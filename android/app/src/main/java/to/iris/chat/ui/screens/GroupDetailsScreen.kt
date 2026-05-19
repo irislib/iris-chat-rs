@@ -71,6 +71,7 @@ fun GroupDetailsScreen(
     val coroutineScope = rememberCoroutineScope()
     val haptics = rememberIrisHapticFeedback()
     var renameValue by remember(groupId, details?.name) { mutableStateOf(details?.name.orEmpty()) }
+    var aboutValue by remember(groupId, details?.about) { mutableStateOf(details?.about.orEmpty()) }
     var memberInput by remember(groupId) { mutableStateOf("") }
     var selectedAddMemberOwners by remember(groupId) { mutableStateOf(setOf<String>()) }
     var memberResultsVisible by remember(groupId) { mutableStateOf(true) }
@@ -219,6 +220,13 @@ fun GroupDetailsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = IrisTheme.palette.muted,
                 )
+                details.about?.takeIf { it.isNotBlank() }?.let { aboutText ->
+                    Text(
+                        text = aboutText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.testTag("groupDetailsAbout"),
+                    )
+                }
                 if (details.canManage) {
                     IrisSecondaryButton(
                         text = if (appState.busy.uploadingAttachment) "Uploading…" else "Change photo",
@@ -303,6 +311,7 @@ fun GroupDetailsScreen(
                                 label = primary,
                                 emphasize = member.isLocalOwner,
                                 size = 38.dp,
+                                imageUrl = member.pictureUrl,
                             )
                             Column(
                                 modifier =
@@ -404,6 +413,33 @@ fun GroupDetailsScreen(
                                 contentDescription = null,
                             )
                         },
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "Description",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(horizontal = 2.dp),
+                    )
+                    TextField(
+                        value = aboutValue,
+                        onValueChange = { aboutValue = it },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .testTag("groupDetailsAboutInput"),
+                        placeholder = { Text("Add a description") },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = irisTextFieldColors(),
+                        minLines = 2,
+                        maxLines = 5,
+                    )
+                    IrisPrimaryButton(
+                        text = "Save description",
+                        onClick = { appManager.updateGroupAbout(groupId, aboutValue) },
+                        enabled = !appState.busy.updatingGroup,
+                        modifier = Modifier.testTag("groupDetailsAboutSaveButton"),
                     )
                 }
 

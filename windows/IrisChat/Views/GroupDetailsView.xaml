@@ -42,6 +42,33 @@
             <Border Background="{StaticResource Panel}"
                     CornerRadius="{StaticResource SectionRadius}"
                     Padding="20"
+                    Margin="0,0,0,16"
+                    x:Name="AboutSection">
+                <StackPanel>
+                    <TextBlock Text="Description"
+                               Style="{StaticResource SectionTitleText}"
+                               Margin="0,0,0,8" />
+                    <TextBox x:Name="GroupAboutInput"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             MinHeight="60"
+                             VerticalContentAlignment="Top" />
+                    <Button Style="{StaticResource PrimaryButton}"
+                            HorizontalAlignment="Left"
+                            Margin="0,10,0,0"
+                            Click="OnSaveAbout"
+                            x:Name="SaveAboutButton">
+                        <TextBlock Text="Save description" />
+                    </Button>
+                    <TextBlock x:Name="GroupAboutDisplay"
+                               TextWrapping="Wrap"
+                               Visibility="Collapsed" />
+                </StackPanel>
+            </Border>
+
+            <Border Background="{StaticResource Panel}"
+                    CornerRadius="{StaticResource SectionRadius}"
+                    Padding="20"
                     Margin="0,0,0,16">
                 <Button Style="{StaticResource SecondaryButton}"
                         HorizontalAlignment="Left"

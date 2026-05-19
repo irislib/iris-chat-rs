@@ -124,7 +124,12 @@ pub fn present_chat_info(
 
     let common_groups = manager.mutual_groups(&info.chat_id);
     if !common_groups.is_empty() {
-        content.append(&common_groups_card(common_groups, &dialog, manager.clone()));
+        content.append(&common_groups_card(
+            common_groups,
+            &info.preferences,
+            &dialog,
+            manager.clone(),
+        ));
     }
 
     content.append(&nickname_card(&info, manager.clone()));
@@ -340,6 +345,7 @@ fn present_nickname_editor(
 
 fn common_groups_card(
     groups: Vec<ChatThreadSnapshot>,
+    preferences: &PreferencesSnapshot,
     dialog: &adw::Dialog,
     manager: Rc<AppManager>,
 ) -> gtk::Widget {
@@ -359,6 +365,18 @@ fn common_groups_card(
             .build();
         row.set_subtitle(&format!("{} people", group.member_count));
         let avatar = adw::Avatar::new(32, Some(&group.display_name), true);
+        if let Some(url) = group.picture_url.as_deref() {
+            if url.starts_with("http://") || url.starts_with("https://") {
+                let proxied = proxied_image_url(
+                    url.to_string(),
+                    preferences.clone(),
+                    Some(64),
+                    Some(64),
+                    true,
+                );
+                image_cache::fetch_into_avatar(&avatar, &proxied);
+            }
+        }
         row.add_prefix(&avatar);
         let chevron = gtk::Image::from_icon_name("go-next-symbolic");
         chevron.add_css_class("dim-label");

@@ -359,6 +359,7 @@ pub struct GroupMemberSnapshot {
     pub owner_pubkey_hex: String,
     pub display_name: String,
     pub npub: String,
+    pub picture_url: Option<String>,
     pub is_admin: bool,
     pub is_creator: bool,
     pub is_local_owner: bool,
@@ -369,6 +370,9 @@ pub struct GroupDetailsSnapshot {
     pub group_id: String,
     pub name: String,
     pub picture_url: Option<String>,
+    /// Free-text group description (Signal calls this the group description).
+    /// `None` if unset. Admins can edit via `AppAction::UpdateGroupAbout`.
+    pub about: Option<String>,
     pub created_by_display_name: String,
     pub created_by_npub: String,
     pub can_manage: bool,

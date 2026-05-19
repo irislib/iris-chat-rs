@@ -81,7 +81,6 @@ mod support;
 mod tests;
 
 pub(crate) const NEARBY_PRESENCE_KIND: u16 = 22242;
-pub(crate) const GROUP_PICTURE_KIND: u32 = 10449;
 pub(super) const APPCORE_PROTOCOL_LABEL: &str = "appcore-protocol";
 pub(super) const APPCORE_PROTOCOL_BOOTSTRAP_LABEL: &str = "appcore-protocol-bootstrap";
 pub(super) const APPCORE_PROTOCOL_FIRST_CONTACT_LABEL: &str = "appcore-protocol-first-contact";

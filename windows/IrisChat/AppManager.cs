@@ -501,6 +501,15 @@ public sealed class AppManager : INotifyPropertyChanged
     public void UpdateGroupName(string groupId, string name) =>
         DispatchToRust(new AppAction.UpdateGroupName(groupId, name.Trim()));
 
+    public void UpdateGroupAbout(string groupId, string? about)
+    {
+        var normalized = about?.Trim();
+        DispatchToRust(new AppAction.UpdateGroupAbout(
+            groupId,
+            string.IsNullOrEmpty(normalized) ? null : normalized
+        ));
+    }
+
     public void UpdateGroupPicture(string groupId, string sourceFilePath)
     {
         try

@@ -340,9 +340,12 @@ impl AppCore {
                     subtitle,
                     picture_url: group_snapshot
                         .as_ref()
-                        .and_then(|group| self.group_pictures.get(&group.group_id).cloned())
+                        .and_then(|group| self.group_picture_url(group))
                         .or(direct_picture),
-                    about: direct_about,
+                    about: group_snapshot
+                        .as_ref()
+                        .and_then(|group| group.about.clone())
+                        .or(direct_about),
                     member_count,
                     last_message_preview: last_message.map(message_preview),
                     last_message_at_secs: last_message.map(|message| message.created_at_secs),
@@ -416,9 +419,12 @@ impl AppCore {
                         .or_else(|| self.owner_secondary_identifier(&thread.chat_id)),
                     picture_url: group_snapshot
                         .as_ref()
-                        .and_then(|group| self.group_pictures.get(&group.group_id).cloned())
+                        .and_then(|group| self.group_picture_url(group))
                         .or(direct_picture),
-                    about: direct_about,
+                    about: group_snapshot
+                        .as_ref()
+                        .and_then(|group| group.about.clone())
+                        .or(direct_about),
                     group_id: group_snapshot.as_ref().map(|group| group.group_id.clone()),
                     member_count: group_snapshot
                         .as_ref()
@@ -818,6 +824,7 @@ impl AppCore {
                     npub: owner
                         .and_then(owner_npub_from_owner)
                         .unwrap_or_else(|| owner_hex.to_string()),
+                    picture_url: self.owner_picture_url(&owner_hex),
                     is_admin: group
                         .admins
                         .iter()
@@ -847,12 +854,14 @@ impl AppCore {
             .and_then(owner_npub_from_owner)
             .unwrap_or_else(|| creator.clone());
         let is_muted = self.is_chat_muted(&group_chat_id(&group.group_id));
-        let picture_url = self.group_pictures.get(&group.group_id).cloned();
+        let picture_url = self.group_picture_url(&group);
+        let about = group.about.clone();
 
         Some(GroupDetailsSnapshot {
             group_id: group.group_id,
             name: group.name,
             picture_url,
+            about,
             created_by_display_name: self.owner_display_label(&creator),
             created_by_npub: creator_npub,
             can_manage: group
@@ -863,6 +872,18 @@ impl AppCore {
             revision: group.revision,
             members,
         })
+    }
+
+    /// Read a group's picture URL. Prefers the picture carried in the new
+    /// metadata snapshot (ndr >=0.0.144), but falls back to the legacy
+    /// `group_pictures` map populated from the old GROUP_PICTURE_KIND control
+    /// rumor / the legacy `picture` SQL column, so users who upgrade keep
+    /// seeing pictures set under the old scheme until someone changes them.
+    pub(super) fn group_picture_url(&self, group: &GroupSnapshot) -> Option<String> {
+        group
+            .picture
+            .clone()
+            .or_else(|| self.group_pictures.get(&group.group_id).cloned())
     }
 
     pub(super) fn can_use_chats(&self) -> bool {

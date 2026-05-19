@@ -677,6 +677,18 @@ class AppManager(
         dispatchToRust(AppAction.UpdateGroupName(trimmedGroupId, trimmedName))
     }
 
+    fun updateGroupAbout(
+        groupId: String,
+        about: String,
+    ) {
+        val trimmedGroupId = groupId.trim()
+        if (trimmedGroupId.isEmpty()) {
+            return
+        }
+        val normalized = about.trim().takeIf { it.isNotEmpty() }
+        dispatchToRust(AppAction.UpdateGroupAbout(trimmedGroupId, normalized))
+    }
+
     fun updateGroupPicture(
         groupId: String,
         filePath: String,

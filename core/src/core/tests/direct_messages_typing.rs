@@ -144,6 +144,8 @@ fn group_created_by_unknown_creator_surfaces_as_request_and_clears_on_accept() {
         group_id: group_id.clone(),
         protocol: GroupProtocol::PairwiseFanoutV1,
         name: "Stranger's group".to_string(),
+        picture: None,
+        about: None,
         created_by: OwnerPubkey::from_bytes(creator.public_key().to_bytes()),
         members: vec![
             OwnerPubkey::from_bytes(creator.public_key().to_bytes()),
@@ -210,6 +212,8 @@ fn group_created_by_accepted_peer_is_not_a_request() {
         group_id: "trusted_group".to_string(),
         protocol: GroupProtocol::PairwiseFanoutV1,
         name: "Friend's group".to_string(),
+        picture: None,
+        about: None,
         created_by: OwnerPubkey::from_bytes(creator.public_key().to_bytes()),
         members: vec![
             OwnerPubkey::from_bytes(creator.public_key().to_bytes()),
@@ -1738,6 +1742,8 @@ fn test_group_snapshot(
         group_id: group_id.to_string(),
         protocol: nostr_double_ratchet::GroupProtocol::sender_key_v1(),
         name: name.to_string(),
+        picture: None,
+        about: None,
         created_by: ndr_owner_pubkey(created_by),
         members: members.into_iter().map(ndr_owner_pubkey).collect(),
         admins: admins.into_iter().map(ndr_owner_pubkey).collect(),

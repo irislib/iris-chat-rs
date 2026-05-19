@@ -185,6 +185,31 @@ fn settings_card(
     }
     group.add(&name_row);
 
+    // About / description row. Admins can edit; everyone else sees the
+    // current value read-only (or nothing if unset).
+    let about_row = adw::EntryRow::builder().title("Description").build();
+    about_row.set_text(details.about.as_deref().unwrap_or(""));
+    if details.can_manage {
+        let busy = state.busy.updating_group;
+        about_row.set_sensitive(!busy);
+
+        let group_id_for_apply = group_id.to_string();
+        let manager_for_apply = manager.clone();
+        about_row.connect_apply(move |row| {
+            let value = row.text().trim().to_string();
+            let about = if value.is_empty() { None } else { Some(value) };
+            manager_for_apply.dispatch(AppAction::UpdateGroupAbout {
+                group_id: group_id_for_apply.clone(),
+                about,
+            });
+        });
+    } else {
+        about_row.set_editable(false);
+    }
+    if details.can_manage || details.about.as_deref().map(|v| !v.trim().is_empty()).unwrap_or(false) {
+        group.add(&about_row);
+    }
+
     let mute_row = adw::ActionRow::builder()
         .title(if details.is_muted {
             "Unmute chat"
@@ -255,6 +280,16 @@ fn member_row(
         });
     }
     let avatar = adw::Avatar::new(36, Some(&member.display_name), true);
+    if let Some(url) = member.picture_url.as_ref() {
+        let proxied = proxied_image_url(
+            url.clone(),
+            state.preferences.clone(),
+            Some(72),
+            Some(72),
+            true,
+        );
+        image_cache::fetch_into_avatar(&avatar, &proxied);
+    }
     row.add_prefix(&avatar);
 
     if member.is_local_owner {

@@ -254,6 +254,48 @@ impl ProtocolEngine {
         })
     }
 
+    pub(super) fn update_group_picture(
+        &mut self,
+        group_id: &str,
+        picture: Option<String>,
+    ) -> anyhow::Result<ProtocolGroupSendResult> {
+        self.with_state_checkpoint(|engine| {
+            let mut rng = OsRng;
+            let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
+            let prepared = engine.group_manager.update_picture(
+                &mut engine.session_manager,
+                &mut ctx,
+                group_id,
+                picture,
+            )?;
+            let mut output = engine.protocol_group_send_from_prepared(&prepared, None)?;
+            output.snapshot = engine.group_manager.group(group_id);
+            engine.persist()?;
+            Ok(output)
+        })
+    }
+
+    pub(super) fn update_group_about(
+        &mut self,
+        group_id: &str,
+        about: Option<String>,
+    ) -> anyhow::Result<ProtocolGroupSendResult> {
+        self.with_state_checkpoint(|engine| {
+            let mut rng = OsRng;
+            let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
+            let prepared = engine.group_manager.update_about(
+                &mut engine.session_manager,
+                &mut ctx,
+                group_id,
+                about,
+            )?;
+            let mut output = engine.protocol_group_send_from_prepared(&prepared, None)?;
+            output.snapshot = engine.group_manager.group(group_id);
+            engine.persist()?;
+            Ok(output)
+        })
+    }
+
     pub(super) fn add_group_members(
         &mut self,
         group_id: &str,

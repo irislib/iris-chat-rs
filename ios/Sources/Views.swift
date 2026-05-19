@@ -6343,6 +6343,7 @@ struct GroupDetailsScreen: View {
     let groupId: String
 
     @State private var groupName = ""
+    @State private var groupAbout = ""
     @State private var memberInput = ""
     @State private var selectedAddMemberOwners = Set<String>()
     @State private var addMemberSuggestionsVisible = true
@@ -6414,6 +6415,33 @@ struct GroupDetailsScreen: View {
                         .disabled(manager.state.busy.updatingGroup)
                         .accessibilityIdentifier("groupDetailsRenameButton")
                     }
+
+                    if details.canManage {
+                        TextField("Add a description", text: Binding(
+                            get: { groupAbout.isEmpty ? (details.about ?? "") : groupAbout },
+                            set: { groupAbout = $0 }
+                        ), axis: .vertical)
+                        .lineLimit(2...5)
+                        .textFieldStyle(.plain)
+                        .irisInputField()
+                        .accessibilityIdentifier("groupDetailsAboutInput")
+
+                        Button("Save description") {
+                            let trimmed = groupAbout.trimmingCharacters(in: .whitespacesAndNewlines)
+                            manager.dispatch(.updateGroupAbout(
+                                groupId: groupId,
+                                about: trimmed.isEmpty ? nil : trimmed
+                            ))
+                        }
+                        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                        .disabled(manager.state.busy.updatingGroup)
+                        .accessibilityIdentifier("groupDetailsAboutSaveButton")
+                    } else if let about = details.about, !about.isEmpty {
+                        Text(about)
+                            .font(.system(.body, design: .rounded))
+                            .foregroundStyle(palette.textPrimary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
 
                 IrisSectionCard {
@@ -6474,7 +6502,14 @@ struct GroupDetailsScreen: View {
                         let primary = primaryDisplayName(displayName: member.displayName, fallback: member.npub)
                         VStack(alignment: .leading, spacing: 10) {
                             let memberHeader = HStack(alignment: .top, spacing: 12) {
-                                IrisAvatar(label: primary, size: 38, emphasize: member.isLocalOwner)
+                                IrisAvatar(
+                                    label: primary,
+                                    size: 38,
+                                    emphasize: member.isLocalOwner,
+                                    pictureUrl: member.pictureUrl,
+                                    preferences: manager.state.preferences,
+                                    manager: manager
+                                )
 
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text(primary)

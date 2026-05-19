@@ -468,6 +468,9 @@ impl AppCore {
                 file_path,
                 filename,
             } => self.update_group_picture(&group_id, &file_path, &filename),
+            AppAction::UpdateGroupAbout { group_id, about } => {
+                self.set_group_about(&group_id, about)
+            }
             AppAction::AddGroupMembers {
                 group_id,
                 member_inputs,

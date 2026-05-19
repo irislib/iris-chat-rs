@@ -45,6 +45,30 @@ public partial class GroupDetailsView : UserControl
         SaveNameButton.IsEnabled = details.canManage;
         AddMemberInput.IsEnabled = details.canManage;
         MuteChatText.Text = details.isMuted ? "Unmute chat" : "Mute chat";
+
+        var about = details.about ?? string.Empty;
+        if (details.canManage)
+        {
+            if (!GroupAboutInput.IsKeyboardFocused)
+                GroupAboutInput.Text = about;
+            GroupAboutInput.Visibility = Visibility.Visible;
+            SaveAboutButton.Visibility = Visibility.Visible;
+            GroupAboutDisplay.Visibility = Visibility.Collapsed;
+            AboutSection.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            GroupAboutInput.Visibility = Visibility.Collapsed;
+            SaveAboutButton.Visibility = Visibility.Collapsed;
+            GroupAboutDisplay.Text = about;
+            GroupAboutDisplay.Visibility = string.IsNullOrWhiteSpace(about)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            AboutSection.Visibility = string.IsNullOrWhiteSpace(about)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+        }
+
         UpdateAddMemberButton(details);
 
         MembersList.Items.Clear();
@@ -218,8 +242,19 @@ public partial class GroupDetailsView : UserControl
     private FrameworkElement BuildMember(GroupDetailsSnapshot details, GroupMemberSnapshot m)
     {
         var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var avatar = new IrisChat.Chrome.Avatar
+        {
+            Label = m.displayName,
+            PictureUrl = m.pictureUrl,
+            Size = 36,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 10, 0),
+        };
+        Grid.SetColumn(avatar, 0);
 
         var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         info.Children.Add(new TextBlock
@@ -235,7 +270,7 @@ public partial class GroupDetailsView : UserControl
             FontSize = 12,
             Margin = new Thickness(0, 2, 0, 0),
         });
-        Grid.SetColumn(info, 0);
+        Grid.SetColumn(info, 1);
 
         var actions = new StackPanel
         {
@@ -269,8 +304,9 @@ public partial class GroupDetailsView : UserControl
             actions.Children.Add(remove);
         }
 
-        Grid.SetColumn(actions, 1);
+        Grid.SetColumn(actions, 2);
 
+        grid.Children.Add(avatar);
         grid.Children.Add(info);
         grid.Children.Add(actions);
 
@@ -300,6 +336,16 @@ public partial class GroupDetailsView : UserControl
         var newName = GroupNameInput.Text?.Trim();
         if (string.IsNullOrEmpty(newName) || newName == details.name) return;
         App.CurrentManager.UpdateGroupName(details.groupId, newName!);
+    }
+
+    private void OnSaveAbout(object sender, RoutedEventArgs e)
+    {
+        var details = App.CurrentManager.GroupDetails;
+        if (details == null) return;
+        var typed = GroupAboutInput.Text?.Trim();
+        var current = details.about ?? string.Empty;
+        if ((typed ?? string.Empty) == current) return;
+        App.CurrentManager.UpdateGroupAbout(details.groupId, typed);
     }
 
     private void OnPickPicture(object sender, RoutedEventArgs e)

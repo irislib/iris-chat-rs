@@ -258,12 +258,7 @@ impl AppCore {
                     "group.picture.upload.ok",
                     format!("group_id={group_id} url={picture_url}"),
                 );
-                self.apply_group_picture_url(
-                    &group_id,
-                    Some(picture_url.clone()),
-                    unix_now().get(),
-                );
-                self.publish_group_picture_control(&group_id, Some(picture_url));
+                self.set_group_picture(&group_id, Some(picture_url));
             }
             Err(error) => {
                 self.push_debug_log("group.picture.upload.error", error);
@@ -273,40 +268,19 @@ impl AppCore {
         }
     }
 
-    fn publish_group_picture_control(&mut self, group_id: &str, picture_url: Option<String>) {
-        let Some(owner_pubkey) = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| logged_in.owner_pubkey)
-        else {
-            return;
-        };
-        let content = serde_json::json!({ "picture": picture_url }).to_string();
-        let mut tags = Vec::new();
-        if let Ok(group_tag) = nostr::Tag::parse(["l", group_id]) {
-            tags.push(group_tag);
-        }
-        let mut rumor = UnsignedEvent::new(
-            owner_pubkey,
-            Timestamp::from_secs(unix_now().get()),
-            Kind::Custom(GROUP_PICTURE_KIND as u16),
-            tags,
-            content,
-        );
-        rumor.ensure_id();
-        let inner_event_id = rumor.id.as_ref().map(ToString::to_string);
-        let payload = match serde_json::to_vec(&rumor) {
-            Ok(payload) => payload,
-            Err(error) => {
-                self.state.toast = Some(error.to_string());
-                self.emit_state();
-                return;
-            }
-        };
+    /// Single entry point for picture mutations: drives the ndr `update_picture`
+    /// admin API, which fans the change out in the same revisioned metadata
+    /// snapshot as name/membership (so new joiners and out-of-sync members get
+    /// it for free). `Some(url)` sets, `None` clears.
+    pub(super) fn set_group_picture(&mut self, group_id: &str, picture_url: Option<String>) {
+        let trimmed = picture_url
+            .map(|url| url.trim().to_string())
+            .filter(|url| !url.is_empty());
+        let previous = self.groups.get(group_id).cloned();
         let result = self
             .protocol_engine
             .as_mut()
-            .map(|engine| engine.send_group_payload(group_id, payload, inner_event_id));
+            .map(|engine| engine.update_group_picture(group_id, trimmed));
         match result {
             Some(Ok(result)) => {
                 self.process_protocol_engine_effects_with_completions(
@@ -314,39 +288,51 @@ impl AppCore {
                     &BTreeMap::new(),
                 );
                 self.handle_queued_protocol_targets("group.picture", &result.queued_targets);
-                self.request_protocol_subscription_refresh();
-                self.rebuild_state();
-                self.persist_best_effort();
-                self.emit_state();
+                if let Some(snapshot) = result.snapshot {
+                    self.apply_local_group_snapshot(
+                        previous.as_ref(),
+                        snapshot,
+                        "group.picture",
+                    );
+                }
             }
-            Some(Err(error)) => {
-                self.state.toast = Some(error.to_string());
-                self.emit_state();
-            }
-            None => {
-                self.state.toast = Some("Protocol engine is not ready.".to_string());
-                self.emit_state();
-            }
+            Some(Err(error)) => self.state.toast = Some(error.to_string()),
+            None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
         }
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
     }
 
-    pub(super) fn apply_group_picture_url(
-        &mut self,
-        group_id: &str,
-        picture_url: Option<String>,
-        updated_at_secs: u64,
-    ) {
-        match picture_url {
-            Some(url) if !url.trim().is_empty() => {
-                self.group_pictures
-                    .insert(group_id.to_string(), url.trim().to_string());
+    /// Same shape as `set_group_picture`, but for the group's free-text
+    /// description (Signal calls this the group description; we use "about"
+    /// to mirror per-user profile vocabulary).
+    pub(super) fn set_group_about(&mut self, group_id: &str, about: Option<String>) {
+        let trimmed = about
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty());
+        let previous = self.groups.get(group_id).cloned();
+        let result = self
+            .protocol_engine
+            .as_mut()
+            .map(|engine| engine.update_group_about(group_id, trimmed));
+        match result {
+            Some(Ok(result)) => {
+                self.process_protocol_engine_effects_with_completions(
+                    result.effects,
+                    &BTreeMap::new(),
+                );
+                self.handle_queued_protocol_targets("group.about", &result.queued_targets);
+                if let Some(snapshot) = result.snapshot {
+                    self.apply_local_group_snapshot(
+                        previous.as_ref(),
+                        snapshot,
+                        "group.about",
+                    );
+                }
             }
-            _ => {
-                self.group_pictures.remove(group_id);
-            }
-        }
-        if let Some(group) = self.groups.get(group_id).cloned() {
-            self.apply_group_snapshot_to_threads(&group, updated_at_secs);
+            Some(Err(error)) => self.state.toast = Some(error.to_string()),
+            None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
         }
         self.rebuild_state();
         self.persist_best_effort();
@@ -396,6 +382,9 @@ impl AppCore {
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
             None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
         }
+        // Picture and about now travel inside the same metadata snapshot
+        // (ndr >=0.0.144), so adding members propagates them automatically —
+        // no separate rebroadcast needed.
         self.state.busy.updating_group = false;
         self.rebuild_state();
         self.persist_best_effort();
@@ -634,30 +623,6 @@ impl AppCore {
                     created_at_secs,
                 );
             }
-            GROUP_PICTURE_KIND => {
-                let Some(group_id) = parse_group_id_from_chat_id(chat_id) else {
-                    return;
-                };
-                let Some(group) = self.groups.get(&group_id) else {
-                    return;
-                };
-                if !group
-                    .admins
-                    .iter()
-                    .any(|admin| admin.to_string() == sender_owner.to_hex())
-                {
-                    self.push_debug_log(
-                        "group.picture.skip",
-                        format!(
-                            "group_id={group_id} sender_not_admin={}",
-                            sender_owner.to_hex()
-                        ),
-                    );
-                    return;
-                }
-                let picture_url = parse_group_picture_control(&runtime_rumor.content);
-                self.apply_group_picture_url(&group_id, picture_url, created_at_secs);
-            }
             _ => {}
         }
     }
@@ -747,12 +712,3 @@ impl AppCore {
     }
 }
 
-fn parse_group_picture_control(content: &str) -> Option<String> {
-    let value = serde_json::from_str::<serde_json::Value>(content).ok()?;
-    value
-        .get("picture")
-        .and_then(|picture| picture.as_str())
-        .map(str::trim)
-        .filter(|picture| picture.starts_with("htree://") || picture.starts_with("nhash://"))
-        .map(ToString::to_string)
-}

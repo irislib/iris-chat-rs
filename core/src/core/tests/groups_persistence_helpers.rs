@@ -1221,7 +1221,7 @@ fn group_picture_projects_to_chat_list_current_chat_and_details() {
     let group_id = current.group_id.as_ref().expect("group id").clone();
     let chat_id = group_chat_id(&group_id);
     let picture_url = "htree://nhash1group/photo.jpg".to_string();
-    core.apply_group_picture_url(&group_id, Some(picture_url.clone()), 123);
+    core.set_group_picture(&group_id, Some(picture_url.clone()));
 
     assert_eq!(
         core.state
@@ -1252,8 +1252,11 @@ fn group_picture_projects_to_chat_list_current_chat_and_details() {
     );
 }
 
+/// Picture lives inside the protocol's `GroupSnapshot` now (ndr >=0.0.144),
+/// so setting one and reloading must round-trip the field through the
+/// engine's persisted group_json — not via the legacy `group_pictures` map.
 #[test]
-fn group_picture_persists_separately_from_protocol_group_snapshot() {
+fn group_picture_persists_inside_protocol_group_snapshot() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -1272,23 +1275,76 @@ fn group_picture_persists_separately_from_protocol_group_snapshot() {
         .and_then(|chat| chat.group_id.clone())
         .expect("group id");
     let picture_url = "htree://nhash1persisted/photo%201.jpg".to_string();
-    core.apply_group_picture_url(&group_id, Some(picture_url.clone()), 456);
+    core.set_group_picture(&group_id, Some(picture_url.clone()));
 
     let persisted = core
         .load_persisted()
         .expect("load persisted")
         .expect("persisted state");
     assert_eq!(
-        persisted.group_pictures.get(&group_id).map(String::as_str),
-        Some(picture_url.as_str())
-    );
-    assert!(
         persisted
             .groups
             .iter()
             .find(|group| group.group_id == group_id)
-            .is_some(),
-        "group metadata still persists through the protocol snapshot"
+            .and_then(|group| group.picture.as_deref()),
+        Some(picture_url.as_str()),
+        "picture lives on the persisted GroupSnapshot, not in a side table"
+    );
+}
+
+/// Member changes from a peer admin arrive as a fresh `MetadataUpdated`
+/// snapshot. With ndr >=0.0.144 the picture is part of that snapshot, so
+/// preservation across membership updates is the peer admin's responsibility:
+/// they must include the current picture in the snapshot they broadcast.
+/// This test pins down the local apply behavior — what we render must
+/// reflect whatever the latest snapshot says.
+#[test]
+fn group_picture_follows_metadata_snapshot_on_incoming_changes() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("group-picture-membership", &owner, &device);
+    let group_id = "group-picture-membership".to_string();
+    let owner_pubkey = owner.public_key();
+    let new_member = Keys::generate().public_key();
+    let picture_url = "htree://nhash1retained/photo.jpg".to_string();
+
+    // Seed: single-member group with a picture, as a peer admin would have
+    // broadcast it (revision 1 carries the picture).
+    let mut initial = test_group_snapshot(
+        &group_id,
+        "Photos",
+        owner_pubkey,
+        vec![owner_pubkey],
+        vec![owner_pubkey],
+        1,
+    );
+    initial.picture = Some(picture_url.clone());
+    core.apply_group_decrypted_event(GroupIncomingEvent::MetadataUpdated(initial.clone()));
+
+    // Peer admin adds a member: a well-behaved admin keeps the picture set
+    // in the new revision's snapshot, so members on the other end keep
+    // seeing it.
+    let mut after_add = test_group_snapshot(
+        &group_id,
+        "Photos",
+        owner_pubkey,
+        vec![owner_pubkey, new_member],
+        vec![owner_pubkey],
+        2,
+    );
+    after_add.picture = Some(picture_url.clone());
+    core.apply_group_decrypted_event(GroupIncomingEvent::MetadataUpdated(after_add));
+
+    core.rebuild_state();
+    let chat_id = group_chat_id(&group_id);
+    assert_eq!(
+        core.state
+            .chat_list
+            .iter()
+            .find(|chat| chat.chat_id == chat_id)
+            .and_then(|chat| chat.picture_url.as_deref()),
+        Some(picture_url.as_str()),
+        "picture set on the new revision must show up in chat list"
     );
 }
 

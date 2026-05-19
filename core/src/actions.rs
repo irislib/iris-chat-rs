@@ -209,6 +209,12 @@ pub enum AppAction {
         file_path: String,
         filename: String,
     },
+    /// Admin: set or clear the group's free-text description (Signal's group
+    /// description). `None` clears.
+    UpdateGroupAbout {
+        group_id: String,
+        about: Option<String>,
+    },
     AddGroupMembers {
         group_id: String,
         member_inputs: Vec<String>,
