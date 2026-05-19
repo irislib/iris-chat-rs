@@ -611,6 +611,10 @@ impl AppManager {
         }
     }
 
+    pub fn window_active(&self) -> bool {
+        self.window_active.get()
+    }
+
     pub fn record_user_activity(&self) {
         *self.last_user_activity.borrow_mut() = Instant::now();
     }

@@ -241,6 +241,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
                                 &prev_chat_list,
                                 &slot.chat_list,
                                 prev_focused_chat_id.as_deref(),
+                                manager_for_updates.window_active(),
                             );
                         }
                     }
@@ -614,6 +615,7 @@ fn notify_new_messages(
     prev: &[ChatThreadSnapshot],
     current: &[ChatThreadSnapshot],
     focused_chat_id: Option<&str>,
+    window_active: bool,
 ) {
     let prev_map: HashMap<&str, &ChatThreadSnapshot> =
         prev.iter().map(|c| (c.chat_id.as_str(), c)).collect();
@@ -621,7 +623,10 @@ fn notify_new_messages(
         if chat.is_muted {
             continue;
         }
-        if Some(chat.chat_id.as_str()) == focused_chat_id {
+        // The currently visible chat only suppresses while our window has
+        // focus; once the user has switched to another app we still want
+        // to notify them about new messages there.
+        if window_active && Some(chat.chat_id.as_str()) == focused_chat_id {
             continue;
         }
         let last_at = chat.last_message_at_secs.unwrap_or(0);

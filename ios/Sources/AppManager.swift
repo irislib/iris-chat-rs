@@ -3365,11 +3365,20 @@ final class AppManager: ObservableObject {
         guard oldState.account != nil, nextState.preferences.desktopNotificationsEnabled else {
             return
         }
-        let openChatIDs = [
-            activeChatID(in: oldState),
-            activeChatID(in: nextState),
-            nextState.currentChat?.chatId
-        ].compactMap { $0 }
+        // "Open chat" should only suppress when the user can actually see it — i.e.
+        // the app is foregrounded. Once the app is in the background, the user
+        // expects notifications for every unmuted chat, including the one they
+        // last had on screen.
+        let openChatIDs: [String]
+        if appSceneIsActive {
+            openChatIDs = [
+                activeChatID(in: oldState),
+                activeChatID(in: nextState),
+                nextState.currentChat?.chatId
+            ].compactMap { $0 }
+        } else {
+            openChatIDs = []
+        }
         let oldUnreadByChat = Dictionary(
             uniqueKeysWithValues: oldState.chatList.map { ($0.chatId, $0.unreadCount) }
         )

@@ -1298,6 +1298,42 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
+    func testDesktopNotificationPostedForActiveChatWhenAppBackgrounded() async {
+        let activeRoute = Router(defaultScreen: .chat(chatId: "chat-1"), screenStack: [])
+        let rust = MockRustApp(
+            state: makeLargeFixtureState(
+                rev: 1,
+                router: activeRoute,
+                account: makeAccount(),
+                chatList: makeLargeChatList(replacingFirstWith: makeChatThread(unreadCount: 0))
+            )
+        )
+        let notifications = MockDesktopNotificationPoster()
+        let manager = AppManager(
+            rust: rust,
+            secretStore: InMemorySecretStore(),
+            desktopNotifications: notifications
+        )
+
+        // Simulate the OS reporting that the app moved off-screen, e.g. the
+        // user switched to another desktop app while the chat was open.
+        manager.appBackgrounded()
+
+        rust.emit(.fullState(makeLargeFixtureState(
+            rev: 2,
+            router: activeRoute,
+            account: makeAccount(),
+            chatList: makeLargeChatList(replacingFirstWith: makeChatThread(unreadCount: 1, preview: "after backgrounded"))
+        )))
+
+        let posted = await waitUntil { notifications.posts.count == 1 }
+        XCTAssertTrue(posted)
+        XCTAssertEqual(notifications.posts.first?.title, "Bob")
+        XCTAssertEqual(notifications.posts.first?.body, "after backgrounded")
+        _ = manager
+    }
+
+    @MainActor
     func testDesktopNotificationPreferenceSuppressesNewUnreadMessages() async {
         var preferences = makeLargeFixtureState().preferences
         preferences.desktopNotificationsEnabled = false
