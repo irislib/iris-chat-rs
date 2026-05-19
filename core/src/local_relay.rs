@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -17,6 +18,73 @@ struct RelayState {
     events_by_id: BTreeMap<String, Value>,
     subscriptions: HashMap<usize, HashMap<String, Vec<Value>>>,
     clients: HashMap<usize, mpsc::UnboundedSender<Message>>,
+    faults: RelayFaults,
+    dropped_event_ids: HashSet<String>,
+}
+
+#[derive(Clone, Default)]
+struct RelayFaults {
+    drop_event_ids_file: Option<PathBuf>,
+    drop_matching_events_once: bool,
+}
+
+impl RelayState {
+    fn from_env() -> Self {
+        Self {
+            faults: RelayFaults::from_env(),
+            ..Self::default()
+        }
+    }
+
+    fn should_drop_event(&mut self, event_id: &str) -> bool {
+        let Some(path) = self.faults.drop_event_ids_file.as_ref() else {
+            return false;
+        };
+        if self.faults.drop_matching_events_once && self.dropped_event_ids.contains(event_id) {
+            return false;
+        }
+        if !drop_event_ids(path).contains(event_id) {
+            return false;
+        }
+        self.dropped_event_ids.insert(event_id.to_string());
+        true
+    }
+}
+
+impl RelayFaults {
+    fn from_env() -> Self {
+        let drop_event_ids_file = std::env::var_os("IRIS_LOCAL_RELAY_DROP_EVENT_IDS_FILE")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let drop_matching_events_once = !env_flag("IRIS_LOCAL_RELAY_DROP_EVENT_IDS_ALWAYS");
+        Self {
+            drop_event_ids_file,
+            drop_matching_events_once,
+        }
+    }
+}
+
+fn env_flag(name: &str) -> bool {
+    matches!(
+        std::env::var(name)
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+fn drop_event_ids(path: &Path) -> HashSet<String> {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return HashSet::new();
+    };
+    raw.lines()
+        .filter_map(|line| line.split('#').next())
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn lock_relay_state(state: &Arc<Mutex<RelayState>>) -> MutexGuard<'_, RelayState> {
@@ -176,7 +244,7 @@ pub fn run_forever(bind_addr: &str) -> Result<()> {
         let listener = TcpListener::bind(&bind_addr)
             .await
             .with_context(|| format!("bind relay listener {bind_addr}"))?;
-        let state = Arc::new(Mutex::new(RelayState::default()));
+        let state = Arc::new(Mutex::new(RelayState::from_env()));
         let next_client_id = Arc::new(std::sync::atomic::AtomicUsize::new(1));
 
         println!("Local Nostr relay listening on ws://{bind_addr}");
@@ -314,17 +382,33 @@ fn handle_client_message(client_id: usize, raw_message: &str, state: &Arc<Mutex<
             let Some(event_id) = event.get("id").and_then(Value::as_str) else {
                 return;
             };
-            let (sender, deliveries) = {
+            let event_id = event_id.to_string();
+            let (sender, deliveries, dropped) = {
                 let mut relay = lock_relay_state(state);
-                relay
-                    .events_by_id
-                    .insert(event_id.to_string(), event.clone());
                 let sender = relay.clients.get(&client_id).cloned();
-                let deliveries = matching_deliveries(&relay, &event);
-                (sender, deliveries)
+                if relay.should_drop_event(&event_id) {
+                    (sender, Vec::new(), true)
+                } else {
+                    relay.events_by_id.insert(event_id.clone(), event.clone());
+                    let deliveries = matching_deliveries(&relay, &event);
+                    (sender, deliveries, false)
+                }
             };
+            if dropped {
+                eprintln!("Local relay fault dropped event_id={event_id}");
+            }
             if let Some(sender) = sender {
-                let _ = sender.send(Message::Text(json!(["OK", event_id, true, ""]).to_string()));
+                let message = if dropped {
+                    "fault: dropped by local relay"
+                } else {
+                    ""
+                };
+                let _ = sender.send(Message::Text(
+                    json!(["OK", event_id, true, message]).to_string(),
+                ));
+            }
+            if dropped {
+                return;
             }
 
             for (target, payload) in deliveries {
@@ -480,4 +564,55 @@ pub fn matches_filter(event: &Value, filter: &Value) -> bool {
     }
 
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn drop_event_ids_file_ignores_comments_and_blank_lines() {
+        let mut file = tempfile::NamedTempFile::new().expect("temp drop file");
+        writeln!(file, "\n# comment\nabc\n  def  # inline comment\n").expect("write drop file");
+
+        let ids = drop_event_ids(&file.path().to_path_buf());
+
+        assert!(ids.contains("abc"));
+        assert!(ids.contains("def"));
+        assert!(!ids.contains("# comment"));
+    }
+
+    #[test]
+    fn relay_fault_drops_matching_event_once_by_default() {
+        let mut file = tempfile::NamedTempFile::new().expect("temp drop file");
+        writeln!(file, "event-to-drop").expect("write drop file");
+        let mut state = RelayState {
+            faults: RelayFaults {
+                drop_event_ids_file: Some(file.path().to_path_buf()),
+                drop_matching_events_once: true,
+            },
+            ..RelayState::default()
+        };
+
+        assert!(state.should_drop_event("event-to-drop"));
+        assert!(!state.should_drop_event("event-to-drop"));
+        assert!(!state.should_drop_event("different-event"));
+    }
+
+    #[test]
+    fn relay_fault_can_drop_matching_event_every_time() {
+        let mut file = tempfile::NamedTempFile::new().expect("temp drop file");
+        writeln!(file, "event-to-drop").expect("write drop file");
+        let mut state = RelayState {
+            faults: RelayFaults {
+                drop_event_ids_file: Some(file.path().to_path_buf()),
+                drop_matching_events_once: false,
+            },
+            ..RelayState::default()
+        };
+
+        assert!(state.should_drop_event("event-to-drop"));
+        assert!(state.should_drop_event("event-to-drop"));
+    }
 }

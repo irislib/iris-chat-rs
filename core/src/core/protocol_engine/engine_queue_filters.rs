@@ -317,6 +317,7 @@ impl ProtocolEngine {
             pending_group_fanouts: self.pending_group_fanouts.clone(),
             pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),
             pending_group_sender_key_messages: self.pending_group_sender_key_messages.clone(),
+            pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),
             pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
             subscription_generation: self.subscription_generation,
             last_backfill_attempt_secs: self.last_backfill_attempt_secs,

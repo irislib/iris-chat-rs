@@ -1,0 +1,54 @@
+{
+  "name": "alice-alice2-bob-group",
+  "work_dir": "/tmp/iris-mobile-scenario-alice-alice2-bob-group",
+  "relay": {
+    "port": 4848,
+    "label": "iris.scenario.alice-alice2-bob.relay",
+    "drop_file": "/tmp/iris-mobile-scenario-alice-alice2-bob-group/drop-events.txt",
+    "log_file": "/tmp/iris-mobile-scenario-alice-alice2-bob-group/relay.log",
+    "set_id": "local-alice-alice2-bob-group",
+    "host_interface": "en0"
+  },
+  "ios": {
+    "build": true
+  },
+  "open_apps": true,
+  "devices": [
+    {
+      "id": "alice1",
+      "platform": "ios",
+      "simulator": "Sender Key Alice",
+      "run_id": "alice1",
+      "user": "alice",
+      "display_name": "Alice",
+      "reset": true
+    },
+    {
+      "id": "alice2",
+      "platform": "ios",
+      "simulator": "Sender Key Alice 2",
+      "run_id": "alice2",
+      "user": "alice",
+      "linked_to": "alice",
+      "reset": true
+    },
+    {
+      "id": "bob1",
+      "platform": "ios",
+      "simulator": "Sender Key Bob",
+      "run_id": "bob",
+      "user": "bob",
+      "display_name": "Bob",
+      "reset": true
+    }
+  ],
+  "groups": [
+    {
+      "id": "alice-bob",
+      "creator": "alice1",
+      "name": "Alice Bob Repair Demo",
+      "members": ["bob"],
+      "wait_for_members": true
+    }
+  ]
+}

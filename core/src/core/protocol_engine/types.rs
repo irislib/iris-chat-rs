@@ -2,6 +2,7 @@ const PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
 const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
+const SENDER_KEY_REPAIR_RETRY_DELAY_SECS: u64 = 30;
 const LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS: u64 = 120;
 
 fn default_true() -> bool {
@@ -26,6 +27,8 @@ struct ProtocolEnginePersistedState {
     #[serde(default)]
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent>,
+    #[serde(default)]
+    pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     #[serde(default)]
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     #[serde(default)]
@@ -158,6 +161,20 @@ struct ProtocolPendingGroupPairwisePayload {
     sender_device: Option<NdrDevicePubkey>,
     payload: Vec<u8>,
     created_at_secs: u64,
+    next_retry_at_secs: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct ProtocolPendingGroupSenderKeyRepair {
+    group_id: String,
+    sender_event_pubkey_hex: String,
+    key_id: u32,
+    message_number: u32,
+    #[serde(default)]
+    required_revision: Option<u64>,
+    created_at_secs: u64,
+    last_requested_at_secs: u64,
+    request_count: u32,
     next_retry_at_secs: u64,
 }
 
@@ -308,6 +325,8 @@ pub(super) struct ProtocolEngineDebugSnapshot {
     pub(super) pending_group_fanout_count: usize,
     pub(super) pending_group_pairwise_payload_count: usize,
     pub(super) pending_group_sender_key_message_count: usize,
+    pub(super) pending_group_sender_key_repair_count: usize,
+    pub(super) pending_group_sender_key_repair_last_requested_at_secs: u64,
     pub(super) pending_outbound_targets: Vec<String>,
     #[serde(default)]
     pub(super) pending_outbound_details: Vec<ProtocolPendingOutboundDebug>,
@@ -355,6 +374,7 @@ pub(super) struct ProtocolEngine {
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent>,
+    pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     known_message_author_cache: std::cell::RefCell<Option<KnownMessageAuthorCache>>,
     #[cfg(test)]
@@ -383,6 +403,7 @@ struct ProtocolEngineCheckpoint {
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent>,
+    pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     subscription_generation: u64,
     last_backfill_attempt_secs: u64,

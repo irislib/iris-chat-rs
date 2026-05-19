@@ -365,8 +365,8 @@ impl AppCore {
             return;
         }
         self.protocol_subscription_runtime.liveness_due_at = Some(due_at);
-        self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
-        let token = self.protocol_reconnect_token;
+        self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
+        let token = self.protocol_liveness_token;
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
             sleep_until(due_at).await;
@@ -1372,7 +1372,7 @@ impl AppCore {
     }
 
     pub(super) fn handle_protocol_subscription_liveness_check(&mut self, token: u64) {
-        if token != self.protocol_reconnect_token {
+        if token != self.protocol_liveness_token {
             return;
         }
         self.protocol_subscription_runtime.liveness_due_at = None;

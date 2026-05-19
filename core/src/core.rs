@@ -14,11 +14,12 @@ use crate::updates::{AppUpdate, CoreMsg, InternalEvent, RelayPublishDrainResult}
 use flume::Sender;
 use nostr::{Alphabet, EventBuilder, SingleLetterTag, UnsignedEvent};
 use nostr_double_ratchet::{
-    AuthorizedDevice, DevicePubkey as NdrDevicePubkey, DeviceRoster, GroupIncomingEvent,
-    GroupManagerSnapshot, GroupPendingFanout, GroupPreparedPublish, GroupPreparedSend,
-    GroupProtocol, GroupSenderKeyHandleResult, GroupSenderKeyMessage, GroupSnapshot, Invite,
-    MessageEnvelope, OwnerPubkey as NdrOwnerPubkey, PreparedSend, ProtocolContext, RelayGap,
-    SessionManager, SessionManagerSnapshot, SessionState, UnixSeconds as NdrUnixSeconds,
+    AuthorizedDevice, DevicePubkey as NdrDevicePubkey, DeviceRoster, DomainError,
+    Error as NdrError, GroupIncomingEvent, GroupManagerSnapshot, GroupPendingFanout,
+    GroupPreparedPublish, GroupPreparedSend, GroupProtocol, GroupSenderKeyHandleResult,
+    GroupSenderKeyMessage, GroupSnapshot, Invite, MessageEnvelope, OwnerPubkey as NdrOwnerPubkey,
+    PreparedSend, ProtocolContext, RelayGap, SenderKeyRepairRequest, SessionManager,
+    SessionManagerSnapshot, SessionState, UnixSeconds as NdrUnixSeconds,
 };
 use nostr_double_ratchet_nostr::{
     apply_app_keys_snapshot_with_required_device, is_app_keys_event, AppKeys, DeviceEntry,
@@ -478,6 +479,7 @@ pub struct AppCore {
     device_invite_poll_token: u64,
     message_expiry_token: u64,
     protocol_reconnect_token: u64,
+    protocol_liveness_token: u64,
     defer_owner_app_keys_publish: bool,
     current_device_labels: Option<CurrentDeviceLabels>,
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,

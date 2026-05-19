@@ -30,6 +30,7 @@ impl ProtocolEngine {
                         pending_group_fanouts: state.pending_group_fanouts,
                         pending_group_pairwise_payloads: state.pending_group_pairwise_payloads,
                         pending_group_sender_key_messages: state.pending_group_sender_key_messages,
+                        pending_group_sender_key_repairs: state.pending_group_sender_key_repairs,
                         pending_decrypted_deliveries: state.pending_decrypted_deliveries,
                         known_message_author_cache: std::cell::RefCell::new(None),
                         #[cfg(test)]
@@ -99,6 +100,7 @@ impl ProtocolEngine {
             pending_group_fanouts: Vec::new(),
             pending_group_pairwise_payloads: Vec::new(),
             pending_group_sender_key_messages: Vec::new(),
+            pending_group_sender_key_repairs: Vec::new(),
             pending_decrypted_deliveries: Vec::new(),
             known_message_author_cache: std::cell::RefCell::new(None),
             #[cfg(test)]
@@ -146,6 +148,13 @@ impl ProtocolEngine {
             pending_group_fanout_count: self.pending_group_fanouts.len(),
             pending_group_pairwise_payload_count: self.pending_group_pairwise_payloads.len(),
             pending_group_sender_key_message_count: self.pending_group_sender_key_messages.len(),
+            pending_group_sender_key_repair_count: self.pending_group_sender_key_repairs.len(),
+            pending_group_sender_key_repair_last_requested_at_secs: self
+                .pending_group_sender_key_repairs
+                .iter()
+                .map(|repair| repair.last_requested_at_secs)
+                .max()
+                .unwrap_or_default(),
             pending_outbound_targets: self.queued_message_diagnostics(None),
             pending_outbound_details: self.pending_outbound_debug_details(),
             pending_group_fanout_targets: self.queued_group_targets(),
@@ -565,6 +574,7 @@ impl ProtocolEngine {
             pending_group_fanouts: self.pending_group_fanouts.clone(),
             pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),
             pending_group_sender_key_messages: self.pending_group_sender_key_messages.clone(),
+            pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),
             pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
             subscription_generation: self.subscription_generation,
             last_backfill_attempt_secs: self.last_backfill_attempt_secs,
@@ -580,6 +590,7 @@ impl ProtocolEngine {
         self.pending_group_fanouts = checkpoint.pending_group_fanouts;
         self.pending_group_pairwise_payloads = checkpoint.pending_group_pairwise_payloads;
         self.pending_group_sender_key_messages = checkpoint.pending_group_sender_key_messages;
+        self.pending_group_sender_key_repairs = checkpoint.pending_group_sender_key_repairs;
         self.pending_decrypted_deliveries = checkpoint.pending_decrypted_deliveries;
         self.subscription_generation = checkpoint.subscription_generation;
         self.last_backfill_attempt_secs = checkpoint.last_backfill_attempt_secs;

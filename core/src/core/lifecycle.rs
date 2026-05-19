@@ -63,6 +63,7 @@ impl AppCore {
             device_invite_poll_token: 0,
             message_expiry_token: 0,
             protocol_reconnect_token: 0,
+            protocol_liveness_token: 0,
             defer_owner_app_keys_publish: false,
             current_device_labels: None,
             protocol_subscription_runtime: ProtocolSubscriptionRuntime::default(),
@@ -257,6 +258,7 @@ impl AppCore {
         self.stop_pending_linked_device();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
+        self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
         self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
         self.relay_status_watch_urls.clear();
         self.relay_status_by_url.clear();
@@ -284,6 +286,7 @@ impl AppCore {
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.message_expiry_token = self.message_expiry_token.saturating_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
+        self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
         self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
         self.relay_status_watch_urls.clear();
         self.relay_status_by_url.clear();

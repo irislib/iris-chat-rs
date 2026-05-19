@@ -319,7 +319,8 @@ pub(crate) fn decrypt_mobile_push_notification(
             .into_iter()
             .find_map(|event| match event {
                 GroupIncomingEvent::Message(message) => Some(message),
-                GroupIncomingEvent::MetadataUpdated(_) => None,
+                GroupIncomingEvent::MetadataUpdated(_)
+                | GroupIncomingEvent::SenderKeyRepairRequested(_) => None,
             })
         else {
             return cached_fallback();

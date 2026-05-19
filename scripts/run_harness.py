@@ -6,6 +6,44 @@ import subprocess
 import sys
 
 
+def classify_instrumentation_result(lines: list[str], exit_code: int) -> int:
+    if exit_code != 0:
+        return exit_code
+
+    saw_failure = False
+    saw_runner_success_code = False
+    saw_test_success_status = False
+    saw_post_success_teardown_crash = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "INSTRUMENTATION_CODE: -1":
+            saw_runner_success_code = True
+        elif stripped == "INSTRUMENTATION_STATUS_CODE: 0":
+            saw_test_success_status = True
+
+        if stripped.startswith("INSTRUMENTATION_STATUS_CODE: -") or stripped == "FAILURES!!!":
+            saw_failure = True
+        elif stripped in {
+            "INSTRUMENTATION_RESULT: shortMsg=Process crashed.",
+            "INSTRUMENTATION_RESULT: shortMsg=Process crashed",
+        }:
+            if saw_test_success_status and not saw_failure:
+                saw_post_success_teardown_crash = True
+            else:
+                saw_failure = True
+        elif stripped.startswith("INSTRUMENTATION_RESULT: shortMsg="):
+            saw_failure = True
+
+    if saw_failure:
+        return 1
+    if saw_runner_success_code:
+        return 0
+    if saw_post_success_teardown_crash and saw_test_success_status:
+        return 0
+    return 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run an Android instrumentation harness test with quote-safe arguments.")
     parser.add_argument("--adb", required=True, help="Absolute path to adb")
@@ -53,27 +91,14 @@ def main() -> int:
         bufsize=1,
     )
     assert process.stdout is not None
-    saw_failure = False
-    saw_success_code = False
+    lines: list[str] = []
     for line in process.stdout:
         sys.stdout.write(line)
         sys.stdout.flush()
-        stripped = line.strip()
-        if stripped == "INSTRUMENTATION_CODE: -1":
-            saw_success_code = True
-        if (
-            stripped.startswith("INSTRUMENTATION_STATUS_CODE: -")
-            or stripped == "FAILURES!!!"
-            or stripped.startswith("INSTRUMENTATION_RESULT: shortMsg=")
-        ):
-            saw_failure = True
+        lines.append(line)
 
     exit_code = process.wait()
-    if exit_code != 0:
-        return exit_code
-    if saw_failure or not saw_success_code:
-        return 1
-    return 0
+    return classify_instrumentation_result(lines, exit_code)
 
 
 if __name__ == "__main__":

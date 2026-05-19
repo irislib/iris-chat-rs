@@ -172,7 +172,7 @@ run_android_test() {
     printf '%s\n' "${output}" >&2
     return 1
   fi
-  if ! printf '%s\n' "${output}" | rg -q '^INSTRUMENTATION_CODE: -1$'; then
+  if ! iris_e2e_android_instrumentation_succeeded "${output}"; then
     echo "Android harness ${test_name} did not report success on ${serial}" >&2
     printf '%s\n' "${output}" >&2
     return 1
@@ -300,7 +300,7 @@ if [[ "${LINK_STATUS}" -ne 0 ]]; then
   echo "Linked-device authorization harness failed with exit code ${LINK_STATUS}" >&2
   exit "${LINK_STATUS}"
 fi
-if ! rg -q '^INSTRUMENTATION_CODE: -1$' "${LINK_LOG}"; then
+if ! iris_e2e_android_instrumentation_file_succeeded "${LINK_LOG}"; then
   echo "Linked-device authorization harness did not report success" >&2
   exit 1
 fi
@@ -317,14 +317,16 @@ fi
 ALICE_TO_BOB="android-public-alice-to-bob-${STAMP}"
 ALICE_TO_CHARLIE="android-public-alice-to-charlie-${STAMP}"
 run_android_test "${ALICE_SERIAL}" send_message_from_args \
-  peer_input "${BOB_NPUB}" message "${ALICE_TO_BOB}" >/dev/null
+  peer_input "${BOB_NPUB}" message "${ALICE_TO_BOB}" \
+  wait_for_relay_drain true relay_drain_timeout_secs 240 >/dev/null
 run_android_test "${BOB_SERIAL}" wait_for_message_from_args \
   peer_input "${ALICE_NPUB}" message "${ALICE_TO_BOB}" direction incoming >/dev/null
 run_android_test "${ALICE_LINKED_SERIAL}" wait_for_message_from_args \
   peer_input "${BOB_NPUB}" message "${ALICE_TO_BOB}" direction outgoing >/dev/null
 
 run_android_test "${ALICE_SERIAL}" send_message_from_args \
-  peer_input "${CHARLIE_NPUB}" message "${ALICE_TO_CHARLIE}" >/dev/null
+  peer_input "${CHARLIE_NPUB}" message "${ALICE_TO_CHARLIE}" \
+  wait_for_relay_drain true relay_drain_timeout_secs 240 >/dev/null
 run_android_test "${CHARLIE_SERIAL}" wait_for_message_from_args \
   peer_input "${ALICE_NPUB}" message "${ALICE_TO_CHARLIE}" direction incoming >/dev/null
 run_android_test "${ALICE_LINKED_SERIAL}" wait_for_message_from_args \

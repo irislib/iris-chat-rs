@@ -310,14 +310,16 @@ fi
 ALICE_TO_BOB="ios-public-alice-to-bob-${STAMP}"
 ALICE_TO_CHARLIE="ios-public-alice-to-charlie-${STAMP}"
 run_ios_test "${ALICE_UDID}" alice send_message_from_args 0 0 \
-  peer_input "${BOB_NPUB}" message "${ALICE_TO_BOB}" >/dev/null
+  peer_input "${BOB_NPUB}" message "${ALICE_TO_BOB}" \
+  wait_for_relay_drain true relay_drain_timeout_secs 240 >/dev/null
 run_ios_test "${BOB_UDID}" bob wait_for_message_from_args 0 0 \
   peer_input "${ALICE_NPUB}" message "${ALICE_TO_BOB}" direction incoming >/dev/null
 run_ios_test "${ALICE_LINKED_UDID}" alice-linked wait_for_message_from_args 0 0 \
   peer_input "${BOB_NPUB}" message "${ALICE_TO_BOB}" direction outgoing >/dev/null
 
 run_ios_test "${ALICE_UDID}" alice send_message_from_args 0 0 \
-  peer_input "${CHARLIE_NPUB}" message "${ALICE_TO_CHARLIE}" >/dev/null
+  peer_input "${CHARLIE_NPUB}" message "${ALICE_TO_CHARLIE}" \
+  wait_for_relay_drain true relay_drain_timeout_secs 240 >/dev/null
 run_ios_test "${CHARLIE_UDID}" charlie wait_for_message_from_args 0 0 \
   peer_input "${ALICE_NPUB}" message "${ALICE_TO_CHARLIE}" direction incoming >/dev/null
 run_ios_test "${ALICE_LINKED_UDID}" alice-linked wait_for_message_from_args 0 0 \

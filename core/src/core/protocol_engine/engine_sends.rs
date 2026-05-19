@@ -111,9 +111,16 @@ impl ProtocolEngine {
         let pending_group_pairwise_checkpoint = self.pending_group_pairwise_payloads.clone();
         let mut rng = OsRng;
         let mut ctx = ProtocolContext::new(NdrUnixSeconds(event.created_at.as_secs()), &mut rng);
-        let processed = self
+        let processed = match self
             .session_manager
-            .observe_invite_response(&mut ctx, &envelope)?;
+            .observe_invite_response(&mut ctx, &envelope)
+        {
+            Ok(processed) => processed,
+            Err(NdrError::Domain(DomainError::InviteAlreadyUsed)) => {
+                return Ok(ProtocolRetryBatch::default());
+            }
+            Err(error) => return Err(error.into()),
+        };
         self.invalidate_known_message_author_cache();
         if let Some(processed) = processed.as_ref() {
             self.wake_pending_protocol_for_owner(

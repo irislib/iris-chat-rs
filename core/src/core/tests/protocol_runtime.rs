@@ -445,7 +445,7 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
         },
     );
 
-    core.handle_protocol_subscription_liveness_check(core.protocol_reconnect_token);
+    core.handle_protocol_subscription_liveness_check(core.protocol_liveness_token);
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while std::time::Instant::now() < deadline {
@@ -993,6 +993,40 @@ fn successful_protocol_subscription_apply_sets_applied_plan() {
 }
 
 #[test]
+fn liveness_scheduling_does_not_invalidate_subscription_apply_completion() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("subscription-apply-liveness-generation", &owner, &device);
+    let plan = protocol_plan_for_test(vec![device.public_key()], Vec::new());
+    core.protocol_subscription_runtime.desired_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.applying_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.refresh_in_flight = true;
+    core.protocol_subscription_runtime.reconcile_token = 9;
+    let apply_generation = core.protocol_reconnect_token;
+
+    core.schedule_protocol_subscription_liveness_check(Duration::from_secs(2));
+
+    core.handle_protocol_subscription_reconcile_completed(
+        apply_generation,
+        9,
+        "test_success_after_liveness_schedule".to_string(),
+        Some(plan.clone()),
+        true,
+        None,
+        vec![("wss://relay.example".to_string(), RelayStatus::Connected)],
+        1,
+        1,
+        1,
+    );
+
+    assert!(
+        !core.protocol_subscription_runtime.refresh_in_flight,
+        "liveness timers must not leave subscription apply permanently in-flight"
+    );
+    assert_eq!(core.protocol_subscription_runtime.applied_plan, Some(plan));
+}
+
+#[test]
 fn stale_protocol_subscription_reconcile_completion_is_ignored() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -1029,8 +1063,16 @@ fn liveness_token_does_not_stale_subscription_completion() {
     core.protocol_subscription_runtime.refresh_in_flight = true;
     core.protocol_subscription_runtime.reconcile_token = 9;
     let apply_generation = core.protocol_reconnect_token;
+    let liveness_generation = core.protocol_liveness_token;
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
-    assert_ne!(core.protocol_reconnect_token, apply_generation);
+    assert_eq!(
+        core.protocol_reconnect_token, apply_generation,
+        "liveness scheduling must not invalidate subscription apply generation"
+    );
+    assert_ne!(
+        core.protocol_liveness_token, liveness_generation,
+        "liveness scheduling should still advance the independent liveness token"
+    );
 
     core.handle_protocol_subscription_reconcile_completed(
         apply_generation,
@@ -1119,7 +1161,7 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_missing_appkeys_when_conn
     );
 
     core.debug_log.clear();
-    let token = core.protocol_reconnect_token;
+    let token = core.protocol_liveness_token;
     core.handle_protocol_subscription_liveness_check(token);
 
     assert!(
@@ -1146,7 +1188,7 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
     );
     core.protocol_subscription_runtime.liveness_due_at = None;
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
-    let first_token = core.protocol_reconnect_token;
+    let first_token = core.protocol_liveness_token;
     let first_due = core
         .protocol_subscription_runtime
         .liveness_due_at
@@ -1154,7 +1196,7 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
 
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
     assert_eq!(
-        core.protocol_reconnect_token, first_token,
+        core.protocol_liveness_token, first_token,
         "a later/equal liveness request must not cancel the pending reconnect"
     );
     assert_eq!(
@@ -1163,7 +1205,7 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
     );
 
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(2));
-    let fast_token = core.protocol_reconnect_token;
+    let fast_token = core.protocol_liveness_token;
     let fast_due = core
         .protocol_subscription_runtime
         .liveness_due_at
@@ -1179,7 +1221,7 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
 
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
     assert_eq!(
-        core.protocol_reconnect_token, fast_token,
+        core.protocol_liveness_token, fast_token,
         "a later liveness request must not starve the fast reconnect"
     );
     assert_eq!(
@@ -1347,8 +1389,11 @@ fn protocol_fetch_rate_limit_tolerates_stale_start_time() {
     let device = Keys::generate();
     let mut core = logged_in_test_core("protocol-fetch-stale-rate-limit", &owner, &device);
 
+    let Some(stale_started_at) = Instant::now().checked_sub(Duration::from_secs(60)) else {
+        return;
+    };
     core.protocol_subscription_runtime
-        .protocol_fetch_last_started_at = Some(Instant::now() - Duration::from_secs(60));
+        .protocol_fetch_last_started_at = Some(stale_started_at);
     core.debug_log.clear();
 
     core.fetch_recent_protocol_state();
@@ -1427,7 +1472,7 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_sessio
     );
 
     core.debug_log.clear();
-    let token = core.protocol_reconnect_token;
+    let token = core.protocol_liveness_token;
     core.handle_protocol_subscription_liveness_check(token);
 
     assert!(
@@ -2579,6 +2624,46 @@ fn invite_response_observation_installs_session_author_state() {
             .is_empty(),
         "observing the invite response should install receiver state for the peer"
     );
+}
+
+#[test]
+fn invite_response_replay_after_consumed_invite_is_idempotent() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
+            1,
+        )
+        .expect("peer appkeys");
+
+    let invite = engine.local_invite_for_test().expect("local invite");
+    let (_peer_session, response) = invite
+        .accept_with_owner(
+            peer_device.public_key(),
+            peer_device.secret_key().to_secret_bytes(),
+            Some(peer_device.public_key().to_hex()),
+            Some(peer_owner.public_key()),
+        )
+        .expect("peer accepts invite");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+        .expect("invite response event");
+
+    engine
+        .observe_invite_response_event(&response_event)
+        .expect("first invite response");
+    let duplicate = engine
+        .observe_invite_response_event(&response_event)
+        .expect("duplicate invite response should be ignored");
+    assert!(duplicate.direct_results.is_empty());
+    assert!(duplicate.direct_messages.is_empty());
+    assert!(duplicate.effects.is_empty());
+    assert!(duplicate.group_result.events.is_empty());
+    assert!(duplicate.group_result.effects.is_empty());
 }
 
 #[test]

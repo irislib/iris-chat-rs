@@ -295,6 +295,7 @@ impl AppCore {
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.message_expiry_token = self.message_expiry_token.wrapping_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
+        self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
         self.protocol_engine = None;
         if let Some(logged_in) = self.logged_in.take() {
             let client = logged_in.client.clone();
@@ -819,6 +820,7 @@ impl AppCore {
         }
 
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
+        self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
         self.start_relay_status_watchers();
         self.schedule_session_connect();
         self.emit_account_bundle_update(owner_keys.as_ref(), &device_keys);
