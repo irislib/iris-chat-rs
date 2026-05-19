@@ -54,6 +54,7 @@ impl AppCore {
             thread.unread_count = 0;
             changed = true;
         }
+        self.send_seen_receipt_to_local_siblings(&normalized_chat_id, receipt_ids.clone());
         if self.preferences.send_read_receipts
             && !self.thread_is_message_request(&normalized_chat_id)
         {
@@ -68,6 +69,34 @@ impl AppCore {
             self.rebuild_state();
             self.emit_state();
         }
+    }
+
+    fn send_seen_receipt_to_local_siblings(&mut self, chat_id: &str, message_ids: Vec<String>) {
+        let Some(owner_pubkey) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
+            return;
+        };
+        let (conversation_owner, group_id) = if is_group_chat_id(chat_id) {
+            (owner_pubkey, parse_group_id_from_chat_id(chat_id))
+        } else if let Ok((_, peer)) = parse_peer_input(chat_id) {
+            (peer, None)
+        } else {
+            return;
+        };
+        let Some(unsigned) =
+            receipt_unsigned_event(owner_pubkey, "seen", message_ids, group_id.as_deref())
+        else {
+            return;
+        };
+        self.send_protocol_engine_unsigned_event_to_local_siblings(
+            conversation_owner,
+            chat_id,
+            unsigned,
+            "receipt.self_sync",
+        );
     }
 
     pub(super) fn send_receipt(
@@ -188,26 +217,12 @@ impl AppCore {
         if message_ids.is_empty() {
             return;
         }
-        let now = unix_now();
-        let receipt_type_for_pairwise = match receipt_type {
-            "seen" => pairwise_codec::ReceiptType::Seen,
-            _ => pairwise_codec::ReceiptType::Delivered,
+        let Some(unsigned) =
+            receipt_unsigned_event(owner_pubkey, receipt_type, message_ids, group_id)
+        else {
+            return;
         };
-        if let Ok(mut unsigned) = pairwise_codec::receipt_event(
-            owner_pubkey,
-            receipt_type_for_pairwise,
-            message_ids,
-            pairwise_codec::EncodeOptions::new(now.get(), now.get().saturating_mul(1000)),
-        ) {
-            if let Some(group_id) = group_id {
-                if let Ok(group_tag) = nostr::Tag::parse(["l", group_id]) {
-                    unsigned.tags.push(group_tag);
-                    unsigned.id = None;
-                    unsigned.ensure_id();
-                }
-            }
-            self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "receipt");
-        }
+        self.send_protocol_engine_unsigned_event_to_peer_only(peer, chat_id, unsigned, "receipt");
     }
 
     pub(super) fn apply_receipt_to_messages(
@@ -272,6 +287,34 @@ impl AppCore {
             self.persist_best_effort();
         }
     }
+}
+
+fn receipt_unsigned_event(
+    owner_pubkey: PublicKey,
+    receipt_type: &str,
+    message_ids: Vec<String>,
+    group_id: Option<&str>,
+) -> Option<UnsignedEvent> {
+    let now = unix_now();
+    let receipt_type_for_pairwise = match receipt_type {
+        "seen" => pairwise_codec::ReceiptType::Seen,
+        _ => pairwise_codec::ReceiptType::Delivered,
+    };
+    let mut unsigned = pairwise_codec::receipt_event(
+        owner_pubkey,
+        receipt_type_for_pairwise,
+        message_ids,
+        pairwise_codec::EncodeOptions::new(now.get(), now.get().saturating_mul(1000)),
+    )
+    .ok()?;
+    if let Some(group_id) = group_id {
+        if let Ok(group_tag) = nostr::Tag::parse(["l", group_id]) {
+            unsigned.tags.push(group_tag);
+            unsigned.id = None;
+            unsigned.ensure_id();
+        }
+    }
+    Some(unsigned)
 }
 
 fn should_advance_delivery(current: &DeliveryState, next: &DeliveryState) -> bool {

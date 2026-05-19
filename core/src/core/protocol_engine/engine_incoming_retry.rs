@@ -202,8 +202,14 @@ impl ProtocolEngine {
             {
                 pending.probe_local_sibling_roster = false;
             }
-            let remote_targets = self
-                .remaining_remote_targets(recipient_owner, &pending.delivered_remote_device_hexes);
+            let remote_targets = if pending.send_remote {
+                self.remaining_remote_targets(
+                    recipient_owner,
+                    &pending.delivered_remote_device_hexes,
+                )
+            } else {
+                Vec::new()
+            };
             let local_targets =
                 self.remaining_local_sibling_targets(&pending.delivered_local_device_hexes);
 
@@ -628,5 +634,4 @@ impl ProtocolEngine {
             ..Default::default()
         })
     }
-
 }

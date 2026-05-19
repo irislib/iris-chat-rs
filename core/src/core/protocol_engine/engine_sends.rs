@@ -449,6 +449,93 @@ impl ProtocolEngine {
         )
     }
 
+    pub(super) fn send_direct_unsigned_event_to_peer_only(
+        &mut self,
+        peer_pubkey: PublicKey,
+        chat_id: &str,
+        mut rumor: UnsignedEvent,
+        now: UnixSeconds,
+    ) -> anyhow::Result<ProtocolDirectSendResult> {
+        rumor.ensure_id();
+        let message_id = rumor
+            .id
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        let remote_payload = serde_json::to_vec(&rumor)?;
+        self.send_direct_remote_payload(
+            peer_pubkey,
+            chat_id,
+            remote_payload,
+            Some(message_id.clone()),
+            message_id,
+            now,
+        )
+    }
+
+    pub(super) fn send_local_sibling_unsigned_event(
+        &mut self,
+        conversation_owner: PublicKey,
+        chat_id: &str,
+        mut rumor: UnsignedEvent,
+        now: UnixSeconds,
+    ) -> anyhow::Result<ProtocolDirectSendResult> {
+        rumor.ensure_id();
+        let message_id = rumor
+            .id
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        let payload = serde_json::to_vec(&rumor)?;
+        self.send_local_sibling_payload(
+            chat_id,
+            local_sibling_payload(conversation_owner, &payload)?,
+            Some(message_id.clone()),
+            message_id,
+            now,
+        )
+    }
+
+    fn send_direct_remote_payload(
+        &mut self,
+        peer_pubkey: PublicKey,
+        chat_id: &str,
+        remote_payload: Vec<u8>,
+        inner_event_id: Option<String>,
+        message_id: String,
+        now: UnixSeconds,
+    ) -> anyhow::Result<ProtocolDirectSendResult> {
+        self.with_state_checkpoint(|engine| {
+            engine.send_direct_remote_payload_inner(
+                peer_pubkey,
+                chat_id,
+                remote_payload,
+                inner_event_id,
+                message_id,
+                now,
+            )
+        })
+    }
+
+    fn send_local_sibling_payload(
+        &mut self,
+        chat_id: &str,
+        local_sibling_payload: Vec<u8>,
+        inner_event_id: Option<String>,
+        message_id: String,
+        now: UnixSeconds,
+    ) -> anyhow::Result<ProtocolDirectSendResult> {
+        self.with_state_checkpoint(|engine| {
+            engine.send_local_sibling_payload_inner(
+                chat_id,
+                local_sibling_payload,
+                inner_event_id,
+                message_id,
+                now,
+            )
+        })
+    }
+
     fn send_direct_payloads(
         &mut self,
         peer_pubkey: PublicKey,
@@ -469,6 +556,137 @@ impl ProtocolEngine {
                 message_id,
                 now,
             )
+        })
+    }
+
+    fn send_direct_remote_payload_inner(
+        &mut self,
+        peer_pubkey: PublicKey,
+        chat_id: &str,
+        remote_payload: Vec<u8>,
+        inner_event_id: Option<String>,
+        message_id: String,
+        now: UnixSeconds,
+    ) -> anyhow::Result<ProtocolDirectSendResult> {
+        let recipient_owner = ndr_owner(peer_pubkey);
+        let mut rng = OsRng;
+        let mut ctx = ProtocolContext::new(NdrUnixSeconds(now.get()), &mut rng);
+        let remote = self.session_manager.prepare_remote_send(
+            &mut ctx,
+            recipient_owner,
+            remote_payload.clone(),
+        )?;
+
+        let mut event_ids = Vec::new();
+        let mut effects =
+            protocol_effects_from_prepared(&remote, inner_event_id.clone(), &mut event_ids)?;
+
+        let remote_delivered = delivered_device_hexes(&remote);
+        let gaps = remote.relay_gaps.clone();
+        let probe_remote_roster = remote.deliveries.is_empty()
+            && remote.relay_gaps.is_empty()
+            && !self.has_roster_for_owner(recipient_owner);
+        let mut queued_targets = Vec::new();
+        let mut queued_effects = Vec::new();
+        if !gaps.is_empty() || probe_remote_roster {
+            let reason = if probe_remote_roster {
+                ProtocolPendingReason::MissingRoster
+            } else {
+                pending_reason_from_gaps(&gaps)
+            };
+            let pending = ProtocolPendingOutbound {
+                message_id: message_id.clone(),
+                chat_id: chat_id.to_string(),
+                recipient_owner_hex: peer_pubkey.to_hex(),
+                send_remote: true,
+                remote_payload,
+                local_sibling_payload: None,
+                inner_event_id,
+                delivered_remote_device_hexes: remote_delivered,
+                delivered_local_device_hexes: Vec::new(),
+                probe_local_sibling_roster: false,
+                created_at_secs: now.get(),
+                next_retry_at_secs: now.get().saturating_add(PENDING_RETRY_DELAY_SECS),
+                reason,
+            };
+            queued_targets = self.pending_target_hexes(&pending);
+            queued_effects = self.protocol_backfill_effects_for_pending_outbound(
+                &pending,
+                NdrUnixSeconds(now.get()),
+                "direct_send",
+            );
+            self.upsert_pending_outbound(pending);
+        }
+        self.persist()?;
+        effects.extend(queued_effects);
+        Ok(ProtocolDirectSendResult {
+            message_id,
+            event_ids,
+            effects,
+            queued_targets,
+        })
+    }
+
+    fn send_local_sibling_payload_inner(
+        &mut self,
+        chat_id: &str,
+        local_sibling_payload: Vec<u8>,
+        inner_event_id: Option<String>,
+        message_id: String,
+        now: UnixSeconds,
+    ) -> anyhow::Result<ProtocolDirectSendResult> {
+        let mut rng = OsRng;
+        let mut ctx = ProtocolContext::new(NdrUnixSeconds(now.get()), &mut rng);
+        let local = self
+            .session_manager
+            .prepare_local_sibling_send_refreshing_one_way_sessions(
+                &mut ctx,
+                local_sibling_payload.clone(),
+            )?;
+
+        let mut event_ids = Vec::new();
+        let mut effects =
+            protocol_effects_from_prepared(&local, inner_event_id.clone(), &mut event_ids)?;
+
+        let local_delivered = delivered_device_hexes(&local);
+        let probe_local_sibling_roster = self.needs_local_sibling_roster_probe(&local);
+        let has_undelivered_local_siblings = !self
+            .remaining_local_sibling_targets(&local_delivered)
+            .is_empty();
+        let gaps = local.relay_gaps.clone();
+        let mut queued_targets = Vec::new();
+        let mut queued_effects = Vec::new();
+        if !gaps.is_empty() || probe_local_sibling_roster || has_undelivered_local_siblings {
+            let pending = ProtocolPendingOutbound {
+                message_id: message_id.clone(),
+                chat_id: chat_id.to_string(),
+                recipient_owner_hex: public_owner(self.local_owner)?.to_hex(),
+                send_remote: false,
+                remote_payload: Vec::new(),
+                local_sibling_payload: Some(local_sibling_payload),
+                inner_event_id,
+                delivered_remote_device_hexes: Vec::new(),
+                delivered_local_device_hexes: local_delivered,
+                probe_local_sibling_roster,
+                created_at_secs: now.get(),
+                next_retry_at_secs: now.get().saturating_add(PENDING_RETRY_DELAY_SECS),
+                reason: pending_reason_from_gaps(&gaps),
+            };
+            queued_targets = self.pending_target_hexes(&pending);
+            queued_effects = self.protocol_backfill_effects_for_pending_outbound(
+                &pending,
+                NdrUnixSeconds(now.get()),
+                "local_sibling_send",
+            );
+            self.upsert_pending_outbound(pending);
+        }
+        self.persist()?;
+        effects.extend(queued_effects);
+        Ok(ProtocolDirectSendResult {
+            message_id,
+            event_ids,
+            effects,
+            queued_targets,
         })
     }
 
@@ -529,6 +747,7 @@ impl ProtocolEngine {
                 message_id: message_id.clone(),
                 chat_id: chat_id.to_string(),
                 recipient_owner_hex: peer_pubkey.to_hex(),
+                send_remote: true,
                 remote_payload,
                 local_sibling_payload: Some(local_sibling_payload),
                 inner_event_id,
@@ -556,5 +775,4 @@ impl ProtocolEngine {
             queued_targets,
         })
     }
-
 }

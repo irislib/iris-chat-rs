@@ -53,7 +53,56 @@ impl AppCore {
         let Some(protocol_engine) = self.protocol_engine.as_mut() else {
             return false;
         };
-        match protocol_engine.send_direct_unsigned_event(peer, chat_id, unsigned, unix_now()) {
+        let result =
+            protocol_engine.send_direct_unsigned_event(peer, chat_id, unsigned, unix_now());
+        self.handle_protocol_direct_send_result(chat_id, reason, result)
+    }
+
+    pub(super) fn send_protocol_engine_unsigned_event_to_peer_only(
+        &mut self,
+        peer: PublicKey,
+        chat_id: &str,
+        unsigned: UnsignedEvent,
+        reason: &'static str,
+    ) -> bool {
+        let Some(protocol_engine) = self.protocol_engine.as_mut() else {
+            return false;
+        };
+        let result = protocol_engine.send_direct_unsigned_event_to_peer_only(
+            peer,
+            chat_id,
+            unsigned,
+            unix_now(),
+        );
+        self.handle_protocol_direct_send_result(chat_id, reason, result)
+    }
+
+    pub(super) fn send_protocol_engine_unsigned_event_to_local_siblings(
+        &mut self,
+        conversation_owner: PublicKey,
+        chat_id: &str,
+        unsigned: UnsignedEvent,
+        reason: &'static str,
+    ) -> bool {
+        let Some(protocol_engine) = self.protocol_engine.as_mut() else {
+            return false;
+        };
+        let result = protocol_engine.send_local_sibling_unsigned_event(
+            conversation_owner,
+            chat_id,
+            unsigned,
+            unix_now(),
+        );
+        self.handle_protocol_direct_send_result(chat_id, reason, result)
+    }
+
+    fn handle_protocol_direct_send_result(
+        &mut self,
+        chat_id: &str,
+        reason: &'static str,
+        result: anyhow::Result<ProtocolDirectSendResult>,
+    ) -> bool {
+        match result {
             Ok(result) => {
                 self.push_debug_log(
                     "appcore.protocol.send",

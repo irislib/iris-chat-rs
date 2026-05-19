@@ -4,6 +4,10 @@ const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
 const LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS: u64 = 120;
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct ProtocolEnginePersistedState {
     version: u32,
@@ -78,6 +82,8 @@ pub(super) struct ProtocolPendingOutbound {
     pub(super) message_id: String,
     pub(super) chat_id: String,
     recipient_owner_hex: String,
+    #[serde(default = "default_true")]
+    send_remote: bool,
     remote_payload: Vec<u8>,
     local_sibling_payload: Option<Vec<u8>>,
     inner_event_id: Option<String>,

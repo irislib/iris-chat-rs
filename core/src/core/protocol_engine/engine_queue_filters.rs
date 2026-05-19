@@ -129,21 +129,23 @@ impl ProtocolEngine {
         let mut owner_authors = Vec::new();
         let mut invite_authors = Vec::new();
 
-        if let Ok(owner) = PublicKey::parse(&pending.recipient_owner_hex) {
-            let ndr_owner = ndr_owner(owner);
-            let remote_targets =
-                self.remaining_remote_targets(ndr_owner, &pending.delivered_remote_device_hexes);
-            if !remote_targets.is_empty()
-                || (matches!(pending.reason, ProtocolPendingReason::MissingRoster)
-                    && !self.has_roster_for_owner(ndr_owner))
-            {
-                owner_authors.push(owner);
+        if pending.send_remote {
+            if let Ok(owner) = PublicKey::parse(&pending.recipient_owner_hex) {
+                let ndr_owner = ndr_owner(owner);
+                let remote_targets = self
+                    .remaining_remote_targets(ndr_owner, &pending.delivered_remote_device_hexes);
+                if !remote_targets.is_empty()
+                    || (matches!(pending.reason, ProtocolPendingReason::MissingRoster)
+                        && !self.has_roster_for_owner(ndr_owner))
+                {
+                    owner_authors.push(owner);
+                }
+                invite_authors.extend(
+                    remote_targets
+                        .into_iter()
+                        .filter_map(|target| public_device(target).ok()),
+                );
             }
-            invite_authors.extend(
-                remote_targets
-                    .into_iter()
-                    .filter_map(|target| public_device(target).ok()),
-            );
         }
 
         let local_targets =
@@ -242,18 +244,20 @@ impl ProtocolEngine {
 
     fn pending_remote_target_hexes(&self, pending: &ProtocolPendingOutbound) -> Vec<String> {
         let mut targets = Vec::new();
-        if let Ok(owner) = PublicKey::parse(&pending.recipient_owner_hex) {
-            let ndr_owner = ndr_owner(owner);
-            let remote_targets =
-                self.remaining_remote_targets(ndr_owner, &pending.delivered_remote_device_hexes);
-            for target in remote_targets {
-                targets.push(target.to_hex());
-            }
-            if targets.is_empty()
-                && matches!(pending.reason, ProtocolPendingReason::MissingRoster)
-                && !self.has_roster_for_owner(ndr_owner)
-            {
-                targets.push(format!("owner:{}", owner.to_hex()));
+        if pending.send_remote {
+            if let Ok(owner) = PublicKey::parse(&pending.recipient_owner_hex) {
+                let ndr_owner = ndr_owner(owner);
+                let remote_targets = self
+                    .remaining_remote_targets(ndr_owner, &pending.delivered_remote_device_hexes);
+                for target in remote_targets {
+                    targets.push(target.to_hex());
+                }
+                if targets.is_empty()
+                    && matches!(pending.reason, ProtocolPendingReason::MissingRoster)
+                    && !self.has_roster_for_owner(ndr_owner)
+                {
+                    targets.push(format!("owner:{}", owner.to_hex()));
+                }
             }
         }
         targets.sort();
@@ -268,7 +272,8 @@ impl ProtocolEngine {
         snapshot: &SessionManagerSnapshot,
     ) -> bool {
         let delivered_remote = delivered_device_set(&pending.delivered_remote_device_hexes);
-        if !delivered_remote.contains(&target)
+        if pending.send_remote
+            && !delivered_remote.contains(&target)
             && PublicKey::parse(&pending.recipient_owner_hex).is_ok_and(|owner| {
                 self.remaining_remote_targets_with_snapshot(
                     snapshot,
@@ -323,7 +328,8 @@ impl ProtocolEngine {
     }
 
     pub(super) fn enter_batch(&self) {
-        self.batch_depth.set(self.batch_depth.get().saturating_add(1));
+        self.batch_depth
+            .set(self.batch_depth.get().saturating_add(1));
     }
 
     pub(super) fn exit_batch(&self) -> anyhow::Result<()> {

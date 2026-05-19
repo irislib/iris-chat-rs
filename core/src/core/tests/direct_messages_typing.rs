@@ -648,6 +648,95 @@ fn self_synced_seen_receipt_marks_incoming_message_seen() {
     assert_eq!(message.delivery, DeliveryState::Seen);
 }
 
+fn protocol_send_log_count(core: &AppCore, reason: &str) -> usize {
+    let needle = format!("reason={reason} ");
+    core.debug_log
+        .iter()
+        .filter(|entry| entry.category == "appcore.protocol.send" && entry.detail.contains(&needle))
+        .count()
+}
+
+#[test]
+fn mark_seen_syncs_to_local_siblings_when_sender_receipts_are_disabled() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sibling_device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("seen-sync-receipts-disabled", &owner, &device);
+    install_local_sibling_session_for_test(&mut core, &owner, &device, &sibling_device);
+    core.pending_relay_publishes.clear();
+    core.preferences.send_read_receipts = false;
+
+    let chat_id = peer.public_key().to_hex();
+    let message_id = "a".repeat(64);
+    core.push_incoming_message_from(
+        &chat_id,
+        Some(message_id.clone()),
+        "sync this read privately".to_string(),
+        1_777_159_492,
+        None,
+        Some(chat_id.clone()),
+        Some(chat_id.clone()),
+        Some("outer-disabled".to_string()),
+    );
+
+    core.mark_messages_seen(&chat_id, std::slice::from_ref(&message_id));
+
+    assert_eq!(core.threads.get(&chat_id).unwrap().unread_count, 0);
+    assert_eq!(
+        protocol_send_log_count(&core, "receipt.self_sync"),
+        1,
+        "local sibling should still learn that the chat was seen"
+    );
+    assert_eq!(
+        protocol_send_log_count(&core, "receipt"),
+        0,
+        "disabled sender receipts must not leak a seen receipt to the peer"
+    );
+}
+
+#[test]
+fn mark_seen_syncs_message_requests_to_local_siblings_without_peer_receipt() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sibling_device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("seen-sync-request", &owner, &device);
+    install_local_sibling_session_for_test(&mut core, &owner, &device, &sibling_device);
+    core.pending_relay_publishes.clear();
+
+    let chat_id = peer.public_key().to_hex();
+    let message_id = "b".repeat(64);
+    core.push_incoming_message_from(
+        &chat_id,
+        Some(message_id.clone()),
+        "request read on this device".to_string(),
+        1_777_159_492,
+        None,
+        Some(chat_id.clone()),
+        Some(chat_id.clone()),
+        Some("outer-request".to_string()),
+    );
+    assert!(
+        core.thread_is_message_request(&chat_id),
+        "test needs an unaccepted request thread"
+    );
+
+    core.mark_messages_seen(&chat_id, std::slice::from_ref(&message_id));
+
+    assert_eq!(core.threads.get(&chat_id).unwrap().unread_count, 0);
+    assert_eq!(
+        protocol_send_log_count(&core, "receipt.self_sync"),
+        1,
+        "local sibling should clear its unread count for the request"
+    );
+    assert_eq!(
+        protocol_send_log_count(&core, "receipt"),
+        0,
+        "message requests must not send sender-visible seen receipts"
+    );
+}
+
 #[test]
 fn self_synced_direct_message_is_rendered_as_outgoing_on_linked_device() {
     let owner = Keys::generate();
@@ -857,12 +946,7 @@ fn duplicate_persisted_incoming_message_surfaces_missing_chat_row() {
         "precondition: live core has no chat row yet"
     );
 
-    core.apply_decrypted_runtime_message(
-        peer.public_key(),
-        None,
-        content,
-        Some(outer_event_id),
-    );
+    core.apply_decrypted_runtime_message(peer.public_key(), None, content, Some(outer_event_id));
     core.rebuild_state();
 
     let row = core
@@ -871,7 +955,10 @@ fn duplicate_persisted_incoming_message_surfaces_missing_chat_row() {
         .iter()
         .find(|row| row.chat_id == chat_id)
         .expect("duplicate persisted message still creates a visible chat row");
-    assert_eq!(row.last_message_preview.as_deref(), Some("hidden until manual open"));
+    assert_eq!(
+        row.last_message_preview.as_deref(),
+        Some("hidden until manual open")
+    );
     assert_eq!(row.unread_count, 1);
 }
 
@@ -890,9 +977,27 @@ fn open_chat_preserves_same_second_message_insert_order() {
             unread_count: 0,
             updated_at_secs: created_at_secs,
             messages: vec![
-                test_chat_message(&chat_id, "z-first-random-event-id", "first", created_at_secs, true),
-                test_chat_message(&chat_id, "a-second-random-event-id", "second", created_at_secs, true),
-                test_chat_message(&chat_id, "m-last-random-event-id", "last", created_at_secs, true),
+                test_chat_message(
+                    &chat_id,
+                    "z-first-random-event-id",
+                    "first",
+                    created_at_secs,
+                    true,
+                ),
+                test_chat_message(
+                    &chat_id,
+                    "a-second-random-event-id",
+                    "second",
+                    created_at_secs,
+                    true,
+                ),
+                test_chat_message(
+                    &chat_id,
+                    "m-last-random-event-id",
+                    "last",
+                    created_at_secs,
+                    true,
+                ),
             ],
             draft: String::new(),
         },
@@ -1874,8 +1979,7 @@ fn group_delivered_receipt_is_queued_directly_to_message_author() {
         .url
         .clone();
 
-    let mut bob =
-        logged_in_test_core("group-delivered-author-only-bob", &bob_owner, &bob_device);
+    let mut bob = logged_in_test_core("group-delivered-author-only-bob", &bob_owner, &bob_device);
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
     });
@@ -1908,11 +2012,13 @@ fn group_delivered_receipt_is_queued_directly_to_message_author() {
         .debug_snapshot();
     assert_eq!(debug.pending_group_fanout_count, 0);
     assert!(
-        debug.pending_outbound_details.iter().any(|pending| {
-            pending.recipient_owner_hex == alice_owner.public_key().to_hex()
-                && pending.chat_id == chat_id
+        bob.debug_log.iter().any(|entry| {
+            entry.category == "appcore.protocol.send"
+                && entry.detail.contains("reason=receipt ")
+                && entry.detail.contains(&format!("chat_id={chat_id} "))
+                && entry.detail.contains("event_ids=1")
         }),
-        "delivered receipt for group message {rumor_id} should be queued as a direct payload to the message author"
+        "delivered receipt for group message {rumor_id} should be sent as a direct payload to the message author"
     );
 }
 
