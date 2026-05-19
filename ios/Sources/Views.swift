@@ -2941,7 +2941,8 @@ private func trimmedText(_ value: String?) -> String? {
 }
 
 private func highlightedProfileAboutText(_ text: String, linkColor: Color) -> Text {
-    guard let regex = try? NSRegularExpression(pattern: #"\b(?:https?://|www\.)\S+"#) else {
+    let pattern = #"(?i)(?:^|(?<=[\s(\[{<]))((?:https?://|www\.)[^\s<]+|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::[0-9]{2,5})?(?:/[^\s<]*)?)"#
+    guard let regex = try? NSRegularExpression(pattern: pattern) else {
         return Text(text)
     }
     let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
@@ -2953,11 +2954,14 @@ private func highlightedProfileAboutText(_ text: String, linkColor: Color) -> Te
     var result = Text("")
     var cursor = text.startIndex
     for match in matches {
-        guard let range = Range(match.range, in: text) else { continue }
+        guard var range = Range(match.range(at: 1), in: text) else { continue }
+        let visible = String(text[range]).trimmingCharacters(in: profileAboutURLTrailingPunctuation)
+        guard !visible.isEmpty else { continue }
+        range = range.lowerBound..<text.index(range.lowerBound, offsetBy: visible.count)
         if cursor < range.lowerBound {
             result = result + Text(String(text[cursor..<range.lowerBound]))
         }
-        result = result + Text(String(text[range])).foregroundColor(linkColor).underline()
+        result = result + Text(visible).foregroundColor(linkColor).underline()
         cursor = range.upperBound
     }
     if cursor < text.endIndex {
@@ -2965,6 +2969,8 @@ private func highlightedProfileAboutText(_ text: String, linkColor: Color) -> Te
     }
     return result
 }
+
+private let profileAboutURLTrailingPunctuation = CharacterSet(charactersIn: ".,;:!?)]")
 
 private func primaryDisplayName(displayName: String, fallback: String) -> String {
     trimmedText(displayName) ?? fallbackProfileNameForIdentity(fallback)

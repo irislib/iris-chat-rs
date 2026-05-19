@@ -4866,7 +4866,7 @@ private func linkedMessageAttributedString(_ text: String, foreground: Color) ->
 
 private func messageURLMatches(in text: String) -> [(range: Range<String.Index>, url: URL)] {
     var matches: [(Range<String.Index>, URL)] = []
-    let pattern = #"\b((https?://|www\.)[^\s<]+)"#
+    let pattern = #"(?i)(?:^|(?<=[\s(\[{<]))((?:https?://|www\.)[^\s<]+|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::[0-9]{2,5})?(?:/[^\s<]*)?)"#
     guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
         return matches
     }

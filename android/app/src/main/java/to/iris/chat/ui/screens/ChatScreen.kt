@@ -1078,15 +1078,13 @@ private fun ProfileAboutCard(
     }
 }
 
-private val UrlTextRegex = Regex("""\b(?:https?://|www\.)\S+""")
-
 private fun linkHighlightedText(
     text: String,
     linkColor: Color,
 ): AnnotatedString =
     buildAnnotatedString {
         var cursor = 0
-        for (match in UrlTextRegex.findAll(text)) {
+        for (match in messageUrlMatches(text)) {
             val range = match.range
             if (range.first > cursor) {
                 append(text.substring(cursor, range.first))
@@ -1097,9 +1095,9 @@ private fun linkHighlightedText(
                     textDecoration = TextDecoration.Underline,
                 ),
             ) {
-                append(match.value)
+                append(match.visible)
             }
-            cursor = range.last + 1
+            cursor = match.range.last + 1
         }
         if (cursor < text.length) {
             append(text.substring(cursor))

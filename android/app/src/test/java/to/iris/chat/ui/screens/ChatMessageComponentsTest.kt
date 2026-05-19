@@ -33,6 +33,48 @@ class ChatMessageComponentsTest {
     }
 
     @Test
+    fun messageUrlMatchesAcceptBareDomainsWithPaths() {
+        assertEquals(
+            listOf(
+                MessageUrlMatch(
+                    range = 6..24,
+                    visible = "github.com/username",
+                    url = "https://github.com/username",
+                ),
+            ),
+            messageUrlMatches("visit github.com/username"),
+        )
+    }
+
+    @Test
+    fun messageUrlMatchesTrimTrailingPunctuation() {
+        assertEquals(
+            listOf(
+                MessageUrlMatch(
+                    range = 1..16,
+                    visible = "example.com/path",
+                    url = "https://example.com/path",
+                ),
+            ),
+            messageUrlMatches("(example.com/path)."),
+        )
+    }
+
+    @Test
+    fun messageUrlMatchesKeepSchemedUrlsAndSkipEmails() {
+        assertEquals(
+            listOf(
+                MessageUrlMatch(
+                    range = 25..44,
+                    visible = "https://iris.to/chat",
+                    url = "https://iris.to/chat",
+                ),
+            ),
+            messageUrlMatches("mail me@example.com then https://iris.to/chat"),
+        )
+    }
+
+    @Test
     fun forwardableMessageTextStripsQuotedReplyAndKeepsAttachments() {
         val attachment =
             MessageAttachmentSnapshot(
