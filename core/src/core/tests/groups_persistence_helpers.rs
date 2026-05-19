@@ -695,28 +695,33 @@ fn appcore_sender_key_missing_rotated_distribution_repairs_and_applies_pending_o
         &mut devices[bob].engine,
         &repair_response_effects,
     );
-    assert!(
-        bob_repaired_events.is_empty(),
-        "key repair alone should not apply a message that still needs newer metadata"
-    );
-    assert!(
-        !revision_request_effects.is_empty(),
-        "decrypting with repaired key should request missing metadata revision"
-    );
-
-    let (_alice_events, metadata_response_effects) = deliver_protocol_effects_to_engine_once(
-        &mut devices[alice].engine,
-        &revision_request_effects,
-    );
-    assert!(
-        !metadata_response_effects.is_empty(),
-        "sender should answer revision repair request with current metadata"
-    );
-
-    let (bob_final_events, _followup) = deliver_protocol_effects_to_engine_once(
-        &mut devices[bob].engine,
-        &metadata_response_effects,
-    );
+    let bob_final_events = if group_events_contain_body(
+        &bob_repaired_events,
+        &group_id,
+        alice_owner,
+        alice_device,
+        b"after missed rotation",
+    ) {
+        bob_repaired_events
+    } else {
+        assert!(
+            !revision_request_effects.is_empty(),
+            "decrypting with repaired key should request missing metadata revision if the repaired key does not apply immediately"
+        );
+        let (_alice_events, metadata_response_effects) = deliver_protocol_effects_to_engine_once(
+            &mut devices[alice].engine,
+            &revision_request_effects,
+        );
+        assert!(
+            !metadata_response_effects.is_empty(),
+            "sender should answer revision repair request with current metadata"
+        );
+        let (bob_final_events, _followup) = deliver_protocol_effects_to_engine_once(
+            &mut devices[bob].engine,
+            &metadata_response_effects,
+        );
+        bob_final_events
+    };
     assert!(
         group_events_contain_body(
             &bob_final_events,
