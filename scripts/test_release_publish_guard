@@ -6,6 +6,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_SCRIPT="${ROOT_DIR}/scripts/release"
 COMMON_ARGS=(--dry-run --skip-gate --skip-cargo-crate --skip-testflight)
 
+python3 -m unittest discover -s "${ROOT_DIR}/scripts" -p 'test_*.py'
+
 run_case() {
   local name="$1"
   local expected="$2"

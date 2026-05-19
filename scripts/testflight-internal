@@ -36,6 +36,8 @@ Environment:
   IRIS_TESTFLIGHT_GROUPS          optional comma-separated internal group names or IDs
   IRIS_TESTFLIGHT_PUBLIC_GROUPS   optional comma-separated external group names or IDs
   IRIS_TESTFLIGHT_WHATS_NEW       optional "What to Test" text
+  IRIS_TESTFLIGHT_RELEASE_NOTES_FILE
+                                  optional markdown file used for default "What to Test"
   IRIS_TESTFLIGHT_WAIT_ATTEMPTS   default 20
   IRIS_TESTFLIGHT_WAIT_SECONDS    default 30
   IRIS_ASC_API_IP                 optional api.appstoreconnect.apple.com IP override
@@ -67,6 +69,7 @@ fi
 
 export IRIS_TESTFLIGHT_ACTION="$ACTION"
 export IRIS_IOS_BUNDLE_ID="$IOS_BUNDLE_ID"
+export IRIS_REPO_ROOT="$ROOT"
 
 python3 <<'PY'
 import base64
@@ -103,10 +106,12 @@ PUBLIC_ACTIONS = {
     "public-status",
     "public-expire-older",
 }
-DEFAULT_WHATS_NEW = (
-    "Please test account creation, restoring with a secret key, direct and group chats, "
-    "linked devices, notifications, attachments, and Nearby messaging."
-)
+
+SCRIPTS_DIR = os.path.join(os.environ.get("IRIS_REPO_ROOT", "."), "scripts")
+if SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, SCRIPTS_DIR)
+
+from testflight_notes import resolved_what_to_test
 
 
 def fail(message, code=1):
@@ -487,7 +492,15 @@ def beta_build_localizations(build):
 
 
 def upsert_what_to_test(build):
-    whats_new = os.environ.get("IRIS_TESTFLIGHT_WHATS_NEW", "").strip() or DEFAULT_WHATS_NEW
+    whats_new = resolved_what_to_test(
+        VERSION_NAME,
+        os.environ.get("IRIS_REPO_ROOT", "."),
+        explicit=os.environ.get("IRIS_TESTFLIGHT_WHATS_NEW", ""),
+        release_notes_file=os.environ.get(
+            "IRIS_TESTFLIGHT_RELEASE_NOTES_FILE",
+            "ZAPSTORE_RELEASE_NOTES.md",
+        ),
+    )
     locale = os.environ.get("IRIS_TESTFLIGHT_LOCALE", "en-US")
     existing = None
     for item in beta_build_localizations(build):

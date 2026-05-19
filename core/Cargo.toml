@@ -1,6 +1,6 @@
 [package]
 name = "iris-chat"
-version = "0.1.27"
+version = "0.1.28"
 edition = "2021"
 description = "Iris Chat command line client and shared encrypted chat core"
 license = "MIT"

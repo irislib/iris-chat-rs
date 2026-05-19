@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.28
+
+- Update to `nostr-double-ratchet` 0.0.146 with sender-key repair hardening, authenticated repair requests, repair snapshots, and shared retry helpers.
+- Keep group sender-key recovery retryable after restart without moving app scheduling state into the protocol core.
+- Resolve ownerless NDR invites through known app-key rosters so first-contact delivery to known devices does not stall.
+
 ## 0.1.27
 
 - Advance app-key roster timestamps when a linked device is removed so stale device rosters cannot restore the removed device.

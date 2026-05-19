@@ -1,3 +1,9 @@
+# Iris Chat 2026.5.20.1
+
+- Group messages recover more reliably after app restarts and missed key updates.
+- New chats with known linked devices get unstuck more often.
+- Recovery retries are quieter and survive restart.
+
 # Iris Chat 2026.5.18.6
 
 - Foreground stays responsive during catch-up bursts and large group metadata updates.
