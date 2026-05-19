@@ -1,5 +1,7 @@
 use super::*;
 
+const DELIVERED_RECEIPT_DEBOUNCE: Duration = Duration::from_millis(750);
+
 impl AppCore {
     pub(super) fn set_chat_unread(&mut self, chat_id: &str, unread: bool) {
         let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
@@ -54,6 +56,7 @@ impl AppCore {
             thread.unread_count = 0;
             changed = true;
         }
+        self.cancel_pending_delivered_receipts(&normalized_chat_id, &receipt_ids);
         self.send_seen_receipt_to_local_siblings(&normalized_chat_id, receipt_ids.clone());
         if self.preferences.send_read_receipts
             && !self.thread_is_message_request(&normalized_chat_id)
@@ -120,6 +123,135 @@ impl AppCore {
             return;
         }
         self.send_receipt_inner(chat_id, receipt_type, message_ids);
+    }
+
+    pub(super) fn queue_delivered_receipt(&mut self, chat_id: &str, message_id: String) {
+        if message_id.is_empty() {
+            return;
+        }
+        let due_at = Instant::now() + DELIVERED_RECEIPT_DEBOUNCE;
+        self.pending_delivered_receipts
+            .entry((chat_id.to_string(), message_id))
+            .or_insert(due_at);
+        self.schedule_pending_delivered_receipt_flush();
+    }
+
+    fn schedule_pending_delivered_receipt_flush(&mut self) {
+        let Some(due_at) = self.pending_delivered_receipts.values().min().copied() else {
+            self.pending_delivered_receipt_flush_due_at = None;
+            return;
+        };
+        if self
+            .pending_delivered_receipt_flush_due_at
+            .is_some_and(|existing| existing <= due_at)
+        {
+            return;
+        }
+        self.pending_delivered_receipt_flush_due_at = Some(due_at);
+        self.pending_delivered_receipt_token = self.pending_delivered_receipt_token.wrapping_add(1);
+        let token = self.pending_delivered_receipt_token;
+        let tx = self.core_sender.clone();
+        self.runtime.spawn(async move {
+            sleep_until(due_at).await;
+            let _ = tx.send(CoreMsg::Internal(Box::new(
+                InternalEvent::FlushPendingDeliveredReceipts { token },
+            )));
+        });
+    }
+
+    pub(super) fn handle_pending_delivered_receipt_flush(&mut self, token: u64) {
+        if token != self.pending_delivered_receipt_token {
+            return;
+        }
+        self.pending_delivered_receipt_flush_due_at = None;
+        self.flush_due_pending_delivered_receipts(Instant::now());
+        self.schedule_pending_delivered_receipt_flush();
+    }
+
+    fn flush_due_pending_delivered_receipts(&mut self, now: Instant) {
+        let pending = std::mem::take(&mut self.pending_delivered_receipts);
+        let mut due = Vec::new();
+        for ((chat_id, message_id), due_at) in pending {
+            if due_at <= now {
+                due.push((chat_id, message_id));
+            } else {
+                self.pending_delivered_receipts
+                    .insert((chat_id, message_id), due_at);
+            }
+        }
+        self.send_pending_delivered_receipts(due);
+    }
+
+    #[cfg(test)]
+    pub(super) fn flush_all_pending_delivered_receipts_for_test(&mut self) {
+        let pending = std::mem::take(&mut self.pending_delivered_receipts);
+        self.pending_delivered_receipt_flush_due_at = None;
+        self.pending_delivered_receipt_token = self.pending_delivered_receipt_token.wrapping_add(1);
+        self.send_pending_delivered_receipts(pending.into_keys());
+    }
+
+    fn cancel_pending_delivered_receipts(&mut self, chat_id: &str, message_ids: &[String]) {
+        if message_ids.is_empty() {
+            return;
+        }
+        let ids = message_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        let mut removed = false;
+        self.pending_delivered_receipts
+            .retain(|(pending_chat_id, pending_message_id), _| {
+                let keep = pending_chat_id != chat_id || !ids.contains(pending_message_id.as_str());
+                removed |= !keep;
+                keep
+            });
+        let delivered_key = (chat_id.to_string(), "delivered".to_string());
+        let mut remove_batch_key = false;
+        if let Some(batch_ids) = self.pending_outgoing_receipts.get_mut(&delivered_key) {
+            batch_ids.retain(|id| !ids.contains(id.as_str()));
+            remove_batch_key = batch_ids.is_empty();
+        }
+        if remove_batch_key {
+            self.pending_outgoing_receipts.remove(&delivered_key);
+        }
+        if removed && self.pending_delivered_receipts.is_empty() {
+            self.pending_delivered_receipt_flush_due_at = None;
+            self.pending_delivered_receipt_token =
+                self.pending_delivered_receipt_token.wrapping_add(1);
+        }
+    }
+
+    fn send_pending_delivered_receipts(
+        &mut self,
+        pending: impl IntoIterator<Item = (String, String)>,
+    ) {
+        let mut by_chat = BTreeMap::<String, Vec<String>>::new();
+        for (chat_id, message_id) in pending {
+            if self.should_send_pending_delivered_receipt(&chat_id, &message_id) {
+                by_chat.entry(chat_id).or_default().push(message_id);
+            }
+        }
+        for (chat_id, mut ids) in by_chat {
+            ids.sort();
+            ids.dedup();
+            if !ids.is_empty() {
+                self.send_receipt(&chat_id, "delivered", ids);
+            }
+        }
+    }
+
+    fn should_send_pending_delivered_receipt(&self, chat_id: &str, message_id: &str) -> bool {
+        if !self.preferences.send_read_receipts || self.thread_is_message_request(chat_id) {
+            return false;
+        }
+        let Some(thread) = self.threads.get(chat_id) else {
+            return false;
+        };
+        thread.messages.iter().any(|message| {
+            !message.is_outgoing
+                && message.id == message_id
+                && !matches!(message.delivery, DeliveryState::Seen)
+        })
     }
 
     pub(super) fn send_receipt_inner(

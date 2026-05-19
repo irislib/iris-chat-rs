@@ -657,6 +657,85 @@ fn protocol_send_log_count(core: &AppCore, reason: &str) -> usize {
 }
 
 #[test]
+fn delivered_receipt_waits_for_debounce_before_sending() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("delivered-debounce-flushes", &owner, &device);
+
+    let chat_id = peer.public_key().to_hex();
+    core.handle_action(AppAction::SetMessageRequestAccepted {
+        chat_id: chat_id.clone(),
+    });
+    let (content, _) = runtime_rumor_json(
+        peer.public_key(),
+        CHAT_MESSAGE_KIND,
+        "wait a beat",
+        1_777_159_493,
+        Vec::new(),
+    );
+
+    core.apply_decrypted_runtime_message(peer.public_key(), None, content, Some("c".repeat(64)));
+
+    assert_eq!(core.pending_delivered_receipts.len(), 1);
+    assert_eq!(
+        protocol_send_log_count(&core, "receipt"),
+        0,
+        "delivered should not be sent synchronously with message ingest"
+    );
+
+    core.flush_all_pending_delivered_receipts_for_test();
+
+    assert!(core.pending_delivered_receipts.is_empty());
+    assert_eq!(
+        protocol_send_log_count(&core, "receipt"),
+        1,
+        "delivered should send once the debounce expires"
+    );
+}
+
+#[test]
+fn seen_cancels_pending_delivered_receipt_before_debounce_flush() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("delivered-debounce-seen-cancels", &owner, &device);
+
+    let chat_id = peer.public_key().to_hex();
+    core.handle_action(AppAction::SetMessageRequestAccepted {
+        chat_id: chat_id.clone(),
+    });
+    let (content, message_id) = runtime_rumor_json(
+        peer.public_key(),
+        CHAT_MESSAGE_KIND,
+        "opened immediately",
+        1_777_159_493,
+        Vec::new(),
+    );
+    core.apply_decrypted_runtime_message(peer.public_key(), None, content, Some("d".repeat(64)));
+
+    assert_eq!(core.pending_delivered_receipts.len(), 1);
+    assert_eq!(protocol_send_log_count(&core, "receipt"), 0);
+
+    core.mark_messages_seen(&chat_id, std::slice::from_ref(&message_id));
+
+    assert!(core.pending_delivered_receipts.is_empty());
+    assert_eq!(
+        protocol_send_log_count(&core, "receipt"),
+        1,
+        "seen should still send immediately"
+    );
+
+    core.flush_all_pending_delivered_receipts_for_test();
+
+    assert_eq!(
+        protocol_send_log_count(&core, "receipt"),
+        1,
+        "cancelled delivered should not send after the debounce flush"
+    );
+}
+
+#[test]
 fn mark_seen_syncs_to_local_siblings_when_sender_receipts_are_disabled() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -2011,6 +2090,15 @@ fn group_delivered_receipt_is_queued_directly_to_message_author() {
         .expect("protocol engine")
         .debug_snapshot();
     assert_eq!(debug.pending_group_fanout_count, 0);
+    assert_eq!(bob.pending_delivered_receipts.len(), 1);
+    assert_eq!(
+        protocol_send_log_count(&bob, "receipt"),
+        0,
+        "delivered receipt should wait for its short debounce"
+    );
+
+    bob.flush_all_pending_delivered_receipts_for_test();
+
     assert!(
         bob.debug_log.iter().any(|entry| {
             entry.category == "appcore.protocol.send"

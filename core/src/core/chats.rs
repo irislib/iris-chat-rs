@@ -1530,7 +1530,7 @@ impl AppCore {
                     // Suppress delivered receipts for unaccepted
                     // requests so the sender can't tell whether the
                     // user has seen the conversation arrive.
-                    self.send_receipt(&chat_id, "delivered", vec![inner_event_id]);
+                    self.queue_delivered_receipt(&chat_id, inner_event_id);
                 }
             }
             REACTION_KIND => {

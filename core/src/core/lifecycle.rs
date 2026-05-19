@@ -88,6 +88,9 @@ impl AppCore {
             batch_dirty_state: false,
             batch_dirty_persist: false,
             pending_outgoing_receipts: BTreeMap::new(),
+            pending_delivered_receipts: BTreeMap::new(),
+            pending_delivered_receipt_flush_due_at: None,
+            pending_delivered_receipt_token: 0,
             last_emitted_state: None,
             app_store,
             _data_dir_lock: data_dir_lock,
@@ -140,6 +143,9 @@ impl AppCore {
                 InternalEvent::DebugSnapshotWriteFinished { .. } => "DebugSnapshotWriteFinished",
                 InternalEvent::DebugLog { .. } => "DebugLog",
                 InternalEvent::TypingIndicatorExpired { .. } => "TypingIndicatorExpired",
+                InternalEvent::FlushPendingDeliveredReceipts { .. } => {
+                    "FlushPendingDeliveredReceipts"
+                }
                 InternalEvent::RelayPublishDrainFinished { .. } => "RelayPublishDrainFinished",
                 InternalEvent::RetryPendingRelayPublishes { .. } => "RetryPendingRelayPublishes",
                 InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
@@ -650,6 +656,9 @@ impl AppCore {
                     self.rebuild_state();
                     self.emit_state();
                 }
+            }
+            InternalEvent::FlushPendingDeliveredReceipts { token } => {
+                self.handle_pending_delivered_receipt_flush(token);
             }
             InternalEvent::RelayPublishDrainFinished { token, results } => {
                 self.handle_relay_publish_drain_finished(token, results);

@@ -113,6 +113,9 @@ pub(crate) enum InternalEvent {
         chat_id: String,
         author: String,
     },
+    FlushPendingDeliveredReceipts {
+        token: u64,
+    },
     RelayPublishDrainFinished {
         token: u64,
         results: Vec<RelayPublishDrainResult>,

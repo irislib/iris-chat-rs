@@ -524,6 +524,12 @@ pub struct AppCore {
     /// per (chat, type). Without this a 10-message catch-up would emit
     /// 10 separate `delivered` events; with it, one event with 10 e-tags.
     pending_outgoing_receipts: BTreeMap<(String, String), Vec<String>>,
+    /// Incoming `delivered` receipts wait briefly before being sent. If the
+    /// user opens the chat immediately, the `seen` receipt cancels them so we
+    /// don't emit both receipt types for the same message in the same breath.
+    pending_delivered_receipts: BTreeMap<(String, String), Instant>,
+    pending_delivered_receipt_flush_due_at: Option<Instant>,
+    pending_delivered_receipt_token: u64,
     /// Last `AppState` we successfully pushed across the FFI boundary, kept
     /// so `emit_state_inner` can skip pushes that don't change anything
     /// user-visible (a full `AppState` JNI marshal + Compose recomposition

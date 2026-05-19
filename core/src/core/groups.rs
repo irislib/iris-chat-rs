@@ -577,7 +577,7 @@ impl AppCore {
                     && self.preferences.send_read_receipts
                     && !self.thread_is_message_request(chat_id)
                 {
-                    self.send_receipt(chat_id, "delivered", vec![receipt_message_id]);
+                    self.queue_delivered_receipt(chat_id, receipt_message_id);
                 }
             }
             REACTION_KIND => {
