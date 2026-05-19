@@ -4,6 +4,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using IrisChat.Bindings;
 
 namespace IrisChat.Chrome;
 
@@ -18,45 +19,12 @@ public partial class EmojiPicker : UserControl
     public IReadOnlyList<string> MessageEmojis { get; set; } = [];
 
     private static readonly (string Name, string[] Emojis)[] Categories =
-    {
-        ("Smileys", new[] {
-            "😀","😃","😄","😁","😆","😅","😂","🤣","😊","🙂","🙃","😉","😍","🥰","😘","😎","🤩","🥳",
-            "😏","😌","😴","😪","🤤","😋","😜","🤪","😝","🤔","🤨","😐","😑","😶","🙄","😬","🤐","🤧",
-            "🤒","🤕","😇","🤠","🥺","😢","😭","😠","🤬","🤯","🥶","🥵","😱","😨","😰","😳","🤗"
-        }),
-        ("Hearts", new[] {
-            "❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💖","💗","💓","💞","💕","💘","💝","💟","♥️","💔","❣️"
-        }),
-        ("Hands", new[] {
-            "👍","👎","👌","✌️","🤞","🤟","🤘","🤙","👈","👉","👆","👇","☝️","✋","🤚","🖐","🖖","👋","🤝","🙏","👏","🙌","💪"
-        }),
-        ("Animals", new[] {
-            "🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🙈","🙉","🙊",
-            "🐔","🐧","🐦","🦅","🦉","🦄","🐝","🦋","🐞","🐢","🐍","🦖","🐙","🦀","🐬","🐳","🦈"
-        }),
-        ("Food", new[] {
-            "🍏","🍎","🍐","🍊","🍋","🍌","🍉","🍇","🍓","🫐","🍒","🍑","🥭","🍍","🥥","🥝",
-            "🍅","🥑","🥕","🌽","🍆","🥔","🍕","🍔","🍟","🌭","🍿","🥪","🌮","🌯","🍣","🍜","🍝",
-            "🍦","🍩","🍪","🎂","🍰","☕","🍵","🍺","🥂","🍷","🥃"
-        }),
-        ("Activities", new[] {
-            "⚽","🏀","🏈","⚾","🥎","🎾","🏐","🏉","🎱","🪀","🏓","🏸","🥅","🏒","🏑","🥍","🏏",
-            "🥊","🥋","🎽","⛸","🥌","🛷","🪂","🏋","🤸","🤺","🏇","⛷","🏂","🏌","🏄","🚣","🏊",
-            "🤽","🚴","🚵","🎯","🎮","🎲","🎼","🎤","🎧","🎷","🎸","🥁"
-        }),
-        ("Travel", new[] {
-            "🚗","🚕","🚙","🚌","🚎","🏎","🚓","🚑","🚒","🚐","🛻","🚚","🚛","🚜","🛵","🏍","🛺","🚲","🛴","🛹",
-            "🚂","✈️","🚀","🛸","🛶","⛵","🚢","🚁","🗺","🗽","🗼","🏰","🎡","🎢","🎠","🏖","🏝","🏔","🌋","🏕","🌄","🌅","🌌"
-        }),
-        ("Objects", new[] {
-            "📱","💻","⌨","🖥","🖨","🖱","💾","💿","📷","📸","📹","🎥","📺","📻","📞","☎","🔌","🔋","💡","🔦","🕯",
-            "💵","💰","💳","💎","⚖","🔧","🔨","🛠","⛏","🪛","🪚","🔩","⚙","🧱","⛓","🧲","🔫","💣","🧨"
-        }),
-        ("Symbols", new[] {
-            "✅","❎","✔","❌","⭕","🚫","⚠","💯","🔥","✨","🌟","⭐","🌈","☀","🌙","⚡","☄","💥","🌊","💧","💦",
-            "🎉","🎊","🎁","🎀","🎈","🪅","🎂","🍾","🥇","🥈","🥉","🏆","🎖","🏅","💤","💭","🗯","💬"
-        }),
-    };
+        Native.IrisEmojiCatalog()
+            .Select(c => (c.name, c.emojis.ToArray()))
+            .ToArray();
+
+    private static readonly Dictionary<string, string> SearchAliases =
+        Native.IrisEmojiSearchAliases().ToDictionary(a => a.emoji, a => a.keywords);
 
     public EmojiPicker()
     {
@@ -100,7 +68,7 @@ public partial class EmojiPicker : UserControl
                     sections.Add((name, emojis));
                     continue;
                 }
-                var hits = emojis.Where(e => e.Contains(query)).ToArray();
+                var hits = emojis.Where(e => MatchesEmojiQuery(e, name, lower)).ToArray();
                 if (hits.Length > 0)
                 {
                     sections.Add((name, hits));
@@ -113,6 +81,13 @@ public partial class EmojiPicker : UserControl
         {
             SectionsHost.Items.Add(BuildSection(name, emojis));
         }
+    }
+
+    private static bool MatchesEmojiQuery(string emoji, string category, string queryLower)
+    {
+        if (emoji.Contains(queryLower)) return true;
+        return SearchAliases.TryGetValue(emoji, out var aliases)
+               && aliases.ToLowerInvariant().Contains(queryLower);
     }
 
     private static IEnumerable<string> UniqueEmojis(IEnumerable<string> emojis)

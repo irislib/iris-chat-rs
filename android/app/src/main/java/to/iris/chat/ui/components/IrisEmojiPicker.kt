@@ -235,6 +235,7 @@ internal fun irisEmojiMatchesQuery(
     emoji: String,
     category: String,
     query: String,
+    aliases: Map<String, String> = IrisEmojiSearchAliases,
 ): Boolean {
     val tokens = normalizeEmojiSearchText(query).split(" ").filter { it.isNotBlank() }
     if (tokens.isEmpty()) return true
@@ -245,8 +246,7 @@ internal fun irisEmojiMatchesQuery(
             .map { codePoint -> runCatching { Character.getName(codePoint) }.getOrNull() }
             .filterNotNull()
             .joinToString(" ")
-    val aliases = IrisEmojiSearchAliases[emoji].orEmpty()
-    val haystack = normalizeEmojiSearchText("$emoji $category $names $aliases")
+    val haystack = normalizeEmojiSearchText("$emoji $category $names ${aliases[emoji].orEmpty()}")
     return tokens.all { haystack.contains(it) }
 }
 
@@ -256,103 +256,16 @@ private fun normalizeEmojiSearchText(value: String): String =
         .replace('_', ' ')
         .replace('-', ' ')
 
-private val IrisEmojiSearchAliases =
-    mapOf(
-        "😂" to "laugh laughing lol haha",
-        "🤣" to "laugh laughing lol haha rolling",
-        "😊" to "smile smiling happy",
-        "🙂" to "smile smiling happy",
-        "😍" to "love heart eyes",
-        "🥰" to "love hearts",
-        "😘" to "kiss love",
-        "😢" to "sad tear crying",
-        "😭" to "sad cry crying",
-        "😠" to "angry mad",
-        "🤬" to "angry mad swearing",
-        "🙏" to "pray praying thanks thank you please",
-        "👏" to "clap applause",
-        "🙌" to "hooray yay hands",
-        "❤️" to "love heart red",
-        "♥️" to "love heart red",
-        "🔥" to "fire lit hot",
-        "🎉" to "party celebrate celebration",
-        "🎊" to "party celebrate celebration",
-        "✨" to "sparkle sparkles",
-        "✅" to "yes check done",
-        "❌" to "no cross x",
-        "👀" to "eyes look watching",
-        "💯" to "hundred perfect",
-    )
+// Pulls aliases from core's `iris_emoji_search_aliases`. Wrapped so JVM unit
+// tests (which don't load the native lib) get an empty map instead of crashing
+// — tests that exercise the alias path inject their own map via the optional
+// `aliases` parameter on `irisEmojiMatchesQuery`.
+private val IrisEmojiSearchAliases: Map<String, String> by lazy {
+    runCatching { to.iris.chat.rust.irisEmojiSearchAliases().associate { it.emoji to it.keywords } }
+        .getOrElse { emptyMap() }
+}
 
-internal val IrisEmojiCatalog: List<Pair<String, List<String>>> =
-    listOf(
-        "Smileys" to
-            listOf(
-                "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "🙂",
-                "🙃", "😉", "😍", "🥰", "😘", "😎", "🤩", "🥳", "😏", "😌",
-                "😴", "😪", "🤤", "😋", "😜", "🤪", "😝", "🤔", "🤨", "😐",
-                "😑", "😶", "🙄", "😬", "🤐", "🤧", "🤒", "🤕", "😇", "🤠",
-                "🥺", "😢", "😭", "😠", "🤬", "🤯", "🥶", "🥵", "😱", "😨",
-                "😰", "😳", "🤗",
-            ),
-        "Hearts" to
-            listOf(
-                "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💖",
-                "💗", "💓", "💞", "💕", "💘", "💝", "💟", "♥️", "💔", "❣️",
-                "❤️‍🔥", "❤️‍🩹",
-            ),
-        "Hands" to
-            listOf(
-                "👍", "👎", "👌", "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉",
-                "👆", "👇", "☝️", "✋", "🤚", "🖐", "🖖", "👋", "🤝", "🙏",
-                "👏", "🙌", "💪", "🫶", "🫰", "🫵", "🫱", "🫲",
-            ),
-        "Animals" to
-            listOf(
-                "🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯",
-                "🦁", "🐮", "🐷", "🐸", "🐵", "🙈", "🙉", "🙊", "🐔", "🐧",
-                "🐦", "🦅", "🦉", "🦄", "🐝", "🦋", "🐞", "🐢", "🐍", "🦖",
-                "🐙", "🦀", "🐬", "🐳", "🦈",
-            ),
-        "Food" to
-            listOf(
-                "🍏", "🍎", "🍐", "🍊", "🍋", "🍌", "🍉", "🍇", "🍓", "🫐",
-                "🍒", "🍑", "🥭", "🍍", "🥥", "🥝", "🍅", "🥑", "🥕", "🌽",
-                "🍆", "🥔", "🍕", "🍔", "🍟", "🌭", "🍿", "🥪", "🌮", "🌯",
-                "🍣", "🍜", "🍝", "🍦", "🍩", "🍪", "🎂", "🍰", "☕", "🍵",
-                "🍺", "🥂", "🍷", "🥃",
-            ),
-        "Activities" to
-            listOf(
-                "⚽", "🏀", "🏈", "⚾", "🥎", "🎾", "🏐", "🏉", "🎱", "🪀",
-                "🏓", "🏸", "🥅", "🏒", "🏑", "🥍", "🏏", "🪃", "🥊", "🥋",
-                "🎽", "⛸", "🥌", "🛷", "🪂", "🏋️", "🤸", "🤺", "🏇", "⛷",
-                "🏂", "🏌️", "🏄", "🚣", "🏊", "🤽", "🚴", "🚵", "🎯", "🎮",
-                "🎲", "🎼", "🎤", "🎧", "🎷", "🎸", "🥁",
-            ),
-        "Travel" to
-            listOf(
-                "🚗", "🚕", "🚙", "🚌", "🚎", "🏎", "🚓", "🚑", "🚒", "🚐",
-                "🛻", "🚚", "🚛", "🚜", "🛵", "🏍", "🛺", "🚲", "🛴", "🛹",
-                "🚂", "✈️", "🚀", "🛸", "🛶", "⛵", "🚢", "🚁", "🗺", "🗽",
-                "🗼", "🏰", "🎡", "🎢", "🎠", "🏖", "🏝", "🏔", "🌋", "🏕",
-                "🌄", "🌅", "🌌",
-            ),
-        "Objects" to
-            listOf(
-                "📱", "💻", "⌨️", "🖥", "🖨", "🖱", "💾", "💿", "📷", "📸",
-                "📹", "🎥", "📺", "📻", "📞", "☎️", "🔌", "🔋", "💡", "🔦",
-                "🕯", "🧯", "🛢", "💵", "💰", "💳", "💎", "⚖️", "🔧", "🔨",
-                "🛠", "⛏", "🪛", "🪚", "🔩", "⚙️", "🧱", "⛓", "🧲", "🔫",
-                "💣", "🧨",
-            ),
-        "Symbols" to
-            listOf(
-                "✅", "❎", "✔️", "❌", "⭕", "🚫", "⚠️", "🔱", "☑️", "💯",
-                "🔥", "✨", "🌟", "⭐", "🌈", "☀️", "🌙", "⚡", "☄️", "💥",
-                "🌊", "💧", "💦", "🎉", "🎊", "🎁", "🎀", "🎈", "🪅", "🍾",
-                "🥇", "🥈", "🥉", "🏆", "🎖", "🏅", "💤", "💭", "🗯", "💬",
-                "🆗", "🆕", "🆒", "🆓", "🆙", "🔝", "♻️", "☮️", "✝️", "☪️",
-                "🕉", "☸️", "✡️", "☯️", "☦️",
-            ),
-    )
+internal val IrisEmojiCatalog: List<Pair<String, List<String>>> by lazy {
+    runCatching { to.iris.chat.rust.irisEmojiCatalog().map { it.name to it.emojis } }
+        .getOrElse { emptyList() }
+}

@@ -15,8 +15,9 @@ class IrisEmojiPickerTest {
 
     @Test
     fun searchMatchesCommonAliases() {
-        assertTrue(irisEmojiMatchesQuery("😂", "Smileys", "laugh"))
-        assertTrue(irisEmojiMatchesQuery("❤️", "Hearts", "love"))
+        val aliases = mapOf("😂" to "laugh laughing lol haha", "❤️" to "love heart red")
+        assertTrue(irisEmojiMatchesQuery("😂", "Smileys", "laugh", aliases))
+        assertTrue(irisEmojiMatchesQuery("❤️", "Hearts", "love", aliases))
     }
 
     @Test

@@ -2901,7 +2901,7 @@ func irisEmojiMatchesSearch(_ emoji: String, category: String, query: String) ->
     let scalarNames = emoji.unicodeScalars
         .compactMap { $0.properties.name }
         .joined(separator: " ")
-    let aliases = irisEmojiSearchAliases[emoji] ?? ""
+    let aliases = irisEmojiSearchAliasMap[emoji] ?? ""
     let haystack = irisNormalizeEmojiSearchText("\(emoji) \(category) \(scalarNames) \(aliases)")
     return tokens.allSatisfy { haystack.contains($0) }
 }
@@ -2914,32 +2914,13 @@ private func irisNormalizeEmojiSearchText(_ value: String) -> String {
         .lowercased()
 }
 
-private let irisEmojiSearchAliases: [String: String] = [
-    "😂": "laugh laughing lol haha",
-    "🤣": "laugh laughing lol haha rolling",
-    "😊": "smile smiling happy",
-    "🙂": "smile smiling happy",
-    "😍": "love heart eyes",
-    "🥰": "love hearts",
-    "😘": "kiss love",
-    "😢": "sad tear crying",
-    "😭": "sad cry crying",
-    "😠": "angry mad",
-    "🤬": "angry mad swearing",
-    "🙏": "pray praying thanks thank you please",
-    "👏": "clap applause",
-    "🙌": "hooray yay hands",
-    "❤️": "love heart red",
-    "♥️": "love heart red",
-    "🔥": "fire lit hot",
-    "🎉": "party celebrate celebration",
-    "🎊": "party celebrate celebration",
-    "✨": "sparkle sparkles",
-    "✅": "yes check done",
-    "❌": "no cross x",
-    "👀": "eyes look watching",
-    "💯": "hundred perfect",
-]
+private let irisEmojiSearchAliasMap: [String: String] = {
+    var map: [String: String] = [:]
+    for entry in irisEmojiSearchAliases() {
+        map[entry.emoji] = entry.keywords
+    }
+    return map
+}()
 
 private struct ChatMessageActionsSheet: View {
     @Environment(\.irisPalette) private var palette
@@ -3075,6 +3056,21 @@ private struct ChatMessageActionsSheet: View {
     }
 }
 
+private func irisEmojiCategorySymbol(for name: String) -> String {
+    switch name {
+    case "Smileys": return "face.smiling"
+    case "Hearts": return "heart.fill"
+    case "Hands": return "hand.thumbsup.fill"
+    case "Animals": return "pawprint.fill"
+    case "Food": return "fork.knife"
+    case "Activities": return "sportscourt"
+    case "Travel": return "airplane"
+    case "Objects": return "lightbulb.fill"
+    case "Symbols": return "sparkles"
+    default: return "square.grid.2x2.fill"
+    }
+}
+
 struct IrisEmojiPicker: View {
     @Environment(\.irisPalette) private var palette
     let suggestedEmojis: [String]
@@ -3094,26 +3090,9 @@ struct IrisEmojiPicker: View {
         self.onPick = onPick
     }
 
-    private static let categories: [(String, String, [String])] = [
-        ("Smileys", "face.smiling",
-         ["😀","😃","😄","😁","😆","😅","😂","🤣","😊","🙂","🙃","😉","😍","🥰","😘","😎","🤩","🥳","😏","😌","😴","😪","🤤","😋","😜","🤪","😝","🤔","🤨","😐","😑","😶","🙄","😬","🤐","🤧","🤒","🤕","😇","🤠","🥺","😢","😭","😠","🤬","🤯","🥶","🥵","😱","😨","😰","😳","🤗"]),
-        ("Hearts", "heart.fill",
-         ["❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💖","💗","💓","💞","💕","💘","💝","💟","♥️","💔","❣️","❤️‍🔥","❤️‍🩹"]),
-        ("Hands", "hand.thumbsup.fill",
-         ["👍","👎","👌","✌️","🤞","🤟","🤘","🤙","👈","👉","👆","👇","☝️","✋","🤚","🖐","🖖","👋","🤝","🙏","👏","🙌","💪","🫶","🫰","🫵","🫱","🫲"]),
-        ("Animals", "pawprint.fill",
-         ["🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🙈","🙉","🙊","🐔","🐧","🐦","🦅","🦉","🦄","🐝","🦋","🐞","🐢","🐍","🦖","🐙","🦀","🐬","🐳","🦈"]),
-        ("Food", "fork.knife",
-         ["🍏","🍎","🍐","🍊","🍋","🍌","🍉","🍇","🍓","🫐","🍒","🍑","🥭","🍍","🥥","🥝","🍅","🥑","🥕","🌽","🍆","🥔","🍕","🍔","🍟","🌭","🍿","🥪","🌮","🌯","🍣","🍜","🍝","🍦","🍩","🍪","🎂","🍰","☕","🍵","🍺","🥂","🍷","🥃"]),
-        ("Activities", "sportscourt",
-         ["⚽","🏀","🏈","⚾","🥎","🎾","🏐","🏉","🎱","🪀","🏓","🏸","🥅","🏒","🏑","🥍","🏏","🪃","🥊","🥋","🎽","⛸","🥌","🛷","🪂","🏋️","🤸","🤺","🏇","⛷","🏂","🏌️","🏄","🚣","🏊","🤽","🚴","🚵","🎯","🎮","🎲","🎼","🎤","🎧","🎷","🎸","🥁"]),
-        ("Travel", "airplane",
-         ["🚗","🚕","🚙","🚌","🚎","🏎","🚓","🚑","🚒","🚐","🛻","🚚","🚛","🚜","🛵","🏍","🛺","🚲","🛴","🛹","🚂","✈️","🚀","🛸","🛶","⛵","🚢","🚁","🗺","🗽","🗼","🏰","🎡","🎢","🎠","🏖","🏝","🏔","🌋","🏕","🌄","🌅","🌌"]),
-        ("Objects", "lightbulb.fill",
-         ["📱","💻","⌨️","🖥","🖨","🖱","💾","💿","📷","📸","📹","🎥","📺","📻","📞","☎️","🔌","🔋","💡","🔦","🕯","🧯","🛢","💵","💰","💳","💎","⚖️","🔧","🔨","🛠","⛏","🪛","🪚","🔩","⚙️","🧱","⛓","🧲","🔫","💣","🧨"]),
-        ("Symbols", "sparkles",
-         ["✅","❎","✔️","❌","⭕","🚫","⚠️","🔱","☑️","💯","🔥","✨","🌟","⭐","🌈","☀️","🌙","⚡","☄️","💥","🌊","💧","💦","🎉","🎊","🎁","🎀","🎈","🪅","🎂","🍾","🥇","🥈","🥉","🏆","🎖","🏅","💤","💭","🗯","💬","🆗","🆕","🆒","🆓","🆙","🔝","♻️","✅","❤️","💔","☮️","✝️","☪️","🕉","☸️","✡️","☯️","☦️"]),
-    ]
+    private static let categories: [(String, String, [String])] = irisEmojiCatalog().map {
+        ($0.name, irisEmojiCategorySymbol(for: $0.name), $0.emojis)
+    }
 
     private var filteredCategories: [(String, String, [String])] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)

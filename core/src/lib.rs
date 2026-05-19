@@ -1,6 +1,7 @@
 mod actions;
 mod core;
 pub mod desktop_nearby;
+mod emoji;
 pub mod image_proxy;
 pub mod local_relay;
 pub mod perflog;
@@ -20,6 +21,7 @@ use std::{panic, panic::AssertUnwindSafe};
 use flume::{Receiver, Sender};
 
 pub use actions::AppAction;
+pub use emoji::*;
 pub use qr::*;
 pub use state::*;
 pub use test_fixtures::*;
