@@ -746,6 +746,7 @@ if ACTION in PUBLIC_ACTIONS:
 
 selected_groups = select_internal_groups(groups())
 if ACTION in {"put", "attach"}:
+    upsert_what_to_test(build)
     attach_build(build, selected_groups)
 else:
     summarize_build(build, selected_groups)
