@@ -955,9 +955,16 @@ impl AppCore {
     /// Enter a batch scope. While `batch_depth > 0`, calls to
     /// `rebuild_state` / `emit_state` / `persist_best_effort` are deferred
     /// and coalesced into a single rebuild + persist + emit at the
-    /// outermost `exit_batch()`.
+    /// outermost `exit_batch()`. The protocol engine's own `persist()`
+    /// is also gated so an N-event catch-up issues one engine write
+    /// instead of N — each engine write serializes the full session +
+    /// group manager state and holds the SQLite connection mutex while
+    /// it runs, so coalescing is what keeps UI reads responsive on iOS.
     pub(super) fn enter_batch(&mut self) {
         self.batch_depth = self.batch_depth.saturating_add(1);
+        if let Some(engine) = self.protocol_engine.as_ref() {
+            engine.enter_batch();
+        }
     }
 
     pub(super) fn exit_batch(&mut self) {
@@ -965,6 +972,11 @@ impl AppCore {
             return;
         }
         self.batch_depth -= 1;
+        if let Some(engine) = self.protocol_engine.as_ref() {
+            if let Err(error) = engine.exit_batch() {
+                self.push_debug_log("protocol.persist.batch_flush_failed", error.to_string());
+            }
+        }
         if self.batch_depth > 0 {
             return;
         }

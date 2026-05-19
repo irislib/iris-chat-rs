@@ -355,6 +355,15 @@ pub(super) struct ProtocolEngine {
     known_message_author_cache_build_count: std::cell::Cell<u64>,
     subscription_generation: u64,
     last_backfill_attempt_secs: u64,
+    /// While > 0, `persist()` only flips `batch_persist_dirty` instead of
+    /// serializing+writing. AppCore wraps catch-up bursts and other
+    /// multi-event entry points so an N-event burst issues one persist
+    /// instead of N. The exclusive SQLite write under iOS DELETE-mode
+    /// journaling can keep UI reads blocked on the connection mutex for
+    /// hundreds of ms each — N of them stacked produced the multi-second
+    /// foreground freeze.
+    pub(super) batch_depth: std::cell::Cell<u32>,
+    pub(super) batch_persist_dirty: std::cell::Cell<bool>,
 }
 
 #[derive(Clone)]

@@ -36,6 +36,8 @@ impl ProtocolEngine {
                         known_message_author_cache_build_count: std::cell::Cell::new(0),
                         subscription_generation: state.subscription_generation,
                         last_backfill_attempt_secs: state.last_backfill_attempt_secs,
+                        batch_depth: std::cell::Cell::new(0),
+                        batch_persist_dirty: std::cell::Cell::new(false),
                     }
                 }
                 _ => Self::from_seed(
@@ -103,6 +105,8 @@ impl ProtocolEngine {
             known_message_author_cache_build_count: std::cell::Cell::new(0),
             subscription_generation: 0,
             last_backfill_attempt_secs: 0,
+            batch_depth: std::cell::Cell::new(0),
+            batch_persist_dirty: std::cell::Cell::new(false),
         })
     }
 
@@ -363,6 +367,11 @@ impl ProtocolEngine {
     #[cfg(test)]
     pub(super) fn known_message_author_cache_build_count_for_test(&self) -> u64 {
         self.known_message_author_cache_build_count.get()
+    }
+
+    #[cfg(test)]
+    pub(super) fn pending_decrypted_deliveries_len_for_test(&self) -> usize {
+        self.pending_decrypted_deliveries.len()
     }
 
     pub(super) fn known_group_sender_event_pubkeys(&self) -> Vec<PublicKey> {

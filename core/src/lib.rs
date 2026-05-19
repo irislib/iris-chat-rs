@@ -1021,7 +1021,7 @@ fn recover_core_after_panic(supervisor: &CoreSupervisor, detail: String) -> Opti
             "core.supervisor.restore action={:?}",
             std::mem::discriminant(&action)
         );
-        match catch_core_batch(|| core.handle_message(CoreMsg::Action(action))) {
+        match catch_core_batch(|| core.handle_messages(vec![CoreMsg::Action(action)])) {
             Ok(true) => {}
             Ok(false) => {
                 publish_core_failure_state(
@@ -1165,8 +1165,12 @@ fn handle_core_batch_responsive(core: &mut AppCore, messages: Vec<CoreMsg>) -> b
         }
     }
 
+    // Each foreground message runs in its own batch — the user gets immediate
+    // feedback per action, but a single action that cascades into multiple
+    // engine.persist() calls (e.g. send → retry_pending_protocol → another
+    // persist) coalesces them into one SQLite write.
     for message in foreground {
-        if !core.handle_message(message) {
+        if !core.handle_messages(vec![message]) {
             return false;
         }
     }

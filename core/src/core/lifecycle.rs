@@ -231,12 +231,9 @@ impl AppCore {
         if messages.is_empty() {
             return true;
         }
-        if messages.len() == 1 {
-            let Some(message) = messages.into_iter().next() else {
-                return true;
-            };
-            return self.handle_message(message);
-        }
+        // Always batch so a single relay event that cascades into multiple
+        // engine.persist() calls (sync_group_to_local_siblings → retry_pending_group_inputs
+        // → retry_pending_group_fanouts → persist) issues one engine write at exit.
         self.enter_batch();
         let mut keep_running = true;
         for msg in messages {

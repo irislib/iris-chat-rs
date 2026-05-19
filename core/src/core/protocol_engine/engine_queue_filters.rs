@@ -294,6 +294,14 @@ impl ProtocolEngine {
     }
 
     fn persist(&self) -> anyhow::Result<()> {
+        if self.batch_depth.get() > 0 {
+            self.batch_persist_dirty.set(true);
+            return Ok(());
+        }
+        self.persist_now()
+    }
+
+    fn persist_now(&self) -> anyhow::Result<()> {
         let state = ProtocolEnginePersistedState {
             version: PROTOCOL_ENGINE_STATE_VERSION,
             session_manager: self.session_manager.snapshot(),
@@ -308,8 +316,25 @@ impl ProtocolEngine {
             subscription_generation: self.subscription_generation,
             last_backfill_attempt_secs: self.last_backfill_attempt_secs,
         };
+        self.batch_persist_dirty.set(false);
         self.storage
             .put(PROTOCOL_ENGINE_STATE_KEY, serde_json::to_string(&state)?)?;
+        Ok(())
+    }
+
+    pub(super) fn enter_batch(&self) {
+        self.batch_depth.set(self.batch_depth.get().saturating_add(1));
+    }
+
+    pub(super) fn exit_batch(&self) -> anyhow::Result<()> {
+        let depth = self.batch_depth.get();
+        if depth == 0 {
+            return Ok(());
+        }
+        self.batch_depth.set(depth - 1);
+        if self.batch_depth.get() == 0 && self.batch_persist_dirty.get() {
+            self.persist_now()?;
+        }
         Ok(())
     }
 }

@@ -2213,8 +2213,17 @@ fn appcore_defers_decrypted_delivery_ack_until_app_state_is_persisted() {
         1,
         "notification-preview durability may write the message row immediately, but full app-state persistence is still batch-deferred"
     );
+    // The engine's protocol-state persist is batch-deferred (catch-up bursts
+    // would otherwise stack N serialize+write rounds on the SQLite connection
+    // mutex and freeze UI reads on iOS). The contract this test guards is the
+    // *in-memory* invariant: the runtime decrypted delivery must remain
+    // pending until app state is durably saved, so the ack can't race ahead
+    // of the message-row durability.
     assert_eq!(
-        stored_pending_decrypted_delivery_count(&core, &bob_keys, &bob_keys),
+        core.protocol_engine
+            .as_ref()
+            .expect("protocol engine")
+            .pending_decrypted_deliveries_len_for_test(),
         1,
         "runtime decrypted delivery must remain pending until app state is durably saved"
     );
