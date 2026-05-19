@@ -63,6 +63,7 @@ mod message_expiry;
 mod mobile_push;
 mod model;
 mod nearby;
+pub(crate) mod notifications;
 mod payloads;
 mod persistence;
 mod profile;

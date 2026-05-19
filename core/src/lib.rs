@@ -1631,6 +1631,39 @@ pub fn decrypt_mobile_push_notification_payload(
     )
 }
 
+pub use crate::core::notifications::NotificationCandidate;
+
+/// Compute the list of chats that should raise a notification given two
+/// successive `AppState` chat-list snapshots. Single source of truth for
+/// suppression — chat muted, chat open with app foregrounded, outgoing
+/// last message, no unread increase, or global pref off. Use this from
+/// Android, macOS, Linux, and Windows. iOS APNS uses a separate path
+/// that cannot suppress until Apple grants the filtering entitlement.
+#[uniffi::export]
+pub fn decide_pending_notifications(
+    previous_chats: Vec<ChatThreadSnapshot>,
+    next_chats: Vec<ChatThreadSnapshot>,
+    preferences: PreferencesSnapshot,
+    app_foreground: bool,
+    open_chat_id: Option<String>,
+) -> Vec<NotificationCandidate> {
+    crate::core::notifications::decide_notifications(
+        &previous_chats,
+        &next_chats,
+        &preferences,
+        app_foreground,
+        open_chat_id.as_deref(),
+    )
+}
+
+/// Pull the open chat id out of a `Router`, falling back to its default
+/// screen. Shells normally just call this with `state.router` so they
+/// don't each reimplement the `Screen::Chat { chat_id }` extraction.
+#[uniffi::export]
+pub fn router_open_chat_id(router: Router) -> Option<String> {
+    crate::core::notifications::active_chat_id(&router)
+}
+
 #[uniffi::export]
 pub fn resolve_mobile_push_subscription_server_url(
     platform_key: String,

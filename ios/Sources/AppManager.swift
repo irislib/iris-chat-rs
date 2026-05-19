@@ -3358,44 +3358,18 @@ final class AppManager: ObservableObject {
     }
 
     private func postDesktopNotifications(from oldState: AppState, to nextState: AppState) {
-        guard oldState.account != nil, nextState.preferences.desktopNotificationsEnabled else {
+        guard oldState.account != nil else {
             return
         }
-        // "Open chat" should only suppress when the user can actually see it — i.e.
-        // the app is foregrounded. Once the app is in the background, the user
-        // expects notifications for every unmuted chat, including the one they
-        // last had on screen.
-        let openChatIDs: [String]
-        if appSceneIsActive {
-            openChatIDs = [
-                activeChatID(in: oldState),
-                activeChatID(in: nextState),
-                nextState.currentChat?.chatId
-            ].compactMap { $0 }
-        } else {
-            openChatIDs = []
-        }
-        let oldUnreadByChat = Dictionary(
-            uniqueKeysWithValues: oldState.chatList.map { ($0.chatId, $0.unreadCount) }
+        let candidates = decidePendingNotifications(
+            previousChats: oldState.chatList,
+            nextChats: nextState.chatList,
+            preferences: nextState.preferences,
+            appForeground: appSceneIsActive,
+            openChatId: routerOpenChatId(router: nextState.router)
         )
-        for chat in nextState.chatList {
-            guard !chat.isMuted else {
-                continue
-            }
-            guard chat.lastMessageIsOutgoing == false else {
-                continue
-            }
-            guard !openChatIDs.contains(where: { appChatID($0, matches: chat.chatId) }) else {
-                continue
-            }
-            let previousUnread = oldUnreadByChat[chat.chatId] ?? 0
-            guard chat.unreadCount > previousUnread else {
-                continue
-            }
-            let preview = chat.lastMessagePreview?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let body = preview.isEmpty ? "New message" : preview
-            desktopNotifications.post(title: chat.displayName, body: body)
+        for candidate in candidates {
+            desktopNotifications.post(title: candidate.title, body: candidate.body)
         }
     }
 

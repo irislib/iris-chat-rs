@@ -1,12 +1,11 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::glib;
 use iris_chat_core::{
-    proxied_image_url, AccountSnapshot, AppAction, AppState, AppUpdate, ChatThreadSnapshot,
-    CurrentChatSnapshot, Screen,
+    decide_pending_notifications, proxied_image_url, router_open_chat_id, AccountSnapshot,
+    AppAction, AppState, AppUpdate, ChatThreadSnapshot, CurrentChatSnapshot, Screen,
 };
 
 use crate::app_manager::AppManager;
@@ -221,8 +220,6 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
                     let mut slot = current_for_updates.borrow_mut();
                     if state.rev >= slot.rev {
                         let prev_chat_list = slot.chat_list.clone();
-                        let prev_focused_chat_id =
-                            slot.current_chat.as_ref().map(|c| c.chat_id.clone());
                         *slot = state;
                         manager_for_updates.sync_nearby_preference(&slot);
                         apply_state(
@@ -236,14 +233,11 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
                             &last_toast_for_updates,
                             &slot.toast,
                         );
-                        if slot.preferences.desktop_notifications_enabled {
-                            notify_new_messages(
-                                &prev_chat_list,
-                                &slot.chat_list,
-                                prev_focused_chat_id.as_deref(),
-                                manager_for_updates.window_active(),
-                            );
-                        }
+                        post_notifications_from_core(
+                            &prev_chat_list,
+                            &slot,
+                            manager_for_updates.window_active(),
+                        );
                     }
                 }
                 AppUpdate::NearbyPublishedEvent {
@@ -611,40 +605,21 @@ fn attach_chat_title_click(slot: &gtk::Box, manager: &Rc<AppManager>, chat: &Cur
     slot.add_controller(gesture);
 }
 
-fn notify_new_messages(
+fn post_notifications_from_core(
     prev: &[ChatThreadSnapshot],
-    current: &[ChatThreadSnapshot],
-    focused_chat_id: Option<&str>,
+    state: &AppState,
     window_active: bool,
 ) {
-    let prev_map: HashMap<&str, &ChatThreadSnapshot> =
-        prev.iter().map(|c| (c.chat_id.as_str(), c)).collect();
-    for chat in current {
-        if chat.is_muted {
-            continue;
-        }
-        // The currently visible chat only suppresses while our window has
-        // focus; once the user has switched to another app we still want
-        // to notify them about new messages there.
-        if window_active && Some(chat.chat_id.as_str()) == focused_chat_id {
-            continue;
-        }
-        let last_at = chat.last_message_at_secs.unwrap_or(0);
-        let prev_at = prev_map
-            .get(chat.chat_id.as_str())
-            .and_then(|p| p.last_message_at_secs)
-            .unwrap_or(0);
-        if last_at <= prev_at {
-            continue;
-        }
-        if !matches!(chat.last_message_is_outgoing, Some(false)) {
-            continue;
-        }
-        let body = chat
-            .last_message_preview
-            .clone()
-            .unwrap_or_else(|| "New message".to_string());
-        notifications::notify(APP_ID, &chat.display_name, &body);
+    let open_chat_id = router_open_chat_id(state.router.clone());
+    let candidates = decide_pending_notifications(
+        prev.to_vec(),
+        state.chat_list.clone(),
+        state.preferences.clone(),
+        window_active,
+        open_chat_id,
+    );
+    for candidate in candidates {
+        notifications::notify(APP_ID, &candidate.title, &candidate.body);
     }
 }
 
