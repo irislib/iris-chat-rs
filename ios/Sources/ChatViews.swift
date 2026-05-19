@@ -1253,6 +1253,7 @@ private enum SignalConversationLayout {
     static let reactionPillOverlap: CGFloat = 7
     static let reactionPillHorizontalInset: CGFloat = 6
     static let reactionPillProtrusion: CGFloat = reactionPillHeight - reactionPillOverlap
+    static let messageActionDockSpacing: CGFloat = 8
 }
 
 func irisGroupSenderNameColorHex(for senderKey: String, isDarkMode: Bool) -> UInt32 {
@@ -1733,10 +1734,6 @@ private struct ChatMessageRow: View, Equatable {
                             groupSenderAvatar
                         }
 
-                        if message.isOutgoing {
-                            desktopActionDockSlot
-                        }
-
                         VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4) {
                             if showsGroupSenderName {
                                 Text(message.author)
@@ -1922,6 +1919,13 @@ private struct ChatMessageRow: View, Equatable {
                             }
                         }
 #if canImport(AppKit)
+                        // Keep the dock anchored to the drawn bubble, not
+                        // the invisible max-width frame that only caps long
+                        // messages. Alignment guides put the dock just
+                        // outside the bubble without hard-coding its width.
+                        .overlay(alignment: message.isOutgoing ? .leading : .trailing) {
+                            actionDockOverlay(isOutgoing: message.isOutgoing)
+                        }
                         // Cap bubble width on macOS; iOS has no hover and
                         // phone widths self-limit.
                         .frame(
@@ -1933,10 +1937,6 @@ private struct ChatMessageRow: View, Equatable {
                         // This modifier only renders the offset/reveal state,
                         // keeping vertical flicks on bubbles in the scroll path.
                         .applyMessageBubbleSwipe(offset: swipeOffset)
-
-                        if !message.isOutgoing {
-                            desktopActionDockSlot
-                        }
 
                         if !message.isOutgoing {
                             Spacer(minLength: SignalConversationLayout.messageDirectionSpacing)
@@ -1960,15 +1960,22 @@ private struct ChatMessageRow: View, Equatable {
     }
 
     @ViewBuilder
-    private var desktopActionDockSlot: some View {
-#if canImport(AppKit)
-        actionDock()
-            .fixedSize()
-            .opacity(showActionDock ? 1 : 0)
-            .allowsHitTesting(showActionDock)
-#else
-        EmptyView()
-#endif
+    private func actionDockOverlay(isOutgoing: Bool) -> some View {
+        if showActionDock {
+            if isOutgoing {
+                actionDock()
+                    .fixedSize()
+                    .alignmentGuide(.leading) { dimensions in
+                        dimensions.width + SignalConversationLayout.messageActionDockSpacing
+                    }
+            } else {
+                actionDock()
+                    .fixedSize()
+                    .alignmentGuide(.trailing) { _ in
+                        -SignalConversationLayout.messageActionDockSpacing
+                    }
+            }
+        }
     }
 
     @ViewBuilder
@@ -2808,8 +2815,9 @@ private struct ChatMessageActionDock: View {
                 onShowReactionPicker()
             } label: {
                 Image(systemName: "face.smiling")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 26, height: 24)
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: ChatMessageActionDock.buttonWidth, height: ChatMessageActionDock.buttonHeight)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.irisPlain)
             .accessibilityIdentifier("messageReactButton")
@@ -2821,9 +2829,14 @@ private struct ChatMessageActionDock: View {
                 Button("Delete message", role: .destructive, action: onDelete)
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.system(size: 13, weight: .bold))
-                    .frame(width: 26, height: 24)
+                    .font(.system(size: 14, weight: .bold))
+                    .frame(width: ChatMessageActionDock.buttonWidth, height: ChatMessageActionDock.buttonHeight)
+                    // Menu's default hit area on macOS shrinks to the glyph;
+                    // contentShape pushes it back out to the full button frame.
+                    .contentShape(Rectangle())
             }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
             .buttonStyle(.irisPlain)
             .accessibilityIdentifier("messageMoreButton")
         }
@@ -2838,12 +2851,16 @@ private struct ChatMessageActionDock: View {
     private func dockButton(_ systemName: String, identifier: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: 26, height: 24)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: ChatMessageActionDock.buttonWidth, height: ChatMessageActionDock.buttonHeight)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.irisPlain)
         .accessibilityIdentifier(identifier)
     }
+
+    fileprivate static let buttonWidth: CGFloat = 30
+    fileprivate static let buttonHeight: CGFloat = 28
 }
 
 private let quickReactionEmojis: [String] = ["❤️", "👍", "😂", "😮", "😢", "🙏", "🔥"]
