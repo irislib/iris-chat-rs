@@ -401,7 +401,7 @@ fn linked_device_missing_local_session_exposes_link_code() {
 }
 
 #[test]
-fn app_keys_cache_merges_older_roster_events_additively() {
+fn app_keys_cache_ignores_older_roster_events() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let old_device = Keys::generate();
@@ -429,8 +429,8 @@ fn app_keys_cache_merges_older_roster_events_additively() {
     let stale = AppKeys::new(vec![DeviceEntry::new(old_device.public_key(), 10)]);
     assert!(
         core.apply_known_app_keys_snapshot(owner.public_key(), &stale, 10)
-            .is_some(),
-        "older owner-signed app-key events should add missing devices without replacing the cached timestamp"
+            .is_none(),
+        "older owner-signed app-key events must not resurrect removed devices"
     );
 
     let cached = core
@@ -442,7 +442,7 @@ fn app_keys_cache_merges_older_roster_events_additively() {
         .devices
         .iter()
         .any(|entry| entry.identity_pubkey_hex == device.public_key().to_hex()));
-    assert!(cached
+    assert!(!cached
         .devices
         .iter()
         .any(|entry| entry.identity_pubkey_hex == old_device.public_key().to_hex()));
@@ -542,7 +542,7 @@ fn removing_authorized_device_advances_app_keys_timestamp() {
         .app_keys
         .get(&owner.public_key().to_hex())
         .expect("cached roster");
-    assert_eq!(cached.created_at_secs, linked_device_created_at + 1);
+    assert_eq!(cached.created_at_secs, linked_device_created_at + 2);
     assert!(cached
         .devices
         .iter()
@@ -568,13 +568,25 @@ fn removing_authorized_device_advances_app_keys_timestamp() {
         .app_keys
         .get_device(&device_b.public_key())
         .is_none());
+
+    let resurrected = apply_app_keys_snapshot_with_required_device(
+        Some(&published_removal),
+        cached.created_at_secs,
+        &stale_linked_cache,
+        linked_device_created_at,
+        None,
+    );
+    assert!(resurrected
+        .app_keys
+        .get_device(&device_b.public_key())
+        .is_none());
 }
 
 #[test]
 fn removing_authorized_device_beats_equal_timestamp_roster_merge() {
     assert_eq!(account::next_removed_app_keys_created_at(100, 80, 90), 102);
-    assert_eq!(account::next_removed_app_keys_created_at(100, 110, 90), 111);
-    assert_eq!(account::next_removed_app_keys_created_at(100, 80, 120), 121);
+    assert_eq!(account::next_removed_app_keys_created_at(100, 110, 90), 112);
+    assert_eq!(account::next_removed_app_keys_created_at(100, 80, 120), 122);
     assert_eq!(account::next_removed_app_keys_created_at(100, 100, 90), 102);
 }
 

@@ -1170,12 +1170,7 @@ fn next_app_keys_created_at(now: u64, current: u64) -> u64 {
 }
 
 pub(super) fn next_removed_app_keys_created_at(now: u64, current: u64, latest_device: u64) -> u64 {
-    let latest_known = current.max(latest_device);
-    if now >= latest_known {
-        now.saturating_add(2)
-    } else {
-        latest_known.saturating_add(1)
-    }
+    now.max(current).max(latest_device).saturating_add(2)
 }
 
 fn normalize_device_label(label: &str) -> Option<String> {
