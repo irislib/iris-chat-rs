@@ -14,12 +14,12 @@ use crate::updates::{AppUpdate, CoreMsg, InternalEvent, RelayPublishDrainResult}
 use flume::Sender;
 use nostr::{Alphabet, EventBuilder, SingleLetterTag, UnsignedEvent};
 use nostr_double_ratchet::{
-    AuthorizedDevice, DevicePubkey as NdrDevicePubkey, DeviceRoster, DomainError,
-    Error as NdrError, GroupIncomingEvent, GroupManagerSnapshot, GroupPendingFanout,
-    GroupPreparedPublish, GroupPreparedSend, GroupProtocol, GroupSenderKeyHandleResult,
-    GroupSenderKeyMessage, GroupSnapshot, Invite, MessageEnvelope, OwnerPubkey as NdrOwnerPubkey,
-    PreparedSend, ProtocolContext, RelayGap, SenderKeyRepairRequest, SessionManager,
-    SessionManagerSnapshot, SessionState, UnixSeconds as NdrUnixSeconds,
+    sender_key_repair_default_next_retry_at, AuthorizedDevice, DevicePubkey as NdrDevicePubkey,
+    DeviceRoster, DomainError, Error as NdrError, GroupIncomingEvent, GroupManagerSnapshot,
+    GroupPendingFanout, GroupPreparedPublish, GroupPreparedSend, GroupProtocol,
+    GroupSenderKeyHandleResult, GroupSenderKeyMessage, GroupSnapshot, Invite, MessageEnvelope,
+    OwnerPubkey as NdrOwnerPubkey, PreparedSend, ProtocolContext, RelayGap, SenderKeyRepairRequest,
+    SessionManager, SessionManagerSnapshot, SessionState, UnixSeconds as NdrUnixSeconds,
 };
 use nostr_double_ratchet_nostr::{
     apply_app_keys_snapshot_with_required_device, is_app_keys_event, AppKeys, DeviceEntry,

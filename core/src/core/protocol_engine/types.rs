@@ -2,18 +2,10 @@ const PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
 const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
-const SENDER_KEY_REPAIR_RETRY_DELAYS_SECS: [u64; 5] = [30, 120, 600, 3_600, 21_600];
 const LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS: u64 = 120;
 
 fn default_true() -> bool {
     true
-}
-
-fn sender_key_repair_retry_delay_secs(request_count: u32) -> u64 {
-    let index = request_count
-        .saturating_sub(1)
-        .min((SENDER_KEY_REPAIR_RETRY_DELAYS_SECS.len() - 1) as u32) as usize;
-    SENDER_KEY_REPAIR_RETRY_DELAYS_SECS[index]
 }
 
 #[derive(Debug, Serialize, Deserialize)]

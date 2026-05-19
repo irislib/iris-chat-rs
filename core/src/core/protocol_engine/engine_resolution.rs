@@ -557,6 +557,9 @@ impl ProtocolEngine {
             }
             Err(error) => return Err(error.into()),
         };
+        let now = NdrUnixSeconds(unix_now().get());
+        let repair_request =
+            SenderKeyRepairRequest::from_pending_sender_key_message(&message, &result, now);
         match result {
             GroupSenderKeyHandleResult::Event(event) => {
                 self.clear_group_sender_key_repairs(
@@ -572,43 +575,11 @@ impl ProtocolEngine {
                     ..Default::default()
                 })
             }
-            GroupSenderKeyHandleResult::PendingDistribution {
-                group_id,
-                sender_event_pubkey,
-                key_id,
-            } => {
-                let request = SenderKeyRepairRequest {
-                    group_id,
-                    sender_event_pubkey,
-                    key_id,
-                    message_number: message_repair_number,
-                    required_revision: None,
-                    created_at: NdrUnixSeconds(unix_now().get()),
-                };
-                let effects =
-                    self.sender_key_repair_request_effects(request, NdrUnixSeconds(unix_now().get()))?;
-                Ok(ProtocolGroupIncomingResult {
-                    consumed: true,
-                    pending: true,
-                    effects,
-                    ..Default::default()
-                })
-            }
-            GroupSenderKeyHandleResult::PendingRevision {
-                group_id,
-                required_revision,
-                ..
-            } => {
-                let request = SenderKeyRepairRequest {
-                    group_id,
-                    sender_event_pubkey: message_repair_sender,
-                    key_id: message_repair_key_id,
-                    message_number: message_repair_number,
-                    required_revision: Some(required_revision),
-                    created_at: NdrUnixSeconds(unix_now().get()),
-                };
-                let effects =
-                    self.sender_key_repair_request_effects(request, NdrUnixSeconds(unix_now().get()))?;
+            GroupSenderKeyHandleResult::PendingDistribution { .. }
+            | GroupSenderKeyHandleResult::PendingRevision { .. } => {
+                let request = repair_request
+                    .expect("pending sender-key result should produce a repair request");
+                let effects = self.sender_key_repair_request_effects(request, now)?;
                 Ok(ProtocolGroupIncomingResult {
                     consumed: true,
                     pending: true,
@@ -679,8 +650,8 @@ impl ProtocolEngine {
         if let Some(pending) = self.pending_group_sender_key_repairs.get_mut(index) {
             pending.last_requested_at_secs = now.get();
             pending.request_count = pending.request_count.saturating_add(1);
-            let retry_delay_secs = sender_key_repair_retry_delay_secs(pending.request_count);
-            pending.next_retry_at_secs = now.get().saturating_add(retry_delay_secs);
+            pending.next_retry_at_secs =
+                sender_key_repair_default_next_retry_at(now, pending.request_count).get();
         }
         self.invalidate_known_message_author_cache();
         Ok(output.effects)
