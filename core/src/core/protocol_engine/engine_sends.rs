@@ -65,10 +65,14 @@ impl ProtocolEngine {
         let pending_inbound_checkpoint = self.pending_inbound.clone();
         let pending_group_fanouts_checkpoint = self.pending_group_fanouts.clone();
         let pending_group_pairwise_checkpoint = self.pending_group_pairwise_payloads.clone();
-        let invite = parse_invite_event(event)?;
+        let mut invite = parse_invite_event(event)?;
         let invite_owner = invite
             .inviter_owner_pubkey
+            .or_else(|| self.verified_roster_owner_for_device(invite.inviter_device_pubkey))
             .unwrap_or_else(|| NdrOwnerPubkey::from_bytes(invite.inviter_device_pubkey.to_bytes()));
+        if invite.inviter_owner_pubkey.is_none() {
+            invite.inviter_owner_pubkey = Some(invite_owner);
+        }
         if invite.inviter_device_pubkey != self.local_device {
             self.session_manager
                 .observe_device_invite(invite_owner, invite)?;

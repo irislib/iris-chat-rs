@@ -405,6 +405,71 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
 }
 
 #[test]
+fn appcore_ownerless_invite_uses_known_roster_owner_for_first_contact() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+
+    engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
+            1,
+        )
+        .expect("peer appkeys");
+
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(2), &mut rng);
+    let ownerless_invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(peer_device.public_key().to_bytes()),
+        None,
+        None,
+    )
+    .expect("ownerless invite");
+    let invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&ownerless_invite)
+        .expect("invite event")
+        .sign_with_keys(&peer_device)
+        .expect("signed invite");
+
+    engine
+        .observe_invite_event(&invite_event)
+        .expect("observe ownerless invite");
+
+    let result = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "hello",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+
+    assert!(
+        !result
+            .queued_targets
+            .contains(&peer_device.public_key().to_hex())
+            && !result
+                .queued_targets
+                .contains(&format!("owner:{}", peer_owner.public_key().to_hex())),
+        "known ownerless invite should not leave the peer device queued: {:?}",
+        result.queued_targets
+    );
+    assert!(
+        result.effects.iter().any(|effect| matches!(
+            effect,
+            ProtocolEffect::PublishStagedFirstContact { bootstrap, .. }
+                if bootstrap.iter().any(|publish| publish.event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND)
+        )),
+        "first contact should publish an invite response for ownerless peer invites"
+    );
+}
+
+#[test]
 fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys() {
     let owner = Keys::generate();
     let device = Keys::generate();

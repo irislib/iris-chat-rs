@@ -221,6 +221,30 @@ impl ProtocolEngine {
             })
     }
 
+    fn verified_roster_owner_for_device(
+        &self,
+        device_pubkey: NdrDevicePubkey,
+    ) -> Option<NdrOwnerPubkey> {
+        let provisional_owner = NdrOwnerPubkey::from_bytes(device_pubkey.to_bytes());
+        let mut provisional_match = None;
+        for user in self.session_manager.snapshot().users {
+            let Some(roster) = user.roster.as_ref() else {
+                continue;
+            };
+            if roster.get_device(&device_pubkey).is_none() {
+                continue;
+            }
+            if user.owner_pubkey == self.local_owner {
+                continue;
+            }
+            if user.owner_pubkey != provisional_owner {
+                return Some(user.owner_pubkey);
+            }
+            provisional_match = Some(user.owner_pubkey);
+        }
+        provisional_match
+    }
+
     pub(super) fn has_pending_inbound_direct_events(&self) -> bool {
         !self.pending_inbound.is_empty()
     }
