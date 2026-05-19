@@ -1161,7 +1161,7 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_missing_appkeys_when_conn
     );
 
     core.debug_log.clear();
-    let token = core.protocol_reconnect_token;
+    let token = core.protocol_liveness_token;
     core.handle_protocol_subscription_liveness_check(token);
 
     assert!(
@@ -1188,7 +1188,7 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
     );
     core.protocol_subscription_runtime.liveness_due_at = None;
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
-    let first_token = core.protocol_reconnect_token;
+    let first_token = core.protocol_liveness_token;
     let first_due = core
         .protocol_subscription_runtime
         .liveness_due_at
@@ -1196,7 +1196,7 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
 
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
     assert_eq!(
-        core.protocol_reconnect_token, first_token,
+        core.protocol_liveness_token, first_token,
         "a later/equal liveness request must not cancel the pending reconnect"
     );
     assert_eq!(
@@ -1205,7 +1205,7 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
     );
 
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(2));
-    let fast_token = core.protocol_reconnect_token;
+    let fast_token = core.protocol_liveness_token;
     let fast_due = core
         .protocol_subscription_runtime
         .liveness_due_at
@@ -1221,7 +1221,7 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
 
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
     assert_eq!(
-        core.protocol_reconnect_token, fast_token,
+        core.protocol_liveness_token, fast_token,
         "a later liveness request must not starve the fast reconnect"
     );
     assert_eq!(
@@ -1472,7 +1472,7 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_sessio
     );
 
     core.debug_log.clear();
-    let token = core.protocol_reconnect_token;
+    let token = core.protocol_liveness_token;
     core.handle_protocol_subscription_liveness_check(token);
 
     assert!(

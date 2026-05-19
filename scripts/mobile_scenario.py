@@ -343,6 +343,7 @@ class Scenario:
         if not ios_devices or not self.config.get("ios", {}).get("build", True):
             return
         run([str(IOS_BUILD), "ios-xcframework"], env=self.scenario_env())
+        run([str(IOS_BUILD), "ios-xcodeproj"], env=self.scenario_env())
 
     def build_android(self) -> None:
         android_devices = [
