@@ -296,7 +296,6 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
 
 struct RootView: View {
     @ObservedObject var manager: AppManager
-    @State private var directChatInfoChatId: String?
     @State private var settingsFocus: SettingsFocusSection?
 #if os(iOS)
     @State private var showingSettingsSheet = false
@@ -321,24 +320,8 @@ struct RootView: View {
 #endif
                         DesktopChatShell(
                             manager: manager,
-                            directChatInfoChatId: $directChatInfoChatId,
                             onOpenNearby: openNearbyIris,
                             onOpenNearbyPeerProfile: openNearbyPeerProfile
-                        )
-                    }
-                } else if let directChatInfoChatId {
-                    NavigationShell(
-                        title: "Details",
-                        canGoBack: true,
-                        onBack: { self.directChatInfoChatId = nil },
-                        leading: AnyView(EmptyView()),
-                        trailing: AnyView(EmptyView()),
-                        offlineBanner: offlineBanner
-                    ) {
-                        DirectChatInfoScreen(
-                            manager: manager,
-                            chatId: directChatInfoChatId,
-                            onClose: { self.directChatInfoChatId = nil }
                         )
                     }
                 } else {
@@ -662,10 +645,10 @@ struct RootView: View {
                 manager?.dispatch(.pushScreen(screen: .groupDetails(groupId: groupId)))
             }
         }
-        // Direct chat — open the inline info sheet.
+        // Direct chat — push the info route so back navigation lands on the chat.
         let chatId = chat.chatId
-        return {
-            directChatInfoChatId = chatId
+        return { [weak manager] in
+            manager?.dispatch(.pushScreen(screen: .directChatInfo(chatId: chatId)))
         }
     }
 
@@ -1654,7 +1637,6 @@ private let mobileWifiBlockingStatuses: Set<String> = [
 private struct DesktopChatShell: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
-    @Binding var directChatInfoChatId: String?
     let onOpenNearby: () -> Void
     let onOpenNearbyPeerProfile: (String) -> Void
 
@@ -1710,7 +1692,7 @@ private struct DesktopChatShell: View {
                         if let groupId = current.groupId {
                             manager.dispatch(.pushScreen(screen: .groupDetails(groupId: groupId)))
                         } else {
-                            directChatInfoChatId = current.chatId
+                            manager.dispatch(.pushScreen(screen: .directChatInfo(chatId: current.chatId)))
                         }
                     }
                 },
@@ -1727,16 +1709,8 @@ private struct DesktopChatShell: View {
                 } ?? AnyView(EmptyView()),
                 trailing: AnyView(EmptyView())
             )
-            if directChatInfoChatId == chatId {
-                DirectChatInfoScreen(
-                    manager: manager,
-                    chatId: chatId,
-                    onClose: { directChatInfoChatId = nil }
-                )
-            } else {
-                ChatScreen(manager: manager, chatId: chatId)
-                    .id(chatId)
-            }
+            ChatScreen(manager: manager, chatId: chatId)
+                .id(chatId)
         case .directChatInfo(let chatId):
             DesktopPaneTopBar(title: manager.state.currentChat?.displayName ?? "Details", canGoBack: true, onBack: manager.navigateBack)
             DirectChatInfoScreen(

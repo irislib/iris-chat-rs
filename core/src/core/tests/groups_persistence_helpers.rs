@@ -1182,6 +1182,137 @@ fn appcore_sender_key_stochastic_group_soak() {
     }
 }
 
+/// Repro for the macOS / Android bug: tapping a direct chat title pushes
+/// the info screen, and back must return to the chat instead of the chat
+/// list. Mirrors the group-details flow but for the direct-message case
+/// after we converted both UIs from local overlays to the router push.
+#[test]
+fn back_from_direct_chat_info_returns_to_chat() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("back-from-direct-info", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+
+    core.handle_action(AppAction::OpenChat {
+        chat_id: chat_id.clone(),
+    });
+    assert_eq!(
+        core.state.router.screen_stack,
+        vec![Screen::Chat {
+            chat_id: chat_id.clone(),
+        }],
+        "chat opened"
+    );
+
+    core.handle_action(AppAction::PushScreen {
+        screen: Screen::DirectChatInfo {
+            chat_id: chat_id.clone(),
+        },
+    });
+    assert_eq!(
+        core.state.router.screen_stack,
+        vec![
+            Screen::Chat {
+                chat_id: chat_id.clone(),
+            },
+            Screen::DirectChatInfo {
+                chat_id: chat_id.clone(),
+            },
+        ],
+        "info pushed on top of the chat"
+    );
+
+    let mut next_stack = core.state.router.screen_stack.clone();
+    next_stack.pop();
+    core.handle_action(AppAction::UpdateScreenStack { stack: next_stack });
+
+    assert_eq!(
+        core.state.router.screen_stack,
+        vec![Screen::Chat {
+            chat_id: chat_id.clone(),
+        }],
+        "back tap returns to the chat"
+    );
+    assert_eq!(
+        core.active_chat_id.as_deref(),
+        Some(chat_id.as_str()),
+        "active chat is restored from the router"
+    );
+}
+
+/// Repro for the Android bug: opening group details from a chat and then
+/// pressing back must return to the chat — not jump to the chat list.
+/// The Android UI sends `UpdateScreenStack(stack.dropLast())` for back
+/// taps, so a `[Chat, GroupDetails]` → `[Chat]` round-trip through the
+/// core has to keep `Chat` on the stack.
+#[test]
+fn back_from_group_details_returns_to_chat() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("back-from-group-details", &owner, &device);
+
+    core.handle_action(AppAction::CreateGroup {
+        name: "Crew".to_string(),
+        member_inputs: Vec::new(),
+    });
+
+    let group_id = core
+        .state
+        .current_chat
+        .as_ref()
+        .and_then(|chat| chat.group_id.clone())
+        .expect("group id");
+    let group_chat_id = format!("group:{group_id}");
+
+    // After CreateGroup the chat is already active. Push group details
+    // as the chat title tap would.
+    core.handle_action(AppAction::PushScreen {
+        screen: Screen::GroupDetails {
+            group_id: group_id.clone(),
+        },
+    });
+    assert_eq!(
+        core.state.router.screen_stack,
+        vec![
+            Screen::Chat {
+                chat_id: group_chat_id.clone(),
+            },
+            Screen::GroupDetails {
+                group_id: group_id.clone(),
+            },
+        ],
+        "details pushed on top of the chat"
+    );
+
+    // Mimic Android's back tap: drop the last screen and let the core
+    // reconcile via UpdateScreenStack.
+    let mut next_stack = core.state.router.screen_stack.clone();
+    next_stack.pop();
+    core.handle_action(AppAction::UpdateScreenStack { stack: next_stack });
+
+    assert_eq!(
+        core.state.router.screen_stack,
+        vec![Screen::Chat {
+            chat_id: group_chat_id.clone(),
+        }],
+        "back tap returns to the chat, not the chat list"
+    );
+    assert_eq!(
+        core.active_chat_id.as_deref(),
+        Some(group_chat_id.as_str()),
+        "active chat is restored from the router"
+    );
+    assert_eq!(
+        core.state
+            .current_chat
+            .as_ref()
+            .map(|chat| chat.chat_id.clone()),
+        Some(group_chat_id),
+        "projection re-emits current_chat on back"
+    );
+}
+
 #[test]
 fn create_group_allows_self_only_group() {
     let owner = Keys::generate();

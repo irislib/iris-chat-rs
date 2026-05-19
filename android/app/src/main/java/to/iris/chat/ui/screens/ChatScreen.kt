@@ -150,8 +150,6 @@ fun ChatScreen(
     appManager: AppManager,
     chatId: String,
     nearbyService: IrisNearbyService? = null,
-    openInfoOnStart: Boolean = false,
-    onInfoOpenConsumed: () -> Unit = {},
 ) {
     // Subscribe to per-slice flows so this screen only recomposes when
     // *its* state slice changed. Tapping into the consolidated
@@ -188,7 +186,6 @@ fun ChatScreen(
     val latestDraft by rememberUpdatedState(draft)
     val latestLastPersistedDraft by rememberUpdatedState(lastPersistedDraft)
     val latestHasSentTyping by rememberUpdatedState(hasSentTyping)
-    var directChatInfoOpen by remember(chatId) { mutableStateOf(false) }
     var inChatSearchOpen by remember(chatId) { mutableStateOf(false) }
     var composerBounds by remember { mutableStateOf<Rect?>(null) }
     val composerFocusRequester = remember { FocusRequester() }
@@ -231,13 +228,6 @@ fun ChatScreen(
         forceScrollToLatest = false
         initialScrollPending = true
         observedMessageCount = 0
-    }
-
-    LaunchedEffect(chatId, openInfoOnStart) {
-        if (openInfoOnStart) {
-            directChatInfoOpen = true
-            onInfoOpenConsumed()
-        }
     }
 
     // Keep the composer aligned with the persisted thread draft without
@@ -467,7 +457,7 @@ fun ChatScreen(
                     chat?.let { current ->
                         current.groupId?.let { groupId ->
                             { appManager.pushScreen(Screen.GroupDetails(groupId)) }
-                        } ?: { directChatInfoOpen = true }
+                        } ?: { appManager.pushScreen(Screen.DirectChatInfo(chatId)) }
                     },
                 actions = {
                     if (chat != null) {
@@ -496,14 +486,6 @@ fun ChatScreen(
             ) {
                 Text("Loading chat…")
             }
-            return@Scaffold
-        }
-        if (directChatInfoOpen) {
-            DirectChatInfoScreen(
-                appManager = appManager,
-                chatId = chatId,
-                onBack = { directChatInfoOpen = false },
-            )
             return@Scaffold
         }
         val visibleMessages = chat.messages
