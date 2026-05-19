@@ -151,6 +151,9 @@ run_macos_rust() {
           CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
           CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
           RUSTFLAGS="-C linker=$cc_bin -C link-arg=-target -C link-arg=$arch_target -C link-arg=-mmacosx-version-min=${min_version}" \
+          IRIS_APP_VERSION="${IRIS_APP_VERSION_NAME:-}" \
+          IRIS_BUILD_GIT_SHA="${IRIS_BUILD_GIT_SHA:-}" \
+          IRIS_BUILD_TIMESTAMP_UTC="${IRIS_BUILD_TIMESTAMP_UTC:-}" \
           cargo build --release --target "$target"
       else
         env \
@@ -167,6 +170,9 @@ run_macos_rust() {
           CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
           CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
           RUSTFLAGS="-C linker=$cc_bin -C link-arg=-target -C link-arg=$arch_target -C link-arg=-mmacosx-version-min=${min_version}" \
+          IRIS_APP_VERSION="${IRIS_APP_VERSION_NAME:-}" \
+          IRIS_BUILD_GIT_SHA="${IRIS_BUILD_GIT_SHA:-}" \
+          IRIS_BUILD_TIMESTAMP_UTC="${IRIS_BUILD_TIMESTAMP_UTC:-}" \
           cargo build --target "$target"
       fi
     done

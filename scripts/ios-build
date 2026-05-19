@@ -129,6 +129,9 @@ run_ios_rust() {
           CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$cc_bin" \
           CARGO_TARGET_AARCH64_APPLE_IOS_SIM_LINKER="$cc_bin" \
           RUSTFLAGS="-C linker=$cc_bin -C link-arg=$min_flag" \
+          IRIS_APP_VERSION="${IRIS_APP_VERSION_NAME:-}" \
+          IRIS_BUILD_GIT_SHA="${IRIS_BUILD_GIT_SHA:-}" \
+          IRIS_BUILD_TIMESTAMP_UTC="${IRIS_BUILD_TIMESTAMP_UTC:-}" \
           cargo build --release --target "$target"
       else
         env \
@@ -145,6 +148,9 @@ run_ios_rust() {
           CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$cc_bin" \
           CARGO_TARGET_AARCH64_APPLE_IOS_SIM_LINKER="$cc_bin" \
           RUSTFLAGS="-C linker=$cc_bin -C link-arg=$min_flag" \
+          IRIS_APP_VERSION="${IRIS_APP_VERSION_NAME:-}" \
+          IRIS_BUILD_GIT_SHA="${IRIS_BUILD_GIT_SHA:-}" \
+          IRIS_BUILD_TIMESTAMP_UTC="${IRIS_BUILD_TIMESTAMP_UTC:-}" \
           cargo build --target "$target"
       fi
     done

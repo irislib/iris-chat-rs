@@ -2722,7 +2722,25 @@ final class AppManager: ObservableObject {
     }
 
     func buildSummaryText() -> String {
-        buildSummary()
+        // Use the bundle's marketing version (CFBundleShortVersionString +
+        // .build segment from CFBundleVersion) — the same string Apple shows
+        // in App Store / TestFlight / Finder Get Info — and append the git
+        // short SHA pulled from the Rust core's build_summary("V (SHA)").
+        // The Rust APP_VERSION can silently fall back to CARGO_PKG_VERSION
+        // when a build path bypasses release.env (e.g. Xcode IDE build,
+        // manual cargo invocation), which would otherwise show "0.1.x"
+        // here even though the bundle plist is correct.
+        let version = AppPaths.appVersion()
+        let coreSummary = buildSummary()
+        if let openParen = coreSummary.lastIndex(of: "("),
+           let closeParen = coreSummary.lastIndex(of: ")"),
+           openParen < closeParen {
+            let sha = coreSummary[coreSummary.index(after: openParen)..<closeParen]
+            if !sha.isEmpty {
+                return "\(version) (\(sha))"
+            }
+        }
+        return version
     }
 
     func relaySetIdText() -> String {
