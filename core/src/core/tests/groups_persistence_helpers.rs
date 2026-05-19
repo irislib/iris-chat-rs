@@ -2112,8 +2112,8 @@ fn appcore_sender_key_pending_outer_survives_restart_and_applies_once() {
 }
 
 #[test]
-#[ignore = "long-running exploratory sender-key group soak"]
-fn appcore_sender_key_stochastic_group_soak() {
+#[ignore = "long-running sender-key group membership stress test"]
+fn appcore_sender_key_group_membership_stress() {
     let mut devices = sender_key_matrix_devices(6);
     let member_one = devices[1].owner.public_key();
     let member_two = devices[2].owner.public_key();
@@ -2122,11 +2122,11 @@ fn appcore_sender_key_stochastic_group_soak() {
     let created = devices[0]
         .engine
         .create_group(
-            "sender-key soak".to_string(),
+            "sender-key stress".to_string(),
             vec![member_one, member_two],
             UnixSeconds(200),
         )
-        .expect("create sender-key soak group");
+        .expect("create sender-key stress group");
     let group_id = created.snapshot.expect("created group").group_id;
     for recipient_index in [1, 2] {
         deliver_protocol_effects_to_engine(&mut devices[recipient_index].engine, &created.effects);
@@ -2138,7 +2138,7 @@ fn appcore_sender_key_stochastic_group_soak() {
             let add = devices[0]
                 .engine
                 .add_group_members(&group_id, vec![member_three])
-                .expect("add fourth soak member");
+                .expect("add fourth stress member");
             active.push(3);
             for recipient_index in active.iter().copied() {
                 deliver_protocol_effects_to_engine(
@@ -2151,7 +2151,7 @@ fn appcore_sender_key_stochastic_group_soak() {
             let add = devices[0]
                 .engine
                 .add_group_members(&group_id, vec![member_four])
-                .expect("add fifth soak member");
+                .expect("add fifth stress member");
             active.push(4);
             for recipient_index in active.iter().copied() {
                 deliver_protocol_effects_to_engine(
@@ -2164,7 +2164,7 @@ fn appcore_sender_key_stochastic_group_soak() {
             let remove = devices[0]
                 .engine
                 .remove_group_member(&group_id, member_one)
-                .expect("remove soak member");
+                .expect("remove stress member");
             active.retain(|index| *index != 1);
             for recipient_index in [1usize, 0, 2, 3, 4] {
                 deliver_protocol_effects_to_engine(
@@ -2175,15 +2175,15 @@ fn appcore_sender_key_stochastic_group_soak() {
         }
 
         let sender_index = active[step % active.len()];
-        let body = format!("sender-key-soak-{step}").into_bytes();
+        let body = format!("sender-key-stress-{step}").into_bytes();
         let sent = devices[sender_index]
             .engine
             .send_group_payload(
                 &group_id,
                 body.clone(),
-                Some(format!("sender-key-soak-inner-{step}")),
+                Some(format!("sender-key-stress-inner-{step}")),
             )
-            .expect("send soak payload");
+            .expect("send stress payload");
         assert_eq!(sender_key_outer_count(&sent.effects, &sent.event_ids), 1);
         let sender_owner = devices[sender_index].owner.public_key();
         let sender_device = devices[sender_index].device.public_key();
@@ -2197,7 +2197,7 @@ fn appcore_sender_key_stochastic_group_soak() {
             );
             assert!(
                 group_events_contain_body(&events, &group_id, sender_owner, sender_device, &body),
-                "missing soak body at step {step}; sender_index={sender_index}; recipient_index={recipient_index}; active={active:?}; body={}; events={events:?}; recipient_debug={:?}",
+                "missing stress body at step {step}; sender_index={sender_index}; recipient_index={recipient_index}; active={active:?}; body={}; events={events:?}; recipient_debug={:?}",
                 String::from_utf8_lossy(&body),
                 devices[recipient_index].engine.debug_snapshot()
             );

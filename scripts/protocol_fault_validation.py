@@ -197,7 +197,7 @@ class ProtocolFaultValidation:
                 {
                     "id": "carol1",
                     "platform": "ios",
-                    "simulator": "Group Hardening Carol",
+                    "simulator": "Sender Key Carol",
                     "run_id": "carol",
                     "user": "carol",
                     "display_name": "Carol",

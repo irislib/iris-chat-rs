@@ -4,16 +4,16 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
-RUN_DIR="${IRIS_GROUP_HARDENING_RUN_DIR:-/tmp/iris-group-hardening-fault-matrix-${RUN_ID}}"
+RUN_DIR="${IRIS_SENDER_KEY_FAULT_MATRIX_RUN_DIR:-/tmp/iris-sender-key-fault-matrix-${RUN_ID}}"
 MODE="all"
 EXACT=()
 NOCAPTURE=0
 
 usage() {
   cat <<EOF
-Usage: scripts/group_hardening_fault_matrix.sh [--basic|--adversarial] [--exact NAME] [--nocapture]
+Usage: scripts/sender_key_fault_matrix.sh [--basic|--adversarial] [--exact NAME] [--nocapture]
 
-Runs the deterministic group hardening fault matrix.
+Runs the deterministic sender-key fault matrix.
 
 Options:
   --basic          Run only the 10 basic scenarios.
@@ -77,7 +77,7 @@ ADVERSARIAL_SCENARIOS=(
   sender_key_duplicate_replay_idempotent
   sender_key_removed_member_repair_denied
   sender_key_mixed_order_storm
-  sender_key_cli_fault_injection_demo
+  sender_key_cli_drop_repair_flow
 )
 
 if ((${#EXACT[@]} > 0)); then
@@ -91,7 +91,7 @@ else
 fi
 
 mkdir -p "${RUN_DIR}"
-echo "group_hardening_fault_matrix_run_dir=${RUN_DIR}"
+echo "sender_key_fault_matrix_run_dir=${RUN_DIR}"
 
 run_logged() {
   local scenario="$1"
@@ -313,7 +313,7 @@ run_scenario() {
     sender_key_mixed_order_storm)
       run_core_lib_test "${scenario}" appcore_sender_key_mixed_order_storm_converges
       ;;
-    sender_key_cli_fault_injection_demo)
+    sender_key_cli_drop_repair_flow)
       run_cli_test "${scenario}" sender_key_cli_group_interop_three_members_restart_and_restored_owner_device
       ;;
     *)
@@ -329,5 +329,5 @@ for scenario in "${SCENARIOS[@]}"; do
   run_scenario "${scenario}"
 done
 
-echo "Group hardening fault matrix passed: ${#SCENARIOS[@]} scenario(s)"
+echo "Sender-key fault matrix passed: ${#SCENARIOS[@]} scenario(s)"
 echo "Artifacts: ${RUN_DIR}"

@@ -17,7 +17,7 @@
     {
       "id": "alice1",
       "platform": "ios",
-      "simulator": "Group Hardening Alice",
+      "simulator": "Sender Key Alice",
       "run_id": "alice1",
       "user": "alice",
       "display_name": "Alice",
@@ -26,7 +26,7 @@
     {
       "id": "alice2",
       "platform": "ios",
-      "simulator": "Group Hardening Alice 2",
+      "simulator": "Sender Key Alice 2",
       "run_id": "alice2",
       "user": "alice",
       "linked_to": "alice",
@@ -35,7 +35,7 @@
     {
       "id": "bob1",
       "platform": "ios",
-      "simulator": "Group Hardening Bob",
+      "simulator": "Sender Key Bob",
       "run_id": "bob",
       "user": "bob",
       "display_name": "Bob",
