@@ -445,10 +445,10 @@ private fun updatePollIntervalMs(): Long =
         ?.let { it * 1_000L }
         ?: 6 * 60 * 60 * 1_000L
 
-private fun resolveAssetUrl(manifestUrl: String, assetPath: String): String =
+internal fun resolveAssetUrl(manifestUrl: String, assetPath: String): String =
     URI(manifestUrl).resolve(assetPath).toString()
 
-private fun versionIsNewer(candidate: String, current: String): Boolean {
+internal fun versionIsNewer(candidate: String, current: String): Boolean {
     if (isDevPlaceholderVersion(current)) return false
     val left = versionParts(candidate)
     val right = versionParts(current)
