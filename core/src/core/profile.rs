@@ -44,6 +44,8 @@ impl AppCore {
         let mut record = record;
         if let Some(existing) = self.owner_profiles.get(&local_owner_hex) {
             record.nickname = existing.nickname.clone();
+            record.extra_metadata_json = existing.extra_metadata_json.clone();
+            record.extra_tags = existing.extra_tags.clone();
         }
         self.owner_profiles.insert(local_owner_hex.clone(), record);
         self.push_debug_log("profile.local.set", format!("owner={local_owner_hex}"));
@@ -271,9 +273,16 @@ impl AppCore {
 
     pub(super) fn apply_profile_metadata_event(&mut self, event: &Event) -> bool {
         let owner_hex = event.pubkey.to_hex();
-        let Some(mut record) =
-            parse_owner_profile_record(&event.content, event.created_at.as_secs())
-        else {
+        let extra_tags: Vec<Vec<String>> = event
+            .tags
+            .iter()
+            .map(|tag| tag.as_slice().to_vec())
+            .collect();
+        let Some(mut record) = parse_owner_profile_record(
+            &event.content,
+            extra_tags,
+            event.created_at.as_secs(),
+        ) else {
             return false;
         };
 

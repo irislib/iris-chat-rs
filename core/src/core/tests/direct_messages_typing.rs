@@ -974,6 +974,7 @@ fn contact_nickname_overrides_direct_chat_title_and_persists() {
             picture: None,
             about: None,
             updated_at_secs: 1,
+            ..OwnerProfileRecord::default()
         },
     );
     core.handle_action(AppAction::CreateChat {

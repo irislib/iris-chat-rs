@@ -68,7 +68,7 @@ pub(super) struct CurrentDeviceLabels {
     pub(super) client_label: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct OwnerProfileRecord {
     #[serde(default)]
     pub(super) nickname: Option<String>,
@@ -80,20 +80,34 @@ pub(super) struct OwnerProfileRecord {
     pub(super) picture: Option<String>,
     #[serde(default)]
     pub(super) about: Option<String>,
+    // Verbatim JSON object of any kind:0 content fields not represented above,
+    // so a save doesn't blank out fields written by other Nostr clients.
+    #[serde(default = "default_extra_metadata_json")]
+    pub(super) extra_metadata_json: String,
+    // Verbatim tags of the most-recent kind:0 event, preserved on republish.
+    #[serde(default)]
+    pub(super) extra_tags: Vec<Vec<String>>,
     #[serde(default)]
     pub(super) updated_at_secs: u64,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub(super) struct NostrProfileMetadata {
-    #[serde(default)]
-    pub(super) name: Option<String>,
-    #[serde(default)]
-    pub(super) display_name: Option<String>,
-    #[serde(default)]
-    pub(super) picture: Option<String>,
-    #[serde(default)]
-    pub(super) about: Option<String>,
+fn default_extra_metadata_json() -> String {
+    "{}".to_string()
+}
+
+impl Default for OwnerProfileRecord {
+    fn default() -> Self {
+        Self {
+            nickname: None,
+            name: None,
+            display_name: None,
+            picture: None,
+            about: None,
+            extra_metadata_json: default_extra_metadata_json(),
+            extra_tags: Vec::new(),
+            updated_at_secs: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -588,10 +588,14 @@ impl AppCore {
         let mut durable_events: Vec<(&'static str, Event)> = Vec::new();
 
         if let (Some(keys), Some(profile)) = (owner_keys.clone(), local_profile) {
-            if let Ok(event) =
-                EventBuilder::new(Kind::Metadata, build_profile_metadata_json(&profile))
-                    .sign_with_keys(&keys)
-            {
+            let mut builder =
+                EventBuilder::new(Kind::Metadata, build_profile_metadata_json(&profile));
+            for tag_values in &profile.extra_tags {
+                if let Ok(tag) = nostr::Tag::parse(tag_values.clone()) {
+                    builder = builder.tag(tag);
+                }
+            }
+            if let Ok(event) = builder.sign_with_keys(&keys) {
                 background_events.push(("metadata", event));
             }
         }
