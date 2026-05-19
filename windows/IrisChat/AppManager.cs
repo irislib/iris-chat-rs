@@ -742,7 +742,6 @@ public sealed class AppManager : INotifyPropertyChanged
     public string RelaySetIdText() => Native.RelaySetId();
     public bool TrustedTestBuildEnabled() => Native.IsTrustedTestBuild();
     public string? ExportOwnerNsec() => _secretStore.Load()?.OwnerNsec;
-    public string? ExportDeviceNsec() => _secretStore.Load()?.DeviceNsec;
 
     private static TimeSpan LoadDesktopUpdatePollInterval()
     {

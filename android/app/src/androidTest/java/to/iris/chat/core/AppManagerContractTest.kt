@@ -531,7 +531,7 @@ class AppManagerContractTest {
     }
 
     @Test
-    fun export_secret_keys_reads_persisted_account_bundle() {
+    fun export_owner_secret_reads_persisted_account_bundle() {
         val appManager = createManager()
         persistStoredSecret(
             StoredAccountBundle(
@@ -542,10 +542,8 @@ class AppManagerContractTest {
         )
 
         val ownerNsec = runBlocking { appManager.exportOwnerNsec() }
-        val deviceNsec = runBlocking { appManager.exportDeviceNsec() }
 
         assertEquals("nsec1owner", ownerNsec)
-        assertEquals("nsec1device", deviceNsec)
     }
 
     @Test
@@ -560,10 +558,8 @@ class AppManagerContractTest {
         )
 
         val ownerNsec = runBlocking { appManager.exportOwnerNsec() }
-        val deviceNsec = runBlocking { appManager.exportDeviceNsec() }
 
         assertNull(ownerNsec)
-        assertEquals("nsec1device", deviceNsec)
     }
 
     @Test

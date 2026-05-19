@@ -1194,9 +1194,9 @@ class AppManager(
             loadPersistedBundle()?.ownerNsec
         }
 
-    suspend fun exportDeviceNsec(): String? =
+    suspend fun hasPersistedDeviceSecret(): Boolean =
         withContext(ioDispatcher) {
-            loadPersistedBundle()?.deviceNsec
+            !loadPersistedBundle()?.deviceNsec.isNullOrBlank()
         }
 
     suspend fun exportSupportBundleJson(): String =

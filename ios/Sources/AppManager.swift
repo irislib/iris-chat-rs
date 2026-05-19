@@ -2713,10 +2713,6 @@ final class AppManager: ObservableObject {
         secretStore.load()?.ownerNsec
     }
 
-    func exportDeviceNsec() -> String? {
-        secretStore.load()?.deviceNsec
-    }
-
     func resetAppState() {
         logout()
     }

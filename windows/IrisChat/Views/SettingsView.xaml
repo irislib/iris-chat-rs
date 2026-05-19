@@ -392,14 +392,8 @@
                         <Button x:Name="ExportOwnerKeyButton"
                                 Style="{StaticResource SecondaryButton}"
                                 Click="OnExportOwner"
-                                Margin="0,0,0,8"
                                 HorizontalAlignment="Left">
                             <TextBlock Text="Copy secret key" />
-                        </Button>
-                        <Button Style="{StaticResource SecondaryButton}"
-                                Click="OnExportDevice"
-                                HorizontalAlignment="Left">
-                            <TextBlock Text="Copy this device's key" />
                         </Button>
                     </StackPanel>
                 </Border>

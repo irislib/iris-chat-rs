@@ -1704,8 +1704,8 @@ class RealRelayHarnessTest {
 
     private fun waitForPersistedDeviceSecret() {
         waitForState("persisted device secret", timeoutMs = 90_000) {
-            val secret = kotlinx.coroutines.runBlocking { appManager().exportDeviceNsec() }
-            true.takeIf { !secret.isNullOrBlank() }
+            val ready = kotlinx.coroutines.runBlocking { appManager().hasPersistedDeviceSecret() }
+            true.takeIf { ready }
         }
     }
 
