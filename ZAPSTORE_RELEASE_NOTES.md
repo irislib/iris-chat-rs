@@ -1,3 +1,7 @@
+# Iris Chat 2026.5.18.6
+
+- Foreground stays responsive during catch-up bursts and large group metadata updates.
+
 # Iris Chat 2026.5.18.5
 
 - Linked devices now learn remote-created groups after restart.
