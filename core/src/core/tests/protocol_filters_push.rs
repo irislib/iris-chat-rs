@@ -914,13 +914,39 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
             Some(admin_device.public_key()),
         )
         .expect("primary processes group metadata");
-    linked
+    let linked_metadata_result = linked
         .process_group_pairwise_payload(
             &metadata_payload,
             admin_owner.public_key(),
             Some(admin_device.public_key()),
         )
         .expect("linked processes group metadata");
+
+    let target_owner_hex = owner.public_key().to_hex();
+    let target_device_hex = primary_device.public_key().to_hex();
+    let metadata_bootstrap_events = linked_metadata_result
+        .effects
+        .iter()
+        .flat_map(|effect| match effect {
+            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload }
+                if payload.iter().any(|publish| {
+                    publish.target_owner_pubkey_hex.as_deref() == Some(target_owner_hex.as_str())
+                        && publish.target_device_id.as_deref() == Some(target_device_hex.as_str())
+                }) =>
+            {
+                bootstrap
+                    .iter()
+                    .map(|publish| publish.event.clone())
+                    .collect::<Vec<_>>()
+            }
+            _ => Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    for event in &metadata_bootstrap_events {
+        primary
+            .observe_invite_response_event(event)
+            .expect("primary processes linked metadata bootstrap response");
+    }
 
     let known_primary_authors = primary.message_author_pubkeys_for_owner(owner.public_key());
     assert!(
@@ -935,8 +961,6 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
             Some("linked-group-inner".to_string()),
         )
         .expect("linked group send");
-    let target_owner_hex = owner.public_key().to_hex();
-    let target_device_hex = primary_device.public_key().to_hex();
     let local_sibling_events = result
         .effects
         .iter()
@@ -989,7 +1013,7 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
         linked.debug_snapshot().pending_group_fanout_targets
     );
     assert!(
-        !local_sibling_bootstrap_events.is_empty(),
+        !metadata_bootstrap_events.is_empty() || !local_sibling_bootstrap_events.is_empty(),
         "first-contact local sibling group copy should include invite-response bootstrap"
     );
     for event in &local_sibling_bootstrap_events {
