@@ -641,6 +641,178 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
 }
 
 #[test]
+fn remote_group_metadata_syncs_to_local_sibling() {
+    let owner = Keys::generate();
+    let primary_device = Keys::generate();
+    let linked_device = Keys::generate();
+    let admin_owner = Keys::generate();
+    let admin_device = Keys::generate();
+    let mut primary = test_protocol_engine(&owner, &primary_device);
+    let mut linked = test_protocol_engine(&owner, &linked_device);
+
+    let local_app_keys = AppKeys::new(vec![
+        DeviceEntry::new(primary_device.public_key(), 1),
+        DeviceEntry::new(linked_device.public_key(), 1),
+    ]);
+    primary
+        .ingest_app_keys_snapshot(owner.public_key(), local_app_keys.clone(), 1)
+        .expect("primary local appkeys");
+    linked
+        .ingest_app_keys_snapshot(owner.public_key(), local_app_keys, 1)
+        .expect("linked local appkeys");
+
+    let linked_invite = linked.local_invite_for_test().expect("linked invite");
+    let (primary_session, response) = linked_invite
+        .accept_with_owner(
+            primary_device.public_key(),
+            primary_device.secret_key().to_secret_bytes(),
+            Some(primary_device.public_key().to_hex()),
+            Some(owner.public_key()),
+        )
+        .expect("primary accepts linked invite");
+    primary
+        .import_session_state(
+            owner.public_key(),
+            Some(linked_device.public_key().to_hex()),
+            primary_session.state,
+            UnixSeconds(2),
+        )
+        .expect("primary imports linked session");
+    let linked_response = nostr_double_ratchet_nostr::process_invite_response_event(
+        &linked_invite,
+        &nostr_double_ratchet_nostr::invite_response_event(&response)
+            .expect("invite response event"),
+        linked_device.secret_key().to_secret_bytes(),
+    )
+    .expect("linked processes invite response")
+    .expect("response addressed to linked invite");
+    linked
+        .import_session_state(
+            owner.public_key(),
+            Some(primary_device.public_key().to_hex()),
+            linked_response.session.state,
+            UnixSeconds(2),
+        )
+        .expect("linked imports primary session");
+    let mut primary_invite = primary
+        .local_invite_for_test()
+        .expect("primary invite for linked sibling");
+    primary_invite.owner_public_key = Some(owner.public_key());
+    primary_invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
+    let primary_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&primary_invite)
+        .expect("primary invite unsigned")
+        .sign_with_keys(&primary_device)
+        .expect("primary invite event");
+    linked
+        .observe_invite_event(&primary_invite_event)
+        .expect("linked observes primary invite");
+
+    let admin_app_keys = AppKeys::new(vec![DeviceEntry::new(admin_device.public_key(), 1)]);
+    primary
+        .ingest_app_keys_snapshot(admin_owner.public_key(), admin_app_keys, 1)
+        .expect("primary admin appkeys");
+
+    let group_id = "remote-group-local-sibling-sync".to_string();
+    let snapshot = test_group_snapshot(
+        &group_id,
+        "Remote Group",
+        admin_owner.public_key(),
+        vec![admin_owner.public_key(), owner.public_key()],
+        vec![admin_owner.public_key()],
+        1,
+    );
+    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let metadata_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
+        &codec,
+        nostr_double_ratchet::GroupPayloadEncodeContext {
+            local_device_pubkey: ndr_device_pubkey(admin_device.public_key()),
+            created_at: NdrUnixSeconds(11),
+        },
+        &nostr_double_ratchet::GroupPairwiseCommand::MetadataSnapshot { snapshot },
+    )
+    .expect("metadata payload");
+
+    let outcome = primary
+        .process_group_pairwise_payload(
+            &metadata_payload,
+            admin_owner.public_key(),
+            Some(admin_device.public_key()),
+        )
+        .expect("primary processes remote group metadata");
+    assert!(
+        outcome.events.iter().any(|event| {
+            matches!(event, GroupIncomingEvent::MetadataUpdated(group) if group.group_id == group_id)
+        }),
+        "primary should apply remote group metadata before syncing siblings"
+    );
+
+    let target_owner_hex = owner.public_key().to_hex();
+    let target_device_hex = linked_device.public_key().to_hex();
+    let mut bootstrap_events = Vec::new();
+    let mut sibling_payload_events = Vec::new();
+    for effect in &outcome.effects {
+        match effect {
+            ProtocolEffect::PublishSignedForInnerEvent {
+                event,
+                target_owner_pubkey_hex,
+                target_device_id,
+                ..
+            } if target_owner_pubkey_hex.as_deref() == Some(target_owner_hex.as_str())
+                && target_device_id.as_deref() == Some(target_device_hex.as_str()) =>
+            {
+                sibling_payload_events.push(event.clone());
+            }
+            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => {
+                bootstrap_events.extend(bootstrap.iter().map(|publish| publish.event.clone()));
+                sibling_payload_events.extend(
+                    payload
+                        .iter()
+                        .filter(|publish| {
+                            publish.target_owner_pubkey_hex.as_deref()
+                                == Some(target_owner_hex.as_str())
+                                && publish.target_device_id.as_deref()
+                                    == Some(target_device_hex.as_str())
+                        })
+                        .map(|publish| publish.event.clone()),
+                );
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        !sibling_payload_events.is_empty(),
+        "remote group metadata should be republished to linked local devices"
+    );
+
+    for event in &bootstrap_events {
+        linked
+            .observe_invite_response_event(event)
+            .expect("linked processes sibling bootstrap");
+    }
+    let mut linked_group_events = Vec::new();
+    for event in &sibling_payload_events {
+        let decrypted = linked
+            .process_direct_message_event(event)
+            .expect("linked processes sibling group sync")
+            .expect("linked decrypts sibling group sync");
+        let outcome = linked
+            .process_group_pairwise_payload(
+                decrypted.content.as_bytes(),
+                decrypted.sender,
+                decrypted.sender_device,
+            )
+            .expect("linked applies sibling group payload");
+        linked_group_events.extend(outcome.events);
+    }
+    assert!(
+        linked_group_events.iter().any(|event| {
+            matches!(event, GroupIncomingEvent::MetadataUpdated(group) if group.group_id == group_id)
+        }),
+        "linked device should learn the remote-created group from its primary sibling"
+    );
+}
+
+#[test]
 fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
     let owner = Keys::generate();
     let primary_device = Keys::generate();

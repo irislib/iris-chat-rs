@@ -243,6 +243,37 @@ impl ProtocolEngine {
         })
     }
 
+    fn sync_group_to_local_siblings(
+        &mut self,
+        group: &GroupSnapshot,
+    ) -> anyhow::Result<(Vec<ProtocolEffect>, Vec<String>)> {
+        let now = NdrUnixSeconds(unix_now().get());
+        let mut rng = OsRng;
+        let mut ctx = ProtocolContext::new(now, &mut rng);
+        let prepared = self.group_manager.sync_group_to_local_siblings(
+            &mut self.session_manager,
+            &mut ctx,
+            &group.group_id,
+        )?;
+        self.queue_group_pending_fanouts(&group.group_id, &prepared, None);
+        let mut event_ids = Vec::new();
+        let mut effects = protocol_effects_from_group_prepared_publish(
+            &prepared,
+            None,
+            &mut event_ids,
+        )?;
+        let mut queued_targets = self.queued_group_targets();
+        queued_targets.sort();
+        queued_targets.dedup();
+        self.append_queued_protocol_backfill(
+            &mut effects,
+            &queued_targets,
+            now,
+            "group_local_sibling_sync",
+        );
+        Ok((effects, queued_targets))
+    }
+
     fn queue_group_pending_fanouts(
         &mut self,
         group_id: &str,

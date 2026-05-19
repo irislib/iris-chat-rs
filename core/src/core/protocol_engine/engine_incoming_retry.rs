@@ -105,18 +105,33 @@ impl ProtocolEngine {
 
         match result {
             Ok(Some(event)) => {
+                let mut effects = Vec::new();
+                let mut queued_targets = Vec::new();
+                if sender_owner != self.local_owner {
+                    if let GroupIncomingEvent::MetadataUpdated(group) = &event {
+                        let (sync_effects, sync_targets) =
+                            self.sync_group_to_local_siblings(group)?;
+                        effects.extend(sync_effects);
+                        queued_targets.extend(sync_targets);
+                    }
+                }
                 let mut events = vec![event];
                 let retry = self.retry_pending_group_inputs(NdrUnixSeconds(unix_now().get()))?;
                 events.extend(retry.events);
-                let mut effects = retry.effects;
+                effects.extend(retry.effects);
+                queued_targets.extend(retry.queued_targets);
                 let fanout_retry =
                     self.retry_pending_group_fanouts(NdrUnixSeconds(unix_now().get()))?;
                 effects.extend(fanout_retry.effects);
+                queued_targets.extend(fanout_retry.queued_targets);
+                queued_targets.extend(self.queued_group_targets());
+                queued_targets.sort();
+                queued_targets.dedup();
                 self.persist()?;
                 Ok(ProtocolGroupIncomingResult {
                     events,
                     effects,
-                    queued_targets: self.queued_group_targets(),
+                    queued_targets,
                     consumed: true,
                     ..Default::default()
                 })

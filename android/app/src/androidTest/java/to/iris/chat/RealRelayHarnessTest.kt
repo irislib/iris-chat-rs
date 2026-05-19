@@ -59,7 +59,8 @@ class RealRelayHarnessTest {
 
     @Test
     fun create_account_and_report_identity() {
-        val account = ensureLoggedIn()
+        val account = ensureLoggedIn(createIfMissing = true)
+        waitForPersistedDeviceSecret()
         waitForRelayDrainIfRequested()
         reportStatus(
             "npub" to account.npub,
@@ -341,6 +342,7 @@ class RealRelayHarnessTest {
                     ?.takeIf { it.authorizationState == expectedState }
             }
 
+        waitForPersistedDeviceSecret()
         waitForRelayDrainIfRequested()
         reportStatus(
             "npub" to account.npub,
@@ -1680,7 +1682,7 @@ class RealRelayHarnessTest {
         )
     }
 
-    private fun ensureLoggedIn(): to.iris.chat.rust.AccountSnapshot {
+    private fun ensureLoggedIn(createIfMissing: Boolean = false): to.iris.chat.rust.AccountSnapshot {
         var createRequested = false
         return waitForState("logged in account", timeoutMs = 90_000) {
             val manager = appManager()
@@ -1689,7 +1691,7 @@ class RealRelayHarnessTest {
             when (manager.bootstrapState.value) {
                 AccountBootstrapState.Loading -> null
                 AccountBootstrapState.NeedsLogin -> {
-                    if (!createRequested) {
+                    if (createIfMissing && !createRequested) {
                         createRequested = true
                         manager.createAccount()
                     }
@@ -1697,6 +1699,13 @@ class RealRelayHarnessTest {
                 }
                 is AccountBootstrapState.LoggedIn -> null
             }
+        }
+    }
+
+    private fun waitForPersistedDeviceSecret() {
+        waitForState("persisted device secret", timeoutMs = 90_000) {
+            val secret = kotlinx.coroutines.runBlocking { appManager().exportDeviceNsec() }
+            true.takeIf { !secret.isNullOrBlank() }
         }
     }
 
