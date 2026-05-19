@@ -835,6 +835,33 @@ fn appcore_sender_key_repair_request_survives_restart_and_throttles() {
         !late.group_result.effects.is_empty(),
         "repair request should be re-emitted after retry delay"
     );
+
+    let after_late_retry = devices[bob].engine.debug_snapshot();
+    let second_early = devices[bob]
+        .engine
+        .retry_pending_protocol(NdrUnixSeconds(
+            after_late_retry
+                .pending_group_sender_key_repair_last_requested_at_secs
+                .saturating_add(31),
+        ))
+        .expect("second early retry");
+    assert!(
+        second_early.group_result.effects.is_empty(),
+        "repair request should back off after the second request"
+    );
+
+    let second_late = devices[bob]
+        .engine
+        .retry_pending_protocol(NdrUnixSeconds(
+            after_late_retry
+                .pending_group_sender_key_repair_last_requested_at_secs
+                .saturating_add(121),
+        ))
+        .expect("second late retry");
+    assert!(
+        !second_late.group_result.effects.is_empty(),
+        "repair request should re-emit after the backoff delay"
+    );
 }
 
 #[test]

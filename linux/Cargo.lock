@@ -2125,7 +2125,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet"
-version = "0.0.144"
+version = "0.0.145"
 dependencies = [
  "base64",
  "hex",
@@ -2140,7 +2140,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet-nostr"
-version = "0.0.144"
+version = "0.0.145"
 dependencies = [
  "base64",
  "hex",
@@ -2155,7 +2155,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet-pairwise-codec"
-version = "0.0.144"
+version = "0.0.145"
 dependencies = [
  "nostr 0.44.2",
  "serde",
@@ -2165,7 +2165,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet-runtime"
-version = "0.0.144"
+version = "0.0.145"
 dependencies = [
  "base64",
  "crossbeam-channel",

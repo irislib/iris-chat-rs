@@ -289,11 +289,7 @@ impl AppCore {
                 );
                 self.handle_queued_protocol_targets("group.picture", &result.queued_targets);
                 if let Some(snapshot) = result.snapshot {
-                    self.apply_local_group_snapshot(
-                        previous.as_ref(),
-                        snapshot,
-                        "group.picture",
-                    );
+                    self.apply_local_group_snapshot(previous.as_ref(), snapshot, "group.picture");
                 }
             }
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
@@ -324,11 +320,7 @@ impl AppCore {
                 );
                 self.handle_queued_protocol_targets("group.about", &result.queued_targets);
                 if let Some(snapshot) = result.snapshot {
-                    self.apply_local_group_snapshot(
-                        previous.as_ref(),
-                        snapshot,
-                        "group.about",
-                    );
+                    self.apply_local_group_snapshot(previous.as_ref(), snapshot, "group.about");
                 }
             }
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
@@ -712,4 +704,3 @@ impl AppCore {
         "Group admins changed".to_string()
     }
 }
-

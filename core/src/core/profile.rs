@@ -278,11 +278,9 @@ impl AppCore {
             .iter()
             .map(|tag| tag.as_slice().to_vec())
             .collect();
-        let Some(mut record) = parse_owner_profile_record(
-            &event.content,
-            extra_tags,
-            event.created_at.as_secs(),
-        ) else {
+        let Some(mut record) =
+            parse_owner_profile_record(&event.content, extra_tags, event.created_at.as_secs())
+        else {
             return false;
         };
 

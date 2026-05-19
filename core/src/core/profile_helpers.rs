@@ -119,7 +119,11 @@ pub(super) fn build_profile_metadata_json(profile: &OwnerProfileRecord) -> Strin
     let display_name = profile.display_name.clone().or_else(|| Some(name.clone()));
 
     let mut object = parsed_extra_metadata_object(&profile.extra_metadata_json);
-    set_or_remove_string(&mut object, "name", (!name.is_empty()).then(|| name.clone()));
+    set_or_remove_string(
+        &mut object,
+        "name",
+        (!name.is_empty()).then(|| name.clone()),
+    );
     set_or_remove_string(&mut object, "display_name", display_name);
     set_or_remove_string(&mut object, "picture", profile.picture.clone());
     set_or_remove_string(&mut object, "about", profile.about.clone());

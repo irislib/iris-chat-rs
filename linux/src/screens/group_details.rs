@@ -206,7 +206,13 @@ fn settings_card(
     } else {
         about_row.set_editable(false);
     }
-    if details.can_manage || details.about.as_deref().map(|v| !v.trim().is_empty()).unwrap_or(false) {
+    if details.can_manage
+        || details
+            .about
+            .as_deref()
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+    {
         group.add(&about_row);
     }
 

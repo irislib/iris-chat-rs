@@ -679,8 +679,8 @@ impl ProtocolEngine {
         if let Some(pending) = self.pending_group_sender_key_repairs.get_mut(index) {
             pending.last_requested_at_secs = now.get();
             pending.request_count = pending.request_count.saturating_add(1);
-            pending.next_retry_at_secs =
-                now.get().saturating_add(SENDER_KEY_REPAIR_RETRY_DELAY_SECS);
+            let retry_delay_secs = sender_key_repair_retry_delay_secs(pending.request_count);
+            pending.next_retry_at_secs = now.get().saturating_add(retry_delay_secs);
         }
         self.invalidate_known_message_author_cache();
         Ok(output.effects)
