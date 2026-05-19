@@ -1,3 +1,10 @@
+# Iris Chat 2026.5.18.5
+
+- Linked devices now learn remote-created groups after restart.
+- Group messages recover more reliably after app restore.
+- Android release checks now rebuild Rust path dependencies when shared protocol code changes.
+- Android storage avoids a native SQLite crash seen during relay publishing.
+
 # Iris Chat 2026.5.18.4
 
 - Nearby profiles now open as profiles instead of being mistaken for chats.
