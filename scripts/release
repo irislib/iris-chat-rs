@@ -560,6 +560,9 @@ mark_note_asset_used() {
 note_asset_was_used() {
   local name="$1"
   local used
+  if [[ "${#USED_NOTE_ASSETS[@]}" -eq 0 ]]; then
+    return 1
+  fi
   for used in "${USED_NOTE_ASSETS[@]}"; do
     [[ "$used" == "$name" ]] && return 0
   done
