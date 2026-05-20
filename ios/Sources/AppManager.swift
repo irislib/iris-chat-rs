@@ -2961,7 +2961,7 @@ final class AppManager: ObservableObject {
         // scenario the bug report describes. Without this we'd be
         // racing with the message-arrival auto-scroll on first paint,
         // which is a different (and easier) code path.
-        dispatchToRust(.updateScreenStack(stack: []))
+        dispatch(.updateScreenStack(stack: []))
         pendingTestSeed = nil
     }
 
