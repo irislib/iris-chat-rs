@@ -4,60 +4,15 @@ impl ProtocolEngine {
         owner_pubkey: PublicKey,
         device_keys: &Keys,
     ) -> anyhow::Result<Self> {
-        let device_secret = device_keys.secret_key().to_secret_bytes();
         let local_owner = ndr_owner(owner_pubkey);
-        let local_device = ndr_device(device_keys.public_key());
-
-        let mut engine = match storage.get(PROTOCOL_ENGINE_STATE_KEY)? {
-            Some(raw) => match serde_json::from_str::<ProtocolEnginePersistedState>(&raw) {
-                Ok(state) if state.version == PROTOCOL_ENGINE_STATE_VERSION => {
-                    let session_manager =
-                        SessionManager::from_snapshot(state.session_manager, device_secret)?;
-                    let group_manager = NostrGroupManager::from_snapshot(state.group_manager)?;
-                    Self {
-                        owner_pubkey,
-                        local_owner,
-                        local_device,
-                        storage,
-                        session_manager,
-                        group_manager,
-                        latest_app_keys_created_at: state.latest_app_keys_created_at,
-                        pending_outbound: state.pending_outbound,
-                        pending_inbound: state.pending_inbound,
-                        pending_group_fanouts: state.pending_group_fanouts,
-                        pending_group_pairwise_payloads: state.pending_group_pairwise_payloads,
-                        pending_group_sender_key_messages: state.pending_group_sender_key_messages,
-                        pending_group_sender_key_repairs: state.pending_group_sender_key_repairs,
-                        pending_decrypted_deliveries: state.pending_decrypted_deliveries,
-                        known_message_author_cache: std::cell::RefCell::new(None),
-                        #[cfg(test)]
-                        known_message_author_cache_build_count: std::cell::Cell::new(0),
-                        subscription_generation: state.subscription_generation,
-                        last_backfill_attempt_secs: state.last_backfill_attempt_secs,
-                        batch_depth: std::cell::Cell::new(0),
-                        batch_persist_dirty: std::cell::Cell::new(false),
-                    }
-                }
-                _ => Self::from_seed(
-                    storage,
-                    owner_pubkey,
-                    local_owner,
-                    local_device,
-                    device_secret,
-                    SessionManager::new(local_owner, device_secret).snapshot(),
-                    NostrGroupManager::new(local_owner).snapshot(),
-                )?,
-            },
-            None => Self::from_seed(
-                storage,
-                owner_pubkey,
-                local_owner,
-                local_device,
-                device_secret,
-                SessionManager::new(local_owner, device_secret).snapshot(),
-                NostrGroupManager::new(local_owner).snapshot(),
-            )?,
-        };
+        let device_secret = device_keys.secret_key().to_secret_bytes();
+        let mut engine = Self::load_or_seed(
+            storage,
+            owner_pubkey,
+            device_keys,
+            SessionManager::new(local_owner, device_secret).snapshot(),
+            NostrGroupManager::new(local_owner).snapshot(),
+        )?;
 
         let local_invite = if let Some(invite) = engine.session_manager.snapshot().local_invite {
             let invite = normalize_local_invite_owner(invite, owner_pubkey);
@@ -74,10 +29,7 @@ impl ProtocolEngine {
             engine.session_manager.replace_local_invite(invite.clone());
             invite
         };
-        engine.ensure_local_roster(local_invite.created_at);
-        engine.hydrate_pending_inbound_metadata();
-        engine.prune_untracked_pending_inbound();
-        engine.persist()?;
+        engine.finish_local_device_startup(local_invite.created_at)?;
         Ok(engine)
     }
 
@@ -90,71 +42,97 @@ impl ProtocolEngine {
         seed_session_manager: SessionManagerSnapshot,
         seed_group_manager: GroupManagerSnapshot,
     ) -> anyhow::Result<Self> {
-        let device_secret = device_keys.secret_key().to_secret_bytes();
-        let local_owner = ndr_owner(owner_pubkey);
-        let local_device = ndr_device(device_keys.public_key());
-
-        let mut engine = match storage.get(PROTOCOL_ENGINE_STATE_KEY)? {
-            Some(raw) => match serde_json::from_str::<ProtocolEnginePersistedState>(&raw) {
-                Ok(state) if state.version == PROTOCOL_ENGINE_STATE_VERSION => {
-                    let session_manager =
-                        SessionManager::from_snapshot(state.session_manager, device_secret)?;
-                    let group_manager = NostrGroupManager::from_snapshot(state.group_manager)?;
-                    Self {
-                        owner_pubkey,
-                        local_owner,
-                        local_device,
-                        storage,
-                        session_manager,
-                        group_manager,
-                        latest_app_keys_created_at: state.latest_app_keys_created_at,
-                        pending_outbound: state.pending_outbound,
-                        pending_inbound: state.pending_inbound,
-                        pending_group_fanouts: state.pending_group_fanouts,
-                        pending_group_pairwise_payloads: state.pending_group_pairwise_payloads,
-                        pending_group_sender_key_messages: state.pending_group_sender_key_messages,
-                        pending_group_sender_key_repairs: state.pending_group_sender_key_repairs,
-                        pending_decrypted_deliveries: state.pending_decrypted_deliveries,
-                        known_message_author_cache: std::cell::RefCell::new(None),
-                        #[cfg(test)]
-                        known_message_author_cache_build_count: std::cell::Cell::new(0),
-                        subscription_generation: state.subscription_generation,
-                        last_backfill_attempt_secs: state.last_backfill_attempt_secs,
-                        batch_depth: std::cell::Cell::new(0),
-                        batch_persist_dirty: std::cell::Cell::new(false),
-                    }
-                }
-                _ => Self::from_seed(
-                    storage,
-                    owner_pubkey,
-                    local_owner,
-                    local_device,
-                    device_secret,
-                    seed_session_manager,
-                    seed_group_manager,
-                )?,
-            },
-            None => Self::from_seed(
-                storage,
-                owner_pubkey,
-                local_owner,
-                local_device,
-                device_secret,
-                seed_session_manager,
-                seed_group_manager,
-            )?,
-        };
+        let mut engine = Self::load_or_seed(
+            storage,
+            owner_pubkey,
+            device_keys,
+            seed_session_manager,
+            seed_group_manager,
+        )?;
 
         if engine.session_manager.snapshot().local_invite.is_none() {
             engine
                 .session_manager
                 .replace_local_invite(local_invite.clone());
         }
-        engine.ensure_local_roster(local_invite.created_at);
-        engine.hydrate_pending_inbound_metadata();
-        engine.prune_untracked_pending_inbound();
-        engine.persist()?;
+        engine.finish_local_device_startup(local_invite.created_at)?;
         Ok(engine)
+    }
+
+    fn load_or_seed(
+        storage: Arc<dyn StorageAdapter>,
+        owner_pubkey: PublicKey,
+        device_keys: &Keys,
+        seed_session_manager: SessionManagerSnapshot,
+        seed_group_manager: GroupManagerSnapshot,
+    ) -> anyhow::Result<Self> {
+        let device_secret = device_keys.secret_key().to_secret_bytes();
+        let local_owner = ndr_owner(owner_pubkey);
+        let local_device = ndr_device(device_keys.public_key());
+
+        if let Some(engine) = Self::load_persisted_state(
+            Arc::clone(&storage),
+            owner_pubkey,
+            local_owner,
+            local_device,
+            device_secret,
+        )? {
+            return Ok(engine);
+        }
+
+        Self::from_seed(
+            storage,
+            owner_pubkey,
+            local_owner,
+            local_device,
+            device_secret,
+            seed_session_manager,
+            seed_group_manager,
+        )
+    }
+
+    fn load_persisted_state(
+        storage: Arc<dyn StorageAdapter>,
+        owner_pubkey: PublicKey,
+        local_owner: NdrOwnerPubkey,
+        local_device: NdrDevicePubkey,
+        device_secret: [u8; 32],
+    ) -> anyhow::Result<Option<Self>> {
+        let Some(raw) = storage.get(PROTOCOL_ENGINE_STATE_KEY)? else {
+            return Ok(None);
+        };
+        let Ok(state) = serde_json::from_str::<ProtocolEnginePersistedState>(&raw) else {
+            return Ok(None);
+        };
+        if state.version != PROTOCOL_ENGINE_STATE_VERSION {
+            return Ok(None);
+        }
+
+        let session_manager = SessionManager::from_snapshot(state.session_manager, device_secret)?;
+        let group_manager = NostrGroupManager::from_snapshot(state.group_manager)?;
+        Ok(Some(Self {
+            owner_pubkey,
+            local_owner,
+            local_device,
+            storage,
+            session_manager,
+            group_manager,
+            latest_app_keys_created_at: state.latest_app_keys_created_at,
+            pending_outbound: state.pending_outbound,
+            pending_inbound: state.pending_inbound,
+            pending_group_fanouts: state.pending_group_fanouts,
+            pending_group_pairwise_payloads: state.pending_group_pairwise_payloads,
+            pending_group_sender_key_messages: state.pending_group_sender_key_messages,
+            pending_group_sender_key_repairs: state.pending_group_sender_key_repairs,
+            pending_decrypted_deliveries: state.pending_decrypted_deliveries,
+            known_message_author_cache: std::cell::RefCell::new(None),
+            #[cfg(test)]
+            known_message_author_cache_build_count: std::cell::Cell::new(0),
+            subscription_generation: state.subscription_generation,
+            last_backfill_attempt_secs: state.last_backfill_attempt_secs,
+            batch_depth: std::cell::Cell::new(0),
+            batch_persist_dirty: std::cell::Cell::new(false),
+        }))
     }
 
     fn from_seed(
@@ -193,6 +171,13 @@ impl ProtocolEngine {
             batch_depth: std::cell::Cell::new(0),
             batch_persist_dirty: std::cell::Cell::new(false),
         })
+    }
+
+    fn finish_local_device_startup(&mut self, local_invite_created_at: NdrUnixSeconds) -> anyhow::Result<()> {
+        self.ensure_local_roster(local_invite_created_at);
+        self.hydrate_pending_inbound_metadata();
+        self.prune_untracked_pending_inbound();
+        self.persist()
     }
 
     fn hydrate_pending_inbound_metadata(&mut self) {
