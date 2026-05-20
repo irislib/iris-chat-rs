@@ -1,3 +1,10 @@
+# Iris Chat 2026.5.20.2
+
+- Chats now fetch missing profile details when needed, so names and photos appear more reliably.
+- Desktop notifications now work more consistently after switching away from Iris.
+- Settings no longer show secret device-key copy/export actions.
+- Chat-list profile avatars feel cleaner when tapped.
+
 # Iris Chat 2026.5.20.1
 
 - Group messages recover more reliably after app restarts and missed key updates.

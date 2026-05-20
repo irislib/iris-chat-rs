@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.29
+
+- Fetch missing profile metadata on demand so newly discovered chats can fill in names, photos, and profile details without a manual search.
+- Make desktop notification decisions come from shared core logic and keep macOS/Linux notifications firing after the app is backgrounded.
+- Remove device-key copy/export surfaces from native settings and profile screens.
+- Harden sender-key repair handling by returning recoverable errors instead of panicking on unexpected pending-repair states.
+
 ## 0.1.28
 
 - Update to `nostr-double-ratchet` 0.0.146 with sender-key repair hardening, authenticated repair requests, repair snapshots, and shared retry helpers.
