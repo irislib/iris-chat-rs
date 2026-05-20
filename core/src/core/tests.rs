@@ -6,4 +6,5 @@ include!("tests/protocol_runtime.rs");
 include!("tests/protocol_filters_push.rs");
 include!("tests/app_keys_invites_requests.rs");
 include!("tests/direct_messages_typing.rs");
+include!("tests/groups_sender_key.rs");
 include!("tests/groups_persistence_helpers.rs");
