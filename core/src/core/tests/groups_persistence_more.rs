@@ -544,7 +544,7 @@ fn test_protocol_engine_with_storage(
         SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();
     session_manager.local_invite = Some(local_invite);
     let group_manager = NostrGroupManager::new(local_owner).snapshot();
-    ProtocolEngine::seed_storage_if_missing_for_test(storage.as_ref(), session_manager, group_manager)
+    seed_protocol_storage_if_missing_for_test(storage.as_ref(), session_manager, group_manager)
         .expect("seed protocol state");
     ProtocolEngine::load_or_create_for_local_device(
         storage,
@@ -695,7 +695,7 @@ fn install_test_protocol_engine(
     let seed_group_manager = seed_group_manager.unwrap_or_else(|| {
         NostrGroupManager::new(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes())).snapshot()
     });
-    ProtocolEngine::seed_storage_if_missing_for_test(
+    seed_protocol_storage_if_missing_for_test(
         storage.as_ref(),
         seed_session_manager,
         seed_group_manager,

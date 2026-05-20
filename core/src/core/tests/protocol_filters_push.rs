@@ -533,7 +533,7 @@ fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys
     };
     let storage =
         Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
-    ProtocolEngine::seed_storage_for_test(
+    seed_protocol_storage_for_test(
         storage.as_ref(),
         seed_session_manager,
         NostrGroupManager::new(local_owner).snapshot(),
@@ -2810,7 +2810,7 @@ fn core_with_divergent_login_and_protocol_invites_with_updates(
         SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();
     seed_session_manager.local_invite = Some(protocol_invite.clone());
     let seed_group_manager = NostrGroupManager::new(local_owner).snapshot();
-    ProtocolEngine::seed_storage_for_test(
+    seed_protocol_storage_for_test(
         storage.as_ref(),
         seed_session_manager,
         seed_group_manager,

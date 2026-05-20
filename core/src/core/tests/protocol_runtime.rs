@@ -252,7 +252,7 @@ fn protocol_engine_load_or_create_prefers_persisted_protocol_invite() {
         local_invite: Some(protocol_invite.clone()),
         users: Vec::new(),
     };
-    ProtocolEngine::seed_storage_for_test(
+    seed_protocol_storage_for_test(
         storage.as_ref(),
         seed_session_manager,
         NostrGroupManager::new(local_owner).snapshot(),
@@ -2434,4 +2434,3 @@ fn appcore_invite_event_wakes_device_queued_direct_send_before_retry_delay() {
         "remote peer fanout should be fully drained"
     );
 }
-
