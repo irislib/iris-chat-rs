@@ -577,8 +577,11 @@ impl ProtocolEngine {
             }
             GroupSenderKeyHandleResult::PendingDistribution { .. }
             | GroupSenderKeyHandleResult::PendingRevision { .. } => {
-                let request = repair_request
-                    .expect("pending sender-key result should produce a repair request");
+                let Some(request) = repair_request else {
+                    return Err(anyhow::anyhow!(
+                        "pending sender-key result did not produce a repair request"
+                    ));
+                };
                 let effects = self.sender_key_repair_request_effects(request, now)?;
                 Ok(ProtocolGroupIncomingResult {
                     consumed: true,
@@ -635,7 +638,11 @@ impl ProtocolEngine {
                 });
             self.pending_group_sender_key_repairs.len() - 1
         };
-        if self.pending_group_sender_key_repairs[index].next_retry_at_secs > now.get() {
+        if self
+            .pending_group_sender_key_repairs
+            .get(index)
+            .is_some_and(|pending| pending.next_retry_at_secs > now.get())
+        {
             return Ok(Vec::new());
         }
 
