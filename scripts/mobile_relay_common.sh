@@ -20,6 +20,18 @@ local_android_loopback_relay_url() {
   printf 'ws://127.0.0.1:%s' "$(local_relay_port)"
 }
 
+android_debug_app_package() {
+  printf '%s' "${ANDROID_APP_PACKAGE:-${ANDROID_PACKAGE_NAME:-to.iris.chat.debug}}"
+}
+
+android_debug_test_package() {
+  printf '%s' "${ANDROID_TEST_PACKAGE:-${ANDROID_TEST_PACKAGE_NAME:-to.iris.chat.test}}"
+}
+
+android_debug_test_runner() {
+  printf '%s/androidx.test.runner.AndroidJUnitRunner' "$(android_debug_test_package)"
+}
+
 local_ios_relay_url() {
   printf 'ws://127.0.0.1:%s' "$(local_relay_port)"
 }

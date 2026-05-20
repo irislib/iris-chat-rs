@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANDROID_DIR="${ROOT_DIR}/android"
 ANDROID_TEST_AVD="${IRIS_ANDROID_QA_AVD:-Medium_Phone_API_36.1}"
 PACKAGE_NAME="to.iris.chat.debug"
-TEST_PACKAGE_NAME="to.iris.chat.debug.test"
+TEST_PACKAGE_NAME="${ANDROID_TEST_PACKAGE_NAME:-to.iris.chat.test}"
 CONTRACT_CLASSES="to.iris.chat.core.AppManagerContractTest"
 SMOKE_CLASSES="to.iris.chat.PikaLikeUiTest,to.iris.chat.account.AndroidKeystoreSecretStoreTest"
 
