@@ -50,6 +50,17 @@ extension ButtonStyle where Self == IrisPlainButtonStyle {
     static var irisPlain: IrisPlainButtonStyle { IrisPlainButtonStyle() }
 }
 
+struct IrisUnpressedButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .irisHoverPointer()
+    }
+}
+
+extension ButtonStyle where Self == IrisUnpressedButtonStyle {
+    static var irisUnpressed: IrisUnpressedButtonStyle { IrisUnpressedButtonStyle() }
+}
+
 private struct IrisControlTintModifier: ViewModifier {
     @Environment(\.irisPalette) private var palette
 

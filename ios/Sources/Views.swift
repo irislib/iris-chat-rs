@@ -569,7 +569,7 @@ struct RootView: View {
                     loadedImageIdentifier: "chatListProfileAvatarImage"
                 )
             }
-            .buttonStyle(.irisPlain)
+            .buttonStyle(.irisUnpressed)
             .accessibilityIdentifier("chatListProfileButton")
         )
     }
@@ -1952,13 +1952,13 @@ private struct DesktopChatSidebar: View {
                         IrisAvatar(
                             label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
                             size: 42,
-                            emphasize: true,
+                            emphasize: false,
                             pictureUrl: account.pictureUrl,
                             preferences: manager.state.preferences,
                             manager: manager
                         )
                     }
-                    .buttonStyle(.irisPlain)
+                    .buttonStyle(.irisUnpressed)
                     .accessibilityIdentifier("chatListProfileButton")
                     if hasHttpPicture(account.pictureUrl) || hasHashtreePicture(account.pictureUrl) {
                         Color.clear
