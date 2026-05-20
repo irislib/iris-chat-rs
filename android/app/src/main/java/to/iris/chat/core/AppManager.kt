@@ -227,10 +227,14 @@ private fun activeNotificationChatIds(
     router: Router,
 ): Set<String> =
     buildSet {
-        val activeScreen = router.screenStack.lastOrNull() ?: router.defaultScreen
-        if (activeScreen is Screen.Chat) {
-            normalizedNotificationId(activeScreen.chatId)?.let(::add)
-        }
+        // Single source of truth — the Rust core knows what "open chat"
+        // means for the router stack. Keep the alternate currentChat
+        // hints below to bridge the brief moment after we navigated but
+        // before Rust has emitted the new state.
+        to.iris.chat.rust
+            .routerOpenChatId(router)
+            ?.let(::normalizedNotificationId)
+            ?.let(::add)
         normalizedNotificationId(currentChat?.chatId.orEmpty())?.let(::add)
         currentChat?.groupId
             ?.let(::normalizedNotificationId)
@@ -1194,9 +1198,9 @@ class AppManager(
             loadPersistedBundle()?.ownerNsec
         }
 
-    suspend fun exportDeviceNsec(): String? =
+    suspend fun hasPersistedDeviceSecret(): Boolean =
         withContext(ioDispatcher) {
-            loadPersistedBundle()?.deviceNsec
+            !loadPersistedBundle()?.deviceNsec.isNullOrBlank()
         }
 
     suspend fun exportSupportBundleJson(): String =

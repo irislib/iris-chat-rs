@@ -173,12 +173,10 @@ private func proxiedImageURL(
 
 private enum SecretExportKind: Identifiable {
     case owner
-    case device
 
     var id: String {
         switch self {
         case .owner: return "owner"
-        case .device: return "device"
         }
     }
 }
@@ -7243,17 +7241,13 @@ struct SettingsScreen: View {
         .irisOnChange(of: focusedSection) { _ in
             applyFocusedSection()
         }
-        .alert(item: $pendingSecretExport) { exportKind in
-            let isDeviceExport = exportKind == .device
-            return Alert(
-                title: Text(isDeviceExport ? "Export This Device's Key" : "Export Secret Key"),
-                message: Text(isDeviceExport
-                    ? "This key only unlocks this device. Copy it now?"
-                    : "Your secret key gives full access to your profile. Never share it with anyone. Store it securely."),
+        .alert(item: $pendingSecretExport) { _ in
+            Alert(
+                title: Text("Export Secret Key"),
+                message: Text("Your secret key gives full access to your profile. Never share it with anyone. Store it securely."),
                 primaryButton: .cancel(Text("Cancel")),
-                secondaryButton: .default(Text(isDeviceExport ? "Copy Key" : "Copy")) {
-                    let secret = isDeviceExport ? manager.exportDeviceNsec() : manager.exportOwnerNsec()
-                    guard let secret, !secret.isEmpty else {
+                secondaryButton: .default(Text("Copy")) {
+                    guard let secret = manager.exportOwnerNsec(), !secret.isEmpty else {
                         manager.showSecretExportUnavailable()
                         return
                     }
@@ -7544,14 +7538,6 @@ struct SettingsScreen: View {
                     .buttonStyle(IrisSecondaryButtonStyle())
                     .accessibilityIdentifier("myProfileExportOwnerKeyButton")
                 }
-
-                Button {
-                    pendingSecretExport = .device
-                } label: {
-                    Label("Export this device's key", systemImage: "key.fill")
-                }
-                .buttonStyle(IrisSecondaryButtonStyle())
-                .accessibilityIdentifier("myProfileExportDeviceKeyButton")
             }
 
         case .updates:

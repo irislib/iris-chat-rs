@@ -355,13 +355,6 @@ public partial class SettingsView : UserControl
         App.CurrentManager.CopyToClipboard(nsec!);
     }
 
-    private void OnExportDevice(object sender, RoutedEventArgs e)
-    {
-        var nsec = App.CurrentManager.ExportDeviceNsec();
-        if (string.IsNullOrEmpty(nsec)) { App.CurrentManager.ShowToast("Key unavailable"); return; }
-        App.CurrentManager.CopyToClipboard(nsec!);
-    }
-
     private void OnExportSupport(object sender, RoutedEventArgs e)
     {
         var path = PlatformFilePicker.SaveFile(

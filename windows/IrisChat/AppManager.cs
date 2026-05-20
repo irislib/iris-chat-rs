@@ -742,7 +742,6 @@ public sealed class AppManager : INotifyPropertyChanged
     public string RelaySetIdText() => Native.RelaySetId();
     public bool TrustedTestBuildEnabled() => Native.IsTrustedTestBuild();
     public string? ExportOwnerNsec() => _secretStore.Load()?.OwnerNsec;
-    public string? ExportDeviceNsec() => _secretStore.Load()?.DeviceNsec;
 
     private static TimeSpan LoadDesktopUpdatePollInterval()
     {
@@ -1184,29 +1183,21 @@ public sealed class AppManager : INotifyPropertyChanged
     private void PostDesktopNotifications(AppState old, AppState next)
     {
         if (old.account == null) return;
-        if (!next.preferences.desktopNotificationsEnabled) return;
 
-        // Suppress while the user is looking at our window. iOS/macOS get this
-        // for free from UNUserNotificationCenter; on Windows we have to ask
-        // WPF whether our main window is currently the foreground window.
         var mainWindow = Application.Current?.MainWindow;
-        if (mainWindow != null && mainWindow.IsActive) return;
+        var appForeground = mainWindow?.IsActive ?? false;
+        var openChatId = Native.RouterOpenChatId(next.router);
 
-        var oldUnread = (old.chatList ?? Array.Empty<ChatThreadSnapshot>())
-            .ToDictionary(c => c.chatId, c => c.unreadCount);
-        var currentChatId = next.currentChat?.chatId;
-
-        foreach (var chat in next.chatList ?? Array.Empty<ChatThreadSnapshot>())
+        var candidates = Native.DecidePendingNotifications(
+            previousChats: old.chatList ?? new List<ChatThreadSnapshot>(),
+            nextChats: next.chatList ?? new List<ChatThreadSnapshot>(),
+            preferences: next.preferences,
+            appForeground: appForeground,
+            openChatId: openChatId
+        );
+        foreach (var candidate in candidates)
         {
-            if (chat.isMuted) continue;
-            if (chat.lastMessageIsOutgoing == true) continue;
-            if (chat.chatId == currentChatId) continue;
-            oldUnread.TryGetValue(chat.chatId, out var prevUnread);
-            if (chat.unreadCount <= prevUnread) continue;
-
-            var preview = chat.lastMessagePreview?.Trim();
-            var body = string.IsNullOrEmpty(preview) ? "New message" : preview!;
-            try { _notifier.Post(chat.displayName, body); } catch { }
+            try { _notifier.Post(candidate.title, candidate.body); } catch { }
         }
     }
 

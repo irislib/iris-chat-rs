@@ -103,7 +103,6 @@ private fun irisChatProfileUrl(npub: String): String = "https://chat.iris.to/#/$
 
 private enum class SecretExportKind {
     Owner,
-    Device,
 }
 
 private enum class SettingsPage(
@@ -666,12 +665,6 @@ fun MyProfileSheet(
                                         modifier = Modifier.testTag("myProfileExportOwnerKeyButton"),
                                     )
                                 }
-                                IrisMenuRow(
-                                    title = "Export this device's key",
-                                    onClick = { pendingSecretExport = SecretExportKind.Device },
-                                    icon = IrisIcons.Key,
-                                    modifier = Modifier.testTag("myProfileExportDeviceKeyButton"),
-                                )
                             }
                         }
 
@@ -906,20 +899,13 @@ fun MyProfileSheet(
         )
     }
 
-    pendingSecretExport?.let { exportKind ->
-        val isDeviceExport = exportKind == SecretExportKind.Device
+    pendingSecretExport?.let { _ ->
         AlertDialog(
             onDismissRequest = { pendingSecretExport = null },
-            title = {
-                Text(if (isDeviceExport) "Export This Device's Key" else "Export Secret Key")
-            },
+            title = { Text("Export Secret Key") },
             text = {
                 Text(
-                    if (isDeviceExport) {
-                        "This key only unlocks this device. Copy it now?"
-                    } else {
-                        "Your secret key gives full access to your profile. Never share it with anyone. Store it securely."
-                    },
+                    "Your secret key gives full access to your profile. Never share it with anyone. Store it securely.",
                 )
             },
             dismissButton = {
@@ -939,12 +925,7 @@ fun MyProfileSheet(
                         haptics.confirm()
                         pendingSecretExport = null
                         coroutineScope.launch {
-                            val secret =
-                                if (isDeviceExport) {
-                                    appManager.exportDeviceNsec()
-                                } else {
-                                    appManager.exportOwnerNsec()
-                                }
+                            val secret = appManager.exportOwnerNsec()
                             if (secret.isNullOrBlank()) {
                                 Toast.makeText(context, "Key unavailable", Toast.LENGTH_SHORT).show()
                             } else {
@@ -953,16 +934,10 @@ fun MyProfileSheet(
                             }
                         }
                     },
-                    modifier = Modifier.testTag(
-                        if (isDeviceExport) {
-                            "myProfileConfirmExportDeviceKeyButton"
-                        } else {
-                            "myProfileConfirmExportOwnerKeyButton"
-                        },
-                    ),
+                    modifier = Modifier.testTag("myProfileConfirmExportOwnerKeyButton"),
                     colors = settingsTextButtonColors(),
                 ) {
-                    Text(if (isDeviceExport) "Copy Key" else "Copy")
+                    Text("Copy")
                 }
             },
         )

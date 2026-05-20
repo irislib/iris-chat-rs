@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import UserNotifications
 
 @MainActor
 final class IrisChatAppDelegate: NSObject, NSApplicationDelegate {
@@ -8,6 +9,7 @@ final class IrisChatAppDelegate: NSObject, NSApplicationDelegate {
     private weak var manager: AppManager?
     private var pendingUrls: [URL] = []
     private var startsHidden = false
+    private let notificationDelegate = MacUserNotificationDelegate()
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         singleInstance.onOpen = { [weak self] urls in
@@ -22,6 +24,18 @@ final class IrisChatAppDelegate: NSObject, NSApplicationDelegate {
             name: NSWindow.didBecomeKeyNotification,
             object: nil
         )
+        // Owning the delegate ensures banners display while the app is the
+        // frontmost process. Without it macOS silently drops foreground
+        // notifications and the user only sees them in Notification Center.
+        UNUserNotificationCenter.current().delegate = notificationDelegate
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        manager?.appForegrounded()
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        manager?.appBackgrounded()
     }
 
     // Redirect the yellow minimize and red close buttons to NSApp.hide so the
@@ -111,6 +125,31 @@ final class IrisChatAppDelegate: NSObject, NSApplicationDelegate {
 
     private static var launchArgumentsContainDeepLink: Bool {
         CommandLine.arguments.contains { $0.starts(with: "irischat://") }
+    }
+}
+
+final class MacUserNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound, .list])
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+            let window = NSApp.windows.first(where: { $0.title == "Iris Chat" })
+                ?? NSApp.windows.first(where: { $0.canBecomeKey })
+                ?? NSApp.windows.first
+            window?.makeKeyAndOrderFront(nil)
+        }
+        completionHandler()
     }
 }
 

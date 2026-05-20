@@ -1298,6 +1298,42 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
+    func testDesktopNotificationPostedForActiveChatWhenAppBackgrounded() async {
+        let activeRoute = Router(defaultScreen: .chat(chatId: "chat-1"), screenStack: [])
+        let rust = MockRustApp(
+            state: makeLargeFixtureState(
+                rev: 1,
+                router: activeRoute,
+                account: makeAccount(),
+                chatList: makeLargeChatList(replacingFirstWith: makeChatThread(unreadCount: 0))
+            )
+        )
+        let notifications = MockDesktopNotificationPoster()
+        let manager = AppManager(
+            rust: rust,
+            secretStore: InMemorySecretStore(),
+            desktopNotifications: notifications
+        )
+
+        // Simulate the OS reporting that the app moved off-screen, e.g. the
+        // user switched to another desktop app while the chat was open.
+        manager.appBackgrounded()
+
+        rust.emit(.fullState(makeLargeFixtureState(
+            rev: 2,
+            router: activeRoute,
+            account: makeAccount(),
+            chatList: makeLargeChatList(replacingFirstWith: makeChatThread(unreadCount: 1, preview: "after backgrounded"))
+        )))
+
+        let posted = await waitUntil { notifications.posts.count == 1 }
+        XCTAssertTrue(posted)
+        XCTAssertEqual(notifications.posts.first?.title, "Bob")
+        XCTAssertEqual(notifications.posts.first?.body, "after backgrounded")
+        _ = manager
+    }
+
+    @MainActor
     func testDesktopNotificationPreferenceSuppressesNewUnreadMessages() async {
         var preferences = makeLargeFixtureState().preferences
         preferences.desktopNotificationsEnabled = false
@@ -1601,7 +1637,7 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
-    func testAppManagerExportsPersistedOwnerAndDeviceSecrets() async {
+    func testAppManagerExportsPersistedOwnerSecret() async {
         let rust = MockRustApp()
         let store = InMemorySecretStore(
             bundle: StoredAccountBundle(
@@ -1622,32 +1658,6 @@ final class IrisChatTests: XCTestCase {
 
         await Task.yield()
         XCTAssertEqual(manager.exportOwnerNsec(), "nsec1owner")
-        XCTAssertEqual(manager.exportDeviceNsec(), "nsec1device")
-    }
-
-    @MainActor
-    func testAppManagerExportsDeviceSecretForLinkedDeviceBundle() async {
-        let rust = MockRustApp()
-        let store = InMemorySecretStore(
-            bundle: StoredAccountBundle(
-                ownerNsec: nil,
-                ownerPubkeyHex: "owner-hex",
-                deviceNsec: "nsec1device"
-            )
-        )
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let manager = AppManager(
-            rust: rust,
-            secretStore: store,
-            dataDir: tempDir,
-            environment: [:]
-        )
-
-        await Task.yield()
-        XCTAssertNil(manager.exportOwnerNsec())
-        XCTAssertEqual(manager.exportDeviceNsec(), "nsec1device")
     }
 
     @MainActor
