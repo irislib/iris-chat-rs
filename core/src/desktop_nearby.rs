@@ -1324,9 +1324,6 @@ impl NearbyProfileEvent {
 }
 
 fn private_local_ipv4() -> Option<Ipv4Addr> {
-    if let Some(addr) = interface_private_ipv4() {
-        return Some(addr);
-    }
     for target in ["8.8.8.8:80", "1.1.1.1:80"] {
         let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).ok()?;
         if socket.connect(target).is_ok() {
@@ -1338,107 +1335,6 @@ fn private_local_ipv4() -> Option<Ipv4Addr> {
             }
         }
     }
-    None
-}
-
-#[derive(Clone, Copy)]
-struct LocalIpv4Candidate {
-    addr: Ipv4Addr,
-    is_up: bool,
-    is_running: bool,
-    is_multicast: bool,
-    is_loopback: bool,
-    is_point_to_point: bool,
-}
-
-fn best_private_lan_ipv4(candidates: &[LocalIpv4Candidate]) -> Option<Ipv4Addr> {
-    candidates
-        .iter()
-        .copied()
-        .filter(|candidate| {
-            candidate.is_up
-                && candidate.is_running
-                && candidate.is_multicast
-                && !candidate.is_loopback
-                && !candidate.is_point_to_point
-                && is_private_ipv4(candidate.addr)
-        })
-        .min_by_key(|candidate| ipv4_selection_rank(candidate.addr))
-        .map(|candidate| candidate.addr)
-}
-
-fn ipv4_selection_rank(addr: Ipv4Addr) -> u8 {
-    if is_rfc1918_ipv4(addr) {
-        0
-    } else {
-        1
-    }
-}
-
-fn is_rfc1918_ipv4(ip: Ipv4Addr) -> bool {
-    let octets = ip.octets();
-    match octets {
-        [10, _, _, _] => true,
-        [172, second, _, _] if (16..=31).contains(&second) => true,
-        [192, 168, _, _] => true,
-        _ => false,
-    }
-}
-
-#[cfg(unix)]
-fn interface_private_ipv4() -> Option<Ipv4Addr> {
-    let mut ifaddrs = std::ptr::null_mut();
-    // SAFETY: getifaddrs initializes a linked list owned by libc. The guard
-    // below releases it exactly once before this function returns.
-    if unsafe { libc::getifaddrs(&mut ifaddrs) } != 0 {
-        return None;
-    }
-    struct IfAddrsGuard(*mut libc::ifaddrs);
-    impl Drop for IfAddrsGuard {
-        fn drop(&mut self) {
-            // SAFETY: the pointer came from a successful getifaddrs call and
-            // is not used after the guard is dropped.
-            unsafe { libc::freeifaddrs(self.0) };
-        }
-    }
-    let _guard = IfAddrsGuard(ifaddrs);
-
-    let mut candidates = Vec::new();
-    let mut cursor = ifaddrs;
-    while !cursor.is_null() {
-        // SAFETY: cursor walks the valid getifaddrs linked list until null.
-        let entry = unsafe { &*cursor };
-        if !entry.ifa_addr.is_null() {
-            // SAFETY: ifa_addr is non-null and points to a sockaddr supplied
-            // by getifaddrs for the lifetime of the list.
-            let sockaddr = unsafe { &*entry.ifa_addr };
-            if sockaddr.sa_family as i32 == libc::AF_INET {
-                // SAFETY: AF_INET entries have sockaddr_in layout.
-                let sockaddr_in = unsafe { &*(entry.ifa_addr as *const libc::sockaddr_in) };
-                let addr = Ipv4Addr::from(sockaddr_in.sin_addr.s_addr.to_ne_bytes());
-                let flags = entry.ifa_flags as libc::c_uint;
-                candidates.push(LocalIpv4Candidate {
-                    addr,
-                    is_up: has_interface_flag(flags, libc::IFF_UP),
-                    is_running: has_interface_flag(flags, libc::IFF_RUNNING),
-                    is_multicast: has_interface_flag(flags, libc::IFF_MULTICAST),
-                    is_loopback: has_interface_flag(flags, libc::IFF_LOOPBACK),
-                    is_point_to_point: has_interface_flag(flags, libc::IFF_POINTOPOINT),
-                });
-            }
-        }
-        cursor = entry.ifa_next;
-    }
-    best_private_lan_ipv4(&candidates)
-}
-
-#[cfg(unix)]
-fn has_interface_flag(flags: libc::c_uint, flag: libc::c_int) -> bool {
-    flags & flag as libc::c_uint != 0
-}
-
-#[cfg(not(unix))]
-fn interface_private_ipv4() -> Option<Ipv4Addr> {
     None
 }
 
@@ -1832,60 +1728,6 @@ mod tests {
 
     impl DesktopNearbyObserver for NoopDesktopNearbyObserver {
         fn desktop_nearby_changed(&self, _snapshot: DesktopNearbySnapshot) {}
-    }
-
-    #[test]
-    fn private_lan_address_selection_prefers_non_tunnel_interface() {
-        let candidates = vec![
-            LocalIpv4Candidate {
-                addr: Ipv4Addr::new(10, 139, 69, 97),
-                is_up: true,
-                is_running: true,
-                is_multicast: true,
-                is_loopback: false,
-                is_point_to_point: true,
-            },
-            LocalIpv4Candidate {
-                addr: Ipv4Addr::new(192, 168, 100, 4),
-                is_up: true,
-                is_running: true,
-                is_multicast: true,
-                is_loopback: false,
-                is_point_to_point: false,
-            },
-        ];
-
-        assert_eq!(
-            best_private_lan_ipv4(&candidates),
-            Some(Ipv4Addr::new(192, 168, 100, 4))
-        );
-    }
-
-    #[test]
-    fn private_lan_address_selection_uses_link_local_only_as_fallback() {
-        let candidates = vec![
-            LocalIpv4Candidate {
-                addr: Ipv4Addr::new(169, 254, 201, 191),
-                is_up: true,
-                is_running: true,
-                is_multicast: true,
-                is_loopback: false,
-                is_point_to_point: false,
-            },
-            LocalIpv4Candidate {
-                addr: Ipv4Addr::new(192, 168, 100, 4),
-                is_up: true,
-                is_running: true,
-                is_multicast: true,
-                is_loopback: false,
-                is_point_to_point: false,
-            },
-        ];
-
-        assert_eq!(
-            best_private_lan_ipv4(&candidates),
-            Some(Ipv4Addr::new(192, 168, 100, 4))
-        );
     }
 
     #[test]
