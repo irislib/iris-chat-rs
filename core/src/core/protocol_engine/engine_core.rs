@@ -59,6 +59,31 @@ impl ProtocolEngine {
         Ok(engine)
     }
 
+    #[cfg(test)]
+    pub(super) fn seed_storage_for_test(
+        storage: &dyn StorageAdapter,
+        seed_session_manager: SessionManagerSnapshot,
+        seed_group_manager: GroupManagerSnapshot,
+    ) -> anyhow::Result<()> {
+        let state = ProtocolEnginePersistedState {
+            version: PROTOCOL_ENGINE_STATE_VERSION,
+            session_manager: seed_session_manager,
+            group_manager: seed_group_manager,
+            latest_app_keys_created_at: BTreeMap::new(),
+            pending_outbound: Vec::new(),
+            pending_inbound: Vec::new(),
+            pending_group_fanouts: Vec::new(),
+            pending_group_pairwise_payloads: Vec::new(),
+            pending_group_sender_key_messages: Vec::new(),
+            pending_group_sender_key_repairs: Vec::new(),
+            pending_decrypted_deliveries: Vec::new(),
+            subscription_generation: 0,
+            last_backfill_attempt_secs: 0,
+        };
+        storage.put(PROTOCOL_ENGINE_STATE_KEY, serde_json::to_string(&state)?)?;
+        Ok(())
+    }
+
     fn load_or_seed(
         storage: Arc<dyn StorageAdapter>,
         owner_pubkey: PublicKey,

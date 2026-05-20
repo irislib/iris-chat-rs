@@ -252,15 +252,12 @@ fn protocol_engine_load_or_create_prefers_persisted_protocol_invite() {
         local_invite: Some(protocol_invite.clone()),
         users: Vec::new(),
     };
-    let _seeded_engine = ProtocolEngine::load_or_seed_for_test(
-        storage.clone() as Arc<dyn StorageAdapter>,
-        owner.public_key(),
-        &device,
-        protocol_invite.clone(),
+    ProtocolEngine::seed_storage_for_test(
+        storage.as_ref(),
         seed_session_manager,
         NostrGroupManager::new(local_owner).snapshot(),
     )
-    .expect("seeded protocol engine");
+    .expect("seed protocol state");
 
     let mut legacy_invite =
         Invite::create_new(device.public_key(), Some(device_id), None).expect("legacy invite");

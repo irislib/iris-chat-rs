@@ -533,19 +533,16 @@ fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys
     };
     let storage =
         Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
-    let local_invite = Invite::create_new(
-        device.public_key(),
-        Some(device.public_key().to_hex()),
-        None,
+    ProtocolEngine::seed_storage_for_test(
+        storage.as_ref(),
+        seed_session_manager,
+        NostrGroupManager::new(local_owner).snapshot(),
     )
-    .expect("local invite");
-    let engine = ProtocolEngine::load_or_seed_for_test(
+    .expect("seed protocol state");
+    let engine = ProtocolEngine::load_or_create_for_local_device(
         storage,
         owner.public_key(),
         &device,
-        local_invite,
-        seed_session_manager,
-        NostrGroupManager::new(local_owner).snapshot(),
     )
     .expect("protocol engine");
 
@@ -2809,17 +2806,21 @@ fn core_with_divergent_login_and_protocol_invites_with_updates(
     let storage =
         Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     let local_owner = ndr_owner_pubkey(owner.public_key());
-    let seed_session_manager =
+    let mut seed_session_manager =
         SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();
+    seed_session_manager.local_invite = Some(protocol_invite.clone());
     let seed_group_manager = NostrGroupManager::new(local_owner).snapshot();
+    ProtocolEngine::seed_storage_for_test(
+        storage.as_ref(),
+        seed_session_manager,
+        seed_group_manager,
+    )
+    .expect("seed protocol state");
     core.protocol_engine = Some(
-        ProtocolEngine::load_or_seed_for_test(
+        ProtocolEngine::load_or_create_for_local_device(
             storage,
             owner.public_key(),
             device,
-            protocol_invite.clone(),
-            seed_session_manager,
-            seed_group_manager,
         )
         .expect("protocol engine"),
     );
