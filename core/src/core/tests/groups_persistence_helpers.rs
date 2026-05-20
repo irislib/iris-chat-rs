@@ -2638,19 +2638,12 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
             data_dir_str.clone(),
             Arc::new(RwLock::new(AppState::empty())),
         );
-        let invite = Invite::create_new(
-            device.public_key(),
-            Some(device.public_key().to_hex()),
-            None,
-        )
-        .expect("local invite");
         core.logged_in = Some(LoggedInState {
             owner_pubkey: owner.public_key(),
             owner_keys: Some(owner.clone()),
             device_keys: device.clone(),
             client: Client::new(device.clone()),
             relay_urls: Vec::new(),
-            local_invite: invite,
             authorization_state: LocalAuthorizationState::Authorized,
         });
 
@@ -2831,19 +2824,12 @@ fn appcore_clear_persistence_drops_sqlite_state() {
         data_dir_str.clone(),
         Arc::new(RwLock::new(AppState::empty())),
     );
-    let invite = Invite::create_new(
-        device.public_key(),
-        Some(device.public_key().to_hex()),
-        None,
-    )
-    .expect("invite");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
         owner_keys: Some(owner.clone()),
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
     core.next_message_id = 5;
@@ -3416,16 +3402,12 @@ fn logged_in_test_core_with_storage(
             .to_string(),
         Arc::new(RwLock::new(AppState::empty())),
     );
-    let device_id = device.public_key().to_hex();
-    let invite = Invite::create_new(device.public_key(), Some(device_id.clone()), None)
-        .expect("local invite");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
         owner_keys: Some(owner.clone()),
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
     install_test_protocol_engine(&mut core, owner, device, storage, None, None);
@@ -3439,16 +3421,12 @@ fn logged_in_test_core_at_data_dir(owner: &Keys, device: &Keys, data_dir: String
         data_dir,
         Arc::new(RwLock::new(AppState::empty())),
     );
-    let device_id = device.public_key().to_hex();
-    let invite = Invite::create_new(device.public_key(), Some(device_id.clone()), None)
-        .expect("local invite");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
         owner_keys: Some(owner.clone()),
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
     let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
@@ -3504,16 +3482,11 @@ fn test_protocol_engine_with_storage(
     storage: Arc<dyn StorageAdapter>,
 ) -> ProtocolEngine {
     let local_owner = NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes());
-    let local_invite = Invite::create_new(
-        device.public_key(),
-        Some(device.public_key().to_hex()),
-        None,
-    )
-    .expect("local invite");
+    let local_invite = stable_local_invite_for_test(owner, device);
     let session_manager =
         SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();
     let group_manager = NostrGroupManager::new(local_owner).snapshot();
-    ProtocolEngine::load_or_seed(
+    ProtocolEngine::load_or_seed_for_test(
         storage,
         owner.public_key(),
         device,
@@ -3651,12 +3624,7 @@ fn install_test_protocol_engine(
     seed_session_manager: Option<SessionManagerSnapshot>,
     seed_group_manager: Option<GroupManagerSnapshot>,
 ) {
-    let local_invite = core
-        .logged_in
-        .as_ref()
-        .expect("logged in")
-        .local_invite
-        .clone();
+    let local_invite = stable_local_invite_for_test(owner, device);
     let seed_session_manager = seed_session_manager.unwrap_or_else(|| {
         SessionManager::new(
             NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes()),
@@ -3668,7 +3636,7 @@ fn install_test_protocol_engine(
         NostrGroupManager::new(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes())).snapshot()
     });
     core.protocol_engine = Some(
-        ProtocolEngine::load_or_seed(
+        ProtocolEngine::load_or_seed_for_test(
             storage,
             owner.public_key(),
             device,
@@ -3678,6 +3646,18 @@ fn install_test_protocol_engine(
         )
         .expect("protocol engine"),
     );
+}
+
+fn stable_local_invite_for_test(owner: &Keys, device: &Keys) -> Invite {
+    let mut invite = Invite::create_new(
+        device.public_key(),
+        Some(device.public_key().to_hex()),
+        None,
+    )
+    .expect("local invite");
+    invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
+    invite.owner_public_key = Some(owner.public_key());
+    invite
 }
 
 fn stored_message_count(core: &AppCore) -> i64 {

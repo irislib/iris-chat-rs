@@ -164,6 +164,153 @@ fn appcore_direct_message_event_for_test(
 }
 
 #[test]
+fn protocol_engine_load_or_create_creates_owner_bound_local_invite() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let storage =
+        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+
+    let engine =
+        ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), &device)
+            .expect("protocol engine");
+
+    let invite = engine.local_invite_for_test().expect("local invite");
+    assert_eq!(
+        invite.inviter_owner_pubkey,
+        Some(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes()))
+    );
+    assert_eq!(invite.owner_public_key, Some(owner.public_key()));
+    assert_eq!(invite.purpose.as_deref(), None);
+    assert_eq!(invite.max_uses, None);
+
+    let local_owner = NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes());
+    let local_device = NdrDevicePubkey::from_bytes(device.public_key().to_bytes());
+    let snapshot = engine.session_manager_snapshot_for_test();
+    let local_user = snapshot
+        .users
+        .iter()
+        .find(|user| user.owner_pubkey == local_owner)
+        .expect("local user");
+    let roster = local_user.roster.as_ref().expect("local roster");
+    assert_eq!(roster.devices, vec![AuthorizedDevice::new(local_device, invite.created_at)]);
+}
+
+#[test]
+fn protocol_engine_load_or_create_installs_legacy_device_invite() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let storage = Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new());
+    let device_id = device.public_key().to_hex();
+    let storage_key = format!("device-invite/{device_id}");
+
+    let mut legacy_invite =
+        Invite::create_new(device.public_key(), Some(device_id.clone()), None)
+            .expect("legacy invite");
+    legacy_invite.created_at = NdrUnixSeconds(123);
+    storage
+        .put(&storage_key, legacy_invite.serialize().expect("legacy invite json"))
+        .expect("store legacy invite");
+
+    let engine = ProtocolEngine::load_or_create_for_local_device(
+        storage.clone() as Arc<dyn StorageAdapter>,
+        owner.public_key(),
+        &device,
+    )
+    .expect("protocol engine");
+
+    let invite = engine.local_invite_for_test().expect("local invite");
+    assert_eq!(
+        invite.inviter_ephemeral_public_key,
+        legacy_invite.inviter_ephemeral_public_key
+    );
+    assert_eq!(
+        invite.inviter_owner_pubkey,
+        Some(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes()))
+    );
+    assert_eq!(invite.owner_public_key, Some(owner.public_key()));
+    assert_eq!(invite.created_at, NdrUnixSeconds(123));
+}
+
+#[test]
+fn protocol_engine_load_or_create_prefers_persisted_protocol_invite() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let storage = Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new());
+    let device_id = device.public_key().to_hex();
+    let storage_key = format!("device-invite/{device_id}");
+    let local_owner = NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes());
+    let local_device = NdrDevicePubkey::from_bytes(device.public_key().to_bytes());
+
+    let mut protocol_invite =
+        Invite::create_new(device.public_key(), Some(device_id.clone()), None)
+            .expect("protocol invite");
+    protocol_invite.owner_public_key = Some(owner.public_key());
+    protocol_invite.created_at = NdrUnixSeconds(111);
+    let seed_session_manager = SessionManagerSnapshot {
+        local_owner_pubkey: local_owner,
+        local_device_pubkey: local_device,
+        local_invite: Some(protocol_invite.clone()),
+        users: Vec::new(),
+    };
+    let _seeded_engine = ProtocolEngine::load_or_seed_for_test(
+        storage.clone() as Arc<dyn StorageAdapter>,
+        owner.public_key(),
+        &device,
+        protocol_invite.clone(),
+        seed_session_manager,
+        NostrGroupManager::new(local_owner).snapshot(),
+    )
+    .expect("seeded protocol engine");
+
+    let mut legacy_invite =
+        Invite::create_new(device.public_key(), Some(device_id), None).expect("legacy invite");
+    legacy_invite.owner_public_key = Some(owner.public_key());
+    legacy_invite.created_at = NdrUnixSeconds(222);
+    storage
+        .put(&storage_key, legacy_invite.serialize().expect("legacy invite json"))
+        .expect("store legacy invite");
+
+    let engine = ProtocolEngine::load_or_create_for_local_device(
+        storage.clone() as Arc<dyn StorageAdapter>,
+        owner.public_key(),
+        &device,
+    )
+    .expect("protocol engine");
+
+    let invite = engine.local_invite_for_test().expect("local invite");
+    assert_eq!(
+        invite.inviter_ephemeral_public_key,
+        protocol_invite.inviter_ephemeral_public_key
+    );
+    assert_eq!(
+        invite.inviter_owner_pubkey,
+        Some(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes()))
+    );
+    assert_eq!(invite.owner_public_key, Some(owner.public_key()));
+    assert_eq!(invite.created_at, NdrUnixSeconds(111));
+    let stored_legacy = Invite::deserialize(
+        &storage
+            .get(&storage_key)
+            .expect("read legacy invite")
+            .expect("legacy invite json"),
+    )
+    .expect("stored legacy invite");
+    assert_eq!(
+        stored_legacy.inviter_ephemeral_public_key,
+        legacy_invite.inviter_ephemeral_public_key
+    );
+
+    let snapshot = engine.session_manager_snapshot_for_test();
+    let local_user = snapshot
+        .users
+        .iter()
+        .find(|user| user.owner_pubkey == local_owner)
+        .expect("local user");
+    let roster = local_user.roster.as_ref().expect("local roster");
+    assert_eq!(roster.created_at, NdrUnixSeconds(111));
+}
+
+#[test]
 fn restoring_invalid_secret_key_shows_normie_error() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let mut core = AppCore::new(
@@ -796,16 +943,12 @@ fn relay_status_bucket_only_changes_do_not_emit_state() {
         Arc::new(RwLock::new(AppState::empty())),
     );
     core.preferences.nostr_relay_urls = vec!["wss://relay.example".to_string()];
-    let device_id = device.public_key().to_hex();
-    let invite =
-        Invite::create_new(device.public_key(), Some(device_id), None).expect("local invite");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
         owner_keys: Some(owner),
         device_keys: device.clone(),
         client: Client::new(device),
         relay_urls: Vec::new(),
-        local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
 

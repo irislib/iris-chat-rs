@@ -696,19 +696,20 @@ impl AppCore {
             .private_chat_invites
             .values()
             .max_by_key(|invite| invite.created_at)
+            .cloned()
             .or_else(|| {
-                self.logged_in
+                self.protocol_engine
                     .as_ref()
-                    .map(|logged_in| &logged_in.local_invite)
+                    .and_then(ProtocolEngine::local_invite)
             })?;
-        let url = super::invites::chat_invite_url(invite).ok()?;
+        let url = super::invites::chat_invite_url(&invite).ok()?;
         Some(PublicInviteSnapshot { url })
     }
 
     pub(super) fn build_link_device_snapshot(&self) -> Option<LinkDeviceSnapshot> {
         if let Some(pending) = self.pending_linked_device.as_ref() {
             return Some(LinkDeviceSnapshot {
-                url: pending.url.clone(),
+                url: pending.pairing_url.clone(),
                 device_input: pending.device_keys.public_key().to_bech32().ok()?,
             });
         }
@@ -720,7 +721,7 @@ impl AppCore {
             return None;
         }
 
-        let mut invite = logged_in.local_invite.clone();
+        let mut invite = self.protocol_engine.as_ref()?.local_invite()?;
         invite.purpose = Some("link".to_string());
         invite.owner_public_key = Some(logged_in.owner_pubkey);
         Some(LinkDeviceSnapshot {
