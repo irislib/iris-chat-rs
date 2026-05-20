@@ -3483,16 +3483,16 @@ fn test_protocol_engine_with_storage(
 ) -> ProtocolEngine {
     let local_owner = NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes());
     let local_invite = stable_local_invite_for_test(owner, device);
-    let session_manager =
+    let mut session_manager =
         SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();
+    session_manager.local_invite = Some(local_invite);
     let group_manager = NostrGroupManager::new(local_owner).snapshot();
-    ProtocolEngine::load_or_seed_for_test(
+    ProtocolEngine::seed_storage_if_missing_for_test(storage.as_ref(), session_manager, group_manager)
+        .expect("seed protocol state");
+    ProtocolEngine::load_or_create_for_local_device(
         storage,
         owner.public_key(),
         device,
-        local_invite,
-        session_manager,
-        group_manager,
     )
     .expect("protocol engine")
 }
@@ -3625,24 +3625,30 @@ fn install_test_protocol_engine(
     seed_group_manager: Option<GroupManagerSnapshot>,
 ) {
     let local_invite = stable_local_invite_for_test(owner, device);
-    let seed_session_manager = seed_session_manager.unwrap_or_else(|| {
+    let mut seed_session_manager = seed_session_manager.unwrap_or_else(|| {
         SessionManager::new(
             NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes()),
             device.secret_key().to_secret_bytes(),
         )
         .snapshot()
     });
+    if seed_session_manager.local_invite.is_none() {
+        seed_session_manager.local_invite = Some(local_invite);
+    }
     let seed_group_manager = seed_group_manager.unwrap_or_else(|| {
         NostrGroupManager::new(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes())).snapshot()
     });
+    ProtocolEngine::seed_storage_if_missing_for_test(
+        storage.as_ref(),
+        seed_session_manager,
+        seed_group_manager,
+    )
+    .expect("seed protocol state");
     core.protocol_engine = Some(
-        ProtocolEngine::load_or_seed_for_test(
+        ProtocolEngine::load_or_create_for_local_device(
             storage,
             owner.public_key(),
             device,
-            local_invite,
-            seed_session_manager,
-            seed_group_manager,
         )
         .expect("protocol engine"),
     );

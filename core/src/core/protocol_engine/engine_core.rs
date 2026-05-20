@@ -34,32 +34,6 @@ impl ProtocolEngine {
     }
 
     #[cfg(test)]
-    pub(super) fn load_or_seed_for_test(
-        storage: Arc<dyn StorageAdapter>,
-        owner_pubkey: PublicKey,
-        device_keys: &Keys,
-        local_invite: Invite,
-        seed_session_manager: SessionManagerSnapshot,
-        seed_group_manager: GroupManagerSnapshot,
-    ) -> anyhow::Result<Self> {
-        let mut engine = Self::load_or_seed(
-            storage,
-            owner_pubkey,
-            device_keys,
-            seed_session_manager,
-            seed_group_manager,
-        )?;
-
-        if engine.session_manager.snapshot().local_invite.is_none() {
-            engine
-                .session_manager
-                .replace_local_invite(local_invite.clone());
-        }
-        engine.finish_local_device_startup(local_invite.created_at)?;
-        Ok(engine)
-    }
-
-    #[cfg(test)]
     pub(super) fn seed_storage_for_test(
         storage: &dyn StorageAdapter,
         seed_session_manager: SessionManagerSnapshot,
@@ -81,6 +55,18 @@ impl ProtocolEngine {
             last_backfill_attempt_secs: 0,
         };
         storage.put(PROTOCOL_ENGINE_STATE_KEY, serde_json::to_string(&state)?)?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn seed_storage_if_missing_for_test(
+        storage: &dyn StorageAdapter,
+        seed_session_manager: SessionManagerSnapshot,
+        seed_group_manager: GroupManagerSnapshot,
+    ) -> anyhow::Result<()> {
+        if storage.get(PROTOCOL_ENGINE_STATE_KEY)?.is_none() {
+            Self::seed_storage_for_test(storage, seed_session_manager, seed_group_manager)?;
+        }
         Ok(())
     }
 
