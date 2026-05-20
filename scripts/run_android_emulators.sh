@@ -106,6 +106,18 @@ find_serial_for_avd() {
   return 1
 }
 
+avd_exists() {
+  local avd_name="$1"
+  local available
+  available="$("${EMULATOR}" -list-avds 2>/dev/null || true)"
+  while IFS= read -r name; do
+    if [[ "${name}" == "${avd_name}" ]]; then
+      return 0
+    fi
+  done <<<"${available}"
+  return 1
+}
+
 launch_visible_avd() {
   local avd_name="$1"
   local cmd="\"${EMULATOR}\" -avd \"${avd_name}\" -gpu swiftshader_indirect"
@@ -139,6 +151,13 @@ launch_headless_avd() {
 
 ensure_avd_running() {
   local avd_name="$1"
+  if ! avd_exists "${avd_name}"; then
+    echo "Android AVD ${avd_name} is not installed." >&2
+    echo "Installed AVDs:" >&2
+    "${EMULATOR}" -list-avds >&2 || true
+    return 1
+  fi
+
   local serial
   serial="$(find_serial_for_avd "${avd_name}" || true)"
   if [[ -z "${serial}" ]]; then
