@@ -41,6 +41,7 @@ impl AppCore {
         let (chat_id, _) = parse_peer_input(peer_input)?;
         let now = unix_now().get();
         self.prune_expired_messages(now);
+        self.fetch_missing_profile_metadata(&chat_id, "open_chat");
         self.ensure_thread_record(&chat_id, now).unread_count = 0;
         self.load_latest_message_page_for_chat(&chat_id);
 
@@ -1082,6 +1083,9 @@ impl AppCore {
         let message_id = message_id.unwrap_or_else(|| self.allocate_message_id());
         let author_owner_pubkey_hex = author_owner_pubkey_hex
             .or_else(|| (!is_group_chat_id(chat_id)).then(|| chat_id.to_string()));
+        if let Some(owner_hex) = author_owner_pubkey_hex.as_deref() {
+            self.fetch_missing_profile_metadata(owner_hex, "incoming_message");
+        }
         let author_picture_url = author_owner_pubkey_hex
             .as_ref()
             .and_then(|owner_hex| self.owner_picture_url(owner_hex));

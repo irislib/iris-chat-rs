@@ -50,6 +50,7 @@ impl AppCore {
             screen_stack: Vec::new(),
             next_message_id: 1,
             owner_profiles: BTreeMap::new(),
+            profile_metadata_fetch_inflight: HashSet::new(),
             app_keys: BTreeMap::new(),
             groups: BTreeMap::new(),
             group_pictures: BTreeMap::new(),
@@ -127,6 +128,9 @@ impl AppCore {
                 InternalEvent::RelayEvent(_) => "RelayEvent",
                 InternalEvent::NearbyEvent { .. } => "NearbyEvent",
                 InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
+                InternalEvent::ProfileMetadataFetchFinished { .. } => {
+                    "ProfileMetadataFetchFinished"
+                }
                 InternalEvent::FetchTrackedPeerCatchUp { .. } => "FetchTrackedPeerCatchUp",
                 InternalEvent::ProtocolSubscriptionLivenessCheck { .. } => {
                     "ProtocolSubscriptionLivenessCheck"
@@ -192,6 +196,7 @@ impl AppCore {
                 owner_input,
                 reply_tx,
             } => {
+                self.fetch_missing_profile_metadata(&owner_input, "profile_debug");
                 let _ = reply_tx.send(self.build_peer_profile_debug_snapshot(&owner_input));
             }
             CoreMsg::MutualGroups {
@@ -292,6 +297,7 @@ impl AppCore {
         self.relay_status_by_url.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.relay_transport_runtime = RelayTransportRuntime::default();
+        self.profile_metadata_fetch_inflight.clear();
         self.pending_relay_publish_inflight.clear();
         self.relay_connected_count = 0;
         self.all_relays_offline_since_secs = None;
@@ -593,6 +599,33 @@ impl AppCore {
                         InternalEvent::FetchCatchUpEvents(remainder),
                     )));
                 }
+            }
+            InternalEvent::ProfileMetadataFetchFinished {
+                owner_pubkey_hex,
+                events,
+                error,
+            } => {
+                self.profile_metadata_fetch_inflight
+                    .remove(&owner_pubkey_hex);
+                if let Some(error) = error {
+                    self.push_debug_log(
+                        "profile.metadata.fetch.error",
+                        format!("owner={owner_pubkey_hex} error={error}"),
+                    );
+                    return;
+                }
+                self.push_debug_log(
+                    "profile.metadata.fetch.result",
+                    format!("owner={owner_pubkey_hex} events={}", events.len()),
+                );
+                if events.is_empty() {
+                    return;
+                }
+                self.enter_batch();
+                for event in events {
+                    self.handle_relay_event(event);
+                }
+                self.exit_batch();
             }
             InternalEvent::RelayStatusChanged {
                 relay_url,

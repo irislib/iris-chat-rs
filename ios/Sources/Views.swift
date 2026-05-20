@@ -18,6 +18,7 @@ private let irisPrivacyURL = URL(string: "https://chat.iris.to/privacy")!
 private let irisTermsURL = URL(string: "https://chat.iris.to/terms")!
 private let irisChildSafetyURL = URL(string: "https://chat.iris.to/csae")!
 private let irisSupportEmail = "irismessenger@pm.me"
+private let chatListRelativeTimeTicker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 private func irisChatProfileURL(npub: String) -> URL {
     URL(string: "https://chat.iris.to/#/\(npub)")!
 }
@@ -3313,6 +3314,7 @@ struct ChatListScreen: View {
     @State private var expandedSearchSections: Set<ChatListSearchSection> = []
     @State private var searchMessageLimit: UInt32 = 50
     @State private var lastExpansionQuery: String = ""
+    @State private var relativeNow = Date()
 
     private static let initialMessageSearchLimit: UInt32 = 50
     private static let messageSearchLimitStep: UInt32 = 50
@@ -3338,8 +3340,6 @@ struct ChatListScreen: View {
     }
 
     var body: some View {
-        let relativeNow = Date()
-
 #if os(iOS)
         ChatListTableView(
             searchText: $searchText,
@@ -3362,6 +3362,9 @@ struct ChatListScreen: View {
         .irisOnChange(of: searchText) { _ in
             resetSearchExpansionIfNeeded()
             autoProceedIfShortcut()
+        }
+        .onReceive(chatListRelativeTimeTicker) { date in
+            relativeNow = date
         }
         .task(id: searchRequestToken) {
             // Refresh the search cache once per query change. Body
@@ -3426,6 +3429,9 @@ struct ChatListScreen: View {
         .irisOnChange(of: searchText) { _ in
             resetSearchExpansionIfNeeded()
             autoProceedIfShortcut()
+        }
+        .onReceive(chatListRelativeTimeTicker) { date in
+            relativeNow = date
         }
         .task(id: searchRequestToken) {
             // Refresh the search cache once per query change. Body
@@ -4339,6 +4345,7 @@ private struct ChatListTableView: UIViewRepresentable {
     private func makeFingerprint() -> [String] {
         let expanded = expandedSearchSections.map(\.rawValue).sorted().joined(separator: ",")
         var values = [
+            "time:\(Int(relativeNow.timeIntervalSince1970 / 30))",
             "search:\(isSearchActive):\(searchText):\(messageLimit):\(expanded)",
             "nearby:\(preferences.nearbyShowInChatList):\(preferences.nearbyEnabled):\(manager.nearbyIris.sidebarSubtitle):" +
                 "\(manager.nearbyIris.isVisible):\(manager.nearbyIris.isLanVisible):" +

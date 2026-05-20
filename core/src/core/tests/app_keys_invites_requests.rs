@@ -1210,6 +1210,10 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
         ),
         "private invite-response filters must be derived from recipient #p values"
     );
+    assert!(
+        !has_filter_with_kind(&filters, 0),
+        "profile metadata should stay a targeted lookup, not a live subscription"
+    );
 }
 
 #[test]
@@ -1606,6 +1610,22 @@ fn has_filter_with_kind_author(filters: &[Filter], kind: u32, author: PublicKey)
                         .any(|value| value.as_str() == Some(author_hex.as_str()))
                 });
             has_kind && has_author
+        })
+}
+
+fn has_filter_with_kind(filters: &[Filter], kind: u32) -> bool {
+    filters
+        .iter()
+        .map(|filter| serde_json::to_value(filter).expect("filter json"))
+        .any(|filter| {
+            filter
+                .get("kinds")
+                .and_then(|kinds| kinds.as_array())
+                .is_some_and(|kinds| {
+                    kinds
+                        .iter()
+                        .any(|value| value.as_u64() == Some(kind as u64))
+                })
         })
 }
 

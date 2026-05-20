@@ -1,6 +1,96 @@
 use super::*;
 
+const PROFILE_METADATA_FETCH_TIMEOUT_SECS: u64 = 5;
+
 impl AppCore {
+    pub(super) fn fetch_missing_profile_metadata(
+        &mut self,
+        owner_input: &str,
+        reason: &'static str,
+    ) -> bool {
+        let Ok((owner_hex, owner_pubkey)) = parse_peer_input(owner_input) else {
+            return false;
+        };
+        self.fetch_missing_profile_metadata_for_owner(owner_hex, owner_pubkey, reason)
+    }
+
+    fn fetch_missing_profile_metadata_for_owner(
+        &mut self,
+        owner_hex: String,
+        owner_pubkey: PublicKey,
+        reason: &'static str,
+    ) -> bool {
+        if is_group_chat_id(&owner_hex) || self.has_cached_profile_metadata(&owner_hex) {
+            return false;
+        }
+        let Some((client, relay_urls)) = self
+            .logged_in
+            .as_ref()
+            .filter(|logged_in| !logged_in.relay_urls.is_empty())
+            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
+        else {
+            return false;
+        };
+        if !self
+            .profile_metadata_fetch_inflight
+            .insert(owner_hex.clone())
+        {
+            self.push_debug_log(
+                "profile.metadata.fetch.skip",
+                format!("reason={reason} owner={owner_hex} in_flight=true"),
+            );
+            return false;
+        }
+
+        self.push_debug_log(
+            "profile.metadata.fetch",
+            format!("reason={reason} owner={owner_hex}"),
+        );
+        let tx = self.core_sender.clone();
+        self.runtime.spawn(async move {
+            ensure_session_relays_configured(&client, &relay_urls).await;
+            connect_client_with_timeout(&client, Duration::from_secs(5)).await;
+            let filter = Filter::new().kind(Kind::Metadata).author(owner_pubkey);
+            match client
+                .fetch_events(
+                    filter,
+                    Duration::from_secs(PROFILE_METADATA_FETCH_TIMEOUT_SECS),
+                )
+                .await
+            {
+                Ok(events) => {
+                    let _ = tx.send(CoreMsg::Internal(Box::new(
+                        InternalEvent::ProfileMetadataFetchFinished {
+                            owner_pubkey_hex: owner_hex,
+                            events: events.iter().cloned().collect(),
+                            error: None,
+                        },
+                    )));
+                }
+                Err(error) => {
+                    let _ = tx.send(CoreMsg::Internal(Box::new(
+                        InternalEvent::ProfileMetadataFetchFinished {
+                            owner_pubkey_hex: owner_hex,
+                            events: Vec::new(),
+                            error: Some(error.to_string()),
+                        },
+                    )));
+                }
+            }
+        });
+        true
+    }
+
+    fn has_cached_profile_metadata(&self, owner_hex: &str) -> bool {
+        self.owner_profiles.get(owner_hex).is_some_and(|profile| {
+            profile.profile_label().is_some()
+                || profile.picture.is_some()
+                || profile.about.is_some()
+                || profile.extra_metadata_json.trim() != "{}"
+                || !profile.extra_tags.is_empty()
+        })
+    }
+
     pub(super) fn set_local_profile_name(&mut self, name: &str) {
         let picture_url = self
             .logged_in

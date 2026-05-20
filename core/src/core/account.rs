@@ -309,6 +309,7 @@ impl AppCore {
         self.active_chat_id = None;
         self.screen_stack.clear();
         self.owner_profiles.clear();
+        self.profile_metadata_fetch_inflight.clear();
         self.app_keys.clear();
         self.groups.clear();
         self.chat_message_ttl_seconds.clear();
@@ -516,6 +517,7 @@ impl AppCore {
         self.active_chat_id = None;
         self.screen_stack.clear();
         self.owner_profiles.clear();
+        self.profile_metadata_fetch_inflight.clear();
         self.app_keys.clear();
         self.groups.clear();
         self.chat_message_ttl_seconds.clear();

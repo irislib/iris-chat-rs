@@ -458,6 +458,7 @@ pub struct AppCore {
     screen_stack: Vec<Screen>,
     next_message_id: u64,
     owner_profiles: BTreeMap<String, OwnerProfileRecord>,
+    profile_metadata_fetch_inflight: HashSet<String>,
     app_keys: BTreeMap<String, KnownAppKeys>,
     groups: BTreeMap<String, GroupSnapshot>,
     group_pictures: BTreeMap<String, String>,

@@ -78,6 +78,11 @@ pub(crate) enum InternalEvent {
         token: u64,
     },
     FetchCatchUpEvents(Vec<Event>),
+    ProfileMetadataFetchFinished {
+        owner_pubkey_hex: String,
+        events: Vec<Event>,
+        error: Option<String>,
+    },
     RelayStatusChanged {
         relay_url: String,
         status: RelayStatus,

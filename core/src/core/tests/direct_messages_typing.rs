@@ -1,4 +1,69 @@
 #[test]
+fn opening_uncached_direct_chat_starts_targeted_profile_fetch() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("open-direct-profile-fetch", &owner, &device);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls =
+        relay_urls_from_strings(&core.preferences.nostr_relay_urls);
+    core.protocol_subscription_runtime
+        .protocol_fetch_last_started_at = Some(Instant::now());
+    core.debug_log.clear();
+
+    core.handle_action(AppAction::CreateChat {
+        peer_input: peer.public_key().to_hex(),
+    });
+
+    let peer_hex = peer.public_key().to_hex();
+    assert!(
+        core.debug_log.iter().any(|entry| {
+            entry.category == "profile.metadata.fetch"
+                && entry.detail.contains("reason=open_chat")
+                && entry.detail.contains(&peer_hex)
+        }),
+        "opening an uncached direct chat should start a narrow profile metadata fetch"
+    );
+    assert!(
+        core.debug_log.iter().any(|entry| {
+            entry.category == "protocol.catch_up.skip" && entry.detail.contains("rate limited")
+        }),
+        "the broad catch-up path should remain independently rate-limited"
+    );
+}
+
+#[test]
+fn incoming_uncached_direct_message_starts_targeted_profile_fetch() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("incoming-profile-fetch", &owner, &device);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls =
+        relay_urls_from_strings(&core.preferences.nostr_relay_urls);
+    core.debug_log.clear();
+
+    let (incoming, _) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_MESSAGE_KIND,
+        "hi",
+        1_777_159_493,
+        Vec::new(),
+    );
+    core.apply_decrypted_runtime_message(sender.public_key(), None, incoming, Some("c".repeat(64)));
+
+    let sender_hex = sender.public_key().to_hex();
+    assert!(
+        core.debug_log.iter().any(|entry| {
+            entry.category == "profile.metadata.fetch"
+                && entry.detail.contains("reason=incoming_message")
+                && entry.detail.contains(&sender_hex)
+        }),
+        "new incoming direct messages should look up uncached sender profile metadata"
+    );
+}
+
+#[test]
 fn self_synced_outgoing_message_from_linked_device_marks_thread_accepted() {
     let owner = Keys::generate();
     let device = Keys::generate();
