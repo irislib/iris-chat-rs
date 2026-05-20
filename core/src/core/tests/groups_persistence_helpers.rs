@@ -157,7 +157,7 @@ fn observe_sender_key_matrix_protocol_state(devices: &mut [SenderKeyMatrixDevice
             (
                 device.owner.clone(),
                 device.device.clone(),
-                device.engine.local_invite_for_test().expect("local invite"),
+                device.engine.local_invite().expect("local invite"),
             )
         })
         .collect::<Vec<_>>();
@@ -2046,7 +2046,7 @@ fn appcore_sender_key_pending_outer_survives_restart_and_applies_once() {
     let bob_device = Keys::generate();
     let mut alice = test_protocol_engine(&alice_owner, &alice_device);
     observe_current_device_appkeys_for_test(&mut alice, &alice_owner, &alice_device);
-    let alice_invite = alice.local_invite_for_test().expect("alice local invite");
+    let alice_invite = alice.local_invite().expect("alice local invite");
 
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let data_dir = temp_dir.path().to_string_lossy().to_string();
@@ -2063,7 +2063,7 @@ fn appcore_sender_key_pending_outer_survives_restart_and_applies_once() {
         .protocol_engine
         .as_ref()
         .expect("bob protocol engine")
-        .local_invite_for_test()
+        .local_invite()
         .expect("bob local invite");
     observe_local_invite_for_test(&mut alice, &bob_owner, &bob_device, &bob_invite);
 

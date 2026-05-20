@@ -597,7 +597,7 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
         .ingest_app_keys_snapshot(owner.public_key(), local_app_keys, 1)
         .expect("linked local appkeys");
 
-    let linked_invite = linked.local_invite_for_test().expect("linked invite");
+    let linked_invite = linked.local_invite().expect("linked invite");
     let linked_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&linked_invite)
         .expect("linked invite event")
         .sign_with_keys(&linked_device)
@@ -723,7 +723,7 @@ fn remote_group_metadata_syncs_to_local_sibling() {
         .ingest_app_keys_snapshot(owner.public_key(), local_app_keys, 1)
         .expect("linked local appkeys");
 
-    let linked_invite = linked.local_invite_for_test().expect("linked invite");
+    let linked_invite = linked.local_invite().expect("linked invite");
     let (primary_session, response) = linked_invite
         .accept_with_owner(
             primary_device.public_key(),
@@ -757,7 +757,7 @@ fn remote_group_metadata_syncs_to_local_sibling() {
         )
         .expect("linked imports primary session");
     let mut primary_invite = primary
-        .local_invite_for_test()
+        .local_invite()
         .expect("primary invite for linked sibling");
     primary_invite.owner_public_key = Some(owner.public_key());
     primary_invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
@@ -895,7 +895,7 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
         .ingest_app_keys_snapshot(owner.public_key(), local_app_keys, 1)
         .expect("linked local appkeys");
 
-    let linked_invite = linked.local_invite_for_test().expect("linked invite");
+    let linked_invite = linked.local_invite().expect("linked invite");
     let (primary_session, response) = linked_invite
         .accept_with_owner(
             primary_device.public_key(),
@@ -929,7 +929,7 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
         )
         .expect("linked imports primary session");
     let mut primary_invite = primary
-        .local_invite_for_test()
+        .local_invite()
         .expect("primary invite for linked sibling");
     primary_invite.owner_public_key = Some(owner.public_key());
     primary_invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
@@ -2677,7 +2677,7 @@ fn mobile_push_snapshot_tracks_local_invite_when_enabled() {
     let invite_pubkey = core
         .protocol_engine
         .as_ref()
-        .and_then(ProtocolEngine::local_invite_for_test)
+        .and_then(ProtocolEngine::local_invite)
         .expect("local invite")
         .inviter_ephemeral_public_key
         .to_hex();
@@ -2696,7 +2696,7 @@ fn mobile_push_snapshot_tracks_private_invite_when_enabled() {
     let local_invite_pubkey = core
         .protocol_engine
         .as_ref()
-        .and_then(ProtocolEngine::local_invite_for_test)
+        .and_then(ProtocolEngine::local_invite)
         .expect("local invite")
         .inviter_ephemeral_public_key
         .to_string();

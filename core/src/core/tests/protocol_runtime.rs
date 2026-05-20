@@ -134,7 +134,7 @@ fn appcore_direct_message_event_for_test(
     created_at_secs: u64,
 ) -> Event {
     let invite = receiver_engine
-        .local_invite_for_test()
+        .local_invite()
         .expect("receiver local invite");
     let (mut sender_session, response) = invite
         .accept_with_owner(
@@ -174,7 +174,7 @@ fn protocol_engine_load_or_create_creates_owner_bound_local_invite() {
         ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), &device)
             .expect("protocol engine");
 
-    let invite = engine.local_invite_for_test().expect("local invite");
+    let invite = engine.local_invite().expect("local invite");
     assert_eq!(
         invite.inviter_owner_pubkey,
         Some(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes()))
@@ -218,7 +218,7 @@ fn protocol_engine_load_or_create_installs_legacy_device_invite() {
     )
     .expect("protocol engine");
 
-    let invite = engine.local_invite_for_test().expect("local invite");
+    let invite = engine.local_invite().expect("local invite");
     assert_eq!(
         invite.inviter_ephemeral_public_key,
         legacy_invite.inviter_ephemeral_public_key
@@ -274,7 +274,7 @@ fn protocol_engine_load_or_create_prefers_persisted_protocol_invite() {
     )
     .expect("protocol engine");
 
-    let invite = engine.local_invite_for_test().expect("local invite");
+    let invite = engine.local_invite().expect("local invite");
     assert_eq!(
         invite.inviter_ephemeral_public_key,
         protocol_invite.inviter_ephemeral_public_key
@@ -2742,7 +2742,7 @@ fn invite_response_observation_installs_session_author_state() {
         )
         .expect("peer appkeys");
 
-    let invite = engine.local_invite_for_test().expect("local invite");
+    let invite = engine.local_invite().expect("local invite");
     let (_peer_session, response) = invite
         .accept_with_owner(
             peer_device.public_key(),
@@ -2781,7 +2781,7 @@ fn invite_response_replay_after_consumed_invite_is_idempotent() {
         )
         .expect("peer appkeys");
 
-    let invite = engine.local_invite_for_test().expect("local invite");
+    let invite = engine.local_invite().expect("local invite");
     let (_peer_session, response) = invite
         .accept_with_owner(
             peer_device.public_key(),
@@ -2814,7 +2814,7 @@ fn appcore_direct_message_from_unverified_claimed_owner_retries_after_appkeys() 
     let peer_device = Keys::generate();
     let mut engine = test_protocol_engine(&owner, &device);
 
-    let invite = engine.local_invite_for_test().expect("local invite");
+    let invite = engine.local_invite().expect("local invite");
     let (mut peer_session, response) = invite
         .accept_with_owner(
             peer_device.public_key(),
@@ -2895,7 +2895,7 @@ fn appcore_pending_group_payload_from_claimed_device_uses_owner_after_appkeys() 
     let peer_device = Keys::generate();
     let mut engine = test_protocol_engine(&owner, &device);
 
-    let invite = engine.local_invite_for_test().expect("local invite");
+    let invite = engine.local_invite().expect("local invite");
     let (_peer_session, response) = invite
         .accept_with_owner(
             peer_device.public_key(),

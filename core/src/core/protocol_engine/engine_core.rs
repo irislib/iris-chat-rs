@@ -393,11 +393,6 @@ impl ProtocolEngine {
     }
 
     #[cfg(test)]
-    pub(super) fn local_invite_for_test(&self) -> Option<Invite> {
-        self.local_invite()
-    }
-
-    #[cfg(test)]
     pub(super) fn pending_inbound_for_test(&self) -> Vec<ProtocolPendingInboundTestDebug> {
         self.pending_inbound
             .iter()

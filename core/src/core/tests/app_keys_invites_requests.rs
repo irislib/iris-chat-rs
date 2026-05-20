@@ -1092,7 +1092,7 @@ fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
     let stable_invite = core
         .protocol_engine
         .as_ref()
-        .and_then(ProtocolEngine::local_invite_for_test)
+        .and_then(ProtocolEngine::local_invite)
         .expect("stable local invite");
     assert!(core.pending_linked_device.is_none());
     assert_eq!(stable_invite.owner_public_key, Some(owner.public_key()));
@@ -1191,7 +1191,7 @@ fn local_relay_pairing_e2e_uses_stable_protocol_invite_after_login() {
     let stable_invite = linked
         .protocol_engine
         .as_ref()
-        .and_then(ProtocolEngine::local_invite_for_test)
+        .and_then(ProtocolEngine::local_invite)
         .expect("stable local invite");
     let stable_response_pubkey = stable_invite
         .inviter_ephemeral_public_key
@@ -1242,7 +1242,7 @@ fn recent_protocol_filters_include_runtime_invite_response_backfill() {
     let invite_response_pubkey = core
         .protocol_engine
         .as_ref()
-        .and_then(ProtocolEngine::local_invite_for_test)
+        .and_then(ProtocolEngine::local_invite)
         .expect("local invite")
         .inviter_ephemeral_public_key
         .to_hex();
@@ -1898,7 +1898,7 @@ fn install_local_sibling_session_for_test(
         .protocol_engine
         .as_ref()
         .expect("protocol engine")
-        .local_invite_for_test()
+        .local_invite()
         .expect("linked invite");
     let (_primary_session, response) = linked_invite
         .accept_with_owner(
@@ -1938,7 +1938,7 @@ fn create_invite_generates_private_link_without_public_republish() {
     let local_invite_response_pubkey = core
         .protocol_engine
         .as_ref()
-        .and_then(ProtocolEngine::local_invite_for_test)
+        .and_then(ProtocolEngine::local_invite)
         .expect("local invite")
         .inviter_ephemeral_public_key
         .to_string();
