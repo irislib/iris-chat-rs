@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCOPE="${IRIS_SOURCE_FILE_SIZE_SCOPE:-all}"
+
+case "$SCOPE" in
+  all)
+    MAX_LINES="${IRIS_SOURCE_FILE_LINE_LIMIT:-1000}"
+    ;;
+  rust)
+    MAX_LINES="${IRIS_RUST_FILE_LINE_LIMIT:-3000}"
+    ;;
+  *)
+    echo "IRIS_SOURCE_FILE_SIZE_SCOPE must be 'all' or 'rust'" >&2
+    exit 2
+    ;;
+esac
+
+if ! [[ "$MAX_LINES" =~ ^[0-9]+$ ]] || [[ "$MAX_LINES" -eq 0 ]]; then
+  echo "source file line limit must be a positive integer" >&2
+  exit 2
+fi
+
+cd "$ROOT_DIR"
+
+baseline_limit_for() {
+  case "$1" in
+    android/app/src/androidTest/java/to/iris/chat/RealRelayHarnessTest.kt) echo 2697 ;;
+    android/app/src/androidTest/java/to/iris/chat/core/AppManagerContractTest.kt) echo 1109 ;;
+    android/app/src/main/java/to/iris/chat/core/AppManager.kt) echo 2065 ;;
+    android/app/src/main/java/to/iris/chat/nearby/IrisNearbyService.kt) echo 2416 ;;
+    android/app/src/main/java/to/iris/chat/ui/components/IrisChrome.kt) echo 1057 ;;
+    android/app/src/main/java/to/iris/chat/ui/navigation/NdrApp.kt) echo 1219 ;;
+    android/app/src/main/java/to/iris/chat/ui/screens/ChatAttachments.kt) echo 1456 ;;
+    android/app/src/main/java/to/iris/chat/ui/screens/ChatListScreen.kt) echo 1173 ;;
+    android/app/src/main/java/to/iris/chat/ui/screens/ChatMessageComponents.kt) echo 2060 ;;
+    android/app/src/main/java/to/iris/chat/ui/screens/ChatScreen.kt) echo 1623 ;;
+    android/app/src/main/java/to/iris/chat/ui/screens/MyProfileSheet.kt) echo 1792 ;;
+    core/src/bin/iris.rs) echo 2246 ;;
+    core/src/core/account.rs) echo 1223 ;;
+    core/src/core/chats.rs) echo 1898 ;;
+    core/src/core/mobile_push.rs) echo 1526 ;;
+    core/src/core/projection.rs) echo 1052 ;;
+    core/src/core/protocol.rs) echo 1883 ;;
+    core/src/core/storage/store.rs) echo 2765 ;;
+    core/src/core/tests/app_keys_invites_requests.rs) echo 2404 ;;
+    core/src/core/tests/direct_messages_typing.rs) echo 2347 ;;
+    core/src/core/tests/groups_persistence_more.rs) echo 1006 ;;
+    core/src/core/tests/groups_sender_key.rs) echo 2190 ;;
+    core/src/core/tests/protocol_filters_push.rs) echo 2880 ;;
+    core/src/core/tests/protocol_runtime.rs) echo 2608 ;;
+    core/src/desktop_nearby.rs) echo 1818 ;;
+    core/src/lib.rs) echo 1941 ;;
+    ios/Sources/AppManager.swift) echo 3948 ;;
+    ios/Sources/ChatViews.swift) echo 1214 ;;
+    ios/Sources/IrisNearbyService.swift) echo 2559 ;;
+    ios/Tests/InteropHarnessTests.swift) echo 2178 ;;
+    ios/Tests/IrisChatTests.swift) echo 2446 ;;
+    ios/UITests/IrisChatUITests.swift) echo 1180 ;;
+    linux/src/screens/chat.rs) echo 2709 ;;
+    macos/Sources/MacBitchatNearbyService.swift) echo 1152 ;;
+    scripts/protocol_fault_validation.py) echo 1342 ;;
+    scripts/release) echo 1240 ;;
+    windows/IrisChat/AppManager.cs) echo 1463 ;;
+    *) echo "$MAX_LINES" ;;
+  esac
+}
+
+is_skipped_source() {
+  case "$1" in
+    */Bindings/*|*.lock|*.png|*.jpg|*.jpeg|*.icns|*.jar|*.ico|*.json|*.toml|*.yaml|*.yml|*.md|*.plist|*.entitlements|*.xml|*.xaml|*.xcassets/*)
+      return 0
+      ;;
+    android/gradlew|android/gradlew.bat)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+if [[ "$SCOPE" == "rust" ]]; then
+  pathspecs=('*.rs')
+else
+  pathspecs=(
+    '*.rs'
+    '*.swift'
+    '*.kt'
+    '*.kts'
+    '*.cs'
+    '*.py'
+    '*.sh'
+    '*.bash'
+    '*.zsh'
+    'scripts/*'
+    'tools/*'
+  )
+fi
+
+failed=0
+while IFS= read -r -d '' file; do
+  [[ -f "$file" ]] || continue
+  if is_skipped_source "$file"; then
+    continue
+  fi
+
+  lines="$(wc -l < "$file" | tr -d ' ')"
+  limit="$(baseline_limit_for "$file")"
+  if [[ "$lines" -gt "$limit" ]]; then
+    if [[ "$limit" -gt "$MAX_LINES" ]]; then
+      printf 'Oversized source file grew: %s has %s lines, ratchet is %s\n' "$file" "$lines" "$limit" >&2
+    else
+      printf 'Source file too large: %s has %s lines, limit is %s\n' "$file" "$lines" "$MAX_LINES" >&2
+    fi
+    failed=1
+  fi
+done < <(git ls-files -z --cached --others --exclude-standard -- "${pathspecs[@]}")
+
+if [[ "$failed" -ne 0 ]]; then
+  echo "Split oversized source files before committing. Existing oversized files may shrink, but not grow." >&2
+  exit 1
+fi
