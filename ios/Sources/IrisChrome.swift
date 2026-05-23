@@ -1698,7 +1698,7 @@ struct IrisComposerBar: View {
                     .disabled(isSending || isUploading)
                     .popover(isPresented: $showingEmojiPicker, arrowEdge: .bottom) {
                         IrisEmojiPicker { emoji in
-                            draft.append(emoji)
+                            insertEmoji(emoji)
                             showingEmojiPicker = false
                         }
                     }
@@ -1808,19 +1808,27 @@ struct IrisComposerBar: View {
             isFocused = true
         }
         #else
-        TextField(placeholder, text: $draft, axis: .vertical)
-            .lineLimit(1...5)
-            .irisDraftInputModifiers()
-            .irisInputField()
-            .irisDesktopSubmit(submitDraft)
-            .focused($isFocused)
-            .contentShape(Rectangle())
-            .simultaneousGesture(
-                TapGesture().onEnded {
-                    isFocused = true
-                }
+        ZStack(alignment: .topLeading) {
+            if draft.isEmpty {
+                Text(placeholder)
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(palette.muted)
+                    .padding(.top, 1)
+                    .allowsHitTesting(false)
+            }
+            IrisAppKitComposerTextView(
+                text: $draft,
+                isFocused: $isFocused,
+                onSubmit: submitDraft
             )
-            .accessibilityIdentifier("chatMessageInput")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .irisInputField()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            isFocused = true
+        }
+        .accessibilityIdentifier("chatMessageInput")
         #endif
     }
 
@@ -1901,10 +1909,22 @@ struct IrisComposerBar: View {
         }
         #if os(iOS)
         let text = IrisUIKitComposerTextView.currentText ?? draft
+        #elseif canImport(AppKit)
+        let text = IrisAppKitComposerTextView.currentText ?? draft
         #else
         let text = draft
         #endif
         onSend(text)
+    }
+
+    private func insertEmoji(_ emoji: String) {
+        #if canImport(AppKit)
+        if let text = IrisAppKitComposerTextView.insertTextAtSelection(emoji) {
+            draft = text
+            return
+        }
+        #endif
+        draft.append(emoji)
     }
 
     private func handleDroppedFiles(_ providers: [NSItemProvider]) -> Bool {
@@ -2055,6 +2075,209 @@ private struct IrisUIKitComposerTextView: UIViewRepresentable {
         func textViewDidEndEditing(_ textView: UITextView) {
             parent.isFocused = false
         }
+    }
+}
+#endif
+
+#if canImport(AppKit)
+struct IrisAppKitComposerTextView: NSViewRepresentable {
+    private static weak var activeTextView: NSTextView?
+
+    static var currentText: String? {
+        activeTextView?.string
+    }
+
+    @discardableResult
+    static func insertTextAtSelection(_ replacement: String) -> String? {
+        guard let textView = activeTextView else {
+            return nil
+        }
+        return insertTextAtSelection(replacement, into: textView)
+    }
+
+    @discardableResult
+    static func insertTextAtSelection(_ replacement: String, into textView: NSTextView) -> String {
+        textView.insertText(replacement, replacementRange: textView.selectedRange())
+        return textView.string
+    }
+
+    @Binding var text: String
+    @FocusState.Binding var isFocused: Bool
+    let onSubmit: () -> Void
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.verticalScrollElasticity = .none
+        scrollView.setAccessibilityIdentifier("chatMessageInput")
+
+        let textView = IrisComposerNSTextView()
+        Self.activeTextView = textView
+        textView.composerCommandDelegate = context.coordinator
+        textView.delegate = context.coordinator
+        textView.drawsBackground = false
+        textView.backgroundColor = .clear
+        textView.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        textView.textColor = .labelColor
+        textView.insertionPointColor = .controlAccentColor
+        textView.textContainerInset = .zero
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.heightTracksTextView = false
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.allowsUndo = true
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.minSize = NSSize(width: 0, height: Self.lineHeight(for: textView))
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.autoresizingMask = [.width]
+        textView.isContinuousSpellCheckingEnabled = true
+        textView.isAutomaticSpellingCorrectionEnabled = true
+        textView.setAccessibilityIdentifier("chatMessageInput")
+
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? IrisComposerNSTextView else {
+            return
+        }
+
+        Self.activeTextView = textView
+        context.coordinator.parent = self
+        textView.composerCommandDelegate = context.coordinator
+        textView.delegate = context.coordinator
+
+        if textView.string != text, !textView.hasMarkedText() {
+            let selectedRange = textView.selectedRange()
+            textView.string = text
+            Self.restoreSelection(selectedRange, in: textView)
+        }
+
+        Self.updateScrollState(in: nsView, textView: textView)
+
+        if isFocused, textView.window?.firstResponder !== textView {
+            DispatchQueue.main.async { [weak textView] in
+                guard let textView else { return }
+                textView.window?.makeFirstResponder(textView)
+            }
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        guard let textView = nsView.documentView as? NSTextView else {
+            return nil
+        }
+        let width = max(proposal.width ?? nsView.bounds.width, 1)
+        let height = min(
+            max(Self.measuredHeight(for: textView, width: width), Self.lineHeight(for: textView)),
+            Self.maxHeight(for: textView)
+        )
+        return CGSize(width: width, height: height)
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    private static func updateScrollState(in scrollView: NSScrollView, textView: NSTextView) {
+        let width = max(scrollView.bounds.width, 1)
+        let contentHeight = measuredHeight(for: textView, width: width)
+        scrollView.hasVerticalScroller = contentHeight > maxHeight(for: textView)
+    }
+
+    private static func restoreSelection(_ selectedRange: NSRange, in textView: NSTextView) {
+        let textLength = (textView.string as NSString).length
+        let location = min(selectedRange.location, textLength)
+        let length = min(selectedRange.length, textLength - location)
+        textView.setSelectedRange(NSRange(location: location, length: length))
+    }
+
+    private static func measuredHeight(for textView: NSTextView, width: CGFloat) -> CGFloat {
+        guard let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer else {
+            return lineHeight(for: textView)
+        }
+        textContainer.containerSize = NSSize(width: max(width, 1), height: CGFloat.greatestFiniteMagnitude)
+        layoutManager.ensureLayout(for: textContainer)
+        return ceil(max(layoutManager.usedRect(for: textContainer).height, lineHeight(for: textView)))
+    }
+
+    private static func lineHeight(for textView: NSTextView) -> CGFloat {
+        let font = textView.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        if let layoutManager = textView.layoutManager {
+            return ceil(layoutManager.defaultLineHeight(for: font))
+        }
+        return ceil(font.ascender - font.descender + font.leading)
+    }
+
+    private static func maxHeight(for textView: NSTextView) -> CGFloat {
+        lineHeight(for: textView) * 5
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate, IrisComposerNSTextViewCommandDelegate {
+        var parent: IrisAppKitComposerTextView
+
+        init(parent: IrisAppKitComposerTextView) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else {
+                return
+            }
+            guard parent.text != textView.string else {
+                return
+            }
+            parent.text = textView.string
+        }
+
+        func textDidBeginEditing(_ notification: Notification) {
+            parent.isFocused = true
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            parent.isFocused = false
+        }
+
+        func composerTextViewDidSubmit(_ textView: NSTextView) {
+            if parent.text != textView.string {
+                parent.text = textView.string
+            }
+            parent.onSubmit()
+        }
+    }
+}
+
+private protocol IrisComposerNSTextViewCommandDelegate: AnyObject {
+    func composerTextViewDidSubmit(_ textView: NSTextView)
+}
+
+private final class IrisComposerNSTextView: NSTextView {
+    weak var composerCommandDelegate: IrisComposerNSTextViewCommandDelegate?
+
+    override func doCommand(by selector: Selector) {
+        if selector == #selector(NSResponder.insertNewline(_:)), !shouldInsertLineBreakForCurrentEvent {
+            composerCommandDelegate?.composerTextViewDidSubmit(self)
+            return
+        }
+        super.doCommand(by: selector)
+    }
+
+    private var shouldInsertLineBreakForCurrentEvent: Bool {
+        guard let event = NSApp.currentEvent, event.type == .keyDown else {
+            return false
+        }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return flags.contains(.shift) || flags.contains(.option)
     }
 }
 #endif
