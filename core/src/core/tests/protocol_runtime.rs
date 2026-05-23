@@ -133,6 +133,21 @@ fn appcore_direct_message_event_for_test(
     body: &str,
     created_at_secs: u64,
 ) -> Event {
+    appcore_direct_message_event_with_author_keys_for_test(
+        receiver_engine,
+        sender_keys,
+        body,
+        created_at_secs,
+    )
+    .0
+}
+
+fn appcore_direct_message_event_with_author_keys_for_test(
+    receiver_engine: &mut ProtocolEngine,
+    sender_keys: &Keys,
+    body: &str,
+    created_at_secs: u64,
+) -> (Event, Keys) {
     let invite = receiver_engine
         .local_invite()
         .expect("receiver local invite");
@@ -160,7 +175,62 @@ fn appcore_direct_message_event_for_test(
         .plan_send(content.as_bytes(), NdrUnixSeconds(created_at_secs))
         .expect("sender plans message");
     let sent = sender_session.apply_send(plan);
-    message_event(&sent.envelope).expect("message event")
+    let author_keys = Keys::new(
+        nostr::SecretKey::from_slice(&sent.envelope.signer_secret_key)
+            .expect("message event author secret key"),
+    );
+    (
+        message_event(&sent.envelope).expect("message event"),
+        author_keys,
+    )
+}
+
+fn logged_in_test_core_with_updates(
+    label: &str,
+    owner: &Keys,
+    device: &Keys,
+) -> (AppCore, flume::Receiver<AppUpdate>, tempfile::TempDir) {
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("iris-chat-rs-test-{label}-"))
+        .tempdir()
+        .expect("temp dir");
+    let (update_tx, update_rx) = flume::unbounded();
+    let mut core = AppCore::new(
+        update_tx,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: owner.public_key(),
+        owner_keys: Some(owner.clone()),
+        device_keys: device.clone(),
+        client: Client::new(device.clone()),
+        relay_urls: Vec::new(),
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+    let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        core.app_store.shared(),
+        owner.public_key().to_hex(),
+        device.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+    install_test_protocol_engine(&mut core, owner, device, storage, None, None);
+    (core, update_rx, temp_dir)
+}
+
+fn signed_pairwise_message_event_for_test(
+    sender_keys: &Keys,
+    header: &str,
+    content: &str,
+) -> Event {
+    EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), content)
+        .tag(nostr::Tag::parse(["header", header]).expect("header tag"))
+        .sign_with_keys(sender_keys)
+        .expect("signed pairwise message event")
+}
+
+fn drain_app_updates(update_rx: &flume::Receiver<AppUpdate>) {
+    while update_rx.try_recv().is_ok() {}
 }
 
 #[test]
@@ -1888,6 +1958,108 @@ fn relay_pending_inbound_replays_are_short_circuited() {
         body.contains("has_pending_inbound_direct_event_id")
             && body.contains("appcore.protocol.message.pending_replay"),
         "relay replays of already-durable pending inbound events must avoid reparsing and refetching immediately"
+    );
+}
+
+#[test]
+fn invalid_pairwise_message_errors_are_seen_without_state_emit() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let alice = Keys::generate();
+    let (mut core, update_rx, _temp_dir) =
+        logged_in_test_core_with_updates("invalid-pairwise-seen", &owner, &device);
+
+    let (_valid_message, known_sender_keys) = appcore_direct_message_event_with_author_keys_for_test(
+        core.protocol_engine.as_mut().expect("protocol engine"),
+        &alice,
+        "prime sender session",
+        200,
+    );
+    assert!(
+        core.protocol_engine
+            .as_ref()
+            .expect("protocol engine")
+            .is_known_message_author(known_sender_keys.public_key()),
+        "test sender should be known before the invalid direct message arrives"
+    );
+    drain_app_updates(&update_rx);
+
+    let invalid =
+        signed_pairwise_message_event_for_test(&known_sender_keys, "not-a-valid-header", "ciphertext");
+    let event_id = invalid.id.to_string();
+    let builds_before = core.debug_snapshot_build_count();
+
+    core.handle_relay_event(invalid.clone());
+
+    assert!(
+        core.has_seen_event(&event_id),
+        "unrecoverable pairwise parse errors should not be retried forever"
+    );
+    assert_eq!(
+        core.debug_snapshot_build_count(),
+        builds_before,
+        "invalid direct messages should not force snapshot persistence"
+    );
+    assert!(
+        update_rx.try_recv().is_err(),
+        "invalid direct messages should not emit a full app state"
+    );
+
+    let message_count_after_first = core.debug_event_counters.message_events;
+    core.handle_relay_event(invalid);
+    assert_eq!(
+        core.debug_event_counters.message_events, message_count_after_first,
+        "seen invalid direct messages should short-circuit before parsing"
+    );
+    assert!(
+        update_rx.try_recv().is_err(),
+        "seen invalid direct messages should stay silent"
+    );
+}
+
+#[test]
+fn no_header_message_kind_event_is_not_pairwise_decrypted() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let alice = Keys::generate();
+    let (mut core, update_rx, _temp_dir) =
+        logged_in_test_core_with_updates("no-header-message-kind", &owner, &device);
+
+    let _valid_message = appcore_direct_message_event_for_test(
+        core.protocol_engine.as_mut().expect("protocol engine"),
+        &alice,
+        "prime sender session",
+        200,
+    );
+    drain_app_updates(&update_rx);
+
+    let malformed = EventBuilder::new(
+        Kind::from(MESSAGE_EVENT_KIND as u16),
+        "not a group sender-key payload",
+    )
+    .sign_with_keys(&alice)
+    .expect("signed malformed message event");
+    let event_id = malformed.id.to_string();
+    let builds_before = core.debug_snapshot_build_count();
+
+    core.handle_relay_event(malformed);
+
+    assert!(
+        core.has_seen_event(&event_id),
+        "malformed kind-1060 events without a pairwise header should be consumed once"
+    );
+    assert_eq!(
+        core.debug_event_counters.message_events, 0,
+        "events without a pairwise header should not enter direct-message decrypt"
+    );
+    assert_eq!(
+        core.debug_snapshot_build_count(),
+        builds_before,
+        "malformed non-pairwise events should not force snapshot persistence"
+    );
+    assert!(
+        update_rx.try_recv().is_err(),
+        "malformed non-pairwise events should not emit a full app state"
     );
 }
 

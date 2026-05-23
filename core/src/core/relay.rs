@@ -41,6 +41,8 @@ impl AppCore {
         let is_app_keys_protocol_event = kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event);
         let is_invite_protocol_event = is_protocol_invite_event(&event);
         let is_invite_response_protocol_event = kind == INVITE_RESPONSE_KIND;
+        let is_pairwise_message_event =
+            kind == MESSAGE_EVENT_KIND && event_has_tag(&event, "header");
         if self.has_seen_event(&event_id) {
             // Only persist + rebuild + emit when the transport-channel
             // set actually grew. Without this guard, every mirrored
@@ -161,54 +163,59 @@ impl AppCore {
                 }
             }
             MESSAGE_EVENT_KIND => {
-                let group_result = match self
-                    .protocol_engine
-                    .as_mut()
-                    .map(|engine| engine.process_group_outer_event(&event))
-                {
-                    Some(Ok(group_result)) => group_result,
-                    Some(Err(error)) => {
-                        self.push_debug_log(
-                            "appcore.protocol.group.outer.error",
-                            error.to_string(),
-                        );
+                if !is_pairwise_message_event {
+                    let group_result = match self
+                        .protocol_engine
+                        .as_mut()
+                        .map(|engine| engine.process_group_outer_event(&event))
+                    {
+                        Some(Ok(group_result)) => group_result,
+                        Some(Err(error)) => {
+                            self.push_debug_log(
+                                "appcore.protocol.group.outer.error",
+                                error.to_string(),
+                            );
+                            self.persist_best_effort();
+                            self.rebuild_state();
+                            self.emit_state();
+                            return;
+                        }
+                        None => Default::default(),
+                    };
+                    if group_result.consumed
+                        || !group_result.events.is_empty()
+                        || !group_result.effects.is_empty()
+                        || !group_result.queued_targets.is_empty()
+                    {
+                        self.debug_event_counters.group_events += 1;
+                        let should_remember_group_event = group_result.consumed
+                            || !group_result.events.is_empty()
+                            || !group_result.effects.is_empty();
+                        if !group_result.queued_targets.is_empty() {
+                            self.handle_queued_protocol_targets(
+                                "group.outer",
+                                &group_result.queued_targets,
+                            );
+                        }
+                        for group_event in group_result.events {
+                            self.apply_group_decrypted_event(group_event);
+                        }
+                        if !group_result.effects.is_empty() {
+                            self.process_protocol_engine_effects_with_completions(
+                                group_result.effects,
+                                &BTreeMap::new(),
+                            );
+                        }
+                        if should_remember_group_event {
+                            self.remember_event(event_id);
+                        }
                         self.persist_best_effort();
                         self.rebuild_state();
                         self.emit_state();
                         return;
                     }
-                    None => Default::default(),
-                };
-                if group_result.consumed
-                    || !group_result.events.is_empty()
-                    || !group_result.effects.is_empty()
-                    || !group_result.queued_targets.is_empty()
-                {
-                    self.debug_event_counters.group_events += 1;
-                    let should_remember_group_event = group_result.consumed
-                        || !group_result.events.is_empty()
-                        || !group_result.effects.is_empty();
-                    if !group_result.queued_targets.is_empty() {
-                        self.handle_queued_protocol_targets(
-                            "group.outer",
-                            &group_result.queued_targets,
-                        );
-                    }
-                    for group_event in group_result.events {
-                        self.apply_group_decrypted_event(group_event);
-                    }
-                    if !group_result.effects.is_empty() {
-                        self.process_protocol_engine_effects_with_completions(
-                            group_result.effects,
-                            &BTreeMap::new(),
-                        );
-                    }
-                    if should_remember_group_event {
-                        self.remember_event(event_id);
-                    }
-                    self.persist_best_effort();
-                    self.rebuild_state();
-                    self.emit_state();
+
+                    self.remember_event(event_id);
                     return;
                 }
                 if self
@@ -220,9 +227,6 @@ impl AppCore {
                         "appcore.protocol.message.ignored",
                         "unknown message author",
                     );
-                    self.persist_best_effort();
-                    self.rebuild_state();
-                    self.emit_state();
                     return;
                 }
                 self.debug_event_counters.message_events += 1;
@@ -309,6 +313,8 @@ impl AppCore {
                     }
                     Err(error) => {
                         self.push_debug_log("appcore.protocol.message.error", error.to_string());
+                        self.remember_event(event_id);
+                        return;
                     }
                 }
             }
@@ -670,6 +676,13 @@ fn is_protocol_invite_event(event: &Event) -> bool {
                     .get(1)
                     .is_some_and(|value| value.starts_with(NDR_INVITES_D_TAG_PREFIX))
         })
+}
+
+fn event_has_tag(event: &Event, name: &str) -> bool {
+    event
+        .tags
+        .iter()
+        .any(|tag| tag.as_slice().first().map(|value| value.as_str()) == Some(name))
 }
 
 #[cfg(test)]
