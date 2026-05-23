@@ -207,8 +207,10 @@ fn wait_for_listener_ready(
     receiver: &mpsc::Receiver<Value>,
     stderr: &Arc<Mutex<String>>,
 ) {
+    // `iris listen` may restore an existing account, foreground the app, and
+    // wait through its full network-runtime readiness window before printing.
     let ready = receiver
-        .recv_timeout(Duration::from_secs(25))
+        .recv_timeout(Duration::from_secs(60))
         .unwrap_or_else(|error| {
             let status = child.try_wait().expect("child status");
             let stderr = stderr.lock().map(|text| text.clone()).unwrap_or_default();
