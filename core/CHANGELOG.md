@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.30
+
+- Update to `nostr-double-ratchet` 0.0.147 so new group messages and one-to-many protocol messages no longer expose sender-key key ids or message counters to message servers.
+- Keep recovery compatible with older no-header group messages while avoiding re-exposing hidden counters in sender-key repair requests.
+
 ## 0.1.29
 
 - Fetch missing profile metadata on demand so newly discovered chats can fill in names, photos, and profile details without a manual search.

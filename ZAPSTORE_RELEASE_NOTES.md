@@ -1,3 +1,9 @@
+# Iris Chat 2026.5.23.1
+
+- Messages reveal less delivery metadata to message servers.
+- Group message recovery still works with older app versions.
+- Message repair requests avoid sharing hidden delivery counters.
+
 # Iris Chat 2026.5.20.2
 
 - Chats now fetch missing profile details when needed, so names and photos appear more reliably.
