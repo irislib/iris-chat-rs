@@ -1027,7 +1027,7 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
         .as_ref()
         .expect("pending link invite");
     let (_owner_session, response_envelope) = pending
-        .invite
+        .pairing_invite
         .accept_with_owner(
             owner.public_key(),
             owner.secret_key().to_secret_bytes(),
@@ -1054,15 +1054,196 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
 }
 
 #[test]
+fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
+    let owner = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nostr_relay_urls.clear();
+    core.handle_action(AppAction::StartLinkedDevice {
+        owner_input: String::new(),
+    });
+
+    let pending = core
+        .pending_linked_device
+        .as_ref()
+        .expect("pending link invite");
+    let pairing_invite = pending.pairing_invite.clone();
+    assert_eq!(pairing_invite.purpose.as_deref(), Some("link"));
+    assert!(pairing_invite.owner_public_key.is_none());
+
+    let (_owner_session, response_envelope) = pairing_invite
+        .accept_with_owner(
+            owner.public_key(),
+            owner.secret_key().to_secret_bytes(),
+            Some(owner.public_key().to_hex()),
+            Some(owner.public_key()),
+        )
+        .expect("owner accepts");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response_envelope)
+        .expect("invite response event");
+
+    core.handle_relay_event(response_event);
+
+    let stable_invite = core
+        .protocol_engine
+        .as_ref()
+        .and_then(ProtocolEngine::local_invite)
+        .expect("stable local invite");
+    assert!(core.pending_linked_device.is_none());
+    assert_eq!(stable_invite.owner_public_key, Some(owner.public_key()));
+    assert_ne!(
+        stable_invite.inviter_ephemeral_public_key,
+        pairing_invite.inviter_ephemeral_public_key
+    );
+    assert_ne!(stable_invite.purpose.as_deref(), Some("link"));
+    assert_ne!(stable_invite.max_uses, Some(1));
+}
+
+#[test]
+fn local_relay_pairing_e2e_uses_stable_protocol_invite_after_login() {
+    let owner = Keys::generate();
+    let relay = crate::local_relay::TestRelay::start();
+    let relay_url = relay.url().to_string();
+    let relay_urls = relay_urls_from_strings(std::slice::from_ref(&relay_url));
+    let primary_temp_dir = tempfile::TempDir::new().expect("primary temp dir");
+    let linked_temp_dir = tempfile::TempDir::new().expect("linked temp dir");
+    let (primary_update_tx, _) = flume::unbounded();
+    let (primary_core_tx, primary_core_rx) = flume::unbounded();
+    let mut primary = AppCore::new(
+        primary_update_tx,
+        primary_core_tx,
+        primary_temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    primary.preferences.nostr_relay_urls = vec![relay_url.clone()];
+    primary
+        .start_primary_session(owner.clone(), owner.clone(), false, false)
+        .expect("primary session");
+    {
+        let logged_in = primary.logged_in.as_mut().expect("primary logged in");
+        logged_in.relay_urls = relay_urls.clone();
+        let client = logged_in.client.clone();
+        let connected = primary.runtime.block_on(async {
+            ensure_session_relays_configured(&client, &relay_urls).await;
+            connect_client_with_timeout(&client, Duration::from_secs(2)).await;
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let connected = client
+                    .relays()
+                    .await
+                    .values()
+                    .filter(|relay| relay.status() == RelayStatus::Connected)
+                    .count();
+                if connected > 0 || Instant::now() >= deadline {
+                    break connected;
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        });
+        assert!(connected > 0, "test relay must be connected");
+    }
+    primary.refresh_relay_connection_status();
+
+    let mut linked = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        linked_temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    linked.preferences.nostr_relay_urls = vec![relay_url];
+    linked.handle_action(AppAction::StartLinkedDevice {
+        owner_input: String::new(),
+    });
+    let pairing_invite = linked
+        .pending_linked_device
+        .as_ref()
+        .expect("pending linked device")
+        .pairing_invite
+        .clone();
+    let pairing_response_pubkey = pairing_invite
+        .inviter_ephemeral_public_key
+        .to_nostr()
+        .expect("pairing response pubkey");
+    let pairing_url = linked
+        .state
+        .link_device
+        .as_ref()
+        .expect("link-device snapshot")
+        .url
+        .clone();
+
+    primary.handle_action(AppAction::AddAuthorizedDevice {
+        device_input: pairing_url,
+    });
+    let response_event = wait_for_relay_event_with_kind(
+        &mut primary,
+        &primary_core_rx,
+        &relay,
+        INVITE_RESPONSE_KIND,
+    );
+    linked.handle_relay_event(response_event);
+
+    let stable_invite = linked
+        .protocol_engine
+        .as_ref()
+        .and_then(ProtocolEngine::local_invite)
+        .expect("stable local invite");
+    let stable_response_pubkey = stable_invite
+        .inviter_ephemeral_public_key
+        .to_nostr()
+        .expect("stable response pubkey");
+    assert!(linked.pending_linked_device.is_none());
+    assert_eq!(stable_invite.owner_public_key, Some(owner.public_key()));
+    assert_ne!(stable_response_pubkey, pairing_response_pubkey);
+    assert_ne!(stable_invite.purpose.as_deref(), Some("link"));
+
+    let public_invite = linked
+        .build_public_invite_snapshot()
+        .and_then(|snapshot| super::invites::parse_public_invite_input(&snapshot.url).ok())
+        .expect("public invite snapshot");
+    assert_eq!(
+        public_invite.inviter_ephemeral_public_key,
+        stable_invite.inviter_ephemeral_public_key
+    );
+    assert_ne!(
+        public_invite.inviter_ephemeral_public_key,
+        pairing_invite.inviter_ephemeral_public_key
+    );
+
+    let filters = linked.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    assert!(
+        has_filter_with_kind_pubkey(&filters, INVITE_RESPONSE_KIND, stable_response_pubkey),
+        "protocol filters must track the stable invite response key"
+    );
+    assert!(
+        !has_filter_with_kind_pubkey(&filters, INVITE_RESPONSE_KIND, pairing_response_pubkey),
+        "protocol filters must not keep tracking the temporary pairing invite"
+    );
+
+    let push = linked.build_mobile_push_sync_snapshot();
+    assert!(push
+        .invite_response_pubkeys
+        .contains(&stable_response_pubkey.to_hex()));
+    assert!(!push
+        .invite_response_pubkeys
+        .contains(&pairing_response_pubkey.to_hex()));
+}
+
+#[test]
 fn recent_protocol_filters_include_runtime_invite_response_backfill() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let core = logged_in_test_core("protocol-backfill-invite-response", &owner, &device);
     let invite_response_pubkey = core
-        .logged_in
+        .protocol_engine
         .as_ref()
-        .expect("logged in")
-        .local_invite
+        .and_then(ProtocolEngine::local_invite)
+        .expect("local invite")
         .inviter_ephemeral_public_key
         .to_hex();
 
@@ -1454,12 +1635,12 @@ fn unknown_direct_message_author_is_ignored_instead_of_bootstrapping_public_back
         )
         .expect("alice session import");
     assert!(
-        core.protocol_engine
+        !core
+            .protocol_engine
             .as_ref()
             .expect("protocol engine")
             .message_author_pubkeys_for_owner(alice_keys.public_key())
-            .is_empty()
-            == false,
+            .is_empty(),
         "tracked peer starts with app keys and known message authors"
     );
     assert!(
@@ -1499,12 +1680,12 @@ fn direct_message_discovery_backfill_stays_scoped_for_partial_tracked_peer_state
 
     install_local_sibling_session_for_test(&mut core, &owner, &linked_device, &primary_device);
     assert!(
-        core.protocol_engine
+        !core
+            .protocol_engine
             .as_ref()
             .expect("protocol engine")
             .message_author_pubkeys_for_owner(owner.public_key())
-            .len()
-            > 0,
+            .is_empty(),
         "linked device should already know a primary-device message author"
     );
     assert!(
@@ -1691,6 +1872,32 @@ fn has_filter_with_kind_pubkey(filters: &[Filter], kind: u32, pubkey: PublicKey)
         })
 }
 
+fn wait_for_relay_event_with_kind(
+    core: &mut AppCore,
+    core_rx: &flume::Receiver<CoreMsg>,
+    relay: &crate::local_relay::TestRelay,
+    kind: u32,
+) -> Event {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        while let Ok(msg) = core_rx.try_recv() {
+            core.handle_message(msg);
+        }
+        core.refresh_relay_connection_status();
+        core.retry_pending_relay_publishes("test_relay_event_wait");
+        if let Some(event) = relay
+            .events()
+            .into_iter()
+            .filter_map(|event| serde_json::from_value::<Event>(event).ok())
+            .find(|event| event.kind.as_u16() as u32 == kind)
+        {
+            return event;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("relay event with kind {kind} was not published");
+}
+
 fn install_local_sibling_session_for_test(
     core: &mut AppCore,
     owner: &Keys,
@@ -1711,7 +1918,7 @@ fn install_local_sibling_session_for_test(
         .protocol_engine
         .as_ref()
         .expect("protocol engine")
-        .local_invite_for_test()
+        .local_invite()
         .expect("linked invite");
     let (_primary_session, response) = linked_invite
         .accept_with_owner(
@@ -1749,10 +1956,10 @@ fn create_invite_generates_private_link_without_public_republish() {
     core.pending_relay_publishes.clear();
 
     let local_invite_response_pubkey = core
-        .logged_in
+        .protocol_engine
         .as_ref()
-        .expect("logged in")
-        .local_invite
+        .and_then(ProtocolEngine::local_invite)
+        .expect("local invite")
         .inviter_ephemeral_public_key
         .to_string();
 

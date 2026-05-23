@@ -6,15 +6,14 @@ pub(super) struct LoggedInState {
     pub(super) device_keys: Keys,
     pub(super) client: Client,
     pub(super) relay_urls: Vec<RelayUrl>,
-    pub(super) local_invite: Invite,
     pub(super) authorization_state: LocalAuthorizationState,
 }
 
 pub(super) struct PendingLinkedDeviceState {
     pub(super) device_keys: Keys,
-    pub(super) client: Client,
-    pub(super) invite: Invite,
-    pub(super) url: String,
+    pub(super) pairing_client: Client,
+    pub(super) pairing_invite: Invite,
+    pub(super) pairing_url: String,
 }
 
 #[derive(Clone)]

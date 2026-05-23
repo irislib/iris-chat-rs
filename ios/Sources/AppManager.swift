@@ -1116,6 +1116,8 @@ final class AppManager: ObservableObject {
     }
     private var pendingTestSeed: PendingTestSeed?
     private var seedTestMessagesDispatched = false
+    private var pendingTestSeedCreateAttempts = 0
+    private var pendingTestSeedRetryTask: Task<Void, Never>?
     private var uiTestSeedCount: Int?
     private var uiTestSeedDaySplitIndex: Int?
 #if os(iOS)
@@ -1333,6 +1335,9 @@ final class AppManager: ObservableObject {
             )
         }
 #endif
+        if pendingTestSeed != nil {
+            schedulePendingTestSeedRetry()
+        }
     }
 
     var activeScreen: Screen {
@@ -2910,17 +2915,30 @@ final class AppManager: ObservableObject {
 
     private func runPendingTestSeedIfNeeded() {
         guard let seed = pendingTestSeed else { return }
-        guard state.account != nil else { return }
-        if state.chatList.isEmpty {
+        guard state.account != nil else {
+            schedulePendingTestSeedRetry()
+            return
+        }
+        let seedChatId = state.currentChat?.chatId ?? state.chatList.first?.chatId
+        if seedChatId == nil {
             let normalized = normalizePeerInput(input: seed.peer)
             guard !normalized.isEmpty, isValidPeerInput(input: normalized) else {
                 pendingTestSeed = nil
                 return
             }
-            dispatchToRust(.createChat(peerInput: normalized))
+            if pendingTestSeedCreateAttempts < 5 {
+                pendingTestSeedCreateAttempts += 1
+                dispatchToRust(.createChat(peerInput: normalized))
+            }
+            schedulePendingTestSeedRetry()
             return
         }
-        guard !seedTestMessagesDispatched, let chat = state.chatList.first else { return }
+        guard !seedTestMessagesDispatched, let chatId = seedChatId else {
+            schedulePendingTestSeedRetry()
+            return
+        }
+        pendingTestSeedRetryTask?.cancel()
+        pendingTestSeedRetryTask = nil
         seedTestMessagesDispatched = true
         for i in 1...seed.count {
             let label: String
@@ -2932,15 +2950,25 @@ final class AppManager: ObservableObject {
                 label = "seed-msg-\(i)"
             }
             let body = "\(label) lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua"
-            dispatchToRust(.sendMessage(chatId: chat.chatId, text: body))
+            dispatchToRust(.sendMessage(chatId: chatId, text: body))
         }
         // Pop back to the chat list so the test can re-enter the chat
         // from a clean state — that's the "open an existing long chat"
         // scenario the bug report describes. Without this we'd be
         // racing with the message-arrival auto-scroll on first paint,
         // which is a different (and easier) code path.
-        dispatchToRust(.updateScreenStack(stack: []))
+        dispatch(.updateScreenStack(stack: []))
         pendingTestSeed = nil
+    }
+
+    private func schedulePendingTestSeedRetry() {
+        guard pendingTestSeed != nil else { return }
+        pendingTestSeedRetryTask?.cancel()
+        pendingTestSeedRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            self?.runPendingTestSeedIfNeeded()
+        }
     }
 
 #if os(iOS)

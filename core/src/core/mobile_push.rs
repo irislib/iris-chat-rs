@@ -74,12 +74,13 @@ impl AppCore {
         let message_author_pubkeys = sorted_hexes(message_author_pubkeys);
         let invite_response_pubkeys = if self.preferences.invite_acceptance_notifications_enabled {
             let mut pubkeys = HashSet::new();
-            pubkeys.insert(
-                logged_in
-                    .local_invite
-                    .inviter_ephemeral_public_key
-                    .to_string(),
-            );
+            if let Some(pubkey) = self
+                .protocol_engine
+                .as_ref()
+                .and_then(ProtocolEngine::local_invite_response_pubkey)
+            {
+                pubkeys.insert(pubkey.to_hex());
+            }
             pubkeys.extend(
                 self.private_chat_invite_response_pubkeys()
                     .into_iter()
@@ -281,29 +282,10 @@ pub(crate) fn decrypt_mobile_push_notification(
     let storage =
         Arc::new(NotificationPreviewStorage::new(base_storage)) as Arc<dyn StorageAdapter>;
 
-    let mut local_invite = match Invite::create_new(
-        device_keys.public_key(),
-        Some(device_keys.public_key().to_hex()),
-        Some(1),
-    ) {
-        Ok(invite) => invite,
-        Err(_) => return cached_fallback(),
-    };
-    local_invite.owner_public_key = Some(owner_pubkey);
-    let seed_session_manager = SessionManager::new(
-        NdrOwnerPubkey::from_bytes(owner_pubkey.to_bytes()),
-        device_keys.secret_key().to_secret_bytes(),
-    )
-    .snapshot();
-    let seed_group_manager =
-        NostrGroupManager::new(NdrOwnerPubkey::from_bytes(owner_pubkey.to_bytes())).snapshot();
-    let mut engine = match ProtocolEngine::load_or_seed(
+    let mut engine = match ProtocolEngine::load_or_create_for_local_device(
         storage,
         owner_pubkey,
         &device_keys,
-        local_invite,
-        seed_session_manager,
-        seed_group_manager,
     ) {
         Ok(engine) => engine,
         Err(_) => return cached_fallback(),

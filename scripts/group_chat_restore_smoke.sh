@@ -28,10 +28,10 @@ if [[ ! -f "${HARNESS}" ]]; then
   exit 1
 fi
 
-RUNNER="to.iris.chat.test/androidx.test.runner.AndroidJUnitRunner"
+RUNNER="${ANDROID_RUNNER:-$(android_debug_test_runner)}"
 CLASS="to.iris.chat.RealRelayHarnessTest"
-PACKAGE_NAME="to.iris.chat.debug"
-TEST_PACKAGE_NAME="to.iris.chat.test"
+PACKAGE_NAME="$(android_debug_app_package)"
+TEST_PACKAGE_NAME="$(android_debug_test_package)"
 RELAY_LOG="${RELAY_LOG:-/tmp/ndr-group-restore-relay.log}"
 RELAY_PID=""
 DEFAULT_AVDS=("Medium_Phone_API_36.1" "Pixel_Fold")

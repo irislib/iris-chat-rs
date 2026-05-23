@@ -992,9 +992,9 @@ final class IrisChatUITests: XCTestCase {
     }
 
     private func seededChatRowPreview(_ app: XCUIApplication) -> XCUIElement {
-        app.descendants(matching: .any).matching(
+        app.cells.matching(
             NSPredicate(
-                format: "label CONTAINS 'FIRST_SCROLL_SENTINEL' OR label CONTAINS 'seed-msg-' OR label CONTAINS 'LAST_SCROLL_SENTINEL'"
+                format: "identifier BEGINSWITH 'chatRow-'"
             )
         ).firstMatch
     }

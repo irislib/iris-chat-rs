@@ -533,19 +533,16 @@ fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys
     };
     let storage =
         Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
-    let local_invite = Invite::create_new(
-        device.public_key(),
-        Some(device.public_key().to_hex()),
-        None,
+    seed_protocol_storage_for_test(
+        storage.as_ref(),
+        seed_session_manager,
+        NostrGroupManager::new(local_owner).snapshot(),
     )
-    .expect("local invite");
-    let engine = ProtocolEngine::load_or_seed(
+    .expect("seed protocol state");
+    let engine = ProtocolEngine::load_or_create_for_local_device(
         storage,
         owner.public_key(),
         &device,
-        local_invite,
-        seed_session_manager,
-        NostrGroupManager::new(local_owner).snapshot(),
     )
     .expect("protocol engine");
 
@@ -600,7 +597,7 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
         .ingest_app_keys_snapshot(owner.public_key(), local_app_keys, 1)
         .expect("linked local appkeys");
 
-    let linked_invite = linked.local_invite_for_test().expect("linked invite");
+    let linked_invite = linked.local_invite().expect("linked invite");
     let linked_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&linked_invite)
         .expect("linked invite event")
         .sign_with_keys(&linked_device)
@@ -726,7 +723,7 @@ fn remote_group_metadata_syncs_to_local_sibling() {
         .ingest_app_keys_snapshot(owner.public_key(), local_app_keys, 1)
         .expect("linked local appkeys");
 
-    let linked_invite = linked.local_invite_for_test().expect("linked invite");
+    let linked_invite = linked.local_invite().expect("linked invite");
     let (primary_session, response) = linked_invite
         .accept_with_owner(
             primary_device.public_key(),
@@ -760,7 +757,7 @@ fn remote_group_metadata_syncs_to_local_sibling() {
         )
         .expect("linked imports primary session");
     let mut primary_invite = primary
-        .local_invite_for_test()
+        .local_invite()
         .expect("primary invite for linked sibling");
     primary_invite.owner_public_key = Some(owner.public_key());
     primary_invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
@@ -898,7 +895,7 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
         .ingest_app_keys_snapshot(owner.public_key(), local_app_keys, 1)
         .expect("linked local appkeys");
 
-    let linked_invite = linked.local_invite_for_test().expect("linked invite");
+    let linked_invite = linked.local_invite().expect("linked invite");
     let (primary_session, response) = linked_invite
         .accept_with_owner(
             primary_device.public_key(),
@@ -932,7 +929,7 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
         )
         .expect("linked imports primary session");
     let mut primary_invite = primary
-        .local_invite_for_test()
+        .local_invite()
         .expect("primary invite for linked sibling");
     primary_invite.owner_public_key = Some(owner.public_key());
     primary_invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
@@ -1525,16 +1522,12 @@ fn local_identity_artifacts_offer_profile_metadata_to_nearby() {
         temp_dir.path().to_string_lossy().to_string(),
         Arc::new(RwLock::new(AppState::empty())),
     );
-    let device_id = device.public_key().to_hex();
-    let invite =
-        Invite::create_new(device.public_key(), Some(device_id.clone()), None).expect("invite");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
         owner_keys: Some(owner.clone()),
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
     core.owner_profiles.insert(
@@ -1597,9 +1590,6 @@ fn editing_profile_preserves_extra_metadata_fields_and_tags() {
         temp_dir.path().to_string_lossy().to_string(),
         Arc::new(RwLock::new(AppState::empty())),
     );
-    let device_id = device.public_key().to_hex();
-    let invite =
-        Invite::create_new(device.public_key(), Some(device_id.clone()), None).expect("invite");
     let owner_hex = owner.public_key().to_hex();
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
@@ -1607,7 +1597,6 @@ fn editing_profile_preserves_extra_metadata_fields_and_tags() {
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
     // Simulate having received a kind:0 from another client that carried
@@ -1755,9 +1744,6 @@ fn delete_profile_metadata_publishes_blank_profile_and_clears_local_record() {
         temp_dir.path().to_string_lossy().to_string(),
         Arc::new(RwLock::new(AppState::empty())),
     );
-    let device_id = device.public_key().to_hex();
-    let invite =
-        Invite::create_new(device.public_key(), Some(device_id.clone()), None).expect("invite");
     let owner_hex = owner.public_key().to_hex();
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
@@ -1765,7 +1751,6 @@ fn delete_profile_metadata_publishes_blank_profile_and_clears_local_record() {
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
     core.owner_profiles.insert(
@@ -1813,16 +1798,12 @@ fn nearby_presence_event_binds_owner_to_ble_nonce_pair() {
         temp_dir.path().to_string_lossy().to_string(),
         Arc::new(RwLock::new(AppState::empty())),
     );
-    let device_id = device.public_key().to_hex();
-    let invite =
-        Invite::create_new(device.public_key(), Some(device_id.clone()), None).expect("invite");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
         owner_keys: Some(owner.clone()),
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
 
@@ -2037,12 +2018,6 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
         temp_dir.path().to_string_lossy().to_string(),
         Arc::new(RwLock::new(AppState::empty())),
     );
-    let local_invite = Invite::create_new(
-        bob_keys.public_key(),
-        Some(bob_keys.public_key().to_hex()),
-        None,
-    )
-    .expect("local invite");
     core.handle_action(AppAction::IngestMobilePushPayload {
         payload_json: payload.clone(),
     });
@@ -2058,7 +2033,6 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
         device_keys: bob_keys.clone(),
         client: Client::new(bob_keys.clone()),
         relay_urls: Vec::new(),
-        local_invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
     install_test_protocol_engine(&mut core, &bob_keys, &bob_keys, bob_storage, None, None);
@@ -2218,19 +2192,12 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
         data_dir.to_string_lossy().to_string(),
         Arc::new(RwLock::new(AppState::empty())),
     );
-    let invite = Invite::create_new(
-        device.public_key(),
-        Some(device.public_key().to_hex()),
-        None,
-    )
-    .expect("invite");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
         owner_keys: Some(owner.clone()),
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
     // Pretend Alice's profile is already known.
@@ -2353,19 +2320,12 @@ fn appcore_defers_decrypted_delivery_ack_until_app_state_is_persisted() {
         data_dir.to_string_lossy().to_string(),
         Arc::new(RwLock::new(AppState::empty())),
     );
-    let bob_local_invite = Invite::create_new(
-        bob_keys.public_key(),
-        Some(bob_keys.public_key().to_hex()),
-        None,
-    )
-    .expect("bob local invite");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: bob_keys.public_key(),
         owner_keys: Some(bob_keys.clone()),
         device_keys: bob_keys.clone(),
         client: Client::new(bob_keys.clone()),
         relay_urls: Vec::new(),
-        local_invite: bob_local_invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
     let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
@@ -2631,6 +2591,82 @@ fn mobile_push_subscription_body_includes_invite_response_filter() {
 }
 
 #[test]
+fn app_invite_consumers_use_protocol_owned_local_invite() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let (core, login_invite, protocol_invite) =
+        core_with_divergent_login_and_protocol_invites(&owner, &device);
+
+    let login_pubkey = login_invite.inviter_ephemeral_public_key.to_hex();
+    let protocol_pubkey = protocol_invite.inviter_ephemeral_public_key.to_hex();
+    assert_ne!(login_pubkey, protocol_pubkey);
+
+    let public_invite = core
+        .build_public_invite_snapshot()
+        .and_then(|snapshot| super::invites::parse_public_invite_input(&snapshot.url).ok())
+        .expect("public invite fallback");
+    assert_eq!(
+        public_invite.inviter_ephemeral_public_key,
+        protocol_invite.inviter_ephemeral_public_key
+    );
+
+    let push = core.build_mobile_push_sync_snapshot();
+    assert_eq!(push.invite_response_pubkeys, vec![protocol_pubkey.clone()]);
+
+    let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    assert!(
+        filters.iter().any(|filter| {
+            serde_json::to_value(filter)
+                .ok()
+                .and_then(|value| value.get("#p").cloned())
+                .and_then(|pubkeys| pubkeys.as_array().cloned())
+                .is_some_and(|pubkeys| {
+                    pubkeys
+                        .iter()
+                        .any(|pubkey| pubkey.as_str() == Some(protocol_pubkey.as_str()))
+                })
+        }),
+        "protocol backfill filters should use protocol-owned local invite pubkey"
+    );
+}
+
+#[test]
+fn local_identity_publish_uses_protocol_owned_local_invite() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let (update_tx, update_rx) = flume::unbounded();
+    let (mut core, login_invite, protocol_invite) =
+        core_with_divergent_login_and_protocol_invites_with_updates(&owner, &device, update_tx);
+
+    let login_pubkey = login_invite.inviter_ephemeral_public_key.to_hex();
+    let protocol_pubkey = protocol_invite.inviter_ephemeral_public_key.to_hex();
+    assert_ne!(login_pubkey, protocol_pubkey);
+
+    core.publish_local_identity_artifacts();
+
+    let published_invite = update_rx
+        .try_iter()
+        .filter_map(|update| match update {
+            AppUpdate::NearbyPublishedEvent {
+                kind, event_json, ..
+            } if kind == INVITE_EVENT_KIND => serde_json::from_str::<Event>(&event_json).ok(),
+            _ => None,
+        })
+        .filter_map(|event| parse_invite_event(&event).ok())
+        .next()
+        .expect("published invite event");
+
+    assert_eq!(
+        published_invite.inviter_ephemeral_public_key.to_hex(),
+        protocol_pubkey
+    );
+    assert_ne!(
+        published_invite.inviter_ephemeral_public_key.to_hex(),
+        login_pubkey
+    );
+}
+
+#[test]
 fn mobile_push_snapshot_tracks_local_invite_when_enabled() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -2639,10 +2675,10 @@ fn mobile_push_snapshot_tracks_local_invite_when_enabled() {
     let snapshot = core.build_mobile_push_sync_snapshot();
 
     let invite_pubkey = core
-        .logged_in
+        .protocol_engine
         .as_ref()
-        .expect("logged in")
-        .local_invite
+        .and_then(ProtocolEngine::local_invite)
+        .expect("local invite")
         .inviter_ephemeral_public_key
         .to_hex();
     assert_eq!(snapshot.invite_response_pubkeys, vec![invite_pubkey]);
@@ -2658,10 +2694,10 @@ fn mobile_push_snapshot_tracks_private_invite_when_enabled() {
     let snapshot = core.build_mobile_push_sync_snapshot();
 
     let local_invite_pubkey = core
-        .logged_in
+        .protocol_engine
         .as_ref()
-        .expect("logged in")
-        .local_invite
+        .and_then(ProtocolEngine::local_invite)
+        .expect("local invite")
         .inviter_ephemeral_public_key
         .to_string();
     let private_invite_pubkey = core
@@ -2722,6 +2758,74 @@ fn mobile_push_snapshot_omits_local_invite_when_disabled() {
     let snapshot = core.build_mobile_push_sync_snapshot();
 
     assert!(snapshot.invite_response_pubkeys.is_empty());
+}
+
+fn core_with_divergent_login_and_protocol_invites(
+    owner: &Keys,
+    device: &Keys,
+) -> (AppCore, Invite, Invite) {
+    let (update_tx, _update_rx) = flume::unbounded();
+    core_with_divergent_login_and_protocol_invites_with_updates(owner, device, update_tx)
+}
+
+fn core_with_divergent_login_and_protocol_invites_with_updates(
+    owner: &Keys,
+    device: &Keys,
+    update_tx: Sender<AppUpdate>,
+) -> (AppCore, Invite, Invite) {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        update_tx,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nostr_relay_urls.clear();
+
+    let device_id = device.public_key().to_hex();
+    let mut login_invite =
+        Invite::create_new(device.public_key(), Some(device_id.clone()), None)
+            .expect("login invite");
+    login_invite.owner_public_key = Some(owner.public_key());
+    login_invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
+
+    let mut protocol_invite = Invite::create_new(device.public_key(), Some(device_id), None)
+        .expect("protocol invite");
+    protocol_invite.owner_public_key = Some(owner.public_key());
+    protocol_invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
+
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: owner.public_key(),
+        owner_keys: Some(owner.clone()),
+        device_keys: device.clone(),
+        client: Client::new(device.clone()),
+        relay_urls: Vec::new(),
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+
+    let storage =
+        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    let local_owner = ndr_owner_pubkey(owner.public_key());
+    let mut seed_session_manager =
+        SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();
+    seed_session_manager.local_invite = Some(protocol_invite.clone());
+    let seed_group_manager = NostrGroupManager::new(local_owner).snapshot();
+    seed_protocol_storage_for_test(
+        storage.as_ref(),
+        seed_session_manager,
+        seed_group_manager,
+    )
+    .expect("seed protocol state");
+    core.protocol_engine = Some(
+        ProtocolEngine::load_or_create_for_local_device(
+            storage,
+            owner.public_key(),
+            device,
+        )
+        .expect("protocol engine"),
+    );
+
+    (core, login_invite, protocol_invite)
 }
 
 #[test]

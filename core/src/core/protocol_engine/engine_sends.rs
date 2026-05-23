@@ -650,10 +650,7 @@ impl ProtocolEngine {
         let mut ctx = ProtocolContext::new(NdrUnixSeconds(now.get()), &mut rng);
         let local = self
             .session_manager
-            .prepare_local_sibling_send_refreshing_one_way_sessions(
-                &mut ctx,
-                local_sibling_payload.clone(),
-            )?;
+            .prepare_local_sibling_send_reusing_sessions(&mut ctx, local_sibling_payload.clone())?;
 
         let mut event_ids = Vec::new();
         let mut effects =
@@ -721,10 +718,7 @@ impl ProtocolEngine {
         )?;
         let local = self
             .session_manager
-            .prepare_local_sibling_send_refreshing_one_way_sessions(
-                &mut ctx,
-                local_sibling_payload.clone(),
-            )?;
+            .prepare_local_sibling_send_reusing_sessions(&mut ctx, local_sibling_payload.clone())?;
 
         let mut event_ids = Vec::new();
         let mut effects = Vec::new();

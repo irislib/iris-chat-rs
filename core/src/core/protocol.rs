@@ -658,13 +658,11 @@ impl AppCore {
         if let Some(logged_in) = self.logged_in.as_ref() {
             pubkeys.push(logged_in.device_keys.public_key());
         }
-        if let Some(local_invite_pubkey) = self.logged_in.as_ref().and_then(|logged_in| {
-            logged_in
-                .local_invite
-                .inviter_ephemeral_public_key
-                .to_nostr()
-                .ok()
-        }) {
+        if let Some(local_invite_pubkey) = self
+            .protocol_engine
+            .as_ref()
+            .and_then(ProtocolEngine::local_invite_response_pubkey)
+        {
             pubkeys.push(local_invite_pubkey);
         }
         pubkeys.sort_by_key(|pubkey| pubkey.to_hex());

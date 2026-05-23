@@ -19,9 +19,9 @@ fi
 ADB="${SDK_DIR}/platform-tools/adb"
 EMULATOR="${SDK_DIR}/emulator/emulator"
 HARNESS="${ROOT_DIR}/scripts/run_harness.py"
-RUNNER="to.iris.chat.test/androidx.test.runner.AndroidJUnitRunner"
-PACKAGE_NAME="to.iris.chat.debug"
-TEST_PACKAGE_NAME="to.iris.chat.test"
+RUNNER="${ANDROID_RUNNER:-$(android_debug_test_runner)}"
+PACKAGE_NAME="$(android_debug_app_package)"
+TEST_PACKAGE_NAME="$(android_debug_test_package)"
 DEFAULT_AVDS=("Medium_Phone_API_36.1" "Pixel_Fold")
 RELAY_LOG="${RELAY_LOG:-/tmp/ndr-linked-device-relay.log}"
 RELAY_PID=""

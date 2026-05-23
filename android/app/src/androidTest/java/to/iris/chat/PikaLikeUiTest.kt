@@ -134,6 +134,17 @@ class PikaLikeUiTest {
             .assertIsEnabled()
 
         composeRule.onNodeWithTag("nearbyEnabledSwitch", useUnmergedTree = true).performClick()
+        composeRule.waitUntil(10_000) {
+            runCatching {
+                composeRule.onNodeWithTag("nearbyEnabledSwitch", useUnmergedTree = true)
+                    .assertIsOff()
+                composeRule.onNodeWithTag("nearbyVisibilitySwitch", useUnmergedTree = true)
+                    .assertIsNotEnabled()
+                composeRule.onNodeWithTag("nearbyLanSwitch", useUnmergedTree = true)
+                    .assertIsNotEnabled()
+                true
+            }.getOrDefault(false)
+        }
         composeRule.onNodeWithTag("nearbyVisibilitySwitch", useUnmergedTree = true)
             .assertIsNotEnabled()
         composeRule.onNodeWithTag("nearbyLanSwitch", useUnmergedTree = true)

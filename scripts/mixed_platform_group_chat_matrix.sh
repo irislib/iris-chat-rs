@@ -18,10 +18,10 @@ fi
 ADB="${SDK_DIR}/platform-tools/adb"
 ANDROID_HARNESS="${ROOT_DIR}/scripts/run_harness.py"
 IOS_HARNESS="${ROOT_DIR}/scripts/run_ios_harness.py"
-ANDROID_RUNNER="to.iris.chat.test/androidx.test.runner.AndroidJUnitRunner"
+ANDROID_RUNNER="${ANDROID_RUNNER:-$(android_debug_test_runner)}"
 ANDROID_CLASS="to.iris.chat.RealRelayHarnessTest"
-ANDROID_APP_PACKAGE="to.iris.chat.debug"
-ANDROID_TEST_PACKAGE="to.iris.chat.test"
+ANDROID_APP_PACKAGE="$(android_debug_app_package)"
+ANDROID_TEST_PACKAGE="$(android_debug_test_package)"
 
 ANDROID_ADMIN_AVD="${ANDROID_ADMIN_AVD:-Medium_Phone_API_36.1}"
 ANDROID_MEMBER_AVD="${ANDROID_MEMBER_AVD:-Pixel_Fold}"

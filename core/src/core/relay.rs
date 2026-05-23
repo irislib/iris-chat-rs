@@ -341,7 +341,7 @@ impl AppCore {
         self.debug_event_counters.invite_response_events += 1;
         let event_id = event.id.to_string();
         let response = match nostr_double_ratchet_nostr::process_invite_response_event(
-            &pending.invite,
+            &pending.pairing_invite,
             &event,
             pending.device_keys.secret_key().to_secret_bytes(),
         ) {

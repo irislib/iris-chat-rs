@@ -240,9 +240,9 @@ impl AppCore {
 
         self.pending_linked_device = Some(PendingLinkedDeviceState {
             device_keys,
-            client,
-            invite,
-            url,
+            pairing_client: client,
+            pairing_invite: invite,
+            pairing_url: url,
         });
         Ok(())
     }
@@ -251,7 +251,7 @@ impl AppCore {
         let Some(pending) = self.pending_linked_device.take() else {
             return;
         };
-        let client = pending.client;
+        let client = pending.pairing_client;
         self.runtime.spawn(async move {
             client.unsubscribe_all().await;
             let _ = client.shutdown().await;
@@ -730,26 +730,9 @@ impl AppCore {
             owner_pubkey.to_hex(),
             device_pubkey.to_hex(),
         )) as Arc<dyn StorageAdapter>;
-        let protocol_engine_storage = storage.clone();
         self.private_chat_invites = load_private_chat_invites(storage.as_ref())?;
-        let device_id = device_pubkey.to_hex();
-        let local_invite =
-            load_or_create_local_invite(storage.as_ref(), device_pubkey, &device_id, owner_pubkey)?;
-        let seed_session_manager = SessionManager::new(
-            NdrOwnerPubkey::from_bytes(owner_pubkey.to_bytes()),
-            device_keys.secret_key().to_secret_bytes(),
-        )
-        .snapshot();
-        let seed_group_manager =
-            NostrGroupManager::new(NdrOwnerPubkey::from_bytes(owner_pubkey.to_bytes())).snapshot();
-        let protocol_engine = ProtocolEngine::load_or_seed(
-            protocol_engine_storage,
-            owner_pubkey,
-            &device_keys,
-            local_invite.clone(),
-            seed_session_manager,
-            seed_group_manager,
-        )?;
+        let protocol_engine =
+            ProtocolEngine::load_or_create_for_local_device(storage, owner_pubkey, &device_keys)?;
         self.protocol_engine = Some(protocol_engine);
 
         let authorization_state = self.restored_local_authorization_state(
@@ -772,7 +755,6 @@ impl AppCore {
             device_keys: device_keys.clone(),
             client,
             relay_urls,
-            local_invite,
             authorization_state,
         });
         let existing_app_keys = self.app_keys.values().cloned().collect::<Vec<_>>();
@@ -1129,26 +1111,6 @@ impl AppCore {
             _ => LocalAuthorizationState::AwaitingApproval,
         }
     }
-}
-
-fn load_or_create_local_invite(
-    storage: &dyn StorageAdapter,
-    device_pubkey: PublicKey,
-    device_id: &str,
-    owner_pubkey: PublicKey,
-) -> anyhow::Result<Invite> {
-    let storage_key = format!("device-invite/{device_id}");
-    if let Some(serialized) = storage.get(&storage_key)? {
-        if let Ok(mut invite) = Invite::deserialize(&serialized) {
-            invite.owner_public_key = Some(owner_pubkey);
-            return Ok(invite);
-        }
-    }
-
-    let mut invite = Invite::create_new(device_pubkey, Some(device_id.to_string()), None)?;
-    invite.owner_public_key = Some(owner_pubkey);
-    storage.put(&storage_key, invite.serialize()?)?;
-    Ok(invite)
 }
 
 fn parse_link_device_invite_input(input: &str, owner_pubkey: PublicKey) -> anyhow::Result<Invite> {

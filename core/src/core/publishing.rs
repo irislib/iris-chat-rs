@@ -575,7 +575,10 @@ impl AppCore {
         let owner_keys = logged_in.owner_keys.clone();
         let device_keys = logged_in.device_keys.clone();
         let owner_pubkey = logged_in.owner_pubkey;
-        let local_invite = logged_in.local_invite.clone();
+        let local_invite = self
+            .protocol_engine
+            .as_ref()
+            .and_then(ProtocolEngine::local_invite);
         let local_app_keys = self.app_keys.get(&owner_pubkey.to_hex()).cloned();
         let local_profile = self.owner_profiles.get(&owner_pubkey.to_hex()).cloned();
         let publish_app_keys = !self.defer_owner_app_keys_publish;
@@ -612,9 +615,11 @@ impl AppCore {
             }
         }
 
-        if let Ok(unsigned) = nostr_double_ratchet_nostr::invite_unsigned_event(&local_invite) {
-            if let Ok(event) = unsigned.sign_with_keys(&device_keys) {
-                durable_events.push(("invite", event));
+        if let Some(local_invite) = local_invite {
+            if let Ok(unsigned) = nostr_double_ratchet_nostr::invite_unsigned_event(&local_invite) {
+                if let Ok(event) = unsigned.sign_with_keys(&device_keys) {
+                    durable_events.push(("invite", event));
+                }
             }
         }
 
