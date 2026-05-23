@@ -238,10 +238,11 @@ pub(crate) fn decrypt_mobile_push_notification(
     // saw the wrapper as a non-message rumor (typing, receipt,
     // reaction, settings) and there's nothing useful to show.
     let cached_fallback = || {
-        let is_group_outer = parse_group_sender_key_message_event(&outer_event).is_ok();
+        let is_legacy_group_outer = !mobile_push_event_has_tag(&outer_event, "header")
+            && parse_group_sender_key_message_event(&outer_event).is_ok();
         lookup_mobile_push_preview_after_short_wait(&data_dir, &outer_event_id).unwrap_or_else(
             || {
-                if is_group_outer {
+                if is_legacy_group_outer {
                     lookup_recent_group_mobile_push_preview_after_short_wait(
                         &data_dir,
                         outer_event.created_at.as_secs().saturating_sub(5),
@@ -291,7 +292,20 @@ pub(crate) fn decrypt_mobile_push_notification(
         Err(_) => return cached_fallback(),
     };
 
-    if parse_group_sender_key_message_event(&outer_event).is_ok() {
+    let outer_has_header = mobile_push_event_has_tag(&outer_event, "header");
+    let should_try_group_outer =
+        !outer_has_header || engine.is_known_group_sender_event_author(outer_event.pubkey);
+    let group_outer_parse = should_try_group_outer.then(|| {
+        if outer_has_header {
+            parse_group_sender_key_message_event_unchecked(&outer_event)
+        } else {
+            parse_group_sender_key_message_event(&outer_event)
+        }
+    });
+    if group_outer_parse
+        .as_ref()
+        .is_some_and(|parse| parse.is_ok())
+    {
         let group_result = match engine.process_group_outer_event(&outer_event) {
             Ok(result) => result,
             Err(_) => return cached_fallback(),
@@ -1408,6 +1422,13 @@ fn should_show_mobile_push_kind(kind: u64) -> bool {
         kind,
         MOBILE_PUSH_CHAT_MESSAGE_KIND | MOBILE_PUSH_INVITE_RESPONSE_KIND
     )
+}
+
+fn mobile_push_event_has_tag(event: &Event, name: &str) -> bool {
+    event
+        .tags
+        .iter()
+        .any(|tag| tag.as_slice().first().map(|value| value.as_str()) == Some(name))
 }
 
 #[cfg(test)]

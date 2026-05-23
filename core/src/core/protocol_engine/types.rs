@@ -167,8 +167,10 @@ struct ProtocolPendingGroupPairwisePayload {
 struct ProtocolPendingGroupSenderKeyRepair {
     group_id: String,
     sender_event_pubkey_hex: String,
-    key_id: u32,
-    message_number: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    message_number: Option<u32>,
     #[serde(default)]
     required_revision: Option<u64>,
     created_at_secs: u64,

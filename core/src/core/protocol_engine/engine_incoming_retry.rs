@@ -9,6 +9,7 @@ impl ProtocolEngine {
             ProtocolSenderOwnerResolution::Verified { .. }
             | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { .. } => {}
             ProtocolSenderOwnerResolution::PendingOwnerClaim { .. } => {
+                self.queue_header_group_sender_key_candidate(event)?;
                 self.queue_pending_inbound_direct_event(
                     event.clone(),
                     event.created_at.as_secs(),
@@ -21,6 +22,7 @@ impl ProtocolEngine {
         if let Some(decrypted) = self.decrypt_direct_message_envelope(event, &envelope, true)? {
             return Ok(Some(decrypted));
         }
+        self.queue_header_group_sender_key_candidate(event)?;
         self.queue_pending_inbound_direct_event(
             event.clone(),
             event.created_at.as_secs(),
@@ -30,11 +32,30 @@ impl ProtocolEngine {
         Ok(None)
     }
 
+    fn queue_header_group_sender_key_candidate(&mut self, event: &Event) -> anyhow::Result<()> {
+        if !protocol_event_has_tag(event, "header") {
+            return Ok(());
+        }
+        if self.is_known_message_author(event.pubkey) {
+            return Ok(());
+        }
+        if let Ok(parsed) = parse_group_sender_key_message_event_unchecked(event) {
+            self.queue_pending_group_sender_key_message(parsed)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn process_group_outer_event(
         &mut self,
         event: &Event,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
-        let Ok(parsed) = parse_group_sender_key_message_event(event) else {
+        let has_header = protocol_event_has_tag(event, "header");
+        let parsed = if has_header {
+            parse_group_sender_key_message_event_unchecked(event)
+        } else {
+            parse_group_sender_key_message_event(event)
+        };
+        let Ok(parsed) = parsed else {
             return Ok(ProtocolGroupIncomingResult::default());
         };
         let Some(message) = self.group_sender_key_message_from_parsed(&parsed) else {

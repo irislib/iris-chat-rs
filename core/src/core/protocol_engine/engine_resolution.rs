@@ -529,6 +529,7 @@ impl ProtocolEngine {
             sender_event_pubkey: parsed.sender_event_pubkey,
             key_id: parsed.key_id,
             message_number: parsed.message_number,
+            encrypted_header: parsed.encrypted_header.clone(),
             created_at: parsed.created_at,
             ciphertext: parsed.ciphertext.clone(),
         })
@@ -540,8 +541,11 @@ impl ProtocolEngine {
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
         let message_repair_group_id = message.group_id.clone();
         let message_repair_sender = message.sender_event_pubkey;
-        let message_repair_key_id = message.key_id;
-        let message_repair_number = message.message_number;
+        let message_repair_key_id = message.encrypted_header.is_none().then_some(message.key_id);
+        let message_repair_number = message
+            .encrypted_header
+            .is_none()
+            .then_some(message.message_number);
         let result = match self
             .group_manager
             .handle_sender_key_message(message.clone())
@@ -713,15 +717,21 @@ impl ProtocolEngine {
         &mut self,
         group_id: &str,
         sender_event_pubkey: NdrDevicePubkey,
-        key_id: u32,
-        message_number: u32,
+        key_id: Option<u32>,
+        message_number: Option<u32>,
     ) {
         let sender_event_pubkey_hex = sender_event_pubkey.to_hex();
         self.pending_group_sender_key_repairs.retain(|pending| {
+            let position_matches = match (key_id, message_number) {
+                (Some(key_id), Some(message_number)) => {
+                    pending.key_id == Some(key_id)
+                        && pending.message_number == Some(message_number)
+                }
+                _ => true,
+            };
             !(pending.group_id == group_id
                 && pending.sender_event_pubkey_hex == sender_event_pubkey_hex
-                && pending.key_id == key_id
-                && pending.message_number == message_number)
+                && position_matches)
         });
     }
 

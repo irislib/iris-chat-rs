@@ -310,6 +310,13 @@ fn ndr_device(pubkey: PublicKey) -> NdrDevicePubkey {
     NdrDevicePubkey::from_bytes(pubkey.to_bytes())
 }
 
+fn protocol_event_has_tag(event: &Event, name: &str) -> bool {
+    event
+        .tags
+        .iter()
+        .any(|tag| tag.as_slice().first().map(|value| value.as_str()) == Some(name))
+}
+
 fn delivered_device_set(device_hexes: &[String]) -> HashSet<NdrDevicePubkey> {
     device_hexes
         .iter()

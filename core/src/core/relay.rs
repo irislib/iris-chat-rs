@@ -41,8 +41,14 @@ impl AppCore {
         let is_app_keys_protocol_event = kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event);
         let is_invite_protocol_event = is_protocol_invite_event(&event);
         let is_invite_response_protocol_event = kind == INVITE_RESPONSE_KIND;
-        let is_pairwise_message_event =
-            kind == MESSAGE_EVENT_KIND && event_has_tag(&event, "header");
+        let message_has_header = kind == MESSAGE_EVENT_KIND && event_has_tag(&event, "header");
+        let is_known_group_sender_key_event = kind == MESSAGE_EVENT_KIND
+            && self
+                .protocol_engine
+                .as_ref()
+                .is_some_and(|engine| engine.is_known_group_sender_event_author(event.pubkey));
+        let should_try_group_sender_key_event =
+            kind == MESSAGE_EVENT_KIND && (!message_has_header || is_known_group_sender_key_event);
         if self.has_seen_event(&event_id) {
             // Only persist + rebuild + emit when the transport-channel
             // set actually grew. Without this guard, every mirrored
@@ -163,7 +169,7 @@ impl AppCore {
                 }
             }
             MESSAGE_EVENT_KIND => {
-                if !is_pairwise_message_event {
+                if should_try_group_sender_key_event {
                     let group_result = match self
                         .protocol_engine
                         .as_mut()

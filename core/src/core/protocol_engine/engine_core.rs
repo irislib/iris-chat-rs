@@ -421,6 +421,12 @@ impl ProtocolEngine {
         authors
     }
 
+    pub(super) fn is_known_group_sender_event_author(&self, author: PublicKey) -> bool {
+        self.group_manager
+            .group_id_for_sender_event_pubkey(ndr_device(author))
+            .is_some()
+    }
+
     pub(super) fn known_device_identity_pubkeys_for_owner(
         &self,
         owner_pubkey: PublicKey,

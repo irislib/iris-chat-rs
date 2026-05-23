@@ -29,8 +29,8 @@ use nostr_double_ratchet_nostr::{
 };
 use nostr_double_ratchet_nostr::{
     group_sender_key_message_event, invite_response_event, message_event,
-    parse_group_sender_key_message_event, parse_invite_event, parse_invite_response_event,
-    parse_message_event,
+    parse_group_sender_key_message_event, parse_group_sender_key_message_event_unchecked,
+    parse_invite_event, parse_invite_response_event, parse_message_event,
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use nostr_double_ratchet_runtime::StorageAdapter;
