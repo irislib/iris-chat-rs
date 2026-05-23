@@ -1189,8 +1189,8 @@ public sealed class AppManager : INotifyPropertyChanged
         var openChatId = Native.RouterOpenChatId(next.router);
 
         var candidates = Native.DecidePendingNotifications(
-            previousChats: old.chatList ?? new List<ChatThreadSnapshot>(),
-            nextChats: next.chatList ?? new List<ChatThreadSnapshot>(),
+            previousChats: old.chatList ?? Array.Empty<ChatThreadSnapshot>(),
+            nextChats: next.chatList ?? Array.Empty<ChatThreadSnapshot>(),
             preferences: next.preferences,
             appForeground: appForeground,
             openChatId: openChatId
