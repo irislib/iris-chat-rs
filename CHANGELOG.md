@@ -7,6 +7,7 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 ## Unreleased
 
+- iOS onboarding now requires agreeing to Terms before creating, restoring, or linking a profile.
 - Split the oversized iOS Swift UI files into focused source files.
 - Added a repo-wide source file size ratchet: new source files default to a 1,000-line limit, while existing oversized files may shrink but not grow.
 

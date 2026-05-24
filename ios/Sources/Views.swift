@@ -18,6 +18,7 @@ let irisPrivacyURL = URL(string: "https://chat.iris.to/privacy")!
 let irisTermsURL = URL(string: "https://chat.iris.to/terms")!
 let irisChildSafetyURL = URL(string: "https://chat.iris.to/csae")!
 let irisSupportEmail = "irismessenger@pm.me"
+let irisTermsAcceptedDefaultsKey = "legal.termsAccepted.v1"
 let chatListRelativeTimeTicker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 func irisChatProfileURL(npub: String) -> URL {
     URL(string: "https://chat.iris.to/#/\(npub)")!

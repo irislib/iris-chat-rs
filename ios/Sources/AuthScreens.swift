@@ -15,6 +15,7 @@ import PhotosUI
 struct WelcomeScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
+    @AppStorage(irisTermsAcceptedDefaultsKey) private var termsAccepted = false
 
     var body: some View {
         IrisScrollScreen {
@@ -67,6 +68,11 @@ struct WelcomeScreen: View {
                         .accessibilityIdentifier("welcomeAddDeviceAction")
                     }
                     .frame(maxWidth: 320)
+                    .disabled(!termsAccepted)
+                    .opacity(termsAccepted ? 1 : 0.46)
+
+                    OnboardingTermsAgreement(accepted: $termsAccepted)
+                        .frame(maxWidth: 360)
                 }
                 .frame(maxWidth: .infinity)
 
@@ -81,6 +87,50 @@ struct WelcomeScreen: View {
             .frame(maxWidth: .infinity)
             .padding(.top, IrisLayout.usesDesktopChrome ? 96 : 56)
         }
+    }
+}
+
+private struct OnboardingTermsAgreement: View {
+    @Environment(\.irisPalette) private var palette
+    @Binding var accepted: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Iris has no tolerance for objectionable content or abusive users.")
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(palette.muted)
+                .accessibilityIdentifier("onboardingTermsNotice")
+
+            Button {
+                accepted.toggle()
+            } label: {
+                HStack(alignment: .center, spacing: 10) {
+                    Image(systemName: accepted ? "checkmark.square.fill" : "square")
+                        .foregroundStyle(accepted ? palette.accent : palette.muted)
+                    Text("I agree to the Terms of Use")
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.irisPlain)
+            .accessibilityIdentifier("onboardingTermsAgreementToggle")
+
+            HStack(spacing: 14) {
+                Link("Terms", destination: irisTermsURL)
+                    .accessibilityIdentifier("onboardingTermsLink")
+                Link("Privacy", destination: irisPrivacyURL)
+                    .accessibilityIdentifier("onboardingPrivacyLink")
+            }
+            .font(.system(.caption, design: .rounded, weight: .semibold))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(palette.panel.opacity(0.72))
+        )
     }
 }
 
