@@ -101,21 +101,21 @@ private struct OnboardingTermsAgreement: View {
                 .foregroundStyle(palette.muted)
                 .accessibilityIdentifier("onboardingTermsNotice")
 
-            Button {
-                accepted.toggle()
-            } label: {
-                HStack(alignment: .center, spacing: 10) {
-                    Image(systemName: accepted ? "checkmark.square.fill" : "square")
-                        .foregroundStyle(accepted ? palette.accent : palette.muted)
-                    Text("I agree to the Terms of Use")
-                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.textPrimary)
-                    Spacer(minLength: 0)
-                }
-                .contentShape(Rectangle())
+            if accepted {
+                termsButton(
+                    title: "Terms accepted",
+                    systemImage: "checkmark.circle.fill",
+                    action: { accepted = false }
+                )
+                .buttonStyle(IrisSecondaryButtonStyle())
+            } else {
+                termsButton(
+                    title: "Accept Terms",
+                    systemImage: "checkmark.circle",
+                    action: { accepted = true }
+                )
+                .buttonStyle(IrisPrimaryButtonStyle())
             }
-            .buttonStyle(.irisPlain)
-            .accessibilityIdentifier("onboardingTermsAgreementToggle")
 
             HStack(spacing: 14) {
                 Link("Terms", destination: irisTermsURL)
@@ -131,6 +131,18 @@ private struct OnboardingTermsAgreement: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(palette.panel.opacity(0.72))
         )
+    }
+
+    private func termsButton(
+        title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .frame(maxWidth: .infinity)
+        }
+        .accessibilityIdentifier("onboardingTermsAgreementToggle")
     }
 }
 
