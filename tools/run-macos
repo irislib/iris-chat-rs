@@ -5,6 +5,8 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MACOS_PROJECT="$ROOT/macos/IrisChatMac.xcodeproj"
 MACOS_SCHEME="IrisChatMac"
+MACOS_BUILD_DIR="${IRIS_MACOS_BUILD_DIR:-$ROOT/macos/.build}"
+MACOS_DERIVED_DATA="$MACOS_BUILD_DIR/DerivedData"
 
 usage() {
   cat <<'EOF'
@@ -21,6 +23,7 @@ resolve_app_path() {
     xcodebuild \
       -project "$MACOS_PROJECT" \
       -scheme "$MACOS_SCHEME" \
+      -derivedDataPath "$MACOS_DERIVED_DATA" \
       -destination 'platform=macOS' \
       -showBuildSettings 2>/dev/null
   )"
@@ -31,7 +34,7 @@ resolve_app_path() {
     return 0
   fi
 
-  python3 - "$HOME/Library/Developer/Xcode/DerivedData" <<'PY'
+  python3 - "$MACOS_DERIVED_DATA" <<'PY'
 from pathlib import Path
 import sys
 

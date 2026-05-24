@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MACOS_BUILD_DIR="${IRIS_MACOS_BUILD_DIR:-$ROOT/macos/.build}"
+MACOS_DERIVED_DATA="$MACOS_BUILD_DIR/DerivedData"
 
 print_one() {
   printf 'Build output: %s\n' "$1"
@@ -19,6 +21,7 @@ macos_app_path() {
     xcodebuild \
       -project "$project" \
       -scheme "$scheme" \
+      -derivedDataPath "$MACOS_DERIVED_DATA" \
       -destination 'platform=macOS' \
       -showBuildSettings 2>/dev/null || true
   )"
@@ -33,7 +36,7 @@ macos_app_path() {
   fi
 
   app_path="$(
-    python3 - "$HOME/Library/Developer/Xcode/DerivedData" <<'PY'
+    python3 - "$MACOS_DERIVED_DATA" <<'PY'
 from pathlib import Path
 import sys
 
@@ -52,7 +55,7 @@ PY
     return 0
   fi
 
-  echo "Build output not found under $HOME/Library/Developer/Xcode/DerivedData" >&2
+  echo "Build output not found under $MACOS_DERIVED_DATA" >&2
   return 1
 }
 

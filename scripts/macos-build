@@ -15,6 +15,7 @@ IOS_BINDINGS_DIR="$ROOT/ios/Bindings"
 MACOS_DIR="$ROOT/macos"
 MACOS_FRAMEWORKS_DIR="$MACOS_DIR/Frameworks"
 MACOS_BUILD_DIR="$MACOS_DIR/.build"
+MACOS_DERIVED_DATA="$MACOS_BUILD_DIR/DerivedData"
 PROFILE="${IRIS_MACOS_RUST_PROFILE:-debug}"
 TARGETS="${IRIS_MACOS_RUST_TARGETS:-aarch64-apple-darwin}"
 MACOS_DIST_DIR="$ROOT/dist/macos"
@@ -52,7 +53,7 @@ host_dynamic_lib() {
 
 target_static_lib() {
   local target="$1"
-  printf '%s/%s/%s/libiris_chat_core.a\n' "$(target_root)" "$target" "$PROFILE"
+  printf '%s/%s/%s/libiris_chat_core.a\n' "$(macos_rust_target_root)" "$target" "$PROFILE"
 }
 
 target_root() {
@@ -70,6 +71,15 @@ target_root() {
     printf '%s\n' "$dir"
   else
     printf '%s/%s\n' "$CORE_DIR" "$dir"
+  fi
+}
+
+macos_rust_target_root() {
+  local dir="${IRIS_MACOS_CARGO_TARGET_DIR:-$MACOS_BUILD_DIR/cargo-target}"
+  if [[ "$dir" = /* ]]; then
+    printf '%s\n' "$dir"
+  else
+    printf '%s/%s\n' "$ROOT" "$dir"
   fi
 }
 
@@ -111,7 +121,8 @@ run_macos_rust() {
   local sdkroot
   local min_version="14.0"
   local arch_target
-  local target_upper
+  local rustflags_env_var
+  local target_rustflags
 
   dev_dir="$(xcode-select -p)"
   toolchain_bin="$dev_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin"
@@ -127,15 +138,18 @@ run_macos_rust() {
       case "$target" in
         aarch64-apple-darwin)
           arch_target="arm64-apple-macos${min_version}"
+          rustflags_env_var="CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS"
           ;;
         x86_64-apple-darwin)
           arch_target="x86_64-apple-macos${min_version}"
+          rustflags_env_var="CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS"
           ;;
         *)
           echo "Unsupported macOS target: $target" >&2
           exit 2
           ;;
       esac
+      target_rustflags="-C linker=$cc_bin -C link-arg=-target -C link-arg=$arch_target -C link-arg=-mmacosx-version-min=${min_version}"
       if [[ "$PROFILE" == "release" ]]; then
         env \
           SDKROOT="$sdkroot" \
@@ -144,13 +158,14 @@ run_macos_rust() {
           CXX="$cxx_bin" \
           AR="$ar_bin" \
           RANLIB="$ranlib_bin" \
+          CARGO_TARGET_DIR="$(macos_rust_target_root)" \
           CFLAGS_aarch64_apple_darwin="-target arm64-apple-macos${min_version} -mmacosx-version-min=${min_version}" \
           CFLAGS_x86_64_apple_darwin="-target x86_64-apple-macos${min_version} -mmacosx-version-min=${min_version}" \
           CXXFLAGS_aarch64_apple_darwin="-target arm64-apple-macos${min_version} -mmacosx-version-min=${min_version}" \
           CXXFLAGS_x86_64_apple_darwin="-target x86_64-apple-macos${min_version} -mmacosx-version-min=${min_version}" \
           CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
           CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
-          RUSTFLAGS="-C linker=$cc_bin -C link-arg=-target -C link-arg=$arch_target -C link-arg=-mmacosx-version-min=${min_version}" \
+          "$rustflags_env_var=$target_rustflags" \
           IRIS_APP_VERSION="${IRIS_APP_VERSION_NAME:-}" \
           IRIS_BUILD_GIT_SHA="${IRIS_BUILD_GIT_SHA:-}" \
           IRIS_BUILD_TIMESTAMP_UTC="${IRIS_BUILD_TIMESTAMP_UTC:-}" \
@@ -163,13 +178,14 @@ run_macos_rust() {
           CXX="$cxx_bin" \
           AR="$ar_bin" \
           RANLIB="$ranlib_bin" \
+          CARGO_TARGET_DIR="$(macos_rust_target_root)" \
           CFLAGS_aarch64_apple_darwin="-target arm64-apple-macos${min_version} -mmacosx-version-min=${min_version}" \
           CFLAGS_x86_64_apple_darwin="-target x86_64-apple-macos${min_version} -mmacosx-version-min=${min_version}" \
           CXXFLAGS_aarch64_apple_darwin="-target arm64-apple-macos${min_version} -mmacosx-version-min=${min_version}" \
           CXXFLAGS_x86_64_apple_darwin="-target x86_64-apple-macos${min_version} -mmacosx-version-min=${min_version}" \
           CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
           CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
-          RUSTFLAGS="-C linker=$cc_bin -C link-arg=-target -C link-arg=$arch_target -C link-arg=-mmacosx-version-min=${min_version}" \
+          "$rustflags_env_var=$target_rustflags" \
           IRIS_APP_VERSION="${IRIS_APP_VERSION_NAME:-}" \
           IRIS_BUILD_GIT_SHA="${IRIS_BUILD_GIT_SHA:-}" \
           IRIS_BUILD_TIMESTAMP_UTC="${IRIS_BUILD_TIMESTAMP_UTC:-}" \
@@ -233,6 +249,7 @@ run_macos_build() {
   xcodebuild \
     -project "$MACOS_DIR/IrisChatMac.xcodeproj" \
     -scheme IrisChatMac \
+    -derivedDataPath "$MACOS_DERIVED_DATA" \
     -destination "platform=macOS,arch=$host_arch" \
     CODE_SIGNING_ALLOWED=NO \
     build
@@ -246,6 +263,7 @@ run_macos_test() {
   xcodebuild \
     -project "$MACOS_DIR/IrisChatMac.xcodeproj" \
     -scheme IrisChatMac \
+    -derivedDataPath "$MACOS_DERIVED_DATA" \
     -destination "platform=macOS,arch=$host_arch" \
     CODE_SIGNING_ALLOWED=NO \
     test

@@ -659,7 +659,7 @@ private protocol IrisComposerNSTextViewCommandDelegate: AnyObject {
 }
 
 final class IrisComposerNSTextView: NSTextView {
-    weak var composerCommandDelegate: IrisComposerNSTextViewCommandDelegate?
+    fileprivate weak var composerCommandDelegate: IrisComposerNSTextViewCommandDelegate?
 
     override func doCommand(by selector: Selector) {
         if selector == #selector(NSResponder.insertNewline(_:)), !shouldInsertLineBreakForCurrentEvent {
