@@ -554,19 +554,6 @@ impl AppCore {
         true
     }
 
-    pub(super) fn sign_runtime_unsigned_event(&self, event: UnsignedEvent) -> Option<Event> {
-        let logged_in = self.logged_in.as_ref()?;
-        if event.pubkey == logged_in.device_keys.public_key() {
-            return event.sign_with_keys(&logged_in.device_keys).ok();
-        }
-        if let Some(owner_keys) = logged_in.owner_keys.as_ref() {
-            if event.pubkey == owner_keys.public_key() {
-                return event.sign_with_keys(owner_keys).ok();
-            }
-        }
-        None
-    }
-
     pub(super) fn publish_local_identity_artifacts(&mut self) {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return;

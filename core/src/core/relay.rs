@@ -406,14 +406,6 @@ impl AppCore {
         coalesce_protocol_fetch_effects(&mut effects);
         for effect in effects {
             match effect {
-                ProtocolEffect::PublishUnsigned(unsigned) => {
-                    if let Some(signed) = self.sign_runtime_unsigned_event(unsigned) {
-                        let event_id = signed.id.to_string();
-                        let completion =
-                            self.runtime_publish_completion(&event_id, None, completions);
-                        self.publish_runtime_event(signed, "appcore-protocol", completion);
-                    }
-                }
                 ProtocolEffect::PublishSigned(event) => {
                     let event_id = event.id.to_string();
                     let completion = self.runtime_publish_completion(&event_id, None, completions);
@@ -458,44 +450,8 @@ impl AppCore {
                         self.schedule_first_contact_payload_publish();
                     }
                 }
-                ProtocolEffect::Subscribe { subid, filters } => {
-                    self.push_debug_log(
-                        "appcore.protocol.subscribe_ignored",
-                        format!(
-                            "subid={subid} filters={} using_appcore_plan=true",
-                            filters.len()
-                        ),
-                    );
-                    self.request_protocol_subscription_refresh();
-                }
-                ProtocolEffect::Unsubscribe(subid) => {
-                    self.push_debug_log(
-                        "appcore.protocol.unsubscribe_ignored",
-                        format!("subid={subid} using_appcore_plan=true"),
-                    );
-                    self.request_protocol_subscription_refresh();
-                }
-                ProtocolEffect::FetchBackfill => {
-                    self.fetch_recent_protocol_state();
-                }
                 ProtocolEffect::FetchProtocolState { filters, reason } => {
                     self.fetch_protocol_state_for_filters(filters, reason);
-                }
-                ProtocolEffect::EmitDecrypted {
-                    sender,
-                    sender_device,
-                    conversation_owner,
-                    content,
-                    event_id,
-                } => {
-                    self.apply_decrypted_runtime_message_with_metadata(
-                        sender,
-                        sender_device,
-                        conversation_owner,
-                        content,
-                        event_id,
-                    );
-                    self.mark_mobile_push_dirty();
                 }
             }
         }
