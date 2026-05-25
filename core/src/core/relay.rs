@@ -458,9 +458,6 @@ impl AppCore {
                         self.schedule_first_contact_payload_publish();
                     }
                 }
-                ProtocolEffect::FetchBackfill => {
-                    self.fetch_recent_protocol_state();
-                }
                 ProtocolEffect::FetchProtocolState { filters, reason } => {
                     self.fetch_protocol_state_for_filters(filters, reason);
                 }

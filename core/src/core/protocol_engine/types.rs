@@ -48,7 +48,6 @@ pub(super) struct ProtocolPublishEvent {
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(super) enum ProtocolEffect {
-    FetchBackfill,
     PublishUnsigned(UnsignedEvent),
     PublishSigned(Event),
     PublishSignedForInnerEvent {
