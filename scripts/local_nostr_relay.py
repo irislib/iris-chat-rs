@@ -8,6 +8,7 @@ on a SIGTERM). Build with `cargo build`, then `os.execv` the binary so
 the OS replaces this python process with the rust process — the PID
 the harness tracks IS the relay, and a single kill terminates it.
 """
+import json
 import os
 import subprocess
 import sys
@@ -15,13 +16,21 @@ from pathlib import Path
 
 
 def cargo_target_dir(core_dir: Path) -> Path:
-    configured = os.environ.get("CARGO_TARGET_DIR")
-    if not configured:
-        return core_dir / "target"
-    target_dir = Path(configured)
-    if target_dir.is_absolute():
-        return target_dir
-    return core_dir / target_dir
+    metadata = subprocess.run(
+        [
+            "cargo",
+            "metadata",
+            "--manifest-path",
+            str(core_dir / "Cargo.toml"),
+            "--format-version",
+            "1",
+            "--no-deps",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return Path(json.loads(metadata.stdout)["target_directory"])
 
 
 def main() -> int:

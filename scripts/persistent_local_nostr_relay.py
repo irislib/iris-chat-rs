@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import os
 import signal
 import socket
@@ -33,13 +34,21 @@ def parse_args() -> argparse.Namespace:
 
 
 def cargo_target_dir() -> Path:
-    configured = os.environ.get("CARGO_TARGET_DIR")
-    if not configured:
-        return CORE_DIR / "target"
-    target_dir = Path(configured)
-    if target_dir.is_absolute():
-        return target_dir
-    return CORE_DIR / target_dir
+    metadata = subprocess.run(
+        [
+            "cargo",
+            "metadata",
+            "--manifest-path",
+            str(CORE_DIR / "Cargo.toml"),
+            "--format-version",
+            "1",
+            "--no-deps",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return Path(json.loads(metadata.stdout)["target_directory"])
 
 
 def relay_binary() -> Path:

@@ -22,7 +22,16 @@ EOF
 }
 
 target_root() {
-  local dir="${CARGO_TARGET_DIR:-$CORE_DIR/target}"
+  local dir="${CARGO_TARGET_DIR:-}"
+  if [[ -z "$dir" ]]; then
+    dir="$(
+      cargo metadata \
+        --manifest-path "$CORE_DIR/Cargo.toml" \
+        --format-version 1 \
+        --no-deps \
+        | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])'
+    )"
+  fi
   if [[ "$dir" = /* ]]; then
     printf '%s\n' "$dir"
   else
