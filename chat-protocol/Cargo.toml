@@ -10,7 +10,6 @@ publish = false
 anyhow = "1"
 base64 = "0.22"
 nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
-nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
 nostr-double-ratchet = { version = "0.0.147", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet" }
 nostr-double-ratchet-nostr = { version = "0.0.147", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-nostr" }
 nostr-double-ratchet-pairwise-codec = { version = "0.0.147", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-pairwise-codec" }

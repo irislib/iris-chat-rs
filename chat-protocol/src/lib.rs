@@ -2,6 +2,7 @@ mod protocol_engine;
 mod storage;
 
 use nostr::{Alphabet, SingleLetterTag, UnsignedEvent};
+use nostr::{Event, Filter, Keys, Kind, PublicKey, Timestamp};
 use nostr_double_ratchet::{
     sender_key_repair_default_next_retry_at, AuthorizedDevice, DevicePubkey as NdrDevicePubkey,
     DeviceRoster, DomainError, Error as NdrError, GroupIncomingEvent, GroupManagerSnapshot,
@@ -16,7 +17,6 @@ use nostr_double_ratchet_nostr::{
     parse_invite_event, parse_invite_response_event, parse_message_event, NostrGroupManager,
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
-use nostr_sdk::prelude::{Event, Filter, Keys, Kind, PublicKey, Timestamp};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
