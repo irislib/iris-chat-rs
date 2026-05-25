@@ -12,25 +12,20 @@ use crate::state::{
 };
 use crate::updates::{AppUpdate, CoreMsg, InternalEvent, RelayPublishDrainResult};
 use flume::Sender;
+use iris_chat_protocol::*;
 use nostr::{Alphabet, EventBuilder, SingleLetterTag, UnsignedEvent};
 use nostr_double_ratchet::{
-    sender_key_repair_default_next_retry_at, AuthorizedDevice, DevicePubkey as NdrDevicePubkey,
-    DeviceRoster, DomainError, Error as NdrError, GroupIncomingEvent, GroupManagerSnapshot,
-    GroupPendingFanout, GroupPreparedPublish, GroupPreparedSend, GroupProtocol,
-    GroupSenderKeyHandleResult, GroupSenderKeyMessage, GroupSnapshot, Invite, MessageEnvelope,
-    OwnerPubkey as NdrOwnerPubkey, PreparedSend, ProtocolContext, RelayGap, SenderKeyRepairRequest,
-    SessionManager, SessionManagerSnapshot, SessionState, UnixSeconds as NdrUnixSeconds,
+    GroupIncomingEvent, GroupSnapshot, Invite, SessionManagerSnapshot, SessionState,
+    UnixSeconds as NdrUnixSeconds,
 };
 use nostr_double_ratchet_nostr::{
     apply_app_keys_snapshot_with_required_device, is_app_keys_event, AppKeys, DeviceEntry,
-    NostrGroupManager, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND,
-    GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
-    REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
+    APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_SENDER_KEY_MESSAGE_KIND,
+    INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND,
+    TYPING_KIND,
 };
 use nostr_double_ratchet_nostr::{
-    group_sender_key_message_event, invite_response_event, message_event,
     parse_group_sender_key_message_event, parse_group_sender_key_message_event_unchecked,
-    parse_invite_event, parse_invite_response_event, parse_message_event,
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use nostr_double_ratchet_runtime::StorageAdapter;
@@ -38,7 +33,6 @@ use nostr_sdk::prelude::{
     Client, Event, Filter, Keys, Kind, PublicKey, RelayNotification, RelayPoolNotification,
     RelayStatus, RelayUrl, SubscribeOptions, SubscriptionId, Timestamp, ToBech32,
 };
-use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs;
@@ -46,6 +40,19 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep, sleep_until, Duration, Instant};
+
+#[cfg(test)]
+use nostr_double_ratchet::{
+    AuthorizedDevice, DevicePubkey as NdrDevicePubkey, DeviceRoster, GroupManagerSnapshot,
+    OwnerPubkey as NdrOwnerPubkey, ProtocolContext, SessionManager,
+};
+#[cfg(test)]
+use nostr_double_ratchet_nostr::{
+    invite_response_event, message_event, parse_invite_event, parse_message_event,
+    NostrGroupManager,
+};
+#[cfg(test)]
+use rand::rngs::OsRng;
 
 mod account;
 mod attachment_upload;
@@ -71,7 +78,6 @@ mod profile;
 mod profile_helpers;
 mod projection;
 mod protocol;
-mod protocol_engine;
 mod protocol_filters;
 mod publish_helpers;
 mod publishing;
@@ -89,15 +95,6 @@ pub(super) const APPCORE_PROTOCOL_FIRST_CONTACT_LABEL: &str = "appcore-protocol-
 
 type OwnerPubkey = PublicKey;
 type DevicePubkey = PublicKey;
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct UnixSeconds(u64);
-
-impl UnixSeconds {
-    pub(super) fn get(self) -> u64 {
-        self.0
-    }
-}
 
 use account::known_app_keys_from_ndr;
 use account::known_app_keys_to_ndr;
@@ -119,7 +116,6 @@ pub(crate) use model::ProtocolSubscriptionPlan;
 use model::*;
 use payloads::*;
 use profile_helpers::*;
-use protocol_engine::*;
 use protocol_filters::*;
 use publish_helpers::*;
 use storage::{open_database, AppStore, DataDirLock, SqliteStorageAdapter};

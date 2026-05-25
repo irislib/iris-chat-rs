@@ -1,0 +1,24 @@
+[package]
+name = "iris-chat-protocol"
+version = "0.1.0"
+edition = "2021"
+description = "Reusable Iris Chat double-ratchet protocol engine"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
+nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
+nostr-double-ratchet = { version = "0.0.147", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet" }
+nostr-double-ratchet-nostr = { version = "0.0.147", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-nostr" }
+nostr-double-ratchet-pairwise-codec = { version = "0.0.147", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-pairwise-codec" }
+nostr-double-ratchet-runtime = { version = "0.0.147", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-runtime" }
+rand = "0.8"
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

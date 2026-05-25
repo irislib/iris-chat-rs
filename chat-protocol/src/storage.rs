@@ -6,14 +6,14 @@ use nostr_double_ratchet_runtime::{Error as NdrError, Result as NdrResult, Stora
 /// single database serves multiple owner accounts and devices without
 /// keyspace collisions — matching the per-(owner, device) directory
 /// scoping the previous file-backed adapter used.
-pub(crate) struct SqliteStorageAdapter {
+pub struct SqliteStorageAdapter {
     conn: SharedConnection,
     owner_pubkey_hex: String,
     device_pubkey_hex: String,
 }
 
 impl SqliteStorageAdapter {
-    pub(crate) fn new(
+    pub fn new(
         conn: SharedConnection,
         owner_pubkey_hex: String,
         device_pubkey_hex: String,
@@ -118,19 +118,35 @@ fn escape_like(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::open_database;
     use super::*;
+    use std::sync::{Arc, Mutex};
 
-    fn fresh_adapter() -> (tempfile::TempDir, SqliteStorageAdapter) {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let conn = open_database(tmp.path()).unwrap();
-        let adapter = SqliteStorageAdapter::new(conn, "owner".to_string(), "device".to_string());
-        (tmp, adapter)
+    fn fresh_connection() -> SharedConnection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE ndr_kv (
+                owner_pubkey_hex TEXT NOT NULL,
+                device_pubkey_hex TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (owner_pubkey_hex, device_pubkey_hex, key)
+            );",
+        )
+        .unwrap();
+        Arc::new(Mutex::new(conn))
+    }
+
+    fn fresh_adapter() -> SqliteStorageAdapter {
+        SqliteStorageAdapter::new(
+            fresh_connection(),
+            "owner".to_string(),
+            "device".to_string(),
+        )
     }
 
     #[test]
     fn put_get_del_round_trip() {
-        let (_tmp, adapter) = fresh_adapter();
+        let adapter = fresh_adapter();
         assert!(adapter.get("k").unwrap().is_none());
         adapter.put("k", "v".to_string()).unwrap();
         assert_eq!(adapter.get("k").unwrap(), Some("v".to_string()));
@@ -142,7 +158,7 @@ mod tests {
 
     #[test]
     fn list_returns_only_matching_prefix() {
-        let (_tmp, adapter) = fresh_adapter();
+        let adapter = fresh_adapter();
         adapter.put("user/alice", "1".to_string()).unwrap();
         adapter.put("user/bob", "2".to_string()).unwrap();
         adapter.put("invite/charlie", "3".to_string()).unwrap();
@@ -153,8 +169,7 @@ mod tests {
 
     #[test]
     fn keys_are_isolated_per_owner_device() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let conn = open_database(tmp.path()).unwrap();
+        let conn = fresh_connection();
         let alice = SqliteStorageAdapter::new(conn.clone(), "owner_a".into(), "device_a".into());
         let bob = SqliteStorageAdapter::new(conn, "owner_b".into(), "device_b".into());
         alice.put("shared-key", "alice".to_string()).unwrap();

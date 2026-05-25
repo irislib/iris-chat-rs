@@ -1,5 +1,5 @@
 impl ProtocolEngine {
-    pub(super) fn load_or_create_for_local_device(
+    pub fn load_or_create_for_local_device(
         storage: Arc<dyn StorageAdapter>,
         owner_pubkey: PublicKey,
         device_keys: &Keys,
@@ -30,7 +30,6 @@ impl ProtocolEngine {
             pending_group_sender_key_repairs: Vec::new(),
             pending_decrypted_deliveries: Vec::new(),
             known_message_author_cache: std::cell::RefCell::new(None),
-            #[cfg(test)]
             known_message_author_cache_build_count: std::cell::Cell::new(0),
             subscription_generation: 0,
             last_backfill_attempt_secs: 0,
@@ -92,7 +91,6 @@ impl ProtocolEngine {
             pending_group_sender_key_repairs: state.pending_group_sender_key_repairs,
             pending_decrypted_deliveries: state.pending_decrypted_deliveries,
             known_message_author_cache: std::cell::RefCell::new(None),
-            #[cfg(test)]
             known_message_author_cache_build_count: std::cell::Cell::new(0),
             subscription_generation: state.subscription_generation,
             last_backfill_attempt_secs: state.last_backfill_attempt_secs,
@@ -136,7 +134,7 @@ impl ProtocolEngine {
         });
     }
 
-    pub(super) fn debug_snapshot(&self) -> ProtocolEngineDebugSnapshot {
+    pub fn debug_snapshot(&self) -> ProtocolEngineDebugSnapshot {
         ProtocolEngineDebugSnapshot {
             known_message_author_count: self.known_message_author_pubkeys().len(),
             pending_outbound_count: self.pending_outbound.len(),
@@ -160,17 +158,15 @@ impl ProtocolEngine {
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn session_manager_snapshot_for_test(&self) -> SessionManagerSnapshot {
+    pub fn session_manager_snapshot_for_test(&self) -> SessionManagerSnapshot {
         self.session_manager.snapshot()
     }
 
-    #[cfg(test)]
-    pub(super) fn group_manager_snapshot_for_test(&self) -> GroupManagerSnapshot {
+    pub fn group_manager_snapshot_for_test(&self) -> GroupManagerSnapshot {
         self.group_manager.snapshot()
     }
 
-    pub(super) fn is_known_local_owner_device(&self, device_pubkey: PublicKey) -> bool {
+    pub fn is_known_local_owner_device(&self, device_pubkey: PublicKey) -> bool {
         let device_pubkey = ndr_device(device_pubkey);
         self.session_manager
             .snapshot()
@@ -184,7 +180,7 @@ impl ProtocolEngine {
             })
     }
 
-    pub(super) fn owner_hint_for_device(
+    pub fn owner_hint_for_device(
         &self,
         device_pubkey: PublicKey,
     ) -> Option<ProtocolDeviceOwnerHint> {
@@ -241,11 +237,11 @@ impl ProtocolEngine {
         provisional_match
     }
 
-    pub(super) fn has_pending_inbound_direct_events(&self) -> bool {
+    pub fn has_pending_inbound_direct_events(&self) -> bool {
         !self.pending_inbound.is_empty()
     }
 
-    pub(super) fn has_pending_inbound_direct_event_id(&self, event_id: &str) -> bool {
+    pub fn has_pending_inbound_direct_event_id(&self, event_id: &str) -> bool {
         self.pending_inbound.iter().any(|pending| {
             let pending_event_id = if pending.event_id.is_empty() {
                 pending.event.id.to_string()
@@ -256,7 +252,7 @@ impl ProtocolEngine {
         })
     }
 
-    pub(super) fn queued_owner_claim_targets(&self) -> Vec<String> {
+    pub fn queued_owner_claim_targets(&self) -> Vec<String> {
         let mut targets = self.pending_inbound_owner_claim_targets();
         targets.extend(self.pending_group_pairwise_owner_claim_targets());
         targets.sort();
@@ -264,7 +260,7 @@ impl ProtocolEngine {
         targets
     }
 
-    pub(super) fn queued_protocol_backfill_effects(
+    pub fn queued_protocol_backfill_effects(
         &self,
         now: NdrUnixSeconds,
         reason: &'static str,
@@ -286,11 +282,11 @@ impl ProtocolEngine {
         (targets, effects)
     }
 
-    pub(super) fn queued_group_target_hexes(&self) -> Vec<String> {
+    pub fn queued_group_target_hexes(&self) -> Vec<String> {
         self.queued_group_targets()
     }
 
-    pub(super) fn has_queued_invite_author(&self, author: PublicKey) -> bool {
+    pub fn has_queued_invite_author(&self, author: PublicKey) -> bool {
         let target = ndr_device(author);
         let snapshot = self.session_manager.snapshot();
         self.pending_outbound.iter().any(|pending| {
@@ -298,19 +294,18 @@ impl ProtocolEngine {
         })
     }
 
-    pub(super) fn local_invite(&self) -> Option<Invite> {
+    pub fn local_invite(&self) -> Option<Invite> {
         self.session_manager.snapshot().local_invite
     }
 
-    pub(super) fn local_invite_response_pubkey(&self) -> Option<PublicKey> {
+    pub fn local_invite_response_pubkey(&self) -> Option<PublicKey> {
         self.local_invite()?
             .inviter_ephemeral_public_key
             .to_nostr()
             .ok()
     }
 
-    #[cfg(test)]
-    pub(super) fn pending_inbound_for_test(&self) -> Vec<ProtocolPendingInboundTestDebug> {
+    pub fn pending_inbound_for_test(&self) -> Vec<ProtocolPendingInboundTestDebug> {
         self.pending_inbound
             .iter()
             .map(|pending| ProtocolPendingInboundTestDebug {
@@ -327,7 +322,7 @@ impl ProtocolEngine {
             .collect()
     }
 
-    pub(super) fn known_message_author_pubkeys(&self) -> Vec<PublicKey> {
+    pub fn known_message_author_pubkeys(&self) -> Vec<PublicKey> {
         self.with_known_message_author_cache(|cache| cache.pubkeys.clone())
     }
 
@@ -337,7 +332,7 @@ impl ProtocolEngine {
     /// caller drop blocked / non-accepted peers from the subscription
     /// filter without losing the device-ephemeral keys that nostr
     /// actually filters on.
-    pub(super) fn message_author_pubkeys_filtered<F>(&self, accept_owner: F) -> Vec<PublicKey>
+    pub fn message_author_pubkeys_filtered<F>(&self, accept_owner: F) -> Vec<PublicKey>
     where
         F: Fn(PublicKey) -> bool,
     {
@@ -363,7 +358,7 @@ impl ProtocolEngine {
         authors
     }
 
-    pub(super) fn is_known_message_author(&self, author: PublicKey) -> bool {
+    pub fn is_known_message_author(&self, author: PublicKey) -> bool {
         self.with_known_message_author_cache(|cache| cache.pubkey_set.contains(&author))
     }
 
@@ -381,7 +376,6 @@ impl ProtocolEngine {
     }
 
     fn build_known_message_author_cache(&self) -> KnownMessageAuthorCache {
-        #[cfg(test)]
         self.known_message_author_cache_build_count
             .set(self.known_message_author_cache_build_count.get() + 1);
 
@@ -399,17 +393,15 @@ impl ProtocolEngine {
         self.known_message_author_cache.borrow_mut().take();
     }
 
-    #[cfg(test)]
-    pub(super) fn known_message_author_cache_build_count_for_test(&self) -> u64 {
+    pub fn known_message_author_cache_build_count_for_test(&self) -> u64 {
         self.known_message_author_cache_build_count.get()
     }
 
-    #[cfg(test)]
-    pub(super) fn pending_decrypted_deliveries_len_for_test(&self) -> usize {
+    pub fn pending_decrypted_deliveries_len_for_test(&self) -> usize {
         self.pending_decrypted_deliveries.len()
     }
 
-    pub(super) fn known_group_sender_event_pubkeys(&self) -> Vec<PublicKey> {
+    pub fn known_group_sender_event_pubkeys(&self) -> Vec<PublicKey> {
         let mut authors = self
             .group_manager
             .known_sender_event_pubkeys()
@@ -421,13 +413,13 @@ impl ProtocolEngine {
         authors
     }
 
-    pub(super) fn is_known_group_sender_event_author(&self, author: PublicKey) -> bool {
+    pub fn is_known_group_sender_event_author(&self, author: PublicKey) -> bool {
         self.group_manager
             .group_id_for_sender_event_pubkey(ndr_device(author))
             .is_some()
     }
 
-    pub(super) fn known_device_identity_pubkeys_for_owner(
+    pub fn known_device_identity_pubkeys_for_owner(
         &self,
         owner_pubkey: PublicKey,
     ) -> Vec<PublicKey> {
@@ -450,7 +442,7 @@ impl ProtocolEngine {
         devices
     }
 
-    pub(super) fn message_author_pubkeys_for_owner(
+    pub fn message_author_pubkeys_for_owner(
         &self,
         owner_pubkey: PublicKey,
     ) -> Vec<PublicKey> {
@@ -479,11 +471,11 @@ impl ProtocolEngine {
     /// user, so callers that hit multiple owners in one pass must
     /// share a single snapshot via the `_with_snapshot` helpers
     /// below instead of paying that clone cost per owner.
-    pub(super) fn session_manager_snapshot(&self) -> SessionManagerSnapshot {
+    pub fn session_manager_snapshot(&self) -> SessionManagerSnapshot {
         self.session_manager.snapshot()
     }
 
-    pub(super) fn message_session_debug_snapshots_with_snapshot(
+    pub fn message_session_debug_snapshots_with_snapshot(
         snapshot: &SessionManagerSnapshot,
         owner_pubkey: PublicKey,
     ) -> Vec<ProtocolMessageSessionDebugSnapshot> {
@@ -514,7 +506,7 @@ impl ProtocolEngine {
             .collect()
     }
 
-    pub(super) fn active_session_count_for_owner_with_snapshot(
+    pub fn active_session_count_for_owner_with_snapshot(
         snapshot: &SessionManagerSnapshot,
         owner_pubkey: PublicKey,
     ) -> usize {
@@ -528,14 +520,14 @@ impl ProtocolEngine {
             .count()
     }
 
-    pub(super) fn active_session_count_for_owner(&self, owner_pubkey: PublicKey) -> usize {
+    pub fn active_session_count_for_owner(&self, owner_pubkey: PublicKey) -> usize {
         Self::active_session_count_for_owner_with_snapshot(
             &self.session_manager.snapshot(),
             owner_pubkey,
         )
     }
 
-    pub(super) fn queued_message_diagnostics(&self, message_id: Option<&str>) -> Vec<String> {
+    pub fn queued_message_diagnostics(&self, message_id: Option<&str>) -> Vec<String> {
         let mut targets = Vec::new();
         for pending in &self.pending_outbound {
             if message_id
@@ -589,7 +581,7 @@ impl ProtocolEngine {
             .collect()
     }
 
-    pub(super) fn has_queued_remote_message_work(&self, message_id: &str) -> bool {
+    pub fn has_queued_remote_message_work(&self, message_id: &str) -> bool {
         self.pending_outbound.iter().any(|pending| {
             pending.message_id == message_id
                 && !self.pending_remote_target_hexes(pending).is_empty()

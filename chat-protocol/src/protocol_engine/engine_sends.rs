@@ -1,5 +1,5 @@
 impl ProtocolEngine {
-    pub(super) fn ingest_app_keys_snapshot(
+    pub fn ingest_app_keys_snapshot(
         &mut self,
         owner_pubkey: PublicKey,
         app_keys: AppKeys,
@@ -56,7 +56,7 @@ impl ProtocolEngine {
         self.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))
     }
 
-    pub(super) fn observe_invite_event(
+    pub fn observe_invite_event(
         &mut self,
         event: &Event,
     ) -> anyhow::Result<ProtocolRetryBatch> {
@@ -91,7 +91,7 @@ impl ProtocolEngine {
         self.retry_pending_protocol(NdrUnixSeconds(event.created_at.as_secs()))
     }
 
-    pub(super) fn observe_invite_response_event(
+    pub fn observe_invite_response_event(
         &mut self,
         event: &Event,
     ) -> anyhow::Result<ProtocolRetryBatch> {
@@ -145,7 +145,7 @@ impl ProtocolEngine {
         self.retry_pending_protocol(ctx.now)
     }
 
-    pub(super) fn accept_invite(
+    pub fn accept_invite(
         &mut self,
         invite: &Invite,
         owner_pubkey_hint: Option<PublicKey>,
@@ -198,7 +198,7 @@ impl ProtocolEngine {
         })
     }
 
-    pub(super) fn import_session_state(
+    pub fn import_session_state(
         &mut self,
         peer_pubkey: PublicKey,
         device_id: Option<String>,
@@ -221,7 +221,7 @@ impl ProtocolEngine {
         self.retry_pending_protocol(NdrUnixSeconds(now.get()))
     }
 
-    pub(super) fn create_group(
+    pub fn create_group(
         &mut self,
         name: String,
         member_owners: Vec<PublicKey>,
@@ -244,7 +244,7 @@ impl ProtocolEngine {
         })
     }
 
-    pub(super) fn update_group_name(
+    pub fn update_group_name(
         &mut self,
         group_id: &str,
         name: String,
@@ -265,7 +265,7 @@ impl ProtocolEngine {
         })
     }
 
-    pub(super) fn update_group_picture(
+    pub fn update_group_picture(
         &mut self,
         group_id: &str,
         picture: Option<String>,
@@ -286,7 +286,7 @@ impl ProtocolEngine {
         })
     }
 
-    pub(super) fn update_group_about(
+    pub fn update_group_about(
         &mut self,
         group_id: &str,
         about: Option<String>,
@@ -307,7 +307,7 @@ impl ProtocolEngine {
         })
     }
 
-    pub(super) fn add_group_members(
+    pub fn add_group_members(
         &mut self,
         group_id: &str,
         members: Vec<PublicKey>,
@@ -328,7 +328,7 @@ impl ProtocolEngine {
         })
     }
 
-    pub(super) fn remove_group_member(
+    pub fn remove_group_member(
         &mut self,
         group_id: &str,
         member: PublicKey,
@@ -349,7 +349,7 @@ impl ProtocolEngine {
         })
     }
 
-    pub(super) fn set_group_admin(
+    pub fn set_group_admin(
         &mut self,
         group_id: &str,
         member: PublicKey,
@@ -380,7 +380,7 @@ impl ProtocolEngine {
         })
     }
 
-    pub(super) fn send_group_payload(
+    pub fn send_group_payload(
         &mut self,
         group_id: &str,
         payload: Vec<u8>,
@@ -404,7 +404,7 @@ impl ProtocolEngine {
         })
     }
 
-    pub(super) fn send_direct_text(
+    pub fn send_direct_text(
         &mut self,
         peer_pubkey: PublicKey,
         chat_id: &str,
@@ -435,7 +435,7 @@ impl ProtocolEngine {
         )
     }
 
-    pub(super) fn send_direct_unsigned_event(
+    pub fn send_direct_unsigned_event(
         &mut self,
         peer_pubkey: PublicKey,
         chat_id: &str,
@@ -460,7 +460,7 @@ impl ProtocolEngine {
         )
     }
 
-    pub(super) fn send_direct_unsigned_event_to_peer_only(
+    pub fn send_direct_unsigned_event_to_peer_only(
         &mut self,
         peer_pubkey: PublicKey,
         chat_id: &str,
@@ -484,7 +484,7 @@ impl ProtocolEngine {
         )
     }
 
-    pub(super) fn send_local_sibling_unsigned_event(
+    pub fn send_local_sibling_unsigned_event(
         &mut self,
         conversation_owner: PublicKey,
         chat_id: &str,

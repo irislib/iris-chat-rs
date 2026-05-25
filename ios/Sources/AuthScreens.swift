@@ -33,7 +33,7 @@ struct WelcomeScreen: View {
 
                     HStack(spacing: 0) {
                         Text("iris")
-                            .foregroundStyle(palette.accent)
+                            .foregroundStyle(palette.textPrimary)
                         Text(" chat")
                             .foregroundStyle(palette.textPrimary)
                     }

@@ -38,16 +38,16 @@ struct ProtocolEnginePersistedState {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
-pub(super) struct ProtocolPublishEvent {
-    pub(super) event: Event,
-    pub(super) inner_event_id: Option<String>,
-    pub(super) target_owner_pubkey_hex: Option<String>,
-    pub(super) target_device_id: Option<String>,
+pub struct ProtocolPublishEvent {
+    pub event: Event,
+    pub inner_event_id: Option<String>,
+    pub target_owner_pubkey_hex: Option<String>,
+    pub target_device_id: Option<String>,
 }
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
-pub(super) enum ProtocolEffect {
+pub enum ProtocolEffect {
     Subscribe {
         subid: String,
         filters: Vec<Filter>,
@@ -80,9 +80,9 @@ pub(super) enum ProtocolEffect {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(super) struct ProtocolPendingOutbound {
-    pub(super) message_id: String,
-    pub(super) chat_id: String,
+pub struct ProtocolPendingOutbound {
+    pub message_id: String,
+    pub chat_id: String,
     recipient_owner_hex: String,
     #[serde(default = "default_true")]
     send_remote: bool,
@@ -101,7 +101,7 @@ pub(super) struct ProtocolPendingOutbound {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub(super) enum ProtocolPendingReason {
+pub enum ProtocolPendingReason {
     MissingRoster,
     MissingDeviceInvite,
     PublishRetry,
@@ -135,14 +135,13 @@ struct ProtocolPendingInbound {
     metadata_verified: bool,
 }
 
-#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct ProtocolPendingInboundTestDebug {
-    pub(super) event_id: String,
-    pub(super) sender_message_pubkey_hex: Option<String>,
-    pub(super) claimed_owner_pubkey_hex: Option<String>,
-    pub(super) has_envelope: bool,
-    pub(super) metadata_verified: bool,
+pub struct ProtocolPendingInboundTestDebug {
+    pub event_id: String,
+    pub sender_message_pubkey_hex: Option<String>,
+    pub claimed_owner_pubkey_hex: Option<String>,
+    pub has_envelope: bool,
+    pub metadata_verified: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -197,50 +196,50 @@ struct KnownMessageAuthorCache {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct ProtocolDirectSendResult {
-    pub(super) message_id: String,
-    pub(super) event_ids: Vec<String>,
-    pub(super) effects: Vec<ProtocolEffect>,
-    pub(super) queued_targets: Vec<String>,
+pub struct ProtocolDirectSendResult {
+    pub message_id: String,
+    pub event_ids: Vec<String>,
+    pub effects: Vec<ProtocolEffect>,
+    pub queued_targets: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct ProtocolRetryResult {
-    pub(super) message_id: String,
-    pub(super) chat_id: String,
-    pub(super) event_ids: Vec<String>,
-    pub(super) effects: Vec<ProtocolEffect>,
-    pub(super) queued_targets: Vec<String>,
+pub struct ProtocolRetryResult {
+    pub message_id: String,
+    pub chat_id: String,
+    pub event_ids: Vec<String>,
+    pub effects: Vec<ProtocolEffect>,
+    pub queued_targets: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct ProtocolGroupSendResult {
-    pub(super) snapshot: Option<GroupSnapshot>,
-    pub(super) message_id: Option<String>,
-    pub(super) event_ids: Vec<String>,
-    pub(super) effects: Vec<ProtocolEffect>,
-    pub(super) queued_targets: Vec<String>,
+pub struct ProtocolGroupSendResult {
+    pub snapshot: Option<GroupSnapshot>,
+    pub message_id: Option<String>,
+    pub event_ids: Vec<String>,
+    pub effects: Vec<ProtocolEffect>,
+    pub queued_targets: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct ProtocolGroupIncomingResult {
-    pub(super) events: Vec<GroupIncomingEvent>,
-    pub(super) effects: Vec<ProtocolEffect>,
-    pub(super) queued_targets: Vec<String>,
-    pub(super) consumed: bool,
-    pub(super) pending: bool,
+pub struct ProtocolGroupIncomingResult {
+    pub events: Vec<GroupIncomingEvent>,
+    pub effects: Vec<ProtocolEffect>,
+    pub queued_targets: Vec<String>,
+    pub consumed: bool,
+    pub pending: bool,
 }
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct ProtocolRetryBatch {
-    pub(super) direct_results: Vec<ProtocolRetryResult>,
-    pub(super) group_result: ProtocolGroupIncomingResult,
-    pub(super) direct_messages: Vec<ProtocolDecryptedMessage>,
-    pub(super) effects: Vec<ProtocolEffect>,
+pub struct ProtocolRetryBatch {
+    pub direct_results: Vec<ProtocolRetryResult>,
+    pub group_result: ProtocolGroupIncomingResult,
+    pub direct_messages: Vec<ProtocolDecryptedMessage>,
+    pub effects: Vec<ProtocolEffect>,
 }
 
 impl ProtocolRetryBatch {
-    pub(super) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.direct_results.is_empty()
             && self.group_result.events.is_empty()
             && self.group_result.effects.is_empty()
@@ -252,26 +251,26 @@ impl ProtocolRetryBatch {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
-pub(super) struct ProtocolAcceptInviteResult {
-    pub(super) owner_pubkey: PublicKey,
-    pub(super) inviter_device_pubkey: PublicKey,
-    pub(super) device_id: String,
-    pub(super) effects: Vec<ProtocolEffect>,
+pub struct ProtocolAcceptInviteResult {
+    pub owner_pubkey: PublicKey,
+    pub inviter_device_pubkey: PublicKey,
+    pub device_id: String,
+    pub effects: Vec<ProtocolEffect>,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct ProtocolDecryptedMessage {
-    pub(super) sender: PublicKey,
-    pub(super) sender_device: Option<PublicKey>,
-    pub(super) conversation_owner: Option<PublicKey>,
-    pub(super) content: String,
-    pub(super) event_id: Option<String>,
+pub struct ProtocolDecryptedMessage {
+    pub sender: PublicKey,
+    pub sender_device: Option<PublicKey>,
+    pub conversation_owner: Option<PublicKey>,
+    pub content: String,
+    pub event_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ProtocolDeviceOwnerHint {
-    pub(super) owner: PublicKey,
-    pub(super) verified: bool,
+pub struct ProtocolDeviceOwnerHint {
+    pub owner: PublicKey,
+    pub verified: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -319,49 +318,49 @@ impl From<ProtocolPendingDecryptedDelivery> for ProtocolDecryptedMessage {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub(super) struct ProtocolEngineDebugSnapshot {
-    pub(super) known_message_author_count: usize,
-    pub(super) pending_outbound_count: usize,
-    pub(super) pending_inbound_count: usize,
-    pub(super) pending_group_fanout_count: usize,
-    pub(super) pending_group_pairwise_payload_count: usize,
-    pub(super) pending_group_sender_key_message_count: usize,
-    pub(super) pending_group_sender_key_repair_count: usize,
-    pub(super) pending_group_sender_key_repair_last_requested_at_secs: u64,
-    pub(super) pending_outbound_targets: Vec<String>,
+pub struct ProtocolEngineDebugSnapshot {
+    pub known_message_author_count: usize,
+    pub pending_outbound_count: usize,
+    pub pending_inbound_count: usize,
+    pub pending_group_fanout_count: usize,
+    pub pending_group_pairwise_payload_count: usize,
+    pub pending_group_sender_key_message_count: usize,
+    pub pending_group_sender_key_repair_count: usize,
+    pub pending_group_sender_key_repair_last_requested_at_secs: u64,
+    pub pending_outbound_targets: Vec<String>,
     #[serde(default)]
-    pub(super) pending_outbound_details: Vec<ProtocolPendingOutboundDebug>,
+    pub pending_outbound_details: Vec<ProtocolPendingOutboundDebug>,
     #[serde(default)]
-    pub(super) pending_group_fanout_targets: Vec<String>,
-    pub(super) subscription_generation: u64,
-    pub(super) last_backfill_attempt_secs: u64,
-    pub(super) latest_app_keys_owner_count: usize,
+    pub pending_group_fanout_targets: Vec<String>,
+    pub subscription_generation: u64,
+    pub last_backfill_attempt_secs: u64,
+    pub latest_app_keys_owner_count: usize,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub(super) struct ProtocolPendingOutboundDebug {
-    pub(super) message_id: String,
-    pub(super) chat_id: String,
-    pub(super) recipient_owner_hex: String,
-    pub(super) reason: String,
-    pub(super) probe_local_sibling_roster: bool,
-    pub(super) delivered_remote_device_hexes: Vec<String>,
-    pub(super) delivered_local_device_hexes: Vec<String>,
-    pub(super) remaining_remote_targets: Vec<String>,
-    pub(super) remaining_local_sibling_targets: Vec<String>,
-    pub(super) queued_targets: Vec<String>,
-    pub(super) next_retry_at_secs: u64,
+pub struct ProtocolPendingOutboundDebug {
+    pub message_id: String,
+    pub chat_id: String,
+    pub recipient_owner_hex: String,
+    pub reason: String,
+    pub probe_local_sibling_roster: bool,
+    pub delivered_remote_device_hexes: Vec<String>,
+    pub delivered_local_device_hexes: Vec<String>,
+    pub remaining_remote_targets: Vec<String>,
+    pub remaining_local_sibling_targets: Vec<String>,
+    pub queued_targets: Vec<String>,
+    pub next_retry_at_secs: u64,
 }
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
-pub(super) struct ProtocolMessageSessionDebugSnapshot {
-    pub(super) state: SessionState,
-    pub(super) tracked_sender_pubkeys: Vec<PublicKey>,
-    pub(super) has_receiving_capability: bool,
+pub struct ProtocolMessageSessionDebugSnapshot {
+    pub state: SessionState,
+    pub tracked_sender_pubkeys: Vec<PublicKey>,
+    pub has_receiving_capability: bool,
 }
 
-pub(super) struct ProtocolEngine {
+pub struct ProtocolEngine {
     owner_pubkey: PublicKey,
     local_owner: NdrOwnerPubkey,
     local_device: NdrDevicePubkey,
@@ -378,7 +377,6 @@ pub(super) struct ProtocolEngine {
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     known_message_author_cache: std::cell::RefCell<Option<KnownMessageAuthorCache>>,
-    #[cfg(test)]
     known_message_author_cache_build_count: std::cell::Cell<u64>,
     subscription_generation: u64,
     last_backfill_attempt_secs: u64,
@@ -389,8 +387,8 @@ pub(super) struct ProtocolEngine {
     /// journaling can keep UI reads blocked on the connection mutex for
     /// hundreds of ms each — N of them stacked produced the multi-second
     /// foreground freeze.
-    pub(super) batch_depth: std::cell::Cell<u32>,
-    pub(super) batch_persist_dirty: std::cell::Cell<bool>,
+    pub batch_depth: std::cell::Cell<u32>,
+    pub batch_persist_dirty: std::cell::Cell<bool>,
 }
 
 #[derive(Clone)]

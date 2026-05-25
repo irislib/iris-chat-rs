@@ -1,10 +1,12 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use std::{fs, path::Path};
 
 use iris_chat_core::{
     classify_chat_input, AppAction, AppReconciler, AppState, AppUpdate, ChatInputShortcut,
     ChatKind, FfiApp,
 };
+use rusqlite::Connection;
 use tempfile::TempDir;
 
 /// A migrated v10 database must still serve FTS5 search after the
@@ -13,48 +15,53 @@ use tempfile::TempDir;
 #[test]
 fn ffi_search_works_against_pre_search_database() {
     let dir = TempDir::new().unwrap();
-    {
-        let app = FfiApp::new(
-            dir.path().to_string_lossy().to_string(),
-            String::new(),
-            "test".to_string(),
-        );
-        let inbox = ReconcilerInbox::install(&app);
-        app.dispatch(AppAction::CreateAccount {
-            name: "Alice".to_string(),
-        });
-        inbox.wait_until(Duration::from_secs(5), |state| state.account.is_some());
-        let bob = ensure_account(&TempDir::new().unwrap(), "Bob");
-        let _bob_chat = create_chat_and_send(&app, &inbox, &bob, "abracadabra magic word");
-        app.shutdown();
-    }
+    seed_pre_search_database(dir.path());
 
     // Re-open: same db, schema migration is idempotent. Search must
     // still hit the FTS5 index even on a database that existed before
-    // the search code path was introduced — uniffi clones the runtime
-    // but the on-disk state is what matters.
+    // the search code path was introduced.
     let app = FfiApp::new(
         dir.path().to_string_lossy().to_string(),
         String::new(),
         "test".to_string(),
     );
-    let _inbox = ReconcilerInbox::install(&app);
-    // The FTS5 index gets rebuilt on migration in the background;
-    // poll search() until it returns a hit (or panic on timeout)
-    // rather than guessing how long migration takes.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let result = loop {
-        let result = app.search("abracadabra".to_string(), None, 20);
-        if !result.messages.is_empty() {
-            break result;
-        }
-        if Instant::now() > deadline {
-            panic!("search index never returned a hit within 5s");
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    };
+    let result = app.search("abracadabra".to_string(), None, 20);
     assert_eq!(result.messages.len(), 1, "{:?}", result.messages);
     assert!(result.messages[0].body.contains("abracadabra"));
+    app.shutdown();
+}
+
+fn seed_pre_search_database(data_dir: &Path) {
+    fs::create_dir_all(data_dir).unwrap();
+    let conn = Connection::open(data_dir.join("core.sqlite3")).unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TABLE threads (chat_id TEXT PRIMARY KEY);
+        CREATE TABLE messages (
+            chat_id TEXT NOT NULL REFERENCES threads(chat_id) ON DELETE CASCADE,
+            id TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'user',
+            author TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL,
+            is_outgoing INTEGER NOT NULL DEFAULT 0,
+            created_at_secs INTEGER NOT NULL DEFAULT 0,
+            expires_at_secs INTEGER,
+            delivery TEXT NOT NULL DEFAULT 'sent',
+            attachments_json TEXT NOT NULL DEFAULT '[]',
+            reactions_json TEXT NOT NULL DEFAULT '[]',
+            reactors_json TEXT NOT NULL DEFAULT '[]',
+            source_event_id TEXT,
+            recipient_deliveries_json TEXT NOT NULL DEFAULT '[]',
+            delivery_trace_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (chat_id, id)
+        );
+        INSERT INTO threads(chat_id) VALUES ('npub-pre-search');
+        INSERT INTO messages(chat_id, id, author, body, is_outgoing, created_at_secs)
+        VALUES ('npub-pre-search', '1', 'alice', 'abracadabra magic word', 1, 42);
+        PRAGMA user_version = 10;
+        "#,
+    )
+    .unwrap();
 }
 
 /// `classify_chat_input` is the single source of truth for "is this
@@ -366,7 +373,9 @@ fn ensure_account(temp: &TempDir, name: &str) -> String {
         }
         let snapshot = inbox.state.lock().unwrap().clone();
         if let Some(account) = snapshot.account {
-            return account.npub;
+            let npub = account.npub;
+            app.shutdown();
+            return npub;
         }
         std::thread::sleep(Duration::from_millis(2));
     }

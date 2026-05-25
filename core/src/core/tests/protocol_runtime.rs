@@ -1880,18 +1880,18 @@ fn liveness_retries_pending_inbound_direct_events() {
 fn read_protocol_engine_source() -> String {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     [
-        "src/core/protocol_engine.rs",
-        "src/core/protocol_engine/types.rs",
-        "src/core/protocol_engine/engine_core.rs",
-        "src/core/protocol_engine/engine_sends.rs",
-        "src/core/protocol_engine/engine_incoming_retry.rs",
-        "src/core/protocol_engine/engine_resolution.rs",
-        "src/core/protocol_engine/engine_queue_filters.rs",
-        "src/core/protocol_engine/free_functions.rs",
+        "chat-protocol/src/protocol_engine.rs",
+        "chat-protocol/src/protocol_engine/types.rs",
+        "chat-protocol/src/protocol_engine/engine_core.rs",
+        "chat-protocol/src/protocol_engine/engine_sends.rs",
+        "chat-protocol/src/protocol_engine/engine_incoming_retry.rs",
+        "chat-protocol/src/protocol_engine/engine_resolution.rs",
+        "chat-protocol/src/protocol_engine/engine_queue_filters.rs",
+        "chat-protocol/src/protocol_engine/free_functions.rs",
     ]
     .into_iter()
     .map(|path| {
-        std::fs::read_to_string(manifest.join(path))
+        std::fs::read_to_string(manifest.parent().expect("core crate has repo parent").join(path))
             .unwrap_or_else(|error| panic!("read {path}: {error}"))
     })
     .collect::<Vec<_>>()
@@ -2067,11 +2067,11 @@ fn no_header_message_kind_event_is_not_pairwise_decrypted() {
 fn group_sender_key_ignored_results_are_consumed_without_retry_queue() {
     let protocol_source = read_protocol_engine_source();
     let process_start = protocol_source
-        .find("pub(super) fn process_group_outer_event")
+        .find("fn process_group_outer_event")
         .expect("process group outer function");
     let process_body = &protocol_source[process_start
         ..protocol_source[process_start..]
-            .find("pub(super) fn process_group_pairwise_payload")
+            .find("fn process_group_pairwise_payload")
             .map(|offset| process_start + offset)
             .unwrap_or(protocol_source.len())];
     assert!(

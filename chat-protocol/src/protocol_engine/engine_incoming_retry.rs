@@ -1,5 +1,5 @@
 impl ProtocolEngine {
-    pub(super) fn process_direct_message_event(
+    pub fn process_direct_message_event(
         &mut self,
         event: &Event,
     ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
@@ -45,7 +45,7 @@ impl ProtocolEngine {
         Ok(())
     }
 
-    pub(super) fn process_group_outer_event(
+    pub fn process_group_outer_event(
         &mut self,
         event: &Event,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
@@ -75,7 +75,7 @@ impl ProtocolEngine {
         })
     }
 
-    pub(super) fn process_group_pairwise_payload(
+    pub fn process_group_pairwise_payload(
         &mut self,
         payload: &[u8],
         from_owner_pubkey: PublicKey,
@@ -202,7 +202,7 @@ impl ProtocolEngine {
         }
     }
 
-    pub(super) fn retry_pending_outbound(
+    pub fn retry_pending_outbound(
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<Vec<ProtocolRetryResult>> {
@@ -362,7 +362,7 @@ impl ProtocolEngine {
         Ok(results)
     }
 
-    pub(super) fn retry_pending_protocol(
+    pub fn retry_pending_protocol(
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<ProtocolRetryBatch> {
@@ -402,7 +402,7 @@ impl ProtocolEngine {
         Ok(batch)
     }
 
-    pub(super) fn ack_pending_decrypted_deliveries(&mut self) -> anyhow::Result<()> {
+    pub fn ack_pending_decrypted_deliveries(&mut self) -> anyhow::Result<()> {
         if self.pending_decrypted_deliveries.is_empty() {
             return Ok(());
         }

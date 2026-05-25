@@ -328,12 +328,12 @@ impl ProtocolEngine {
         Ok(())
     }
 
-    pub(super) fn enter_batch(&self) {
+    pub fn enter_batch(&self) {
         self.batch_depth
             .set(self.batch_depth.get().saturating_add(1));
     }
 
-    pub(super) fn exit_batch(&self) -> anyhow::Result<()> {
+    pub fn exit_batch(&self) -> anyhow::Result<()> {
         let depth = self.batch_depth.get();
         if depth == 0 {
             return Ok(());

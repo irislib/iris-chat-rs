@@ -976,7 +976,6 @@ final class IrisChatUITests: XCTestCase {
 
         XCTAssertTrue(waitForChatList(app, timeout: 20), "chat list never appeared after account creation")
     }
-
     private func tapWelcomeAction(
         _ app: XCUIApplication,
         _ identifier: String,
@@ -991,7 +990,6 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(action.isEnabled, file: file, line: line)
         action.tap()
     }
-
     private func acceptOnboardingTermsIfNeeded(
         _ app: XCUIApplication,
         file: StaticString = #filePath,
@@ -1001,11 +999,9 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(toggle.waitForExistence(timeout: 10), file: file, line: line)
         toggle.tap()
     }
-
     private func waitForChatList(_ app: XCUIApplication, timeout: TimeInterval) -> Bool {
         waitForAnyElement(app, identifiers: ["chatListNewChatButton", "desktopNewChatRow"], timeout: timeout) != nil
     }
-
     private func seededChatRowPreview(_ app: XCUIApplication) -> XCUIElement {
         app.cells.matching(
             NSPredicate(
@@ -1013,7 +1009,6 @@ final class IrisChatUITests: XCTestCase {
             )
         ).firstMatch
     }
-
     private func inlineDaySeparator(_ app: XCUIApplication, label: String) -> XCUIElement {
         app.descendants(matching: .any).matching(
             NSPredicate(
@@ -1022,7 +1017,6 @@ final class IrisChatUITests: XCTestCase {
             )
         ).firstMatch
     }
-
     private func assertOnboardingScreenUsesHeaderBack(
         _ app: XCUIApplication,
         actionIdentifier: String,
@@ -1037,7 +1031,6 @@ final class IrisChatUITests: XCTestCase {
         element(app, "navigationBackButton").tap()
         XCTAssertTrue(element(app, "welcomeChooserCard").waitForExistence(timeout: 10), file: file, line: line)
     }
-
     private func tapNewChat(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         guard let newChat = waitForAnyElement(
             app,
@@ -1053,7 +1046,6 @@ final class IrisChatUITests: XCTestCase {
             newChat.tap()
         }
     }
-
     private func returnToChatList(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         if let settingsCloseButton = waitForAnyElement(
             app,
@@ -1080,7 +1072,6 @@ final class IrisChatUITests: XCTestCase {
         }
         XCTAssertTrue(waitForChatList(app, timeout: 10), file: file, line: line)
     }
-
     private func waitForAnyElement(
         _ app: XCUIApplication,
         identifiers: [String],
@@ -1098,7 +1089,6 @@ final class IrisChatUITests: XCTestCase {
         } while Date() < deadline
         return nil
     }
-
     private func waitUntil(timeout: TimeInterval, condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
@@ -1109,19 +1099,16 @@ final class IrisChatUITests: XCTestCase {
         } while Date() < deadline
         return condition()
     }
-
     private func dragHorizontally(_ element: XCUIElement, from startX: CGFloat, to endX: CGFloat) {
         let start = element.coordinate(withNormalizedOffset: CGVector(dx: startX, dy: 0.5))
         let end = element.coordinate(withNormalizedOffset: CGVector(dx: endX, dy: 0.5))
         start.press(forDuration: 0.05, thenDragTo: end)
     }
-
     private func dragVertically(_ element: XCUIElement, x: CGFloat, fromY: CGFloat, toY: CGFloat) {
         let start = element.coordinate(withNormalizedOffset: CGVector(dx: x, dy: fromY))
         let end = element.coordinate(withNormalizedOffset: CGVector(dx: x, dy: toY))
         start.press(forDuration: 0.05, thenDragTo: end)
     }
-
     private func flickVertically(_ element: XCUIElement, x: CGFloat, fromY: CGFloat, toY: CGFloat) {
         let start = element.coordinate(withNormalizedOffset: CGVector(dx: x, dy: fromY))
         let end = element.coordinate(withNormalizedOffset: CGVector(dx: x, dy: toY))
@@ -1132,7 +1119,6 @@ final class IrisChatUITests: XCTestCase {
             thenHoldForDuration: 0
         )
     }
-
     private func openGroupDetails(_ app: XCUIApplication) {
         let header = element(app, "chatHeaderTitleButton")
         XCTAssertTrue(header.waitForExistence(timeout: 5))
