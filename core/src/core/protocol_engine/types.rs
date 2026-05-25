@@ -45,10 +45,8 @@ pub(super) struct ProtocolPublishEvent {
     pub(super) target_device_id: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(super) enum ProtocolEffect {
-    PublishUnsigned(UnsignedEvent),
     PublishSigned(Event),
     PublishSignedForInnerEvent {
         event: Event,
@@ -63,13 +61,6 @@ pub(super) enum ProtocolEffect {
     FetchProtocolState {
         filters: Vec<Filter>,
         reason: &'static str,
-    },
-    EmitDecrypted {
-        sender: PublicKey,
-        sender_device: Option<PublicKey>,
-        conversation_owner: Option<PublicKey>,
-        content: String,
-        event_id: Option<String>,
     },
 }
 

@@ -406,14 +406,6 @@ impl AppCore {
         coalesce_protocol_fetch_effects(&mut effects);
         for effect in effects {
             match effect {
-                ProtocolEffect::PublishUnsigned(unsigned) => {
-                    if let Some(signed) = self.sign_runtime_unsigned_event(unsigned) {
-                        let event_id = signed.id.to_string();
-                        let completion =
-                            self.runtime_publish_completion(&event_id, None, completions);
-                        self.publish_runtime_event(signed, "appcore-protocol", completion);
-                    }
-                }
                 ProtocolEffect::PublishSigned(event) => {
                     let event_id = event.id.to_string();
                     let completion = self.runtime_publish_completion(&event_id, None, completions);
@@ -460,22 +452,6 @@ impl AppCore {
                 }
                 ProtocolEffect::FetchProtocolState { filters, reason } => {
                     self.fetch_protocol_state_for_filters(filters, reason);
-                }
-                ProtocolEffect::EmitDecrypted {
-                    sender,
-                    sender_device,
-                    conversation_owner,
-                    content,
-                    event_id,
-                } => {
-                    self.apply_decrypted_runtime_message_with_metadata(
-                        sender,
-                        sender_device,
-                        conversation_owner,
-                        content,
-                        event_id,
-                    );
-                    self.mark_mobile_push_dirty();
                 }
             }
         }

@@ -254,7 +254,6 @@ fn queued_group_retry_without_protocol_progress_reschedules_fast_tick() {
         !batch.group_result.effects.iter().any(|effect| matches!(
             effect,
             ProtocolEffect::PublishSigned(_)
-                | ProtocolEffect::PublishUnsigned(_)
                 | ProtocolEffect::PublishSignedForInnerEvent { .. }
                 | ProtocolEffect::PublishStagedFirstContact { .. }
         )),
