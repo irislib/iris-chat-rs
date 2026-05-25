@@ -458,23 +458,6 @@ impl AppCore {
                         self.schedule_first_contact_payload_publish();
                     }
                 }
-                ProtocolEffect::Subscribe { subid, filters } => {
-                    self.push_debug_log(
-                        "appcore.protocol.subscribe_ignored",
-                        format!(
-                            "subid={subid} filters={} using_appcore_plan=true",
-                            filters.len()
-                        ),
-                    );
-                    self.request_protocol_subscription_refresh();
-                }
-                ProtocolEffect::Unsubscribe(subid) => {
-                    self.push_debug_log(
-                        "appcore.protocol.unsubscribe_ignored",
-                        format!("subid={subid} using_appcore_plan=true"),
-                    );
-                    self.request_protocol_subscription_refresh();
-                }
                 ProtocolEffect::FetchBackfill => {
                     self.fetch_recent_protocol_state();
                 }

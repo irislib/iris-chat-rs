@@ -48,11 +48,6 @@ pub(super) struct ProtocolPublishEvent {
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(super) enum ProtocolEffect {
-    Subscribe {
-        subid: String,
-        filters: Vec<Filter>,
-    },
-    Unsubscribe(String),
     FetchBackfill,
     PublishUnsigned(UnsignedEvent),
     PublishSigned(Event),
