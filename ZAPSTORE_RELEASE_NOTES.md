@@ -1,3 +1,11 @@
+# Iris Chat 2026.5.27
+
+- Onboarding now asks people to agree to Terms before creating, restoring, or linking a profile.
+- Welcome screens, app icons, splash art, and notification icons are cleaner and more consistent.
+- Pending outgoing messages now use a send icon, keeping the clock/timer icon for disappearing messages.
+- Linux chats now include link actions.
+- Split oversized iOS Swift UI files and added a repo-wide source file size ratchet.
+
 # Iris Chat 2026.5.23.1
 
 - Messages reveal less delivery metadata to message servers.

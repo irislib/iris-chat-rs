@@ -7,9 +7,13 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 ## Unreleased
 
-- iOS onboarding now requires agreeing to Terms before creating, restoring, or linking a profile.
-- Split the oversized iOS Swift UI files into focused source files.
-- Added a repo-wide source file size ratchet: new source files default to a 1,000-line limit, while existing oversized files may shrink but not grow.
+## 2026.5.27
+
+- Onboarding now asks people to agree to Terms before creating, restoring, or linking a profile.
+- Welcome screens, app icons, splash art, and notification icons are cleaner and more consistent.
+- Pending outgoing messages now use a send icon, keeping the clock/timer icon for disappearing messages.
+- Linux chats now include link actions.
+- Split oversized iOS Swift UI files and added a repo-wide source file size ratchet.
 
 ## 2026.5.23.1
 
