@@ -4,8 +4,8 @@
     <mask id="iris-ring-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
       <rect width="512" height="512" fill="#000000"/>
       <circle cx="256.000" cy="256.000" r="253.000" fill="#ffffff"/>
-      <circle cx="256.000" cy="256.000" r="107.000" fill="#000000"/>
-      <polygon points="202.500,348.665 128.721,383.279 163.335,309.500" fill="#000000"/>
+      <circle cx="256.000" cy="256.000" r="146.000" fill="#000000"/>
+      <polygon points="198.953,390.394 77.102,434.898 121.606,313.047" fill="#000000"/>
     </mask>
   </defs>
   <g mask="url(#iris-ring-mask)">

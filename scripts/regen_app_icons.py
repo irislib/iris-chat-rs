@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Regenerate Iris Chat app icons and logo assets.
 
-The icon is a native-style sweep-gradient iris ring with a small lower-left
-dent in the center hole. The script writes a vector copy to assets/ and uses
-that same geometry to generate platform PNG/ICO/ICNS assets.
+The icon is a native-style sweep-gradient iris ring with a lower-left dent in
+the center hole. The script writes a vector copy to assets/ and uses that same
+geometry to generate platform PNG/ICO/ICNS assets.
 """
 from __future__ import annotations
 
@@ -20,16 +20,17 @@ REPO = Path(__file__).resolve().parent.parent
 SVG_SOURCE = REPO / "assets/iris-chat-logo.svg"
 BG = (0, 0, 0, 255)
 LOGO_FRACTION = 0.75
-ANDROID_FOREGROUND_FRACTION = 0.68
-ANDROID_SPLASH_FRACTION = ANDROID_FOREGROUND_FRACTION
+ANDROID_LEGACY_FRACTION = 0.64
+ANDROID_FOREGROUND_FRACTION = 0.58
+ANDROID_SPLASH_FRACTION = 0.54
 
 VIEWBOX = 512
 CENTER = VIEWBOX / 2
 OUTER_RADIUS = 253
-INNER_RADIUS = 107
+INNER_RADIUS = 146
 DENT_DIRECTION_DEGREES = 135
-DENT_HALF_ANGLE_DEGREES = 15
-DENT_TIP_RADIUS = INNER_RADIUS + (OUTER_RADIUS - INNER_RADIUS) / 2
+DENT_HALF_ANGLE_DEGREES = 22
+DENT_TIP_RADIUS = OUTER_RADIUS
 SWEEP_SEGMENTS = 720
 SWEEP_SEGMENT_OVERLAP_DEGREES = 0.2
 SWEEP_COLORS = [
@@ -301,6 +302,16 @@ def render_foreground(size: int) -> Image.Image:
     return icon
 
 
+def render_android_legacy_icon(size: int) -> Image.Image:
+    icon = Image.new("RGBA", (size, size), BG)
+    logo_size = round(size * ANDROID_LEGACY_FRACTION)
+    resized = render_logo(logo_size).copy()
+    x = (size - resized.width) // 2
+    y = (size - resized.height) // 2
+    icon.alpha_composite(resized, (x, y))
+    return icon
+
+
 def render_splash(size: int) -> Image.Image:
     icon = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     logo_size = round(size * ANDROID_SPLASH_FRACTION)
@@ -327,7 +338,7 @@ def write_outputs(out_dir: Path, outputs: dict[str, int], rgb: bool) -> None:
 def write_android() -> None:
     for filename, size in ANDROID_LEGACY_OUTPUTS.items():
         path = ANDROID_RES_DIR / filename
-        img = render_icon(size)
+        img = render_android_legacy_icon(size)
         img.save(path, "PNG", optimize=True)
         print(f"  {path.relative_to(REPO)} ({size}x{size})")
 
