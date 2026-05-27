@@ -108,6 +108,9 @@ ANDROID_SPLASH_OUTPUTS = {
     "drawable-xxxhdpi/ic_splash_icon.png": 432,
 }
 
+ANDROID_NOTIFICATION_ICON = "drawable/ic_notification.xml"
+ANDROID_NOTIFICATION_VIEWBOX = 24
+
 LINUX_OUTPUTS = {
     "iris-chat-16.png": 16,
     "iris-chat-22.png": 22,
@@ -175,6 +178,43 @@ def svg_sector_path(start_degrees: float, end_degrees: float) -> str:
         f"L {x0:.3f} {y0:.3f} "
         f"A {radius:.3f} {radius:.3f} 0 0 1 {x1:.3f} {y1:.3f} Z"
     )
+
+
+def scaled_circle_path(cx: float, cy: float, radius: float) -> str:
+    return (
+        f"M {cx:.3f} {cy - radius:.3f} "
+        f"A {radius:.3f} {radius:.3f} 0 1 1 {cx:.3f} {cy + radius:.3f} "
+        f"A {radius:.3f} {radius:.3f} 0 1 1 {cx:.3f} {cy - radius:.3f} Z"
+    )
+
+
+def android_notification_icon_source() -> str:
+    scale = ANDROID_NOTIFICATION_VIEWBOX / VIEWBOX
+    cx = CENTER * scale
+    cy = CENTER * scale
+    outer_radius = OUTER_RADIUS * scale
+    inner_radius = INNER_RADIUS * scale
+    outer = scaled_circle_path(cx, cy, outer_radius)
+    inner = scaled_circle_path(cx, cy, inner_radius)
+    dent = " ".join(
+        (
+            "M" if index == 0 else "L"
+        ) + f" {x:.3f} {y:.3f}"
+        for index, (x, y) in enumerate(dent_points(scale))
+    )
+    path = f"{outer} {inner} {dent} Z"
+    return f"""<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="{ANDROID_NOTIFICATION_VIEWBOX}"
+    android:viewportHeight="{ANDROID_NOTIFICATION_VIEWBOX}">
+    <path
+        android:fillColor="@android:color/white"
+        android:fillType="evenOdd"
+        android:pathData="{path}" />
+</vector>
+"""
 
 
 def svg_source() -> str:
@@ -302,6 +342,10 @@ def write_android() -> None:
         img = render_splash(size)
         img.save(path, "PNG", optimize=True)
         print(f"  {path.relative_to(REPO)} ({size}x{size})")
+
+    notification_path = ANDROID_RES_DIR / ANDROID_NOTIFICATION_ICON
+    notification_path.write_text(android_notification_icon_source(), encoding="utf-8")
+    print(f"  {notification_path.relative_to(REPO)}")
 
 
 def write_linux() -> None:
