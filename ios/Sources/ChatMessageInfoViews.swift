@@ -654,7 +654,7 @@ struct IrisDeliveryGlyph: View {
     private var glyph: some View {
         switch delivery {
         case .queued, .pending:
-            Image(systemName: "clock")
+            Image(systemName: "paperplane.fill")
         case .sent:
             Image(systemName: "checkmark")
         case .received, .seen:
