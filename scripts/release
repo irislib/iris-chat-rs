@@ -931,6 +931,16 @@ build_cli_linux_target() {
     note_skipped "cli ${target}: only x86_64 Linux is wired for Docker builds"
     return 0
   fi
+  if [[ "${IRIS_CLI_LINUX_REUSE_EXISTING:-0}" == "1" ]]; then
+    local archive="$ROOT/dist/cli/iris-${target}.tar.gz"
+    if [[ ! -f "$archive" ]]; then
+      note_skipped "cli ${target}: IRIS_CLI_LINUX_REUSE_EXISTING set but no prebuilt archive found"
+      return 1
+    fi
+    ASSET_PATHS+=("$archive")
+    note_built "Iris CLI ${target}: $(basename "$archive")"
+    return 0
+  fi
   if ! command -v docker >/dev/null 2>&1; then
     note_skipped "cli ${target}: docker not available"
     return 0
@@ -942,6 +952,10 @@ build_cli_linux_target() {
     -v "$ROOT/..:/workspace:cached" \
     -w "/workspace/$repo_basename/core" \
     -e CARGO_TARGET_DIR="/workspace/$repo_basename/target/cli-release/linux-x64" \
+    -e IRIS_APP_VERSION_NAME="$IRIS_APP_VERSION_NAME" \
+    -e IRIS_APP_VERSION_CODE="$IRIS_APP_VERSION_CODE" \
+    -e IRIS_BUILD_GIT_SHA="$IRIS_BUILD_GIT_SHA" \
+    -e IRIS_BUILD_TIMESTAMP_UTC="$IRIS_BUILD_TIMESTAMP_UTC" \
     -e PATH="/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     --entrypoint /bin/bash \
     "$image" -c 'set -Eeuo pipefail; cargo build --release --bin iris --locked'
