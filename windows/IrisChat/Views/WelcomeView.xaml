@@ -33,12 +33,6 @@
                 </StackPanel>
             </Button>
 
-            <TextBlock Style="{StaticResource MutedText}"
-                       Text="or"
-                       TextAlignment="Center"
-                       HorizontalAlignment="Stretch"
-                       Margin="0,0,0,12" />
-
             <Button Style="{StaticResource SecondaryButton}"
                     Click="OnRestore">
                 <StackPanel Orientation="Horizontal">

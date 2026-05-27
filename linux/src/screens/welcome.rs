@@ -39,11 +39,6 @@ pub fn render(manager: &Rc<AppManager>) -> gtk::Widget {
     });
     container.append(&create);
 
-    let separator = gtk::Label::new(Some("or"));
-    separator.add_css_class("dim-label");
-    separator.set_halign(gtk::Align::Center);
-    container.append(&separator);
-
     let restore = welcome_button("Restore profile", "dialog-password-symbolic", false);
     dispatch_on_click(&restore, manager, || AppAction::PushScreen {
         screen: Screen::RestoreAccount,

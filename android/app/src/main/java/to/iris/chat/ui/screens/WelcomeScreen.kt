@@ -75,37 +75,33 @@ fun WelcomeScreen(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background,
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Box(
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 32.dp, vertical = 40.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
                 modifier =
                     Modifier
-                        .weight(1f)
+                        .widthIn(max = 360.dp)
                         .fillMaxWidth()
-                        .verticalScroll(scrollState)
-                        .padding(horizontal = 32.dp, vertical = 40.dp),
-                contentAlignment = Alignment.Center,
+                        .testTag("welcomeChooserCard"),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(28.dp),
             ) {
                 WelcomeBrand(
                     modifier =
                         Modifier
-                            .widthIn(max = 360.dp)
-                            .fillMaxWidth()
-                            .testTag("welcomeChooserCard"),
+                            .fillMaxWidth(),
                 )
-            }
-
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.background,
-                shadowElevation = if (scrollState.canScrollForward) 8.dp else 0.dp,
-            ) {
                 WelcomeActions(
                     appManager = appManager,
                     modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .navigationBarsPadding()
-                            .padding(horizontal = 32.dp, vertical = 24.dp),
+                        Modifier.fillMaxWidth(),
                 )
             }
         }
@@ -175,13 +171,6 @@ private fun WelcomeActions(
                     Modifier
                         .fillMaxWidth()
                         .testTag("welcomeCreateAction"),
-            )
-            Text(
-                text = "or",
-                modifier = Modifier.fillMaxWidth(),
-                color = IrisTheme.palette.muted,
-                style = MaterialTheme.typography.labelMedium,
-                textAlign = TextAlign.Center,
             )
             IrisSecondaryButton(
                 text = "Restore profile",
