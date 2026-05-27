@@ -21,6 +21,7 @@ SVG_SOURCE = REPO / "assets/iris-chat-logo.svg"
 BG = (0, 0, 0, 255)
 LOGO_FRACTION = 0.75
 ANDROID_FOREGROUND_FRACTION = 0.68
+ANDROID_SPLASH_FRACTION = ANDROID_FOREGROUND_FRACTION
 
 VIEWBOX = 512
 CENTER = VIEWBOX / 2
@@ -97,6 +98,14 @@ ANDROID_FOREGROUND_OUTPUTS = {
     "drawable-xhdpi/ic_launcher_foreground.png": 216,
     "drawable-xxhdpi/ic_launcher_foreground.png": 324,
     "drawable-xxxhdpi/ic_launcher_foreground.png": 432,
+}
+
+ANDROID_SPLASH_OUTPUTS = {
+    "drawable-mdpi/ic_splash_icon.png": 108,
+    "drawable-hdpi/ic_splash_icon.png": 162,
+    "drawable-xhdpi/ic_splash_icon.png": 216,
+    "drawable-xxhdpi/ic_splash_icon.png": 324,
+    "drawable-xxxhdpi/ic_splash_icon.png": 432,
 }
 
 LINUX_OUTPUTS = {
@@ -252,6 +261,16 @@ def render_foreground(size: int) -> Image.Image:
     return icon
 
 
+def render_splash(size: int) -> Image.Image:
+    icon = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    logo_size = round(size * ANDROID_SPLASH_FRACTION)
+    resized = render_logo(logo_size).copy()
+    x = (size - resized.width) // 2
+    y = (size - resized.height) // 2
+    icon.alpha_composite(resized, (x, y))
+    return icon
+
+
 def render_transparent_logo(size: int) -> Image.Image:
     return render_logo(size).copy()
 
@@ -275,6 +294,12 @@ def write_android() -> None:
     for filename, size in ANDROID_FOREGROUND_OUTPUTS.items():
         path = ANDROID_RES_DIR / filename
         img = render_foreground(size)
+        img.save(path, "PNG", optimize=True)
+        print(f"  {path.relative_to(REPO)} ({size}x{size})")
+
+    for filename, size in ANDROID_SPLASH_OUTPUTS.items():
+        path = ANDROID_RES_DIR / filename
+        img = render_splash(size)
         img.save(path, "PNG", optimize=True)
         print(f"  {path.relative_to(REPO)} ({size}x{size})")
 
