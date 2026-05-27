@@ -20,9 +20,10 @@
                            FontSize="36"
                            FontWeight="Bold" />
             </StackPanel>
-            <Button Style="{StaticResource PrimaryButton}"
+            <Button x:Name="CreateButton"
+                    Style="{StaticResource PrimaryButton}"
                     Click="OnCreate"
-                    Margin="0,0,0,10">
+                    Margin="0,0,0,12">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE710;"
                                FontFamily="Segoe MDL2 Assets"
@@ -32,26 +33,20 @@
                 </StackPanel>
             </Button>
 
+            <TextBlock Style="{StaticResource MutedText}"
+                       Text="or"
+                       TextAlignment="Center"
+                       HorizontalAlignment="Stretch"
+                       Margin="0,0,0,12" />
+
             <Button Style="{StaticResource SecondaryButton}"
-                    Click="OnRestore"
-                    Margin="0,0,0,10">
+                    Click="OnRestore">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE192;"
                                FontFamily="Segoe MDL2 Assets"
                                FontSize="16"
                                Margin="0,0,8,0" />
                     <TextBlock Text="Restore profile" />
-                </StackPanel>
-            </Button>
-
-            <Button Style="{StaticResource SecondaryButton}"
-                    Click="OnLink">
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE772;"
-                               FontFamily="Segoe MDL2 Assets"
-                               FontSize="16"
-                               Margin="0,0,8,0" />
-                    <TextBlock Text="Link this device" />
                 </StackPanel>
             </Button>
         </StackPanel>

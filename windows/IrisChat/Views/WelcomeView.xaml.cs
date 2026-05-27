@@ -6,14 +6,14 @@ namespace IrisChat.Views;
 
 public partial class WelcomeView : UserControl
 {
-    public WelcomeView() { InitializeComponent(); }
+    public WelcomeView()
+    {
+        InitializeComponent();
+    }
 
     private void OnCreate(object sender, RoutedEventArgs e) =>
         App.CurrentManager.Push(new Screen.CreateAccount());
 
     private void OnRestore(object sender, RoutedEventArgs e) =>
         App.CurrentManager.Push(new Screen.RestoreAccount());
-
-    private void OnLink(object sender, RoutedEventArgs e) =>
-        App.CurrentManager.Push(new Screen.AddDevice());
 }

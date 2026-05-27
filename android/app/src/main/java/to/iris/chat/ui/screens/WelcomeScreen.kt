@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import to.iris.chat.BuildConfig
 import to.iris.chat.R
@@ -158,7 +159,7 @@ private fun WelcomeActions(
                 Modifier
                     .widthIn(max = 320.dp)
                     .fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             IrisPrimaryButton(
                 text = "Create profile",
@@ -175,6 +176,13 @@ private fun WelcomeActions(
                         .fillMaxWidth()
                         .testTag("welcomeCreateAction"),
             )
+            Text(
+                text = "or",
+                modifier = Modifier.fillMaxWidth(),
+                color = IrisTheme.palette.muted,
+                style = MaterialTheme.typography.labelMedium,
+                textAlign = TextAlign.Center,
+            )
             IrisSecondaryButton(
                 text = "Restore profile",
                 onClick = { appManager.pushScreen(Screen.RestoreAccount) },
@@ -189,21 +197,6 @@ private fun WelcomeActions(
                     Modifier
                         .fillMaxWidth()
                         .testTag("welcomeRestoreAction"),
-            )
-            IrisSecondaryButton(
-                text = "Link this device",
-                onClick = { appManager.pushScreen(Screen.AddDevice) },
-                icon = {
-                    Icon(
-                        imageVector = Icons.Rounded.Devices,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                    )
-                },
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .testTag("welcomeAddDeviceAction"),
             )
         }
         if (BuildConfig.TRUSTED_TEST_BUILD) {
@@ -316,6 +309,28 @@ fun RestoreAccountScreen(
                     Modifier
                         .fillMaxWidth()
                         .testTag("importKeyButton"),
+            )
+            Text(
+                text = "or",
+                modifier = Modifier.fillMaxWidth(),
+                color = IrisTheme.palette.muted,
+                style = MaterialTheme.typography.labelMedium,
+                textAlign = TextAlign.Center,
+            )
+            IrisSecondaryButton(
+                text = "Link this device",
+                onClick = { appManager.pushScreen(Screen.AddDevice) },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Rounded.Devices,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .testTag("restoreLinkDeviceAction"),
             )
         },
     ) {

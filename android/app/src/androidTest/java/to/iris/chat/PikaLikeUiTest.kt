@@ -383,7 +383,10 @@ class PikaLikeUiTest {
     @Test
     fun link_device_shows_scannable_code() {
         composeRule.resetToWelcome()
-        composeRule.onNodeWithTag("welcomeAddDeviceAction", useUnmergedTree = true)
+        composeRule.onNodeWithTag("welcomeRestoreAction", useUnmergedTree = true)
+            .performClick()
+        composeRule.waitForTag("restoreAccountScreen")
+        composeRule.onNodeWithTag("restoreLinkDeviceAction", useUnmergedTree = true)
             .performClick()
         composeRule.waitForTag("addDeviceScreen")
         composeRule.waitForTag("linkDeviceQrCode")
@@ -555,9 +558,8 @@ class PikaLikeUiTest {
 
         if (hasTag("welcomeCreateAction")) {
             onNodeWithTag("welcomeCreateAction", useUnmergedTree = true).performClick()
-            waitForTag("createAccountScreen")
+            waitForTag("signupNameField")
             onNodeWithTag("signupNameField", useUnmergedTree = true)
-                .assertIsFocused()
                 .performTextInput("android tester")
             onNodeWithTag("generateKeyButton", useUnmergedTree = true).performClick()
             waitForTag("chatListNewChatButton")

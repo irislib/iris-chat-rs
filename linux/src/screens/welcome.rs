@@ -39,17 +39,16 @@ pub fn render(manager: &Rc<AppManager>) -> gtk::Widget {
     });
     container.append(&create);
 
+    let separator = gtk::Label::new(Some("or"));
+    separator.add_css_class("dim-label");
+    separator.set_halign(gtk::Align::Center);
+    container.append(&separator);
+
     let restore = welcome_button("Restore profile", "dialog-password-symbolic", false);
     dispatch_on_click(&restore, manager, || AppAction::PushScreen {
         screen: Screen::RestoreAccount,
     });
     container.append(&restore);
-
-    let add_device = welcome_button("Link this device", "computer-symbolic", false);
-    dispatch_on_click(&add_device, manager, || AppAction::PushScreen {
-        screen: Screen::AddDevice,
-    });
-    container.append(&add_device);
 
     container.upcast()
 }

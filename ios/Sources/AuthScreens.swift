@@ -39,7 +39,7 @@ struct WelcomeScreen: View {
                     }
                     .font(.system(.largeTitle, design: .rounded, weight: .bold))
 
-                    VStack(spacing: 10) {
+                    VStack(spacing: 12) {
                         Button {
                             manager.dispatch(.pushScreen(screen: .createAccount))
                         } label: {
@@ -49,6 +49,12 @@ struct WelcomeScreen: View {
                         .buttonStyle(IrisPrimaryButtonStyle())
                         .accessibilityIdentifier("welcomeCreateAction")
 
+                        Text("or")
+                            .font(.system(.caption, design: .rounded, weight: .semibold))
+                            .foregroundStyle(palette.muted)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 2)
+
                         Button {
                             manager.dispatch(.pushScreen(screen: .restoreAccount))
                         } label: {
@@ -57,15 +63,6 @@ struct WelcomeScreen: View {
                         }
                         .buttonStyle(IrisSecondaryButtonStyle())
                         .accessibilityIdentifier("welcomeRestoreAction")
-
-                        Button {
-                            manager.dispatch(.pushScreen(screen: .addDevice))
-                        } label: {
-                            Label("Link this device", systemImage: "iphone")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(IrisSecondaryButtonStyle())
-                        .accessibilityIdentifier("welcomeAddDeviceAction")
                     }
                     .frame(maxWidth: 320)
                     .disabled(!termsAccepted)
@@ -233,6 +230,21 @@ struct RestoreAccountScreen: View {
                 .buttonStyle(IrisPrimaryButtonStyle())
                 .disabled(manager.state.busy.restoringSession)
                 .accessibilityIdentifier("importKeyButton")
+
+                Text("or")
+                    .font(.system(.caption, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 2)
+
+                Button {
+                    manager.dispatch(.pushScreen(screen: .addDevice))
+                } label: {
+                    Label("Link this device", systemImage: "iphone")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(IrisSecondaryButtonStyle())
+                .accessibilityIdentifier("restoreLinkDeviceAction")
             }
         }
     }
