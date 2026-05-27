@@ -15,7 +15,7 @@ use iris_chat_core::{
     DesktopNearbySnapshot, DeviceAuthorizationState, FfiApp, FfiDesktopNearby,
     GroupDetailsSnapshot,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -1148,6 +1148,7 @@ fn send_message(
     expires_at_secs: Option<u64>,
 ) -> Result<Value> {
     let chat_id = chat_action_input(&cli.app.state(), chat);
+    let _ = open_chat(cli, &chat_id);
     let action = if let Some(expires_at_secs) = expires_at_secs {
         AppAction::SendDisappearingMessage {
             chat_id: chat_id.clone(),
@@ -1161,17 +1162,19 @@ fn send_message(
         }
     };
     cli.dispatch_and_wait(action, Duration::from_secs(2))?;
-    let state = cli.app.state();
-    fail_on_toast(&state)?;
-    let current = state.current_chat.context("No chat is open.")?;
-    let sent = current
-        .messages
-        .iter()
-        .rev()
-        .find(|item| item.is_outgoing && item.body == message)
-        .cloned()
-        .context("Message was not added to the chat.")?;
-    Ok(message_json(&sent))
+    if let Ok(current) = open_chat(cli, &chat_id) {
+        if let Some(sent) = current
+            .messages
+            .iter()
+            .rev()
+            .find(|item| item.is_outgoing && item.body == message)
+            .cloned()
+        {
+            return Ok(message_json(&sent));
+        }
+    }
+    latest_outgoing_message_row(&cli.reconciler.data_dir, &chat_id, message)?
+        .context("Message was not added to the chat.")
 }
 
 fn react(cli: &CliApp, chat: &str, message_id: &str, emoji: &str) -> Result<Value> {
@@ -1590,6 +1593,48 @@ fn new_message_rows(
         }
     }
     Ok(messages)
+}
+
+fn latest_outgoing_message_row(
+    data_dir: &Path,
+    chat_id: &str,
+    body: &str,
+) -> Result<Option<Value>> {
+    let conn = open_existing_db(data_dir)?;
+    conn.query_row(
+        "SELECT chat_id, id, body, is_outgoing, created_at_secs, expires_at_secs, delivery, source_event_id
+         FROM messages
+         WHERE chat_id = ?1 AND body = ?2 AND is_outgoing = 1
+         ORDER BY created_at_secs DESC, id DESC
+         LIMIT 1",
+        (chat_id, body),
+        |row| {
+            Ok(json!({
+                "id": row.get::<_, String>(1)?,
+                "chat_id": row.get::<_, String>(0)?,
+                "author": Value::Null,
+                "body": row.get::<_, String>(2)?,
+                "is_outgoing": row.get::<_, i64>(3)? != 0,
+                "created_at_secs": row.get::<_, i64>(4)?,
+                "expires_at_secs": row.get::<_, Option<i64>>(5)?,
+                "delivery": row.get::<_, String>(6)?,
+                "source_event_id": row.get::<_, Option<String>>(7)?,
+                "recipient_deliveries": [],
+                "delivery_trace": {
+                    "outer_event_ids": [],
+                    "pending_relay_event_ids": [],
+                    "queued_protocol_targets": [],
+                    "target_device_ids": [],
+                    "transport_channels": [],
+                    "last_transport_error": Value::Null,
+                },
+                "attachments": [],
+                "reactions": [],
+            }))
+        },
+    )
+    .optional()
+    .map_err(Into::into)
 }
 
 fn print_output(json_output: bool, command: &str, data: Value) -> Result<()> {
