@@ -17,60 +17,65 @@ struct WelcomeScreen: View {
     @ObservedObject var manager: AppManager
 
     var body: some View {
-        IrisScrollScreen {
-            VStack(spacing: 20) {
-                VStack(spacing: 18) {
-                    Color.clear
-                        .frame(height: 0)
-                        .accessibilityIdentifier("welcomeChooserCard")
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: 20) {
+                    VStack(spacing: 18) {
+                        Color.clear
+                            .frame(height: 0)
+                            .accessibilityIdentifier("welcomeChooserCard")
 
-                    Image("IrisLogo")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 132, height: 132)
-                        .accessibilityHidden(true)
+                        Image("IrisLogo")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 132, height: 132)
+                            .accessibilityHidden(true)
 
-                    HStack(spacing: 0) {
-                        Text("iris")
-                            .foregroundStyle(palette.textPrimary)
-                        Text(" chat")
-                            .foregroundStyle(palette.textPrimary)
-                    }
-                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
-
-                    VStack(spacing: 12) {
-                        Button {
-                            manager.dispatch(.pushScreen(screen: .createAccount))
-                        } label: {
-                            Label("Create profile", systemImage: "plus")
-                                .frame(maxWidth: .infinity)
+                        HStack(spacing: 0) {
+                            Text("iris")
+                                .foregroundStyle(palette.textPrimary)
+                            Text(" chat")
+                                .foregroundStyle(palette.textPrimary)
                         }
-                        .buttonStyle(IrisPrimaryButtonStyle())
-                        .accessibilityIdentifier("welcomeCreateAction")
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
 
-                        Button {
-                            manager.dispatch(.pushScreen(screen: .restoreAccount))
-                        } label: {
-                            Label("Restore profile", systemImage: "key.fill")
-                                .frame(maxWidth: .infinity)
+                        VStack(spacing: 12) {
+                            Button {
+                                manager.dispatch(.pushScreen(screen: .createAccount))
+                            } label: {
+                                Label("Create profile", systemImage: "plus")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(IrisPrimaryButtonStyle())
+                            .accessibilityIdentifier("welcomeCreateAction")
+
+                            Button {
+                                manager.dispatch(.pushScreen(screen: .restoreAccount))
+                            } label: {
+                                Label("Restore profile", systemImage: "key.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(IrisSecondaryButtonStyle())
+                            .accessibilityIdentifier("welcomeRestoreAction")
                         }
-                        .buttonStyle(IrisSecondaryButtonStyle())
-                        .accessibilityIdentifier("welcomeRestoreAction")
+                        .frame(maxWidth: 320)
                     }
-                    .frame(maxWidth: 320)
+                    .frame(maxWidth: .infinity)
+
+                    if manager.trustedTestBuildEnabled() {
+                        Text("Test build")
+                            .font(.system(.caption, design: .rounded, weight: .semibold))
+                            .foregroundStyle(palette.accentAlt)
+                            .accessibilityIdentifier("welcomeSecondaryCard")
+                    }
                 }
+                .frame(maxWidth: 480)
                 .frame(maxWidth: .infinity)
-
-                if manager.trustedTestBuildEnabled() {
-                    Text("Test build")
-                        .font(.system(.caption, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.accentAlt)
-                        .accessibilityIdentifier("welcomeSecondaryCard")
-                }
+                .padding(.horizontal, IrisLayout.contentHorizontalPadding)
+                .padding(.vertical, IrisLayout.contentBottomPadding)
+                .frame(minHeight: proxy.size.height, alignment: .center)
             }
-            .frame(maxWidth: 480)
-            .frame(maxWidth: .infinity)
-            .padding(.top, IrisLayout.usesDesktopChrome ? 96 : 56)
+            .scrollIndicators(.hidden)
         }
     }
 }

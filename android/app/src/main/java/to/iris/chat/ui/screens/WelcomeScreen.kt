@@ -3,6 +3,7 @@ package to.iris.chat.ui.screens
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -75,34 +77,37 @@ fun WelcomeScreen(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background,
     ) {
-        Box(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .verticalScroll(scrollState)
-                    .navigationBarsPadding()
-                    .padding(horizontal = 32.dp, vertical = 40.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            Box(
                 modifier =
                     Modifier
-                        .widthIn(max = 360.dp)
                         .fillMaxWidth()
-                        .testTag("welcomeChooserCard"),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(28.dp),
+                        .heightIn(min = maxHeight)
+                        .verticalScroll(scrollState)
+                        .navigationBarsPadding()
+                        .padding(horizontal = 32.dp, vertical = 40.dp),
+                contentAlignment = Alignment.Center,
             ) {
-                WelcomeBrand(
+                Column(
                     modifier =
                         Modifier
-                            .fillMaxWidth(),
-                )
-                WelcomeActions(
-                    appManager = appManager,
-                    modifier =
-                        Modifier.fillMaxWidth(),
-                )
+                            .widthIn(max = 360.dp)
+                            .fillMaxWidth()
+                            .testTag("welcomeChooserCard"),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(28.dp),
+                ) {
+                    WelcomeBrand(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth(),
+                    )
+                    WelcomeActions(
+                        appManager = appManager,
+                        modifier =
+                            Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
     }
