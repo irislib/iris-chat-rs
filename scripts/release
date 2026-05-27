@@ -429,6 +429,20 @@ build_android() {
 
 # ---------- Linux ----------
 build_linux() {
+  if [[ "${IRIS_LINUX_REUSE_EXISTING:-0}" == "1" ]]; then
+    local tar
+    local deb
+    tar="$(ls -1t "$ROOT"/dist/linux/iris-chat-"${TAG}"-linux-*.tar.gz 2>/dev/null | head -n 1 || true)"
+    deb="$(ls -1t "$ROOT"/dist/linux/iris-chat-"${TAG}"-linux-*.deb 2>/dev/null | head -n 1 || true)"
+    if [[ -z "$tar" || ! -f "$tar" ]]; then
+      note_skipped "linux: IRIS_LINUX_REUSE_EXISTING set but no prebuilt Linux tarball found"
+      return 1
+    fi
+    ASSET_PATHS+=("$tar")
+    note_built "Linux tarball: $(basename "$tar")"
+    [[ -n "$deb" && -f "$deb" ]] && { ASSET_PATHS+=("$deb"); note_built "Linux .deb: $(basename "$deb")"; }
+    return 0
+  fi
   if ! command -v docker >/dev/null 2>&1; then
     note_skipped "linux: docker not available"
     return 0
