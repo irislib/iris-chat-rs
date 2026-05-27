@@ -15,7 +15,6 @@ import PhotosUI
 struct WelcomeScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
-    @AppStorage(irisTermsAcceptedDefaultsKey) private var termsAccepted = false
 
     var body: some View {
         IrisScrollScreen {
@@ -49,12 +48,6 @@ struct WelcomeScreen: View {
                         .buttonStyle(IrisPrimaryButtonStyle())
                         .accessibilityIdentifier("welcomeCreateAction")
 
-                        Text("or")
-                            .font(.system(.caption, design: .rounded, weight: .semibold))
-                            .foregroundStyle(palette.muted)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 2)
-
                         Button {
                             manager.dispatch(.pushScreen(screen: .restoreAccount))
                         } label: {
@@ -65,11 +58,6 @@ struct WelcomeScreen: View {
                         .accessibilityIdentifier("welcomeRestoreAction")
                     }
                     .frame(maxWidth: 320)
-                    .disabled(!termsAccepted)
-                    .opacity(termsAccepted ? 1 : 0.46)
-
-                    OnboardingTermsAgreement(accepted: $termsAccepted)
-                        .frame(maxWidth: 360)
                 }
                 .frame(maxWidth: .infinity)
 
@@ -92,27 +80,25 @@ private struct OnboardingTermsAgreement: View {
     @Binding var accepted: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Iris has no tolerance for objectionable content or abusive users.")
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                accepted.toggle()
+            } label: {
+                Label(
+                    accepted ? "Terms accepted" : "Accept Terms",
+                    systemImage: accepted ? "checkmark.square.fill" : "square"
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .font(.system(.callout, design: .rounded, weight: .semibold))
+            .foregroundStyle(palette.textPrimary)
+            .accessibilityIdentifier("onboardingTermsAgreementToggle")
+
+            Text("No abusive or objectionable content.")
                 .font(.system(.caption, design: .rounded))
                 .foregroundStyle(palette.muted)
                 .accessibilityIdentifier("onboardingTermsNotice")
-
-            if accepted {
-                termsButton(
-                    title: "Terms accepted",
-                    systemImage: "checkmark.circle.fill",
-                    action: { accepted = false }
-                )
-                .buttonStyle(IrisSecondaryButtonStyle())
-            } else {
-                termsButton(
-                    title: "Accept Terms",
-                    systemImage: "checkmark.circle",
-                    action: { accepted = true }
-                )
-                .buttonStyle(IrisPrimaryButtonStyle())
-            }
 
             HStack(spacing: 14) {
                 Link("Terms", destination: irisTermsURL)
@@ -122,29 +108,12 @@ private struct OnboardingTermsAgreement: View {
             }
             .font(.system(.caption, design: .rounded, weight: .semibold))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(palette.panel.opacity(0.72))
-        )
-    }
-
-    private func termsButton(
-        title: String,
-        systemImage: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .frame(maxWidth: .infinity)
-        }
-        .accessibilityIdentifier("onboardingTermsAgreementToggle")
     }
 }
 
 struct CreateAccountScreen: View {
     @ObservedObject var manager: AppManager
+    @AppStorage(irisTermsAcceptedDefaultsKey) private var termsAccepted = false
     @State private var displayName = ""
     @FocusState private var isNameFocused: Bool
 
@@ -153,7 +122,7 @@ struct CreateAccountScreen: View {
     }
 
     private var canCreateAccount: Bool {
-        !trimmedDisplayName.isEmpty && !manager.state.busy.creatingAccount
+        termsAccepted && !trimmedDisplayName.isEmpty && !manager.state.busy.creatingAccount
     }
 
     var body: some View {
@@ -174,6 +143,8 @@ struct CreateAccountScreen: View {
                     .submitLabel(.done)
                     .onSubmit(submitCreateAccount)
                     .accessibilityIdentifier("signupNameField")
+
+                OnboardingTermsAgreement(accepted: $termsAccepted)
 
                 Button(manager.state.busy.creatingAccount ? "Creating…" : "Create profile") {
                     submitCreateAccount()

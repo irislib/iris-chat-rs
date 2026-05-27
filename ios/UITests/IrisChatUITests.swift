@@ -47,7 +47,7 @@ final class IrisChatUITests: XCTestCase {
         let app = launchCleanApp()
 
         XCTAssertTrue(element(app, "welcomeChooserCard").waitForExistence(timeout: 10))
-        XCTAssertTrue(element(app, "onboardingTermsNotice").waitForExistence(timeout: 10))
+        XCTAssertFalse(element(app, "onboardingTermsNotice").exists)
         XCTAssertTrue(element(app, "welcomeCreateAction").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "welcomeRestoreAction").waitForExistence(timeout: 10))
         createAccount(app)
@@ -956,6 +956,10 @@ final class IrisChatUITests: XCTestCase {
         typeText(name, into: nameField, app: app)
         let action = element(app, "generateKeyButton")
         XCTAssertTrue(action.waitForExistence(timeout: 10), file: file, line: line)
+        if !action.isEnabled {
+            acceptOnboardingTermsIfNeeded(app, file: file, line: line)
+        }
+        XCTAssertTrue(waitUntil(timeout: 5) { action.isEnabled }, file: file, line: line)
         XCTAssertTrue(action.isEnabled, file: file, line: line)
         action.tap()
     }
