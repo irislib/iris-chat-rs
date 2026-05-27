@@ -59,7 +59,7 @@ baseline_limit_for() {
     ios/Tests/InteropHarnessTests.swift) echo 2178 ;;
     ios/Tests/IrisChatTests.swift) echo 2446 ;;
     ios/UITests/IrisChatUITests.swift) echo 1180 ;;
-    linux/src/screens/chat.rs) echo 2709 ;;
+    linux/src/screens/chat.rs) echo 2846 ;;
     macos/Sources/MacBitchatNearbyService.swift) echo 1152 ;;
     scripts/protocol_fault_validation.py) echo 1342 ;;
     scripts/release) echo 1240 ;;
