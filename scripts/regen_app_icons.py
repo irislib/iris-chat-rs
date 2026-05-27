@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate Iris app icons and logo assets.
+"""Regenerate Iris Chat app icons and logo assets.
 
 The icon is a native-style sweep-gradient iris ring with a small lower-left
 dent in the center hole. The script writes a vector copy to assets/ and uses
@@ -32,14 +32,15 @@ DENT_TIP_RADIUS = INNER_RADIUS + (OUTER_RADIUS - INNER_RADIUS) / 2
 SWEEP_SEGMENTS = 720
 SWEEP_SEGMENT_OVERLAP_DEGREES = 0.2
 SWEEP_COLORS = [
-    "#F43F5E",
-    "#F97316",
-    "#FACC15",
-    "#22C55E",
-    "#06B6D4",
-    "#3B82F6",
-    "#8B5CF6",
-    "#F43F5E",
+    "#312E81",
+    "#4F46E5",
+    "#7C3AED",
+    "#A855F7",
+    "#D946EF",
+    "#EC4899",
+    "#BE185D",
+    "#7C3AED",
+    "#312E81",
 ]
 
 IOS_DIR = REPO / "ios/Assets.xcassets/AppIcon.appiconset"
