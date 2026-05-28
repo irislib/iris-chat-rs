@@ -1702,10 +1702,11 @@ fn protocol_backfill_fetches_configure_relays_before_network_fetch() {
     for fn_name in [
         "fetch_recent_messages_for_author",
         "fetch_recent_group_sender_key_messages_for_author",
-        "fetch_recent_protocol_state",
+        "fetch_recent_protocol_state_inner",
     ] {
         let start = protocol_source
             .find(&format!("pub(super) fn {fn_name}"))
+            .or_else(|| protocol_source.find(&format!("fn {fn_name}")))
             .unwrap_or_else(|| panic!("missing {fn_name}"));
         let body = &protocol_source[start..];
         let end = body
@@ -1874,6 +1875,78 @@ fn liveness_retries_pending_inbound_direct_events() {
         body.contains("has_pending_inbound_direct_events")
             && body.contains("should_retry_backfill"),
         "protocol liveness must retry durable pending inbound direct events even when tracked-peer backfill appears complete"
+    );
+}
+
+#[test]
+fn pending_inbound_liveness_does_not_force_global_message_backfill() {
+    let protocol_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol.rs"),
+    )
+    .expect("read protocol source");
+    let start = protocol_source
+        .find("pub(super) fn handle_protocol_subscription_liveness_check")
+        .expect("liveness handler");
+    let body = &protocol_source[start
+        ..protocol_source[start..]
+            .find("\n    pub(super) fn reconcile_protocol_subscriptions")
+            .map(|offset| start + offset)
+            .unwrap_or(protocol_source.len())];
+    let tracked_message_condition = body
+        .split("let should_fetch_tracked_peer_messages")
+        .nth(1)
+        .unwrap_or_default()
+        .split(';')
+        .next()
+        .unwrap_or_default();
+
+    assert!(
+        body.contains("pending_inbound_retry_needed")
+            && body.contains("|| pending_inbound_retry_needed"),
+        "pending inbound direct events must still wake protocol-state retry"
+    );
+    assert!(
+        !tracked_message_condition.contains("pending_inbound_retry_needed"),
+        "pending inbound retry alone must not trigger global tracked-peer message history fetches"
+    );
+    assert!(
+        !tracked_message_condition.contains("tracked_peer_backfill_needed"),
+        "queued protocol-state retry alone must not trigger global tracked-peer message history fetches"
+    );
+    assert!(
+        body.contains("if should_fetch_tracked_peer_messages")
+            && body.contains("self.fetch_recent_messages_for_tracked_peers();"),
+        "tracked-peer message backfill should be explicitly gated"
+    );
+}
+
+#[test]
+fn scheduled_tracked_peer_catch_up_does_not_force_global_message_backfill() {
+    let lifecycle_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/lifecycle.rs"),
+    )
+    .expect("read lifecycle source");
+    let start = lifecycle_source
+        .find("InternalEvent::FetchTrackedPeerCatchUp { token } => {")
+        .expect("tracked peer catch-up handler");
+    let body = &lifecycle_source[start
+        ..lifecycle_source[start..]
+            .find("InternalEvent::ProtocolSubscriptionLivenessCheck")
+            .map(|offset| start + offset)
+            .unwrap_or(lifecycle_source.len())];
+
+    assert!(
+        body.contains("fetch_recent_protocol_metadata_state"),
+        "scheduled protocol catch-up should retry metadata/state without pulling all message history"
+    );
+    assert!(
+        !body.contains("fetch_recent_protocol_state();"),
+        "scheduled protocol catch-up must not use the full history fetch path unconditionally"
+    );
+    assert!(
+        body.contains("if should_fetch_tracked_peer_messages")
+            && body.contains("self.fetch_recent_messages_for_tracked_peers();"),
+        "message history catch-up should be gated behind dirty or unapplied subscription state"
     );
 }
 

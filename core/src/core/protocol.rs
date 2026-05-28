@@ -552,6 +552,18 @@ impl AppCore {
     }
 
     pub(super) fn recent_protocol_filters(&self, now: UnixSeconds) -> Vec<Filter> {
+        self.recent_protocol_filters_inner(now, true)
+    }
+
+    fn recent_protocol_metadata_filters(&self, now: UnixSeconds) -> Vec<Filter> {
+        self.recent_protocol_filters_inner(now, false)
+    }
+
+    fn recent_protocol_filters_inner(
+        &self,
+        now: UnixSeconds,
+        include_message_history: bool,
+    ) -> Vec<Filter> {
         let Some(plan) = self
             .protocol_subscription_runtime
             .desired_plan
@@ -593,14 +605,16 @@ impl AppCore {
                     .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
             );
         }
-        let message_authors = pubkeys_from_hexes(&plan.message_authors);
-        if !message_authors.is_empty() {
-            filters.push(direct_message_history_filter(message_authors));
-        }
+        if include_message_history {
+            let message_authors = pubkeys_from_hexes(&plan.message_authors);
+            if !message_authors.is_empty() {
+                filters.push(direct_message_history_filter(message_authors));
+            }
 
-        let group_sender_key_authors = pubkeys_from_hexes(&plan.group_sender_key_authors);
-        if !group_sender_key_authors.is_empty() {
-            filters.push(group_sender_key_history_filter(group_sender_key_authors));
+            let group_sender_key_authors = pubkeys_from_hexes(&plan.group_sender_key_authors);
+            if !group_sender_key_authors.is_empty() {
+                filters.push(group_sender_key_history_filter(group_sender_key_authors));
+            }
         }
 
         let private_invite_response_pubkeys = plan
@@ -671,6 +685,14 @@ impl AppCore {
     }
 
     pub(super) fn fetch_recent_protocol_state(&mut self) -> bool {
+        self.fetch_recent_protocol_state_inner(true)
+    }
+
+    pub(super) fn fetch_recent_protocol_metadata_state(&mut self) -> bool {
+        self.fetch_recent_protocol_state_inner(false)
+    }
+
+    fn fetch_recent_protocol_state_inner(&mut self, include_message_history: bool) -> bool {
         if self.protocol_subscription_runtime.protocol_fetch_in_flight {
             self.push_debug_log("protocol.catch_up.skip", "fetch already in flight");
             return false;
@@ -692,13 +714,20 @@ impl AppCore {
             return false;
         };
         let now = unix_now();
-        let filters = self.recent_protocol_filters(now);
+        let filters = if include_message_history {
+            self.recent_protocol_filters(now)
+        } else {
+            self.recent_protocol_metadata_filters(now)
+        };
         if filters.is_empty() {
             return false;
         }
         self.push_debug_log(
             "protocol.catch_up.fetch",
-            format!("filters={}", filters.len()),
+            format!(
+                "filters={} messages={include_message_history}",
+                filters.len()
+            ),
         );
         self.state.busy.syncing_network = true;
         self.protocol_subscription_runtime.protocol_fetch_in_flight = true;
@@ -1403,20 +1432,24 @@ impl AppCore {
             .unwrap_or(0);
         let desired_unapplied = self.protocol_subscription_runtime.desired_plan
             != self.protocol_subscription_runtime.applied_plan;
+        let tracked_peer_backfill_needed = self.tracked_peer_protocol_backfill_needed();
+        let pending_inbound_retry_needed = self
+            .protocol_engine
+            .as_ref()
+            .is_some_and(|engine| engine.has_pending_inbound_direct_events());
         let should_retry_backfill = self.protocol_subscription_runtime.desired_plan.is_some()
             && (connected_relays == 0
-                || self.tracked_peer_protocol_backfill_needed()
+                || tracked_peer_backfill_needed
                 || self.protocol_subscription_runtime.refresh_in_flight
                 || self.protocol_subscription_runtime.refresh_dirty
                 || desired_unapplied
-                || self
-                    .protocol_engine
-                    .as_ref()
-                    .is_some_and(|engine| engine.has_pending_inbound_direct_events()));
+                || pending_inbound_retry_needed);
+        let should_fetch_tracked_peer_messages =
+            desired_unapplied || self.protocol_subscription_runtime.refresh_dirty;
         self.push_debug_log(
             "protocol.liveness",
             format!(
-                "connected={connected_relays} retry_backfill={should_retry_backfill} pending_publishes={}",
+                "connected={connected_relays} retry_backfill={should_retry_backfill} tracked_messages={should_fetch_tracked_peer_messages} pending_inbound={pending_inbound_retry_needed} pending_publishes={}",
                 self.pending_relay_publishes.len()
             ),
         );
@@ -1426,9 +1459,11 @@ impl AppCore {
         if should_retry_backfill {
             let queued_targets = self.current_queued_protocol_targets();
             if queued_targets.is_empty() {
-                self.fetch_recent_protocol_state();
+                self.fetch_recent_protocol_metadata_state();
             }
-            self.fetch_recent_messages_for_tracked_peers();
+            if should_fetch_tracked_peer_messages {
+                self.fetch_recent_messages_for_tracked_peers();
+            }
             self.retry_protocol_engine_pending_outbound("liveness_check");
         }
         if has_pending_relay_publishes {

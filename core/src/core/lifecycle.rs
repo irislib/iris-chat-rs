@@ -552,9 +552,18 @@ impl AppCore {
                 }
                 self.protocol_subscription_runtime
                     .tracked_peer_catch_up_due_at = None;
-                self.push_debug_log("protocol.catch_up.schedule", "fetch tracked peers");
-                self.fetch_recent_protocol_state();
-                self.fetch_recent_messages_for_tracked_peers();
+                let should_fetch_tracked_peer_messages =
+                    self.protocol_subscription_runtime.desired_plan
+                        != self.protocol_subscription_runtime.applied_plan
+                        || self.protocol_subscription_runtime.refresh_dirty;
+                self.push_debug_log(
+                    "protocol.catch_up.schedule",
+                    format!("fetch tracked peers messages={should_fetch_tracked_peer_messages}"),
+                );
+                self.fetch_recent_protocol_metadata_state();
+                if should_fetch_tracked_peer_messages {
+                    self.fetch_recent_messages_for_tracked_peers();
+                }
                 self.retry_protocol_engine_pending_outbound("tracked_peer_catch_up");
                 if self.is_device_roster_open() {
                     self.fetch_pending_device_invites_for_local_owner();
