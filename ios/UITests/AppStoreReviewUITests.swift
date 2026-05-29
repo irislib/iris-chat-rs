@@ -28,8 +28,8 @@ final class AppStoreReviewUITests: XCTestCase {
         case "block_report":
             let app = launchReviewApp(runID: runID, reset: false)
             openIncomingMessageRequest(app, message: message)
-            blockIncomingRequest(app)
             assertReportUserSheetReachable(app)
+            blockIncomingRequest(app)
         default:
             XCTFail("Unknown \(phaseKey): \(phase)")
         }
@@ -113,7 +113,9 @@ final class AppStoreReviewUITests: XCTestCase {
             fallbackConfirm.tap()
         }
 
-        XCTAssertTrue(element(app, "blockedComposerBar").waitForExistence(timeout: 10))
+        XCTAssertTrue(waitForChatList(app, timeout: 10))
+        XCTAssertFalse(element(app, "blockedComposerBar").exists)
+        XCTAssertTrue(waitForNoChatRows(app, timeout: 15), "blocked request stayed in the chat list")
     }
 
     private func messageRequestBlockAction(_ app: XCUIApplication) -> XCUIElement {
@@ -136,8 +138,14 @@ final class AppStoreReviewUITests: XCTestCase {
         XCTAssertTrue(reportButton.isHittable)
         reportButton.tap()
 
-        XCTAssertTrue(app.buttons["Report and block"].firstMatch.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Report only"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(reportDialogButton(app, "directChatReportAndBlockButton", fallbackLabel: "Report and block").waitForExistence(timeout: 5))
+        XCTAssertTrue(reportDialogButton(app, "directChatReportOnlyButton", fallbackLabel: "Report only").waitForExistence(timeout: 5))
+        dismissReportDialog(app)
+
+        let backButton = element(app, "navigationBackButton")
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
+        backButton.tap()
+        XCTAssertTrue(element(app, "messageRequestBar").waitForExistence(timeout: 10))
     }
 
     private func waitForChatList(_ app: XCUIApplication, timeout: TimeInterval) -> Bool {
@@ -166,6 +174,34 @@ final class AppStoreReviewUITests: XCTestCase {
         return nil
     }
 
+    private func reportDialogButton(
+        _ app: XCUIApplication,
+        _ identifier: String,
+        fallbackLabel: String
+    ) -> XCUIElement {
+        let identified = app.buttons[identifier].firstMatch
+        if identified.exists {
+            return identified
+        }
+        return app.buttons[fallbackLabel].firstMatch
+    }
+
+    private func dismissReportDialog(_ app: XCUIApplication) {
+        let identifiedCancel = app.buttons["directChatReportCancelButton"].firstMatch
+        if identifiedCancel.waitForExistence(timeout: 2) {
+            identifiedCancel.tap()
+            return
+        }
+
+        let fallbackCancel = app.buttons["Cancel"].firstMatch
+        if fallbackCancel.waitForExistence(timeout: 2) {
+            fallbackCancel.tap()
+            return
+        }
+
+        app.swipeDown()
+    }
+
     private func waitUntil(timeout: TimeInterval, condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
@@ -175,6 +211,20 @@ final class AppStoreReviewUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         } while Date() < deadline
         return condition()
+    }
+
+    private func waitForNoChatRows(_ app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            let row = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "identifier BEGINSWITH 'chatRow-'"))
+                .firstMatch
+            if !row.exists {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return false
     }
 
     private func scrollToElement(_ target: XCUIElement, app: XCUIApplication) {

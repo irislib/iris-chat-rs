@@ -115,9 +115,9 @@ struct BlockConfirmationTarget: Identifiable {
 }
 
 /// Signal-style block confirmation: tapping Block on the
-/// message-request bar lifts a sheet with "Block" (keep the thread
-/// for evidence) and "Block and Delete" (wipe the chat too). Mirrors
-/// `ConversationViewController+MessageRequest.swift` in signal-ios.
+/// message-request bar lifts a sheet with "Block" (hide the thread but
+/// keep local evidence) and "Block and Delete" (wipe the chat too).
+/// Mirrors `ConversationViewController+MessageRequest.swift` in signal-ios.
 /// Extracted to a `ViewModifier` so the ChatScreen body type-checks
 /// in reasonable time — the inline form pushed the closure over the
 /// compiler's expression-complexity threshold.
@@ -139,13 +139,14 @@ struct BlockConfirmationModifier: ViewModifier {
             actions: { item in
                 Button("Block", role: .destructive) {
                     manager.setUserBlocked(item.chatId, blocked: true)
+                    manager.navigateAwayFromBlockedChat(item.chatId)
                     target = nil
                 }
                 .accessibilityIdentifier("messageRequestBlockConfirmKeep")
                 Button("Block and Delete", role: .destructive) {
                     manager.setUserBlocked(item.chatId, blocked: true)
                     manager.dispatch(.deleteChat(chatId: item.chatId))
-                    manager.navigateBack()
+                    manager.navigateAwayFromBlockedChat(item.chatId)
                     target = nil
                 }
                 .accessibilityIdentifier("messageRequestBlockConfirmDelete")

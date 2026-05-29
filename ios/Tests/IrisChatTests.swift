@@ -1992,6 +1992,58 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
+    func testNavigateAwayFromBlockedChatClearsChatAndInfoRoutes() async {
+        let chatId = "aa" + String(repeating: "11", count: 31)
+        let staleStack: [Screen] = [
+            .chat(chatId: chatId),
+            .directChatInfo(chatId: chatId)
+        ]
+        let rust = MockRustApp(
+            state: makeLargeFixtureState(
+                rev: 1,
+                router: Router(defaultScreen: .chatList, screenStack: staleStack),
+                currentChat: makeCurrentChat(chatId: chatId)
+            )
+        )
+        let store = InMemorySecretStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        manager.navigateAwayFromBlockedChat(chatId)
+
+        XCTAssertEqual(manager.state.router.screenStack, [])
+        XCTAssertEqual(manager.activeScreen, .chatList)
+        XCTAssertNil(manager.state.currentChat)
+        let dispatched = await waitUntil {
+            rust.dispatchedActions.contains(.updateScreenStack(stack: []))
+        }
+        XCTAssertTrue(dispatched)
+
+        rust.emit(
+            .fullState(
+                makeLargeFixtureState(
+                    rev: 2,
+                    router: Router(defaultScreen: .chatList, screenStack: staleStack),
+                    currentChat: makeCurrentChat(chatId: chatId)
+                )
+            )
+        )
+        await Task.yield()
+
+        XCTAssertEqual(manager.state.rev, 2)
+        XCTAssertEqual(manager.state.router.screenStack, [])
+        XCTAssertEqual(manager.activeScreen, .chatList)
+        XCTAssertNil(manager.state.currentChat)
+    }
+
+    @MainActor
     func testOpenChatAppliesLocalRouteWhileRustCatchesUp() async {
         let chatId = "chat-1"
         let rust = MockRustApp(
