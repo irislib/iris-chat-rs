@@ -507,13 +507,7 @@ final class IrisChatUITests: XCTestCase {
         submitWelcomeName(app)
         XCTAssertTrue(waitForChatList(app, timeout: 60), "seed helper never returned to the chat list")
 
-        let chatRowPreview = seededChatRowPreview(app)
-        XCTAssertTrue(
-            chatRowPreview.waitForExistence(timeout: 45),
-            "seeded 120-message chat never appeared in the chat list"
-        )
-        chatRowPreview.tap()
-        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
+        openSeededChat(app)
 
         XCTAssertTrue(element(app, "chatHeaderSearchButton").waitForExistence(timeout: 10))
         element(app, "chatHeaderSearchButton").tap()
