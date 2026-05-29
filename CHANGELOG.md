@@ -7,6 +7,9 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 ## Unreleased
 
+- iOS notifications stay off by default until turned on in Settings.
+- Typing indicators are on by default.
+
 ## 2026.5.27
 
 - Onboarding now asks people to agree to Terms before creating, restoring, or linking a profile.

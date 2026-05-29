@@ -2828,9 +2828,11 @@ fn core_with_divergent_login_and_protocol_invites_with_updates(
 }
 
 #[test]
-fn typing_indicators_default_to_opt_in() {
-    assert!(!PersistedPreferences::default().send_typing_indicators);
-    assert!(!AppState::empty().preferences.send_typing_indicators);
+fn typing_indicators_default_to_enabled() {
+    assert!(PersistedPreferences::default().send_typing_indicators);
+    assert!(AppState::empty().preferences.send_typing_indicators);
+    let decoded: PersistedPreferences = serde_json::from_str("{}").expect("decode preferences");
+    assert!(decoded.send_typing_indicators);
 }
 
 #[test]

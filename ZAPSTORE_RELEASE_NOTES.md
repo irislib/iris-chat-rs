@@ -1,3 +1,8 @@
+# Iris Chat Unreleased
+
+- iOS notifications stay off by default until turned on in Settings.
+- Typing indicators are on by default.
+
 # Iris Chat 2026.5.27
 
 - Onboarding now asks people to agree to Terms before creating, restoring, or linking a profile.

@@ -1324,7 +1324,7 @@ public sealed class AppManager : INotifyPropertyChanged
             Array.Empty<MobilePushSessionSnapshot>()
         ),
         new PreferencesSnapshot(
-            sendTypingIndicators: false,
+            sendTypingIndicators: true,
             sendReadReceipts: true,
             desktopNotificationsEnabled: true,
             inviteAcceptanceNotificationsEnabled: true,

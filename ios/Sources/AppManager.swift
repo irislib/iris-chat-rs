@@ -1095,6 +1095,7 @@ final class AppManager: ObservableObject {
     )
     private var iosSideEffectGate = IosStateSideEffectGate()
     private let isUiTestRun: Bool
+    private let shouldApplyIosFreshInstallNotificationDefaults: Bool
 #endif
     private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
@@ -1164,6 +1165,12 @@ final class AppManager: ObservableObject {
         self.screenshotFixtureReferenceDate = Date()
         self.screenshotFixtureShowsNearbyTransportPeers =
             environment["IRIS_UI_TEST_NEARBY_TAPPABLE_FIRST_PEER_HEX"] != nil
+        self.shouldApplyIosFreshInstallNotificationDefaults =
+            environment["IRIS_IOS_ENABLE_NOTIFICATION_DEFAULTS_IN_TESTS"] == "1" ||
+            (
+                AppPaths.testRunId(environment: environment) == nil &&
+                AppPaths.testRunId(environment: ProcessInfo.processInfo.environment) == nil
+            )
 #endif
         try? fileManager.createDirectory(at: resolvedDataDir, withIntermediateDirectories: true)
         AppPaths.prepareDataDirForBackgroundNotificationReads(resolvedDataDir, fileManager: fileManager)
@@ -2430,6 +2437,9 @@ final class AppManager: ObservableObject {
         guard !trimmed.isEmpty else {
             return
         }
+#if os(iOS)
+        applyIosFreshInstallNotificationDefaultsIfNeeded()
+#endif
         dispatchToRust(.createAccount(name: trimmed))
     }
 
@@ -2463,10 +2473,16 @@ final class AppManager: ObservableObject {
             showToast("Invalid key.")
             return
         }
+#if os(iOS)
+        applyIosFreshInstallNotificationDefaultsIfNeeded()
+#endif
         dispatchToRust(.restoreSession(ownerNsec: trimmed))
     }
 
     func startLinkedDevice(ownerInput: String) {
+#if os(iOS)
+        applyIosFreshInstallNotificationDefaultsIfNeeded()
+#endif
         dispatchToRust(.startLinkedDevice(ownerInput: ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)))
     }
 
@@ -2785,6 +2801,9 @@ final class AppManager: ObservableObject {
         rust = nextRust
         nextRust.listenForUpdates(reconciler: reconciler)
         applyFullState(nextRust.state(), force: true)
+#if os(iOS)
+        applyIosFreshInstallNotificationDefaultsIfNeeded()
+#endif
     }
 
     private func syncCurrentDeviceLabelsIfNeeded(state: AppState) {
@@ -3047,6 +3066,9 @@ final class AppManager: ObservableObject {
         guard let bundle = secretStore.load() else {
             storedAccountBundle = nil
             bootstrapInFlight = false
+#if os(iOS)
+            applyIosFreshInstallNotificationDefaultsIfNeeded()
+#endif
             return
         }
         secretStore.save(bundle)
@@ -3064,6 +3086,19 @@ final class AppManager: ObservableObject {
             bootstrapInFlight = false
         }
     }
+
+#if os(iOS)
+    private func applyIosFreshInstallNotificationDefaultsIfNeeded() {
+        guard shouldApplyIosFreshInstallNotificationDefaults else { return }
+        guard state.account == nil else { return }
+        if state.preferences.desktopNotificationsEnabled {
+            dispatchToRust(.setDesktopNotificationsEnabled(enabled: false), showsToastOnFailure: false)
+        }
+        if state.preferences.inviteAcceptanceNotificationsEnabled {
+            dispatchToRust(.setInviteAcceptanceNotificationsEnabled(enabled: false), showsToastOnFailure: false)
+        }
+    }
+#endif
 
     private func settleBootstrapIfNeeded(with nextState: AppState) {
         guard persistedRestoreInFlight else {

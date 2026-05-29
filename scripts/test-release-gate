@@ -9,6 +9,7 @@ RUN_NATIVE_CONTRACT="${IRIS_TEST_GATE_NATIVE_CONTRACT:-1}"
 RUN_CORE_LAN="${IRIS_TEST_GATE_CORE_LAN:-1}"
 RUN_INTEROP="${IRIS_TEST_GATE_INTEROP:-0}"
 RUN_PRODUCTION_CLI="${IRIS_TEST_GATE_PRODUCTION_CLI:-0}"
+RUN_APP_STORE_REVIEW="${IRIS_TEST_GATE_APP_STORE_REVIEW:-0}"
 RUN_ONDEVICE="${IRIS_TEST_GATE_ONDEVICE:-0}"
 RUN_NOTIFICATIONS="${IRIS_TEST_GATE_NOTIFICATIONS:-0}"
 RUN_LAN_AVAILABLE="${IRIS_TEST_GATE_LAN_AVAILABLE:-0}"
@@ -24,6 +25,7 @@ Options:
   --full               Include interop confidence checks.
   --interop            Include mixed-platform interop confidence checks.
   --production-cli     Include Docker CLI test against production message servers.
+  --app-store-review   Include iOS App Store block/report simulator e2e.
   --on-device          Require Android + iPhone + Mac LAN visibility.
   --lan-available      Run LAN visibility if at least two participants are available.
   --no-core-lan        Skip same-host core LAN visibility smoke.
@@ -34,6 +36,7 @@ Options:
 Environment:
   IRIS_TEST_GATE_INTEROP=1
   IRIS_TEST_GATE_PRODUCTION_CLI=1
+  IRIS_TEST_GATE_APP_STORE_REVIEW=1
   IRIS_TEST_GATE_CORE_LAN=0
   IRIS_TEST_GATE_ONDEVICE=1
   IRIS_TEST_GATE_NOTIFICATIONS=1
@@ -51,6 +54,7 @@ while [[ $# -gt 0 ]]; do
       MODE=full
       RUN_INTEROP=1
       RUN_PRODUCTION_CLI=1
+      RUN_APP_STORE_REVIEW=1
       shift
       ;;
     --interop)
@@ -59,6 +63,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --production-cli)
       RUN_PRODUCTION_CLI=1
+      shift
+      ;;
+    --app-store-review)
+      RUN_APP_STORE_REVIEW=1
       shift
       ;;
     --on-device)
@@ -130,6 +138,15 @@ fi
 if [[ "${RUN_PRODUCTION_CLI}" == "1" ]]; then
   run_step "production relay CLI Docker e2e" \
     "${ROOT_DIR}/scripts/cli_production_relay_e2e_docker"
+fi
+
+if [[ "${RUN_APP_STORE_REVIEW}" == "1" ]]; then
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "iOS App Store review e2e requires macOS." >&2
+    exit 1
+  fi
+  run_step "iOS App Store review block/report e2e" \
+    "${ROOT_DIR}/scripts/e2e_ios_app_store_review_block_report.sh"
 fi
 
 if [[ "${RUN_ONDEVICE}" == "1" ]]; then

@@ -60,6 +60,7 @@ info:
     @echo "  just test-homebrew-tap"
     @echo "  just test-android"
     @echo "  just test-ios"
+    @echo "  just test-ios-app-store-review"
     @echo "  just test-macos"
     @echo "  just test-linux"
     @echo "  just test-windows"
@@ -213,6 +214,9 @@ test-android:
 
 test-ios:
     ./scripts/test-ios
+
+test-ios-app-store-review:
+    ./scripts/e2e_ios_app_store_review_block_report.sh
 
 test-macos:
     ./scripts/test-macos
