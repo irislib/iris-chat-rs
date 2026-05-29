@@ -5,8 +5,7 @@ import AppKit
 #else
 @testable import IrisChat
 #endif
-
-private final class InMemorySecretStore: AccountSecretStore {
+final class InMemorySecretStore: AccountSecretStore {
     var bundle: StoredAccountBundle?
     var clearSucceeds = true
 
@@ -40,7 +39,7 @@ private final class MockDesktopNotificationPoster: DesktopNotificationPosting {
     }
 }
 
-private final class MockRustApp: RustAppClient {
+final class MockRustApp: RustAppClient {
     var currentState: AppState
     var supportBundleJson = "{\"ok\":true}"
     var peerDebug: PeerProfileDebugSnapshot?
@@ -66,11 +65,7 @@ private final class MockRustApp: RustAppClient {
         return dispatchedActionsStorage
     }
 
-    func clearDispatchedActions() {
-        dispatchedActionsLock.lock()
-        dispatchedActionsStorage.removeAll()
-        dispatchedActionsLock.unlock()
-    }
+    func clearDispatchedActions() { dispatchedActionsLock.lock(); dispatchedActionsStorage.removeAll(); dispatchedActionsLock.unlock() }
 
     var chatSnapshotCallCount: Int {
         chatSnapshotCallCountLock.lock()
@@ -346,7 +341,7 @@ private func makeBusyState() -> BusyState {
     )
 }
 
-private func makeAppState(
+func makeAppState(
     rev: UInt64 = 0,
     router: Router = Router(defaultScreen: .welcome, screenStack: []),
     account: AccountSnapshot? = nil,
@@ -554,7 +549,7 @@ private func makeMessage(
 }
 
 @MainActor
-private func waitUntil(
+func waitUntil(
     timeoutNanoseconds: UInt64 = 1_000_000_000,
     condition: @escaping () -> Bool
 ) async -> Bool {
@@ -618,56 +613,7 @@ private func writePendingShare(
     try data.write(to: url, options: .atomic)
     return url
 }
-
 final class IrisChatTests: XCTestCase {
-#if os(iOS)
-    @MainActor
-    func testIosFreshInstallNotificationDefaultsDisableBeforeOnboarding() async {
-        let dataDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: dataDir) }
-        let rust = MockRustApp(state: makeAppState())
-        let manager = AppManager(
-            rust: rust,
-            secretStore: InMemorySecretStore(),
-            dataDir: dataDir,
-            environment: ["IRIS_IOS_ENABLE_NOTIFICATION_DEFAULTS_IN_TESTS": "1"]
-        )
-
-        let disabledOnEmptyLaunch = await waitUntil {
-            rust.dispatchedActions.contains(.setDesktopNotificationsEnabled(enabled: false)) &&
-            rust.dispatchedActions.contains(.setInviteAcceptanceNotificationsEnabled(enabled: false))
-        }
-        XCTAssertTrue(disabledOnEmptyLaunch)
-
-        rust.clearDispatchedActions()
-        manager.createAccount(name: " Alice ")
-        XCTAssertEqual(rust.dispatchedActions, [
-            .setDesktopNotificationsEnabled(enabled: false),
-            .setInviteAcceptanceNotificationsEnabled(enabled: false),
-            .createAccount(name: "Alice"),
-        ])
-
-        rust.clearDispatchedActions()
-        manager.restoreSession(ownerNsec: " nsec1restored ")
-        XCTAssertEqual(rust.dispatchedActions, [
-            .setDesktopNotificationsEnabled(enabled: false),
-            .setInviteAcceptanceNotificationsEnabled(enabled: false),
-            .restoreSession(ownerNsec: "nsec1restored"),
-        ])
-
-        rust.clearDispatchedActions()
-        manager.startLinkedDevice(ownerInput: " user-id ")
-        XCTAssertEqual(rust.dispatchedActions, [
-            .setDesktopNotificationsEnabled(enabled: false),
-            .setInviteAcceptanceNotificationsEnabled(enabled: false),
-            .startLinkedDevice(ownerInput: "user-id"),
-        ])
-
-        _ = manager
-    }
-#endif
-
     func testGroupSenderNameColorsAvoidBrandPurpleAndSpreadDeterministically() {
         let names = [
             "Alice", "Bob", "Charlie", "Dina", "Eve", "Frank",

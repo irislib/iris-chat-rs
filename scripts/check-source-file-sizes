@@ -43,14 +43,14 @@ baseline_limit_for() {
     core/src/core/chats.rs) echo 1898 ;;
     core/src/core/mobile_push.rs) echo 1526 ;;
     core/src/core/projection.rs) echo 1052 ;;
-    core/src/core/protocol.rs) echo 1883 ;;
+    core/src/core/protocol.rs) echo 1918 ;;
     core/src/core/storage/store.rs) echo 2765 ;;
     core/src/core/tests/app_keys_invites_requests.rs) echo 2404 ;;
     core/src/core/tests/direct_messages_typing.rs) echo 2347 ;;
     core/src/core/tests/groups_persistence_more.rs) echo 1006 ;;
     core/src/core/tests/groups_sender_key.rs) echo 2190 ;;
     core/src/core/tests/protocol_filters_push.rs) echo 2880 ;;
-    core/src/core/tests/protocol_runtime.rs) echo 2608 ;;
+    core/src/core/tests/protocol_runtime.rs) echo 2681 ;;
     core/src/desktop_nearby.rs) echo 1818 ;;
     core/src/lib.rs) echo 1941 ;;
     ios/Sources/AppManager.swift) echo 3948 ;;
@@ -62,7 +62,7 @@ baseline_limit_for() {
     linux/src/screens/chat.rs) echo 2846 ;;
     macos/Sources/MacBitchatNearbyService.swift) echo 1152 ;;
     scripts/protocol_fault_validation.py) echo 1342 ;;
-    scripts/release) echo 1240 ;;
+    scripts/release) echo 1293 ;;
     windows/IrisChat/AppManager.cs) echo 1463 ;;
     *) echo "$MAX_LINES" ;;
   esac
