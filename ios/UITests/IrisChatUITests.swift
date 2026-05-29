@@ -363,20 +363,7 @@ final class IrisChatUITests: XCTestCase {
         submitWelcomeName(app)
         XCTAssertTrue(waitForChatList(app, timeout: 45), "seed helper never returned to the chat list")
 
-        // Once the seed finishes dispatching, it pops back to the chat
-        // list so we can re-enter the chat from a clean state — that's
-        // the "open an existing long chat" scenario the bug report
-        // describes. Wait for *any* seed-formatted message to show up
-        // as the chat row preview (the Rust core's tie-breaking on
-        // identical timestamps means we can't predict which seed
-        // message lands last in the ordering), then tap into the chat.
-        let chatRowPreview = seededChatRowPreview(app)
-        XCTAssertTrue(
-            chatRowPreview.waitForExistence(timeout: 30),
-            "seeded chat row never appeared in the chat list"
-        )
-        chatRowPreview.tap()
-        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
+        openSeededChat(app, rowTimeout: 30)
         Thread.sleep(forTimeInterval: 1.5)
 
         let attachment = XCTAttachment(screenshot: app.screenshot())
@@ -459,10 +446,7 @@ final class IrisChatUITests: XCTestCase {
         submitWelcomeName(app)
         XCTAssertTrue(waitForChatList(app, timeout: 60), "seed helper never returned to the chat list")
 
-        let chatRowPreview = seededChatRowPreview(app)
-        XCTAssertTrue(chatRowPreview.waitForExistence(timeout: 45), "seeded chat row never appeared")
-        chatRowPreview.tap()
-        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
+        openSeededChat(app)
 
         let timeline = app.scrollViews["chatTimeline"].firstMatch
         XCTAssertTrue(timeline.waitForExistence(timeout: 10))
@@ -498,10 +482,7 @@ final class IrisChatUITests: XCTestCase {
         submitWelcomeName(app)
         XCTAssertTrue(waitForChatList(app, timeout: 60), "seed helper never returned to the chat list")
 
-        let chatRowPreview = seededChatRowPreview(app)
-        XCTAssertTrue(chatRowPreview.waitForExistence(timeout: 45), "seeded chat row never appeared")
-        chatRowPreview.tap()
-        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
+        openSeededChat(app)
 
         let timeline = app.scrollViews["chatTimeline"].firstMatch
         XCTAssertTrue(timeline.waitForExistence(timeout: 10))
@@ -995,6 +976,27 @@ final class IrisChatUITests: XCTestCase {
                 format: "identifier BEGINSWITH 'chatRow-'"
             )
         ).firstMatch
+    }
+    private func openSeededChat(
+        _ app: XCUIApplication,
+        rowTimeout: TimeInterval = 45,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        if element(app, "chatMessageInput").exists { return }
+        let deadline = Date().addingTimeInterval(rowTimeout)
+        var sawRow = false
+        repeat {
+            let row = seededChatRowPreview(app)
+            if row.waitForExistence(timeout: min(5, max(0.1, deadline.timeIntervalSinceNow))) {
+                sawRow = true
+                row.tap()
+                if element(app, "chatMessageInput").waitForExistence(timeout: 2) { return }
+            }
+            _ = waitForChatList(app, timeout: 1)
+        } while Date() < deadline
+        XCTAssertTrue(sawRow, "seeded chat row never appeared", file: file, line: line)
+        XCTAssertTrue(element(app, "chatMessageInput").exists, "seeded chat did not open", file: file, line: line)
     }
     private func inlineDaySeparator(_ app: XCUIApplication, label: String) -> XCUIElement {
         app.descendants(matching: .any).matching(
