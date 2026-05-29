@@ -113,8 +113,11 @@ final class AppStoreReviewUITests: XCTestCase {
             fallbackConfirm.tap()
         }
 
+        XCTAssertTrue(element(app, "blockedComposerBar").waitForExistence(timeout: 10))
+        let backButton = element(app, "navigationBackButton")
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
+        backButton.tap()
         XCTAssertTrue(waitForChatList(app, timeout: 10))
-        XCTAssertFalse(element(app, "blockedComposerBar").exists)
         XCTAssertTrue(waitForNoChatRows(app, timeout: 15), "blocked request stayed in the chat list")
     }
 

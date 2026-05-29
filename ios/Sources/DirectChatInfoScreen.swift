@@ -287,7 +287,6 @@ struct DirectChatInfoScreen: View {
         ) {
             Button("Block user", role: .destructive) {
                 manager.setUserBlocked(chatId, blocked: true)
-                manager.navigateAwayFromBlockedChat(chatId)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -526,7 +525,6 @@ struct DirectChatInfoScreen: View {
     private func reportUser(_ chat: CurrentChatSnapshot, block: Bool) {
         if block {
             manager.setUserBlocked(chatId, blocked: true)
-            manager.navigateAwayFromBlockedChat(chatId)
         }
 
         let userId = peerInputToNpub(input: chatId)

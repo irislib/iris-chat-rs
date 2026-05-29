@@ -8,7 +8,7 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 ## Unreleased
 
 - iOS notifications stay off by default until turned on in Settings.
-- Blocked message requests leave the chat screen and disappear from the chat list.
+- Blocked message requests stay open for review and disappear from the chat list after you leave.
 - Typing indicators are on by default.
 
 ## 2026.5.27

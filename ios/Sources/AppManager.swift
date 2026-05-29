@@ -1386,26 +1386,6 @@ final class AppManager: ObservableObject {
         )
     }
 
-    func navigateAwayFromBlockedChat(_ chatId: String) {
-        let normalized = Self.normalizedBlockedUserId(chatId)
-        guard !normalized.isEmpty else { return }
-        let currentStack = state.router.screenStack
-        let nextStack = currentStack.filter { screen in
-            switch screen {
-            case .chat(let value), .directChatInfo(let value):
-                return Self.normalizedBlockedUserId(value) != normalized
-            default:
-                return true
-            }
-        }
-        guard nextStack != currentStack else { return }
-        navigateOptimistically(
-            to: nextStack,
-            action: .updateScreenStack(stack: nextStack),
-            showsToastOnFailure: false
-        )
-    }
-
 #if os(iOS)
     /// Deep-link from anywhere in the iOS UI to the Messaging page in
     /// the settings modal. Implemented via NotificationCenter so the

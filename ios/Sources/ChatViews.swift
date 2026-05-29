@@ -139,14 +139,13 @@ struct BlockConfirmationModifier: ViewModifier {
             actions: { item in
                 Button("Block", role: .destructive) {
                     manager.setUserBlocked(item.chatId, blocked: true)
-                    manager.navigateAwayFromBlockedChat(item.chatId)
                     target = nil
                 }
                 .accessibilityIdentifier("messageRequestBlockConfirmKeep")
                 Button("Block and Delete", role: .destructive) {
                     manager.setUserBlocked(item.chatId, blocked: true)
                     manager.dispatch(.deleteChat(chatId: item.chatId))
-                    manager.navigateAwayFromBlockedChat(item.chatId)
+                    manager.navigateBack()
                     target = nil
                 }
                 .accessibilityIdentifier("messageRequestBlockConfirmDelete")
