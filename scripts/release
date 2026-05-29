@@ -28,7 +28,8 @@ RELEASE_OWNER_NPUB_DEFAULT="npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvm
 
 PUBLISH=0
 DRY_RUN=0
-PUBLISH_ZAPSTORE=0
+PUBLISH_ZAPSTORE=""
+SKIP_ZAPSTORE=0
 PUBLISH_CARGO_CRATE=""
 TESTFLIGHT_MODE=""
 SKIP_HOMEBREW_TAP=0
@@ -54,7 +55,8 @@ dist/release/<tag>/, and optionally publish it via htree.
 Options:
   --publish                Publish the staged tree and repoint the htree latest release
   --allow-partial-latest   Allow --publish to repoint latest even if required steps are missing
-  --publish-zapstore       Also publish the signed Android APK to Zapstore
+  --skip-zapstore          Do not publish the signed Android APK to Zapstore during --publish
+  --publish-zapstore       Publish the signed Android APK to Zapstore, even without --publish
   --publish-cargo-crate    Publish the iris-chat Rust crate if this version is new
   --skip-cargo-crate       Do not publish the iris-chat Rust crate
   --skip-homebrew-tap      Do not update the Homebrew tap during --publish
@@ -85,6 +87,8 @@ Environment:
                             Required steps for --publish latest (default: macos,windows,android,linux,cli)
   IRIS_RELEASE_GATE_ARGS    Extra/default args for scripts/test-release-gate
   IRIS_RELEASE_TESTFLIGHT   both, internal, public, or 0
+  IRIS_RELEASE_PUBLISH_ZAPSTORE
+  IRIS_RELEASE_SKIP_ZAPSTORE
   IRIS_RELEASE_SKIP_HOMEBREW_TAP
   IRIS_HOMEBREW_TAP_REPO    Default Homebrew tap repo (default: homebrew-iris)
   IRIS_HOMEBREW_TAP_NAME    Default brew tap name (default: sirius/iris)
@@ -97,6 +101,7 @@ while [[ $# -gt 0 ]]; do
     --publish) PUBLISH=1 ;;
     --allow-partial-latest) ALLOW_PARTIAL_LATEST=1 ;;
     --publish-zapstore) PUBLISH_ZAPSTORE=1 ;;
+    --skip-zapstore) SKIP_ZAPSTORE=1 ;;
     --publish-cargo-crate) PUBLISH_CARGO_CRATE=1 ;;
     --skip-cargo-crate) PUBLISH_CARGO_CRATE=0 ;;
     --skip-homebrew-tap) SKIP_HOMEBREW_TAP=1 ;;
@@ -150,6 +155,22 @@ if [[ "${#RELEASE_GATE_ARGS[@]}" -eq 0 ]]; then
 fi
 if bool_is_true "${IRIS_RELEASE_SKIP_GATE:-false}"; then
   RELEASE_GATE=0
+fi
+
+if [[ -z "${PUBLISH_ZAPSTORE}" ]]; then
+  PUBLISH_ZAPSTORE=0
+  if [[ "$PUBLISH" -eq 1 ]]; then
+    PUBLISH_ZAPSTORE=1
+  fi
+  if bool_is_true "${IRIS_RELEASE_PUBLISH_ZAPSTORE:-false}"; then
+    PUBLISH_ZAPSTORE=1
+  fi
+fi
+if bool_is_true "${IRIS_RELEASE_SKIP_ZAPSTORE:-false}"; then
+  SKIP_ZAPSTORE=1
+fi
+if [[ "$SKIP_ZAPSTORE" -eq 1 ]]; then
+  PUBLISH_ZAPSTORE=0
 fi
 
 if [[ -z "${PUBLISH_CARGO_CRATE}" ]]; then
@@ -1261,7 +1282,11 @@ fi
 if [[ "$PUBLISH_ZAPSTORE" -eq 1 ]]; then
   echo
   echo "Publishing Android APK to Zapstore..."
-  "$ROOT/scripts/publish-zapstore-android.sh" publish
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "[dry-run] would run: $ROOT/scripts/publish-zapstore-android.sh publish"
+  else
+    "$ROOT/scripts/publish-zapstore-android.sh" publish
+  fi
 fi
 
 echo

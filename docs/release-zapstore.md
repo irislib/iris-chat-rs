@@ -48,15 +48,18 @@ IRIS_RELEASE_KEY_PASSWORD
 `.env.zapstore.local` contains Zapstore publish settings:
 
 ```text
-SIGN_WITH=browser
+NOSTR_KEY_PATH=/absolute/path/to/nsec
 ZAPSTORE_CHANNEL=main
 ZAPSTORE_IDENTITY_RELAYS=wss://relay.zapstore.dev
 ```
 
-With `SIGN_WITH=browser`, the Nostr private key is not stored in this repo.
-Zapstore opens a local browser signing flow instead. Keep the Nostr publisher
-key backed up separately so you can import it into a browser signer on a new
-computer.
+`SIGN_WITH=nsec1...` also works, but `NOSTR_KEY_PATH` is preferred so the key
+does not appear in command history or process listings. If neither value is
+set, the script falls back to `SIGN_WITH=browser`.
+
+If this repo does not have its own `.env.zapstore.local`, the publish script
+will use `../nostr-vpn/.env.zapstore.local` when present. That keeps Iris Chat
+on the same Zapstore publisher key as Nostr VPN.
 
 ## What To Store Permanently
 
@@ -91,9 +94,9 @@ Keystore alias: iris-chat-upload
 Keystore password: <from release.env>
 Key password: <from release.env>
 Zapstore channel: main
-Zapstore publisher npub: npub1...
+Zapstore publisher npub: npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm
 Zapstore publisher nsec: nsec1...
-Signing mode: browser
+Signing mode: NOSTR_KEY_PATH
 Local keystore path: .zapstore/keystore/iris-chat-release.jks
 ```
 
@@ -173,7 +176,8 @@ go install github.com/zapstore/zsp@latest
 export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
-6. Import the Zapstore publisher key into your browser signer.
+6. Restore `NOSTR_KEY_PATH` in `.env.zapstore.local`, or import the Zapstore
+   publisher key into your browser signer if you use browser signing.
 
 7. Verify the restored setup:
 
@@ -220,8 +224,8 @@ Run the interactive first publish:
 ./scripts/publish-zapstore-android.sh wizard
 ```
 
-The browser signing prompt should appear during `link-identity` and `wizard`.
-Confirm that it is signing with the same `npub` listed in `zapstore.yaml`.
+Confirm that `link-identity` and `wizard` sign with the same `npub` listed in
+`zapstore.yaml`. A browser prompt appears only when using browser signing.
 
 ## Routine Release Checklist
 
@@ -243,7 +247,16 @@ IRIS_APP_VERSION_CODE=2
 ./scripts/publish-zapstore-android.sh check
 ```
 
-5. Publish:
+5. Publish as part of the normal release flow:
+
+```bash
+./scripts/release --publish
+```
+
+Use `--skip-zapstore` only when you intentionally need to publish the rest of
+the release without updating Zapstore.
+
+To publish only Zapstore:
 
 ```bash
 ./scripts/publish-zapstore-android.sh publish

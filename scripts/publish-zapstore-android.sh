@@ -8,7 +8,11 @@ source "$ROOT/scripts/release_common.sh"
 
 load_release_env "$ROOT"
 
-ZAPSTORE_ENV_FILE="${ZAPSTORE_ENV_FILE:-$ROOT/.env.zapstore.local}"
+DEFAULT_ZAPSTORE_ENV_FILE="$ROOT/.env.zapstore.local"
+if [[ ! -f "$DEFAULT_ZAPSTORE_ENV_FILE" && -f "$ROOT/../nostr-vpn/.env.zapstore.local" ]]; then
+  DEFAULT_ZAPSTORE_ENV_FILE="$ROOT/../nostr-vpn/.env.zapstore.local"
+fi
+ZAPSTORE_ENV_FILE="${ZAPSTORE_ENV_FILE:-$DEFAULT_ZAPSTORE_ENV_FILE}"
 if [[ -f "$ZAPSTORE_ENV_FILE" ]]; then
   set -a
   # shellcheck disable=SC1090
@@ -30,7 +34,6 @@ resolve_shared_build_metadata "$ROOT"
 ZAPSTORE_CONFIG="${ZAPSTORE_CONFIG:-$ROOT/zapstore.yaml}"
 ZAPSTORE_CHANNEL="${ZAPSTORE_CHANNEL:-main}"
 ZAPSTORE_IDENTITY_RELAYS="${ZAPSTORE_IDENTITY_RELAYS:-wss://relay.zapstore.dev}"
-SIGN_WITH="${SIGN_WITH:-browser}"
 APK_PATH="$ROOT/dist/android/IrisChat-release-latest.apk"
 
 TEMP_DIR=""
@@ -63,6 +66,21 @@ require_cmd() {
     exit 1
   fi
 }
+
+resolve_sign_with() {
+  if [[ -n "${SIGN_WITH:-}" ]]; then
+    printf '%s\n' "$SIGN_WITH"
+    return 0
+  fi
+  if [[ -n "${NOSTR_KEY_PATH:-}" && -f "$NOSTR_KEY_PATH" ]]; then
+    tr -d '\r\n' < "$NOSTR_KEY_PATH"
+    return 0
+  fi
+  printf '%s\n' "browser"
+}
+
+SIGN_WITH="$(resolve_sign_with)"
+export SIGN_WITH
 
 ensure_config() {
   if [[ ! -f "$ZAPSTORE_CONFIG" ]]; then
@@ -116,8 +134,9 @@ print_config() {
   cat <<EOF
 zapstore.config=$ZAPSTORE_CONFIG
 zapstore.channel=$ZAPSTORE_CHANNEL
-zapstore.sign_with=$SIGN_WITH
+zapstore.signing.method=$(signing_method_label)
 zapstore.identity.relays=$ZAPSTORE_IDENTITY_RELAYS
+zapstore.env.file=$ZAPSTORE_ENV_FILE
 release.keystore.path=${IRIS_RELEASE_KEYSTORE_PATH:-}
 release.apk.path=$APK_PATH
 release.version.name=$IRIS_APP_VERSION_NAME
@@ -201,7 +220,7 @@ run_publish() {
   if [[ "$mode" == "wizard" ]]; then
     cmd=(zsp publish --wizard "$ZAPSTORE_CONFIG" --channel "$ZAPSTORE_CHANNEL")
   else
-    cmd+=(--quiet)
+    cmd+=(--quiet --skip-preview --overwrite-release)
   fi
 
   if [[ -n "${ZSP_EXTRA_FLAGS:-}" ]]; then
