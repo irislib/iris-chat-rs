@@ -1250,8 +1250,7 @@ COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf '%s' "$IRIS_BUILD_
   fi
 } > "$STAGE_DIR/notes.md"
 
-echo
-echo "Staged $TAG at: $STAGE_DIR"
+printf '\nStaged %s at: %s\n' "$TAG" "$STAGE_DIR"
 ls -la "$STAGE_DIR/assets"
 
 assert_homebrew_tap_assets_complete
@@ -1291,5 +1290,4 @@ if [[ "$PUBLISH_ZAPSTORE" -eq 1 ]]; then
   fi
 fi
 
-echo
-echo "Release $TAG complete."
+printf '\nRelease %s complete.\n' "$TAG"

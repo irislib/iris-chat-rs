@@ -523,27 +523,12 @@ struct DirectChatInfoScreen: View {
     }
 
     private func reportUser(_ chat: CurrentChatSnapshot, block: Bool) {
-        if block {
-            manager.setUserBlocked(chatId, blocked: true)
-        }
-
-        let userId = peerInputToNpub(input: chatId)
-        let body = """
-        Reported user: \(chat.displayName)
-        User ID: \(userId)
-        App: Iris Chat \(manager.buildSummaryText())
-
-        What happened:
-        """
-        guard let url = irisMailtoURL(
-            to: irisSupportEmail,
-            subject: "Iris Chat user report",
-            body: body
-        ) else {
-            manager.copyToClipboard("User ID: \(userId)")
-            return
-        }
-        PlatformExternalURL.open(url)
+        irisReportUser(
+            manager: manager,
+            chatId: chatId,
+            displayName: chat.displayName,
+            block: block
+        )
     }
 
     private func groupId(from chatId: String) -> String? {

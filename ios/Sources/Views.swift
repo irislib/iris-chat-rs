@@ -150,6 +150,106 @@ func irisMailtoURL(to email: String, subject: String, body: String) -> URL? {
     return components.url
 }
 
+@MainActor
+func irisReportUser(
+    manager: AppManager,
+    chatId: String,
+    displayName: String,
+    block: Bool
+) {
+    if block {
+        manager.setUserBlocked(chatId, blocked: true)
+    }
+
+    let userId = peerInputToNpub(input: chatId)
+    let body = """
+    Reported user: \(displayName)
+    User ID: \(userId)
+    App: Iris Chat \(manager.buildSummaryText())
+
+    What happened:
+    """
+    guard let url = irisMailtoURL(
+        to: irisSupportEmail,
+        subject: "Iris Chat user report",
+        body: body
+    ) else {
+        manager.copyToClipboard("User ID: \(userId)")
+        return
+    }
+    PlatformExternalURL.open(url)
+}
+
+/// Identifies the chat the message-request options dialog is acting on.
+/// `Identifiable` lets `.confirmationDialog(item:)` rebuild the sheet
+/// when the user changes target without a separate `isPresented` flag.
+struct MessageRequestDeclineTarget: Identifiable {
+    let chatId: String
+    let displayName: String
+    var id: String { chatId }
+}
+
+/// Message-request safety actions live behind Decline so report/block are
+/// visible before a stranger is accepted.
+struct MessageRequestDeclineModifier: ViewModifier {
+    @Binding var target: MessageRequestDeclineTarget?
+    let manager: AppManager
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            target.map { "Decline \($0.displayName)?" } ?? "Decline request?",
+            isPresented: Binding(
+                get: { target != nil },
+                set: { presented in
+                    if !presented { target = nil }
+                }
+            ),
+            titleVisibility: .visible,
+            presenting: target,
+            actions: { item in
+                Button("Delete chat", role: .destructive) {
+                    manager.dispatch(.deleteChat(chatId: item.chatId))
+                    manager.navigateBack()
+                    target = nil
+                }
+                .accessibilityIdentifier("messageRequestDeleteChatButton")
+                Button("Report and block", role: .destructive) {
+                    target = nil
+                    irisReportUser(
+                        manager: manager,
+                        chatId: item.chatId,
+                        displayName: item.displayName,
+                        block: true
+                    )
+                }
+                .accessibilityIdentifier("messageRequestReportAndBlockButton")
+                Button("Report only") {
+                    target = nil
+                    irisReportUser(
+                        manager: manager,
+                        chatId: item.chatId,
+                        displayName: item.displayName,
+                        block: false
+                    )
+                }
+                .accessibilityIdentifier("messageRequestReportOnlyButton")
+                Button("Block", role: .destructive) {
+                    manager.setUserBlocked(item.chatId, blocked: true)
+                    target = nil
+                }
+                .accessibilityIdentifier("messageRequestBlockConfirmKeep")
+                Button("Cancel", role: .cancel) {
+                    target = nil
+                }
+                .accessibilityIdentifier("messageRequestDeclineCancelButton")
+            },
+            message: { _ in
+                Text("No notification is sent.")
+            }
+        )
+    }
+}
+
 func proxiedImageURL(
     _ rawURL: String?,
     preferences: PreferencesSnapshot,

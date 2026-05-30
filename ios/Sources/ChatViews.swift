@@ -41,8 +41,7 @@ struct IrisMessageRequestBar: View {
     @Environment(\.irisPalette) private var palette
     let displayName: String
     let onAccept: () -> Void
-    let onDelete: () -> Void
-    let onBlock: () -> Void
+    let onDecline: () -> Void
 
     var body: some View {
         VStack(spacing: 10) {
@@ -55,16 +54,10 @@ struct IrisMessageRequestBar: View {
 
             HStack(spacing: 8) {
                 requestButton(
-                    "Block",
-                    accessibilityId: "messageRequestBlockButton",
-                    role: .destructive,
-                    action: onBlock
-                )
-                requestButton(
-                    "Delete",
-                    accessibilityId: "messageRequestDeleteButton",
+                    "Decline",
+                    accessibilityId: "messageRequestDeclineButton",
                     role: nil,
-                    action: onDelete
+                    action: onDecline
                 )
                 requestButton(
                     "Accept",
@@ -102,61 +95,6 @@ struct IrisMessageRequestBar: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(accessibilityId)
-    }
-}
-
-/// Identifies the chat the block confirmation dialog is acting on.
-/// `Identifiable` lets `.confirmationDialog(item:)` rebuild the sheet
-/// when the user changes target without a separate `isPresented` flag.
-struct BlockConfirmationTarget: Identifiable {
-    let chatId: String
-    let displayName: String
-    var id: String { chatId }
-}
-
-/// Signal-style block confirmation: tapping Block on the
-/// message-request bar lifts a sheet with "Block" (hide the thread but
-/// keep local evidence) and "Block and Delete" (wipe the chat too).
-/// Mirrors `ConversationViewController+MessageRequest.swift` in signal-ios.
-/// Extracted to a `ViewModifier` so the ChatScreen body type-checks
-/// in reasonable time — the inline form pushed the closure over the
-/// compiler's expression-complexity threshold.
-struct BlockConfirmationModifier: ViewModifier {
-    @Binding var target: BlockConfirmationTarget?
-    let manager: AppManager
-
-    func body(content: Content) -> some View {
-        content.confirmationDialog(
-            target.map { "Block \($0.displayName)?" } ?? "Block?",
-            isPresented: Binding(
-                get: { target != nil },
-                set: { presented in
-                    if !presented { target = nil }
-                }
-            ),
-            titleVisibility: .visible,
-            presenting: target,
-            actions: { item in
-                Button("Block", role: .destructive) {
-                    manager.setUserBlocked(item.chatId, blocked: true)
-                    target = nil
-                }
-                .accessibilityIdentifier("messageRequestBlockConfirmKeep")
-                Button("Block and Delete", role: .destructive) {
-                    manager.setUserBlocked(item.chatId, blocked: true)
-                    manager.dispatch(.deleteChat(chatId: item.chatId))
-                    manager.navigateBack()
-                    target = nil
-                }
-                .accessibilityIdentifier("messageRequestBlockConfirmDelete")
-                Button("Cancel", role: .cancel) {
-                    target = nil
-                }
-            },
-            message: { _ in
-                Text("They won't be able to message you. No notification is sent.")
-            }
-        )
     }
 }
 
@@ -201,7 +139,7 @@ struct ChatScreen: View {
     /// reply; sending a message naturally clears `isRequest` for good
     /// because there's now an outgoing message in the thread.
     @State private var acceptedRequestChatId: String?
-    @State private var blockConfirmationChat: BlockConfirmationTarget?
+    @State private var messageRequestDeclineChat: MessageRequestDeclineTarget?
     @FocusState private var isComposerFocused: Bool
 
     private var chat: CurrentChatSnapshot? {
@@ -584,12 +522,8 @@ struct ChatScreen: View {
                                                 manager.dispatch(.setMessageRequestAccepted(chatId: chat.chatId))
                                                 isComposerFocused = true
                                             },
-                                            onDelete: {
-                                                manager.dispatch(.deleteChat(chatId: chat.chatId))
-                                                manager.navigateBack()
-                                            },
-                                            onBlock: {
-                                                blockConfirmationChat = BlockConfirmationTarget(
+                                            onDecline: {
+                                                messageRequestDeclineChat = MessageRequestDeclineTarget(
                                                     chatId: chat.chatId,
                                                     displayName: chat.displayName
                                                 )
@@ -683,7 +617,7 @@ struct ChatScreen: View {
                 reactorsSelection = nil
             }
         }
-        .modifier(BlockConfirmationModifier(target: $blockConfirmationChat, manager: manager))
+        .modifier(MessageRequestDeclineModifier(target: $messageRequestDeclineChat, manager: manager))
         .onDisappear {
             pendingScrollSettle?.cancel()
             pendingScrollSettle = nil

@@ -28,7 +28,7 @@ final class AppStoreReviewUITests: XCTestCase {
         case "block_report":
             let app = launchReviewApp(runID: runID, reset: false)
             openIncomingMessageRequest(app, message: message)
-            assertReportUserSheetReachable(app)
+            assertMessageRequestDeclineActionsReachable(app)
             blockIncomingRequest(app)
         default:
             XCTFail("Unknown \(phaseKey): \(phase)")
@@ -96,13 +96,11 @@ final class AppStoreReviewUITests: XCTestCase {
 
         XCTAssertTrue(element(app, "messageRequestBar").waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts[message].firstMatch.waitForExistence(timeout: 20))
-        XCTAssertTrue(messageRequestBlockAction(app).waitForExistence(timeout: 5))
+        XCTAssertTrue(messageRequestDeclineAction(app).waitForExistence(timeout: 5))
     }
 
     private func blockIncomingRequest(_ app: XCUIApplication) {
-        let blockButton = messageRequestBlockAction(app)
-        XCTAssertTrue(blockButton.waitForExistence(timeout: 5))
-        blockButton.tap()
+        openMessageRequestDeclineActions(app)
 
         let identifiedConfirm = app.buttons["messageRequestBlockConfirmKeep"].firstMatch
         if identifiedConfirm.waitForExistence(timeout: 5) {
@@ -121,33 +119,28 @@ final class AppStoreReviewUITests: XCTestCase {
         XCTAssertTrue(waitForNoChatRows(app, timeout: 15), "blocked request stayed in the chat list")
     }
 
-    private func messageRequestBlockAction(_ app: XCUIApplication) -> XCUIElement {
-        let identified = element(app, "messageRequestBlockButton")
+    private func messageRequestDeclineAction(_ app: XCUIApplication) -> XCUIElement {
+        let identified = element(app, "messageRequestDeclineButton")
         if identified.exists {
             return identified
         }
-        return app.buttons["Block"].firstMatch
+        return app.buttons["Decline"].firstMatch
     }
 
-    private func assertReportUserSheetReachable(_ app: XCUIApplication) {
-        let header = element(app, "chatHeaderTitleButton")
-        XCTAssertTrue(header.waitForExistence(timeout: 10))
-        header.tap()
+    private func openMessageRequestDeclineActions(_ app: XCUIApplication) {
+        let declineButton = messageRequestDeclineAction(app)
+        XCTAssertTrue(declineButton.waitForExistence(timeout: 5))
+        declineButton.tap()
+    }
 
-        XCTAssertTrue(element(app, "directChatBlockButton").waitForExistence(timeout: 10))
-        let reportButton = element(app, "directChatReportButton")
-        scrollToElement(reportButton, app: app)
-        XCTAssertTrue(reportButton.waitForExistence(timeout: 10))
-        XCTAssertTrue(reportButton.isHittable)
-        reportButton.tap()
+    private func assertMessageRequestDeclineActionsReachable(_ app: XCUIApplication) {
+        openMessageRequestDeclineActions(app)
 
-        XCTAssertTrue(reportDialogButton(app, "directChatReportAndBlockButton", fallbackLabel: "Report and block").waitForExistence(timeout: 5))
-        XCTAssertTrue(reportDialogButton(app, "directChatReportOnlyButton", fallbackLabel: "Report only").waitForExistence(timeout: 5))
+        XCTAssertTrue(reportDialogButton(app, "messageRequestDeleteChatButton", fallbackLabel: "Delete chat").waitForExistence(timeout: 5))
+        XCTAssertTrue(reportDialogButton(app, "messageRequestReportAndBlockButton", fallbackLabel: "Report and block").waitForExistence(timeout: 5))
+        XCTAssertTrue(reportDialogButton(app, "messageRequestReportOnlyButton", fallbackLabel: "Report only").waitForExistence(timeout: 5))
+        XCTAssertTrue(reportDialogButton(app, "messageRequestBlockConfirmKeep", fallbackLabel: "Block").waitForExistence(timeout: 5))
         dismissReportDialog(app)
-
-        let backButton = element(app, "navigationBackButton")
-        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
-        backButton.tap()
         XCTAssertTrue(element(app, "messageRequestBar").waitForExistence(timeout: 10))
     }
 
@@ -190,9 +183,15 @@ final class AppStoreReviewUITests: XCTestCase {
     }
 
     private func dismissReportDialog(_ app: XCUIApplication) {
-        let identifiedCancel = app.buttons["directChatReportCancelButton"].firstMatch
+        let identifiedCancel = app.buttons["messageRequestDeclineCancelButton"].firstMatch
         if identifiedCancel.waitForExistence(timeout: 2) {
             identifiedCancel.tap()
+            return
+        }
+
+        let legacyCancel = app.buttons["directChatReportCancelButton"].firstMatch
+        if legacyCancel.waitForExistence(timeout: 2) {
+            legacyCancel.tap()
             return
         }
 
@@ -229,17 +228,6 @@ final class AppStoreReviewUITests: XCTestCase {
         } while Date() < deadline
         return false
     }
-
-    private func scrollToElement(_ target: XCUIElement, app: XCUIApplication) {
-        for _ in 0..<5 {
-            if target.exists && target.isHittable {
-                return
-            }
-            app.swipeUp()
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        }
-    }
-
     private func element(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
     }
