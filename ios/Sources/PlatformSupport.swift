@@ -188,11 +188,13 @@ enum PlatformDocumentOpener {
 }
 
 enum PlatformExternalURL {
-    static func open(_ url: URL) {
+    static func open(_ url: URL, completion: ((Bool) -> Void)? = nil) {
         #if os(iOS)
-        UIApplication.shared.open(url)
+        UIApplication.shared.open(url, options: [:]) { success in
+            completion?(success)
+        }
         #elseif os(macOS)
-        NSWorkspace.shared.open(url)
+        completion?(NSWorkspace.shared.open(url))
         #endif
     }
 }

@@ -151,6 +151,18 @@ func irisMailtoURL(to email: String, subject: String, body: String) -> URL? {
 }
 
 @MainActor
+private func irisCopyReportDetails(manager: AppManager, body: String) {
+    let fallback = """
+    To: \(irisSupportEmail)
+    Subject: Iris Chat user report
+
+    \(body)
+    """
+    PlatformClipboard.setString(fallback)
+    manager.toasts.show("Report details copied")
+}
+
+@MainActor
 func irisReportUser(
     manager: AppManager,
     chatId: String,
@@ -174,10 +186,15 @@ func irisReportUser(
         subject: "Iris Chat user report",
         body: body
     ) else {
-        manager.copyToClipboard("User ID: \(userId)")
+        irisCopyReportDetails(manager: manager, body: body)
         return
     }
-    PlatformExternalURL.open(url)
+    PlatformExternalURL.open(url) { opened in
+        guard !opened else { return }
+        Task { @MainActor in
+            irisCopyReportDetails(manager: manager, body: body)
+        }
+    }
 }
 
 /// Identifies the chat the message-request options dialog is acting on.
@@ -312,7 +329,7 @@ struct MessageRequestDeclineModifier: ViewModifier {
                 .accessibilityIdentifier("messageRequestReportCancelButton")
             },
             message: { _ in
-                Text("This opens an email to support. No notification is sent.")
+                Text("This prepares a report for support. No notification is sent.")
             }
         )
         .confirmationDialog(
