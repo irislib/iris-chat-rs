@@ -149,3 +149,38 @@ write_manifest() {
     shift 2
   done
 }
+
+windows_ssh_host_candidates() {
+  local raw host
+  if [[ -n "${IRIS_WINDOWS_SSH_HOST:-}" ]]; then
+    printf '%s\n' "$IRIS_WINDOWS_SSH_HOST"
+    return
+  fi
+
+  raw="${IRIS_WINDOWS_SSH_HOSTS:-windows-build win11-dev}"
+  raw="${raw//,/ }"
+  for host in $raw; do
+    [[ -n "$host" ]] && printf '%s\n' "$host"
+  done
+}
+
+windows_ssh_host_candidates_text() {
+  local host text=""
+  while IFS= read -r host; do
+    [[ -n "$host" ]] || continue
+    text="${text:+$text, }$host"
+  done < <(windows_ssh_host_candidates)
+  printf '%s\n' "$text"
+}
+
+select_windows_ssh_host() {
+  local timeout="${1:-10}" host
+  while IFS= read -r host; do
+    [[ -n "$host" ]] || continue
+    if ssh -o BatchMode=yes -o ConnectTimeout="$timeout" "$host" whoami >/dev/null 2>&1; then
+      printf '%s\n' "$host"
+      return 0
+    fi
+  done < <(windows_ssh_host_candidates)
+  return 1
+}

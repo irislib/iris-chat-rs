@@ -4,8 +4,8 @@
 #
 # Mirrors the iOS/Android pattern: the host runs the script, and the actual
 # Rust + .NET toolchain runs on the Windows VM. Configure the SSH host with
-# IRIS_WINDOWS_SSH_HOST; we tar-pipe the working tree over SSH and run base64-encoded PowerShell
-# remotely.
+# IRIS_WINDOWS_SSH_HOST, or set IRIS_WINDOWS_SSH_HOSTS for fallbacks; we
+# tar-pipe the working tree over SSH and run base64-encoded PowerShell remotely.
 #
 # Build target: x86_64-pc-windows-msvc (production). The Windows build host is
 # x86_64, so this matches without emulation.
@@ -43,7 +43,8 @@ commands:
   windows-run        Launch the freshly built .exe on the Windows host
 
 env knobs:
-  IRIS_WINDOWS_SSH_HOST           SSH host running Windows (default: windows-build)
+  IRIS_WINDOWS_SSH_HOST           SSH host running Windows (explicit override)
+  IRIS_WINDOWS_SSH_HOSTS          Candidate SSH hosts (default: windows-build win11-dev)
   IRIS_WINDOWS_GUEST_REPO_PATH    Repo path on the Windows host (default: C:\src\iris-chat-rs)
   IRIS_WINDOWS_TARGET             Rust target triple (default: x86_64-pc-windows-msvc)
   IRIS_WINDOWS_LLVM_BIN           LLVM bin dir for ring/sha2 cc-rs builds
@@ -65,10 +66,24 @@ require_macos() {
   fi
 }
 
-# Returns the SSH host running Windows. We no longer auto-detect Parallels VMs;
-# the build is run against IRIS_WINDOWS_SSH_HOST.
+WINDOWS_SSH_HOST_RESOLVED=""
+
+# Returns a reachable SSH host running Windows.
 detect_vm_name() {
-  printf '%s\n' "${IRIS_WINDOWS_SSH_HOST:-windows-build}"
+  local candidates
+  if [[ -n "${WINDOWS_SSH_HOST_RESOLVED:-}" ]]; then
+    printf '%s\n' "$WINDOWS_SSH_HOST_RESOLVED"
+    return
+  fi
+
+  if WINDOWS_SSH_HOST_RESOLVED="$(select_windows_ssh_host "${IRIS_WINDOWS_SSH_CONNECT_TIMEOUT:-10}")"; then
+    printf '%s\n' "$WINDOWS_SSH_HOST_RESOLVED"
+    return
+  fi
+
+  candidates="$(windows_ssh_host_candidates_text)"
+  err "No reachable Windows SSH host (tried: ${candidates:-<none>}). Set IRIS_WINDOWS_SSH_HOST."
+  exit 1
 }
 
 # Returns the working-tree path inside the Windows host. This is no longer a "shared
@@ -79,7 +94,7 @@ detect_shared_repo_path() {
 }
 
 windows_git_remote_name() {
-  printf '%s\n' "${IRIS_WINDOWS_GIT_REMOTE:-windows-build}"
+  printf '%s\n' "${IRIS_WINDOWS_GIT_REMOTE:-$(detect_vm_name)}"
 }
 
 git_current_branch() {

@@ -378,25 +378,27 @@ build_windows() {
     note_skipped "windows: only wired for macOS hosts driving a Windows build host over SSH"
     return 0
   fi
-  local ssh_host="${IRIS_WINDOWS_SSH_HOST:-windows-build}"
+  local ssh_host=""
+  local ssh_candidates
   local ssh_attempts="${IRIS_WINDOWS_SSH_RETRIES:-8}"
   local ssh_delay="${IRIS_WINDOWS_SSH_RETRY_DELAY_SECS:-10}"
-  local ssh_ready=0
   local attempt
+  ssh_candidates="$(windows_ssh_host_candidates_text)"
   for ((attempt = 1; attempt <= ssh_attempts; attempt++)); do
-    if ssh -o BatchMode=yes -o ConnectTimeout=10 "$ssh_host" whoami >/dev/null 2>&1; then
-      ssh_ready=1
+    if ssh_host="$(select_windows_ssh_host 10)"; then
       break
     fi
     if [[ "$attempt" -lt "$ssh_attempts" ]]; then
-      echo "[wait] windows: ssh $ssh_host unreachable, retrying in ${ssh_delay}s ($attempt/$ssh_attempts)" >&2
+      echo "[wait] windows: ssh unreachable (tried: ${ssh_candidates:-<none>}), retrying in ${ssh_delay}s ($attempt/$ssh_attempts)" >&2
       sleep "$ssh_delay"
     fi
   done
-  if [[ "$ssh_ready" -ne 1 ]]; then
-    note_skipped "windows: ssh $ssh_host unreachable (bring the VM up, or set IRIS_WINDOWS_SSH_HOST)"
+  if [[ -z "${ssh_host:-}" ]]; then
+    note_skipped "windows: ssh unreachable (tried: ${ssh_candidates:-<none>}; bring the VM up, or set IRIS_WINDOWS_SSH_HOST)"
     return 0
   fi
+  export IRIS_WINDOWS_SSH_HOST="$ssh_host"
+  echo "[info] windows: using SSH host $IRIS_WINDOWS_SSH_HOST" >&2
 
   IRIS_WINDOWS_RUST_PROFILE=release \
   IRIS_WINDOWS_DOTNET_CONFIG=Release \

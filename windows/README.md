@@ -43,7 +43,9 @@ just windows-build     # full pipeline above
 just run-windows       # build, then launch IrisChat.exe inside VM
 ```
 
-Env knobs: see `./scripts/windows-build help`.
+Env knobs: see `./scripts/windows-build help`. By default, the helper tries
+`windows-build` and then `win11-dev`; set `IRIS_WINDOWS_SSH_HOST` to force one
+host or `IRIS_WINDOWS_SSH_HOSTS` for a custom fallback list.
 
 ## VM prerequisites
 
