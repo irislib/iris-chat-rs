@@ -39,11 +39,83 @@ fn seed_protocol_storage_if_missing_for_test(
     Ok(())
 }
 
+fn protocol_publish_events(effects: &[ProtocolEffect]) -> Vec<&Event> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProtocolEffect::Publish(publish) => Some(&publish.event),
+            _ => None,
+        })
+        .collect()
+}
+
+fn protocol_publish_events_with_kind(effects: &[ProtocolEffect], kind: u32) -> Vec<Event> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProtocolEffect::Publish(publish) if publish.event.kind.as_u16() as u32 == kind => {
+                Some(publish.event.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn protocol_publish_events_for_target(
+    effects: &[ProtocolEffect],
+    _owner_pubkey_hex: &str,
+    _device_id: &str,
+) -> Vec<Event> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProtocolEffect::Publish(publish)
+                if publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND =>
+            {
+                Some(publish.event.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn protocol_has_publish_target(
+    effects: &[ProtocolEffect],
+    _owner_pubkey_hex: &str,
+    _device_id: &str,
+) -> bool {
+    effects.iter().any(|effect| {
+        matches!(
+            effect,
+            ProtocolEffect::Publish(publish)
+                if publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
+        )
+    })
+}
+
+fn protocol_targeted_payload_count(effects: &[ProtocolEffect], _owner_pubkey_hex: &str) -> usize {
+    effects
+        .iter()
+        .filter(|effect| {
+            matches!(
+                effect,
+                ProtocolEffect::Publish(publish)
+                    if publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
+            )
+        })
+        .count()
+}
+
 include!("tests/protocol_runtime.rs");
 include!("tests/protocol_runtime_replay.rs");
+include!("tests/retry_publish_ordering.rs");
 include!("tests/protocol_filters_push.rs");
 include!("tests/app_keys_invites_requests.rs");
+include!("tests/first_contact_receiver.rs");
 include!("tests/direct_messages_typing.rs");
+include!("tests/direct_messages_runtime_regressions.rs");
+include!("tests/direct_group_sender_key_ack.rs");
 include!("tests/groups_sender_key.rs");
+include!("tests/groups_sender_key_retry.rs");
 include!("tests/groups_persistence_helpers.rs");
 include!("tests/groups_persistence_more.rs");

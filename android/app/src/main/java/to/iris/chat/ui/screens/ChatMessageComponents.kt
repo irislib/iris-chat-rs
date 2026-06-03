@@ -1544,12 +1544,6 @@ private fun MessageInfoDialog(
                     if (trace.outerEventIds.isNotEmpty()) {
                         MessageInfoCopyList("Network events", trace.outerEventIds)
                     }
-                    if (trace.targetDeviceIds.isNotEmpty()) {
-                        MessageInfoCopyList(
-                            label = "Target devices",
-                            values = trace.targetDeviceIds.map { peerInputToNpub(it) },
-                        )
-                    }
                 }
 
                 if (message.attachments.isNotEmpty()) {
@@ -1809,9 +1803,6 @@ private fun messageInfoText(
     }
     if (trace.queuedProtocolTargets.isNotEmpty()) {
         lines += "Queued devices ${trace.queuedProtocolTargets.joinToString(", ", transform = ::shortNpub)}"
-    }
-    if (trace.targetDeviceIds.isNotEmpty()) {
-        lines += "Devices ${trace.targetDeviceIds.joinToString(", ", transform = ::shortNpub)}"
     }
     trace.lastTransportError?.takeIf { it.isNotBlank() }?.let { error ->
         lines += "Last send error $error"

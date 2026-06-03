@@ -426,47 +426,29 @@ fn updates_group() -> adw::PreferencesGroup {
     group
 }
 
-const IRIS_UPDATE_REFERENCE: &str =
-    "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest";
-
 async fn run_update_check() -> String {
     let current = iris_chat_core::app_version();
     if is_dev_placeholder_version(&current) {
         return "Up to date".to_string();
     }
-    let result = gtk::gio::spawn_blocking(move || {
-        std::process::Command::new("htree")
-            .args([
-                "install",
-                IRIS_UPDATE_REFERENCE,
-                "--check",
-                "--current-version",
-                &current,
-            ])
-            .output()
-    })
-    .await;
+    let result = gtk::gio::spawn_blocking(iris_chat_core::iris_desktop_update_check).await;
     match result {
-        Ok(Ok(output)) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let combined = format!("{stdout}\n{stderr}");
-            if output.status.success() {
-                if combined.contains("up to date") || combined.contains("Up to date") {
-                    "Up to date".to_string()
-                } else if let Some(line) = combined
-                    .lines()
-                    .find(|line| line.to_lowercase().contains("available"))
-                {
-                    line.trim().to_string()
+        Ok(update) => {
+            if !update.ok {
+                return update
+                    .error
+                    .unwrap_or_else(|| "Update check failed".to_string());
+            }
+            if update.available {
+                if update.asset.is_empty() {
+                    format!("Update {} found without a Linux app", update.tag)
                 } else {
-                    "Up to date".to_string()
+                    format!("Update {} available", update.tag)
                 }
             } else {
-                "Update check failed".to_string()
+                "Up to date".to_string()
             }
         }
-        Ok(Err(_)) => "htree not found — install hashtree-cli".to_string(),
         Err(_) => "Update check cancelled".to_string(),
     }
 }

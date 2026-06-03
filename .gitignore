@@ -7,6 +7,7 @@ build/
 target/
 android/app/build/
 core/target/
+core/target-codex-test/
 core/uniffi-bindgen/target/
 ios/Bindings/
 ios/.build/

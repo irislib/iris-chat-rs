@@ -125,6 +125,10 @@ pub(crate) enum InternalEvent {
         token: u64,
         results: Vec<RelayPublishDrainResult>,
     },
+    RelayPublishDrainProgress {
+        token: u64,
+        result: RelayPublishDrainResult,
+    },
     RetryPendingRelayPublishes {
         reason: String,
     },
@@ -144,6 +148,9 @@ pub(crate) enum InternalEvent {
         result: Result<String, String>,
     },
     SyncComplete,
+    ProtocolAuthorBackfillComplete {
+        reason: String,
+    },
     // Heavy tail of `open_chat` — DB page load, identity republish,
     // persist, protocol refresh. Runs on the same event loop as a
     // queued follow-up so subsequent UI actions (back, switch chat)
@@ -156,8 +163,6 @@ pub(crate) enum InternalEvent {
 #[derive(Debug)]
 pub(crate) struct RelayPublishDrainResult {
     pub(crate) event_id: String,
-    pub(crate) message_id: Option<String>,
-    pub(crate) chat_id: Option<String>,
     pub(crate) success: bool,
     pub(crate) relay_urls: Vec<String>,
     pub(crate) detail: String,

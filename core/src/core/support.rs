@@ -74,9 +74,6 @@ impl AppCore {
                     event_id: pending.event_id.clone(),
                     label: pending.label.clone(),
                     inner_event_id: pending.inner_event_id.clone(),
-                    target_owner_pubkey_hex: pending.target_owner_pubkey_hex.clone(),
-                    target_device_id: pending.target_device_id.clone(),
-                    message_id: pending.message_id.clone(),
                     chat_id: pending.chat_id.clone(),
                     attempt_count: pending.attempt_count,
                     last_error: pending.last_error.clone(),
@@ -230,6 +227,8 @@ impl AppCore {
             refresh_in_flight: runtime.refresh_in_flight,
             refresh_dirty: runtime.refresh_dirty,
             force_reconnect_dirty: runtime.force_reconnect_dirty,
+            protocol_fetch_in_flight: runtime.protocol_fetch_in_flight,
+            author_backfill_in_flight: runtime.protocol_author_backfill_in_flight,
         }
     }
 
@@ -252,8 +251,14 @@ impl AppCore {
             connect_in_flight: runtime.connect_in_flight,
             connect_dirty: runtime.connect_dirty,
             force_reconnect_dirty: runtime.force_reconnect_dirty,
+            connect_age_ms: runtime
+                .connect_started_at
+                .map(|started_at| started_at.elapsed().as_millis() as u64),
             publish_drain_in_flight: runtime.publish_drain_in_flight,
             publish_drain_dirty: runtime.publish_drain_dirty,
+            publish_drain_age_ms: runtime
+                .publish_drain_started_at
+                .map(|started_at| started_at.elapsed().as_millis() as u64),
             connected_relay_count: self.relay_connected_count,
             pending_relay_publish_count: self.pending_relay_publishes.len() as u64,
             retry_backoff_attempt: runtime.retry_backoff_attempt,

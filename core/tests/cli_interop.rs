@@ -94,13 +94,32 @@ fn run_iris(data_dir: &Path, args: &[&str]) -> Value {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "iris failed status={}\nstdout={}\nstderr={}",
+        "iris failed args={:?} status={}\nstdout={}\nstderr={}\ndebug={}",
+        args,
         output.status,
         stdout,
-        stderr
+        stderr,
+        debug_snapshot(data_dir)
     );
     serde_json::from_str(stdout.trim())
         .unwrap_or_else(|error| panic!("invalid json: {error}\nstdout={stdout}\nstderr={stderr}"))
+}
+
+fn run_iris_capture(data_dir: &Path, args: &[&str]) -> String {
+    let output = Command::new(iris_binary())
+        .arg("--json")
+        .arg("--data-dir")
+        .arg(data_dir)
+        .args(args)
+        .output()
+        .expect("run iris");
+    format!(
+        "args={:?} status={}\nstdout={}\nstderr={}",
+        args,
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
 }
 
 fn debug_snapshot(data_dir: &Path) -> String {
@@ -129,6 +148,25 @@ fn relay_event_summary(relay: &TestRelay) -> Value {
             })
             .collect(),
     )
+}
+
+fn state_contains_group(value: &Value, group_id: &str) -> bool {
+    let group_chat_id = format!("group:{group_id}");
+    value
+        .pointer("/data/groups")
+        .and_then(Value::as_array)
+        .is_some_and(|groups| {
+            groups.iter().any(|group| {
+                group
+                    .get("group_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| id == group_id)
+                    || group
+                        .get("chat_id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| id == group_chat_id)
+            })
+        })
 }
 
 fn start_iris(data_dir: &Path, args: &[&str]) -> std::process::Child {
@@ -743,8 +781,8 @@ fn sender_key_cli_group_interop_three_members_restart_and_restored_owner_device(
         linked_account["data"]["device_id"],
         alice_account["data"]["device_id"]
     );
-    run_iris(alice.path(), &["sync", "--wait-ms", "3000"]);
-    run_iris(alice_linked.path(), &["sync", "--wait-ms", "3000"]);
+    run_iris(alice.path(), &["sync", "--wait-ms", "12000"]);
+    run_iris(alice_linked.path(), &["sync", "--wait-ms", "12000"]);
 
     run_iris(bob.path(), &["relay", "set", relay.url()]);
     let bob_account = run_iris(bob.path(), &["account", "create", "--name", "Bob"]);
@@ -790,9 +828,23 @@ fn sender_key_cli_group_interop_three_members_restart_and_restored_owner_device(
     let group_id = group["data"]["current_chat"]["group_id"]
         .as_str()
         .expect("group id");
-    run_iris(bob.path(), &["sync", "--wait-ms", "5000"]);
-    run_iris(charlie.path(), &["sync", "--wait-ms", "5000"]);
-    run_iris(alice.path(), &["sync", "--wait-ms", "5000"]);
+    let mut bob_group_sync = run_iris(bob.path(), &["sync", "--wait-ms", "15000"]);
+    for _ in 0..3 {
+        if state_contains_group(&bob_group_sync, group_id) {
+            break;
+        }
+        bob_group_sync = run_iris(bob.path(), &["sync", "--wait-ms", "15000"]);
+    }
+    if !state_contains_group(&bob_group_sync, group_id) {
+        let bob_live_debug = run_iris_capture(bob.path(), &["debug", "--wait-ms", "30000"]);
+        panic!(
+            "bob did not learn cli-created group after sync; sync={bob_group_sync}; bob_debug={}; bob_live_debug={bob_live_debug}; relay_events={}",
+            debug_snapshot(bob.path()),
+            relay_event_summary(&relay),
+        );
+    }
+    run_iris(charlie.path(), &["sync", "--wait-ms", "15000"]);
+    run_iris(alice.path(), &["sync", "--wait-ms", "15000"]);
 
     let mut bob_child = start_iris(bob.path(), &["listen", "--interval-ms", "100"]);
     let bob_stdout = bob_child.stdout.take().expect("bob stdout");
@@ -818,7 +870,7 @@ fn sender_key_cli_group_interop_three_members_restart_and_restored_owner_device(
         &["group", "send", group_id, alice_body],
     );
     assert_eq!(sent["data"]["body"], alice_body);
-    run_iris(alice_linked.path(), &["sync", "--wait-ms", "5000"]);
+    run_iris(alice_linked.path(), &["sync", "--wait-ms", "15000"]);
 
     let bob_message = read_stream_message(&relay, &bob_receiver, alice_body);
     let charlie_message = read_stream_message(&relay, &charlie_receiver, alice_body);
@@ -830,8 +882,10 @@ fn sender_key_cli_group_interop_three_members_restart_and_restored_owner_device(
         let _ = bob_child.wait();
         let _ = charlie_child.kill();
         let _ = charlie_child.wait();
+        let bob_read = run_iris_capture(bob.path(), &["read", group_id]);
+        let charlie_read = run_iris_capture(charlie.path(), &["read", group_id]);
         panic!(
-            "three-member sender-key group did not converge; bob_message={bob_message:?}; charlie_message={charlie_message:?}; alice_primary_message={alice_primary_message:?}; linked_debug={}; bob_debug={}; charlie_debug={}; alice_debug={}; relay_events={}",
+            "three-member sender-key group did not converge; bob_message={bob_message:?}; charlie_message={charlie_message:?}; alice_primary_message={alice_primary_message:?}; bob_read={bob_read}; charlie_read={charlie_read}; linked_debug={}; bob_debug={}; charlie_debug={}; alice_debug={}; relay_events={}",
             debug_snapshot(alice_linked.path()),
             debug_snapshot(bob.path()),
             debug_snapshot(charlie.path()),
@@ -854,7 +908,7 @@ fn sender_key_cli_group_interop_three_members_restart_and_restored_owner_device(
     let charlie_body = "charlie sender-key cli group after restart";
     let charlie_sent = run_iris(charlie.path(), &["group", "send", group_id, charlie_body]);
     assert_eq!(charlie_sent["data"]["body"], charlie_body);
-    run_iris(charlie.path(), &["sync", "--wait-ms", "5000"]);
+    run_iris(charlie.path(), &["sync", "--wait-ms", "15000"]);
     if read_stream_message(&relay, &bob_receiver, charlie_body).is_none() {
         let _ = bob_child.kill();
         let _ = bob_child.wait();

@@ -863,7 +863,6 @@ class AppManagerContractTest {
                     outerEventIds = emptyList(),
                     pendingRelayEventIds = emptyList(),
                     queuedProtocolTargets = emptyList(),
-                    targetDeviceIds = emptyList(),
                     transportChannels = emptyList(),
                     lastTransportError = null,
                 ),

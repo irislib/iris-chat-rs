@@ -181,6 +181,7 @@ fn account_create_persists_and_restores_for_next_process() {
     assert_eq!(whoami["data"]["user_id"], created["data"]["user_id"]);
     assert_eq!(whoami["data"]["device_state"], "authorized");
 
+    run_iris(dir.path(), &["relay", "set"]);
     let synced = run_iris(dir.path(), &["sync", "--wait-ms", "100"]);
     assert_eq!(
         synced["data"]["account"]["user_id"],

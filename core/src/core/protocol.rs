@@ -1,48 +1,22 @@
 use super::*;
 use crate::core::projection::relay_connection_status;
 
+mod backfill;
+mod retry_helpers;
+
+use self::backfill::{
+    direct_message_history_filter, group_sender_key_history_filter, protocol_event_summary,
+    NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS, PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE,
+};
+
 const PROTOCOL_SUBSCRIPTION_ID: &str = "ndr-protocol";
 const PROTOCOL_SUBSCRIPTION_APPLY_TIMEOUT_SECS: u64 = 8;
 const PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS: u64 = 30;
 pub(super) const PROTOCOL_RECONNECT_CHECK_SECS: u64 = 2;
-const PROTOCOL_FETCH_MIN_INTERVAL_SECS: u64 = 30;
 const RELAY_TRANSPORT_RETRY_BACKOFF_SECS: [u64; 5] = [2, 5, 15, 30, 60];
-const PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE: usize = 64;
-#[cfg(not(test))]
-const NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS: [u64; 2] = [2_500, 10_000];
-#[cfg(test)]
-const NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS: [u64; 1] = [50];
-
-fn unique_pubkeys(pubkeys: impl IntoIterator<Item = PublicKey>) -> Vec<PublicKey> {
-    let mut seen = HashSet::new();
-    pubkeys
-        .into_iter()
-        .filter(|pubkey| seen.insert(*pubkey))
-        .collect()
-}
-
-fn direct_message_history_filter(author_pubkeys: impl IntoIterator<Item = PublicKey>) -> Filter {
-    Filter::new()
-        .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
-        .authors(unique_pubkeys(author_pubkeys))
-}
-
-fn group_sender_key_history_filter(author_pubkeys: impl IntoIterator<Item = PublicKey>) -> Filter {
-    Filter::new()
-        .kind(Kind::from(GROUP_SENDER_KEY_MESSAGE_KIND as u16))
-        .authors(unique_pubkeys(author_pubkeys))
-}
+const RELAY_CONNECT_STALE_AFTER: Duration = Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS * 4);
 
 impl AppCore {
-    fn protocol_fetch_rate_limit_delay(&self) -> Option<Duration> {
-        let last_started = self
-            .protocol_subscription_runtime
-            .protocol_fetch_last_started_at?;
-        let min_interval = Duration::from_secs(PROTOCOL_FETCH_MIN_INTERVAL_SECS);
-        let elapsed = Instant::now().saturating_duration_since(last_started);
-        (elapsed < min_interval).then(|| min_interval - elapsed)
-    }
-
     pub(super) fn send_protocol_engine_unsigned_event(
         &mut self,
         peer: PublicKey,
@@ -112,10 +86,7 @@ impl AppCore {
                         result.queued_targets.len()
                     ),
                 );
-                self.process_protocol_engine_effects_with_completions(
-                    result.effects,
-                    &BTreeMap::new(),
-                );
+                self.process_protocol_engine_effects(result.effects);
                 if !result.queued_targets.is_empty() {
                     self.handle_queued_protocol_targets(reason, &result.queued_targets);
                 }
@@ -142,37 +113,25 @@ impl AppCore {
         let mut published = 0usize;
         let mut queued_targets = Vec::new();
         let mut direct_effects = Vec::new();
-        let mut direct_completions = BTreeMap::new();
+        let mut direct_message_refs = Vec::new();
         for result in batch.direct_results {
             published = published.saturating_add(result.event_ids.len());
             queued_targets.extend(result.queued_targets.clone());
-            direct_completions.extend(
-                result
-                    .event_ids
-                    .iter()
-                    .map(|event_id| {
-                        (
-                            event_id.clone(),
-                            (result.message_id.clone(), result.chat_id.clone()),
-                        )
-                    })
-                    .collect::<BTreeMap<_, _>>(),
-            );
             direct_effects.extend(result.effects);
-            self.sync_message_delivery_trace(&result.chat_id, &result.message_id);
-            self.reconcile_outgoing_message_delivery(&result.chat_id, &result.message_id);
+            direct_message_refs.push((result.chat_id, result.message_id));
         }
         queued_targets.extend(batch.group_result.queued_targets.clone());
         normalize_protocol_queued_targets(&mut queued_targets);
-        self.process_protocol_engine_effects_with_completions(direct_effects, &direct_completions);
+        self.process_protocol_engine_effects(direct_effects);
+        for (chat_id, message_id) in direct_message_refs {
+            self.sync_message_delivery_trace(&chat_id, &message_id);
+            self.reconcile_outgoing_message_delivery(&chat_id, &message_id);
+        }
         for group_event in batch.group_result.events {
             self.apply_group_decrypted_event(group_event);
         }
-        self.process_protocol_engine_effects_with_completions(
-            batch.group_result.effects,
-            &BTreeMap::new(),
-        );
-        self.process_protocol_engine_effects_with_completions(batch.effects, &BTreeMap::new());
+        self.process_protocol_engine_effects(batch.group_result.effects);
+        self.process_protocol_engine_effects(batch.effects);
         for decrypted in batch.direct_messages {
             let event_id = decrypted.event_id.clone();
             self.apply_decrypted_runtime_message_with_metadata(
@@ -195,6 +154,7 @@ impl AppCore {
         );
         if queued_targets.is_empty() {
             self.request_protocol_subscription_refresh();
+            self.schedule_fast_protocol_retry_if_pending();
         } else {
             self.handle_queued_protocol_targets(reason, &queued_targets);
         }
@@ -238,6 +198,10 @@ impl AppCore {
                 return;
             }
         };
+        if results.is_empty() {
+            self.schedule_fast_protocol_retry_if_pending();
+            return;
+        }
         self.process_protocol_engine_retry_batch(reason, results);
     }
 
@@ -316,6 +280,19 @@ impl AppCore {
                 .values()
                 .map(|peer| peer.owner_hex.clone()),
         );
+        if let Some(protocol_engine) = self.protocol_engine.as_ref() {
+            owners.extend(
+                protocol_engine
+                    .queued_owner_claim_targets()
+                    .into_iter()
+                    .map(|target| {
+                        target
+                            .strip_prefix("owner:")
+                            .unwrap_or(target.as_str())
+                            .to_string()
+                    }),
+            );
+        }
         owners.extend(self.app_keys.keys().cloned());
         if let Some(logged_in) = self.logged_in.as_ref() {
             owners.insert(logged_in.owner_pubkey.to_hex());
@@ -367,26 +344,13 @@ impl AppCore {
         self.protocol_subscription_runtime.liveness_due_at = Some(due_at);
         self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
         let token = self.protocol_liveness_token;
-        let tx = self.core_sender.clone();
+        let tx = self.priority_sender.clone();
         self.runtime.spawn(async move {
             sleep_until(due_at).await;
             let _ = tx.send(CoreMsg::Internal(Box::new(
                 InternalEvent::ProtocolSubscriptionLivenessCheck { token },
             )));
         });
-    }
-
-    fn has_protocol_liveness_work(&self) -> bool {
-        self.protocol_subscription_runtime.desired_plan.is_some()
-            || self.protocol_subscription_runtime.applying_plan.is_some()
-            || self.protocol_subscription_runtime.applied_plan.is_some()
-            || self.protocol_subscription_runtime.refresh_in_flight
-            || self.protocol_subscription_runtime.refresh_dirty
-            || !self.pending_relay_publishes.is_empty()
-            || self
-                .protocol_engine
-                .as_ref()
-                .is_some_and(|engine| engine.has_pending_inbound_direct_events())
     }
 
     pub(super) fn schedule_pending_device_invite_poll(&mut self, after: Duration) {
@@ -404,11 +368,21 @@ impl AppCore {
         });
     }
 
-    pub(super) fn fetch_recent_messages_for_author(&self, author_pubkey: PublicKey) {
+    pub(super) fn refresh_protocol_sync_busy(&mut self) {
+        let subscription = &self.protocol_subscription_runtime;
+        self.state.busy.syncing_network = subscription.protocol_fetch_in_flight
+            || subscription.protocol_author_backfill_in_flight > 0
+            || subscription.refresh_in_flight
+            || subscription.refresh_dirty
+            || subscription.applying_plan.is_some()
+            || subscription.desired_plan != subscription.applied_plan;
+    }
+
+    pub(super) fn fetch_recent_messages_for_author(&mut self, author_pubkey: PublicKey) {
         self.fetch_recent_messages_for_authors(vec![author_pubkey]);
     }
 
-    fn fetch_recent_messages_for_authors(&self, author_pubkeys: Vec<PublicKey>) {
+    fn fetch_recent_messages_for_authors(&mut self, author_pubkeys: Vec<PublicKey>) {
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
@@ -419,22 +393,70 @@ impl AppCore {
         if author_pubkeys.is_empty() {
             return;
         }
-        for author_chunk in author_pubkeys.chunks(PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE) {
-            let filter = direct_message_history_filter(author_chunk.to_vec());
+        let filters = author_pubkeys
+            .chunks(PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE)
+            .map(|author_chunk| direct_message_history_filter(author_chunk.to_vec()))
+            .collect::<Vec<_>>();
+        self.spawn_protocol_author_backfills(client, relay_urls, filters, "direct_message_authors");
+    }
+
+    fn spawn_protocol_author_backfills(
+        &mut self,
+        client: Client,
+        relay_urls: Vec<RelayUrl>,
+        filters: Vec<Filter>,
+        reason: &'static str,
+    ) {
+        if filters.is_empty() {
+            return;
+        }
+        self.protocol_subscription_runtime
+            .protocol_author_backfill_in_flight = self
+            .protocol_subscription_runtime
+            .protocol_author_backfill_in_flight
+            .saturating_add(filters.len() as u64);
+        self.refresh_protocol_sync_busy();
+        self.emit_state();
+        self.push_debug_log(
+            "protocol.author_backfill.fetch",
+            format!("reason={reason} filters={}", filters.len()),
+        );
+        for filter in filters {
             let tx = self.core_sender.clone();
             let client = client.clone();
             let relay_urls = relay_urls.clone();
             self.runtime.spawn(async move {
                 ensure_session_relays_configured(&client, &relay_urls).await;
                 connect_client_with_timeout(&client, Duration::from_secs(5)).await;
-                if let Ok(events) = client.fetch_events(filter, Duration::from_secs(5)).await {
-                    let collected = events.iter().cloned().collect::<Vec<_>>();
-                    if !collected.is_empty() {
-                        let _ = tx.send(CoreMsg::Internal(Box::new(
-                            InternalEvent::FetchCatchUpEvents(collected),
-                        )));
+                match client.fetch_events(filter, Duration::from_secs(5)).await {
+                    Ok(events) => {
+                        let collected = events.iter().cloned().collect::<Vec<_>>();
+                        let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+                            category: "protocol.author_backfill.result".to_string(),
+                            detail: format!(
+                                "reason={reason} events={} summary={}",
+                                collected.len(),
+                                protocol_event_summary(&collected)
+                            ),
+                        })));
+                        if !collected.is_empty() {
+                            let _ = tx.send(CoreMsg::Internal(Box::new(
+                                InternalEvent::FetchCatchUpEvents(collected),
+                            )));
+                        }
+                    }
+                    Err(error) => {
+                        let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+                            category: "protocol.author_backfill.error".to_string(),
+                            detail: format!("reason={reason} error={error}"),
+                        })));
                     }
                 }
+                let _ = tx.send(CoreMsg::Internal(Box::new(
+                    InternalEvent::ProtocolAuthorBackfillComplete {
+                        reason: reason.to_string(),
+                    },
+                )));
             });
         }
     }
@@ -473,13 +495,16 @@ impl AppCore {
     }
 
     pub(super) fn fetch_recent_group_sender_key_messages_for_author(
-        &self,
+        &mut self,
         author_pubkey: PublicKey,
     ) {
         self.fetch_recent_group_sender_key_messages_for_authors(vec![author_pubkey]);
     }
 
-    fn fetch_recent_group_sender_key_messages_for_authors(&self, author_pubkeys: Vec<PublicKey>) {
+    fn fetch_recent_group_sender_key_messages_for_authors(
+        &mut self,
+        author_pubkeys: Vec<PublicKey>,
+    ) {
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
@@ -490,27 +515,19 @@ impl AppCore {
         if author_pubkeys.is_empty() {
             return;
         }
-        for author_chunk in author_pubkeys.chunks(PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE) {
-            let filter = group_sender_key_history_filter(author_chunk.to_vec());
-            let tx = self.core_sender.clone();
-            let client = client.clone();
-            let relay_urls = relay_urls.clone();
-            self.runtime.spawn(async move {
-                ensure_session_relays_configured(&client, &relay_urls).await;
-                connect_client_with_timeout(&client, Duration::from_secs(5)).await;
-                if let Ok(events) = client.fetch_events(filter, Duration::from_secs(5)).await {
-                    let collected = events.iter().cloned().collect::<Vec<_>>();
-                    if !collected.is_empty() {
-                        let _ = tx.send(CoreMsg::Internal(Box::new(
-                            InternalEvent::FetchCatchUpEvents(collected),
-                        )));
-                    }
-                }
-            });
-        }
+        let filters = author_pubkeys
+            .chunks(PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE)
+            .map(|author_chunk| group_sender_key_history_filter(author_chunk.to_vec()))
+            .collect::<Vec<_>>();
+        self.spawn_protocol_author_backfills(
+            client,
+            relay_urls,
+            filters,
+            "group_sender_key_authors",
+        );
     }
 
-    pub(super) fn fetch_recent_messages_for_tracked_peers(&self) {
+    pub(super) fn fetch_recent_messages_for_tracked_peers(&mut self) {
         let direct_authors = self
             .protocol_subscription_runtime
             .desired_plan
@@ -827,49 +844,6 @@ impl AppCore {
         self.fetch_recent_protocol_state();
     }
 
-    fn tracked_peer_protocol_backfill_needed(&self) -> bool {
-        let tracked_peer_owners = self.tracked_peer_owner_hexes();
-        if tracked_peer_owners.is_empty() {
-            return false;
-        }
-
-        tracked_peer_owners
-            .iter()
-            .any(|owner_hex| !self.app_keys.contains_key(owner_hex))
-            || self.protocol_engine.as_ref().is_some_and(|engine| {
-                tracked_peer_owners.iter().any(|owner_hex| {
-                    PublicKey::parse(owner_hex).is_ok_and(|owner_pubkey| {
-                        let owner_prefix = owner_pubkey.to_hex();
-                        engine
-                            .queued_message_diagnostics(None)
-                            .iter()
-                            .any(|target| target == &owner_prefix)
-                    })
-                })
-            })
-            || self.protocol_engine.as_ref().is_some_and(|engine| {
-                tracked_peer_owners.iter().any(|owner_hex| {
-                    PublicKey::parse(owner_hex).is_ok_and(|owner_pubkey| {
-                        engine
-                            .message_author_pubkeys_for_owner(owner_pubkey)
-                            .is_empty()
-                    })
-                })
-            })
-    }
-
-    pub(super) fn current_queued_protocol_targets(&self) -> Vec<String> {
-        let mut targets = Vec::new();
-        if let Some(protocol_engine) = self.protocol_engine.as_ref() {
-            targets.extend(protocol_engine.queued_message_diagnostics(None));
-            targets.extend(protocol_engine.queued_owner_claim_targets());
-            targets.extend(protocol_engine.queued_group_target_hexes());
-        }
-        targets.sort();
-        targets.dedup();
-        targets
-    }
-
     pub(super) fn start_notifications_loop(&self, client: Client) {
         let mut notifications = client.notifications();
         let tx = self.core_sender.clone();
@@ -957,6 +931,21 @@ impl AppCore {
         if relay_urls.is_empty() {
             return;
         }
+        if self.relay_transport_runtime.connect_in_flight
+            && self
+                .relay_transport_runtime
+                .connect_started_at
+                .is_some_and(|started_at| started_at.elapsed() >= RELAY_CONNECT_STALE_AFTER)
+        {
+            self.relay_transport_runtime.connect_in_flight = false;
+            self.relay_transport_runtime.connect_dirty = false;
+            self.relay_transport_runtime.force_reconnect_dirty = false;
+            self.relay_transport_runtime.connect_started_at = None;
+            self.push_debug_log(
+                "relay.transport.connect",
+                format!("reason={reason} reset_stale_in_flight=true"),
+            );
+        }
         if self.relay_transport_runtime.connect_in_flight {
             self.relay_transport_runtime.connect_dirty = true;
             self.relay_transport_runtime.force_reconnect_dirty |= force_reconnect;
@@ -970,11 +959,12 @@ impl AppCore {
         self.relay_transport_runtime.connect_in_flight = true;
         self.relay_transport_runtime.connect_dirty = false;
         self.relay_transport_runtime.force_reconnect_dirty = false;
+        self.relay_transport_runtime.connect_started_at = Some(Instant::now());
         self.relay_transport_runtime.connect_token =
             self.relay_transport_runtime.connect_token.wrapping_add(1);
         self.relay_transport_runtime.last_connect_reason = Some(reason.clone());
         let token = self.relay_transport_runtime.connect_token;
-        let tx = self.core_sender.clone();
+        let tx = self.priority_sender.clone();
         self.push_debug_log(
             "relay.transport.connect",
             format!("reason={reason} start force_reconnect={force_reconnect}"),
@@ -1021,6 +1011,7 @@ impl AppCore {
             return;
         }
         self.relay_transport_runtime.connect_in_flight = false;
+        self.relay_transport_runtime.connect_started_at = None;
         let connect_dirty = self.relay_transport_runtime.connect_dirty;
         let force_reconnect_dirty = self.relay_transport_runtime.force_reconnect_dirty;
         self.relay_transport_runtime.connect_dirty = false;
@@ -1100,6 +1091,7 @@ impl AppCore {
         if self.logged_in.is_none() {
             self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
             self.relay_transport_runtime = RelayTransportRuntime::default();
+            self.refresh_protocol_sync_busy();
             return;
         }
         if self
@@ -1110,6 +1102,7 @@ impl AppCore {
         {
             self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
             self.relay_transport_runtime = RelayTransportRuntime::default();
+            self.refresh_protocol_sync_busy();
             return;
         }
 
@@ -1118,6 +1111,7 @@ impl AppCore {
         let plan_changed = previous_desired != desired_plan;
         self.note_protocol_plan_author_changes(previous_desired.as_ref(), desired_plan.as_ref());
         self.protocol_subscription_runtime.desired_plan = desired_plan.clone();
+        self.refresh_protocol_sync_busy();
 
         let plan_summary = summarize_protocol_plan(desired_plan.as_ref());
         if force || plan_changed {
@@ -1412,7 +1406,9 @@ impl AppCore {
             || self.protocol_subscription_runtime.refresh_in_flight
             || self.protocol_subscription_runtime.refresh_dirty;
         let has_pending_relay_publishes = !self.pending_relay_publishes.is_empty();
-        if !has_subscription_work && !has_pending_relay_publishes {
+        let pending_protocol_retry_needed = self.has_pending_protocol_engine_retry_work();
+        if !has_subscription_work && !has_pending_relay_publishes && !pending_protocol_retry_needed
+        {
             return;
         }
         let connected_relays = self
@@ -1433,35 +1429,35 @@ impl AppCore {
         let desired_unapplied = self.protocol_subscription_runtime.desired_plan
             != self.protocol_subscription_runtime.applied_plan;
         let tracked_peer_backfill_needed = self.tracked_peer_protocol_backfill_needed();
-        let pending_inbound_retry_needed = self
-            .protocol_engine
-            .as_ref()
-            .is_some_and(|engine| engine.has_pending_inbound_direct_events());
         let should_retry_backfill = self.protocol_subscription_runtime.desired_plan.is_some()
             && (connected_relays == 0
                 || tracked_peer_backfill_needed
                 || self.protocol_subscription_runtime.refresh_in_flight
                 || self.protocol_subscription_runtime.refresh_dirty
-                || desired_unapplied
-                || pending_inbound_retry_needed);
+                || desired_unapplied);
+        let should_retry_protocol = should_retry_backfill || pending_protocol_retry_needed;
         let should_fetch_tracked_peer_messages =
             desired_unapplied || self.protocol_subscription_runtime.refresh_dirty;
         self.push_debug_log(
             "protocol.liveness",
             format!(
-                "connected={connected_relays} retry_backfill={should_retry_backfill} tracked_messages={should_fetch_tracked_peer_messages} pending_inbound={pending_inbound_retry_needed} pending_publishes={}",
+                "connected={connected_relays} retry_protocol={should_retry_protocol} tracked_messages={should_fetch_tracked_peer_messages} pending_protocol={pending_protocol_retry_needed} pending_publishes={}",
                 self.pending_relay_publishes.len()
             ),
         );
         if has_subscription_work {
             self.reconcile_protocol_subscriptions("liveness_check", true);
         }
-        if should_retry_backfill {
+        if should_retry_protocol {
             let queued_targets = self.current_queued_protocol_targets();
-            if queued_targets.is_empty() {
+            if self.protocol_subscription_runtime.desired_plan.is_some()
+                && queued_targets.is_empty()
+            {
                 self.fetch_recent_protocol_metadata_state();
             }
-            if should_fetch_tracked_peer_messages {
+            if self.protocol_subscription_runtime.desired_plan.is_some()
+                && should_fetch_tracked_peer_messages
+            {
                 self.fetch_recent_messages_for_tracked_peers();
             }
             self.retry_protocol_engine_pending_outbound("liveness_check");
@@ -1496,6 +1492,7 @@ impl AppCore {
         if self.protocol_subscription_runtime.refresh_in_flight {
             self.protocol_subscription_runtime.refresh_dirty = true;
             self.protocol_subscription_runtime.force_reconnect_dirty |= force_reconnect_if_offline;
+            self.refresh_protocol_sync_busy();
             self.push_debug_log(
                 "protocol.subscription.reconcile",
                 format!("reason={reason} deferred=in_flight"),
@@ -1506,6 +1503,7 @@ impl AppCore {
         if self.relay_connected_count == 0 {
             self.protocol_subscription_runtime.refresh_dirty = true;
             self.protocol_subscription_runtime.force_reconnect_dirty |= force_reconnect_if_offline;
+            self.refresh_protocol_sync_busy();
             self.push_debug_log(
                 "protocol.subscription.reconcile",
                 format!("reason={reason} deferred=relay_offline"),
@@ -1527,13 +1525,14 @@ impl AppCore {
         self.protocol_subscription_runtime.refresh_dirty = false;
         self.protocol_subscription_runtime.force_reconnect_dirty = false;
         self.protocol_subscription_runtime.applying_plan = desired_plan.clone();
+        self.refresh_protocol_sync_busy();
         self.protocol_subscription_runtime.reconcile_token = self
             .protocol_subscription_runtime
             .reconcile_token
             .wrapping_add(1);
         let token = self.protocol_subscription_runtime.reconcile_token;
         let generation = self.protocol_reconnect_token;
-        let tx = self.core_sender.clone();
+        let tx = self.priority_sender.clone();
         self.runtime.spawn(async move {
             let apply_result = tokio::time::timeout(
                 Duration::from_secs(PROTOCOL_SUBSCRIPTION_APPLY_TIMEOUT_SECS),
@@ -1655,6 +1654,7 @@ impl AppCore {
                 PROTOCOL_RECONNECT_CHECK_SECS,
             ));
         }
+        self.refresh_protocol_sync_busy();
         self.rebuild_state();
         self.emit_state();
     }

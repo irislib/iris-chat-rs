@@ -1,3 +1,10 @@
+# Iris Chat 2026.6.3
+
+- Messages recover more reliably after the app was closed, restarted, or offline.
+- Group messages and linked devices retry missing keys instead of getting stuck.
+- Restoring an existing profile with a secret key is covered by broader phone and simulator tests.
+- Desktop builds and release tests now cover more real app journeys.
+
 # Iris Chat 2026.5.29
 
 - iOS notifications stay off by default until turned on in Settings.

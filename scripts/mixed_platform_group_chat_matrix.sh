@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/scripts/mobile_relay_common.sh"
+source "${ROOT_DIR}/scripts/e2e_prerelease_common.sh"
 
 LOCAL_PROPERTIES="${ROOT_DIR}/android/local.properties"
 SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
@@ -39,6 +40,7 @@ PHASE="${PHASE:-all}"
 STATE_FILE="${STATE_FILE:-/tmp/iris-mixed-platform-state.env}"
 SKIP_BUILD=0
 USE_EXISTING_RELAY=0
+IOS_BOOTED_UDIDS=()
 
 RELAY_LOG="${RELAY_LOG:-/tmp/ndr-mixed-platform-relay.log}"
 ANDROID_CREATOR_GROUP_NAME="${ANDROID_CREATOR_GROUP_NAME:-AndroidCreatorGroup}"
@@ -317,6 +319,9 @@ cleanup() {
   if [[ -n "${RELAY_PID:-}" ]]; then
     stop_local_rust_relay "${RELAY_PID}"
   fi
+  if [[ "${IRIS_E2E_KEEP_IOS_SIMS:-0}" != "1" && ${#IOS_BOOTED_UDIDS[@]} -gt 0 ]]; then
+    iris_e2e_shutdown_ios_simulators "${IOS_BOOTED_UDIDS[@]}"
+  fi
   exit "${exit_code}"
 }
 report_error() {
@@ -361,6 +366,7 @@ if [[ -z "${IOS_PRIMARY_UDID}" || -z "${IOS_MEMBER_UDID}" ]]; then
   IFS=$'\n'
   ios_boot=(${ios_boot_output})
   IFS="${old_ifs}"
+  IOS_BOOTED_UDIDS+=("$(extract_ios_udid "${ios_boot[0]}")" "$(extract_ios_udid "${ios_boot[1]}")")
   [[ -z "${IOS_PRIMARY_UDID}" ]] && IOS_PRIMARY_UDID="$(extract_ios_udid "${ios_boot[0]}")"
   [[ -z "${IOS_MEMBER_UDID}" ]] && IOS_MEMBER_UDID="$(extract_ios_udid "${ios_boot[1]}")"
 fi

@@ -102,6 +102,45 @@ sys.exit(1)
 " "$name"
 }
 
+shutdown_stale_ios_simulators() {
+  if [[ "${IRIS_E2E_CLOSE_STALE_IOS_SIMS:-1}" == "0" ]]; then
+    return 0
+  fi
+
+  local -a keep=("$@")
+  local udid=""
+  while IFS= read -r udid; do
+    local keep_udid=""
+    local should_keep=0
+    for keep_udid in "${keep[@]}"; do
+      if [[ "${udid}" == "${keep_udid}" ]]; then
+        should_keep=1
+        break
+      fi
+    done
+    if [[ "${should_keep}" -eq 0 ]]; then
+      if pgrep -fl xcodebuild 2>/dev/null | grep -F "id=${udid}" >/dev/null 2>&1; then
+        echo "▶︎  Keeping active simulator $udid"
+        continue
+      fi
+      echo "▶︎  Shutting down stale simulator $udid"
+      xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
+    fi
+  done < <(xcrun simctl list devices booted | sed -n 's/.*(\([0-9A-F-]\{36\}\)) (Booted).*/\1/p')
+}
+
+shutdown_owned_ios_simulators() {
+  if [[ "${IRIS_E2E_KEEP_IOS_SIMS:-0}" == "1" ]]; then
+    return 0
+  fi
+
+  local udid=""
+  for udid in "$@"; do
+    [[ -n "$udid" ]] || continue
+    xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
+  done
+}
+
 slugify() {
   printf '%s' "$1" |
     /usr/bin/python3 -c "
@@ -222,17 +261,28 @@ export IRIS_XCODE_MARKETING_VERSION="${IRIS_XCODE_MARKETING_VERSION:-0.0.0}"
 # (which also wants x86_64) won't link.
 mkdir -p "$DERIVED_DATA" "$OUT_DIR"
 first_udid=""
+TARGET_UDIDS=()
 for d in "${DEVICES[@]}"; do
   candidate="$(resolve_udid "$d" || true)"
   if [[ -n "${candidate:-}" ]]; then
-    first_udid="$candidate"
-    break
+    TARGET_UDIDS+=("$candidate")
+    if [[ -z "$first_udid" ]]; then
+      first_udid="$candidate"
+    fi
   fi
 done
 if [[ -z "$first_udid" ]]; then
   echo "No matching simulator booted; nothing to do." >&2
   exit 1
 fi
+shutdown_stale_ios_simulators "${TARGET_UDIDS[@]}"
+cleanup() {
+  local exit_code=$?
+  shutdown_owned_ios_simulators "${TARGET_UDIDS[@]}"
+  exit "${exit_code}"
+}
+trap cleanup EXIT
+
 echo "▶︎  Building tests against $first_udid …"
 xcodebuild \
   -project "$PROJECT" \

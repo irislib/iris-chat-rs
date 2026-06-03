@@ -207,7 +207,7 @@ fn group_created_by_unknown_creator_surfaces_as_request_and_clears_on_accept() {
     let chat_id = format!("group:{group_id}");
     let group = GroupSnapshot {
         group_id: group_id.clone(),
-        protocol: GroupProtocol::PairwiseFanoutV1,
+        protocol: GroupProtocol::sender_key_v1(),
         name: "Stranger's group".to_string(),
         picture: None,
         about: None,
@@ -275,7 +275,7 @@ fn group_created_by_accepted_peer_is_not_a_request() {
     let chat_id = "group:trusted_group".to_string();
     let group = GroupSnapshot {
         group_id: "trusted_group".to_string(),
-        protocol: GroupProtocol::PairwiseFanoutV1,
+        protocol: GroupProtocol::sender_key_v1(),
         name: "Friend's group".to_string(),
         picture: None,
         about: None,
@@ -2232,15 +2232,15 @@ fn group_seen_receipt_sent_directly_to_author_updates_sender_copy() {
         Some(alice_owner.public_key().to_hex()),
         Some("group-outer".to_string()),
     );
-
     bob.mark_messages_seen(&chat_id, std::slice::from_ref(&message_id));
 
     let receipt_publishes = bob
         .pending_relay_publishes
         .values()
         .filter(|pending| {
-            pending.target_owner_pubkey_hex.as_deref()
-                == Some(alice_owner.public_key().to_hex().as_str())
+            serde_json::from_str::<Event>(&pending.event_json)
+                .ok()
+                .is_some_and(|event| event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND)
         })
         .count();
     assert_eq!(receipt_publishes, 1);

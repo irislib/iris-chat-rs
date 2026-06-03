@@ -13,10 +13,9 @@ This repo has repeatable release entrypoints for every platform:
 `./scripts/release` builds whatever the current host can build, stages a
 hashtree release tree under `dist/release/<tag>/`, and with `--publish` runs
 `htree add` + `htree release publish releases/iris-chat-rs <tag> <cid>`, which
-also repoints the mutable `latest` release. The macOS desktop updater uses the
-published `iris-chat-<tag>-macos-arm64.app.tar.gz` asset from that latest
-manifest and falls back to the DMG for manual installs. Windows update checks
-use the same latest manifest and open the published setup `.exe`. A publish
+also repoints the mutable `latest` release. The desktop updaters use the
+bundled `iris` helper to resolve the signed hashtree latest release before
+selecting the macOS `.app.tar.gz` or Windows setup `.exe` asset. A publish
 with the full CLI archive set also updates the Homebrew tap at
 `homebrew-iris.git`, unless
 `--skip-homebrew-tap` is passed. Partial builds with `--only` or `--skip` are

@@ -19,8 +19,26 @@ impl ProtocolEngine {
                 return Ok(None);
             }
         };
-        if let Some(decrypted) = self.decrypt_direct_message_envelope(event, &envelope, true)? {
-            return Ok(Some(decrypted));
+        match self.decrypt_direct_message_envelope(event, &envelope, true) {
+            Ok(Some(decrypted)) => return Ok(Some(decrypted)),
+            Ok(None) => {}
+            Err(error) => {
+                if self.queue_header_group_sender_key_candidate_after_direct_error(event)? {
+                    return Ok(None);
+                }
+                if protocol_event_has_tag(event, "header")
+                    && !self.is_known_message_author(event.pubkey)
+                {
+                    self.queue_pending_inbound_direct_event(
+                        event.clone(),
+                        event.created_at.as_secs(),
+                        Some(&envelope),
+                        Some(resolution),
+                    )?;
+                    return Ok(None);
+                }
+                return Err(error);
+            }
         }
         self.queue_header_group_sender_key_candidate(event)?;
         self.queue_pending_inbound_direct_event(
@@ -45,6 +63,20 @@ impl ProtocolEngine {
         Ok(())
     }
 
+    fn queue_header_group_sender_key_candidate_after_direct_error(
+        &mut self,
+        event: &Event,
+    ) -> anyhow::Result<bool> {
+        if !protocol_event_has_tag(event, "header") || self.is_known_message_author(event.pubkey) {
+            return Ok(false);
+        }
+        let Ok(parsed) = parse_group_sender_key_message_event_unchecked(event) else {
+            return Ok(false);
+        };
+        self.queue_pending_group_sender_key_message(parsed)?;
+        Ok(true)
+    }
+
     pub fn process_group_outer_event(
         &mut self,
         event: &Event,
@@ -65,9 +97,19 @@ impl ProtocolEngine {
                 ..Default::default()
             });
         };
-        let result = self.handle_group_sender_key_message(message)?;
+        let mut result = self.handle_group_sender_key_message(message)?;
         if result.pending {
             self.queue_pending_group_sender_key_message(parsed)?;
+        } else if self.clear_pending_group_sender_key_candidate(&parsed) {
+            self.persist()?;
+        }
+        if !result.pending {
+            let retry = self.retry_pending_group_inputs(NdrUnixSeconds(unix_now().get()))?;
+            result.events.extend(retry.events);
+            result.effects.extend(retry.effects);
+            result.queued_targets.extend(retry.queued_targets);
+            result.queued_targets.sort();
+            result.queued_targets.dedup();
         }
         Ok(ProtocolGroupIncomingResult {
             consumed: true,
@@ -81,7 +123,14 @@ impl ProtocolEngine {
         from_owner_pubkey: PublicKey,
         from_sender_device_pubkey: Option<PublicKey>,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
-        let is_group_payload = self.group_manager.is_pairwise_payload(payload);
+        let (is_group_payload, is_supported_group_payload) =
+            classify_group_pairwise_payload(payload).unwrap_or((false, false));
+        if is_group_payload && !is_supported_group_payload {
+            return Ok(ProtocolGroupIncomingResult {
+                consumed: true,
+                ..Default::default()
+            });
+        }
         let sender_device = from_sender_device_pubkey.map(ndr_device);
         let sender_owner = ndr_owner(from_owner_pubkey);
         let sender_owner =
@@ -93,7 +142,7 @@ impl ProtocolEngine {
                     claimed_owner,
                     sender_device,
                 } => {
-                    if is_group_payload {
+                    if is_supported_group_payload {
                         let queued_targets = vec![format!("owner:{}", claimed_owner.to_hex())];
                         let effects = self.protocol_backfill_effects_for_targets(
                             &queued_targets,
@@ -124,14 +173,16 @@ impl ProtocolEngine {
             None => self.group_manager.handle_incoming(sender_owner, payload),
         };
 
+        let now = NdrUnixSeconds(unix_now().get());
         match result {
             Ok(Some(event)) => {
                 if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
-                    let (effects, queued_targets) = self.sender_key_repair_response_effects(
-                        repair.requester_owner,
-                        &repair.request,
-                        NdrUnixSeconds(unix_now().get()),
-                    )?;
+                    let (effects, queued_targets) =
+                        self.sender_key_repair_response_effects(
+                            repair.requester_owner,
+                            &repair.request,
+                            now,
+                        )?;
                     self.persist()?;
                     return Ok(ProtocolGroupIncomingResult {
                         effects,
@@ -144,19 +195,20 @@ impl ProtocolEngine {
                 let mut queued_targets = Vec::new();
                 if sender_owner != self.local_owner {
                     if let GroupIncomingEvent::MetadataUpdated(group) = &event {
-                        let (sync_effects, sync_targets) =
-                            self.sync_group_to_local_siblings(group)?;
+                        for pending in &mut self.pending_group_pairwise_payloads {
+                            pending.next_retry_at_secs = 0;
+                        }
+                        let (sync_effects, sync_targets) = self.sync_group_to_local_siblings(group)?;
                         effects.extend(sync_effects);
                         queued_targets.extend(sync_targets);
                     }
                 }
                 let mut events = vec![event];
-                let retry = self.retry_pending_group_inputs(NdrUnixSeconds(unix_now().get()))?;
+                let retry = self.retry_pending_group_inputs(now)?;
                 events.extend(retry.events);
                 effects.extend(retry.effects);
                 queued_targets.extend(retry.queued_targets);
-                let fanout_retry =
-                    self.retry_pending_group_fanouts(NdrUnixSeconds(unix_now().get()))?;
+                let fanout_retry = self.retry_pending_group_fanouts(now)?;
                 effects.extend(fanout_retry.effects);
                 queued_targets.extend(fanout_retry.queued_targets);
                 queued_targets.extend(self.queued_group_targets());
@@ -171,12 +223,18 @@ impl ProtocolEngine {
                     ..Default::default()
                 })
             }
-            Ok(None) => Ok(ProtocolGroupIncomingResult {
-                consumed: is_group_payload,
-                ..Default::default()
-            }),
+            Ok(None) => {
+                let retry = self.retry_pending_group_inputs(now)?;
+                Ok(ProtocolGroupIncomingResult {
+                    events: retry.events,
+                    effects: retry.effects,
+                    queued_targets: retry.queued_targets,
+                    consumed: is_group_payload || retry.consumed,
+                    ..Default::default()
+                })
+            }
             Err(error) => {
-                if is_group_payload {
+                if is_supported_group_payload {
                     self.queue_pending_group_pairwise_payload(
                         sender_owner,
                         sender_device,
@@ -228,12 +286,13 @@ impl ProtocolEngine {
                     continue;
                 }
             };
+            let local_targets =
+                self.remaining_local_sibling_targets(&pending.delivered_local_device_hexes);
             if pending.probe_local_sibling_roster
-                && now.get().saturating_sub(pending.created_at_secs)
-                    > LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS
-                && self
-                    .remaining_local_sibling_targets(&pending.delivered_local_device_hexes)
-                    .is_empty()
+                && local_targets.is_empty()
+                && (self.has_app_keys_for_owner(self.local_owner)
+                    || now.get().saturating_sub(pending.created_at_secs)
+                        > LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS)
             {
                 pending.probe_local_sibling_roster = false;
             }
@@ -245,8 +304,6 @@ impl ProtocolEngine {
             } else {
                 Vec::new()
             };
-            let local_targets =
-                self.remaining_local_sibling_targets(&pending.delivered_local_device_hexes);
 
             if remote_targets.is_empty() && local_targets.is_empty() {
                 let queued_targets = self.pending_target_hexes(&pending);
@@ -297,6 +354,7 @@ impl ProtocolEngine {
                 effects.extend(protocol_effects_from_prepared(
                     &remote,
                     pending.inner_event_id.clone(),
+                    pending.chat_id.clone(),
                     &mut event_ids,
                 )?);
             }
@@ -318,6 +376,7 @@ impl ProtocolEngine {
                     effects.extend(protocol_effects_from_prepared(
                         &local,
                         pending.inner_event_id.clone(),
+                        pending.chat_id.clone(),
                         &mut event_ids,
                     )?);
                 }
@@ -477,6 +536,7 @@ impl ProtocolEngine {
         else {
             return Ok(None);
         };
+        self.clear_pending_group_sender_key_candidate_for_direct_event(event);
         self.invalidate_known_message_author_cache();
         let (conversation_owner, payload) = decode_local_sibling_payload(&received.payload)
             .map(|(owner, payload)| (Some(owner), payload))
@@ -511,6 +571,12 @@ impl ProtocolEngine {
                 still_pairwise.push(pending);
                 continue;
             }
+            let (_, is_supported_group_payload) =
+                classify_group_pairwise_payload(&pending.payload).unwrap_or((false, false));
+            if !is_supported_group_payload {
+                persist_needed = true;
+                continue;
+            }
             let sender_resolution = self
                 .resolve_group_pairwise_sender_owner(pending.sender_owner, pending.sender_device);
             let sender_owner = match sender_resolution {
@@ -539,11 +605,12 @@ impl ProtocolEngine {
             match outcome {
                 Ok(Some(event)) => {
                     if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
-                        let (effects, queued_targets) = self.sender_key_repair_response_effects(
-                            repair.requester_owner,
-                            &repair.request,
-                            now,
-                        )?;
+                        let (effects, queued_targets) =
+                            self.sender_key_repair_response_effects(
+                                repair.requester_owner,
+                                &repair.request,
+                                now,
+                            )?;
                         result.effects.extend(effects);
                         result.queued_targets.extend(queued_targets);
                     } else {
@@ -567,11 +634,44 @@ impl ProtocolEngine {
 
         let sender_keys = std::mem::take(&mut self.pending_group_sender_key_messages);
         let mut still_sender_keys = Vec::new();
+        let mut stale_sender_repairs = Vec::new();
         for parsed in sender_keys {
+            if let Some(group_id) =
+                self.inactive_local_group_id_for_sender_key_candidate(&parsed)
+            {
+                stale_sender_repairs.push((
+                    group_id,
+                    parsed.sender_event_pubkey,
+                    parsed.encrypted_header.is_none().then_some(parsed.key_id),
+                    parsed
+                        .encrypted_header
+                        .is_none()
+                        .then_some(parsed.message_number),
+                ));
+                persist_needed = true;
+                continue;
+            }
             let Some(message) = self.group_sender_key_message_from_parsed(&parsed) else {
+                if self.unmapped_group_sender_key_candidate_is_known_message_author(&parsed) {
+                    persist_needed = true;
+                    continue;
+                }
                 still_sender_keys.push(parsed);
                 continue;
             };
+            if self.pending_group_sender_key_candidate_predates_known_distribution(&parsed) {
+                stale_sender_repairs.push((
+                    message.group_id,
+                    parsed.sender_event_pubkey,
+                    parsed.encrypted_header.is_none().then_some(parsed.key_id),
+                    parsed
+                        .encrypted_header
+                        .is_none()
+                        .then_some(parsed.message_number),
+                ));
+                persist_needed = true;
+                continue;
+            }
             let outcome = self.handle_group_sender_key_message(message)?;
             if outcome.pending {
                 still_sender_keys.push(parsed);
@@ -582,6 +682,17 @@ impl ProtocolEngine {
             result.effects.extend(outcome.effects);
         }
         self.pending_group_sender_key_messages = still_sender_keys;
+        for (group_id, sender_event_pubkey, key_id, message_number) in stale_sender_repairs {
+            if !self.has_pending_group_sender_key_candidate(&group_id, sender_event_pubkey) {
+                persist_needed |= self.clear_group_sender_key_repairs(
+                    &group_id,
+                    sender_event_pubkey,
+                    key_id,
+                    message_number,
+                );
+            }
+        }
+        persist_needed |= self.prune_pending_group_sender_key_work_for_inactive_local_groups();
         let repair_effects = self.retry_pending_group_sender_key_repairs(now)?;
         if !repair_effects.is_empty() {
             result.effects.extend(repair_effects);
@@ -657,9 +768,11 @@ impl ProtocolEngine {
             };
             let still_has_gap = !prepared.relay_gaps.is_empty();
             let mut event_ids = Vec::new();
+            let chat_id = group_chat_id(&pending.group_id);
             effects.extend(protocol_effects_from_group_prepared_publish(
                 &prepared,
                 pending.inner_event_id.clone(),
+                chat_id,
                 &mut event_ids,
             )?);
             if still_has_gap {
@@ -683,5 +796,172 @@ impl ProtocolEngine {
             queued_targets,
             ..Default::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod incoming_retry_tests {
+    use super::*;
+    use nostr_double_ratchet_runtime::InMemoryStorage;
+
+    fn test_engine(owner: &Keys, device: &Keys) -> ProtocolEngine {
+        ProtocolEngine::load_or_create_for_local_device(
+            Arc::new(InMemoryStorage::new()),
+            owner.public_key(),
+            device,
+        )
+        .expect("test protocol engine")
+    }
+
+    fn direct_message_before_receiver_observes_response(
+        receiver: &ProtocolEngine,
+        sender_owner: &Keys,
+        body: &str,
+        created_at_secs: u64,
+    ) -> (Event, Event) {
+        let invite = receiver.local_invite().expect("receiver invite");
+        let (mut sender_session, response) = invite
+            .accept_with_owner(
+                sender_owner.public_key(),
+                sender_owner.secret_key().to_secret_bytes(),
+                Some(sender_owner.public_key().to_hex()),
+                Some(sender_owner.public_key()),
+            )
+            .expect("sender accepts receiver invite");
+        let response_event = invite_response_event(&response).expect("invite response event");
+        let plan = sender_session
+            .plan_send(body.as_bytes(), NdrUnixSeconds(created_at_secs))
+            .expect("sender plans direct message");
+        let sent = sender_session.apply_send(plan);
+        let message_event = message_event(&sent.envelope).expect("direct message event");
+        (message_event, response_event)
+    }
+
+    #[test]
+    fn direct_message_retry_clears_header_sender_key_candidate() {
+        let bob_owner = Keys::generate();
+        let bob_device = Keys::generate();
+        let alice_owner = Keys::generate();
+        let mut bob = test_engine(&bob_owner, &bob_device);
+        let (message_event, response_event) = direct_message_before_receiver_observes_response(
+            &bob,
+            &alice_owner,
+            "hello after backfill",
+            100,
+        );
+
+        assert!(
+            bob.process_direct_message_event(&message_event)
+                .expect("unknown direct message queues")
+                .is_none(),
+            "receiver should not decrypt before it observes the session response"
+        );
+        assert_eq!(bob.pending_inbound.len(), 1);
+        assert_eq!(bob.pending_group_sender_key_messages.len(), 1);
+        assert!(
+            bob.has_pending_retry_work(),
+            "queued direct/group candidate should keep liveness retry work active"
+        );
+
+        let mut direct_messages = bob
+            .observe_invite_response_event(&response_event)
+            .expect("receiver observes session response");
+        let retry = bob
+            .retry_pending_protocol(NdrUnixSeconds(103))
+            .expect("retry pending direct message");
+        direct_messages
+            .direct_messages
+            .extend(retry.direct_messages);
+
+        assert_eq!(direct_messages.direct_messages.len(), 1);
+        assert_eq!(
+            direct_messages.direct_messages[0].content,
+            "hello after backfill"
+        );
+        assert!(bob.pending_inbound.is_empty());
+        assert!(
+            bob.pending_group_sender_key_messages.is_empty(),
+            "the same event must not remain queued as a sender-key repair candidate after direct decrypt succeeds"
+        );
+        assert!(
+            bob.pending_group_sender_key_repairs.is_empty(),
+            "direct decrypt success should not leave sender-key repair bookkeeping behind"
+        );
+        assert!(
+            !bob.has_pending_retry_work(),
+            "all retry work should be clear after the pending direct message applies"
+        );
+    }
+
+    #[test]
+    fn unknown_group_sender_key_candidate_alone_does_not_keep_retry_work_alive() {
+        let bob_owner = Keys::generate();
+        let bob_device = Keys::generate();
+        let alice_owner = Keys::generate();
+        let mut bob = test_engine(&bob_owner, &bob_device);
+        let (message_event, _response_event) = direct_message_before_receiver_observes_response(
+            &bob,
+            &alice_owner,
+            "hello before metadata",
+            100,
+        );
+
+        assert!(
+            bob.process_direct_message_event(&message_event)
+                .expect("unknown direct message queues")
+                .is_none()
+        );
+        assert_eq!(bob.pending_group_sender_key_messages.len(), 1);
+        bob.pending_inbound.clear();
+
+        assert!(
+            !bob.has_pending_retry_work(),
+            "a header-shaped direct event with no known group sender key must not keep liveness hot by itself"
+        );
+    }
+
+    #[test]
+    fn known_direct_message_author_prunes_unmapped_sender_key_candidate_without_decrypt() {
+        let bob_owner = Keys::generate();
+        let bob_device = Keys::generate();
+        let alice_owner = Keys::generate();
+        let mut bob = test_engine(&bob_owner, &bob_device);
+        let (message_event, response_event) = direct_message_before_receiver_observes_response(
+            &bob,
+            &alice_owner,
+            "hello from another target",
+            100,
+        );
+
+        assert!(
+            bob.process_direct_message_event(&message_event)
+                .expect("unknown direct message queues")
+                .is_none()
+        );
+        assert_eq!(bob.pending_inbound.len(), 1);
+        assert_eq!(bob.pending_group_sender_key_messages.len(), 1);
+
+        bob.pending_inbound.clear();
+        let retry = bob
+            .observe_invite_response_event(&response_event)
+            .expect("receiver observes session response");
+
+        assert!(
+            retry.direct_messages.is_empty(),
+            "test setup removed the pending direct decrypt path"
+        );
+        assert!(bob.is_known_message_author(message_event.pubkey));
+        assert!(
+            bob.pending_group_sender_key_messages.is_empty(),
+            "once the event pubkey is known to be a direct-message author, an unmapped group sender-key candidate should be pruned"
+        );
+        assert_eq!(
+            bob.debug_snapshot().pending_group_sender_key_unmapped_count,
+            0
+        );
+        assert!(
+            !bob.has_pending_retry_work(),
+            "pruning the stale candidate should leave no background retry work"
+        );
     }
 }

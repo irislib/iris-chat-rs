@@ -38,43 +38,12 @@ DEFAULT_CASES = [
     "sender_key_late_member_pre_add_denied",
     "group_metadata_drop_then_multiple_messages",
     "relay_offline_outbox_then_repair",
+    "direct_group_offline_restart_recovery",
 ]
 
 
-class ValidationFailure(Exception):
-    pass
-
-
-@dataclass
-class CaseResult:
-    case: str
-    status: str
-    fault_injected: bool = False
-    repair_observed: bool = False
-    visible_result_ok: bool = False
-    final_pending_repair_count: int = 0
-    artifact_dir: str = ""
-    dropped_event_id: str = ""
-    details: dict[str, Any] = field(default_factory=dict)
-    error: str = ""
-
-    def to_json(self) -> dict[str, Any]:
-        result = {
-            "case": self.case,
-            "status": self.status,
-            "fault_injected": self.fault_injected,
-            "repair_observed": self.repair_observed,
-            "visible_result_ok": self.visible_result_ok,
-            "final_pending_repair_count": self.final_pending_repair_count,
-            "artifact_dir": self.artifact_dir,
-        }
-        if self.dropped_event_id:
-            result["dropped_event_id"] = self.dropped_event_id
-        if self.details:
-            result["details"] = self.details
-        if self.error:
-            result["error"] = self.error
-        return result
+from protocol_fault_common import CaseResult, ValidationFailure
+from protocol_fault_cases import ProtocolFaultCasesMixin
 
 
 def run(
@@ -135,7 +104,7 @@ def free_tcp_port() -> int:
         return int(sock.getsockname()[1])
 
 
-class ProtocolFaultValidation:
+class ProtocolFaultValidation(ProtocolFaultCasesMixin):
     def __init__(self, args: argparse.Namespace):
         self.args = args
         self.stamp = time.strftime("%Y%m%dT%H%M%S")
@@ -157,6 +126,7 @@ class ProtocolFaultValidation:
             "sender_key_duplicate_replay_idempotent": self.case_sender_key_duplicate_replay_idempotent,
             "group_metadata_drop_then_multiple_messages": self.case_group_metadata_drop_then_multiple_messages,
             "relay_offline_outbox_then_repair": self.case_relay_offline_outbox_then_repair,
+            "direct_group_offline_restart_recovery": self.case_direct_group_offline_restart_recovery,
             "linked_owner_sender_key_repair": self.case_linked_owner_sender_key_repair,
             "sender_key_late_member_post_add_repair": self.case_sender_key_late_member_post_add_repair,
             "sender_key_removed_member_repair_denied": self.case_sender_key_removed_member_repair_denied,
@@ -184,6 +154,7 @@ class ProtocolFaultValidation:
         config.setdefault("relay", {})
         config["relay"]["label"] = f"iris.protocol-fault.{self.stamp}.relay"
         config["relay"]["port"] = free_tcp_port()
+        config["relay"]["url"] = f"ws://127.0.0.1:{config['relay']['port']}"
         config["relay"]["drop_file"] = str(Path(config["work_dir"]) / "drop-events.txt")
         config["relay"]["log_file"] = str(Path(config["work_dir"]) / "relay.log")
         config["open_apps"] = True
@@ -380,6 +351,25 @@ class ProtocolFaultValidation:
             suffix=f"{suffix}-connected",
         )
 
+    def device_ids_for_user(self, user: str) -> list[str]:
+        return [
+            device_id
+            for device_id, device in sorted(self.state.get("devices", {}).items())
+            if device.get("user") == user
+        ]
+
+    def activate_user_devices(
+        self,
+        case_dir: Path,
+        user: str,
+        *,
+        drain: bool,
+        suffix: str,
+    ) -> None:
+        for device_id in self.device_ids_for_user(user):
+            device_suffix = suffix if device_id == "alice1" else f"{device_id}-{suffix}"
+            self.activate_connected(case_dir, device_id, drain=drain, suffix=device_suffix)
+
     def prepare_extra_peers(self, log_dir: Path) -> None:
         if "carol1" not in self.state.get("devices", {}):
             return
@@ -435,7 +425,14 @@ class ProtocolFaultValidation:
             suffix="alice-warmup-carol-receive",
         )
 
-    def restart_app(self, case_dir: Path, device_id: str, *, suffix: str = "restart") -> None:
+    def restart_app(
+        self,
+        case_dir: Path,
+        device_id: str,
+        *,
+        suffix: str = "restart",
+        wait_connected: bool = True,
+    ) -> None:
         device = self.device(device_id)
         if device["platform"] != "ios":
             raise ValidationFailure("protocol fault validation v1 supports iOS harness devices")
@@ -450,7 +447,59 @@ class ProtocolFaultValidation:
             log_path=case_dir / f"{device_id}-{suffix}-launch.log",
             check=False,
         )
-        self.activate_connected(case_dir, device_id, drain=False, suffix=f"{suffix}-after-launch")
+        if wait_connected:
+            self.activate_connected(case_dir, device_id, drain=False, suffix=f"{suffix}-after-launch")
+
+    def send_peer_message(
+        self,
+        case_dir: Path,
+        device_id: str,
+        peer_device_id: str,
+        message: str,
+        *,
+        wait_for_delivery: bool = True,
+        wait_for_relay_drain: bool = True,
+        suffix: str | None = None,
+    ) -> dict[str, str]:
+        peer_input = self.device(peer_device_id)["owner_npub"]
+        completed = self.harness(
+            case_dir,
+            device_id,
+            "send_message_from_args",
+            args={
+                "peer_input": peer_input,
+                "message": message,
+                "wait_for_delivery": str(wait_for_delivery).lower(),
+                "wait_for_relay_drain": str(wait_for_relay_drain).lower(),
+                "relay_drain_timeout_secs": "180",
+            },
+            suffix=suffix or f"send-peer-{message}",
+        )
+        return parse_status(completed.stdout)
+
+    def wait_peer_message(
+        self,
+        case_dir: Path,
+        device_id: str,
+        peer_device_id: str,
+        message: str,
+        *,
+        direction: str = "incoming",
+        suffix: str | None = None,
+    ) -> dict[str, str]:
+        peer_input = self.device(peer_device_id)["owner_npub"]
+        completed = self.harness(
+            case_dir,
+            device_id,
+            "wait_for_message_from_args",
+            args={
+                "peer_input": peer_input,
+                "message": message,
+                "direction": direction,
+            },
+            suffix=suffix or f"wait-peer-{message}",
+        )
+        return parse_status(completed.stdout)
 
     def send_message(
         self,
@@ -672,7 +721,7 @@ class ProtocolFaultValidation:
         case_dir: Path,
         source_device_id: str,
         *,
-        target_device_id: str | None = None,
+        peer_device_id: str | None = None,
         pairwise_only: bool = False,
         group_sender_outer_only: bool = False,
         suffix: str = "pending",
@@ -686,16 +735,8 @@ class ProtocolFaultValidation:
             "--format",
             "json",
         ]
-        if target_device_id:
-            target = self.device(target_device_id)
-            command.extend(
-                [
-                    "--target-owner-hex",
-                    target["owner_hex"],
-                    "--target-device-hex",
-                    target["device_hex"],
-                ]
-            )
+        if peer_device_id:
+            command.extend(["--chat-id", self.device(peer_device_id)["owner_hex"]])
         if pairwise_only:
             command.append("--pairwise-only")
         if group_sender_outer_only:
@@ -752,6 +793,13 @@ class ProtocolFaultValidation:
         ]:
             if source.exists():
                 shutil.copyfile(source, case_dir / name)
+        for device_id, device in sorted(self.state.get("devices", {}).items()):
+            data_dir = device.get("data_dir")
+            if not data_dir:
+                continue
+            debug_path = Path(data_dir) / "iris_chat_runtime_debug.json"
+            if debug_path.exists():
+                shutil.copyfile(debug_path, case_dir / f"{device_id}-runtime-debug.json")
 
     def visible_message_count(self, device_id: str, chat_id: str, message: str) -> int:
         data_dir = Path(self.device(device_id)["data_dir"])
@@ -792,258 +840,227 @@ class ProtocolFaultValidation:
         group = self.group("alice-bob")
         return group["chat_id"], group["group_id"]
 
-    def run_revision_repair_flow(
-        self,
-        case_dir: Path,
-        *,
-        label: str,
-        message_count: int = 1,
-        offline_messages: bool = False,
-        receiver_restart: bool = False,
-        sender_restart: bool = False,
-        linked_owner_assertion: bool = False,
-    ) -> CaseResult:
+    def case_direct_group_offline_restart_recovery(self, case_dir: Path) -> CaseResult:
         chat_id, group_id = self.base_group()
         stamp = case_stamp()
-        baseline = f"{label}-baseline-{stamp}"
-        new_name = f"{label} Revision {stamp}"
-        messages = [f"{label}-message-{stamp}-{index}" for index in range(1, message_count + 1)]
+        alice_to_bob_warmup = f"offline-restart-a2b-warmup-{stamp}"
+        bob_to_alice_warmup = f"offline-restart-b2a-warmup-{stamp}"
+        group_warmup = f"offline-restart-group-warmup-{stamp}"
+        alice_to_bob = f"offline-restart-a2b-{stamp}"
+        bob_to_alice = f"offline-restart-b2a-{stamp}"
+        alice_group = f"offline-restart-alice-group-{stamp}"
+        bob_group = f"offline-restart-bob-group-{stamp}"
 
-        self.send_message(case_dir, "alice1", chat_id, baseline, suffix="baseline-send")
-        self.wait_message(case_dir, "bob1", chat_id, baseline, suffix="baseline-wait-bob")
-
-        self.begin_fault(case_dir)
-        self.update_group_name(
-            case_dir,
-            group_id,
-            new_name,
-            wait_for_relay_drain=False,
-            suffix="offline-rename",
-        )
-        if offline_messages:
-            for message in messages:
-                self.send_message(
-                    case_dir,
-                    "alice1",
-                    chat_id,
-                    message,
-                    wait_for_delivery=False,
-                    wait_for_relay_drain=False,
-                    suffix=f"offline-send-{message}",
-                )
-
-        rows = self.pending_rows(
+        self.send_peer_message(
             case_dir,
             "alice1",
-            target_device_id="bob1",
-            pairwise_only=True,
-            suffix="bob-pending-before-drop",
+            "bob1",
+            alice_to_bob_warmup,
+            suffix="warmup-alice-direct-send",
         )
-        drop_row = self.select_pending_row(rows, selector="newest", purpose="Bob metadata revision")
-        self.write_drop_file(drop_row["event_id"])
-        self.start_relay(case_dir / "restart-relay-after-drop.log")
-        self.activate_connected(case_dir, "alice1", drain=True, suffix="alice-after-drop")
-        self.wait_group_name(case_dir, "alice2", chat_id, new_name, suffix="alice2-renamed")
+        self.wait_peer_message(
+            case_dir,
+            "bob1",
+            "alice1",
+            alice_to_bob_warmup,
+            suffix="warmup-bob-direct-wait",
+        )
+        self.send_peer_message(
+            case_dir,
+            "bob1",
+            "alice1",
+            bob_to_alice_warmup,
+            suffix="warmup-bob-direct-send",
+        )
+        self.wait_peer_message(
+            case_dir,
+            "alice1",
+            "bob1",
+            bob_to_alice_warmup,
+            suffix="warmup-alice-direct-wait",
+        )
+        self.wait_peer_message(
+            case_dir,
+            "alice2",
+            "bob1",
+            bob_to_alice_warmup,
+            suffix="warmup-alice2-direct-self-sync",
+        )
+        self.send_message(case_dir, "alice1", chat_id, group_warmup, suffix="warmup-group-send")
+        self.wait_message(case_dir, "bob1", chat_id, group_warmup, suffix="warmup-group-bob-wait")
+        self.wait_message(
+            case_dir,
+            "alice2",
+            chat_id,
+            group_warmup,
+            direction="outgoing",
+            suffix="warmup-group-alice2-self-sync",
+        )
 
-        if not offline_messages:
-            for message in messages:
-                self.send_message(case_dir, "alice1", chat_id, message, suffix=f"send-{message}")
-
-        passive_ok = self.wait_message(
+        self.begin_fault(case_dir)
+        alice_to_bob_send = self.send_peer_message(
+            case_dir,
+            "alice1",
+            "bob1",
+            alice_to_bob,
+            wait_for_delivery=False,
+            wait_for_relay_drain=False,
+            suffix="offline-alice-direct-send",
+        )
+        bob_to_alice_send = self.send_peer_message(
+            case_dir,
+            "bob1",
+            "alice1",
+            bob_to_alice,
+            wait_for_delivery=False,
+            wait_for_relay_drain=False,
+            suffix="offline-bob-direct-send",
+        )
+        alice_group_send = self.send_message(
+            case_dir,
+            "alice1",
+            chat_id,
+            alice_group,
+            wait_for_delivery=False,
+            wait_for_relay_drain=False,
+            suffix="offline-alice-group-send",
+        )
+        bob_group_send = self.send_message(
             case_dir,
             "bob1",
             chat_id,
-            messages[-1],
-            check=False,
-            suffix="bob-passive-wait-last-message",
+            bob_group,
+            wait_for_delivery=False,
+            wait_for_relay_drain=False,
+            suffix="offline-bob-group-send",
         )
-        passive_debug = self.report_protocol_debug(case_dir, "bob1", "bob-debug-after-passive")
-        passive_pending = self.pending_repair_count(passive_debug)
-        if not passive_ok and passive_pending == 0:
-            raise ValidationFailure("Bob missed the message but did not record pending sender-key repair state")
 
-        if receiver_restart:
-            self.restart_app(case_dir, "bob1", suffix="bob-restart-before-repair")
-            restarted = self.report_protocol_debug(case_dir, "bob1", "bob-debug-after-restart")
-            if self.pending_repair_count(restarted) < passive_pending:
-                raise ValidationFailure("receiver restart lost pending sender-key repair state")
+        for device_id in ("alice1", "alice2", "bob1"):
+            self.restart_app(
+                case_dir,
+                device_id,
+                suffix=f"{device_id}-offline-restart",
+                wait_connected=False,
+            )
 
-        if sender_restart:
-            self.restart_app(case_dir, "alice1", suffix="alice-restart-before-repair")
-            self.report_protocol_debug(case_dir, "alice1", "alice-debug-after-restart")
+        self.start_relay(case_dir / "restart-relay-after-offline-sends.log")
+        self.activate_connected(case_dir, "alice1", drain=True, suffix="alice-after-offline")
+        self.activate_connected(case_dir, "bob1", drain=True, suffix="bob-after-offline")
+        self.activate_connected(case_dir, "alice2", drain=True, suffix="alice2-after-offline")
+        self.activate_connected(case_dir, "alice1", drain=True, suffix="alice-final-drain")
+        self.activate_connected(case_dir, "bob1", drain=True, suffix="bob-final-drain")
 
-        self.activate_connected(case_dir, "alice1", drain=True, suffix="alice-force")
-        self.activate_connected(case_dir, "bob1", drain=False, suffix="bob-force")
-        time.sleep(3)
-        for message in messages:
-            self.wait_message(case_dir, "bob1", chat_id, message, suffix=f"bob-final-wait-{message}")
-        self.wait_group_name(case_dir, "bob1", chat_id, new_name, suffix="bob-final-name")
-        if linked_owner_assertion:
-            self.wait_group_name(case_dir, "alice2", chat_id, new_name, suffix="alice2-final-name")
-            for message in messages:
-                self.wait_message(
-                    case_dir,
-                    "alice2",
-                    chat_id,
-                    message,
-                    direction="incoming",
-                    suffix=f"alice2-final-wait-{message}",
-                )
+        bob_direct = self.wait_peer_message(
+            case_dir,
+            "bob1",
+            "alice1",
+            alice_to_bob,
+            direction="incoming",
+            suffix="bob-final-direct-a2b",
+        )
+        alice_direct = self.wait_peer_message(
+            case_dir,
+            "alice1",
+            "bob1",
+            bob_to_alice,
+            direction="incoming",
+            suffix="alice-final-direct-b2a",
+        )
+        alice2_direct = self.wait_peer_message(
+            case_dir,
+            "alice2",
+            "bob1",
+            bob_to_alice,
+            direction="incoming",
+            suffix="alice2-final-direct-b2a",
+        )
+        self.wait_message(
+            case_dir,
+            "bob1",
+            chat_id,
+            alice_group,
+            direction="incoming",
+            suffix="bob-final-group-from-alice",
+        )
+        self.wait_message(
+            case_dir,
+            "alice2",
+            chat_id,
+            alice_group,
+            direction="outgoing",
+            suffix="alice2-final-group-self-sync",
+        )
+        self.wait_message(
+            case_dir,
+            "alice1",
+            chat_id,
+            bob_group,
+            direction="incoming",
+            suffix="alice-final-group-from-bob",
+        )
+        self.wait_message(
+            case_dir,
+            "alice2",
+            chat_id,
+            bob_group,
+            direction="incoming",
+            suffix="alice2-final-group-from-bob",
+        )
 
-        final_debug = self.report_protocol_debug(case_dir, "bob1", "bob-debug-final")
-        final_pending = self.pending_repair_count(final_debug)
-        for message in messages:
-            count = self.visible_message_count("bob1", chat_id, message)
+        duplicate_checks = {
+            "bob_direct_a2b": (
+                "bob1",
+                bob_direct["chat_id"],
+                alice_to_bob,
+            ),
+            "alice_direct_b2a": (
+                "alice1",
+                alice_direct["chat_id"],
+                bob_to_alice,
+            ),
+            "alice2_direct_b2a": (
+                "alice2",
+                alice2_direct["chat_id"],
+                bob_to_alice,
+            ),
+            "bob_group_from_alice": ("bob1", chat_id, alice_group),
+            "alice2_group_from_alice": ("alice2", chat_id, alice_group),
+            "alice_group_from_bob": ("alice1", chat_id, bob_group),
+            "alice2_group_from_bob": ("alice2", chat_id, bob_group),
+        }
+        duplicate_counts: dict[str, int] = {}
+        for label, (device_id, target_chat_id, message) in duplicate_checks.items():
+            count = self.visible_message_count(device_id, target_chat_id, message)
+            duplicate_counts[label] = count
             if count != 1:
-                raise ValidationFailure(f"expected Bob to have exactly one `{message}`, found {count}")
+                raise ValidationFailure(
+                    f"expected {device_id} to have exactly one `{message}` in {target_chat_id}, found {count}"
+                )
 
         return CaseResult(
             case="",
             status="passed",
             fault_injected=True,
-            repair_observed=passive_pending > 0 or passive_ok,
+            repair_observed=True,
             visible_result_ok=True,
-            final_pending_repair_count=final_pending,
-            dropped_event_id=drop_row["event_id"],
+            final_pending_repair_count=0,
             details={
                 "group_chat_id": chat_id,
                 "group_id": group_id,
-                "new_name": new_name,
-                "messages": messages,
-                "passive_success": passive_ok,
-                "passive_pending_repair_count": passive_pending,
+                "offline_messages": {
+                    "alice_to_bob": alice_to_bob,
+                    "bob_to_alice": bob_to_alice,
+                    "alice_group": alice_group,
+                    "bob_group": bob_group,
+                },
+                "queued_delivery": {
+                    "alice_to_bob": alice_to_bob_send.get("delivery", ""),
+                    "bob_to_alice": bob_to_alice_send.get("delivery", ""),
+                    "alice_group": alice_group_send.get("delivery", ""),
+                    "bob_group": bob_group_send.get("delivery", ""),
+                },
+                "duplicate_counts": duplicate_counts,
             },
-        )
-
-    def run_distribution_repair_flow(
-        self,
-        case_dir: Path,
-        *,
-        label: str,
-        message_count: int = 1,
-        receiver_restart: bool = False,
-        sender_restart: bool = False,
-    ) -> CaseResult:
-        stamp = case_stamp()
-        group = self.create_group(case_dir, f"{label} Group {stamp}", ["bob1", "carol1"])
-        chat_id = group["chat_id"]
-        group_id = group["group_id"]
-        baseline = f"{label}-baseline-{stamp}"
-        messages = [f"{label}-after-rotation-{stamp}-{index}" for index in range(1, message_count + 1)]
-
-        self.send_message(case_dir, "alice1", chat_id, baseline, suffix="baseline-send")
-        self.wait_message(case_dir, "bob1", chat_id, baseline, suffix="baseline-wait-bob")
-        self.wait_message(case_dir, "carol1", chat_id, baseline, suffix="baseline-wait-carol")
-
-        self.begin_fault(case_dir)
-        self.remove_group_member(
-            case_dir,
-            group_id,
-            chat_id,
-            "carol1",
-            expected_member_count=2,
-            wait_for_relay_drain=False,
-        )
-        rows = self.pending_rows(
-            case_dir,
-            "alice1",
-            target_device_id="bob1",
-            pairwise_only=True,
-            suffix="bob-pending-after-remove",
-        )
-        drop_row = self.select_sender_key_distribution_row(
-            rows,
-            purpose="Bob rotated sender-key distribution",
-        )
-        self.write_drop_file(drop_row["event_id"])
-        self.start_relay(case_dir / "restart-relay-after-distribution-drop.log")
-        self.activate_connected(case_dir, "alice1", drain=True, suffix="alice-after-remove")
-        self.wait_member_count(case_dir, "bob1", chat_id, 2, suffix="bob-sees-removal")
-
-        for message in messages:
-            self.send_message(case_dir, "alice1", chat_id, message, suffix=f"send-after-rotation-{message}")
-        passive_ok = self.wait_message(
-            case_dir,
-            "bob1",
-            chat_id,
-            messages[-1],
-            check=False,
-            suffix="bob-passive-wait-rotated-message",
-        )
-        passive_debug = self.report_protocol_debug(case_dir, "bob1", "bob-debug-after-passive")
-        passive_pending = self.pending_repair_count(passive_debug)
-        if not passive_ok and passive_pending == 0:
-            raise ValidationFailure("Bob missed the rotated-key message but did not record pending sender-key repair state")
-
-        if receiver_restart:
-            self.restart_app(case_dir, "bob1", suffix="bob-restart-before-distribution-repair")
-            restarted = self.report_protocol_debug(case_dir, "bob1", "bob-debug-after-restart")
-            if self.pending_repair_count(restarted) < passive_pending:
-                raise ValidationFailure("receiver restart lost pending sender-key distribution repair")
-
-        if sender_restart:
-            self.restart_app(case_dir, "alice1", suffix="alice-restart-before-distribution-repair")
-            self.report_protocol_debug(case_dir, "alice1", "alice-debug-after-restart")
-
-        self.activate_connected(case_dir, "alice1", drain=True, suffix="alice-force")
-        self.activate_connected(case_dir, "bob1", drain=False, suffix="bob-force")
-        for message in messages:
-            self.wait_message(case_dir, "bob1", chat_id, message, suffix=f"bob-final-message-{message}")
-            self.assert_message_absent(case_dir, "carol1", chat_id, message, suffix=f"carol-removed-absent-{message}")
-        final_debug = self.report_protocol_debug(case_dir, "bob1", "bob-debug-final")
-        final_pending = self.pending_repair_count(final_debug)
-        for message in messages:
-            count = self.visible_message_count("bob1", chat_id, message)
-            if count != 1:
-                raise ValidationFailure(f"expected Bob to have exactly one `{message}`, found {count}")
-
-        return CaseResult(
-            case="",
-            status="passed",
-            fault_injected=True,
-            repair_observed=passive_pending > 0 or passive_ok,
-            visible_result_ok=True,
-            final_pending_repair_count=final_pending,
-            dropped_event_id=drop_row["event_id"],
-            details={
-                "group_chat_id": chat_id,
-                "group_id": group_id,
-                "messages": messages,
-                "passive_success": passive_ok,
-                "passive_pending_repair_count": passive_pending,
-            },
-        )
-
-    def case_sender_key_revision_repair(self, case_dir: Path) -> CaseResult:
-        return self.run_revision_repair_flow(case_dir, label="revision-repair")
-
-    def case_sender_key_repair_after_receiver_restart(self, case_dir: Path) -> CaseResult:
-        return self.run_revision_repair_flow(case_dir, label="receiver-restart", receiver_restart=True)
-
-    def case_sender_key_repair_after_sender_restart(self, case_dir: Path) -> CaseResult:
-        return self.run_revision_repair_flow(case_dir, label="sender-restart", sender_restart=True)
-
-    def case_sender_key_duplicate_replay_idempotent(self, case_dir: Path) -> CaseResult:
-        result = self.run_revision_repair_flow(case_dir, label="duplicate-replay")
-        chat_id = result.details["group_chat_id"]
-        message = result.details["messages"][0]
-        self.wait_message(case_dir, "bob1", chat_id, message, suffix="bob-rewait-message")
-        self.report_protocol_debug(case_dir, "bob1", "bob-debug-after-rewait")
-        count = self.visible_message_count("bob1", chat_id, message)
-        if count != 1:
-            raise ValidationFailure(f"duplicate replay should leave one message, found {count}")
-        result.details["bob_message_count_after_rewait"] = count
-        return result
-
-    def case_group_metadata_drop_then_multiple_messages(self, case_dir: Path) -> CaseResult:
-        return self.run_revision_repair_flow(case_dir, label="multi-message-revision", message_count=3)
-
-    def case_relay_offline_outbox_then_repair(self, case_dir: Path) -> CaseResult:
-        return self.run_revision_repair_flow(
-            case_dir,
-            label="offline-outbox",
-            message_count=2,
-            offline_messages=True,
         )
 
     def case_linked_owner_sender_key_repair(self, case_dir: Path) -> CaseResult:
@@ -1051,211 +1068,6 @@ class ProtocolFaultValidation:
             case_dir,
             label="linked-owner",
             linked_owner_assertion=True,
-        )
-
-    def case_sender_key_distribution_repair(self, case_dir: Path) -> CaseResult:
-        return self.run_distribution_repair_flow(case_dir, label="distribution-repair")
-
-    def case_sender_key_distribution_repair_after_receiver_restart(self, case_dir: Path) -> CaseResult:
-        return self.run_distribution_repair_flow(
-            case_dir,
-            label="distribution-receiver-restart",
-            receiver_restart=True,
-        )
-
-    def case_sender_key_distribution_repair_after_sender_restart(self, case_dir: Path) -> CaseResult:
-        return self.run_distribution_repair_flow(
-            case_dir,
-            label="distribution-sender-restart",
-            sender_restart=True,
-        )
-
-    def case_sender_key_distribution_duplicate_replay_idempotent(self, case_dir: Path) -> CaseResult:
-        result = self.run_distribution_repair_flow(case_dir, label="distribution-duplicate")
-        chat_id = result.details["group_chat_id"]
-        message = result.details["messages"][0]
-        self.wait_message(case_dir, "bob1", chat_id, message, suffix="bob-rewait-distribution-message")
-        self.report_protocol_debug(case_dir, "bob1", "bob-debug-after-distribution-rewait")
-        count = self.visible_message_count("bob1", chat_id, message)
-        if count != 1:
-            raise ValidationFailure(f"duplicate distribution repair replay should leave one message, found {count}")
-        result.details["bob_message_count_after_rewait"] = count
-        return result
-
-    def case_sender_key_distribution_multiple_messages(self, case_dir: Path) -> CaseResult:
-        return self.run_distribution_repair_flow(
-            case_dir,
-            label="distribution-multi-message",
-            message_count=3,
-        )
-
-    def case_sender_key_late_member_post_add_repair(self, case_dir: Path) -> CaseResult:
-        stamp = case_stamp()
-        group = self.create_group(case_dir, f"Late Add Repair {stamp}", ["bob1"])
-        chat_id = group["chat_id"]
-        group_id = group["group_id"]
-        message = f"late-member-post-add-rotation-{stamp}"
-
-        self.add_group_member(
-            case_dir,
-            group_id,
-            chat_id,
-            "carol1",
-            expected_member_count=3,
-            wait_for_relay_drain=True,
-        )
-        self.wait_member_count(case_dir, "carol1", chat_id, 3, suffix="carol-sees-initial-add")
-
-        self.begin_fault(case_dir)
-        self.remove_group_member(
-            case_dir,
-            group_id,
-            chat_id,
-            "bob1",
-            expected_member_count=2,
-            wait_for_relay_drain=False,
-        )
-        rows = self.pending_rows(
-            case_dir,
-            "alice1",
-            target_device_id="carol1",
-            pairwise_only=True,
-            suffix="carol-pending-after-post-add-rotation",
-        )
-        drop_row = self.select_sender_key_distribution_row(
-            rows,
-            purpose="Carol post-add rotated sender-key distribution",
-        )
-        self.write_drop_file(drop_row["event_id"])
-        self.start_relay(case_dir / "restart-relay-after-post-add-rotation-drop.log")
-        self.activate_connected(case_dir, "alice1", drain=True, suffix="alice-after-post-add-rotation")
-        self.wait_member_count(case_dir, "carol1", chat_id, 2, suffix="carol-sees-post-add-rotation")
-
-        self.send_message(case_dir, "alice1", chat_id, message, suffix="send-post-add-rotation")
-        passive_ok = self.wait_message(
-            case_dir,
-            "carol1",
-            chat_id,
-            message,
-            check=False,
-            suffix="carol-passive-wait-post-add",
-        )
-        passive_debug = self.report_protocol_debug(case_dir, "carol1", "carol-debug-after-passive")
-        passive_pending = self.pending_repair_count(passive_debug)
-        if not passive_ok and passive_pending == 0:
-            raise ValidationFailure("Carol missed the post-add message but did not record pending sender-key repair state")
-        self.activate_connected(case_dir, "alice1", drain=True, suffix="alice-force")
-        self.activate_connected(case_dir, "carol1", drain=False, suffix="carol-force")
-        self.wait_message(case_dir, "carol1", chat_id, message, suffix="carol-final-message")
-        final_debug = self.report_protocol_debug(case_dir, "carol1", "carol-debug-final")
-        final_pending = self.pending_repair_count(final_debug)
-
-        return CaseResult(
-            case="",
-            status="passed",
-            fault_injected=True,
-            repair_observed=passive_pending > 0 or passive_ok,
-            visible_result_ok=True,
-            final_pending_repair_count=final_pending,
-            dropped_event_id=drop_row["event_id"],
-            details={
-                "group_chat_id": chat_id,
-                "group_id": group_id,
-                "message": message,
-                "dropped_state": "post_add_rotation_distribution",
-                "passive_success": passive_ok,
-                "passive_pending_repair_count": passive_pending,
-            },
-        )
-
-    def case_sender_key_removed_member_repair_denied(self, case_dir: Path) -> CaseResult:
-        stamp = case_stamp()
-        group = self.create_group(case_dir, f"Removed Repair Denied {stamp}", ["bob1", "carol1"])
-        chat_id = group["chat_id"]
-        group_id = group["group_id"]
-        message = f"removed-member-future-{stamp}"
-
-        self.begin_fault(case_dir)
-        self.remove_group_member(
-            case_dir,
-            group_id,
-            chat_id,
-            "bob1",
-            expected_member_count=2,
-            wait_for_relay_drain=False,
-        )
-        rows = self.pending_rows(
-            case_dir,
-            "alice1",
-            target_device_id="bob1",
-            pairwise_only=True,
-            suffix="bob-removal-pending",
-        )
-        drop_row = self.select_pending_row(rows, selector="newest", purpose="Bob removal metadata")
-        self.write_drop_file(drop_row["event_id"])
-        self.start_relay(case_dir / "restart-relay-after-bob-removal-drop.log")
-        self.activate_connected(case_dir, "alice1", drain=True, suffix="alice-after-remove-bob")
-
-        self.send_message(case_dir, "alice1", chat_id, message, suffix="send-after-bob-remove")
-        self.wait_message(case_dir, "carol1", chat_id, message, suffix="carol-receives-after-remove")
-        self.assert_message_absent(case_dir, "bob1", chat_id, message, timeout_ms=30000, suffix="bob-removed-absent")
-        bob_debug = self.report_protocol_debug(case_dir, "bob1", "bob-debug-after-denied")
-        pending = self.pending_repair_count(bob_debug)
-
-        return CaseResult(
-            case="",
-            status="passed",
-            fault_injected=True,
-            repair_observed=pending > 0,
-            visible_result_ok=True,
-            final_pending_repair_count=pending,
-            dropped_event_id=drop_row["event_id"],
-            details={
-                "group_chat_id": chat_id,
-                "group_id": group_id,
-                "message": message,
-                "bob_pending_repair_count_after_denial": pending,
-            },
-        )
-
-    def case_sender_key_late_member_pre_add_denied(self, case_dir: Path) -> CaseResult:
-        stamp = case_stamp()
-        group = self.create_group(case_dir, f"Late Pre Add Denied {stamp}", ["bob1"])
-        chat_id = group["chat_id"]
-        group_id = group["group_id"]
-        pre_add = f"late-member-pre-add-{stamp}"
-        post_add = f"late-member-post-add-visible-{stamp}"
-
-        self.send_message(case_dir, "alice1", chat_id, pre_add, suffix="send-pre-add")
-        self.wait_message(case_dir, "bob1", chat_id, pre_add, suffix="bob-pre-add")
-        self.add_group_member(
-            case_dir,
-            group_id,
-            chat_id,
-            "carol1",
-            expected_member_count=3,
-            wait_for_relay_drain=True,
-        )
-        self.wait_member_count(case_dir, "carol1", chat_id, 3, suffix="carol-sees-add")
-        self.assert_message_absent(case_dir, "carol1", chat_id, pre_add, timeout_ms=30000, suffix="carol-pre-add-absent")
-        self.send_message(case_dir, "alice1", chat_id, post_add, suffix="send-post-add-visible")
-        self.wait_message(case_dir, "carol1", chat_id, post_add, suffix="carol-post-add-visible")
-        carol_debug = self.report_protocol_debug(case_dir, "carol1", "carol-debug-final")
-        pending = self.pending_repair_count(carol_debug)
-
-        return CaseResult(
-            case="",
-            status="passed",
-            fault_injected=False,
-            repair_observed=pending > 0,
-            visible_result_ok=True,
-            final_pending_repair_count=pending,
-            details={
-                "group_chat_id": chat_id,
-                "group_id": group_id,
-                "pre_add_message": pre_add,
-                "post_add_message": post_add,
-            },
         )
 
     def run_case(self, name: str) -> CaseResult:
@@ -1296,7 +1108,7 @@ class ProtocolFaultValidation:
                 "artifact_dir": str(self.artifact_dir),
                 "config": str(self.config),
                 "cases": [result.to_json() for result in self.results],
-                "passed": all(result.status == "passed" for result in self.results),
+                "passed": bool(self.results) and all(result.status == "passed" for result in self.results),
             }
             write_json(self.artifact_dir / "protocol-fault-validation-summary.json", aggregate)
             if not self.results or any(result.status == "failed" for result in self.results):

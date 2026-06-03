@@ -26,6 +26,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/scripts/mobile_relay_common.sh"
+source "${ROOT_DIR}/scripts/e2e_prerelease_common.sh"
 
 LOCAL_PROPERTIES="${ROOT_DIR}/android/local.properties"
 SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
@@ -152,6 +153,9 @@ cleanup() {
     echo "Three-peer group chat failed (exit ${exit_code})." >&2
     echo "Relay log: ${RELAY_LOG}" >&2
   fi
+  if [[ "${IRIS_E2E_KEEP_IOS_SIMS:-0}" != "1" ]]; then
+    iris_e2e_shutdown_ios_simulators "${IOS_PRIMARY_UDID}" "${IOS_MEMBER_UDID}"
+  fi
   exit "${exit_code}"
 }
 trap cleanup EXIT
@@ -161,8 +165,11 @@ echo "==> Verifying devices are reachable"
   echo "Android device ${ANDROID_SERIAL} unreachable" >&2
   exit 1
 }
+iris_e2e_shutdown_stale_ios_simulators "${IOS_PRIMARY_UDID}" "${IOS_MEMBER_UDID}"
 xcrun simctl list devices | grep -q "${IOS_PRIMARY_UDID}.*Booted" || xcrun simctl boot "${IOS_PRIMARY_UDID}"
 xcrun simctl list devices | grep -q "${IOS_MEMBER_UDID}.*Booted" || xcrun simctl boot "${IOS_MEMBER_UDID}"
+iris_e2e_wait_for_ios_bootstatus "${IOS_PRIMARY_UDID}"
+iris_e2e_wait_for_ios_bootstatus "${IOS_MEMBER_UDID}"
 
 echo "==> Starting local Rust relay"
 RELAY_PID="$(start_local_rust_relay "${RELAY_LOG}")"

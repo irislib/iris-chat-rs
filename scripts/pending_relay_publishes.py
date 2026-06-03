@@ -31,9 +31,9 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="App data directory containing core.sqlite3, or a direct path to core.sqlite3.",
     )
-    parser.add_argument("--target-owner-hex", help="Filter by target_owner_pubkey_hex.")
-    parser.add_argument("--target-device-hex", help="Filter by target_device_id.")
     parser.add_argument("--event-id", action="append", help="Filter by exact event ID. Repeatable.")
+    parser.add_argument("--chat-id", help="Filter by chat ID.")
+    parser.add_argument("--inner-event-id", help="Filter by inner event/message ID.")
     parser.add_argument("--label-contains", help="Filter by substring in pending label.")
     parser.add_argument(
         "--pairwise-only",
@@ -78,8 +78,7 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
         rows = conn.execute(
             """
             SELECT event_id, owner_pubkey_hex, label, event_json, inner_event_id,
-                   target_owner_pubkey_hex, target_device_id, message_id, chat_id,
-                   created_at_secs, attempt_count, last_error
+                   chat_id, created_at_secs, attempt_count, last_error
             FROM pending_relay_publishes
             ORDER BY created_at_secs ASC, event_id ASC
             """
@@ -136,18 +135,10 @@ def hydrate(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-def normalized(value: str | None) -> str | None:
-    return value.lower() if value else None
-
-
 def matches(row: dict[str, Any], args: argparse.Namespace) -> bool:
-    if args.target_owner_hex and normalized(row.get("target_owner_pubkey_hex")) != normalized(
-        args.target_owner_hex
-    ):
+    if args.chat_id and row.get("chat_id") != args.chat_id:
         return False
-    if args.target_device_hex and normalized(row.get("target_device_id")) != normalized(
-        args.target_device_hex
-    ):
+    if args.inner_event_id and row.get("inner_event_id") != args.inner_event_id:
         return False
     if args.event_id and row["event_id"] not in set(args.event_id):
         return False
@@ -186,8 +177,8 @@ def print_table(rows: list[dict[str, Any]]) -> None:
         "class",
         "event_id",
         "author",
-        "target_owner",
-        "target_device",
+        "chat_id",
+        "inner_event_id",
         "label",
     ]
     print("  ".join(f"{header:>18}" for header in headers))
@@ -197,8 +188,8 @@ def print_table(rows: list[dict[str, Any]]) -> None:
             row.get("classification"),
             short(row.get("event_id"), 18),
             short(row.get("pubkey"), 18),
-            short(row.get("target_owner_pubkey_hex"), 18),
-            short(row.get("target_device_id"), 18),
+            short(row.get("chat_id"), 18),
+            short(row.get("inner_event_id"), 18),
             row.get("label") or "-",
         ]
         print("  ".join(f"{str(value):>18}" for value in values))

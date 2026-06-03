@@ -313,16 +313,6 @@ public class MessageInfoWindow : Window
                 }
             }
         }
-        if (trace?.targetDeviceIds != null)
-        {
-            foreach (var deviceId in trace.targetDeviceIds)
-            {
-                if (!string.IsNullOrEmpty(deviceId))
-                {
-                    rows.Add(CopyRow("Target device", deviceId));
-                }
-            }
-        }
         return rows;
     }
 

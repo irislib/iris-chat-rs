@@ -386,7 +386,6 @@ extension ScreenshotFixture {
                 outerEventIds: [],
                 pendingRelayEventIds: [],
                 queuedProtocolTargets: [],
-                targetDeviceIds: [],
                 transportChannels: [],
                 lastTransportError: nil
             ),

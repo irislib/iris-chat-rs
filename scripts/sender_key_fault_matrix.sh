@@ -227,9 +227,6 @@ with tempfile.TemporaryDirectory() as d:
         label text not null,
         event_json text not null,
         inner_event_id text,
-        target_owner_pubkey_hex text,
-        target_device_id text,
-        message_id text,
         chat_id text,
         created_at_secs integer not null,
         attempt_count integer not null default 0,
@@ -238,12 +235,12 @@ with tempfile.TemporaryDirectory() as d:
     pairwise = {"id":"pairwise-id","pubkey":"author1","created_at":1,"kind":1060,"tags":[["header","abc"]], "content":"cipher"}
     outer_content = base64.b64encode(b"\x00\x00\x00\x01\x00\x00\x00\x00cipher").decode()
     outer = {"id":"outer-id","pubkey":"author2","created_at":2,"kind":1060,"tags":[], "content":outer_content}
-    conn.execute("insert into pending_relay_publishes values (?,?,?,?,?,?,?,?,?,?,?,?)", ("pairwise-id","owner","pairwise",json.dumps(pairwise),None,"bob-owner","bob-device",None,None,1,0,None))
-    conn.execute("insert into pending_relay_publishes values (?,?,?,?,?,?,?,?,?,?,?,?)", ("outer-id","owner","outer",json.dumps(outer),None,None,None,None,None,2,0,None))
+    conn.execute("insert into pending_relay_publishes values (?,?,?,?,?,?,?,?,?)", ("pairwise-id","owner","pairwise",json.dumps(pairwise),None,None,1,0,None))
+    conn.execute("insert into pending_relay_publishes values (?,?,?,?,?,?,?,?,?)", ("outer-id","owner","outer",json.dumps(outer),None,None,2,0,None))
     conn.commit()
     conn.close()
     if mode == "pairwise":
-        args = ["list", "--data-dir", d, "--target-owner-hex", "bob-owner", "--pairwise-only", "--format", "ids"]
+        args = ["list", "--data-dir", d, "--pairwise-only", "--format", "ids"]
         expected = "pairwise-id"
     else:
         args = ["list", "--data-dir", d, "--group-sender-outer-only", "--format", "ids"]

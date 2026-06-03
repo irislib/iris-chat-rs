@@ -3,9 +3,15 @@ const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
 const LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS: u64 = 120;
+const DELIVERED_GROUP_SENDER_KEY_ACK_LIMIT: usize = 512;
+const ANSWERED_GROUP_SENDER_KEY_REPAIR_LIMIT: usize = 512;
 
 fn default_true() -> bool {
     true
+}
+
+fn group_chat_id(group_id: &str) -> String {
+    format!("group:{group_id}")
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -29,6 +35,10 @@ struct ProtocolEnginePersistedState {
     #[serde(default)]
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     #[serde(default)]
+    delivered_group_sender_key_acks: Vec<ProtocolDeliveredGroupSenderKeyAck>,
+    #[serde(default)]
+    answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
+    #[serde(default)]
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     #[serde(default)]
     subscription_generation: u64,
@@ -36,28 +46,16 @@ struct ProtocolEnginePersistedState {
     last_backfill_attempt_secs: u64,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
-pub struct ProtocolPublishEvent {
+pub struct ProtocolPublish {
     pub event: Event,
+    pub chat_id: String,
     pub inner_event_id: Option<String>,
-    pub target_owner_pubkey_hex: Option<String>,
-    pub target_device_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 pub enum ProtocolEffect {
-    PublishSigned(Event),
-    PublishSignedForInnerEvent {
-        event: Event,
-        inner_event_id: Option<String>,
-        target_owner_pubkey_hex: Option<String>,
-        target_device_id: Option<String>,
-    },
-    PublishStagedFirstContact {
-        bootstrap: Vec<ProtocolPublishEvent>,
-        payload: Vec<ProtocolPublishEvent>,
-    },
+    Publish(ProtocolPublish),
     FetchProtocolState {
         filters: Vec<Filter>,
         reason: &'static str,
@@ -161,6 +159,30 @@ struct ProtocolPendingGroupSenderKeyRepair {
     last_requested_at_secs: u64,
     request_count: u32,
     next_retry_at_secs: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct ProtocolDeliveredGroupSenderKeyAck {
+    group_id: String,
+    sender_event_pubkey_hex: String,
+    created_at_secs: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct ProtocolAnsweredGroupSenderKeyRepair {
+    requester_owner_hex: String,
+    group_id: String,
+    sender_event_pubkey_hex: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    message_number: Option<u32>,
+    #[serde(default)]
+    required_revision: Option<u64>,
+    request_created_at_secs: u64,
+    last_responded_at_secs: u64,
+    response_count: u32,
+    next_response_at_secs: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -305,13 +327,27 @@ impl From<ProtocolPendingDecryptedDelivery> for ProtocolDecryptedMessage {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ProtocolEngineDebugSnapshot {
     pub known_message_author_count: usize,
+    #[serde(default)]
+    pub known_message_author_pubkeys: Vec<String>,
+    #[serde(default)]
+    pub known_group_sender_key_author_count: usize,
+    #[serde(default)]
+    pub known_group_sender_key_author_pubkeys: Vec<String>,
     pub pending_outbound_count: usize,
     pub pending_inbound_count: usize,
     pub pending_group_fanout_count: usize,
     pub pending_group_pairwise_payload_count: usize,
     pub pending_group_sender_key_message_count: usize,
+    #[serde(default)]
+    pub pending_group_sender_key_retry_count: usize,
+    #[serde(default)]
+    pub pending_group_sender_key_unmapped_count: usize,
     pub pending_group_sender_key_repair_count: usize,
     pub pending_group_sender_key_repair_last_requested_at_secs: u64,
+    #[serde(default)]
+    pub pending_group_sender_key_repair_next_retry_at_secs: u64,
+    #[serde(default)]
+    pub pending_group_sender_key_repair_max_request_count: u32,
     pub pending_outbound_targets: Vec<String>,
     #[serde(default)]
     pub pending_outbound_details: Vec<ProtocolPendingOutboundDebug>,
@@ -360,6 +396,8 @@ pub struct ProtocolEngine {
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent>,
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
+    delivered_group_sender_key_acks: Vec<ProtocolDeliveredGroupSenderKeyAck>,
+    answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     known_message_author_cache: std::cell::RefCell<Option<KnownMessageAuthorCache>>,
     known_message_author_cache_build_count: std::cell::Cell<u64>,
@@ -388,6 +426,8 @@ struct ProtocolEngineCheckpoint {
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent>,
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
+    delivered_group_sender_key_acks: Vec<ProtocolDeliveredGroupSenderKeyAck>,
+    answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     subscription_generation: u64,
     last_backfill_attempt_secs: u64,

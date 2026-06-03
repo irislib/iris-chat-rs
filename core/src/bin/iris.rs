@@ -20,7 +20,10 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 mod iris_message_rows;
+mod iris_updater;
 use iris_message_rows::{latest_message_keys, latest_outgoing_message_row, new_message_rows};
+use iris_updater::{run_iris_update, UpdateCommands};
+use nostr::PublicKey;
 
 const TOP_LEVEL_HELP: &str = "\
 Account:
@@ -198,6 +201,10 @@ enum MessageServerTopCommands {
 #[derive(Subcommand)]
 enum MaintenanceTopCommands {
     State,
+    Debug {
+        #[arg(long, default_value_t = 0)]
+        wait_ms: u64,
+    },
     Sync {
         #[arg(long, default_value_t = 1500)]
         wait_ms: u64,
@@ -339,87 +346,6 @@ enum UnknownUsersMode {
     Block,
 }
 
-/// Resolve, download, and install iris updates by shelling out to the
-/// published `htree update` CLI (from `hashtree-cli`). We don't link the
-/// updater library directly because iris-chat-rs pins hashtree-core 0.2.8
-/// while the updater needs 0.2.45+.
-#[derive(Subcommand)]
-enum UpdateCommands {
-    /// Print the latest published version and the asset that would be picked
-    Check,
-    /// Download the matching asset to a path (defaults to alongside the
-    /// running binary)
-    Download {
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    /// Replace the running binary with the newer one
-    Install {
-        /// Override the install destination (defaults to current_exe())
-        #[arg(long)]
-        to: Option<PathBuf>,
-        /// Override the asset kind (defaults to inferred from filename)
-        #[arg(long)]
-        kind: Option<String>,
-        /// Skip if the published version is not newer than current
-        #[arg(long)]
-        only_if_newer: bool,
-    },
-}
-
-const IRIS_UPDATE_REFERENCE: &str =
-    "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest";
-
-fn run_iris_update(cmd: &UpdateCommands) -> Result<()> {
-    let mut args = vec!["install".to_string(), IRIS_UPDATE_REFERENCE.to_string()];
-    let current_version = env!("IRIS_APP_VERSION").to_string();
-    args.extend(["--current-version".into(), current_version]);
-    match cmd {
-        UpdateCommands::Check => {
-            args.push("--check".into());
-        }
-        UpdateCommands::Download { out } => {
-            args.push("--download-only".into());
-            if let Some(out) = out {
-                args.extend(["--to".into(), out.display().to_string()]);
-            }
-        }
-        UpdateCommands::Install {
-            to,
-            kind,
-            only_if_newer,
-        } => {
-            let dest = match to {
-                Some(p) => p.clone(),
-                None => std::env::current_exe()
-                    .context("could not determine current_exe() for install destination")?,
-            };
-            args.extend([
-                "--to".into(),
-                dest.display().to_string(),
-                "--executable".into(),
-            ]);
-            if let Some(kind) = kind {
-                args.extend(["--kind".into(), kind.clone()]);
-            }
-            if *only_if_newer {
-                args.push("--only-if-newer".into());
-            }
-        }
-    }
-
-    let status = std::process::Command::new("htree")
-        .args(&args)
-        .status()
-        .context(
-            "failed to spawn htree (install hashtree-cli with `cargo install hashtree-cli`)",
-        )?;
-    if !status.success() {
-        anyhow::bail!("htree {} exited with status {status}", args.join(" "));
-    }
-    Ok(())
-}
-
 #[derive(Clone, Debug, Serialize, serde::Deserialize)]
 struct AccountBundle {
     owner_nsec: Option<String>,
@@ -502,10 +428,22 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    let data_dir = cli.data_dir.unwrap_or_else(default_data_dir);
+    let Cli {
+        json: json_output,
+        data_dir,
+        command,
+    } = cli;
+    let command = match command {
+        Commands::Maintenance(MaintenanceTopCommands::Update(cmd)) => {
+            return run_iris_update(cmd, json_output);
+        }
+        other => other,
+    };
+
+    let data_dir = data_dir.unwrap_or_else(default_data_dir);
     ensure_private_data_dir(&data_dir)?;
-    let command_name = command_name(&cli.command).to_string();
-    let data = match cli.command {
+    let command_name = command_name(&command).to_string();
+    let data = match command {
         Commands::Messages(MessageTopCommands::Search { query, limit }) => {
             search_messages(&data_dir, &query, limit)?
         }
@@ -535,14 +473,14 @@ fn run(cli: Cli) -> Result<()> {
             let background_sync = should_spawn_background_sync(&cli_app.app.state(), &data);
             cli_app.app.shutdown();
             drop(cli_app);
-            print_output(cli.json, &command_name, data)?;
+            print_output(json_output, &command_name, data)?;
             if background_sync {
                 spawn_background_sync(&data_dir);
             }
             return Ok(());
         }
     };
-    print_output(cli.json, &command_name, data)
+    print_output(json_output, &command_name, data)
 }
 
 impl CliApp {
@@ -591,27 +529,43 @@ impl CliApp {
         require_protocol_idle: bool,
     ) -> Result<AppState> {
         let started = Instant::now();
-        let mut last_state = self.app.state();
+        let settle_for = if timeout <= Duration::from_millis(750) {
+            Duration::ZERO
+        } else {
+            Duration::from_millis(750)
+        };
+        let mut ready_since: Option<Instant> = None;
         while started.elapsed() < timeout {
-            last_state = self.app.state();
-            fail_on_toast(&last_state)?;
-            if self.network_runtime_ready(&last_state, require_protocol_idle) {
-                return Ok(last_state);
+            let state = self.app.state();
+            fail_on_toast(&state)?;
+            if self.network_runtime_ready(&state, require_protocol_idle) {
+                let since = *ready_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= settle_for {
+                    return Ok(state);
+                }
+            } else {
+                ready_since = None;
             }
             thread::sleep(Duration::from_millis(100));
         }
-        Ok(last_state)
+        anyhow::bail!(
+            "Timed out waiting for message-server sync. support={}",
+            self.app.export_support_bundle_json()
+        )
     }
 
     fn network_runtime_ready(&self, state: &AppState, require_protocol_idle: bool) -> bool {
-        if is_busy(state) || state.busy.syncing_network {
-            return false;
-        }
-        if require_protocol_idle && has_pending_runtime_publishes(state) {
+        if is_busy(state) {
             return false;
         }
         if state.preferences.nostr_relay_urls.is_empty() {
             return true;
+        }
+        if require_protocol_idle && has_pending_runtime_publishes(state) {
+            return false;
+        }
+        if state.busy.syncing_network {
+            return false;
         }
         let Ok(bundle) = serde_json::from_str::<Value>(&self.app.export_support_bundle_json())
         else {
@@ -649,22 +603,37 @@ impl CliApp {
             .get("applying_plan")
             .cloned()
             .unwrap_or(Value::Null);
+        if require_protocol_idle && state.account.is_some() && desired.is_null() {
+            return false;
+        }
         if !require_protocol_idle {
             return desired.is_null() || desired == applied || desired == applying;
         }
         if refresh_in_flight || refresh_dirty || desired != applied {
             return false;
         }
+        let protocol_fetch_in_flight = subscription
+            .get("protocol_fetch_in_flight")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let author_backfill_in_flight = subscription
+            .get("author_backfill_in_flight")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        if protocol_fetch_in_flight || author_backfill_in_flight > 0 {
+            return false;
+        }
         if require_protocol_idle {
-            let pending_inbound = bundle
-                .pointer("/protocol_engine/pending_inbound_count")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            let pending_group = bundle
-                .pointer("/protocol_engine/pending_group_sender_key_message_count")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            if pending_inbound > 0 || pending_group > 0 {
+            // CLI commands should wait for work they caused to drain, but
+            // inbound repair queues can legitimately outlive the command while
+            // waiting on future metadata/backfill.
+            let pending_protocol = [
+                "/protocol_engine/pending_outbound_count",
+                "/protocol_engine/pending_group_fanout_count",
+            ]
+            .into_iter()
+            .any(|path| bundle.pointer(path).and_then(Value::as_u64).unwrap_or(0) > 0);
+            if pending_protocol {
                 return false;
             }
         }
@@ -777,7 +746,7 @@ fn handle_account_command(
                 AppAction::CreateAccount { name },
                 Duration::from_secs(8),
             )?;
-            let _ = cli.wait_for_network_runtime_ready(Duration::from_secs(4), true)?;
+            let _ = cli.wait_for_network_runtime_ready(Duration::from_secs(10), true)?;
             let state = cli.app.state();
             fail_on_toast(&state)?;
             Ok(account_json(&require_account(&state)?))
@@ -955,13 +924,14 @@ fn handle_invite_device_command(cli: &CliApp, command: InviteDeviceTopCommands) 
 fn handle_group_command(cli: &CliApp, command: GroupCommands) -> Result<Value> {
     match command {
         GroupCommands::Create { name, members } => {
-            cli.dispatch_and_wait(
+            cli.dispatch_and_wait_network(
                 AppAction::CreateGroup {
                     name,
                     member_inputs: members,
                 },
-                Duration::from_secs(4),
+                Duration::from_secs(8),
             )?;
+            let _ = cli.wait_for_network_runtime_ready(Duration::from_secs(8), true)?;
             let state = cli.app.state();
             fail_on_toast(&state)?;
             Ok(json!({
@@ -1091,6 +1061,15 @@ fn handle_privacy_command(cli: &CliApp, command: PrivacyCommands) -> Result<Valu
 fn handle_maintenance_command(cli: &CliApp, command: MaintenanceTopCommands) -> Result<Value> {
     match command {
         MaintenanceTopCommands::State => Ok(state_json(&cli.app.state())),
+        MaintenanceTopCommands::Debug { wait_ms } => {
+            if wait_ms > 0 {
+                let timeout = Duration::from_millis(wait_ms.max(100));
+                let _ = cli.dispatch_and_wait_network(AppAction::AppForegrounded, timeout)?;
+                let _ = cli.wait_for_network_runtime_ready(timeout, true)?;
+            }
+            serde_json::from_str(&cli.app.export_support_bundle_json())
+                .context("parse support bundle json")
+        }
         MaintenanceTopCommands::Sync { wait_ms } => {
             let timeout = Duration::from_millis(wait_ms.max(100));
             let _ = cli.dispatch_and_wait_network(AppAction::AppForegrounded, timeout)?;
@@ -1098,7 +1077,7 @@ fn handle_maintenance_command(cli: &CliApp, command: MaintenanceTopCommands) -> 
             Ok(state_json(&state))
         }
         MaintenanceTopCommands::Update(cmd) => {
-            run_iris_update(&cmd)?;
+            run_iris_update(cmd, false)?;
             Ok(json!({ "ok": true }))
         }
     }
@@ -1151,7 +1130,6 @@ fn send_message(
     expires_at_secs: Option<u64>,
 ) -> Result<Value> {
     let chat_id = chat_action_input(&cli.app.state(), chat);
-    let _ = open_chat(cli, &chat_id);
     let action = if let Some(expires_at_secs) = expires_at_secs {
         AppAction::SendDisappearingMessage {
             chat_id: chat_id.clone(),
@@ -1164,20 +1142,47 @@ fn send_message(
             text: message.to_string(),
         }
     };
-    cli.dispatch_and_wait(action, Duration::from_secs(2))?;
-    if let Ok(current) = open_chat(cli, &chat_id) {
-        if let Some(sent) = current
-            .messages
-            .iter()
-            .rev()
-            .find(|item| item.is_outgoing && item.body == message)
-            .cloned()
+    let state = cli.dispatch_and_wait(action, Duration::from_secs(8))?;
+    fail_on_toast(&state)?;
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(30) {
+        let state = cli.app.state();
+        fail_on_toast(&state)?;
+        if let Some(current) = state
+            .current_chat
+            .as_ref()
+            .filter(|current| current.chat_id == chat_id)
         {
-            return Ok(message_json(&sent));
+            if let Some(sent) = current
+                .messages
+                .iter()
+                .rev()
+                .find(|item| item.is_outgoing && item.body == message)
+                .cloned()
+            {
+                wait_after_send_network_idle(cli)?;
+                return Ok(message_json(&sent));
+            }
         }
+        if let Some(sent) =
+            latest_outgoing_message_row(&cli.reconciler.data_dir, &chat_id, message)?
+        {
+            wait_after_send_network_idle(cli)?;
+            return Ok(sent);
+        }
+        thread::sleep(Duration::from_millis(50));
     }
-    latest_outgoing_message_row(&cli.reconciler.data_dir, &chat_id, message)?
-        .context("Message was not added to the chat.")
+    let sent = latest_outgoing_message_row(&cli.reconciler.data_dir, &chat_id, message)?
+        .context("Message was not added to the chat.")?;
+    wait_after_send_network_idle(cli)?;
+    Ok(sent)
+}
+
+fn wait_after_send_network_idle(cli: &CliApp) -> Result<()> {
+    if !cli.app.state().preferences.nostr_relay_urls.is_empty() {
+        let _ = cli.wait_for_network_runtime_ready(Duration::from_secs(8), true)?;
+    }
+    Ok(())
 }
 
 fn react(cli: &CliApp, chat: &str, message_id: &str, emoji: &str) -> Result<Value> {
@@ -1426,7 +1431,7 @@ fn listen(data_dir: &Path, chat: Option<&str>, interval_ms: u64, nearby_lan: boo
         None
     };
     let _ = cli.dispatch_and_wait_network(AppAction::AppForegrounded, Duration::from_secs(8))?;
-    let state = cli.wait_for_network_runtime_ready(Duration::from_secs(25), true)?;
+    let state = cli.wait_for_network_runtime_ready(Duration::from_secs(55), true)?;
     fail_on_toast(&state)?;
 
     print_stream_envelope(
@@ -1598,6 +1603,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Privacy(_) => "privacy",
         Commands::Maintenance(command) => match command {
             MaintenanceTopCommands::State => "state",
+            MaintenanceTopCommands::Debug { .. } => "debug",
             MaintenanceTopCommands::Sync { .. } => "sync",
             MaintenanceTopCommands::Update(_) => "update",
         },
@@ -1699,7 +1705,6 @@ fn message_json(message: &ChatMessageSnapshot) -> Value {
             "outer_event_ids": message.delivery_trace.outer_event_ids.clone(),
             "pending_relay_event_ids": message.delivery_trace.pending_relay_event_ids.clone(),
             "queued_protocol_targets": message.delivery_trace.queued_protocol_targets.clone(),
-            "target_device_ids": message.delivery_trace.target_device_ids.clone(),
             "transport_channels": message.delivery_trace.transport_channels.clone(),
             "last_transport_error": message.delivery_trace.last_transport_error.clone(),
         },
@@ -1756,7 +1761,13 @@ fn fail_on_toast(state: &AppState) -> Result<()> {
 }
 
 fn chat_action_input(state: &AppState, input: &str) -> String {
-    resolve_chat_id(state, input).unwrap_or_else(|_| input.to_string())
+    resolve_chat_id(state, input)
+        .or_else(|_| normalize_direct_chat_input(input))
+        .unwrap_or_else(|_| input.to_string())
+}
+
+fn normalize_direct_chat_input(input: &str) -> Result<String> {
+    Ok(PublicKey::parse(input.trim())?.to_hex())
 }
 
 fn resolve_chat_id(state: &AppState, input: &str) -> Result<String> {

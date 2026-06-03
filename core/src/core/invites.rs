@@ -255,7 +255,7 @@ impl AppCore {
         // Accepting an invite installs a new session — invalidate the
         // cached mobile-push snapshot so the new recipient appears.
         self.mark_mobile_push_dirty();
-        self.process_protocol_engine_effects_with_completions(result.effects, &BTreeMap::new());
+        self.process_protocol_engine_effects(result.effects);
         Ok(chat_id)
     }
 

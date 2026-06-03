@@ -1,6 +1,11 @@
 use super::*;
+use futures_util::{SinkExt, StreamExt};
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-const RELAY_PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
+const RELAY_PUBLISH_TIMEOUT_SECS: u64 = 10;
+const RELAY_PUBLISH_TIMEOUT: Duration = Duration::from_secs(RELAY_PUBLISH_TIMEOUT_SECS);
+pub(super) const RELAY_PUBLISH_ATTEMPT_TIMEOUT: Duration =
+    Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS + (RELAY_PUBLISH_TIMEOUT_SECS * 2) + 5);
 
 pub(super) async fn publish_event_with_retry(
     client: &Client,
@@ -60,6 +65,127 @@ pub(super) async fn publish_event_to_any_relay(
     event: &Event,
     label: &str,
 ) -> anyhow::Result<Vec<String>> {
+    if relay_urls.is_empty() {
+        return Err(anyhow::anyhow!("{label}: no relays configured"));
+    }
+
+    if relay_urls.len() == 1 {
+        if let Ok(accepted) = publish_event_with_client(client, relay_urls, event).await {
+            return Ok(accepted);
+        }
+    }
+
+    publish_event_to_any_relay_raw(relay_urls, event, label).await
+}
+
+pub(super) async fn publish_event_to_any_connected_relay(
+    client: &Client,
+    relay_urls: &[RelayUrl],
+    event: &Event,
+    label: &str,
+) -> anyhow::Result<Vec<String>> {
+    if relay_urls.is_empty() {
+        return Err(anyhow::anyhow!("{label}: no relays configured"));
+    }
+
+    match publish_event_with_connected_client(client, relay_urls, event).await {
+        Ok(accepted) => Ok(accepted),
+        Err(client_error) => match publish_event_to_any_relay_raw(relay_urls, event, label).await {
+            Ok(accepted) => Ok(accepted),
+            Err(raw_error) => Err(anyhow::anyhow!(
+                "{label}: connected client failed: {client_error}; raw publish failed: {raw_error}"
+            )),
+        },
+    }
+}
+
+pub(super) async fn publish_event_to_any_relay_raw(
+    relay_urls: &[RelayUrl],
+    event: &Event,
+    label: &str,
+) -> anyhow::Result<Vec<String>> {
+    if relay_urls.is_empty() {
+        return Err(anyhow::anyhow!("{label}: no relays configured"));
+    }
+
+    let (tx, mut rx) =
+        tokio::sync::mpsc::channel::<Result<Vec<String>, String>>(relay_urls.len().max(1));
+
+    for relay_url in relay_urls.iter().cloned() {
+        let event = event.clone();
+        let relay_label = relay_url.to_string();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let result =
+                tokio::time::timeout(RELAY_PUBLISH_TIMEOUT, publish_event_raw(&relay_url, &event))
+                    .await;
+            let result = match result {
+                Ok(Ok(())) => Ok(vec![relay_label]),
+                Ok(Err(error)) => Err(format!("{relay_label}: {error}")),
+                Err(_) => Err(format!("{relay_label}: publish timed out")),
+            };
+            let _ = tx.send(result).await;
+        });
+    }
+    drop(tx);
+
+    let mut failures = Vec::new();
+    while let Some(result) = rx.recv().await {
+        match result {
+            Ok(mut successes) => {
+                successes.sort();
+                successes.dedup();
+                return Ok(successes);
+            }
+            Err(error) => failures.push(error),
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "{label}: {}",
+        if failures.is_empty() {
+            "no relay accepted event".to_string()
+        } else {
+            failures.join("; ")
+        }
+    ))
+}
+
+async fn publish_event_with_client(
+    client: &Client,
+    relay_urls: &[RelayUrl],
+    event: &Event,
+) -> anyhow::Result<Vec<String>> {
+    ensure_session_relays_configured(client, relay_urls).await;
+    connect_client_with_timeout(client, Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS)).await;
+    let output = tokio::time::timeout(
+        RELAY_PUBLISH_TIMEOUT,
+        client.send_event_to(relay_urls.iter().cloned(), event),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("publish timed out"))??;
+    let mut accepted = output
+        .success
+        .into_iter()
+        .map(|relay| relay.to_string())
+        .collect::<Vec<_>>();
+    accepted.sort();
+    accepted.dedup();
+    if accepted.is_empty() {
+        anyhow::bail!("no relay accepted event");
+    }
+    Ok(accepted)
+}
+
+async fn publish_event_with_connected_client(
+    client: &Client,
+    relay_urls: &[RelayUrl],
+    event: &Event,
+) -> anyhow::Result<Vec<String>> {
+    if relay_urls.is_empty() {
+        return Err(anyhow::anyhow!("no relays configured"));
+    }
+
     let (tx, mut rx) =
         tokio::sync::mpsc::channel::<Result<Vec<String>, String>>(relay_urls.len().max(1));
 
@@ -114,13 +240,69 @@ pub(super) async fn publish_event_to_any_relay(
     }
 
     Err(anyhow::anyhow!(
-        "{label}: {}",
+        "{}",
         if failures.is_empty() {
             "no relay accepted event".to_string()
         } else {
             failures.join("; ")
         }
     ))
+}
+
+async fn publish_event_raw(relay_url: &RelayUrl, event: &Event) -> anyhow::Result<()> {
+    let relay_label = relay_url.to_string();
+    let event_id = event.id.to_string();
+    let (mut socket, _) = connect_async(relay_label.as_str()).await?;
+    let event_value = serde_json::to_value(event)?;
+    socket
+        .send(Message::Text(
+            serde_json::json!(["EVENT", event_value]).to_string(),
+        ))
+        .await?;
+
+    let mut last_notice = "no relay response".to_string();
+    while let Some(message) = socket.next().await {
+        let message = message?;
+        let Message::Text(text) = message else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        let Some(parts) = value.as_array() else {
+            continue;
+        };
+        match parts.first().and_then(|part| part.as_str()) {
+            Some("OK")
+                if parts.get(1).and_then(|part| part.as_str()) == Some(event_id.as_str()) =>
+            {
+                let accepted = parts
+                    .get(2)
+                    .and_then(|part| part.as_bool())
+                    .unwrap_or(false);
+                let message = parts
+                    .get(3)
+                    .and_then(|part| part.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if accepted || relay_publish_failure_is_terminal_success(&message) {
+                    let _ = socket.close(None).await;
+                    return Ok(());
+                }
+                return Err(anyhow::anyhow!(message));
+            }
+            Some("NOTICE") => {
+                last_notice = parts
+                    .get(1)
+                    .and_then(|part| part.as_str())
+                    .unwrap_or("relay notice")
+                    .to_string();
+            }
+            _ => {}
+        }
+    }
+
+    Err(anyhow::anyhow!(last_notice))
 }
 
 pub(super) fn relay_publish_failure_is_terminal_success(reason: &str) -> bool {
@@ -227,6 +409,38 @@ mod tests {
         result.map(|relays| (elapsed, relays.len()))
     }
 
+    async fn run_connected_publish_case(
+        first_delay_ms: u64,
+        second_delay_ms: u64,
+        first_accepts: bool,
+        second_accepts: bool,
+    ) -> anyhow::Result<(Duration, usize)> {
+        let first = delayed_relay(
+            Duration::from_millis(first_delay_ms),
+            first_accepts,
+            "test reject",
+        )
+        .await;
+        let second = delayed_relay(
+            Duration::from_millis(second_delay_ms),
+            second_accepts,
+            "test reject",
+        )
+        .await;
+        let client = Client::new(Keys::generate());
+        let relay_urls = [first.clone(), second.clone()];
+        ensure_session_relays_configured(&client, &relay_urls).await;
+        connect_client_with_timeout(&client, Duration::from_secs(2)).await;
+        let event = publish_test_event();
+
+        let started = Instant::now();
+        let result =
+            publish_event_to_any_connected_relay(&client, &relay_urls, &event, "timing connected")
+                .await;
+        let elapsed = started.elapsed();
+        result.map(|relays| (elapsed, relays.len()))
+    }
+
     #[tokio::test]
     async fn publish_returns_on_fast_first_ack() {
         let cases = [
@@ -262,6 +476,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connected_publish_returns_on_fast_first_ack() {
+        let cases = [
+            ("connected_slow_first_fast_second", 600, 20, true, true),
+            ("connected_fast_first_slow_second", 20, 600, true, true),
+            ("connected_fast_fail_slow_success", 20, 180, false, true),
+        ];
+        for (scenario, first_delay_ms, second_delay_ms, first_accepts, second_accepts) in cases {
+            let (elapsed, accepted_relays) = run_connected_publish_case(
+                first_delay_ms,
+                second_delay_ms,
+                first_accepts,
+                second_accepts,
+            )
+            .await
+            .expect("connected publish should succeed");
+            let expected_fastest_success_ms = [
+                first_accepts.then_some(first_delay_ms),
+                second_accepts.then_some(second_delay_ms),
+            ]
+            .into_iter()
+            .flatten()
+            .min()
+            .expect("success case has an accepting relay");
+
+            assert!(
+                elapsed < Duration::from_millis(expected_fastest_success_ms.saturating_add(300)),
+                "connected first-ack publish should return near the fastest accepting relay in {scenario}, elapsed={elapsed:?}"
+            );
+            assert_eq!(accepted_relays, 1);
+        }
+    }
+
+    #[tokio::test]
     async fn publish_fails_after_all_relays_reject() {
         let started = Instant::now();
         let result = run_publish_case(20, 30, false, false).await;
@@ -276,6 +523,18 @@ mod tests {
             elapsed < Duration::from_millis(500),
             "failure should collect concurrent rejections without serial delay, elapsed={elapsed:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn publish_single_relay_uses_connected_client_path() {
+        let relay = delayed_ok_relay(Duration::from_millis(20)).await;
+        let client = Client::new(Keys::generate());
+        let event = publish_test_event();
+        let accepted = publish_event_fire_and_forget(&client, &[relay], &event, "single")
+            .await
+            .expect("single relay publish should succeed through the client path");
+
+        assert_eq!(accepted.len(), 1);
     }
 
     #[tokio::test]

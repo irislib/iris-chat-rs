@@ -612,38 +612,7 @@ fn protocol_payload_events_for_result<'a>(
 }
 
 fn protocol_effect_events(effects: &[ProtocolEffect]) -> Vec<&Event> {
-    effects
-        .iter()
-        .flat_map(|effect| match effect {
-            ProtocolEffect::PublishSigned(event) => vec![event],
-            ProtocolEffect::PublishSignedForInnerEvent { event, .. } => vec![event],
-            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => bootstrap
-                .iter()
-                .chain(payload)
-                .map(|publish| &publish.event)
-                .collect::<Vec<_>>(),
-            _ => Vec::new(),
-        })
-        .collect()
-}
-
-fn protocol_targeted_payload_count(effects: &[ProtocolEffect], owner_pubkey_hex: &str) -> usize {
-    effects
-        .iter()
-        .map(|effect| match effect {
-            ProtocolEffect::PublishSignedForInnerEvent {
-                target_owner_pubkey_hex,
-                ..
-            } if target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex) => 1,
-            ProtocolEffect::PublishStagedFirstContact { payload, .. } => payload
-                .iter()
-                .filter(|publish| {
-                    publish.target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex)
-                })
-                .count(),
-            _ => 0,
-        })
-        .sum()
+    protocol_publish_events(effects)
 }
 
 fn latest_sender_key_distribution_for_test(
@@ -803,6 +772,16 @@ fn unknown_group_sender_key_outer_event(sender_event: &Keys) -> Event {
     EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), content)
         .sign_with_keys(sender_event)
         .expect("unknown group sender-key outer")
+}
+
+fn unknown_header_group_sender_key_outer_event(sender_event: &Keys) -> Event {
+    use base64::Engine;
+
+    let content = base64::engine::general_purpose::STANDARD.encode([42_u8; 32]);
+    EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), content)
+        .tag(nostr::Tag::parse(["header", "cover-header"]).expect("header tag"))
+        .sign_with_keys(sender_event)
+        .expect("unknown header group sender-key outer")
 }
 
 fn delivered_texts() -> &'static std::sync::Mutex<std::collections::HashMap<usize, Vec<String>>> {

@@ -1,6 +1,7 @@
 mod actions;
 mod core;
 pub mod desktop_nearby;
+mod desktop_update;
 mod emoji;
 pub mod image_proxy;
 pub mod local_relay;
@@ -21,6 +22,7 @@ use std::{panic, panic::AssertUnwindSafe};
 use flume::{Receiver, Sender};
 
 pub use actions::AppAction;
+pub use desktop_update::*;
 pub use emoji::*;
 pub use qr::*;
 pub use state::*;
@@ -33,6 +35,7 @@ use crate::core::AppCore;
 uniffi::setup_scaffolding!();
 
 pub(crate) const CORE_RESTART_TOAST: &str = "Iris needs restart. Copy support bundle in Settings.";
+const SUPPORT_BUNDLE_REPLY_TIMEOUT: Duration = Duration::from_secs(8);
 
 fn enqueue_update_for_delivery(
     update: AppUpdate,
@@ -578,7 +581,7 @@ impl FfiApp {
                 {
                     return self.support_bundle_json_with_ffi_diagnostics("{}".to_string(), true);
                 }
-                match reply_rx.recv_timeout(Duration::from_secs(2)) {
+                match reply_rx.recv_timeout(SUPPORT_BUNDLE_REPLY_TIMEOUT) {
                     Ok(json) => self.support_bundle_json_with_ffi_diagnostics(json, false),
                     Err(_) => self.support_bundle_json_with_ffi_diagnostics("{}".to_string(), true),
                 }
@@ -844,9 +847,10 @@ fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
     let shared_db = Arc::new(RwLock::new(None));
 
     let update_tx_for_error = update_tx.clone();
-    match AppCore::try_new(
+    match AppCore::try_new_with_priority_sender(
         update_tx.clone(),
         background_tx.clone(),
+        foreground_tx.clone(),
         data_dir.clone(),
         shared_state.clone(),
     ) {
@@ -858,6 +862,7 @@ fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
                     data_dir,
                     update_tx: update_tx.clone(),
                     core_sender: background_tx.clone(),
+                    priority_sender: foreground_tx.clone(),
                     foreground_rx: foreground_rx.clone(),
                     background_rx: background_rx.clone(),
                     shared_state: shared_state.clone(),
@@ -921,6 +926,7 @@ struct CoreSupervisor {
     data_dir: String,
     update_tx: Sender<AppUpdate>,
     core_sender: Sender<CoreMsg>,
+    priority_sender: Sender<CoreMsg>,
     foreground_rx: Receiver<CoreMsg>,
     background_rx: Receiver<CoreMsg>,
     shared_state: Arc<RwLock<AppState>>,
@@ -999,9 +1005,10 @@ fn recover_core_after_panic(supervisor: &CoreSupervisor, detail: String) -> Opti
     crate::perflog!("core.supervisor.restart count={restart_count}");
     set_shared_db(&supervisor.shared_db, None);
 
-    let mut core = match AppCore::try_new(
+    let mut core = match AppCore::try_new_with_priority_sender(
         supervisor.update_tx.clone(),
         supervisor.core_sender.clone(),
+        supervisor.priority_sender.clone(),
         supervisor.data_dir.clone(),
         supervisor.shared_state.clone(),
     ) {
@@ -1232,75 +1239,7 @@ fn is_foreground_core_msg(message: &CoreMsg) -> bool {
 }
 
 #[cfg(test)]
-mod core_queue_tests {
-    use super::*;
-
-    fn background_msg(index: usize) -> CoreMsg {
-        CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-            category: "test.background".to_string(),
-            detail: index.to_string(),
-        }))
-    }
-
-    #[test]
-    fn foreground_queue_preempts_background_backlog() {
-        let (foreground_tx, foreground_rx) = flume::unbounded();
-        let (background_tx, background_rx) = flume::unbounded();
-        for index in 0..100 {
-            background_tx.send(background_msg(index)).unwrap();
-        }
-        foreground_tx
-            .send(CoreMsg::Action(AppAction::NavigateBack))
-            .unwrap();
-
-        let batch = recv_core_batch(&foreground_rx, &background_rx).unwrap();
-
-        assert!(matches!(
-            batch.first(),
-            Some(CoreMsg::Action(AppAction::NavigateBack))
-        ));
-        assert!(
-            batch.iter().all(is_foreground_core_msg),
-            "foreground work should not be bundled behind background backlog"
-        );
-    }
-
-    #[test]
-    fn background_queue_drains_in_bounded_chunks() {
-        let (_foreground_tx, foreground_rx) = flume::unbounded();
-        let (background_tx, background_rx) = flume::unbounded();
-        for index in 0..100 {
-            background_tx.send(background_msg(index)).unwrap();
-        }
-
-        let batch = recv_core_batch(&foreground_rx, &background_rx).unwrap();
-
-        assert_eq!(batch.len(), CORE_BACKGROUND_BATCH_LIMIT);
-        assert!(batch.iter().all(|msg| !is_foreground_core_msg(msg)));
-    }
-
-    #[test]
-    fn route_chat_snapshot_uses_chat_list_without_core_queue() {
-        let state = build_large_test_app_state(80, 20, 1_200);
-        let chat_id = state.chat_list[10].chat_id.clone();
-
-        let snapshot =
-            crate::core::chat_snapshot_from_state_and_db(&state, None, &chat_id, 80).unwrap();
-
-        assert_eq!(snapshot.chat_id, chat_id);
-        assert_eq!(snapshot.display_name, state.chat_list[10].display_name);
-        assert!(snapshot.messages.is_empty());
-    }
-
-    #[test]
-    fn route_chat_snapshot_requires_account() {
-        let mut state = build_large_test_app_state(80, 20, 1_200);
-        state.account = None;
-        let chat_id = state.chat_list[10].chat_id.clone();
-
-        assert!(crate::core::chat_snapshot_from_state_and_db(&state, None, &chat_id, 80).is_none());
-    }
-}
+mod core_queue_tests;
 
 fn filter_threads_for_search(
     chat_list: &[ChatThreadSnapshot],

@@ -13,9 +13,26 @@ impl AppCore {
         Self::try_new(update_tx, core_sender, data_dir, shared_state).expect("start app core")
     }
 
+    #[cfg(test)]
     pub fn try_new(
         update_tx: Sender<AppUpdate>,
         core_sender: Sender<CoreMsg>,
+        data_dir: String,
+        shared_state: Arc<RwLock<AppState>>,
+    ) -> anyhow::Result<Self> {
+        Self::try_new_with_priority_sender(
+            update_tx,
+            core_sender.clone(),
+            core_sender,
+            data_dir,
+            shared_state,
+        )
+    }
+
+    pub fn try_new_with_priority_sender(
+        update_tx: Sender<AppUpdate>,
+        core_sender: Sender<CoreMsg>,
+        priority_sender: Sender<CoreMsg>,
         data_dir: String,
         shared_state: Arc<RwLock<AppState>>,
     ) -> anyhow::Result<Self> {
@@ -37,6 +54,7 @@ impl AppCore {
         Ok(Self {
             update_tx,
             core_sender,
+            priority_sender,
             shared_state,
             runtime,
             data_dir,
@@ -152,6 +170,7 @@ impl AppCore {
                     "FlushPendingDeliveredReceipts"
                 }
                 InternalEvent::RelayPublishDrainFinished { .. } => "RelayPublishDrainFinished",
+                InternalEvent::RelayPublishDrainProgress { .. } => "RelayPublishDrainProgress",
                 InternalEvent::RetryPendingRelayPublishes { .. } => "RetryPendingRelayPublishes",
                 InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
                 InternalEvent::AttachmentUploadProgress { .. } => "AttachmentUploadProgress",
@@ -160,6 +179,9 @@ impl AppCore {
                 }
                 InternalEvent::GroupPictureUploadFinished { .. } => "GroupPictureUploadFinished",
                 InternalEvent::SyncComplete => "SyncComplete",
+                InternalEvent::ProtocolAuthorBackfillComplete { .. } => {
+                    "ProtocolAuthorBackfillComplete"
+                }
                 InternalEvent::OpenChatFinalize { .. } => "OpenChatFinalize",
             },
             CoreMsg::BuildNearbyPresenceEvent { .. } => "BuildNearbyPresenceEvent",
@@ -708,6 +730,9 @@ impl AppCore {
             InternalEvent::RelayPublishDrainFinished { token, results } => {
                 self.handle_relay_publish_drain_finished(token, results);
             }
+            InternalEvent::RelayPublishDrainProgress { token, result } => {
+                self.handle_relay_publish_drain_progress(token, result);
+            }
             InternalEvent::RetryPendingRelayPublishes { reason } => {
                 self.retry_pending_relay_publishes(&reason);
             }
@@ -728,7 +753,25 @@ impl AppCore {
             }
             InternalEvent::SyncComplete => {
                 self.protocol_subscription_runtime.protocol_fetch_in_flight = false;
-                self.state.busy.syncing_network = false;
+                self.refresh_protocol_sync_busy();
+                self.rebuild_state();
+                self.emit_state();
+            }
+            InternalEvent::ProtocolAuthorBackfillComplete { reason } => {
+                self.protocol_subscription_runtime
+                    .protocol_author_backfill_in_flight = self
+                    .protocol_subscription_runtime
+                    .protocol_author_backfill_in_flight
+                    .saturating_sub(1);
+                self.push_debug_log(
+                    "protocol.author_backfill.complete",
+                    format!(
+                        "reason={reason} remaining={}",
+                        self.protocol_subscription_runtime
+                            .protocol_author_backfill_in_flight
+                    ),
+                );
+                self.refresh_protocol_sync_busy();
                 self.rebuild_state();
                 self.emit_state();
             }

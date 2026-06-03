@@ -29,33 +29,9 @@ import to.iris.chat.nearby.IrisNearbyService
 import java.io.File
 
 @RunWith(AndroidJUnit4::class)
-class RealRelayHarnessTest {
+class RealRelayHarnessTest : RealRelayHarnessBase() {
     @get:Rule
-    val activityRule = ActivityScenarioRule(MainActivity::class.java)
-
-    private val instrumentation
-        get() = InstrumentationRegistry.getInstrumentation()
-
-    private val arguments
-        get() = InstrumentationRegistry.getArguments()
-
-    private fun appManager(): AppManager =
-        (instrumentation.targetContext.applicationContext as IrisChatApp).container.appManager
-
-    private fun nearbyService(): IrisNearbyService =
-        (instrumentation.targetContext.applicationContext as IrisChatApp).container.nearbyIrisService
-
-    private fun appFilesDir(): File = instrumentation.targetContext.filesDir
-
-    private fun appPackageName(): String = instrumentation.targetContext.packageName
-
-    private fun <T> withActivity(block: (MainActivity) -> T): T {
-        var result: Result<T>? = null
-        activityRule.scenario.onActivity { activity ->
-            result = runCatching { block(activity) }
-        }
-        return result?.getOrThrow() ?: error("Activity was not available")
-    }
+    override val activityRule = ActivityScenarioRule(MainActivity::class.java)
 
     @Test
     fun create_account_and_report_identity() {
@@ -75,6 +51,7 @@ class RealRelayHarnessTest {
     @Test
     fun report_logged_in_identity() {
         val account = ensureLoggedIn()
+        waitForRelayDrainIfRequested()
         reportStatus(
             "npub" to account.npub,
             "public_key_hex" to account.publicKeyHex,
@@ -87,8 +64,76 @@ class RealRelayHarnessTest {
     }
 
     @Test
-    fun enable_nearby_and_report_peers() {
+    fun export_secret_key() {
         ensureLoggedIn()
+        val secretKey =
+            kotlinx.coroutines.runBlocking { appManager().exportOwnerNsec() }
+                ?: throw AssertionError("Secret key was not available for export")
+        reportStatus(
+            "secret_key" to secretKey,
+        )
+    }
+
+    @Test
+    fun restore_session_from_args() {
+        val secretKey = requiredArg("secret_key")
+        val expectedPublicKeyHex = optionalArg("expected_public_key_hex")
+
+        appManager().restoreSession(secretKey)
+
+        val account =
+            waitForState("restored account", timeoutMs = 90_000) {
+                appManager()
+                    .state
+                    .value
+                    .account
+                    ?.takeIf { account ->
+                        expectedPublicKeyHex?.let { expected ->
+                            account.publicKeyHex.equals(expected, ignoreCase = true)
+                        } ?: true
+                    }
+            }
+
+        appManager().state.value.toast?.takeIf { it.isNotBlank() }?.let { toast ->
+            fail("Restore failed: $toast")
+        }
+
+        waitForPersistedDeviceSecret()
+        waitForRelayDrainIfRequested()
+        reportStatus(
+            "npub" to account.npub,
+            "public_key_hex" to account.publicKeyHex,
+            "device_npub" to account.deviceNpub,
+            "device_public_key_hex" to account.devicePublicKeyHex,
+            "display_name" to account.displayName,
+            "authorization_state" to account.authorizationState.name,
+            "app_package" to appPackageName(),
+            "data_dir" to appFilesDir().absolutePath,
+        )
+    }
+
+    @Test
+    fun wait_for_account_display_name_from_args() {
+        ensureLoggedIn()
+        val expected = requiredArg("display_name")
+        val account =
+            waitForState("account display name $expected", timeoutMs = 180_000) {
+                appManager()
+                    .state
+                    .value
+                    .account
+                    ?.takeIf { account -> account.displayName == expected }
+            }
+
+        reportStatus(
+            "public_key_hex" to account.publicKeyHex,
+            "display_name" to account.displayName,
+        )
+    }
+
+    @Test
+    fun enable_nearby_and_report_peers() {
+        ensureLoggedIn(createIfMissing = true)
         withActivity {
             nearbyService().setVisible(true)
         }
@@ -98,7 +143,7 @@ class RealRelayHarnessTest {
 
     @Test
     fun enable_lan_nearby_and_report_peers() {
-        ensureLoggedIn()
+        ensureLoggedIn(createIfMissing = true)
         withActivity {
             nearbyService().setVisible(false)
             nearbyService().setLocalNetworkVisible(true)
@@ -221,7 +266,7 @@ class RealRelayHarnessTest {
         appManager().sendText(chat.chatId, message)
 
         val finalized =
-            waitForState("invite chat message publish", timeoutMs = 180_000) {
+            waitForState("invite chat message publish", timeoutMs = 60_000) {
                 appManager()
                     .state
                     .value
@@ -245,7 +290,6 @@ class RealRelayHarnessTest {
             "message" to message,
             "delivery" to finalized.delivery.name,
             "outer_event_ids" to finalized.deliveryTrace.outerEventIds.joinToString(","),
-            "target_device_ids" to finalized.deliveryTrace.targetDeviceIds.joinToString(","),
             "recipient_deliveries" to finalized.recipientDeliveries.joinToString("|") { recipient ->
                 "${recipient.ownerPubkeyHex},${recipient.delivery.name}"
             },
@@ -557,13 +601,20 @@ class RealRelayHarnessTest {
     fun report_runtime_debug_snapshot() {
         ensureLoggedIn()
         waitForRelayDrainIfRequested()
+        val settledLiveDebug = waitForRuntimeSnapshotIdleIfRequested()
         val state = appManager().state.value
-        val debug = readJsonObject(DEBUG_SNAPSHOT_FILENAME)
-        val plan = debug?.optJSONObject("current_protocol_plan")
+        val fileDebug = readJsonObject(DEBUG_SNAPSHOT_FILENAME)
+        val liveDebug = settledLiveDebug ?: readLiveRuntimeDebugSnapshot()
+        val debug = liveDebug ?: fileDebug
+        val plan = debug?.optJSONObject("current_protocol_plan") ?: debug?.optJSONObject("protocol")
         val protocolEngine = debug?.optJSONObject("protocol_engine")
         val pendingProtocolOutbound = protocolEngine.optStringArray("pending_outbound_targets")
         val pendingGroupFanouts = protocolEngine.optStringArray("pending_group_fanout_targets")
         val legacyPendingOutbound = summarizeRuntimePendingOutbound(debug?.optJSONArray("pending_outbound"))
+        val localOwner =
+            debug.optStringOrEmpty("local_owner_pubkey_hex").ifEmpty { state.account?.publicKeyHex.orEmpty() }
+        val localDevice =
+            debug.optStringOrEmpty("local_device_pubkey_hex").ifEmpty { state.account?.devicePublicKeyHex.orEmpty() }
 
         reportStatus(
             "data_dir" to appFilesDir().absolutePath,
@@ -576,10 +627,14 @@ class RealRelayHarnessTest {
             "mobile_push_message_author_pubkeys" to state.mobilePush.messageAuthorPubkeys.joinToString(","),
             "mobile_push_session_count" to state.mobilePush.sessions.size.toString(),
             "toast" to state.toast.orEmpty(),
-            "runtime_file_present" to (debug != null).toString(),
+            "runtime_file_present" to (fileDebug != null).toString(),
+            "runtime_live_snapshot_present" to (liveDebug != null).toString(),
+            "runtime_snapshot_source" to if (debug == null) "none" else if (liveDebug == null) "file" else "live",
+            "runtime_support_bundle_timed_out" to
+                (liveDebug?.optJSONObject("ffi_queue")?.optBoolean("core_support_bundle_timed_out") == true).toString(),
             "generated_at_secs" to debug.optStringOrEmpty("generated_at_secs"),
-            "local_owner_pubkey_hex" to debug.optStringOrEmpty("local_owner_pubkey_hex"),
-            "local_device_pubkey_hex" to debug.optStringOrEmpty("local_device_pubkey_hex"),
+            "local_owner_pubkey_hex" to localOwner,
+            "local_device_pubkey_hex" to localDevice,
             "authorization_state" to debug.optStringOrEmpty("authorization_state"),
             "tracked_owner_hexes" to debug.optStringArray("tracked_owner_hexes"),
             "plan_roster_authors" to plan.optStringArray("roster_authors"),
@@ -591,6 +646,12 @@ class RealRelayHarnessTest {
             "pending_protocol_outbound" to pendingProtocolOutbound,
             "pending_group_fanout_count" to protocolEngine.optStringOrEmpty("pending_group_fanout_count"),
             "pending_group_fanouts" to pendingGroupFanouts,
+            "pending_group_sender_key_message_count" to protocolEngine.optStringOrEmpty("pending_group_sender_key_message_count"),
+            "pending_group_sender_key_retry_count" to protocolEngine.optStringOrEmpty("pending_group_sender_key_retry_count"),
+            "pending_group_sender_key_unmapped_count" to protocolEngine.optStringOrEmpty("pending_group_sender_key_unmapped_count"),
+            "pending_group_sender_key_repair_count" to protocolEngine.optStringOrEmpty("pending_group_sender_key_repair_count"),
+            "pending_group_sender_key_repair_next_retry_at_secs" to protocolEngine.optStringOrEmpty("pending_group_sender_key_repair_next_retry_at_secs"),
+            "pending_group_sender_key_repair_max_request_count" to protocolEngine.optStringOrEmpty("pending_group_sender_key_repair_max_request_count"),
             "pending_outbound" to (legacyPendingOutbound.ifEmpty { pendingProtocolOutbound }),
             "pending_relay_publishes" to summarizeRuntimePendingRelayPublishes(debug?.optJSONArray("pending_relay_publishes")),
             "pending_group_controls" to summarizeRuntimePendingGroupControls(debug?.optJSONArray("pending_group_controls")),
@@ -603,6 +664,7 @@ class RealRelayHarnessTest {
     @Test
     fun report_persisted_protocol_snapshot() {
         ensureLoggedIn()
+        waitForRelayDrainIfRequested()
         val persisted = readJsonObject(PERSISTED_STATE_FILENAME)
         val sessionManager = persisted?.optJSONObject("session_manager")
         val groupManager = persisted?.optJSONObject("group_manager")
@@ -722,7 +784,7 @@ class RealRelayHarnessTest {
         appManager().createGroup(groupName, memberInputs)
 
         val chat =
-            waitForState("created group chat", timeoutMs = 180_000) {
+            waitForState("created group chat", timeoutMs = 60_000) {
                 appManager()
                     .state
                     .value
@@ -748,7 +810,7 @@ class RealRelayHarnessTest {
         val chatId = requiredArg("chat_id")
         val timeoutMs =
             optionalArg("timeout_ms")?.toLongOrNull()
-                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 180L) * 1_000L)
+                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 60L) * 1_000L)
         val wakeRelay = relayWakeCallback(chatId)
 
         val existing =
@@ -787,7 +849,7 @@ class RealRelayHarnessTest {
         val expectedMemberCount = requiredArg("member_count").toULong()
         val timeoutMs =
             optionalArg("timeout_ms")?.toLongOrNull()
-                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 180L) * 1_000L)
+                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 60L) * 1_000L)
         val resolvedChatId =
             when {
                 !chatId.isNullOrBlank() -> chatId
@@ -823,7 +885,7 @@ class RealRelayHarnessTest {
         val groupName = requiredArg("group_name")
         val timeoutMs =
             optionalArg("timeout_ms")?.toLongOrNull()
-                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 180L) * 1_000L)
+                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 60L) * 1_000L)
         val wakeRelay = relayWakeCallback(chatId)
         val thread =
             waitForState("group name $groupName", timeoutMs = timeoutMs) {
@@ -847,6 +909,40 @@ class RealRelayHarnessTest {
     }
 
     @Test
+    fun wait_for_group_admin_from_args() {
+        ensureLoggedIn()
+        val groupId = requiredArg("group_id")
+        val memberInput = normalizePeerInput(requiredArg("member_input"))
+        val isAdmin = optionalArg("is_admin")?.lowercase() !in setOf("0", "false", "no")
+        val timeoutMs =
+            optionalArg("timeout_ms")?.toLongOrNull()
+                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 60L) * 1_000L)
+
+        appManager().pushScreen(Screen.GroupDetails(groupId))
+        val details =
+            waitForState("group admin $memberInput=$isAdmin", timeoutMs = timeoutMs) {
+                appManager()
+                    .state
+                    .value
+                    .groupDetails
+                    ?.takeIf { details ->
+                        details.groupId == groupId &&
+                            details.members.any { member ->
+                                member.ownerPubkeyHex.equals(memberInput, ignoreCase = true) &&
+                                    member.isAdmin == isAdmin
+                            }
+                    }
+            }
+
+        reportStatus(
+            "group_id" to details.groupId,
+            "member_input" to memberInput,
+            "is_admin" to isAdmin.toString(),
+            "revision" to details.revision.toString(),
+        )
+    }
+
+    @Test
     fun update_group_name_from_args() {
         ensureLoggedIn()
         val groupId = requiredArg("group_id")
@@ -855,7 +951,7 @@ class RealRelayHarnessTest {
 
         appManager().updateGroupName(groupId, groupName)
         val thread =
-            waitForState("renamed group $groupName", timeoutMs = 180_000) {
+            waitForState("renamed group $groupName", timeoutMs = 60_000) {
                 appManager()
                     .state
                     .value
@@ -876,6 +972,63 @@ class RealRelayHarnessTest {
     }
 
     @Test
+    fun expect_group_name_update_rejected_from_args() {
+        ensureLoggedIn()
+        val groupId = requiredArg("group_id")
+        val rejectedName = requiredArg("group_name")
+        val chatId = optionalArg("chat_id") ?: "group:$groupId"
+        val expectedName = optionalArg("expected_group_name")?.takeIf { it.isNotBlank() }
+        val timeoutMs =
+            optionalArg("timeout_ms")?.toLongOrNull()
+                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 30L) * 1_000L)
+        val initialName =
+            appManager()
+                .state
+                .value
+                .chatList
+                .firstOrNull { thread -> thread.chatId.equals(chatId, ignoreCase = true) }
+                ?.displayName
+                .orEmpty()
+
+        appManager().updateGroupName(groupId, rejectedName)
+        val rejectionToast =
+            waitForOptionalState(timeoutMs = timeoutMs) {
+                val state = appManager().state.value
+                val renamed =
+                    state.chatList.any { thread ->
+                        thread.chatId.equals(chatId, ignoreCase = true) &&
+                            thread.displayName == rejectedName
+                    }
+                if (renamed) {
+                    fail("Rejected group rename unexpectedly applied $rejectedName")
+                }
+                state.toast?.takeIf { it.isNotBlank() }
+            }.orEmpty()
+
+        val finalName =
+            appManager()
+                .state
+                .value
+                .chatList
+                .firstOrNull { thread -> thread.chatId.equals(chatId, ignoreCase = true) }
+                ?.displayName
+                ?: initialName
+        if (expectedName != null && finalName != expectedName) {
+            fail("Expected group name $expectedName, found $finalName")
+        }
+
+        waitForRelayDrainIfRequested()
+        reportStatus(
+            "chat_id" to chatId,
+            "group_id" to groupId,
+            "rejected_group_name" to rejectedName,
+            "group_name" to finalName,
+            "toast" to rejectionToast,
+            "rejected" to "true",
+        )
+    }
+
+    @Test
     fun add_group_members_from_args() {
         ensureLoggedIn()
         val groupId = requiredArg("group_id")
@@ -885,7 +1038,7 @@ class RealRelayHarnessTest {
 
         appManager().addGroupMembers(groupId, memberInputs)
         val thread =
-            waitForState("added group members", timeoutMs = 180_000) {
+            waitForState("added group members", timeoutMs = 60_000) {
                 appManager()
                     .state
                     .value
@@ -926,7 +1079,7 @@ class RealRelayHarnessTest {
         appManager().removeGroupMember(groupId, normalizePeerInput(memberInput))
 
         val current =
-            waitForState("removed group member from $resolvedChatId", timeoutMs = 180_000) {
+            waitForState("removed group member from $resolvedChatId", timeoutMs = 60_000) {
                 val state = appManager().state.value
                 val chat =
                     state.currentChat
@@ -965,7 +1118,7 @@ class RealRelayHarnessTest {
         appManager().setGroupAdmin(groupId, memberInput, isAdmin)
         appManager().pushScreen(Screen.GroupDetails(groupId))
         val details =
-            waitForState("group admin $memberInput=$isAdmin", timeoutMs = 180_000) {
+            waitForState("group admin $memberInput=$isAdmin", timeoutMs = 60_000) {
                 appManager()
                     .state
                     .value
@@ -1001,26 +1154,48 @@ class RealRelayHarnessTest {
 
         appManager().sendText(chat.chatId, message)
 
-        waitForState("outgoing message") {
-            appManager()
-                .state
-                .value
-                .currentChat
-                ?.takeIf { current ->
-                    current.chatId == chat.chatId &&
-                        current.messages.any { entry ->
-                            entry.isOutgoing && entry.body == message
-                        }
-                }
-        }
-
-        val finalized =
-            waitForState("message publish", timeoutMs = 180_000) {
+        val outgoing =
+            waitForState("outgoing message") {
                 appManager()
                     .state
                     .value
                     .currentChat
-                    ?.takeIf { current -> current.chatId == chat.chatId }
+                    ?.takeIf { current ->
+                        current.chatId == chat.chatId &&
+                            current.messages.any { entry ->
+                                entry.isOutgoing && entry.body == message
+                            }
+                    }
+                    ?.messages
+                    ?.firstOrNull { entry ->
+                        entry.isOutgoing && entry.body == message
+                    }
+            }
+
+        val waitForDelivery =
+            optionalArg("wait_for_delivery")?.lowercase() !in setOf("0", "false", "no")
+        if (!waitForDelivery) {
+            reportStatus(
+                "chat_id" to chat.chatId,
+                "message" to message,
+                "delivery" to outgoing.delivery.name,
+                "outer_event_ids" to outgoing.deliveryTrace.outerEventIds.joinToString(","),
+                "recipient_deliveries" to outgoing.recipientDeliveries.joinToString("|") { recipient ->
+                    "${recipient.ownerPubkeyHex},${recipient.delivery.name}"
+                },
+            )
+            return
+        }
+
+        val finalized =
+            waitForState("message publish", timeoutMs = 60_000) {
+                appManager()
+                    .state
+                    .value
+                    .currentChat
+                    ?.takeIf { current ->
+                        current.chatId == chat.chatId
+                    }
                     ?.messages
                     ?.find { entry ->
                         entry.isOutgoing &&
@@ -1044,7 +1219,6 @@ class RealRelayHarnessTest {
             "message" to message,
             "delivery" to finalized.delivery.name,
             "outer_event_ids" to finalized.deliveryTrace.outerEventIds.joinToString(","),
-            "target_device_ids" to finalized.deliveryTrace.targetDeviceIds.joinToString(","),
             "recipient_deliveries" to finalized.recipientDeliveries.joinToString("|") { recipient ->
                 "${recipient.ownerPubkeyHex},${recipient.delivery.name}"
             },
@@ -1090,6 +1264,29 @@ class RealRelayHarnessTest {
     fun disable_relays_and_report() {
         ensureLoggedIn()
         disableRelays()
+        reportStatus(
+            "relay_count" to appManager().state.value.preferences.nostrRelayUrls.size.toString(),
+            "relays" to JSONArray(appManager().state.value.preferences.nostrRelayUrls).toString(),
+        )
+    }
+
+    @Test
+    fun set_relays_from_args() {
+        ensureLoggedIn()
+        val relayUrls =
+            optionalListArg("relay_urls")
+                .ifEmpty {
+                    optionalArg("relay_url")
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let(::listOf)
+                        ?: emptyList()
+                }
+        appManager().dispatch(AppAction.SetNostrRelays(relayUrls))
+        waitForState<Boolean>("set relays", timeoutMs = 30_000) {
+            true.takeIf {
+                appManager().state.value.preferences.nostrRelayUrls == relayUrls
+            }
+        }
         reportStatus(
             "relay_count" to appManager().state.value.preferences.nostrRelayUrls.size.toString(),
             "relays" to JSONArray(appManager().state.value.preferences.nostrRelayUrls).toString(),
@@ -1158,11 +1355,369 @@ class RealRelayHarnessTest {
                 ?.let { ensureChatOpenById(it) }
                 ?: ensureChatOpen(peerInput)
 
+        appManager().dispatch(AppAction.SetTypingIndicatorsEnabled(true))
         appManager().dispatch(AppAction.SendTyping(chat.chatId))
+        waitForRelayDrainIfRequested()
 
         reportStatus(
             "chat_id" to chat.chatId,
             "sent_typing" to "true",
+        )
+    }
+
+    @Test
+    fun wait_for_typing_from_args() {
+        ensureLoggedIn()
+        val chatIdArg = optionalArg("chat_id")
+        val peerInput =
+            optionalArg("peer_input")
+                ?: if (chatIdArg.isNullOrBlank()) requiredArg("peer_input") else ""
+        val chat =
+            chatIdArg
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+        val timeoutMs =
+            optionalArg("timeout_ms")?.toLongOrNull()
+                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 60L) * 1_000L)
+
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "typing_wait_ready" to "true",
+        )
+
+        val typingCount =
+            waitForState("typing indicator", timeoutMs = timeoutMs) {
+                val state = appManager().state.value
+                val currentTypingCount =
+                    state.currentChat
+                        ?.takeIf { current -> current.chatId.equals(chat.chatId, ignoreCase = true) }
+                        ?.typingIndicators
+                        ?.size
+                        ?: 0
+                val threadTyping =
+                    state.chatList.any { thread ->
+                        thread.chatId.equals(chat.chatId, ignoreCase = true) && thread.isTyping
+                    }
+                if (currentTypingCount > 0 || threadTyping) {
+                    currentTypingCount
+                } else {
+                    null
+                }
+            }
+
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "typing_count" to typingCount.toString(),
+            "typing" to "true",
+        )
+    }
+
+    @Test
+    fun accept_message_request_from_args() {
+        ensureLoggedIn()
+        val chatIdArg = optionalArg("chat_id")
+        val peerInput =
+            optionalArg("peer_input")
+                ?: if (chatIdArg.isNullOrBlank()) requiredArg("peer_input") else ""
+        val chat =
+            chatIdArg
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+
+        appManager().dispatch(AppAction.SetMessageRequestAccepted(chat.chatId))
+        waitForRelayDrainIfRequested()
+        val accepted =
+            waitForState("message request accepted", timeoutMs = 30_000) {
+                val state = appManager().state.value
+                val currentAccepted =
+                    state.currentChat
+                        ?.takeIf { current -> current.chatId.equals(chat.chatId, ignoreCase = true) }
+                        ?.let { current -> !current.isRequest }
+                val threadAccepted =
+                    state.chatList
+                        .firstOrNull { thread -> thread.chatId.equals(chat.chatId, ignoreCase = true) }
+                        ?.let { thread -> !thread.isRequest }
+                true.takeIf { currentAccepted == true || threadAccepted == true }
+            }
+
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "accepted" to accepted.toString(),
+        )
+    }
+
+    @Test
+    fun mark_message_seen_from_args() {
+        ensureLoggedIn()
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val chatIdArg = optionalArg("chat_id")
+        val expectedMessage = requiredArg("message")
+        val direction = optionalArg("direction")?.lowercase() ?: "incoming"
+        val chat =
+            chatIdArg
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+
+        val messageIds =
+            waitForState("message ids for seen", timeoutMs = 60_000) {
+                appManager()
+                    .state
+                    .value
+                    .currentChat
+                    ?.takeIf { current -> current.chatId.equals(chat.chatId, ignoreCase = true) }
+                    ?.messages
+                    ?.filter { message ->
+                        message.body == expectedMessage &&
+                            messageDirectionMatches(message.isOutgoing, direction)
+                    }
+                    ?.map { it.id }
+                    ?.takeIf { it.isNotEmpty() }
+            }
+
+        appManager().dispatch(AppAction.MarkMessagesSeen(chat.chatId, messageIds))
+        waitForRelayDrainIfRequested()
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "message" to expectedMessage,
+            "message_ids" to messageIds.joinToString(","),
+            "seen" to "true",
+        )
+    }
+
+    @Test
+    fun wait_for_message_delivery_from_args() {
+        ensureLoggedIn()
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val chatIdArg = optionalArg("chat_id")
+        val expectedMessage = requiredArg("message")
+        val expectedDelivery = (optionalArg("delivery") ?: "seen").uppercase()
+        val direction = optionalArg("direction")?.lowercase() ?: "outgoing"
+        val chat =
+            chatIdArg
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+
+        val delivery =
+            waitForState("message delivery $expectedDelivery", timeoutMs = 60_000) {
+                val message =
+                    appManager()
+                        .state
+                        .value
+                        .currentChat
+                        ?.takeIf { current -> current.chatId.equals(chat.chatId, ignoreCase = true) }
+                        ?.messages
+                        ?.firstOrNull { entry ->
+                            entry.body == expectedMessage &&
+                                messageDirectionMatches(entry.isOutgoing, direction)
+                        }
+                        ?: return@waitForState null
+                if (message.delivery.name.equals(expectedDelivery, ignoreCase = true)) {
+                    message.delivery.name
+                } else {
+                    message.recipientDeliveries
+                        .firstOrNull { recipient ->
+                            recipient.delivery.name.equals(expectedDelivery, ignoreCase = true)
+                        }
+                        ?.delivery
+                        ?.name
+                }
+            }
+
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "message" to expectedMessage,
+            "delivery" to delivery,
+        )
+    }
+
+    @Test
+    fun react_to_message_from_args() {
+        ensureLoggedIn()
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val chatIdArg = optionalArg("chat_id")
+        val expectedMessage = requiredArg("message")
+        val emoji = optionalArg("emoji") ?: "❤️"
+        val direction = optionalArg("direction")?.lowercase() ?: "incoming"
+        val chat =
+            chatIdArg
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+
+        val messageId =
+            waitForState("message to react", timeoutMs = 60_000) {
+                appManager()
+                    .state
+                    .value
+                    .currentChat
+                    ?.takeIf { current -> current.chatId.equals(chat.chatId, ignoreCase = true) }
+                    ?.messages
+                    ?.firstOrNull { entry ->
+                        entry.body == expectedMessage &&
+                            messageDirectionMatches(entry.isOutgoing, direction)
+                    }
+                    ?.id
+            }
+
+        appManager().dispatch(AppAction.ToggleReaction(chat.chatId, messageId, emoji))
+        waitForRelayDrainIfRequested()
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "message" to expectedMessage,
+            "message_id" to messageId,
+            "emoji" to emoji,
+        )
+    }
+
+    @Test
+    fun wait_for_message_reaction_from_args() {
+        ensureLoggedIn()
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val chatIdArg = optionalArg("chat_id")
+        val expectedMessage = requiredArg("message")
+        val emoji = optionalArg("emoji") ?: "❤️"
+        val direction = optionalArg("direction")?.lowercase() ?: "any"
+        val chat =
+            chatIdArg
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+
+        val reaction =
+            waitForState("reaction $emoji", timeoutMs = 60_000) {
+                appManager()
+                    .state
+                    .value
+                    .currentChat
+                    ?.takeIf { current -> current.chatId.equals(chat.chatId, ignoreCase = true) }
+                    ?.messages
+                    ?.firstOrNull { entry ->
+                        entry.body == expectedMessage &&
+                            messageDirectionMatches(entry.isOutgoing, direction)
+                    }
+                    ?.reactions
+                    ?.firstOrNull { reaction -> reaction.emoji == emoji && reaction.count > 0UL }
+            }
+
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "message" to expectedMessage,
+            "emoji" to reaction.emoji,
+            "reaction_count" to reaction.count.toString(),
+            "reacted_by_me" to reaction.reactedByMe.toString(),
+        )
+    }
+
+    @Test
+    fun set_chat_settings_from_args() {
+        ensureLoggedIn()
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val chatIdArg = optionalArg("chat_id")
+        val chat =
+            chatIdArg
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+
+        optionalBoolArg("muted")?.let { muted ->
+            appManager().dispatch(AppAction.SetChatMuted(chat.chatId, muted))
+        }
+        optionalBoolArg("pinned")?.let { pinned ->
+            appManager().dispatch(AppAction.SetChatPinned(chat.chatId, pinned))
+        }
+        optionalArg("ttl_seconds")?.let { ttl ->
+            appManager().dispatch(AppAction.SetChatMessageTtl(chat.chatId, ttl.toULongOrNull()))
+        }
+
+        waitForRelayDrainIfRequested()
+        val settings = waitForChatSettings(chat.chatId, timeoutMs = 30_000)
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "muted" to settings.muted.toString(),
+            "pinned" to settings.pinned.toString(),
+            "ttl_seconds" to settings.ttlSeconds?.toString().orEmpty(),
+        )
+    }
+
+    @Test
+    fun wait_for_chat_settings_from_args() {
+        ensureLoggedIn()
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val chatIdArg = optionalArg("chat_id")
+        val chat =
+            chatIdArg
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+
+        val settings = waitForChatSettings(chat.chatId, timeoutMs = 60_000)
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "muted" to settings.muted.toString(),
+            "pinned" to settings.pinned.toString(),
+            "ttl_seconds" to settings.ttlSeconds?.toString().orEmpty(),
+        )
+    }
+
+    @Test
+    fun send_disappearing_message_from_args() {
+        ensureLoggedIn()
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val chatIdArg = optionalArg("chat_id")
+        val message = requiredArg("message")
+        val ttlSeconds = optionalArg("ttl_seconds")?.toLongOrNull() ?: 8L
+        val expiresAtSecs = ((System.currentTimeMillis() / 1_000L) + ttlSeconds).toULong()
+        val chat =
+            chatIdArg
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+
+        appManager().dispatch(AppAction.SendDisappearingMessage(chat.chatId, message, expiresAtSecs))
+        val sent =
+            waitForState("disappearing message", timeoutMs = 60_000) {
+                appManager()
+                    .state
+                    .value
+                    .currentChat
+                    ?.takeIf { current -> current.chatId.equals(chat.chatId, ignoreCase = true) }
+                    ?.messages
+                    ?.firstOrNull { entry ->
+                        entry.isOutgoing &&
+                            entry.body == message &&
+                            entry.expiresAtSecs != null &&
+                            entry.delivery != DeliveryState.QUEUED &&
+                            entry.delivery != DeliveryState.PENDING
+                    }
+            }
+
+        waitForRelayDrainIfRequested()
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "message" to message,
+            "message_id" to sent.id,
+            "expires_at_secs" to (sent.expiresAtSecs ?: expiresAtSecs).toString(),
+            "delivery" to sent.delivery.name,
+        )
+    }
+
+    @Test
+    fun wait_for_message_absent_from_args() {
+        ensureLoggedIn()
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val chatIdArg = optionalArg("chat_id")
+        val expectedMessage = requiredArg("message")
+        val direction = optionalArg("direction")?.lowercase() ?: "any"
+        val timeoutMs =
+            optionalArg("timeout_ms")?.toLongOrNull()
+                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 60L) * 1_000L)
+        val chat =
+            chatIdArg
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+
+        waitForState("message absent", timeoutMs = timeoutMs) {
+            true.takeIf { countMessages(chat.chatId, expectedMessage, direction) == 0 }
+        }
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "message" to expectedMessage,
+            "absent" to "true",
         )
     }
 
@@ -1210,7 +1765,7 @@ class RealRelayHarnessTest {
         val expectedCount = optionalArg("expected_count")?.toIntOrNull()
         val timeoutMs =
             optionalArg("timeout_ms")?.toLongOrNull()
-                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 180L) * 1_000L)
+                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 60L) * 1_000L)
         val seededChat =
             when {
                 !expectedChatId.isNullOrBlank() -> ensureChatOpenById(expectedChatId)
@@ -1497,7 +2052,7 @@ class RealRelayHarnessTest {
         // even though the smoke was passing the args correctly.
         val peerInput = optionalArg("peer_input").orEmpty()
         val expectedChatId = optionalArg("chat_id")?.takeIf { it.isNotBlank() }
-        val timeoutMs = optionalArg("timeout_ms")?.toLong() ?: 180_000L
+        val timeoutMs = optionalArg("timeout_ms")?.toLong() ?: 60_000L
 
         val seededChat =
             when {
@@ -1676,1022 +2231,5 @@ class RealRelayHarnessTest {
         )
     }
 
-    private fun ensureLoggedIn(createIfMissing: Boolean = false): to.iris.chat.rust.AccountSnapshot {
-        var createRequested = false
-        return waitForState("logged in account", timeoutMs = 90_000) {
-            val manager = appManager()
-            manager.state.value.account?.let { return@waitForState it }
 
-            when (manager.bootstrapState.value) {
-                AccountBootstrapState.Loading -> null
-                AccountBootstrapState.NeedsLogin -> {
-                    if (createIfMissing && !createRequested) {
-                        createRequested = true
-                        manager.createAccount()
-                    }
-                    null
-                }
-                is AccountBootstrapState.LoggedIn -> null
-            }
-        }
-    }
-
-    private fun waitForPersistedDeviceSecret() {
-        waitForState("persisted device secret", timeoutMs = 90_000) {
-            val ready = kotlinx.coroutines.runBlocking { appManager().hasPersistedDeviceSecret() }
-            true.takeIf { ready }
-        }
-    }
-
-    private fun maybeDisableRelays() {
-        if (optionalArg("disable_relays") != "0") {
-            disableRelays()
-        }
-    }
-
-    private fun disableRelays() {
-        while (true) {
-            val relays = appManager().state.value.preferences.nostrRelayUrls
-            if (relays.isEmpty()) {
-                return
-            }
-            val relayUrl = relays.first()
-            appManager().dispatch(AppAction.RemoveNostrRelay(relayUrl))
-            waitForState<Boolean>("removed relay $relayUrl", timeoutMs = 30_000) {
-                true.takeIf {
-                    !appManager().state.value.preferences.nostrRelayUrls.contains(relayUrl)
-                }
-            }
-        }
-    }
-
-    private fun ensureLinkedDeviceStarted(ownerInput: String): to.iris.chat.rust.AccountSnapshot {
-        var linkRequested = false
-        return waitForState("linked device account", timeoutMs = 90_000) {
-            val manager = appManager()
-            manager.state.value.account?.let { account ->
-                if (account.authorizationState == DeviceAuthorizationState.AWAITING_APPROVAL ||
-                    account.authorizationState == DeviceAuthorizationState.AUTHORIZED
-                ) {
-                    return@waitForState account
-                }
-            }
-
-            when (manager.bootstrapState.value) {
-                AccountBootstrapState.Loading -> null
-                AccountBootstrapState.NeedsLogin -> {
-                    if (!linkRequested) {
-                        linkRequested = true
-                        manager.startLinkedDevice(ownerInput)
-                    }
-                    null
-                }
-                is AccountBootstrapState.LoggedIn -> null
-            }
-        }
-    }
-
-    private fun ensureChatOpen(peerInput: String): CurrentChatSnapshot {
-        val existing =
-            waitForOptionalState(timeoutMs = 5_000) {
-                findChatMatchingPeerInput(peerInput)
-            }
-        if (existing != null) {
-            appManager().openChat(existing.chatId)
-            return waitForState("existing chat") {
-                appManager()
-                    .state
-                    .value
-                    .currentChat
-                    ?.takeIf { current -> matchesPeerInput(current.chatId, current.subtitle.orEmpty(), peerInput) }
-            }
-        }
-
-        appManager().createChat(peerInput)
-        return waitForState("created chat") {
-            appManager()
-                .state
-                .value
-                .currentChat
-                ?.takeIf { current -> matchesPeerInput(current.chatId, current.subtitle.orEmpty(), peerInput) }
-        }
-    }
-
-    private fun findChatMatchingPeerInput(peerInput: String): ChatThreadSnapshot? =
-        appManager().state.value.chatList.firstOrNull { thread ->
-            matchesPeerInput(
-                chatId = thread.chatId,
-                peerNpub = thread.subtitle.orEmpty(),
-                peerInput = peerInput,
-            )
-        }
-
-    private fun ensureChatOpenById(chatId: String): CurrentChatSnapshot {
-        val trimmed = chatId.trim()
-        require(trimmed.isNotEmpty()) { "chat id must not be blank" }
-        appManager().openChat(trimmed)
-        return waitForState("opened chat by id") {
-            appManager()
-                .state
-                .value
-                .currentChat
-                ?.takeIf { current -> current.chatId == trimmed }
-            }
-    }
-
-    private fun resolvePeerOwnerHex(peerInput: String): String =
-        appManager()
-            .state
-            .value
-            .chatList
-            .firstOrNull { thread ->
-                matchesPeerInput(
-                    chatId = thread.chatId,
-                    peerNpub = thread.subtitle.orEmpty(),
-                    peerInput = peerInput,
-                )
-            }
-            ?.chatId
-            ?: normalizePeerInput(peerInput)
-
-    private fun matchesPeerInput(
-        chatId: String,
-        peerNpub: String,
-        peerInput: String,
-    ): Boolean {
-        // chatId for direct chats is canonical lowercase hex; peerInput
-        // is whatever the caller had handy (npub / hex / nprofile…).
-        // `normalizePeerInput` returns an npub when the input is
-        // npub-shaped and hex when it's already hex, so it's not a
-        // single canonical form — compare against both via
-        // `peerInputToHex`. Without this the harness silently fails to
-        // find existing chats by npub, falls back to `createChat`, and
-        // times out waiting for a currentChat that already matches.
-        val normalizedDisplay = normalizePeerInput(peerInput)
-        val hex = peerInputToHex(peerInput)
-        if (hex.isNotEmpty() && chatId.equals(hex, ignoreCase = true)) {
-            return true
-        }
-        return chatId.equals(normalizedDisplay, ignoreCase = true) ||
-            peerNpub.equals(normalizedDisplay, ignoreCase = true)
-    }
-
-    private fun deviceMatchesInput(
-        devicePubkeyHex: String,
-        deviceNpub: String,
-        deviceInput: String,
-    ): Boolean {
-        val trimmed = deviceInput.trim()
-        if (trimmed.isEmpty()) {
-            return false
-        }
-        val normalized = normalizePeerInput(trimmed)
-        return devicePubkeyHex.equals(normalized, ignoreCase = true) ||
-            deviceNpub.equals(trimmed, ignoreCase = true) ||
-            deviceNpub.equals(normalized, ignoreCase = true)
-    }
-
-    private fun chatMatchesExpectedChat(
-        chatId: String,
-        peerInput: String,
-        expectedChatId: String?,
-    ): Boolean {
-        if (!expectedChatId.isNullOrBlank()) {
-            return chatId.equals(expectedChatId, ignoreCase = true)
-        }
-        if (peerInput.isBlank()) {
-            return true
-        }
-        val hex = peerInputToHex(peerInput)
-        if (hex.isNotEmpty() && chatId.equals(hex, ignoreCase = true)) {
-            return true
-        }
-        return chatId.equals(normalizePeerInput(peerInput), ignoreCase = true)
-    }
-
-    private fun messageDirectionMatches(
-        isOutgoing: Boolean,
-        direction: String,
-    ): Boolean =
-        when (direction) {
-            "", "incoming" -> !isOutgoing
-            "outgoing" -> isOutgoing
-            "any" -> true
-            else -> !isOutgoing
-        }
-
-    private fun requiredAuthorizationState(): DeviceAuthorizationState =
-        when (requiredArg("authorization_state").trim().uppercase()) {
-            "AUTHORIZED" -> DeviceAuthorizationState.AUTHORIZED
-            "AWAITING_APPROVAL" -> DeviceAuthorizationState.AWAITING_APPROVAL
-            "REVOKED" -> DeviceAuthorizationState.REVOKED
-            else -> throw AssertionError("Unsupported authorization_state argument")
-        }
-
-    private fun optionalArg(name: String): String? =
-        arguments.getString("${name}_b64")
-            ?.takeIf { it.isNotBlank() }
-            ?.let(::decodeBase64Arg)
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
-            ?: arguments.getString(name)?.trim()?.takeIf { it.isNotEmpty() }
-
-    private fun requiredArg(name: String): String {
-        optionalArg(name)?.let { return it }
-        if (arguments.getString("class").isNullOrBlank()) {
-            assumeTrue("Harness action requires instrumentation argument: $name", false)
-        }
-        throw AssertionError("Missing instrumentation argument: $name")
-    }
-
-    private fun requireHarnessInvocation(reason: String) {
-        if (arguments.getString("class").isNullOrBlank()) {
-            assumeTrue(reason, false)
-        }
-    }
-
-    private fun waitForRelayDrainIfRequested() {
-        val raw = optionalArg("wait_for_relay_drain")?.lowercase() ?: return
-        if (raw !in setOf("1", "true", "yes")) {
-            return
-        }
-
-        SystemClock.sleep(500)
-        val runtimeOnly =
-            optionalArg("relay_drain_runtime_only")?.lowercase() in setOf("1", "true", "yes")
-        val timeoutMs =
-            ((optionalArg("relay_drain_timeout_secs")?.toLongOrNull() ?: 180L) * 1_000L)
-                .coerceAtLeast(1_000L)
-        val wakeRelay = relayWakeCallback()
-        wakeRelay()
-        val status =
-            waitForState("relay publish drain", timeoutMs = timeoutMs) {
-                wakeRelay()
-                val pendingDurablePublishCount = pendingRelayPublishCount()
-                appManager()
-                    .state
-                    .value
-                    .networkStatus
-                    ?.takeIf { status ->
-                        (status.relayUrls.isEmpty() || status.connectedRelayCount > 0UL) &&
-                            pendingDurablePublishCount == 0 &&
-                            (runtimeOnly || status.pendingOutboundCount == 0UL) &&
-                            status.pendingGroupControlCount == 0UL
-                    }
-            }
-        reportStatus(
-            "pending_outbound_count" to status.pendingOutboundCount.toString(),
-            "pending_runtime_outbound_count" to pendingRelayPublishCount().toString(),
-            "pending_group_control_count" to status.pendingGroupControlCount.toString(),
-        )
-    }
-
-    private fun requiredListArg(name: String): List<String> =
-        requiredArg(name)
-            .split(',', '\n', '|')
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-            .takeIf { it.isNotEmpty() }
-            ?: throw AssertionError("Missing non-empty list argument: $name")
-
-    private fun optionalListArg(name: String): List<String> =
-        optionalArg(name)
-            ?.split(',', '\n', '|')
-            ?.map(String::trim)
-            ?.filter(String::isNotEmpty)
-            ?: emptyList()
-
-    private fun decodeBase64Arg(value: String): String =
-        String(Base64.decode(value, Base64.NO_WRAP or Base64.URL_SAFE), Charsets.UTF_8)
-
-    private fun storageEntries(root: File): List<String> =
-        root
-            .listFiles()
-            ?.sortedBy { it.name }
-            ?.map { it.relativeTo(root).path.ifBlank { it.name } }
-            ?: emptyList()
-
-    private fun readJsonObject(fileName: String): JSONObject? {
-        val file = File(appFilesDir(), fileName)
-        if (!file.exists()) {
-            return null
-        }
-        return runCatching { JSONObject(file.readText()) }.getOrNull()
-    }
-
-    private data class SqliteCoreSnapshot(
-        val filePresent: Boolean,
-        val appMeta: String = "",
-        val appKeys: String = "",
-        val groups: String = "",
-        val threads: String = "",
-        val messages: String = "",
-        val pendingRelayPublishes: String = "",
-    )
-
-    private fun readSqliteCoreSnapshot(): SqliteCoreSnapshot {
-        val dbFile = File(appFilesDir(), CORE_DB_FILENAME)
-        if (!dbFile.exists()) {
-            return SqliteCoreSnapshot(filePresent = false)
-        }
-        return runCatching {
-            SQLiteDatabase
-                .openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
-                .use { db ->
-                    SqliteCoreSnapshot(
-                        filePresent = true,
-                        appMeta =
-                            summarizeRows(
-                                db,
-                                "SELECT key, value FROM app_meta ORDER BY key",
-                            ) { cursor ->
-                                "${cursor.getString(0)}=${cursor.getString(1)}"
-                            },
-                        appKeys =
-                            summarizeRows(
-                                db,
-                                """
-                                    SELECT owner_pubkey_hex, created_at_secs, devices_json
-                                    FROM app_keys
-                                    ORDER BY owner_pubkey_hex
-                                """.trimIndent(),
-                            ) { cursor ->
-                                listOf(
-                                    cursor.getString(0),
-                                    cursor.getLong(1).toString(),
-                                    cursor.getString(2).take(160),
-                                ).joinToString(",")
-                            },
-                        groups =
-                            summarizeRows(
-                                db,
-                                """
-                                    SELECT group_id, name, updated_at_secs
-                                    FROM groups
-                                    ORDER BY updated_at_secs DESC, group_id
-                                """.trimIndent(),
-                            ) { cursor ->
-                                listOf(
-                                    cursor.getString(0),
-                                    cursor.getString(1),
-                                    cursor.getLong(2).toString(),
-                                ).joinToString(",")
-                            },
-                        threads =
-                            summarizeRows(
-                                db,
-                                """
-                                    SELECT chat_id, unread_count, updated_at_secs
-                                    FROM threads
-                                    ORDER BY updated_at_secs DESC, chat_id
-                                """.trimIndent(),
-                            ) { cursor ->
-                                listOf(
-                                    cursor.getString(0),
-                                    cursor.getLong(1).toString(),
-                                    cursor.getLong(2).toString(),
-                                ).joinToString(",")
-                            },
-                        messages =
-                            summarizeRows(
-                                db,
-                                """
-                                    SELECT chat_id, id, delivery, is_outgoing, body
-                                    FROM messages
-                                    ORDER BY created_at_secs DESC, id DESC
-                                    LIMIT 20
-                                """.trimIndent(),
-                            ) { cursor ->
-                                listOf(
-                                    cursor.getString(0),
-                                    cursor.getString(1),
-                                    cursor.getString(2),
-                                    cursor.getLong(3).toString(),
-                                    cursor.getString(4).replace('|', '/').take(120),
-                                ).joinToString(",")
-                            },
-                        pendingRelayPublishes =
-                            summarizeRows(
-                                db,
-                                """
-                                    SELECT label, target_owner_pubkey_hex, target_device_id, chat_id, message_id, attempt_count
-                                    FROM pending_relay_publishes
-                                    ORDER BY created_at_secs DESC
-                                    LIMIT 30
-                                """.trimIndent(),
-                            ) { cursor ->
-                                listOf(
-                                    cursor.getString(0),
-                                    cursor.stringOrEmpty(1),
-                                    cursor.stringOrEmpty(2),
-                                    cursor.stringOrEmpty(3),
-                                    cursor.stringOrEmpty(4),
-                                    cursor.getLong(5).toString(),
-                                ).joinToString(",")
-                            },
-                    )
-                }
-        }.getOrElse {
-            SqliteCoreSnapshot(
-                filePresent = true,
-                appMeta = "read_error=${it.message.orEmpty()}",
-            )
-        }
-    }
-
-    private fun summarizeRows(
-        db: SQLiteDatabase,
-        sql: String,
-        args: Array<String> = emptyArray(),
-        row: (android.database.Cursor) -> String,
-    ): String =
-        db.rawQuery(sql, args).use { cursor ->
-            buildList {
-                while (cursor.moveToNext()) {
-                    add(row(cursor))
-                }
-            }.joinToString("|")
-        }
-
-    private fun android.database.Cursor.stringOrEmpty(index: Int): String =
-        if (isNull(index)) "" else getString(index)
-
-    private fun pendingRelayPublishCount(label: String? = null): Int {
-        val dbFile = File(appFilesDir(), CORE_DB_FILENAME)
-        if (!dbFile.exists()) {
-            return 0
-        }
-        return runCatching {
-            SQLiteDatabase
-                .openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
-                .use { db ->
-                    val (sql, args) =
-                        if (label.isNullOrBlank()) {
-                            "SELECT COUNT(*) FROM pending_relay_publishes" to emptyArray<String>()
-                        } else {
-                            "SELECT COUNT(*) FROM pending_relay_publishes WHERE label = ?" to
-                                arrayOf(label)
-                        }
-                    db.rawQuery(sql, args).use { cursor ->
-                        if (cursor.moveToFirst()) cursor.getInt(0) else 0
-                    }
-                }
-        }.getOrDefault(0)
-    }
-
-    private fun readOwnerProfileDisplayName(ownerPubkeyHex: String): String? {
-        val dbFile = File(appFilesDir(), CORE_DB_FILENAME)
-        if (!dbFile.exists()) {
-            return null
-        }
-        return runCatching {
-            SQLiteDatabase
-                .openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
-                .use { db ->
-                    db.rawQuery(
-                        """
-                            SELECT display_name, name
-                            FROM owner_profiles
-                            WHERE owner_pubkey_hex = ?
-                            LIMIT 1
-                        """.trimIndent(),
-                        arrayOf(ownerPubkeyHex),
-                    ).use { cursor ->
-                        if (!cursor.moveToFirst()) {
-                            null
-                        } else {
-                            cursor.getString(0)?.takeIf { it.isNotEmpty() }
-                                ?: cursor.getString(1)?.takeIf { it.isNotEmpty() }
-                        }
-                    }
-                }
-        }.getOrNull()
-    }
-
-    private fun readLegacyOwnerProfileDisplayName(ownerPubkeyHex: String): String? {
-        val profiles = readJsonObject("core/profiles.json") ?: return null
-        val entry = profiles.optJSONObject(ownerPubkeyHex) ?: return null
-        return entry.optString("display_name").takeIf { it.isNotEmpty() }
-            ?: entry.optString("name").takeIf { it.isNotEmpty() }
-    }
-
-    private fun persistedThreadWithMessage(
-        persisted: JSONObject,
-        chatId: String?,
-        expectedMessage: String,
-        direction: String,
-    ): String? {
-        val threads = persisted.optJSONArray("threads") ?: return null
-        for (index in 0 until threads.length()) {
-            val thread = threads.optJSONObject(index) ?: continue
-            val threadChatId = thread.optString("chat_id")
-            if (!chatId.isNullOrBlank() && !threadChatId.equals(chatId, ignoreCase = true)) {
-                continue
-            }
-            val messages = thread.optJSONArray("messages") ?: continue
-            val found =
-                (0 until messages.length()).any { messageIndex ->
-                    val message = messages.optJSONObject(messageIndex) ?: return@any false
-                    message.optString("body") == expectedMessage &&
-                        messageDirectionMatches(message.optBoolean("is_outgoing"), direction)
-                }
-            if (found) {
-                return threadChatId
-            }
-        }
-        return null
-    }
-
-    private fun countMessages(
-        chatId: String,
-        expectedMessage: String,
-        direction: String,
-    ): Int {
-        val persistedCount =
-            readJsonObject(PERSISTED_STATE_FILENAME)?.let { persisted ->
-                countPersistedMessages(persisted, chatId, expectedMessage, direction)
-            } ?: 0
-        val stateCount =
-            appManager()
-                .state
-                .value
-                .currentChat
-                ?.takeIf { chat -> chat.chatId.equals(chatId, ignoreCase = true) }
-                ?.messages
-                ?.count { message ->
-                    message.body == expectedMessage &&
-                        messageDirectionMatches(message.isOutgoing, direction)
-                } ?: 0
-        return maxOf(persistedCount, stateCount)
-    }
-
-    private fun countPersistedMessages(
-        persisted: JSONObject,
-        chatId: String,
-        expectedMessage: String,
-        direction: String,
-    ): Int {
-        val threads = persisted.optJSONArray("threads") ?: return 0
-        for (index in 0 until threads.length()) {
-            val thread = threads.optJSONObject(index) ?: continue
-            val threadChatId = thread.optString("chat_id")
-            if (!threadChatId.equals(chatId, ignoreCase = true)) {
-                continue
-            }
-            val messages = thread.optJSONArray("messages") ?: return 0
-            return (0 until messages.length()).count { messageIndex ->
-                val message = messages.optJSONObject(messageIndex) ?: return@count false
-                message.optString("body") == expectedMessage &&
-                    messageDirectionMatches(message.optBoolean("is_outgoing"), direction)
-            }
-        }
-        return 0
-    }
-
-    private fun holdNearbyIfRequested() {
-        val holdMs = (optionalArg("hold_ms")?.toLongOrNull() ?: 0L).coerceIn(0L, 60_000L)
-        if (holdMs <= 0L) return
-        reportStatus("nearby_hold_ms" to holdMs.toString())
-        SystemClock.sleep(holdMs)
-    }
-
-    private fun sqliteDirectionValue(direction: String): String? =
-        when (direction.lowercase()) {
-            "incoming" -> "0"
-            "outgoing" -> "1"
-            else -> null
-        }
-
-    private fun persistedHasPeerRoster(
-        persisted: JSONObject,
-        peerOwnerHex: String,
-    ): Boolean =
-        persisted
-            .optJSONObject("session_manager")
-            ?.optJSONArray("users")
-            ?.let { users ->
-                (0 until users.length()).any { index ->
-                    users.optJSONObject(index)?.let { user ->
-                        user.optString("owner_pubkey").equals(peerOwnerHex, ignoreCase = true) &&
-                            !user.isNull("roster")
-                    } == true
-                }
-            } == true
-
-    private fun persistedHasPeerSession(
-        persisted: JSONObject,
-        peerOwnerHex: String,
-    ): Boolean =
-        persisted
-            .optJSONObject("session_manager")
-            ?.optJSONArray("users")
-            ?.let { users ->
-                (0 until users.length()).any { index ->
-                    val user = users.optJSONObject(index) ?: return@any false
-                    if (!user.optString("owner_pubkey").equals(peerOwnerHex, ignoreCase = true)) {
-                        return@any false
-                    }
-                    val devices = user.optJSONArray("devices") ?: return@any false
-                    (0 until devices.length()).any { deviceIndex ->
-                        val device = devices.optJSONObject(deviceIndex) ?: return@any false
-                        !device.isNull("active_session") ||
-                            (device.optJSONArray("inactive_sessions")?.length() ?: 0) > 0
-                    }
-                }
-            } == true
-
-    private fun persistedHasPeerTransportReady(
-        persisted: JSONObject,
-        peerOwnerHex: String,
-    ): Boolean =
-        persisted
-            .optJSONObject("session_manager")
-            ?.optJSONArray("users")
-            ?.let { users ->
-                (0 until users.length()).any { index ->
-                    val user = users.optJSONObject(index) ?: return@any false
-                    if (!user.optString("owner_pubkey").equals(peerOwnerHex, ignoreCase = true)) {
-                        return@any false
-                    }
-                    val rosterDevices = user.optJSONObject("roster")?.optJSONArray("devices") ?: return@any false
-                    val devices = user.optJSONArray("devices") ?: return@any false
-                    if (rosterDevices.length() == 0) {
-                        return@any false
-                    }
-
-                    (0 until rosterDevices.length()).all { rosterIndex ->
-                        val rosterDevice = rosterDevices.optJSONObject(rosterIndex) ?: return@all false
-                        val rosterDeviceHex = rosterDevice.optString("device_pubkey")
-                        (0 until devices.length()).any { deviceIndex ->
-                            val device = devices.optJSONObject(deviceIndex) ?: return@any false
-                            device.optString("device_pubkey").equals(rosterDeviceHex, ignoreCase = true) &&
-                                !device.isNull("public_invite")
-                        }
-                    }
-                }
-            } == true
-
-    private fun runtimeDebugHasPeerRoster(
-        debug: JSONObject,
-        peerOwnerHex: String,
-    ): Boolean =
-        runtimeDebugKnownPeer(debug, peerOwnerHex) { user ->
-            user.optBoolean("has_roster") && user.optInt("roster_device_count") > 0
-        }
-
-    private fun runtimeDebugHasPeerSession(
-        debug: JSONObject,
-        peerOwnerHex: String,
-    ): Boolean =
-        runtimeDebugKnownPeer(debug, peerOwnerHex) { user ->
-            user.optInt("active_session_device_count") > 0 ||
-                user.optInt("inactive_session_count") > 0
-        }
-
-    private fun runtimeDebugHasPeerTransportReady(
-        debug: JSONObject,
-        peerOwnerHex: String,
-    ): Boolean =
-        runtimeDebugKnownPeer(debug, peerOwnerHex) { user ->
-            user.optBoolean("has_roster") &&
-                user.optInt("roster_device_count") > 0 &&
-                user.optInt("device_count") > 0 &&
-                user.optInt("authorized_device_count") > 0
-        }
-
-    private fun runtimeDebugKnownPeer(
-        debug: JSONObject,
-        peerOwnerHex: String,
-        predicate: (JSONObject) -> Boolean,
-    ): Boolean {
-        val users = debug.optJSONArray("known_users") ?: return false
-        return (0 until users.length()).any { index ->
-            val user = users.optJSONObject(index) ?: return@any false
-            user.optString("owner_pubkey_hex").equals(peerOwnerHex, ignoreCase = true) &&
-                predicate(user)
-        }
-    }
-
-    private fun runtimeDebugAuthorizedDeviceCount(
-        debug: JSONObject?,
-        ownerHex: String,
-    ): Int? {
-        if (debug == null || ownerHex.isBlank()) {
-            return null
-        }
-        val users = debug.optJSONArray("known_users") ?: return null
-        for (index in 0 until users.length()) {
-            val user = users.optJSONObject(index) ?: continue
-            if (user.optString("owner_pubkey_hex").equals(ownerHex, ignoreCase = true)) {
-                return user.optInt("authorized_device_count")
-            }
-        }
-        return null
-    }
-
-    private fun summarizeKnownUsers(
-        snapshot: JSONObject,
-        source: String,
-    ): String =
-        if (source == "runtime") {
-            summarizeRuntimeKnownUsers(snapshot.optJSONArray("known_users"))
-        } else {
-            summarizePersistedUsers(snapshot.optJSONObject("session_manager")?.optJSONArray("users"))
-        }
-
-    private fun summarizeCurrentChat(chat: CurrentChatSnapshot?): String =
-        chat?.let {
-            listOf(
-                it.chatId,
-                it.displayName,
-                it.groupId.orEmpty(),
-                it.memberCount.toString(),
-                it.messages.size.toString(),
-            ).joinToString(",")
-        }.orEmpty()
-
-    private fun summarizeChatList(threads: List<to.iris.chat.rust.ChatThreadSnapshot>): String =
-        threads.joinToString("|") { thread ->
-            listOf(
-                thread.chatId,
-                thread.kind.name,
-                thread.displayName,
-                thread.memberCount.toString(),
-                thread.lastMessagePreview.orEmpty(),
-                thread.unreadCount.toString(),
-            ).joinToString(",")
-        }
-
-    private fun summarizeRuntimeKnownUsers(users: JSONArray?): String =
-        users.joinObjects { user ->
-            listOf(
-                user.optString("owner_pubkey_hex"),
-                "roster=${user.optBoolean("has_roster")}",
-                "rosterDevices=${user.optInt("roster_device_count")}",
-                "devices=${user.optInt("device_count")}",
-                "authorized=${user.optInt("authorized_device_count")}",
-                "active=${user.optInt("active_session_device_count")}",
-                "inactive=${user.optInt("inactive_session_count")}",
-            ).joinToString(",")
-        }
-
-    private fun summarizeRuntimePendingOutbound(entries: JSONArray?): String =
-        entries.joinObjects { entry ->
-            listOf(
-                entry.optString("message_id"),
-                entry.optString("chat_id"),
-                entry.optString("reason"),
-                entry.optString("publish_mode"),
-                "inFlight=${entry.optBoolean("in_flight")}",
-            ).joinToString(",")
-        }
-
-    private fun summarizeRuntimePendingRelayPublishes(entries: JSONArray?): String =
-        entries.joinObjects { entry ->
-            listOf(
-                entry.optString("event_id"),
-                entry.optString("label"),
-                entry.optString("target_owner_pubkey_hex"),
-                entry.optString("target_device_id"),
-                "attempts=${entry.optInt("attempt_count")}",
-                "error=${entry.optString("last_error")}",
-            ).joinToString(",")
-        }
-
-    private fun summarizeRuntimePendingGroupControls(entries: JSONArray?): String =
-        entries.joinObjects { entry ->
-            listOf(
-                entry.optString("operation_id"),
-                entry.optString("group_id"),
-                entry.optString("reason"),
-                entry.optString("kind"),
-                "targets=${entry.optStringArray("target_owner_hexes")}",
-                "inFlight=${entry.optBoolean("in_flight")}",
-            ).joinToString(",")
-        }
-
-    private fun summarizeRecentHandshakePeers(entries: JSONArray?): String =
-        entries.joinObjects { entry ->
-            listOf(
-                entry.optString("owner_hex"),
-                entry.optString("device_hex"),
-                entry.optString("observed_at_secs"),
-            ).joinToString(",")
-        }
-
-    private fun summarizeEventCounts(eventCounts: JSONObject?): String =
-        if (eventCounts == null) {
-            ""
-        } else {
-            listOf(
-                "roster=${eventCounts.optInt("roster_events")}",
-                "invite=${eventCounts.optInt("invite_events")}",
-                "inviteResponse=${eventCounts.optInt("invite_response_events")}",
-                "message=${eventCounts.optInt("message_events")}",
-                "other=${eventCounts.optInt("other_events")}",
-            ).joinToString(",")
-        }
-
-    private fun summarizeRecentLog(entries: JSONArray?): String =
-        entries.joinObjects(limit = 80) { entry ->
-            listOf(
-                entry.optString("timestamp_secs"),
-                entry.optString("category"),
-                entry.optString("detail"),
-            ).joinToString(",")
-        }
-
-    private fun summarizePersistedUsers(users: JSONArray?): String =
-        users.joinObjects { user ->
-            val devices = user.optJSONArray("devices")
-            val activeSessions =
-                devices.countObjects { device ->
-                    !device.isNull("active_session")
-                }
-            val inactiveSessions =
-                devices.sumObjects { device ->
-                    device.optJSONArray("inactive_sessions")?.length() ?: 0
-                }
-            listOf(
-                user.optString("owner_pubkey"),
-                "roster=${!user.isNull("roster")}",
-                "devices=${devices?.length() ?: 0}",
-                "active=${activeSessions}",
-                "inactive=${inactiveSessions}",
-            ).joinToString(",")
-        }
-
-    private fun summarizePersistedGroups(groups: JSONArray?): String =
-        groups.joinObjects { group ->
-            listOf(
-                group.optString("group_id"),
-                group.optString("name"),
-                "revision=${group.optLong("revision")}",
-                "members=${group.optJSONArray("members")?.length() ?: 0}",
-                "admins=${group.optJSONArray("admins")?.length() ?: 0}",
-            ).joinToString(",")
-        }
-
-    private fun summarizePersistedPendingOutbound(entries: JSONArray?): String =
-        entries.joinObjects { entry ->
-            listOf(
-                entry.optString("message_id"),
-                entry.optString("chat_id"),
-                entry.optString("reason"),
-                entry.optString("publish_mode"),
-                "inFlight=${entry.optBoolean("in_flight")}",
-            ).joinToString(",")
-        }
-
-    private fun summarizePersistedPendingGroupControls(entries: JSONArray?): String =
-        entries.joinObjects { entry ->
-            listOf(
-                entry.optString("operation_id"),
-                entry.optString("group_id"),
-                entry.optString("reason"),
-                entry.opt("kind")?.toString().orEmpty(),
-                "inFlight=${entry.optBoolean("in_flight")}",
-            ).joinToString(",")
-        }
-
-    private fun summarizePersistedThreads(entries: JSONArray?): String =
-        entries.joinObjects { entry ->
-            listOf(
-                entry.optString("chat_id"),
-                "messages=${entry.optJSONArray("messages")?.length() ?: 0}",
-                "unread=${entry.optLong("unread_count")}",
-            ).joinToString(",")
-        }
-
-    private fun JSONObject?.optStringOrEmpty(key: String): String =
-        if (this == null || !has(key) || isNull(key)) {
-            ""
-        } else {
-            opt(key)?.toString().orEmpty()
-        }
-
-    private fun JSONObject?.optStringArray(key: String): String =
-        this?.optJSONArray(key).joinValues().orEmpty()
-
-    private fun JSONArray?.joinObjects(
-        limit: Int = Int.MAX_VALUE,
-        block: (JSONObject) -> String,
-    ): String {
-        if (this == null) {
-            return ""
-        }
-        val values = mutableListOf<String>()
-        for (index in 0 until minOf(length(), limit)) {
-            val obj = optJSONObject(index) ?: continue
-            values += block(obj)
-        }
-        return values.joinToString("|")
-    }
-
-    private fun JSONArray?.joinValues(limit: Int = Int.MAX_VALUE): String {
-        if (this == null) {
-            return ""
-        }
-        val values = mutableListOf<String>()
-        for (index in 0 until minOf(length(), limit)) {
-            values += opt(index)?.toString().orEmpty()
-        }
-        return values.joinToString("|")
-    }
-
-    private fun JSONArray?.countObjects(predicate: (JSONObject) -> Boolean): Int {
-        if (this == null) {
-            return 0
-        }
-        var count = 0
-        for (index in 0 until length()) {
-            val obj = optJSONObject(index) ?: continue
-            if (predicate(obj)) {
-                count += 1
-            }
-        }
-        return count
-    }
-
-    private fun JSONArray?.sumObjects(transform: (JSONObject) -> Int): Int {
-        if (this == null) {
-            return 0
-        }
-        var sum = 0
-        for (index in 0 until length()) {
-            val obj = optJSONObject(index) ?: continue
-            sum += transform(obj)
-        }
-        return sum
-    }
-
-    private fun reportNearbySnapshot(snapshot: IrisNearbyService.Snapshot) {
-        val peers = JSONArray()
-        snapshot.peers.forEach { peer ->
-            peers.put(
-                JSONObject()
-                    .put("id", peer.id)
-                    .put("name", peer.name)
-                    .put("owner_pubkey_hex", peer.ownerPubkeyHex ?: "")
-                    .put("profile_event_id", peer.profileEventId ?: ""),
-            )
-        }
-        reportStatus(
-            "nearby_visible" to snapshot.visible.toString(),
-            "nearby_status" to snapshot.status,
-            "nearby_lan_visible" to snapshot.localNetworkVisible.toString(),
-            "nearby_lan_status" to snapshot.localNetworkStatus,
-            "nearby_lan_permission_granted" to snapshot.localNetworkPermissionGranted.toString(),
-            "nearby_peer_count" to snapshot.peerCount.toString(),
-            "nearby_peers" to peers.toString(),
-        )
-    }
-
-    private fun reportStatus(vararg fields: Pair<String, String>) {
-        val bundle = Bundle()
-        fields.forEach { (key, value) -> bundle.putString(key, value) }
-        instrumentation.sendStatus(0, bundle)
-    }
-
-    private fun <T> waitForState(
-        label: String,
-        timeoutMs: Long = 60_000,
-        condition: () -> T?,
-    ): T {
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
-        while (SystemClock.elapsedRealtime() < deadline) {
-            condition()?.let { return it }
-            SystemClock.sleep(100)
-        }
-        throw AssertionError("Timed out waiting for $label")
-    }
-
-    private fun <T> waitForOptionalState(timeoutMs: Long, condition: () -> T?): T? {
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
-        while (SystemClock.elapsedRealtime() < deadline) {
-            condition()?.let { return it }
-            SystemClock.sleep(100)
-        }
-        return null
-    }
-
-    private fun relayWakeCallback(openChatId: String? = null): () -> Unit {
-        var lastRelayWakeAt = 0L
-        return {
-            val now = SystemClock.elapsedRealtime()
-            if (now - lastRelayWakeAt >= HARNESS_RELAY_WAKE_INTERVAL_MS) {
-                lastRelayWakeAt = now
-                appManager().appForegrounded()
-                openChatId?.let(appManager()::openChat)
-            }
-        }
-    }
-
-    private companion object {
-        const val DEBUG_SNAPSHOT_FILENAME = "iris_chat_runtime_debug.json"
-        const val CORE_DB_FILENAME = "core.sqlite3"
-        const val PERSISTED_STATE_FILENAME = "iris_chat_core_state.json"
-        const val NEARBY_PROFILE_TIMEOUT_MS = 180_000L
-        const val HARNESS_RELAY_WAKE_INTERVAL_MS = 3_000L
-    }
 }

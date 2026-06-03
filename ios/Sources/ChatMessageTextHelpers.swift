@@ -182,9 +182,6 @@ func messageInfoText(_ message: ChatMessageSnapshot, chat: CurrentChatSnapshot? 
     if !trace.queuedProtocolTargets.isEmpty {
         lines.append("Queued devices \(trace.queuedProtocolTargets.map(shortNpub).joined(separator: ", "))")
     }
-    if !trace.targetDeviceIds.isEmpty {
-        lines.append("Devices \(trace.targetDeviceIds.map(shortNpub).joined(separator: ", "))")
-    }
     if let lastError = trace.lastTransportError, !lastError.isEmpty {
         lines.append("Last send error \(lastError)")
     }

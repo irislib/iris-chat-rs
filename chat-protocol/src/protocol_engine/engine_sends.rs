@@ -12,16 +12,12 @@ impl ProtocolEngine {
         let pending_group_fanouts_checkpoint = self.pending_group_fanouts.clone();
         let pending_group_pairwise_checkpoint = self.pending_group_pairwise_payloads.clone();
         let owner_hex = owner_pubkey.to_hex();
+        let owner = ndr_owner(owner_pubkey);
         let latest = self
             .latest_app_keys_created_at
             .get(&owner_hex)
             .copied()
             .unwrap_or(0);
-        if created_at < latest {
-            return Ok(ProtocolRetryBatch::default());
-        }
-        self.latest_app_keys_created_at
-            .insert(owner_hex, created_at);
         let roster = DeviceRoster::new(
             NdrUnixSeconds(created_at),
             app_keys
@@ -35,14 +31,24 @@ impl ProtocolEngine {
                 })
                 .collect(),
         );
+        if created_at < latest
+            || (created_at == latest
+                && self
+                    .current_roster_for_owner(owner)
+                    .as_ref()
+                    .is_some_and(|current| current == &roster))
+        {
+            return Ok(ProtocolRetryBatch::default());
+        }
+        self.latest_app_keys_created_at
+            .insert(owner_hex, created_at);
         if owner_pubkey == self.owner_pubkey {
             self.session_manager.replace_local_roster(roster);
         } else {
-            self.session_manager
-                .observe_peer_roster(ndr_owner(owner_pubkey), roster);
+            self.session_manager.observe_peer_roster(owner, roster);
         }
         self.invalidate_known_message_author_cache();
-        self.wake_pending_protocol_for_owner(ndr_owner(owner_pubkey));
+        self.wake_pending_protocol_for_owner(owner);
         if let Err(error) = self.persist() {
             self.session_manager = session_checkpoint;
             self.latest_app_keys_created_at = latest_checkpoint;
@@ -56,10 +62,16 @@ impl ProtocolEngine {
         self.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))
     }
 
-    pub fn observe_invite_event(
-        &mut self,
-        event: &Event,
-    ) -> anyhow::Result<ProtocolRetryBatch> {
+    fn current_roster_for_owner(&self, owner: NdrOwnerPubkey) -> Option<DeviceRoster> {
+        self.session_manager
+            .snapshot()
+            .users
+            .into_iter()
+            .find(|user| user.owner_pubkey == owner)
+            .and_then(|user| user.roster)
+    }
+
+    pub fn observe_invite_event(&mut self, event: &Event) -> anyhow::Result<ProtocolRetryBatch> {
         let session_checkpoint = self.session_manager.clone();
         let pending_outbound_checkpoint = self.pending_outbound.clone();
         let pending_inbound_checkpoint = self.pending_inbound.clone();
@@ -188,8 +200,13 @@ impl ProtocolEngine {
             self.owner_pubkey,
             pairwise_codec::EncodeOptions::new(now.get(), current_unix_millis()).with_expiration(1),
         )?;
-        let bootstrap =
+        let mut bootstrap =
             self.send_direct_unsigned_event(invite_owner, &invite_owner.to_hex(), typing, now)?;
+        for effect in &mut bootstrap.effects {
+            if let ProtocolEffect::Publish(publish) = effect {
+                publish.inner_event_id = None;
+            }
+        }
         Ok(ProtocolAcceptInviteResult {
             owner_pubkey: invite_owner,
             inviter_device_pubkey: public_device(invite.inviter_device_pubkey)?,
@@ -244,12 +261,24 @@ impl ProtocolEngine {
         })
     }
 
+    fn ensure_supported_group_protocol(&self, group_id: &str) -> anyhow::Result<()> {
+        if self
+            .group_manager
+            .group(group_id)
+            .is_some_and(|group| !group.protocol.is_sender_key_v1())
+        {
+            anyhow::bail!("group `{group_id}` uses an unsupported legacy group protocol");
+        }
+        Ok(())
+    }
+
     pub fn update_group_name(
         &mut self,
         group_id: &str,
         name: String,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
         self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
             let prepared = engine.group_manager.update_name(
@@ -271,6 +300,7 @@ impl ProtocolEngine {
         picture: Option<String>,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
         self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
             let prepared = engine.group_manager.update_picture(
@@ -292,6 +322,7 @@ impl ProtocolEngine {
         about: Option<String>,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
         self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
             let prepared = engine.group_manager.update_about(
@@ -313,6 +344,7 @@ impl ProtocolEngine {
         members: Vec<PublicKey>,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
         self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
             let prepared = engine.group_manager.add_members(
@@ -334,6 +366,7 @@ impl ProtocolEngine {
         member: PublicKey,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
         self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
             let prepared = engine.group_manager.remove_members(
@@ -356,6 +389,7 @@ impl ProtocolEngine {
         is_admin: bool,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
         self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
             let prepared = if is_admin {
@@ -387,6 +421,7 @@ impl ProtocolEngine {
         inner_event_id: Option<String>,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
         self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
             let prepared = engine.group_manager.send_message(
@@ -589,8 +624,12 @@ impl ProtocolEngine {
         )?;
 
         let mut event_ids = Vec::new();
-        let mut effects =
-            protocol_effects_from_prepared(&remote, inner_event_id.clone(), &mut event_ids)?;
+        let mut effects = protocol_effects_from_prepared(
+            &remote,
+            inner_event_id.clone(),
+            chat_id.to_string(),
+            &mut event_ids,
+        )?;
 
         let remote_delivered = delivered_device_hexes(&remote);
         let gaps = remote.relay_gaps.clone();
@@ -653,8 +692,12 @@ impl ProtocolEngine {
             .prepare_local_sibling_send_reusing_sessions(&mut ctx, local_sibling_payload.clone())?;
 
         let mut event_ids = Vec::new();
-        let mut effects =
-            protocol_effects_from_prepared(&local, inner_event_id.clone(), &mut event_ids)?;
+        let mut effects = protocol_effects_from_prepared(
+            &local,
+            inner_event_id.clone(),
+            chat_id.to_string(),
+            &mut event_ids,
+        )?;
 
         let local_delivered = delivered_device_hexes(&local);
         let probe_local_sibling_roster = self.needs_local_sibling_roster_probe(&local);
@@ -725,11 +768,13 @@ impl ProtocolEngine {
         effects.extend(protocol_effects_from_prepared(
             &remote,
             inner_event_id.clone(),
+            chat_id.to_string(),
             &mut event_ids,
         )?);
         effects.extend(protocol_effects_from_prepared(
             &local,
             inner_event_id.clone(),
+            chat_id.to_string(),
             &mut event_ids,
         )?);
 

@@ -276,10 +276,14 @@ cleanup() {
   if [[ -n "${RELAY_PID}" ]]; then
     stop_local_rust_relay "${RELAY_PID}"
   fi
+  if [[ "${IRIS_E2E_KEEP_IOS_SIMS:-0}" != "1" && -n "${UDID:-}" ]]; then
+    iris_e2e_shutdown_ios_simulators "${UDID}"
+  fi
 }
 trap cleanup EXIT
 
 UDID="$(resolve_udid)"
+iris_e2e_shutdown_stale_ios_simulators "${UDID}"
 log "Simulator UDID: ${UDID}"
 log "Run dir: ${RUN_DIR}"
 log "Relay: ${RELAYS}"

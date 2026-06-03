@@ -3,6 +3,7 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT_DIR}/scripts/e2e_prerelease_common.sh"
 LOCAL_PROPERTIES="${ROOT_DIR}/android/local.properties"
 ANDROID_HARNESS="${ROOT_DIR}/scripts/run_harness.py"
 IOS_HARNESS="${ROOT_DIR}/scripts/run_ios_harness.py"
@@ -32,6 +33,15 @@ ANDROID_LABEL="android"
 IOS_LABEL="iphone"
 MACOS_LABEL="mac"
 IOS_IS_SIMULATOR=0
+
+cleanup() {
+  local exit_code=$?
+  if [[ "${IRIS_E2E_KEEP_IOS_SIMS:-0}" != "1" && "${IOS_IS_SIMULATOR}" -eq 1 ]]; then
+    iris_e2e_shutdown_ios_simulators "${IOS_UDID}"
+  fi
+  exit "${exit_code}"
+}
+trap cleanup EXIT
 
 usage() {
   cat <<EOF

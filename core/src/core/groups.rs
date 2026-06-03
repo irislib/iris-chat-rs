@@ -71,10 +71,7 @@ impl AppCore {
 
         match result {
             Some(Ok(result)) => {
-                self.process_protocol_engine_effects_with_completions(
-                    result.effects,
-                    &BTreeMap::new(),
-                );
+                self.process_protocol_engine_effects(result.effects);
                 self.handle_queued_protocol_targets("group.create", &result.queued_targets);
                 let Some(group) = result.snapshot else {
                     self.state.toast = Some("Group could not be created.".to_string());
@@ -126,10 +123,7 @@ impl AppCore {
 
         match result {
             Some(Ok(result)) => {
-                self.process_protocol_engine_effects_with_completions(
-                    result.effects,
-                    &BTreeMap::new(),
-                );
+                self.process_protocol_engine_effects(result.effects);
                 self.handle_queued_protocol_targets("group.rename", &result.queued_targets);
                 if let Some(snapshot) = result.snapshot {
                     self.apply_local_group_snapshot(previous.as_ref(), snapshot, "group.rename")
@@ -283,10 +277,7 @@ impl AppCore {
             .map(|engine| engine.update_group_picture(group_id, trimmed));
         match result {
             Some(Ok(result)) => {
-                self.process_protocol_engine_effects_with_completions(
-                    result.effects,
-                    &BTreeMap::new(),
-                );
+                self.process_protocol_engine_effects(result.effects);
                 self.handle_queued_protocol_targets("group.picture", &result.queued_targets);
                 if let Some(snapshot) = result.snapshot {
                     self.apply_local_group_snapshot(previous.as_ref(), snapshot, "group.picture");
@@ -314,10 +305,7 @@ impl AppCore {
             .map(|engine| engine.update_group_about(group_id, trimmed));
         match result {
             Some(Ok(result)) => {
-                self.process_protocol_engine_effects_with_completions(
-                    result.effects,
-                    &BTreeMap::new(),
-                );
+                self.process_protocol_engine_effects(result.effects);
                 self.handle_queued_protocol_targets("group.about", &result.queued_targets);
                 if let Some(snapshot) = result.snapshot {
                     self.apply_local_group_snapshot(previous.as_ref(), snapshot, "group.about");
@@ -358,10 +346,7 @@ impl AppCore {
             .map(|engine| engine.add_group_members(group_id, member_owners));
         match result {
             Some(Ok(result)) => {
-                self.process_protocol_engine_effects_with_completions(
-                    result.effects,
-                    &BTreeMap::new(),
-                );
+                self.process_protocol_engine_effects(result.effects);
                 self.handle_queued_protocol_targets("group.add_members", &result.queued_targets);
                 if let Some(snapshot) = result.snapshot {
                     self.apply_local_group_snapshot(
@@ -401,10 +386,7 @@ impl AppCore {
             .map(|engine| engine.set_group_admin(group_id, owner, is_admin));
         match result {
             Some(Ok(result)) => {
-                self.process_protocol_engine_effects_with_completions(
-                    result.effects,
-                    &BTreeMap::new(),
-                );
+                self.process_protocol_engine_effects(result.effects);
                 self.handle_queued_protocol_targets(
                     if is_admin {
                         "group.add_admin"
@@ -446,10 +428,7 @@ impl AppCore {
             .map(|engine| engine.remove_group_member(group_id, owner));
         match result {
             Some(Ok(result)) => {
-                self.process_protocol_engine_effects_with_completions(
-                    result.effects,
-                    &BTreeMap::new(),
-                );
+                self.process_protocol_engine_effects(result.effects);
                 self.handle_queued_protocol_targets("group.remove_member", &result.queued_targets);
                 if let Some(snapshot) = result.snapshot {
                     self.apply_local_group_snapshot(
@@ -508,7 +487,21 @@ impl AppCore {
                 };
                 let body = String::from_utf8_lossy(&message.body).to_string();
                 if let Some(runtime_rumor) = parse_runtime_rumor(&body) {
-                    self.apply_group_runtime_rumor(&chat_id, sender_owner, runtime_rumor);
+                    let sender_device = message
+                        .sender_device
+                        .and_then(|device| PublicKey::from_slice(&device.to_bytes()).ok());
+                    self.acknowledge_delivered_group_runtime_rumor(
+                        &chat_id,
+                        sender_owner,
+                        sender_device,
+                        runtime_rumor.created_at_secs,
+                    );
+                    self.apply_group_runtime_rumor(
+                        &chat_id,
+                        sender_owner,
+                        sender_device,
+                        runtime_rumor,
+                    );
                     return;
                 }
                 let reason = if looks_like_runtime_rumor(&body) {
@@ -533,9 +526,14 @@ impl AppCore {
         &mut self,
         chat_id: &str,
         sender_owner: PublicKey,
+        sender_device: Option<PublicKey>,
         runtime_rumor: RuntimeRumor,
     ) {
-        if runtime_rumor.pubkey != sender_owner {
+        if !self.runtime_rumor_pubkey_matches_authenticated_sender(
+            sender_owner,
+            sender_device,
+            runtime_rumor.pubkey,
+        ) {
             self.push_debug_log(
                 "group.runtime_rumor.sender_mismatch",
                 format!(

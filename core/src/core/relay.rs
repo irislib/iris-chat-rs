@@ -1,11 +1,6 @@
 use super::protocol::PROTOCOL_RECONNECT_CHECK_SECS;
 use super::*;
 
-#[cfg(not(test))]
-const FIRST_CONTACT_STAGE_DELAY_MS: u64 = 1_500;
-#[cfg(test)]
-const FIRST_CONTACT_STAGE_DELAY_MS: u64 = 25;
-
 fn coalesce_protocol_fetch_effects(effects: &mut Vec<ProtocolEffect>) {
     let mut seen = HashSet::new();
     effects.retain(|effect| match effect {
@@ -17,20 +12,6 @@ fn coalesce_protocol_fetch_effects(effects: &mut Vec<ProtocolEffect>) {
 }
 
 impl AppCore {
-    pub(super) fn runtime_publish_completion(
-        &self,
-        event_id: &str,
-        inner_event_id: Option<&str>,
-        completions: &BTreeMap<String, (String, String)>,
-    ) -> Option<(String, String)> {
-        completions.get(event_id).cloned().or_else(|| {
-            inner_event_id.and_then(|message_id| {
-                self.find_message_chat_id(message_id)
-                    .map(|chat_id| (message_id.to_string(), chat_id))
-            })
-        })
-    }
-
     pub(super) fn handle_relay_event(&mut self, event: Event) {
         self.handle_relay_event_with_channel(event, "message servers");
     }
@@ -207,14 +188,12 @@ impl AppCore {
                             self.apply_group_decrypted_event(group_event);
                         }
                         if !group_result.effects.is_empty() {
-                            self.process_protocol_engine_effects_with_completions(
-                                group_result.effects,
-                                &BTreeMap::new(),
-                            );
+                            self.process_protocol_engine_effects(group_result.effects);
                         }
                         if should_remember_group_event {
                             self.remember_event(event_id);
                         }
+                        self.schedule_fast_protocol_retry_if_pending();
                         self.persist_best_effort();
                         self.rebuild_state();
                         self.emit_state();
@@ -224,16 +203,22 @@ impl AppCore {
                     self.remember_event(event_id);
                     return;
                 }
-                if self
+                let unknown_message_author = self
                     .protocol_engine
                     .as_ref()
-                    .is_some_and(|engine| !engine.is_known_message_author(event.pubkey))
-                {
+                    .is_some_and(|engine| !engine.is_known_message_author(event.pubkey));
+                if unknown_message_author {
+                    if !message_has_header || self.private_chat_invites.is_empty() {
+                        self.push_debug_log(
+                            "appcore.protocol.message.ignored",
+                            "unknown message author",
+                        );
+                        return;
+                    }
                     self.push_debug_log(
-                        "appcore.protocol.message.ignored",
+                        "appcore.protocol.message.pending_header",
                         "unknown message author",
                     );
-                    return;
                 }
                 self.debug_event_counters.message_events += 1;
             }
@@ -286,7 +271,7 @@ impl AppCore {
                     Ok(None) => {
                         self.push_debug_log(
                             "appcore.protocol.message.pending",
-                            "sender/session unresolved",
+                            format!("event_id={event_id} author={}", event.pubkey),
                         );
                         let (queued_targets, effects) = self
                             .protocol_engine
@@ -298,10 +283,7 @@ impl AppCore {
                                 )
                             })
                             .unwrap_or_default();
-                        self.process_protocol_engine_effects_with_completions(
-                            effects,
-                            &BTreeMap::new(),
-                        );
+                        self.process_protocol_engine_effects(effects);
                         if queued_targets.is_empty() {
                             self.request_protocol_subscription_refresh();
                             self.schedule_protocol_subscription_liveness_check(
@@ -316,9 +298,13 @@ impl AppCore {
                         if queued_targets.is_empty() && self.fetch_recent_protocol_state() {
                             self.state.busy.syncing_network = true;
                         }
+                        self.schedule_fast_protocol_retry_if_pending();
                     }
                     Err(error) => {
-                        self.push_debug_log("appcore.protocol.message.error", error.to_string());
+                        self.push_debug_log(
+                            "appcore.protocol.message.error",
+                            format!("event_id={event_id} author={} error={error}", event.pubkey),
+                        );
                         self.remember_event(event_id);
                         return;
                     }
@@ -398,117 +384,18 @@ impl AppCore {
         true
     }
 
-    pub(super) fn process_protocol_engine_effects_with_completions(
-        &mut self,
-        mut effects: Vec<ProtocolEffect>,
-        completions: &BTreeMap<String, (String, String)>,
-    ) {
+    pub(super) fn process_protocol_engine_effects(&mut self, mut effects: Vec<ProtocolEffect>) {
         coalesce_protocol_fetch_effects(&mut effects);
         for effect in effects {
             match effect {
-                ProtocolEffect::PublishSigned(event) => {
-                    let event_id = event.id.to_string();
-                    let completion = self.runtime_publish_completion(&event_id, None, completions);
-                    self.publish_runtime_event(event, APPCORE_PROTOCOL_LABEL, completion);
-                }
-                ProtocolEffect::PublishSignedForInnerEvent {
-                    event,
-                    inner_event_id,
-                    target_owner_pubkey_hex,
-                    target_device_id,
-                } => {
-                    let event_id = event.id.to_string();
-                    let completion = self.runtime_publish_completion(
-                        &event_id,
-                        inner_event_id.as_deref(),
-                        completions,
-                    );
-                    self.publish_runtime_event_with_metadata(
-                        event,
-                        APPCORE_PROTOCOL_LABEL,
-                        completion,
-                        inner_event_id,
-                        target_owner_pubkey_hex,
-                        target_device_id,
-                    );
-                }
-                ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => {
-                    for publish in bootstrap {
-                        self.publish_protocol_event(publish, completions);
-                    }
-                    let mut queued_payloads = 0usize;
-                    for publish in payload {
-                        if self.queue_protocol_event_for_delayed_publish(publish, completions) {
-                            queued_payloads = queued_payloads.saturating_add(1);
-                        }
-                    }
-                    if queued_payloads > 0 {
-                        self.push_debug_log(
-                            "appcore.protocol.first_contact_staged",
-                            format!("queued_payloads={queued_payloads}"),
-                        );
-                        self.schedule_first_contact_payload_publish();
-                    }
+                ProtocolEffect::Publish(publish) => {
+                    self.publish_protocol_event(publish);
                 }
                 ProtocolEffect::FetchProtocolState { filters, reason } => {
                     self.fetch_protocol_state_for_filters(filters, reason);
                 }
             }
         }
-    }
-
-    fn publish_protocol_event(
-        &mut self,
-        publish: ProtocolPublishEvent,
-        completions: &BTreeMap<String, (String, String)>,
-    ) {
-        let event_id = publish.event.id.to_string();
-        let completion = self.runtime_publish_completion(
-            &event_id,
-            publish.inner_event_id.as_deref(),
-            completions,
-        );
-        self.publish_runtime_event_with_metadata(
-            publish.event,
-            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
-            completion,
-            publish.inner_event_id,
-            publish.target_owner_pubkey_hex,
-            publish.target_device_id,
-        );
-    }
-
-    fn queue_protocol_event_for_delayed_publish(
-        &mut self,
-        publish: ProtocolPublishEvent,
-        completions: &BTreeMap<String, (String, String)>,
-    ) -> bool {
-        let event_id = publish.event.id.to_string();
-        let completion = self.runtime_publish_completion(
-            &event_id,
-            publish.inner_event_id.as_deref(),
-            completions,
-        );
-        self.queue_runtime_event_for_delayed_publish(
-            publish.event,
-            APPCORE_PROTOCOL_FIRST_CONTACT_LABEL,
-            completion,
-            publish.inner_event_id,
-            publish.target_owner_pubkey_hex,
-            publish.target_device_id,
-        )
-    }
-
-    pub(super) fn schedule_first_contact_payload_publish(&self) {
-        let tx = self.core_sender.clone();
-        self.runtime.spawn(async move {
-            sleep(Duration::from_millis(FIRST_CONTACT_STAGE_DELAY_MS)).await;
-            let _ = tx.send(CoreMsg::Internal(Box::new(
-                InternalEvent::RetryPendingRelayPublishes {
-                    reason: "first_contact_stage".to_string(),
-                },
-            )));
-        });
     }
 
     pub(super) fn ack_pending_decrypted_deliveries_after_app_persist(&mut self) {

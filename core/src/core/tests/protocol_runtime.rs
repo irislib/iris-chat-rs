@@ -475,7 +475,8 @@ fn queued_runtime_publish_retries_when_message_servers_return() {
         &device,
         temp_dir.path().to_string_lossy().to_string(),
     );
-    core.core_sender = core_tx;
+    core.core_sender = core_tx.clone();
+    core.priority_sender = core_tx;
 
     let chat_id = peer.public_key().to_hex();
     let message_id = "retry-message".to_string();
@@ -559,7 +560,7 @@ fn queued_runtime_publish_retries_when_message_servers_return() {
 }
 
 #[test]
-fn staged_first_contact_queues_payload_durably_before_delayed_publish() {
+fn first_contact_publishes_bootstrap_and_payload_durably() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
@@ -581,36 +582,35 @@ fn staged_first_contact_queues_payload_durably_before_delayed_publish() {
         .sign_with_keys(&device)
         .expect("payload event");
     let payload_id = payload.id.to_string();
-    let completions = BTreeMap::from([(payload_id.clone(), (message_id.clone(), chat_id.clone()))]);
+    let bootstrap_publish = ProtocolPublish {
+        event: bootstrap,
+        chat_id: chat_id.clone(),
+        inner_event_id: None,
+    };
+    let payload_publish = ProtocolPublish {
+        event: payload,
+        chat_id: chat_id.clone(),
+        inner_event_id: Some(message_id.clone()),
+    };
 
-    core.process_protocol_engine_effects_with_completions(
-        vec![ProtocolEffect::PublishStagedFirstContact {
-            bootstrap: vec![ProtocolPublishEvent {
-                event: bootstrap,
-                inner_event_id: None,
-                target_owner_pubkey_hex: None,
-                target_device_id: None,
-            }],
-            payload: vec![ProtocolPublishEvent {
-                event: payload,
-                inner_event_id: Some(message_id.clone()),
-                target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
-                target_device_id: Some(peer.public_key().to_hex()),
-            }],
-        }],
-        &completions,
-    );
+    core.process_protocol_engine_effects(vec![
+        ProtocolEffect::Publish(bootstrap_publish),
+        ProtocolEffect::Publish(payload_publish),
+    ]);
 
     let pending = core
         .pending_relay_publishes
         .get(&payload_id)
-        .expect("payload should be queued before delayed publish");
-    assert_eq!(pending.label, "appcore-protocol-first-contact");
-    assert_eq!(pending.message_id.as_deref(), Some(message_id.as_str()));
+        .expect("payload should be queued");
+    assert_eq!(pending.label, APPCORE_PROTOCOL_LABEL);
+    assert_eq!(pending.inner_event_id.as_deref(), Some(message_id.as_str()));
     assert_eq!(pending.chat_id.as_deref(), Some(chat_id.as_str()));
     assert!(
-        !core.pending_relay_publish_inflight.contains(&payload_id),
-        "payload should be durable but not in flight until the first-contact delay fires"
+        core.pending_relay_publishes
+            .values()
+            .any(|pending| pending.inner_event_id.is_none()
+                && pending.chat_id.as_deref() == Some(chat_id.as_str())),
+        "bootstrap should be durable with chat context but without message delivery metadata"
     );
 }
 
@@ -626,7 +626,8 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
         &device,
         temp_dir.path().to_string_lossy().to_string(),
     );
-    core.core_sender = core_tx;
+    core.core_sender = core_tx.clone();
+    core.priority_sender = core_tx;
     let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
     {
         let logged_in = core.logged_in.as_mut().expect("logged in");
@@ -649,9 +650,6 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
             label: "app-keys".to_string(),
             event_json: serde_json::to_string(&event).expect("event json"),
             inner_event_id: None,
-            target_owner_pubkey_hex: None,
-            target_device_id: None,
-            message_id: None,
             chat_id: None,
             created_at_secs: event.created_at.as_secs(),
             attempt_count: 0,
@@ -743,9 +741,6 @@ fn failed_publish_drain_batches_results_and_schedules_one_retry() {
                 label: "test".to_string(),
                 event_json: serde_json::to_string(&event).expect("event json"),
                 inner_event_id: None,
-                target_owner_pubkey_hex: None,
-                target_device_id: None,
-                message_id: None,
                 chat_id: None,
                 created_at_secs: event.created_at.as_secs(),
                 attempt_count: 0,
@@ -754,8 +749,6 @@ fn failed_publish_drain_batches_results_and_schedules_one_retry() {
         );
         results.push(RelayPublishDrainResult {
             event_id,
-            message_id: None,
-            chat_id: None,
             success: false,
             relay_urls: Vec::new(),
             detail: "publish failed".to_string(),
@@ -1062,7 +1055,6 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
     let mut core = logged_in_test_core("distinct-protocol-publishes", &owner, &device);
     let chat_id = peer.public_key().to_hex();
     let message_id = "duplicate-publish-message".to_string();
-    let target_device_id = "target-device".to_string();
     core.push_outgoing_message_with_id(
         message_id.clone(),
         &chat_id,
@@ -1080,22 +1072,16 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
         .expect("second event");
     let second_event_id = second.id.to_string();
 
-    assert!(core.publish_runtime_event_with_metadata(
-        first,
-        APPCORE_PROTOCOL_LABEL,
-        Some((message_id.clone(), chat_id.clone())),
-        Some("inner-message".to_string()),
-        Some(chat_id.clone()),
-        Some(target_device_id.clone()),
-    ));
-    assert!(core.publish_runtime_event_with_metadata(
-        second,
-        APPCORE_PROTOCOL_LABEL,
-        Some((message_id, chat_id.clone())),
-        Some("inner-message".to_string()),
-        Some(chat_id),
-        Some(target_device_id),
-    ));
+    assert!(core.publish_protocol_event(ProtocolPublish {
+        event: first,
+        chat_id: chat_id.clone(),
+        inner_event_id: Some(message_id.clone()),
+    }));
+    assert!(core.publish_protocol_event(ProtocolPublish {
+        event: second,
+        chat_id: chat_id.clone(),
+        inner_event_id: Some(message_id),
+    }));
 
     assert!(core.pending_relay_publishes.contains_key(&first_event_id));
     assert!(core.pending_relay_publishes.contains_key(&second_event_id));
@@ -1702,6 +1688,7 @@ fn protocol_backfill_fetches_configure_relays_before_network_fetch() {
     for fn_name in [
         "fetch_recent_messages_for_author",
         "fetch_recent_group_sender_key_messages_for_author",
+        "spawn_protocol_author_backfills",
         "fetch_recent_protocol_state_inner",
     ] {
         let start = protocol_source
@@ -1715,8 +1702,9 @@ fn protocol_backfill_fetches_configure_relays_before_network_fetch() {
             .unwrap_or(body.len());
         let body = &body[..end];
         assert!(
-            body.contains("ensure_session_relays_configured(&client, &relay_urls).await;"),
-            "{fn_name} must configure relays before fetching public-relay backfill"
+            body.contains("ensure_session_relays_configured(&client, &relay_urls).await;")
+                || body.contains("self.spawn_protocol_author_backfills("),
+            "{fn_name} must configure relays, or delegate to the shared configured backfill helper, before fetching public-relay backfill"
         );
     }
 }
@@ -1772,9 +1760,9 @@ fn runtime_publish_uses_single_flight_transport_drain() {
         "offline pending publish retry must request the shared relay transport connection"
     );
     assert!(
-        body.contains("publish_event_to_any_relay")
+        body.contains("publish_event_to_any_connected_relay")
             && body.contains("PENDING_RELAY_DRAIN_CONCURRENCY"),
-        "drain worker must publish with bounded no-connect attempts"
+        "drain worker must publish with bounded connected-client/raw fallback attempts"
     );
     assert!(
         !body.contains("connect_client_with_timeout") && !body.contains("client.disconnect"),
@@ -1871,10 +1859,16 @@ fn liveness_retries_pending_inbound_direct_events() {
             .find("\n    pub(super) fn reconcile_protocol_subscriptions")
             .map(|offset| start + offset)
             .unwrap_or(protocol_source.len())];
+    let retry_helpers_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/core/protocol/retry_helpers.rs"),
+    )
+    .expect("read retry helper source");
     assert!(
-        body.contains("has_pending_inbound_direct_events")
-            && body.contains("should_retry_backfill"),
-        "protocol liveness must retry durable pending inbound direct events even when tracked-peer backfill appears complete"
+        retry_helpers_source.contains("has_pending_retry_work()")
+            && body.contains("pending_protocol_retry_needed")
+            && body.contains("should_retry_backfill || pending_protocol_retry_needed"),
+        "protocol liveness must retry durable pending protocol work even when tracked-peer backfill appears complete"
     );
 }
 
@@ -1901,12 +1895,12 @@ fn pending_inbound_liveness_does_not_force_global_message_backfill() {
         .unwrap_or_default();
 
     assert!(
-        body.contains("pending_inbound_retry_needed")
-            && body.contains("|| pending_inbound_retry_needed"),
+        body.contains("pending_protocol_retry_needed")
+            && body.contains("|| pending_protocol_retry_needed"),
         "pending inbound direct events must still wake protocol-state retry"
     );
     assert!(
-        !tracked_message_condition.contains("pending_inbound_retry_needed"),
+        !tracked_message_condition.contains("pending_protocol_retry_needed"),
         "pending inbound retry alone must not trigger global tracked-peer message history fetches"
     );
     assert!(
@@ -1914,7 +1908,7 @@ fn pending_inbound_liveness_does_not_force_global_message_backfill() {
         "queued protocol-state retry alone must not trigger global tracked-peer message history fetches"
     );
     assert!(
-        body.contains("if should_fetch_tracked_peer_messages")
+        body.contains("&& should_fetch_tracked_peer_messages")
             && body.contains("self.fetch_recent_messages_for_tracked_peers();"),
         "tracked-peer message backfill should be explicitly gated"
     );
@@ -1959,6 +1953,7 @@ fn read_protocol_engine_source() -> String {
         "chat-protocol/src/protocol_engine/engine_sends.rs",
         "chat-protocol/src/protocol_engine/engine_incoming_retry.rs",
         "chat-protocol/src/protocol_engine/engine_resolution.rs",
+        "chat-protocol/src/protocol_engine/engine_sender_key_repair.rs",
         "chat-protocol/src/protocol_engine/engine_queue_filters.rs",
         "chat-protocol/src/protocol_engine/free_functions.rs",
     ]
@@ -2189,31 +2184,33 @@ fn appcore_protocol_engine_missing_remote_owner_send_keeps_owner_pending() {
         )
         .expect("direct send");
 
-    let published_peer_targets = result
+    let message_publish_count = result
         .effects
         .iter()
-        .filter_map(|effect| match effect {
-            ProtocolEffect::PublishSignedForInnerEvent {
-                target_owner_pubkey_hex,
-                ..
-            } => target_owner_pubkey_hex.clone(),
-            _ => None,
+        .filter(|effect| {
+            matches!(
+                effect,
+                ProtocolEffect::Publish(publish)
+                    if publish.inner_event_id.as_deref() == Some(result.message_id.as_str())
+            )
         })
-        .collect::<Vec<_>>();
-    assert!(
-        !published_peer_targets.contains(&peer_owner.public_key().to_hex()),
+        .count();
+    assert_eq!(
+        message_publish_count, 0,
         "peer owner must not be considered published before peer protocol state exists"
     );
     let owner_marker = format!("owner:{}", peer_owner.public_key().to_hex());
-    let local_owner_marker = format!("owner:{}", owner.public_key().to_hex());
     assert!(result.queued_targets.contains(&owner_marker));
-    assert!(result.queued_targets.contains(&local_owner_marker));
     let snapshot = engine.debug_snapshot();
     assert_eq!(snapshot.pending_outbound_count, 1);
     assert!(snapshot.pending_outbound_targets.contains(&owner_marker));
-    assert!(snapshot
-        .pending_outbound_targets
-        .contains(&local_owner_marker));
+    assert!(
+        !snapshot
+            .pending_outbound_targets
+            .iter()
+            .any(|target| target == &format!("owner:{}", owner.public_key().to_hex())),
+        "known local roster with only the current device must not leave a self-sync probe queued"
+    );
 }
 
 #[test]
@@ -2234,9 +2231,7 @@ fn appcore_protocol_engine_retry_before_peer_discovery_keeps_missing_roster_pend
         )
         .expect("direct send");
     let owner_marker = format!("owner:{}", peer_owner.public_key().to_hex());
-    let local_owner_marker = format!("owner:{}", owner.public_key().to_hex());
     assert!(result.queued_targets.contains(&owner_marker));
-    assert!(result.queued_targets.contains(&local_owner_marker));
 
     let retries = engine
         .retry_pending_outbound(NdrUnixSeconds(10_000))
@@ -2622,9 +2617,10 @@ fn appcore_invite_event_wakes_device_queued_direct_send_before_retry_delay() {
         "missing peer roster should be queued"
     );
     assert!(
-        send.queued_targets
+        !send
+            .queued_targets
             .contains(&format!("owner:{}", owner.public_key().to_hex())),
-        "local sibling discovery should remain queued until the owner roster is known to have no siblings"
+        "known local roster with no siblings should not keep a self-sync probe queued"
     );
 
     let app_keys_batch = engine

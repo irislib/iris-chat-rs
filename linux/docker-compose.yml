@@ -1,8 +1,8 @@
 services:
   iris-chat-linux:
     build:
-      context: ..
-      dockerfile: linux/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     image: iris-chat-linux-dev:latest
     container_name: iris-chat-linux-dev
     ports:

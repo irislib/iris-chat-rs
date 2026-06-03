@@ -1,6 +1,6 @@
 [package]
 name = "iris-chat-protocol"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Reusable Iris Chat double-ratchet protocol engine"
 license = "MIT"

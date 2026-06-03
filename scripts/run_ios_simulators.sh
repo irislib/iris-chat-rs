@@ -127,14 +127,105 @@ for device in data.get("devices", {}).get(runtime_id, []):
 ' "${RUNTIME_ID}" "${simulator_name}"
 }
 
+shutdown_stale_ios_simulators() {
+  if [[ "${IRIS_E2E_CLOSE_STALE_IOS_SIMS:-1}" == "0" ]]; then
+    return 0
+  fi
+
+  local -a keep=("$@")
+  local udid=""
+  while IFS= read -r udid; do
+    local keep_udid=""
+    local should_keep=0
+    for keep_udid in "${keep[@]}"; do
+      if [[ "${udid}" == "${keep_udid}" ]]; then
+        should_keep=1
+        break
+      fi
+    done
+    if [[ "${should_keep}" -eq 0 ]]; then
+      if pgrep -fl xcodebuild 2>/dev/null | grep -F "id=${udid}" >/dev/null 2>&1; then
+        echo "Keeping active iOS simulator ${udid}" >&2
+        continue
+      fi
+      echo "Shutting down stale iOS simulator ${udid}" >&2
+      xcrun simctl shutdown "${udid}" >/dev/null 2>&1 || true
+    fi
+  done < <(xcrun simctl list devices booted | sed -n 's/.*(\([0-9A-F-]\{36\}\)) (Booted).*/\1/p')
+  quit_idle_ios_simulator_app
+}
+
+quit_idle_ios_simulator_app() {
+  if [[ "${IRIS_E2E_KEEP_IOS_SIMS:-0}" == "1" ]]; then
+    return 0
+  fi
+  if xcrun simctl list devices booted | grep -q "(Booted)"; then
+    return 0
+  fi
+  if pgrep -fl xcodebuild 2>/dev/null | grep -E "id=[0-9A-F-]{36}|platform=iOS Simulator|iphonesimulator" >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! pgrep -x Simulator >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Quitting idle iOS Simulator app" >&2
+  osascript -e 'tell application "Simulator" to quit' >/dev/null 2>&1 ||
+    pkill -x Simulator >/dev/null 2>&1 ||
+    true
+}
+
+wait_for_bootstatus() {
+  local udid="$1"
+  local timeout_secs="${IRIS_IOS_BOOTSTATUS_TIMEOUT_SECS:-120}"
+  local fallback_sleep="${IRIS_IOS_BOOTSTATUS_FALLBACK_SLEEP_SECS:-20}"
+  local deadline=$((SECONDS + timeout_secs))
+  local pid=""
+
+  xcrun simctl bootstatus "${udid}" -b >/dev/null 2>&1 &
+  pid=$!
+  while kill -0 "${pid}" >/dev/null 2>&1; do
+    if (( SECONDS >= deadline )); then
+      kill "${pid}" >/dev/null 2>&1 || true
+      wait "${pid}" >/dev/null 2>&1 || true
+      if xcrun simctl list devices booted | grep -q "(${udid}) (Booted)"; then
+        echo "Timed out waiting for iOS simulator ${udid} bootstatus; continuing because simctl reports Booted." >&2
+        sleep "${fallback_sleep}"
+        return 0
+      fi
+      echo "Timed out waiting for iOS simulator ${udid} to boot." >&2
+      return 1
+    fi
+    sleep 1
+  done
+
+  if wait "${pid}"; then
+    return 0
+  fi
+  if xcrun simctl list devices booted | grep -q "(${udid}) (Booted)"; then
+    echo "iOS simulator ${udid} bootstatus failed; continuing because simctl reports Booted." >&2
+    sleep "${fallback_sleep}"
+    return 0
+  fi
+  return 1
+}
+
+TARGET_UDIDS=()
 for simulator_name in "${SIMULATORS[@]}"; do
   udid="$(find_device_udid "${simulator_name}")"
   if [[ -z "${udid}" ]]; then
     udid="$(xcrun simctl create "${simulator_name}" "${DEVICE_TYPE_ID}" "${RUNTIME_ID}")"
   fi
+  TARGET_UDIDS+=("${udid}")
+done
+
+shutdown_stale_ios_simulators "${TARGET_UDIDS[@]}"
+
+for index in "${!SIMULATORS[@]}"; do
+  simulator_name="${SIMULATORS[$index]}"
+  udid="${TARGET_UDIDS[$index]}"
 
   xcrun simctl boot "${udid}" >/dev/null 2>&1 || true
-  xcrun simctl bootstatus "${udid}" -b >/dev/null
+  wait_for_bootstatus "${udid}"
   echo "${simulator_name} ${udid} ${DEVICE_TYPE_NAME} ${RUNTIME_ID}"
 done
 

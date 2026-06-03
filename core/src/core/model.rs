@@ -155,6 +155,7 @@ pub(super) struct ProtocolSubscriptionRuntime {
     pub(super) tracked_peer_catch_up_due_at: Option<Instant>,
     pub(super) tracked_peer_catch_up_token: u64,
     pub(super) protocol_fetch_in_flight: bool,
+    pub(super) protocol_author_backfill_in_flight: u64,
     pub(super) protocol_fetch_last_started_at: Option<Instant>,
 }
 
@@ -164,9 +165,11 @@ pub(super) struct RelayTransportRuntime {
     pub(super) connect_dirty: bool,
     pub(super) force_reconnect_dirty: bool,
     pub(super) connect_token: u64,
+    pub(super) connect_started_at: Option<Instant>,
     pub(super) publish_drain_in_flight: bool,
     pub(super) publish_drain_dirty: bool,
     pub(super) publish_drain_token: u64,
+    pub(super) publish_drain_started_at: Option<Instant>,
     pub(super) retry_backoff_attempt: u32,
     pub(super) next_retry_due_at: Option<Instant>,
     pub(super) next_retry_reason: Option<String>,
@@ -181,9 +184,6 @@ pub(super) struct PendingRelayPublish {
     pub(super) label: String,
     pub(super) event_json: String,
     pub(super) inner_event_id: Option<String>,
-    pub(super) target_owner_pubkey_hex: Option<String>,
-    pub(super) target_device_id: Option<String>,
-    pub(super) message_id: Option<String>,
     pub(super) chat_id: Option<String>,
     pub(super) created_at_secs: u64,
     pub(super) attempt_count: u64,
@@ -270,8 +270,10 @@ pub(super) struct RuntimeRelayTransportDebug {
     pub(super) connect_in_flight: bool,
     pub(super) connect_dirty: bool,
     pub(super) force_reconnect_dirty: bool,
+    pub(super) connect_age_ms: Option<u64>,
     pub(super) publish_drain_in_flight: bool,
     pub(super) publish_drain_dirty: bool,
+    pub(super) publish_drain_age_ms: Option<u64>,
     pub(super) connected_relay_count: u64,
     pub(super) pending_relay_publish_count: u64,
     pub(super) retry_backoff_attempt: u32,
@@ -304,6 +306,10 @@ pub(super) struct RuntimeProtocolSubscriptionDebug {
     pub(super) refresh_in_flight: bool,
     pub(super) refresh_dirty: bool,
     pub(super) force_reconnect_dirty: bool,
+    #[serde(default)]
+    pub(super) protocol_fetch_in_flight: bool,
+    #[serde(default)]
+    pub(super) author_backfill_in_flight: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -311,9 +317,6 @@ pub(super) struct RuntimePendingRelayPublishDebug {
     pub(super) event_id: String,
     pub(super) label: String,
     pub(super) inner_event_id: Option<String>,
-    pub(super) target_owner_pubkey_hex: Option<String>,
-    pub(super) target_device_id: Option<String>,
-    pub(super) message_id: Option<String>,
     pub(super) chat_id: Option<String>,
     pub(super) attempt_count: u64,
     pub(super) last_error: Option<String>,

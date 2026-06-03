@@ -109,6 +109,62 @@ run_step() {
   "$@"
 }
 
+crate_manifest_field() {
+  local manifest="$1"
+  local field="$2"
+  sed -nE "s/^${field}[[:space:]]*=[[:space:]]*\"([^\"]+)\".*/\\1/p" "$manifest" | head -n 1
+}
+
+crates_io_has_version() {
+  local name="$1"
+  local version="$2"
+  python3 - "$name" "$version" <<'PY'
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+name, version = sys.argv[1:3]
+url = "https://crates.io/api/v1/crates/{}/{}".format(
+    urllib.parse.quote(name, safe=""),
+    urllib.parse.quote(version, safe=""),
+)
+try:
+    with urllib.request.urlopen(url, timeout=20) as response:
+        sys.exit(0 if 200 <= response.status < 300 else 2)
+except urllib.error.HTTPError as error:
+    if error.code == 404:
+        sys.exit(1)
+    print(f"crates.io lookup failed: HTTP {error.code}", file=sys.stderr)
+    sys.exit(2)
+except Exception as error:
+    print(f"crates.io lookup failed: {error}", file=sys.stderr)
+    sys.exit(2)
+PY
+}
+
+run_core_package_check() {
+  local protocol_name protocol_version
+  protocol_name="$(crate_manifest_field "${ROOT_DIR}/chat-protocol/Cargo.toml" name)"
+  protocol_version="$(crate_manifest_field "${ROOT_DIR}/chat-protocol/Cargo.toml" version)"
+  set +e
+  crates_io_has_version "$protocol_name" "$protocol_version"
+  local lookup_status=$?
+  set -e
+  case "$lookup_status" in
+    0)
+      cargo package --manifest-path "${ROOT_DIR}/core/Cargo.toml" --locked --allow-dirty
+      ;;
+    1)
+      echo "Skipping core cargo package verification because ${protocol_name} ${protocol_version} is not on crates.io yet."
+      echo "The release script publishes ${protocol_name} first, then publishes core."
+      ;;
+    *)
+      return "$lookup_status"
+      ;;
+  esac
+}
+
 echo "iris chat release gate (${MODE})"
 
 run_step "release publish guard" "${ROOT_DIR}/scripts/test_release_publish_guard"
@@ -124,7 +180,10 @@ if [[ "${RUN_NATIVE_CONTRACT}" == "1" ]]; then
   run_step "Android native contract/UI tests" env IRIS_SKIP_FAST=1 "${ROOT_DIR}/scripts/test_native_contract.sh"
 fi
 
-run_step "Rust crate package check" cargo package --manifest-path "${ROOT_DIR}/core/Cargo.toml" --locked --allow-dirty
+run_step "Rust protocol crate package check" \
+  cargo package --manifest-path "${ROOT_DIR}/chat-protocol/Cargo.toml" --locked --allow-dirty
+
+run_step "Rust core crate package check" run_core_package_check
 
 if [[ "${RUN_LAN_AVAILABLE}" == "1" ]]; then
   run_step "LAN nearby visibility where available" \

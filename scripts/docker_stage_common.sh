@@ -23,6 +23,49 @@ docker_linux_dev_image() {
   printf '%s\n' "${IRIS_LINUX_DOCKER_IMAGE:-iris-chat-linux-dev:latest}"
 }
 
+docker_prepare_clean_config() {
+  if [[ "${IRIS_DOCKER_CLEAN_CONFIG:-0}" != "1" || -n "${DOCKER_CONFIG:-}" ]]; then
+    return 0
+  fi
+
+  DOCKER_CLEAN_CONFIG_DIR="$(mktemp -d /tmp/iris-docker-config.XXXXXX)"
+  printf '%s\n' '{}' > "${DOCKER_CLEAN_CONFIG_DIR}/config.json"
+  export DOCKER_CONFIG="${DOCKER_CLEAN_CONFIG_DIR}"
+
+  local plugin
+  for plugin in \
+    "${HOME}/.docker/cli-plugins/docker-buildx" \
+    "/Applications/Docker.app/Contents/Resources/cli-plugins/docker-buildx"
+  do
+    if [[ -e "${plugin}" ]]; then
+      mkdir -p "${DOCKER_CLEAN_CONFIG_DIR}/cli-plugins"
+      ln -s "${plugin}" "${DOCKER_CLEAN_CONFIG_DIR}/cli-plugins/docker-buildx" 2>/dev/null || true
+      break
+    fi
+  done
+
+  if [[ -z "${DOCKER_HOST:-}" && -S "${HOME}/.docker/run/docker.sock" ]]; then
+    export DOCKER_HOST="unix://${HOME}/.docker/run/docker.sock"
+  fi
+}
+
+docker_cleanup_clean_config() {
+  if [[ -n "${DOCKER_CLEAN_CONFIG_DIR:-}" ]]; then
+    rm -rf "${DOCKER_CLEAN_CONFIG_DIR}"
+  fi
+}
+
+docker_build_image() {
+  local platform="$1"
+  shift
+
+  if docker buildx version >/dev/null 2>&1; then
+    docker buildx build --load --platform "${platform}" "$@"
+  else
+    docker build --platform "${platform}" "$@"
+  fi
+}
+
 docker_stage_dir() {
   local name="$1"
   printf '%s/%s\n' "$(docker_stage_root)" "$name"

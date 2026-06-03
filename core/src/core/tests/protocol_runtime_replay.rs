@@ -134,22 +134,11 @@ fn appcore_direct_send_keeps_local_sibling_probe_until_local_appkeys_and_invite_
     let retry = &invite_batch.direct_results[0];
     assert_eq!(retry.message_id, send.message_id);
     assert!(
-        retry.effects.iter().any(|effect| matches!(
-            effect,
-            ProtocolEffect::PublishStagedFirstContact { payload, .. }
-                if payload.iter().any(|publish| publish.target_owner_pubkey_hex.as_deref()
-                    == Some(owner.public_key().to_hex().as_str())
-                    && publish.target_device_id.as_deref()
-                        == Some(old_device.public_key().to_hex().as_str()))
-        )) || retry.effects.iter().any(|effect| matches!(
-            effect,
-            ProtocolEffect::PublishSignedForInnerEvent {
-                target_owner_pubkey_hex,
-                target_device_id,
-                ..
-            } if target_owner_pubkey_hex.as_deref() == Some(owner.public_key().to_hex().as_str())
-                && target_device_id.as_deref() == Some(old_device.public_key().to_hex().as_str())
-        )),
+        protocol_has_publish_target(
+        &retry.effects,
+            &owner.public_key().to_hex(),
+            &old_device.public_key().to_hex(),
+        ),
         "old local device should receive a sender-copy publish after its invite arrives"
     );
 }
@@ -208,24 +197,11 @@ fn self_direct_send_retries_to_restored_sibling_after_invite_arrives() {
         invite_batch.direct_results.iter().any(|result| {
             result.message_id == send.message_id
                 && !result.queued_targets.contains(&desktop_device.public_key().to_hex())
-                && (result.effects.iter().any(|effect| matches!(
-                    effect,
-                    ProtocolEffect::PublishStagedFirstContact { payload, .. }
-                        if payload.iter().any(|publish| publish.target_owner_pubkey_hex.as_deref()
-                            == Some(owner.public_key().to_hex().as_str())
-                            && publish.target_device_id.as_deref()
-                                == Some(desktop_device.public_key().to_hex().as_str()))
-                )) || result.effects.iter().any(|effect| matches!(
-                    effect,
-                    ProtocolEffect::PublishSignedForInnerEvent {
-                        target_owner_pubkey_hex,
-                        target_device_id,
-                        ..
-                    } if target_owner_pubkey_hex.as_deref()
-                        == Some(owner.public_key().to_hex().as_str())
-                        && target_device_id.as_deref()
-                            == Some(desktop_device.public_key().to_hex().as_str())
-                )))
+                && protocol_has_publish_target(
+        &result.effects,
+                    &owner.public_key().to_hex(),
+                    &desktop_device.public_key().to_hex(),
+                )
         }),
         "observing the sibling invite should retry the queued self-send to that device"
     );

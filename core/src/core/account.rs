@@ -44,11 +44,11 @@ impl AppCore {
         self.push_debug_log("app.foreground", "refresh relay session");
         self.schedule_session_connect();
         self.request_protocol_subscription_refresh_forced_reconnect_if_offline();
-        let fetching_recent_protocol_state = self.fetch_recent_protocol_state();
+        let _fetching_recent_protocol_state = self.fetch_recent_protocol_state();
         self.fetch_recent_messages_for_tracked_peers();
         self.retry_protocol_engine_pending_outbound("app_foreground");
         self.retry_pending_relay_publishes("app_foreground");
-        self.state.busy.syncing_network = fetching_recent_protocol_state;
+        self.refresh_protocol_sync_busy();
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
@@ -792,7 +792,8 @@ impl AppCore {
                     .cloned()
                     .collect::<Vec<_>>()
                 {
-                    if let (Some(chat_id), Some(message_id)) = (pending.chat_id, pending.message_id)
+                    if let (Some(chat_id), Some(message_id)) =
+                        (pending.chat_id, pending.inner_event_id)
                     {
                         self.sync_message_delivery_trace(&chat_id, &message_id);
                     }
@@ -802,7 +803,6 @@ impl AppCore {
                 self.push_debug_log("publish.runtime.queue", format!("load_failed={error}"));
             }
         }
-
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
         self.start_relay_status_watchers();
@@ -815,7 +815,7 @@ impl AppCore {
         self.schedule_next_message_expiry();
         self.request_protocol_subscription_refresh();
         self.fetch_recent_protocol_state();
-        self.state.busy.syncing_network = true;
+        self.refresh_protocol_sync_busy();
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();

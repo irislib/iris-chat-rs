@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 23;
+const SCHEMA_VERSION: u32 = 26;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -132,9 +132,6 @@ CREATE TABLE IF NOT EXISTS pending_relay_publishes (
     label TEXT NOT NULL,
     event_json TEXT NOT NULL,
     inner_event_id TEXT,
-    target_owner_pubkey_hex TEXT,
-    target_device_id TEXT,
-    message_id TEXT,
     chat_id TEXT,
     created_at_secs INTEGER NOT NULL,
     attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -294,16 +291,10 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
                  ADD COLUMN inner_event_id TEXT;",
             )?;
         }
-        if !column_exists(&tx, "pending_relay_publishes", "target_device_id")? {
+        if !column_exists(&tx, "pending_relay_publishes", "chat_id")? {
             tx.execute_batch(
                 "ALTER TABLE pending_relay_publishes
-                 ADD COLUMN target_device_id TEXT;",
-            )?;
-        }
-        if !column_exists(&tx, "pending_relay_publishes", "target_owner_pubkey_hex")? {
-            tx.execute_batch(
-                "ALTER TABLE pending_relay_publishes
-                 ADD COLUMN target_owner_pubkey_hex TEXT;",
+                 ADD COLUMN chat_id TEXT;",
             )?;
         }
         if !column_exists(&tx, "pending_relay_publishes", "attempt_count")? {
@@ -318,12 +309,6 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
                  ADD COLUMN last_error TEXT;",
             )?;
         }
-    }
-    if current < 9 && !column_exists(&tx, "pending_relay_publishes", "target_owner_pubkey_hex")? {
-        tx.execute_batch(
-            "ALTER TABLE pending_relay_publishes
-             ADD COLUMN target_owner_pubkey_hex TEXT;",
-        )?;
     }
     if current < 10 && !column_exists(&tx, "preferences", "pinned_chat_ids_json")? {
         tx.execute_batch(
@@ -444,6 +429,33 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
             )?;
         }
     }
+    if current < 26 {
+        tx.execute_batch(
+            "DROP INDEX IF EXISTS pending_relay_publishes_owner_idx;
+             ALTER TABLE pending_relay_publishes RENAME TO pending_relay_publishes_old;
+             CREATE TABLE pending_relay_publishes (
+                 event_id TEXT PRIMARY KEY,
+                 owner_pubkey_hex TEXT NOT NULL,
+                 label TEXT NOT NULL,
+                 event_json TEXT NOT NULL,
+                 inner_event_id TEXT,
+                 chat_id TEXT,
+                 created_at_secs INTEGER NOT NULL,
+                 attempt_count INTEGER NOT NULL DEFAULT 0,
+                 last_error TEXT
+             );
+             INSERT INTO pending_relay_publishes(
+                 event_id, owner_pubkey_hex, label, event_json, inner_event_id,
+                 chat_id, created_at_secs, attempt_count, last_error
+             )
+             SELECT event_id, owner_pubkey_hex, label, event_json, inner_event_id,
+                    chat_id, created_at_secs, attempt_count, last_error
+             FROM pending_relay_publishes_old;
+             DROP TABLE pending_relay_publishes_old;
+             CREATE INDEX IF NOT EXISTS pending_relay_publishes_owner_idx
+                 ON pending_relay_publishes(owner_pubkey_hex, created_at_secs);",
+        )?;
+    }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;
     Ok(())
@@ -469,9 +481,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn migrates_v8_pending_relay_publish_target_owner_column() {
+    fn migrates_v25_pending_relay_publish_target_columns_removed() {
+        const OLD_TARGET_OWNER_COLUMN: &str = concat!("target_owner_pubkey_", "hex");
+        const OLD_TARGET_DEVICE_COLUMN: &str = concat!("target_device_", "id");
         let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
+        conn.execute_batch(&format!(
             r#"
             CREATE TABLE pending_relay_publishes (
                 event_id TEXT PRIMARY KEY,
@@ -479,26 +493,66 @@ mod tests {
                 label TEXT NOT NULL,
                 event_json TEXT NOT NULL,
                 inner_event_id TEXT,
-                target_device_id TEXT,
-                message_id TEXT,
+                {OLD_TARGET_OWNER_COLUMN} TEXT,
+                {OLD_TARGET_DEVICE_COLUMN} TEXT,
                 chat_id TEXT,
                 created_at_secs INTEGER NOT NULL,
                 attempt_count INTEGER NOT NULL DEFAULT 0,
                 last_error TEXT
             );
-            PRAGMA user_version = 8;
+            INSERT INTO pending_relay_publishes(
+                event_id, owner_pubkey_hex, label, event_json, inner_event_id,
+                {OLD_TARGET_OWNER_COLUMN}, {OLD_TARGET_DEVICE_COLUMN}, chat_id, created_at_secs,
+                attempt_count, last_error
+            )
+            VALUES(
+                'outer', 'owner', 'appcore-protocol', '{{}}', 'inner',
+                'peer', 'device', 'chat', 42, 1, 'retry'
+            );
+            PRAGMA user_version = 25;
             "#,
-        )
+        ))
         .unwrap();
 
         ensure_schema(&mut conn).unwrap();
 
         assert_eq!(user_version(&conn), SCHEMA_VERSION);
-        assert!(connection_column_exists(
+        assert!(!connection_column_exists(
             &conn,
             "pending_relay_publishes",
-            "target_owner_pubkey_hex"
+            OLD_TARGET_OWNER_COLUMN
         ));
+        assert!(!connection_column_exists(
+            &conn,
+            "pending_relay_publishes",
+            OLD_TARGET_DEVICE_COLUMN
+        ));
+        let row = conn
+            .query_row(
+                "SELECT event_id, inner_event_id, chat_id, attempt_count, last_error
+                 FROM pending_relay_publishes",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                "outer".to_string(),
+                Some("inner".to_string()),
+                Some("chat".to_string()),
+                1,
+                Some("retry".to_string())
+            )
+        );
     }
 
     #[test]

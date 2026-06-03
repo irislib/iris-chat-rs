@@ -90,8 +90,6 @@ mod tests;
 
 pub(crate) const NEARBY_PRESENCE_KIND: u16 = 22242;
 pub(super) const APPCORE_PROTOCOL_LABEL: &str = "appcore-protocol";
-pub(super) const APPCORE_PROTOCOL_BOOTSTRAP_LABEL: &str = "appcore-protocol-bootstrap";
-pub(super) const APPCORE_PROTOCOL_FIRST_CONTACT_LABEL: &str = "appcore-protocol-first-contact";
 
 type OwnerPubkey = PublicKey;
 type DevicePubkey = PublicKey;
@@ -441,6 +439,7 @@ fn fallback_chat_title(chat_id: &str) -> String {
 pub struct AppCore {
     update_tx: Sender<AppUpdate>,
     core_sender: Sender<CoreMsg>,
+    priority_sender: Sender<CoreMsg>,
     shared_state: Arc<RwLock<AppState>>,
     runtime: tokio::runtime::Runtime,
     data_dir: PathBuf,

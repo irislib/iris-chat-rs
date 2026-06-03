@@ -2142,63 +2142,39 @@ fn accepting_invite_alone_installs_session_and_publishes_response() {
 }
 
 #[test]
-fn queued_runtime_publish_completion_uses_inner_message_id() {
+fn queued_runtime_publish_registration_persists_inner_message_id() {
     let owner = Keys::generate();
+    let device = Keys::generate();
     let peer = Keys::generate();
     let chat_id = peer.public_key().to_hex();
     let inner_message_id = "inner-rumor-id".to_string();
+    let mut core = logged_in_test_core("publish-registration-inner-id", &owner, &device);
+    core.push_outgoing_message_with_id(
+        inner_message_id.clone(),
+        &chat_id,
+        "queued".to_string(),
+        1,
+        None,
+        DeliveryState::Queued,
+    );
     let outer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "")
         .sign_with_keys(&owner)
         .expect("outer event");
-    let mut core = AppCore::new(
-        flume::unbounded().0,
-        flume::unbounded().0,
-        std::env::temp_dir()
-            .join(format!(
-                "iris-chat-rs-test-completion-{}",
-                owner.public_key().to_hex()
-            ))
-            .to_string_lossy()
-            .to_string(),
-        Arc::new(RwLock::new(AppState::empty())),
-    );
-    core.threads.insert(
-        chat_id.clone(),
-        ThreadRecord {
-            chat_id: chat_id.clone(),
-            unread_count: 0,
-            updated_at_secs: 1,
-            messages: vec![ChatMessageSnapshot {
-                id: inner_message_id.clone(),
-                chat_id: chat_id.clone(),
-                kind: ChatMessageKind::User,
-                author: owner.public_key().to_hex(),
-                author_owner_pubkey_hex: Some(owner.public_key().to_hex()),
-                author_picture_url: None,
-                body: "queued".to_string(),
-                attachments: Vec::new(),
-                reactions: Vec::new(),
-                reactors: Vec::new(),
-                is_outgoing: true,
-                created_at_secs: 1,
-                expires_at_secs: None,
-                delivery: DeliveryState::Queued,
-                recipient_deliveries: Vec::new(),
-                delivery_trace: Default::default(),
-                source_event_id: None,
-            }],
 
-            draft: String::new(),
-        },
-    );
-
+    let event_id = outer_event.id.to_string();
+    assert!(core.publish_protocol_event(ProtocolPublish {
+        event: outer_event,
+        chat_id: chat_id.clone(),
+        inner_event_id: Some(inner_message_id.clone()),
+    }));
+    let pending = core
+        .pending_relay_publishes
+        .get(&event_id)
+        .expect("pending publish");
+    assert_eq!(pending.chat_id.as_deref(), Some(chat_id.as_str()));
     assert_eq!(
-        core.runtime_publish_completion(
-            &outer_event.id.to_string(),
-            Some(&inner_message_id),
-            &BTreeMap::new(),
-        ),
-        Some((inner_message_id, chat_id))
+        pending.inner_event_id.as_deref(),
+        Some(inner_message_id.as_str())
     );
 }
 

@@ -52,7 +52,7 @@ WORKDIR /workspace/linux
 
 EXPOSE 5900
 
-COPY iris-chat-rs/linux/scripts/dev-entrypoint.sh /usr/local/bin/dev-entrypoint
+COPY scripts/dev-entrypoint.sh /usr/local/bin/dev-entrypoint
 RUN chmod +x /usr/local/bin/dev-entrypoint
 
 ENTRYPOINT ["/usr/local/bin/dev-entrypoint"]

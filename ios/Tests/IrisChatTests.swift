@@ -540,7 +540,6 @@ private func makeMessage(
             outerEventIds: [],
             pendingRelayEventIds: [],
             queuedProtocolTargets: [],
-            targetDeviceIds: [],
             transportChannels: [],
             lastTransportError: nil
         ),
@@ -689,7 +688,7 @@ final class IrisChatTests: XCTestCase {
         XCTAssertTrue(irisShowsGroupSenderName(previous: firstAlice, message: nextDayAlice, chatKind: .group))
     }
 
-    func testGroupSenderAvatarAndNameOnlyApplyToIncomingGroupMessages() {
+    func testGroupSenderAvatarAndNameOnlyApplyToIncomingMessages() {
         let incoming = makeMessage(
             chatId: "group:trip",
             id: "100",

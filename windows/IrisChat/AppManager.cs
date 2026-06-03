@@ -47,7 +47,7 @@ public sealed class AppManager : INotifyPropertyChanged
     private readonly List<ClientDebugLogEntry> _clientDebugLog = new();
     private DispatcherTimer? _updatePollTimer;
     private string? _activeToast;
-    private Uri? _updateAssetUrl;
+    private bool _updateHasAsset;
     private bool _startupUpdateCheckDone;
     private bool _updateChecking;
     private bool _updateInstalling;
@@ -199,7 +199,7 @@ public sealed class AppManager : INotifyPropertyChanged
         }
     }
 
-    public bool UpdateInstallEnabled => UpdateAvailable && _updateAssetUrl is not null && !UpdateChecking && !UpdateInstalling;
+    public bool UpdateInstallEnabled => UpdateAvailable && _updateHasAsset && !UpdateChecking && !UpdateInstalling;
 
     public string UpdateStripeText => string.IsNullOrWhiteSpace(UpdateVersion)
         ? "Update available"
@@ -674,8 +674,8 @@ public sealed class AppManager : INotifyPropertyChanged
 
         try
         {
-            var result = await _updateService.CheckAsync(AppVersion()).ConfigureAwait(true);
-            _updateAssetUrl = result.Available ? result.AssetUrl : null;
+            var result = await _updateService.CheckAsync().ConfigureAwait(true);
+            _updateHasAsset = result.Available && result.HasAsset;
             UpdateAvailable = result.Available;
             UpdateVersion = result.Tag;
             Notify(nameof(UpdateInstallEnabled));
@@ -683,7 +683,7 @@ public sealed class AppManager : INotifyPropertyChanged
             if (result.Available)
             {
                 UpdateStatus = result.Message;
-                if (AutoInstallUpdates && result.AssetUrl is not null)
+                if (AutoInstallUpdates && UpdateInstallEnabled)
                 {
                     await InstallUpdateAsync().ConfigureAwait(true);
                 }
@@ -712,12 +712,12 @@ public sealed class AppManager : INotifyPropertyChanged
 
     public async Task InstallUpdateAsync()
     {
-        if (_updateAssetUrl is null || UpdateInstalling) return;
+        if (!_updateHasAsset || UpdateInstalling) return;
         UpdateInstalling = true;
         UpdateStatus = $"Downloading {UpdateVersion}";
         try
         {
-            var path = await _updateService.DownloadAsync(_updateAssetUrl).ConfigureAwait(true);
+            var path = await _updateService.DownloadWithEmbeddedUpdaterAsync().ConfigureAwait(true);
             UpdateStatus = $"Downloaded {Path.GetFileName(path)}";
             if (!UpdateService.SkipOpen)
             {

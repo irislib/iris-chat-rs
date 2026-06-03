@@ -89,6 +89,7 @@ RUN_DIR="${IRIS_E2E_RUN_DIR:-/tmp/iris-e2e-ios-${STAMP}}"
 LOG_FILE="${RUN_DIR}/ios-prerelease.log"
 mkdir -p "${RUN_DIR}/status"
 iris_e2e_record_repo_trace "${ROOT_DIR}" "${RUN_DIR}"
+IOS_E2E_UDIDS=("${ALICE_UDID}" "${ALICE_LINKED_UDID}" "${BOB_UDID}" "${CHARLIE_UDID}")
 
 if [[ "${RELAY_MODE}" == "local" ]]; then
   RELAYS="$(local_ios_relay_url)"
@@ -230,16 +231,32 @@ dump_debug_on_error() {
 }
 trap dump_debug_on_error ERR
 
+cleanup_ios_simulators() {
+  if [[ "${IRIS_E2E_KEEP_IOS_SIMS:-0}" == "1" ]]; then
+    return 0
+  fi
+  iris_e2e_shutdown_ios_simulators "${IOS_E2E_UDIDS[@]}"
+  if [[ "${IRIS_E2E_CLOSE_STALE_IOS_SIMS:-1}" != "0" ]]; then
+    iris_e2e_shutdown_stale_ios_simulators
+  fi
+}
+trap 'exit_code=$?; cleanup_ios_simulators; exit "${exit_code}"' EXIT
+
 if [[ "${KILL_LEFTOVERS}" -eq 1 ]]; then
   pkill -f "run_ios_harness.py" >/dev/null 2>&1 || true
   pkill -f "InteropHarnessTests" >/dev/null 2>&1 || true
 fi
 
+if [[ "${IRIS_E2E_CLOSE_STALE_IOS_SIMS:-1}" != "0" ]]; then
+  iris_e2e_shutdown_stale_ios_simulators "${IOS_E2E_UDIDS[@]}"
+fi
 for udid in "${ALICE_UDID}" "${ALICE_LINKED_UDID}" "${BOB_UDID}" "${CHARLIE_UDID}"; do
   xcrun simctl boot "${udid}" >/dev/null 2>&1 || true
-  xcrun simctl bootstatus "${udid}" -b >/dev/null
+  iris_e2e_wait_for_ios_bootstatus "${udid}"
 done
-open -a Simulator >/dev/null 2>&1 || true
+if [[ "${IRIS_E2E_KEEP_IOS_SIMS:-0}" == "1" ]]; then
+  open -a Simulator >/dev/null 2>&1 || true
+fi
 
 if [[ "${SKIP_BUILD}" -eq 0 ]]; then
   rm -rf "${ROOT_DIR}/ios/.build/harness-derived-data"
@@ -370,9 +387,11 @@ report_ios_debug "${ALICE_LINKED_UDID}" alice-linked
 report_ios_debug "${BOB_UDID}" bob
 report_ios_debug "${CHARLIE_UDID}" charlie
 
-for udid in "${ALICE_UDID}" "${ALICE_LINKED_UDID}" "${BOB_UDID}" "${CHARLIE_UDID}"; do
-  xcrun simctl launch "${udid}" "${IOS_BUNDLE_ID}" >/dev/null 2>&1 || true
-done
+if [[ "${IRIS_E2E_KEEP_IOS_SIMS:-0}" == "1" ]]; then
+  for udid in "${ALICE_UDID}" "${ALICE_LINKED_UDID}" "${BOB_UDID}" "${CHARLIE_UDID}"; do
+    xcrun simctl launch "${udid}" "${IOS_BUNDLE_ID}" >/dev/null 2>&1 || true
+  done
+fi
 
 trap - ERR
 echo "iOS pre-release E2E passed"

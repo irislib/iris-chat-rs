@@ -15,6 +15,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/e2e_prerelease_common.sh"
 IOS_DIR="$ROOT/ios"
 PROJECT="$IOS_DIR/IrisChat.xcodeproj"
 SCHEME="IrisChat"
@@ -47,6 +48,15 @@ if [[ -z "${udid:-}" ]]; then
   exit 1
 fi
 
+cleanup() {
+  local exit_code=$?
+  if [[ "${IRIS_E2E_KEEP_IOS_SIMS:-0}" != "1" ]]; then
+    xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
+  fi
+  exit "${exit_code}"
+}
+trap cleanup EXIT
+
 echo "▶︎  Shutting down + erasing $DEVICE ($udid) to clear stale permission grants"
 xcrun simctl shutdown all >/dev/null 2>&1 || true
 # Restart CoreSimulator: after a freshly-erased sim, the install
@@ -60,7 +70,7 @@ xcrun simctl boot "$udid"
 # Apps installed too early after a fresh erase + boot get rejected with
 # "Simulator device failed to install the application" because the
 # install service isn't ready. Wait for SpringBoard to be up.
-xcrun simctl bootstatus "$udid" -b
+iris_e2e_wait_for_ios_bootstatus "$udid"
 sleep 3
 
 echo "▶︎  Building tests"

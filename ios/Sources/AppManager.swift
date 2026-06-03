@@ -8,11 +8,6 @@ import SwiftUI
 import UserNotifications
 #endif
 
-#if os(macOS)
-private let defaultIrisUpdateManifestUrl = URL(
-    string: "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest/release.json"
-)!
-#endif
 #if os(iOS)
 private let appManagerPendingShareNotificationName = "to.iris.chat.pending-share"
 #endif
@@ -655,17 +650,12 @@ final class DesktopUpdateController: ObservableObject {
         }
     }
 
-    private let manifestUrl: URL
-    private let currentVersion: () -> String
-    private var assetUrl: URL?
+    private var hasUpdateAsset = false
     private var task: Task<Void, Never>?
     private var automaticCheckTask: Task<Void, Never>?
     private var startupCheckDone = false
 
-    init(manifestUrl: URL, currentVersion: @escaping () -> String) {
-        self.manifestUrl = manifestUrl
-        self.currentVersion = currentVersion
-    }
+    init() {}
 
     deinit {
         automaticCheckTask?.cancel()
@@ -673,7 +663,7 @@ final class DesktopUpdateController: ObservableObject {
     }
 
     var canInstall: Bool {
-        available && assetUrl != nil && !checking && !installing
+        available && hasUpdateAsset && !checking && !installing
     }
 
     func runStartupCheckIfNeeded() {
@@ -743,7 +733,7 @@ final class DesktopUpdateController: ObservableObject {
     }
 
     func install() {
-        guard let assetUrl else {
+        guard hasUpdateAsset else {
             status = "No macOS update found"
             return
         }
@@ -753,7 +743,7 @@ final class DesktopUpdateController: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let savedUrl = try await self.download(from: assetUrl)
+                let savedUrl = try await self.downloadEmbeddedUpdate()
                 try await MainActor.run {
                     try self.installDownloaded(savedUrl)
                 }
@@ -767,28 +757,27 @@ final class DesktopUpdateController: ObservableObject {
     }
 
     private func fetch() async throws -> IrisUpdateCheck {
-        let data = try await loadIrisUpdateData(from: manifestUrl)
-        let manifest = try JSONDecoder().decode(IrisReleaseManifest.self, from: data)
-        let asset = manifest.preferredMacAsset()
-        let url = asset.flatMap { URL(string: $0.path, relativeTo: manifestUrl)?.absoluteURL }
+        let result = await Task.detached {
+            irisDesktopUpdateCheck()
+        }.value
+        try validateIrisUpdateResult(result)
         return IrisUpdateCheck(
-            manifest: manifest,
-            asset: asset,
-            assetUrl: url,
-            isNewer: irisVersionIsNewer(manifest.tag, than: currentVersion())
+            tag: result.tag,
+            assetName: result.asset.isEmpty ? nil : result.asset,
+            isNewer: result.available
         )
     }
 
     private func apply(_ check: IrisUpdateCheck, manual: Bool) {
         checking = false
         available = check.isNewer
-        version = check.manifest.tag
-        assetUrl = check.isNewer ? check.assetUrl : nil
+        version = check.tag
+        hasUpdateAsset = check.isNewer && check.assetName != nil
         if check.isNewer {
-            status = check.assetUrl == nil
-                ? "Update \(check.manifest.tag) found without a macOS app"
-                : "Update \(check.manifest.tag) available"
-            if autoInstall, check.assetUrl != nil {
+            status = !hasUpdateAsset
+                ? "Update \(check.tag) found without a macOS app"
+                : "Update \(check.tag) available"
+            if autoInstall, hasUpdateAsset {
                 install()
             }
         } else if manual {
@@ -798,16 +787,17 @@ final class DesktopUpdateController: ObservableObject {
         }
     }
 
-    private func download(from url: URL) async throws -> URL {
-        let downloadedUrl: URL
-        if url.isFileURL {
-            downloadedUrl = FileManager.default.temporaryDirectory
-                .appendingPathComponent("iris-chat-update-download-\(UUID().uuidString)")
-            try FileManager.default.copyItem(at: url, to: downloadedUrl)
-        } else {
-            (downloadedUrl, _) = try await URLSession.shared.download(from: url)
+    private func downloadEmbeddedUpdate() async throws -> URL {
+        let downloadDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IrisChatDownloads", isDirectory: true)
+        let result = await Task.detached {
+            irisDesktopUpdateDownload(downloadDir: downloadDir.path)
+        }.value
+        try validateIrisUpdateResult(result)
+        guard let path = result.path, !path.isEmpty else {
+            throw IrisUpdateError.missingDownloadedPath
         }
-        return try moveIrisDownloadedUpdate(downloadedUrl, from: url)
+        return URL(fileURLWithPath: path)
     }
 
     private func installDownloaded(_ archiveUrl: URL) throws {
@@ -1022,14 +1012,7 @@ final class AppManager: ObservableObject {
         self.dataDir = resolvedDataDir
 #if os(macOS)
         self.currentAppVersion = appVersion
-        let manifestUrl = environment["IRIS_UPDATE_MANIFEST_URL"]
-            .flatMap(URL.init(string:))
-            ?? defaultIrisUpdateManifestUrl
-        let resolvedAppVersion = appVersion
-        self.updates = DesktopUpdateController(
-            manifestUrl: manifestUrl,
-            currentVersion: { resolvedAppVersion }
-        )
+        self.updates = DesktopUpdateController()
 #endif
         self.state = initialState
         irisSetDebugLoggingEnabled(initialState.preferences.debugLoggingEnabled)
@@ -3424,92 +3407,41 @@ final class AppManager: ObservableObject {
 }
 
 #if os(macOS)
-private struct IrisReleaseManifest: Decodable {
-    let tag: String
-    let assets: [IrisReleaseAsset]
-
-    func preferredMacAsset() -> IrisReleaseAsset? {
-        assets.first { $0.name.hasSuffix("-macos-arm64.app.tar.gz") }
-            ?? assets.first { $0.name.hasSuffix("-macos-arm64.dmg") }
-    }
-}
-
-private struct IrisReleaseAsset: Decodable {
-    let name: String
-    let path: String
-}
-
 private struct IrisUpdateCheck {
-    let manifest: IrisReleaseManifest
-    let asset: IrisReleaseAsset?
-    let assetUrl: URL?
+    let tag: String
+    let assetName: String?
     let isNewer: Bool
 }
 
 private enum IrisUpdateError: LocalizedError {
     case missingAppBundle
+    case updateFailed(String)
+    case updateReturnedUnverifiedSource
+    case missingDownloadedPath
 
     var errorDescription: String? {
         switch self {
         case .missingAppBundle:
             return "Downloaded update did not contain Iris Chat.app."
+        case .updateFailed(let message):
+            return message.isEmpty ? "Update failed." : message
+        case .updateReturnedUnverifiedSource:
+            return "Update could not be verified."
+        case .missingDownloadedPath:
+            return "Downloaded update was not found."
         }
     }
 }
 
-private func loadIrisUpdateData(from url: URL) async throws -> Data {
-    if url.isFileURL {
-        return try Data(contentsOf: url)
+private func validateIrisUpdateResult(_ result: IrisDesktopUpdateResult) throws {
+    guard result.ok else {
+        throw IrisUpdateError.updateFailed(result.error ?? "")
     }
-    let (data, _) = try await URLSession.shared.data(from: url)
-    return data
-}
-
-private func moveIrisDownloadedUpdate(_ downloadedUrl: URL, from assetUrl: URL) throws -> URL {
-    let fileName = assetUrl.lastPathComponent.isEmpty ? "iris-chat-update" : assetUrl.lastPathComponent
-    let destination = FileManager.default.temporaryDirectory
-        .appendingPathComponent("IrisChatDownloads", isDirectory: true)
-        .appendingPathComponent(fileName)
-    try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-    if FileManager.default.fileExists(atPath: destination.path) {
-        try FileManager.default.removeItem(at: destination)
+    if ProcessInfo.processInfo.environment["IRIS_UPDATE_MANIFEST_URL"] == nil,
+       result.available,
+       (!result.verified || result.source != "hashtree-nostr-blossom") {
+        throw IrisUpdateError.updateReturnedUnverifiedSource
     }
-    try FileManager.default.moveItem(at: downloadedUrl, to: destination)
-    return destination
-}
-
-private func irisVersionIsNewer(_ candidate: String, than current: String) -> Bool {
-    // Very old dev builds used the Xcode placeholder "0.1.0". Treat that
-    // (and anything with a major version below the year-style release scheme)
-    // as a local build that always supersedes whatever the manifest says.
-    if irisIsDevPlaceholderVersion(current) {
-        return false
-    }
-    let left = irisVersionParts(candidate)
-    let right = irisVersionParts(current)
-    for index in 0..<max(left.count, right.count) {
-        let leftValue = index < left.count ? left[index] : 0
-        let rightValue = index < right.count ? right[index] : 0
-        if leftValue != rightValue {
-            return leftValue > rightValue
-        }
-    }
-    return false
-}
-
-private func irisIsDevPlaceholderVersion(_ value: String) -> Bool {
-    let parts = irisVersionParts(value)
-    // Releases are tagged YYYY.M.D[.N] (year as major). Anything with a
-    // major below 2000 is the Xcode template default or a hand-built dev
-    // version — treat it as ahead of every release so the banner stays off.
-    return (parts.first ?? 0) < 2000
-}
-
-private func irisVersionParts(_ value: String) -> [Int] {
-    value
-        .trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
-        .split { !$0.isNumber }
-        .map { Int($0) ?? 0 }
 }
 
 private func runIrisUpdateProcess(_ executable: String, arguments: [String]) throws {

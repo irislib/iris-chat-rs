@@ -393,7 +393,7 @@ pub(super) async fn download_hashtree_attachment_base64(nhash: &str) -> anyhow::
     ));
     let tree = HashTree::new(HashTreeConfig::new(store));
     let bytes = tree
-        .get(&cid)
+        .get(&cid, None)
         .await
         .map_err(|error| anyhow::anyhow!("hashtree download failed: {error}"))?
         .ok_or_else(|| anyhow::anyhow!("attachment was not found"))?;

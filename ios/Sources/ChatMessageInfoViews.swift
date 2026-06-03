@@ -185,12 +185,6 @@ struct MessageInfoSheet: View {
             if !trace.outerEventIds.isEmpty {
                 MessageInfoCopyListRow(label: "Network events", values: trace.outerEventIds)
             }
-            if !trace.targetDeviceIds.isEmpty {
-                MessageInfoCopyListRow(
-                    label: "Target devices",
-                    values: trace.targetDeviceIds.map { peerInputToNpub(input: $0) }
-                )
-            }
         }
     }
 

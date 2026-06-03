@@ -8,6 +8,8 @@ source "$ROOT/scripts/docker_stage_common.sh"
 
 IMAGE="${IRIS_LINUX_BUILD_IMAGE:-$(docker_linux_dev_image)}"
 DOCKER_PLATFORM="${IRIS_LINUX_DOCKER_PLATFORM:-$(docker_default_platform)}"
+REPO_BASENAME="$(basename "$ROOT")"
+RATCHET_ROOT="${IRIS_RATCHET_ROOT:-$ROOT/../nostr-double-ratchet}"
 
 if [[ "$(uname -s)" == "Linux" ]]; then
   cargo test --manifest-path "$ROOT/linux/Cargo.toml"
@@ -19,16 +21,27 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-docker build \
-  --platform "$DOCKER_PLATFORM" \
+docker_prepare_clean_config
+trap docker_cleanup_clean_config EXIT
+
+docker_build_image "$DOCKER_PLATFORM" \
+  --build-arg INSTALL_CARGO_WATCH=0 \
   -f "$ROOT/linux/Dockerfile" \
   -t "$IMAGE" \
-  "$ROOT/.."
+  "$ROOT/linux"
+
+DOCKER_VOLUMES=(
+  -v "$ROOT:/workspace/$REPO_BASENAME:cached"
+)
+
+if [[ -d "$RATCHET_ROOT" ]]; then
+  DOCKER_VOLUMES+=(-v "$RATCHET_ROOT:/workspace/nostr-double-ratchet:cached")
+fi
 
 docker run \
   --platform "$DOCKER_PLATFORM" \
   --rm \
-  -v "$ROOT/..:/workspace:cached" \
-  -w /workspace/iris-chat-rs/linux \
+  "${DOCKER_VOLUMES[@]}" \
+  -w "/workspace/$REPO_BASENAME/linux" \
   --entrypoint /bin/bash \
   "$IMAGE" -lc 'set -Eeuo pipefail; cargo test'

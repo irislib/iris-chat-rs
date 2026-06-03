@@ -112,6 +112,18 @@ RUN_DIR="${IRIS_E2E_RUN_DIR:-/tmp/iris-e2e-mixed-${STAMP}}"
 LOG_FILE="${RUN_DIR}/mixed-prerelease.log"
 mkdir -p "${RUN_DIR}/status"
 iris_e2e_record_repo_trace "${ROOT_DIR}" "${RUN_DIR}"
+IOS_E2E_UDIDS=("${IOS_A_UDID}" "${IOS_B_UDID}")
+
+cleanup_ios_simulators() {
+  if [[ "${IRIS_E2E_KEEP_IOS_SIMS:-0}" == "1" ]]; then
+    return 0
+  fi
+  iris_e2e_shutdown_ios_simulators "${IOS_E2E_UDIDS[@]}"
+  if [[ "${IRIS_E2E_CLOSE_STALE_IOS_SIMS:-1}" != "0" ]]; then
+    iris_e2e_shutdown_stale_ios_simulators
+  fi
+}
+trap 'exit_code=$?; cleanup_ios_simulators; exit "${exit_code}"' EXIT
 
 if [[ "${RELAY_MODE}" == "local" ]]; then
   RELAYS="$(local_ios_relay_url)"
@@ -145,11 +157,16 @@ fi
 ANDROID_A_SERIAL="${ANDROID_SERIALS[0]}"
 ANDROID_B_SERIAL="${ANDROID_SERIALS[1]}"
 
+if [[ "${IRIS_E2E_CLOSE_STALE_IOS_SIMS:-1}" != "0" ]]; then
+  iris_e2e_shutdown_stale_ios_simulators "${IOS_E2E_UDIDS[@]}"
+fi
 for udid in "${IOS_A_UDID}" "${IOS_B_UDID}"; do
   xcrun simctl boot "${udid}" >/dev/null 2>&1 || true
-  xcrun simctl bootstatus "${udid}" -b >/dev/null
+  iris_e2e_wait_for_ios_bootstatus "${udid}"
 done
-open -a Simulator >/dev/null 2>&1 || true
+if [[ "${IRIS_E2E_KEEP_IOS_SIMS:-0}" == "1" ]]; then
+  open -a Simulator >/dev/null 2>&1 || true
+fi
 for serial in "${ANDROID_A_SERIAL}" "${ANDROID_B_SERIAL}"; do
   "${ADB}" -s "${serial}" get-state >/dev/null
 done
@@ -514,9 +531,11 @@ report_device_debug "${LINKED_PLATFORM}" "${LINKED_ID}" "${LINKED_RUN_ID}"
 report_device_debug "${BOB_PLATFORM}" "${BOB_ID}" "${BOB_RUN_ID}"
 report_device_debug "${CHARLIE_PLATFORM}" "${CHARLIE_ID}" "${CHARLIE_RUN_ID}"
 
-for udid in "${IOS_A_UDID}" "${IOS_B_UDID}"; do
-  xcrun simctl launch "${udid}" "${IOS_BUNDLE_ID}" >/dev/null 2>&1 || true
-done
+if [[ "${IRIS_E2E_KEEP_IOS_SIMS:-0}" == "1" ]]; then
+  for udid in "${IOS_A_UDID}" "${IOS_B_UDID}"; do
+    xcrun simctl launch "${udid}" "${IOS_BUNDLE_ID}" >/dev/null 2>&1 || true
+  done
+fi
 for serial in "${ANDROID_A_SERIAL}" "${ANDROID_B_SERIAL}"; do
   "${ADB}" -s "${serial}" shell monkey -p "${ANDROID_APP_PACKAGE}" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
 done

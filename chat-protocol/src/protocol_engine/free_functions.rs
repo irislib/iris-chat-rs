@@ -1,101 +1,80 @@
 fn protocol_effects_from_prepared(
     prepared: &PreparedSend,
     inner_event_id: Option<String>,
+    chat_id: String,
     event_ids: &mut Vec<String>,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
-    let mut bootstrap = Vec::new();
-    let mut payload = Vec::new();
-    let target_owner_pubkey_hex = Some(public_owner(prepared.recipient_owner)?.to_hex());
+    let mut publishes = Vec::new();
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
-        bootstrap.push(ProtocolPublishEvent {
+        publishes.push(ProtocolPublish {
             event,
-            inner_event_id: inner_event_id.clone(),
-            target_owner_pubkey_hex: target_owner_pubkey_hex.clone(),
-            target_device_id: None,
+            chat_id: chat_id.clone(),
+            inner_event_id: None,
         });
     }
     for delivery in &prepared.deliveries {
         let event = message_event(&delivery.envelope)?;
         event_ids.push(event.id.to_string());
-        payload.push(ProtocolPublishEvent {
+        let publish = ProtocolPublish {
             event,
+            chat_id: chat_id.clone(),
             inner_event_id: inner_event_id.clone(),
-            target_owner_pubkey_hex: Some(public_owner(delivery.owner_pubkey)?.to_hex()),
-            target_device_id: Some(public_device(delivery.device_pubkey)?.to_hex()),
-        });
+        };
+        publishes.push(publish);
     }
-    Ok(protocol_publish_effects(bootstrap, payload))
+    Ok(publishes.into_iter().map(ProtocolEffect::Publish).collect())
 }
 
 fn protocol_effects_from_group_prepared_publish(
     prepared: &GroupPreparedPublish,
     inner_event_id: Option<String>,
+    chat_id: String,
     event_ids: &mut Vec<String>,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
-    let mut bootstrap = Vec::new();
-    let mut payload = Vec::new();
+    let mut publishes = Vec::new();
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
-        bootstrap.push(ProtocolPublishEvent {
+        publishes.push(ProtocolPublish {
             event,
-            inner_event_id: inner_event_id.clone(),
-            target_owner_pubkey_hex: None,
-            target_device_id: None,
+            chat_id: chat_id.clone(),
+            inner_event_id: None,
         });
     }
     for delivery in &prepared.deliveries {
         let event = message_event(&delivery.envelope)?;
         event_ids.push(event.id.to_string());
-        payload.push(ProtocolPublishEvent {
+        let publish = ProtocolPublish {
             event,
+            chat_id: chat_id.clone(),
             inner_event_id: inner_event_id.clone(),
-            target_owner_pubkey_hex: Some(public_owner(delivery.owner_pubkey)?.to_hex()),
-            target_device_id: Some(public_device(delivery.device_pubkey)?.to_hex()),
-        });
+        };
+        publishes.push(publish);
     }
     for sender_key_message in &prepared.sender_key_messages {
         let event = group_sender_key_message_event(sender_key_message)?;
         event_ids.push(event.id.to_string());
-        payload.push(ProtocolPublishEvent {
+        publishes.push(ProtocolPublish {
             event,
-            inner_event_id: None,
-            target_owner_pubkey_hex: None,
-            target_device_id: None,
+            chat_id: chat_id.clone(),
+            inner_event_id: inner_event_id.clone(),
         });
     }
-    Ok(protocol_publish_effects(bootstrap, payload))
+    Ok(publishes.into_iter().map(ProtocolEffect::Publish).collect())
 }
 
-fn protocol_publish_effects(
-    bootstrap: Vec<ProtocolPublishEvent>,
-    payload: Vec<ProtocolPublishEvent>,
-) -> Vec<ProtocolEffect> {
-    if bootstrap.is_empty() {
-        return payload.into_iter().map(protocol_publish_effect).collect();
-    }
-    if payload.is_empty() {
-        return bootstrap.into_iter().map(protocol_publish_effect).collect();
-    }
-    vec![ProtocolEffect::PublishStagedFirstContact { bootstrap, payload }]
-}
-
-fn protocol_publish_effect(publish: ProtocolPublishEvent) -> ProtocolEffect {
-    match (
-        publish.inner_event_id,
-        publish.target_owner_pubkey_hex,
-        publish.target_device_id,
-    ) {
-        (None, None, None) => ProtocolEffect::PublishSigned(publish.event),
-        (inner_event_id, target_owner_pubkey_hex, target_device_id) => {
-            ProtocolEffect::PublishSignedForInnerEvent {
-                event: publish.event,
-                inner_event_id,
-                target_owner_pubkey_hex,
-                target_device_id,
-            }
-        }
-    }
+fn classify_group_pairwise_payload(payload: &[u8]) -> anyhow::Result<(bool, bool)> {
+    let codec = JsonGroupPayloadCodecV1;
+    let Some(command) = codec.decode_pairwise_command(payload)? else {
+        return Ok((false, false));
+    };
+    let supported = match command {
+        GroupPairwiseCommand::MetadataSnapshot { snapshot } => snapshot.protocol.is_sender_key_v1(),
+        GroupPairwiseCommand::SenderKeyDistribution { .. }
+        | GroupPairwiseCommand::SenderKeyRepairRequest { .. } => true,
+        _ => false,
+    };
+    Ok((true, supported))
 }
 
 fn sort_dedup_protocol_pubkeys(pubkeys: &mut Vec<PublicKey>) {

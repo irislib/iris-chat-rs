@@ -248,7 +248,6 @@ pub struct MessageDeliveryTraceSnapshot {
     pub outer_event_ids: Vec<String>,
     pub pending_relay_event_ids: Vec<String>,
     pub queued_protocol_targets: Vec<String>,
-    pub target_device_ids: Vec<String>,
     pub transport_channels: Vec<String>,
     pub last_transport_error: Option<String>,
 }

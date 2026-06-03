@@ -1038,9 +1038,10 @@ run_release_gate() {
   "$ROOT/scripts/test-release-gate" "${RELEASE_GATE_ARGS[@]}"
 }
 
-core_crate_field() {
-  local field="$1"
-  sed -nE "s/^${field}[[:space:]]*=[[:space:]]*\"([^\"]+)\".*/\\1/p" "$ROOT/core/Cargo.toml" | head -n 1
+crate_manifest_field() {
+  local manifest="$1"
+  local field="$2"
+  sed -nE "s/^${field}[[:space:]]*=[[:space:]]*\"([^\"]+)\".*/\\1/p" "$manifest" | head -n 1
 }
 
 crates_io_has_version() {
@@ -1071,16 +1072,13 @@ except Exception as error:
 PY
 }
 
-publish_cargo_crate() {
-  if [[ "$PUBLISH_CARGO_CRATE" -ne 1 ]]; then
-    echo "Rust crate publish: skipped"
-    return 0
-  fi
+publish_cargo_manifest() {
+  local manifest="$1"
   local crate_name crate_version
-  crate_name="$(core_crate_field name)"
-  crate_version="$(core_crate_field version)"
+  crate_name="$(crate_manifest_field "$manifest" name)"
+  crate_version="$(crate_manifest_field "$manifest" version)"
   if [[ -z "$crate_name" || -z "$crate_version" ]]; then
-    echo "Could not resolve core crate name/version." >&2
+    echo "Could not resolve crate name/version for $manifest." >&2
     return 1
   fi
   echo
@@ -1089,18 +1087,20 @@ publish_cargo_crate() {
   crates_io_has_version "$crate_name" "$crate_version"
   local lookup_status=$?
   set -e
-  case "$lookup_status" in
-    0)
-      echo "crates.io already has ${crate_name} ${crate_version}; skipping."
-      return 0
-      ;;
-    1)
-      ;;
-    *)
-      return "$lookup_status"
-      ;;
-  esac
-  (cd "$ROOT/core" && cargo publish --locked)
+  if [[ "$lookup_status" -eq 0 ]]; then
+    echo "crates.io already has ${crate_name} ${crate_version}; skipping."
+    return 0
+  fi
+  [[ "$lookup_status" -eq 1 ]] || return "$lookup_status"
+  (cd "$(dirname "$manifest")" && cargo publish --locked)
+}
+publish_cargo_crate() {
+  if [[ "$PUBLISH_CARGO_CRATE" -ne 1 ]]; then
+    echo "Rust crate publish: skipped"
+    return 0
+  fi
+  publish_cargo_manifest "$ROOT/chat-protocol/Cargo.toml"
+  publish_cargo_manifest "$ROOT/core/Cargo.toml"
 }
 
 publish_testflight() {

@@ -288,14 +288,20 @@ connected_serials() {
 
 select_default_serials() {
   SELECTED_SERIALS=()
-  local avd serial
-  for avd in "${DEFAULT_AVDS[@]}"; do
-    serial="$(ensure_avd_running "${avd}")"
-    add_unique_serial "${serial}"
-  done
-  while IFS= read -r serial; do
-    add_unique_serial "${serial}"
-  done < <(connected_serials)
+  add_unique_serial "${SERIAL_A}"
+  add_unique_serial "${SERIAL_B}"
+  add_unique_serial "${SERIAL_C}"
+
+  if [[ -z "${SERIAL_A}" || -z "${SERIAL_B}" || -z "${SERIAL_C}" ]]; then
+    local avd serial
+    for avd in "${DEFAULT_AVDS[@]}"; do
+      serial="$(ensure_avd_running "${avd}")"
+      add_unique_serial "${serial}"
+    done
+    while IFS= read -r serial; do
+      add_unique_serial "${serial}"
+    done < <(connected_serials)
+  fi
 
   if [[ ${#SELECTED_SERIALS[@]} -lt 3 ]]; then
     echo "Need three Android devices for linked-device relay matrix; found ${#SELECTED_SERIALS[@]}." >&2

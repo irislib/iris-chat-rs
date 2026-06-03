@@ -65,12 +65,12 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("myProfileSheet")
-        composeRule.onNodeWithTag("settingsProfileQrButton", useUnmergedTree = true).assertIsDisplayed()
-        composeRule.onNodeWithTag("settingsDevicesRow", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.waitForDisplayedTag("settingsProfileQrButton")
+        composeRule.waitForDisplayedTag("settingsDevicesRow")
         composeRule.openSettingsPage("settingsProfileRow")
-        composeRule.onNodeWithTag("myProfileShowQrButton", useUnmergedTree = true).assertIsDisplayed()
-        composeRule.onNodeWithTag("myProfileDisplayNameInput", useUnmergedTree = true).assertIsDisplayed()
-        composeRule.onNodeWithTag("myProfileAboutInput", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.waitForDisplayedTagAfterScroll("myProfileShowQrButton")
+        composeRule.waitForDisplayedTagAfterScroll("myProfileDisplayNameInput")
+        composeRule.waitForDisplayedTagAfterScroll("myProfileAboutInput")
     }
 
     @Test
@@ -465,12 +465,8 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("chatHeaderTitleButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("groupDetailsScreen")
-        composeRule.onNodeWithTag("groupDetailsNameInput", useUnmergedTree = true)
-            .performScrollTo()
-            .assertIsDisplayed()
-        composeRule.onNodeWithTag("groupDetailsAddMembersButton", useUnmergedTree = true)
-            .performScrollTo()
-            .assertIsDisplayed()
+        composeRule.waitForDisplayedTagAfterScroll("groupDetailsNameInput")
+        composeRule.waitForDisplayedTagAfterScroll("groupDetailsAddMembersButton")
     }
 
     @Test
@@ -492,9 +488,7 @@ class PikaLikeUiTest {
         composeRule.waitForTag("chatMessageInput")
         composeRule.onNodeWithTag("chatHeaderTitleButton", useUnmergedTree = true).performClick()
         composeRule.waitForTag("groupDetailsScreen")
-        composeRule.onNodeWithTag("groupDetailsNameInput", useUnmergedTree = true)
-            .performScrollTo()
-            .assertIsDisplayed()
+        composeRule.waitForDisplayedTagAfterScroll("groupDetailsNameInput")
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitForTag(
@@ -502,7 +496,9 @@ class PikaLikeUiTest {
         timeoutMillis: Long = 15_000,
     ) {
         waitUntil(timeoutMillis) {
-            onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            runCatching {
+                onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }.getOrDefault(false)
         }
     }
 
@@ -518,9 +514,28 @@ class PikaLikeUiTest {
         }
     }
 
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitForDisplayedTagAfterScroll(
+        tag: String,
+        timeoutMillis: Long = 15_000,
+    ) {
+        waitUntil(timeoutMillis) {
+            runCatching {
+                onNodeWithTag(tag, useUnmergedTree = true)
+                    .performScrollTo()
+                    .assertIsDisplayed()
+                true
+            }.getOrDefault(false)
+        }
+    }
+
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.openSettingsPage(tag: String) {
         waitForTag(tag)
-        onNodeWithTag(tag, useUnmergedTree = true).performScrollTo().performClick()
+        waitUntil(15_000) {
+            runCatching {
+                onNodeWithTag(tag, useUnmergedTree = true).performScrollTo().performClick()
+                true
+            }.getOrDefault(false)
+        }
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitForText(
@@ -528,7 +543,9 @@ class PikaLikeUiTest {
         timeoutMillis: Long = 15_000,
     ) {
         waitUntil(timeoutMillis) {
-            onAllNodesWithText(text, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            runCatching {
+                onAllNodesWithText(text, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }.getOrDefault(false)
         }
     }
 
@@ -596,7 +613,9 @@ class PikaLikeUiTest {
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.hasTag(tag: String): Boolean =
-        onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        runCatching {
+            onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }.getOrDefault(false)
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.hasTag(
         tag: String,

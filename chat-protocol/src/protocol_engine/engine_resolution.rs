@@ -216,14 +216,17 @@ impl ProtocolEngine {
         );
         let mut event_ids = Vec::new();
         let mut effects = Vec::new();
+        let chat_id = group_chat_id(&prepared.group_id);
         effects.extend(protocol_effects_from_group_prepared_publish(
             &prepared.local_sibling,
             inner_event_id.clone(),
+            chat_id.clone(),
             &mut event_ids,
         )?);
         effects.extend(protocol_effects_from_group_prepared_publish(
             &prepared.remote,
             inner_event_id,
+            chat_id,
             &mut event_ids,
         )?);
         let mut queued_targets = self.queued_group_targets();
@@ -260,6 +263,7 @@ impl ProtocolEngine {
         let mut effects = protocol_effects_from_group_prepared_publish(
             &prepared,
             None,
+            group_chat_id(&group.group_id),
             &mut event_ids,
         )?;
         let mut queued_targets = self.queued_group_targets();
@@ -506,233 +510,5 @@ impl ProtocolEngine {
         Ok(())
     }
 
-    fn queue_pending_group_sender_key_message(
-        &mut self,
-        parsed: nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent,
-    ) -> anyhow::Result<()> {
-        if !self.pending_group_sender_key_messages.contains(&parsed) {
-            self.pending_group_sender_key_messages.push(parsed);
-            self.persist()?;
-        }
-        Ok(())
-    }
-
-    fn group_sender_key_message_from_parsed(
-        &self,
-        parsed: &nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent,
-    ) -> Option<GroupSenderKeyMessage> {
-        let group_id = self
-            .group_manager
-            .group_id_for_sender_event_pubkey(parsed.sender_event_pubkey)?;
-        Some(GroupSenderKeyMessage {
-            group_id,
-            sender_event_pubkey: parsed.sender_event_pubkey,
-            key_id: parsed.key_id,
-            message_number: parsed.message_number,
-            encrypted_header: parsed.encrypted_header.clone(),
-            created_at: parsed.created_at,
-            ciphertext: parsed.ciphertext.clone(),
-        })
-    }
-
-    fn handle_group_sender_key_message(
-        &mut self,
-        message: GroupSenderKeyMessage,
-    ) -> anyhow::Result<ProtocolGroupIncomingResult> {
-        let message_repair_group_id = message.group_id.clone();
-        let message_repair_sender = message.sender_event_pubkey;
-        let message_repair_key_id = message.encrypted_header.is_none().then_some(message.key_id);
-        let message_repair_number = message
-            .encrypted_header
-            .is_none()
-            .then_some(message.message_number);
-        let result = match self
-            .group_manager
-            .handle_sender_key_message(message.clone())
-        {
-            Ok(result) => result,
-            Err(nostr_double_ratchet::Error::Decryption(error))
-                if error == "duplicate or missing sender-key message" =>
-            {
-                return Ok(ProtocolGroupIncomingResult {
-                    consumed: true,
-                    ..Default::default()
-                });
-            }
-            Err(error) => return Err(error.into()),
-        };
-        let now = NdrUnixSeconds(unix_now().get());
-        let repair_request =
-            SenderKeyRepairRequest::from_pending_sender_key_message(&message, &result, now);
-        match result {
-            GroupSenderKeyHandleResult::Event(event) => {
-                self.clear_group_sender_key_repairs(
-                    &message_repair_group_id,
-                    message_repair_sender,
-                    message_repair_key_id,
-                    message_repair_number,
-                );
-                self.persist()?;
-                Ok(ProtocolGroupIncomingResult {
-                    events: vec![event],
-                    consumed: true,
-                    ..Default::default()
-                })
-            }
-            GroupSenderKeyHandleResult::PendingDistribution { .. }
-            | GroupSenderKeyHandleResult::PendingRevision { .. } => {
-                let Some(request) = repair_request else {
-                    anyhow::bail!(
-                        "pending sender-key result did not produce a repair request"
-                    );
-                };
-                let effects = self.sender_key_repair_request_effects(request, now)?;
-                Ok(ProtocolGroupIncomingResult {
-                    consumed: true,
-                    pending: true,
-                    effects,
-                    ..Default::default()
-                })
-            }
-            GroupSenderKeyHandleResult::Ignored => {
-                self.clear_group_sender_key_repairs(
-                    &message_repair_group_id,
-                    message_repair_sender,
-                    message_repair_key_id,
-                    message_repair_number,
-                );
-                Ok(ProtocolGroupIncomingResult {
-                    consumed: true,
-                    ..Default::default()
-                })
-            }
-        }
-    }
-
-    fn sender_key_repair_request_effects(
-        &mut self,
-        request: SenderKeyRepairRequest,
-        now: NdrUnixSeconds,
-    ) -> anyhow::Result<Vec<ProtocolEffect>> {
-        let sender_event_pubkey_hex = request.sender_event_pubkey.to_hex();
-        let position = self
-            .pending_group_sender_key_repairs
-            .iter()
-            .position(|pending| {
-                pending.group_id == request.group_id
-                    && pending.sender_event_pubkey_hex == sender_event_pubkey_hex
-                    && pending.key_id == request.key_id
-                    && pending.message_number == request.message_number
-                    && pending.required_revision == request.required_revision
-            });
-        let index = if let Some(index) = position {
-            index
-        } else {
-            self.pending_group_sender_key_repairs
-                .push(ProtocolPendingGroupSenderKeyRepair {
-                    group_id: request.group_id.clone(),
-                    sender_event_pubkey_hex,
-                    key_id: request.key_id,
-                    message_number: request.message_number,
-                    required_revision: request.required_revision,
-                    created_at_secs: now.get(),
-                    last_requested_at_secs: 0,
-                    request_count: 0,
-                    next_retry_at_secs: 0,
-            });
-            self.pending_group_sender_key_repairs.len() - 1
-        };
-        let Some(pending_repair) = self.pending_group_sender_key_repairs.get(index) else {
-            anyhow::bail!("pending sender-key repair index disappeared");
-        };
-        if pending_repair.next_retry_at_secs > now.get() {
-            return Ok(Vec::new());
-        }
-
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(now, &mut rng);
-        let prepared = self.group_manager.request_sender_key_repair(
-            &mut self.session_manager,
-            &mut ctx,
-            &request,
-        )?;
-        let output = self.protocol_group_send_from_prepared(&prepared, None)?;
-        if let Some(pending) = self.pending_group_sender_key_repairs.get_mut(index) {
-            pending.last_requested_at_secs = now.get();
-            pending.request_count = pending.request_count.saturating_add(1);
-            pending.next_retry_at_secs =
-                sender_key_repair_default_next_retry_at(now, pending.request_count).get();
-        }
-        self.invalidate_known_message_author_cache();
-        Ok(output.effects)
-    }
-
-    fn retry_pending_group_sender_key_repairs(
-        &mut self,
-        now: NdrUnixSeconds,
-    ) -> anyhow::Result<Vec<ProtocolEffect>> {
-        let requests = self
-            .pending_group_sender_key_repairs
-            .iter()
-            .filter(|pending| pending.next_retry_at_secs <= now.get())
-            .filter_map(|pending| {
-                let sender = PublicKey::parse(&pending.sender_event_pubkey_hex).ok()?;
-                Some(SenderKeyRepairRequest {
-                    group_id: pending.group_id.clone(),
-                    sender_event_pubkey: ndr_device(sender),
-                    key_id: pending.key_id,
-                    message_number: pending.message_number,
-                    required_revision: pending.required_revision,
-                    created_at: NdrUnixSeconds(pending.created_at_secs),
-                })
-            })
-            .collect::<Vec<_>>();
-        let mut effects = Vec::new();
-        for request in requests {
-            effects.extend(self.sender_key_repair_request_effects(request, now)?);
-        }
-        Ok(effects)
-    }
-
-    fn sender_key_repair_response_effects(
-        &mut self,
-        requester_owner: NdrOwnerPubkey,
-        request: &SenderKeyRepairRequest,
-        now: NdrUnixSeconds,
-    ) -> anyhow::Result<(Vec<ProtocolEffect>, Vec<String>)> {
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(now, &mut rng);
-        let prepared = self.group_manager.respond_to_sender_key_repair_request(
-            &mut self.session_manager,
-            &mut ctx,
-            requester_owner,
-            request,
-        )?;
-        let output = self.protocol_group_send_from_prepared(&prepared, None)?;
-        self.invalidate_known_message_author_cache();
-        Ok((output.effects, output.queued_targets))
-    }
-
-    fn clear_group_sender_key_repairs(
-        &mut self,
-        group_id: &str,
-        sender_event_pubkey: NdrDevicePubkey,
-        key_id: Option<u32>,
-        message_number: Option<u32>,
-    ) {
-        let sender_event_pubkey_hex = sender_event_pubkey.to_hex();
-        self.pending_group_sender_key_repairs.retain(|pending| {
-            let position_matches = match (key_id, message_number) {
-                (Some(key_id), Some(message_number)) => {
-                    pending.key_id == Some(key_id)
-                        && pending.message_number == Some(message_number)
-                }
-                _ => true,
-            };
-            !(pending.group_id == group_id
-                && pending.sender_event_pubkey_hex == sender_event_pubkey_hex
-                && position_matches)
-        });
-    }
 
 }

@@ -56,37 +56,47 @@ require_cmd() {
 }
 
 require_cmd docker
+docker_prepare_clean_config
 
 mkdir -p "$DIST_DIR"
 
 TAG="v${IRIS_APP_VERSION_NAME}"
 LINUX_ARCH_LABEL="${IRIS_LINUX_ARCH_LABEL:-x64}"
 ARTIFACT_BASENAME="iris-chat-${TAG}-linux-${LINUX_ARCH_LABEL}"
-DEB_VERSION="${IRIS_LINUX_DEB_VERSION:-${IRIS_APP_VERSION_NAME}-1}"
-
-if [[ "$SKIP_DOCKER_BUILD" -ne 1 ]]; then
-  docker build \
-    --platform "$DOCKER_PLATFORM" \
-    --build-arg INSTALL_CARGO_WATCH=0 \
-    -f "$LINUX_DIR/Dockerfile" \
-    -t "$IMAGE" \
-    "$ROOT/.."
-fi
-
 CONTAINER_NAME="iris-chat-linux-release-$$"
 cleanup() {
   if [[ "$KEEP_CONTAINER" -ne 1 ]]; then
     docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
+  docker_cleanup_clean_config
 }
 trap cleanup EXIT
 
+DEB_VERSION="${IRIS_LINUX_DEB_VERSION:-${IRIS_APP_VERSION_NAME}-1}"
+
+if [[ "$SKIP_DOCKER_BUILD" -ne 1 ]]; then
+  docker_build_image "$DOCKER_PLATFORM" \
+    --build-arg INSTALL_CARGO_WATCH=0 \
+    -f "$LINUX_DIR/Dockerfile" \
+    -t "$IMAGE" \
+    "$LINUX_DIR"
+fi
+
 # Stream a release-build script into the container and run it.
+RATCHET_ROOT="${IRIS_RATCHET_ROOT:-$ROOT/../nostr-double-ratchet}"
+DOCKER_VOLUMES=(
+  -v "$ROOT:/workspace/$REPO_BASENAME:cached"
+)
+
+if [[ -d "$RATCHET_ROOT" ]]; then
+  DOCKER_VOLUMES+=(-v "$RATCHET_ROOT:/workspace/nostr-double-ratchet:cached")
+fi
+
 docker run \
   --platform "$DOCKER_PLATFORM" \
   --name "$CONTAINER_NAME" \
   --rm="$([[ "$KEEP_CONTAINER" -eq 1 ]] && printf false || printf true)" \
-  -v "$ROOT/..:/workspace:cached" \
+  "${DOCKER_VOLUMES[@]}" \
   -w "/workspace/$REPO_BASENAME/linux" \
   -e ARTIFACT_BASENAME="$ARTIFACT_BASENAME" \
   -e IRIS_APP_VERSION_NAME="$IRIS_APP_VERSION_NAME" \

@@ -113,9 +113,14 @@ final class IrisChatUITests: XCTestCase {
 
         XCTAssertTrue(element(app, "chatComposerBar").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
-        typeText("hello from ios ui test", into: element(app, "chatMessageInput"), app: app)
+        let messageInput = editableElement(app, "chatMessageInput")
+        typeText("hello from ios ui test", into: messageInput, app: app)
+#if os(macOS)
+        app.typeKey(.return, modifierFlags: [])
+#else
         element(app, "chatSendButton").tap()
         dismissNotificationPromptIfPresent(app: app)
+#endif
 
         let messageText = app.staticTexts["hello from ios ui test"].firstMatch
         XCTAssertTrue(messageText.waitForExistence(timeout: 15))
@@ -208,7 +213,7 @@ final class IrisChatUITests: XCTestCase {
 
         let message = "reaction \(UUID().uuidString)"
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
-        typeText(message, into: element(app, "chatMessageInput"), app: app)
+        typeText(message, into: editableElement(app, "chatMessageInput"), app: app)
         element(app, "chatSendButton").tap()
         dismissNotificationPromptIfPresent(app: app)
 
@@ -241,7 +246,7 @@ final class IrisChatUITests: XCTestCase {
 
         let draft = "draft \(UUID().uuidString)"
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
-        typeText(draft, into: element(app, "chatMessageInput"), app: app)
+        typeText(draft, into: editableElement(app, "chatMessageInput"), app: app)
 
         returnToChatList(app)
         let row = app.descendants(matching: .any)
@@ -293,7 +298,7 @@ final class IrisChatUITests: XCTestCase {
 
         let message = "swipe actions \(UUID().uuidString) lorem ipsum"
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
-        typeText(message, into: element(app, "chatMessageInput"), app: app)
+        typeText(message, into: editableElement(app, "chatMessageInput"), app: app)
         element(app, "chatSendButton").tap()
         dismissNotificationPromptIfPresent(app: app)
 
@@ -511,7 +516,7 @@ final class IrisChatUITests: XCTestCase {
 
         XCTAssertTrue(element(app, "chatHeaderSearchButton").waitForExistence(timeout: 10))
         element(app, "chatHeaderSearchButton").tap()
-        let searchField = element(app, "inChatSearchField")
+        let searchField = editableElement(app, "inChatSearchField")
         XCTAssertTrue(searchField.waitForExistence(timeout: 10))
         typeText("FIRST_SCROLL_SENTINEL", into: searchField, app: app)
 
@@ -539,7 +544,7 @@ final class IrisChatUITests: XCTestCase {
 
         XCTAssertTrue(element(app, "chatComposerBar").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
-        typeText("hello from return key\n", into: element(app, "chatMessageInput"), app: app)
+        typeText("hello from return key\n", into: editableElement(app, "chatMessageInput"), app: app)
 
         XCTAssertFalse(app.staticTexts["hello from return key"].waitForExistence(timeout: 2))
         element(app, "chatSendButton").tap()
@@ -562,12 +567,12 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertFalse(element(app, "newGroupPasteButton").exists)
         XCTAssertFalse(element(app, "newGroupScanQrButton").exists)
         XCTAssertFalse(element(app, "newGroupAddMemberButton").exists)
-        typeText(validPeerNpub, into: element(app, "newGroupMemberInput"), app: app)
+        typeText(validPeerNpub, into: editableElement(app, "newGroupMemberInput"), app: app)
         XCTAssertTrue(element(app, "memberChipRemove").waitForExistence(timeout: 5))
         element(app, "newGroupNextButton").tap()
         XCTAssertTrue(element(app, "newGroupDetailsStep").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "newGroupNameInput").waitForExistence(timeout: 10))
-        typeText("Trip crew", into: element(app, "newGroupNameInput"), app: app)
+        typeText("Trip crew", into: editableElement(app, "newGroupNameInput"), app: app)
         element(app, "newGroupCreateButton").tap()
 
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 45))
@@ -590,7 +595,7 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "newGroupNextButton").isEnabled)
         element(app, "newGroupNextButton").tap()
         XCTAssertTrue(element(app, "newGroupDetailsStep").waitForExistence(timeout: 10))
-        typeText("Solo notes", into: element(app, "newGroupNameInput"), app: app)
+        typeText("Solo notes", into: editableElement(app, "newGroupNameInput"), app: app)
         XCTAssertTrue(element(app, "newGroupCreateButton").isEnabled)
         element(app, "newGroupCreateButton").tap()
 
@@ -627,7 +632,7 @@ final class IrisChatUITests: XCTestCase {
         let app = launchCleanApp()
         createAccount(app)
 
-        let nearbyRow = element(app, "desktopNearbyRow")
+        let nearbyRow = app.buttons.matching(identifier: "desktopNearbyRow").firstMatch
         XCTAssertTrue(nearbyRow.waitForExistence(timeout: 10))
 
         nearbyRow.tap()
@@ -700,7 +705,7 @@ final class IrisChatUITests: XCTestCase {
     private func openChatWithPeer(_ app: XCUIApplication) {
         tapNewChat(app)
         XCTAssertTrue(element(app, "newChatPeerInput").waitForExistence(timeout: 10))
-        typeText(validPeerNpub, into: element(app, "newChatPeerInput"), app: app)
+        typeText(validPeerNpub, into: editableElement(app, "newChatPeerInput"), app: app)
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 15))
     }
 
@@ -711,7 +716,7 @@ final class IrisChatUITests: XCTestCase {
 
         XCTAssertTrue(element(app, "restoreAccountScreen").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "importKeyField").waitForExistence(timeout: 10))
-        typeText(validOwnerNsec, into: element(app, "importKeyField"), app: app)
+        typeText(validOwnerNsec, into: editableElement(app, "importKeyField"), app: app)
         if !waitForChatList(app, timeout: 2) {
             element(app, "importKeyButton").tap()
         }
@@ -726,7 +731,7 @@ final class IrisChatUITests: XCTestCase {
 
         XCTAssertTrue(element(app, "restoreAccountScreen").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "importKeyField").waitForExistence(timeout: 10))
-        typeText("not a secret key", into: element(app, "importKeyField"), app: app)
+        typeText("not a secret key", into: editableElement(app, "importKeyField"), app: app)
         element(app, "importKeyButton").tap()
 
         XCTAssertTrue(app.staticTexts["Invalid key."].waitForExistence(timeout: 10))
@@ -832,6 +837,7 @@ final class IrisChatUITests: XCTestCase {
         }
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        ensureMacWindowVisible(app)
         return app
     }
 
@@ -921,7 +927,7 @@ final class IrisChatUITests: XCTestCase {
     ) {
         tapWelcomeAction(app, "welcomeCreateAction", file: file, line: line)
         XCTAssertTrue(element(app, "createAccountScreen").waitForExistence(timeout: 15), file: file, line: line)
-        let nameField = element(app, "signupNameField")
+        let nameField = editableElement(app, "signupNameField")
         XCTAssertTrue(nameField.waitForExistence(timeout: 15), file: file, line: line)
         XCTAssertTrue(nameField.isEnabled, file: file, line: line)
         nameField.tap()
@@ -965,11 +971,13 @@ final class IrisChatUITests: XCTestCase {
         waitForAnyElement(app, identifiers: ["chatListNewChatButton", "desktopNewChatRow"], timeout: timeout) != nil
     }
     private func seededChatRowPreview(_ app: XCUIApplication) -> XCUIElement {
-        app.cells.matching(
-            NSPredicate(
-                format: "identifier BEGINSWITH 'chatRow-'"
-            )
-        ).firstMatch
+        let predicate = NSPredicate(format: "identifier BEGINSWITH 'chatRow-'")
+        let cell = app.cells.matching(predicate).firstMatch
+#if os(macOS)
+        return cell.exists ? cell : app.buttons.matching(predicate).firstMatch
+#else
+        return cell
+#endif
     }
     private func openSeededChat(
         _ app: XCUIApplication,
@@ -1117,10 +1125,6 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertFalse(toast.waitForExistence(timeout: 1), "dispatch failure toast appeared", file: file, line: line)
     }
 
-    private func element(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any)[identifier]
-    }
-
     private func openSettingsPage(
         _ app: XCUIApplication,
         _ identifier: String,
@@ -1130,34 +1134,5 @@ final class IrisChatUITests: XCTestCase {
         let row = element(app, identifier)
         XCTAssertTrue(row.waitForExistence(timeout: 10), "settings row \(identifier) did not appear", file: file, line: line)
         row.tap()
-    }
-
-    private func typeText(_ text: String, into target: XCUIElement, app: XCUIApplication) {
-#if os(macOS)
-        app.activate()
-        let target = target.identifier.isEmpty ? target : element(app, target.identifier)
-#endif
-        target.tap()
-        if target.elementType == .textView {
-            for character in text {
-                target.typeText(String(character))
-            }
-        } else {
-            target.typeText(text)
-        }
-    }
-
-    private func assertKeyboardFocused(
-        _ target: XCUIElement,
-        timeout: TimeInterval = 5,
-        file: StaticString = #filePath,
-        line: UInt = #line
-    ) {
-#if os(macOS)
-        let predicate = NSPredicate(format: "hasKeyboardFocus == true")
-        let expectation = expectation(for: predicate, evaluatedWith: target)
-        let result = XCTWaiter.wait(for: [expectation], timeout: timeout)
-        XCTAssertEqual(result, .completed, "field did not autofocus", file: file, line: line)
-#endif
     }
 }
