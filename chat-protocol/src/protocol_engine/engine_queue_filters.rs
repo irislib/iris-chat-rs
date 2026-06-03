@@ -193,6 +193,22 @@ impl ProtocolEngine {
         self.protocol_backfill_filters(owner_authors, invite_authors, now)
     }
 
+    pub fn protocol_discovery_effects_for_owners(
+        &self,
+        owners: impl IntoIterator<Item = PublicKey>,
+        now: UnixSeconds,
+        reason: &'static str,
+    ) -> Vec<ProtocolEffect> {
+        let owners = owners.into_iter().collect::<Vec<_>>();
+        let filters =
+            self.protocol_backfill_filters(owners.clone(), owners, NdrUnixSeconds(now.get()));
+        if filters.is_empty() {
+            Vec::new()
+        } else {
+            vec![ProtocolEffect::FetchProtocolState { filters, reason }]
+        }
+    }
+
     fn protocol_backfill_filters(
         &self,
         mut owner_authors: Vec<PublicKey>,

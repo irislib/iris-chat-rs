@@ -15,8 +15,7 @@ use nostr_double_ratchet::{
 use nostr_double_ratchet_nostr::{
     group_sender_key_message_event, invite_response_event, message_event,
     parse_group_sender_key_message_event, parse_group_sender_key_message_event_unchecked,
-    parse_invite_event, parse_invite_response_event, parse_message_event, JsonGroupPayloadCodecV1,
-    NostrGroupManager,
+    JsonGroupPayloadCodecV1, NostrGroupManager,
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use rand::rngs::OsRng;
@@ -33,9 +32,10 @@ pub use nearby::{
     NEARBY_MAX_FRAME_BODY_BYTES,
 };
 pub use nostr_double_ratchet_nostr::{
-    is_app_keys_event, AppKeys, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND,
-    GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
-    REACTION_KIND, RECEIPT_KIND,
+    invite_unsigned_event, is_app_keys_event, parse_invite_event, parse_invite_response_event,
+    parse_message_event, AppKeys, DeviceEntry, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND,
+    CHAT_SETTINGS_KIND, GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND,
+    MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND,
 };
 pub use protocol_engine::*;
 pub use storage::{

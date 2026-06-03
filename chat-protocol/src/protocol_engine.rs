@@ -109,4 +109,64 @@ mod tests {
 
         assert!(engine.has_delivery_blocking_message_work("message-id"));
     }
+
+    #[test]
+    fn protocol_discovery_effects_fetch_appkeys_and_invites_for_owner() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let peer = Keys::generate();
+        let engine = test_engine(&owner, &device);
+
+        let effects = engine.protocol_discovery_effects_for_owners(
+            [peer.public_key()],
+            UnixSeconds(1_777_159_500),
+            "test_discovery",
+        );
+
+        let filters = effects
+            .into_iter()
+            .flat_map(|effect| match effect {
+                ProtocolEffect::FetchProtocolState { filters, .. } => filters,
+                ProtocolEffect::Publish(_) => Vec::new(),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(filters.len(), 2);
+        assert!(has_filter_with_kind_author(
+            &filters,
+            APP_KEYS_EVENT_KIND,
+            peer.public_key()
+        ));
+        assert!(has_filter_with_kind_author(
+            &filters,
+            INVITE_EVENT_KIND,
+            peer.public_key()
+        ));
+    }
+
+    fn has_filter_with_kind_author(filters: &[Filter], kind: u32, author: PublicKey) -> bool {
+        let author_hex = author.to_hex();
+        filters
+            .iter()
+            .map(|filter| serde_json::to_value(filter).expect("filter json"))
+            .any(|filter| {
+                let has_kind = filter
+                    .get("kinds")
+                    .and_then(|kinds| kinds.as_array())
+                    .is_some_and(|kinds| {
+                        kinds
+                            .iter()
+                            .any(|value| value.as_u64() == Some(kind as u64))
+                    });
+                let has_author = filter
+                    .get("authors")
+                    .and_then(|authors| authors.as_array())
+                    .is_some_and(|authors| {
+                        authors
+                            .iter()
+                            .any(|value| value.as_str() == Some(author_hex.as_str()))
+                    });
+                has_kind && has_author
+            })
+    }
 }
