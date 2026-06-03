@@ -39,7 +39,8 @@ pub use nostr_double_ratchet_nostr::{
 };
 pub use protocol_engine::*;
 pub use storage::{
-    InMemoryStorage, SqliteStorageAdapter, StorageAdapter, StorageError, StorageResult,
+    DebouncedFileStorage, FileStorageAdapter, InMemoryStorage, SqliteStorageAdapter,
+    StorageAdapter, StorageError, StorageResult,
 };
 
 const DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS: u64 = 30 * 24 * 60 * 60;

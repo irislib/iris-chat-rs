@@ -1,6 +1,9 @@
 use super::SharedConnection;
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageError {
@@ -88,6 +91,206 @@ impl StorageAdapter for InMemoryStorage {
             .filter(|key| key.starts_with(prefix))
             .cloned()
             .collect())
+    }
+}
+
+pub struct FileStorageAdapter {
+    base_path: PathBuf,
+}
+
+impl FileStorageAdapter {
+    pub fn new(base_path: PathBuf) -> StorageResult<Self> {
+        fs::create_dir_all(&base_path)
+            .map_err(|err| storage_io_error("failed to create storage directory", err))?;
+        Ok(Self { base_path })
+    }
+
+    fn sanitize_key(key: &str) -> String {
+        key.replace(['/', '\\', ':'], "_")
+    }
+
+    fn key_to_path(&self, key: &str) -> PathBuf {
+        let sanitized = Self::sanitize_key(key);
+        self.base_path.join(format!("{}.json", sanitized))
+    }
+}
+
+impl StorageAdapter for FileStorageAdapter {
+    fn get(&self, key: &str) -> StorageResult<Option<String>> {
+        let path = self.key_to_path(key);
+        match fs::read_to_string(&path) {
+            Ok(contents) => Ok(Some(contents)),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(storage_io_error("failed to read storage file", err)),
+        }
+    }
+
+    fn put(&self, key: &str, value: String) -> StorageResult<()> {
+        let path = self.key_to_path(key);
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|err| {
+                storage_io_error("failed to create storage parent directory", err)
+            })?;
+        }
+
+        let tmp_path = path.with_extension(format!("json.{}.tmp", rand::random::<u128>()));
+        fs::write(&tmp_path, value)
+            .map_err(|err| storage_io_error("failed to write storage temp file", err))?;
+
+        #[cfg(windows)]
+        {
+            if path.exists() {
+                fs::remove_file(&path).map_err(|err| {
+                    storage_io_error("failed to replace existing storage file", err)
+                })?;
+            }
+        }
+
+        fs::rename(&tmp_path, &path)
+            .map_err(|err| storage_io_error("failed to commit storage file", err))?;
+
+        Ok(())
+    }
+
+    fn del(&self, key: &str) -> StorageResult<()> {
+        let path = self.key_to_path(key);
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(storage_io_error("failed to delete storage file", err)),
+        }
+    }
+
+    fn list(&self, prefix: &str) -> StorageResult<Vec<String>> {
+        let mut keys = Vec::new();
+        let sanitized_prefix = Self::sanitize_key(prefix);
+        let entries = fs::read_dir(&self.base_path)
+            .map_err(|err| storage_io_error("failed to read storage directory", err))?;
+
+        for entry in entries {
+            let entry =
+                entry.map_err(|err| storage_io_error("failed to read storage entry", err))?;
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_string_lossy();
+
+            if !file_name_str.ends_with(".json") {
+                continue;
+            }
+
+            let key = file_name_str
+                .strip_suffix(".json")
+                .unwrap_or(&file_name_str)
+                .to_string();
+
+            if prefix.is_empty() {
+                keys.push(key);
+                continue;
+            }
+
+            if key.starts_with(&sanitized_prefix) {
+                let remainder = key.strip_prefix(&sanitized_prefix).unwrap_or("");
+                keys.push(format!("{}{}", prefix, remainder));
+            }
+        }
+
+        Ok(keys)
+    }
+}
+
+pub struct DebouncedFileStorage {
+    adapter: FileStorageAdapter,
+    pending_writes: Mutex<HashMap<String, String>>,
+    last_flush: Mutex<Instant>,
+    flush_interval: Duration,
+}
+
+impl DebouncedFileStorage {
+    pub fn new(base_path: PathBuf, flush_interval_ms: u64) -> StorageResult<Self> {
+        Ok(Self {
+            adapter: FileStorageAdapter::new(base_path)?,
+            pending_writes: Mutex::new(HashMap::new()),
+            last_flush: Mutex::new(Instant::now()),
+            flush_interval: Duration::from_millis(flush_interval_ms),
+        })
+    }
+
+    pub fn flush(&self) -> StorageResult<()> {
+        let mut pending = self
+            .pending_writes
+            .lock()
+            .map_err(|_| StorageError::new("pending file storage mutex poisoned"))?;
+        for (key, value) in pending.drain() {
+            self.adapter.put(&key, value)?;
+        }
+        *self
+            .last_flush
+            .lock()
+            .map_err(|_| StorageError::new("file storage flush mutex poisoned"))? = Instant::now();
+        Ok(())
+    }
+
+    fn maybe_flush(&self) -> StorageResult<()> {
+        let last_flush = *self
+            .last_flush
+            .lock()
+            .map_err(|_| StorageError::new("file storage flush mutex poisoned"))?;
+        let pending_count = self
+            .pending_writes
+            .lock()
+            .map_err(|_| StorageError::new("pending file storage mutex poisoned"))?
+            .len();
+
+        if last_flush.elapsed() >= self.flush_interval && pending_count > 0 {
+            self.flush()?;
+        }
+        Ok(())
+    }
+}
+
+impl StorageAdapter for DebouncedFileStorage {
+    fn get(&self, key: &str) -> StorageResult<Option<String>> {
+        let pending = self
+            .pending_writes
+            .lock()
+            .map_err(|_| StorageError::new("pending file storage mutex poisoned"))?;
+        if let Some(value) = pending.get(key) {
+            return Ok(Some(value.clone()));
+        }
+        drop(pending);
+        self.adapter.get(key)
+    }
+
+    fn put(&self, key: &str, value: String) -> StorageResult<()> {
+        self.pending_writes
+            .lock()
+            .map_err(|_| StorageError::new("pending file storage mutex poisoned"))?
+            .insert(key.to_string(), value);
+        self.maybe_flush()
+    }
+
+    fn del(&self, key: &str) -> StorageResult<()> {
+        self.pending_writes
+            .lock()
+            .map_err(|_| StorageError::new("pending file storage mutex poisoned"))?
+            .remove(key);
+        self.adapter.del(key)
+    }
+
+    fn list(&self, prefix: &str) -> StorageResult<Vec<String>> {
+        let mut keys = self.adapter.list(prefix)?;
+        let pending = self
+            .pending_writes
+            .lock()
+            .map_err(|_| StorageError::new("pending file storage mutex poisoned"))?;
+
+        for key in pending.keys() {
+            if key.starts_with(prefix) && !keys.contains(key) {
+                keys.push(key.clone());
+            }
+        }
+
+        Ok(keys)
     }
 }
 
@@ -206,10 +409,15 @@ fn escape_like(input: &str) -> String {
     out
 }
 
+fn storage_io_error(context: &str, error: std::io::Error) -> StorageError {
+    StorageError::new(format!("{}: {}", context, error))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+    use tempfile::TempDir;
 
     fn fresh_connection() -> SharedConnection {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
@@ -266,5 +474,69 @@ mod tests {
         bob.put("shared-key", "bob".to_string()).unwrap();
         assert_eq!(alice.get("shared-key").unwrap(), Some("alice".to_string()));
         assert_eq!(bob.get("shared-key").unwrap(), Some("bob".to_string()));
+    }
+
+    #[test]
+    fn file_storage_round_trips_values() {
+        let temp_dir = TempDir::new().unwrap();
+        let adapter = FileStorageAdapter::new(temp_dir.path().to_path_buf()).unwrap();
+
+        assert!(adapter.get("test-key").unwrap().is_none());
+
+        adapter.put("test-key", "test-value".to_string()).unwrap();
+        assert_eq!(
+            adapter.get("test-key").unwrap(),
+            Some("test-value".to_string())
+        );
+
+        adapter.del("test-key").unwrap();
+        assert!(adapter.get("test-key").unwrap().is_none());
+    }
+
+    #[test]
+    fn file_storage_lists_sanitized_runtime_keys() {
+        let temp_dir = TempDir::new().unwrap();
+        let adapter = FileStorageAdapter::new(temp_dir.path().to_path_buf()).unwrap();
+
+        adapter.put("user/alice", "1".to_string()).unwrap();
+        adapter.put("user/bob", "2".to_string()).unwrap();
+        adapter.put("invite/charlie", "3".to_string()).unwrap();
+
+        let mut user_keys = adapter.list("user/").unwrap();
+        user_keys.sort();
+        assert_eq!(
+            user_keys,
+            vec!["user/alice".to_string(), "user/bob".to_string()]
+        );
+
+        let mut all_keys = adapter.list("").unwrap();
+        all_keys.sort();
+        assert_eq!(
+            all_keys,
+            vec![
+                "invite_charlie".to_string(),
+                "user_alice".to_string(),
+                "user_bob".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn debounced_file_storage_reads_pending_writes_and_flushes() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = DebouncedFileStorage::new(temp_dir.path().to_path_buf(), 1000).unwrap();
+
+        storage.put("key1", "value1".to_string()).unwrap();
+
+        assert_eq!(storage.get("key1").unwrap(), Some("value1".to_string()));
+        assert!(storage.pending_writes.lock().unwrap().contains_key("key1"));
+
+        storage.flush().unwrap();
+
+        assert!(storage.pending_writes.lock().unwrap().is_empty());
+        assert_eq!(
+            storage.adapter.get("key1").unwrap(),
+            Some("value1".to_string())
+        );
     }
 }
