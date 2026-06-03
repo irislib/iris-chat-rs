@@ -529,7 +529,7 @@ fn test_chat_message(
 
 fn test_protocol_engine(owner: &Keys, device: &Keys) -> ProtocolEngine {
     let storage =
-        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     test_protocol_engine_with_storage(owner, device, storage)
 }
 
@@ -772,16 +772,6 @@ fn unknown_group_sender_key_outer_event(sender_event: &Keys) -> Event {
     EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), content)
         .sign_with_keys(sender_event)
         .expect("unknown group sender-key outer")
-}
-
-fn unknown_header_group_sender_key_outer_event(sender_event: &Keys) -> Event {
-    use base64::Engine;
-
-    let content = base64::engine::general_purpose::STANDARD.encode([42_u8; 32]);
-    EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), content)
-        .tag(nostr::Tag::parse(["header", "cover-header"]).expect("header tag"))
-        .sign_with_keys(sender_event)
-        .expect("unknown header group sender-key outer")
 }
 
 fn delivered_texts() -> &'static std::sync::Mutex<std::collections::HashMap<usize, Vec<String>>> {

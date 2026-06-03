@@ -535,7 +535,7 @@ fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys
         }],
     };
     let storage =
-        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     seed_protocol_storage_for_test(
         storage.as_ref(),
         seed_session_manager,
@@ -1986,7 +1986,7 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();
     let bob_storage =
-        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     let mut bob_engine =
         test_protocol_engine_with_storage(&bob_keys, &bob_keys, Arc::clone(&bob_storage));
     let message = "push-only event";
@@ -2081,7 +2081,7 @@ fn mobile_push_decrypt_suppresses_typing_rumors() {
         bob_keys.secret_key().to_secret_bytes(),
         bob_keys.public_key().to_hex(),
         bob_keys.public_key(),
-        Some(bob_storage),
+        Some(runtime_storage_bridge_for_test(bob_storage)),
         None,
     );
     bob.init().expect("bob init");
@@ -2792,7 +2792,7 @@ fn core_with_divergent_login_and_protocol_invites_with_updates(
     });
 
     let storage =
-        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     let local_owner = ndr_owner_pubkey(owner.public_key());
     let mut seed_session_manager =
         SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();

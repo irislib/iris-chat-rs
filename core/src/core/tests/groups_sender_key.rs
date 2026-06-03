@@ -645,7 +645,7 @@ fn appcore_sender_key_missing_rotated_distribution_repairs_and_applies_pending_o
 #[test]
 fn appcore_sender_key_repair_response_survives_sender_restart() {
     let alice_storage =
-        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     let mut devices = (0..3)
         .map(|_| SenderKeyMatrixDevice::new())
         .collect::<Vec<_>>();

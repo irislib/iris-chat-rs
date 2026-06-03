@@ -577,7 +577,7 @@ fn incoming_direct_message_from_tracked_claimed_peer_device_routes_to_owner_thre
             }],
         });
     let storage =
-        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     install_test_protocol_engine(
         &mut core,
         &owner,

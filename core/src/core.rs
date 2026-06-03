@@ -28,7 +28,6 @@ use nostr_double_ratchet_nostr::{
     parse_group_sender_key_message_event, parse_group_sender_key_message_event_unchecked,
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
-use nostr_double_ratchet_runtime::StorageAdapter;
 use nostr_sdk::prelude::{
     Client, Event, Filter, Keys, Kind, PublicKey, RelayNotification, RelayPoolNotification,
     RelayStatus, RelayUrl, SubscribeOptions, SubscriptionId, Timestamp, ToBech32,

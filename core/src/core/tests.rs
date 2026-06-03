@@ -4,6 +4,49 @@ use nostr_double_ratchet_runtime::{NdrRuntime, SessionManagerEvent};
 
 const TEST_PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
 
+#[derive(Clone)]
+struct RuntimeStorageBridgeForTest {
+    inner: Arc<dyn StorageAdapter>,
+}
+
+impl RuntimeStorageBridgeForTest {
+    fn new(inner: Arc<dyn StorageAdapter>) -> Self {
+        Self { inner }
+    }
+}
+
+impl nostr_double_ratchet_runtime::StorageAdapter for RuntimeStorageBridgeForTest {
+    fn get(&self, key: &str) -> nostr_double_ratchet_runtime::Result<Option<String>> {
+        self.inner
+            .get(key)
+            .map_err(|error| nostr_double_ratchet_runtime::Error::Storage(error.to_string()))
+    }
+
+    fn put(&self, key: &str, value: String) -> nostr_double_ratchet_runtime::Result<()> {
+        self.inner
+            .put(key, value)
+            .map_err(|error| nostr_double_ratchet_runtime::Error::Storage(error.to_string()))
+    }
+
+    fn del(&self, key: &str) -> nostr_double_ratchet_runtime::Result<()> {
+        self.inner
+            .del(key)
+            .map_err(|error| nostr_double_ratchet_runtime::Error::Storage(error.to_string()))
+    }
+
+    fn list(&self, prefix: &str) -> nostr_double_ratchet_runtime::Result<Vec<String>> {
+        self.inner
+            .list(prefix)
+            .map_err(|error| nostr_double_ratchet_runtime::Error::Storage(error.to_string()))
+    }
+}
+
+fn runtime_storage_bridge_for_test(
+    storage: Arc<dyn StorageAdapter>,
+) -> Arc<dyn nostr_double_ratchet_runtime::StorageAdapter> {
+    Arc::new(RuntimeStorageBridgeForTest::new(storage))
+}
+
 fn seed_protocol_storage_for_test(
     storage: &dyn StorageAdapter,
     seed_session_manager: SessionManagerSnapshot,

@@ -1,14 +1,14 @@
 
 #[derive(Clone)]
 struct SwitchableFailStorage {
-    inner: nostr_double_ratchet_runtime::InMemoryStorage,
+    inner: InMemoryStorage,
     fail_puts: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl SwitchableFailStorage {
     fn new() -> Self {
         Self {
-            inner: nostr_double_ratchet_runtime::InMemoryStorage::new(),
+            inner: InMemoryStorage::new(),
             fail_puts: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
@@ -20,38 +20,36 @@ impl SwitchableFailStorage {
 }
 
 impl StorageAdapter for SwitchableFailStorage {
-    fn get(&self, key: &str) -> nostr_double_ratchet_runtime::Result<Option<String>> {
+    fn get(&self, key: &str) -> StorageResult<Option<String>> {
         self.inner.get(key)
     }
 
-    fn put(&self, key: &str, value: String) -> nostr_double_ratchet_runtime::Result<()> {
+    fn put(&self, key: &str, value: String) -> StorageResult<()> {
         if self.fail_puts.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(nostr_double_ratchet_runtime::Error::Storage(
-                "injected storage failure".to_string(),
-            ));
+            return Err(StorageError::new("injected storage failure"));
         }
         self.inner.put(key, value)
     }
 
-    fn del(&self, key: &str) -> nostr_double_ratchet_runtime::Result<()> {
+    fn del(&self, key: &str) -> StorageResult<()> {
         self.inner.del(key)
     }
 
-    fn list(&self, prefix: &str) -> nostr_double_ratchet_runtime::Result<Vec<String>> {
+    fn list(&self, prefix: &str) -> StorageResult<Vec<String>> {
         self.inner.list(prefix)
     }
 }
 
 #[derive(Clone)]
 struct CountingStorage {
-    inner: nostr_double_ratchet_runtime::InMemoryStorage,
+    inner: InMemoryStorage,
     put_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl CountingStorage {
     fn new() -> Self {
         Self {
-            inner: nostr_double_ratchet_runtime::InMemoryStorage::new(),
+            inner: InMemoryStorage::new(),
             put_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
@@ -62,21 +60,21 @@ impl CountingStorage {
 }
 
 impl StorageAdapter for CountingStorage {
-    fn get(&self, key: &str) -> nostr_double_ratchet_runtime::Result<Option<String>> {
+    fn get(&self, key: &str) -> StorageResult<Option<String>> {
         self.inner.get(key)
     }
 
-    fn put(&self, key: &str, value: String) -> nostr_double_ratchet_runtime::Result<()> {
+    fn put(&self, key: &str, value: String) -> StorageResult<()> {
         self.put_count
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.inner.put(key, value)
     }
 
-    fn del(&self, key: &str) -> nostr_double_ratchet_runtime::Result<()> {
+    fn del(&self, key: &str) -> StorageResult<()> {
         self.inner.del(key)
     }
 
-    fn list(&self, prefix: &str) -> nostr_double_ratchet_runtime::Result<Vec<String>> {
+    fn list(&self, prefix: &str) -> StorageResult<Vec<String>> {
         self.inner.list(prefix)
     }
 }
@@ -238,7 +236,7 @@ fn protocol_engine_load_or_create_creates_owner_bound_local_invite() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let storage =
-        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
 
     let engine =
         ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), &device)
@@ -269,7 +267,7 @@ fn protocol_engine_load_or_create_creates_owner_bound_local_invite() {
 fn protocol_engine_load_or_create_installs_legacy_device_invite() {
     let owner = Keys::generate();
     let device = Keys::generate();
-    let storage = Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new());
+    let storage = Arc::new(InMemoryStorage::new());
     let device_id = device.public_key().to_hex();
     let storage_key = format!("device-invite/{device_id}");
 
@@ -305,7 +303,7 @@ fn protocol_engine_load_or_create_installs_legacy_device_invite() {
 fn protocol_engine_load_or_create_prefers_persisted_protocol_invite() {
     let owner = Keys::generate();
     let device = Keys::generate();
-    let storage = Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new());
+    let storage = Arc::new(InMemoryStorage::new());
     let device_id = device.public_key().to_hex();
     let storage_key = format!("device-invite/{device_id}");
     let local_owner = NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes());

@@ -14,8 +14,7 @@ mod tests {
     use super::*;
 
     fn test_engine(owner: &Keys, device: &Keys) -> ProtocolEngine {
-        let storage = Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new())
-            as Arc<dyn StorageAdapter>;
+        let storage = Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
         ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), device)
             .expect("protocol engine")
     }

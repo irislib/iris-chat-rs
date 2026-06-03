@@ -1,3 +1,4 @@
+mod nearby;
 mod protocol_engine;
 mod storage;
 
@@ -24,14 +25,22 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub use nearby::{
+    decode_nearby_envelope_frame, decode_nearby_envelope_json, decode_nearby_frame_json,
+    encode_nearby_envelope_frame, encode_nearby_envelope_json, encode_nearby_frame_json,
+    nearby_frame_body_len_from_header, read_nearby_frame, NearbyEnvelope, NearbyFrameAssembler,
+    NearbyInventoryItem, NEARBY_ENVELOPE_VERSION, NEARBY_FRAME_HEADER_BYTES,
+    NEARBY_MAX_FRAME_BODY_BYTES,
+};
 pub use nostr_double_ratchet_nostr::{
     is_app_keys_event, AppKeys, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND,
     GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
     REACTION_KIND, RECEIPT_KIND,
 };
-pub use nostr_double_ratchet_runtime::StorageAdapter;
 pub use protocol_engine::*;
-pub use storage::SqliteStorageAdapter;
+pub use storage::{
+    InMemoryStorage, SqliteStorageAdapter, StorageAdapter, StorageError, StorageResult,
+};
 
 const DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS: u64 = 30 * 24 * 60 * 60;
 const DEVICE_INVITE_DISCOVERY_LIMIT: usize = 256;

@@ -765,7 +765,7 @@ impl NotificationPreviewStorage {
 }
 
 impl StorageAdapter for NotificationPreviewStorage {
-    fn get(&self, key: &str) -> nostr_double_ratchet::Result<Option<String>> {
+    fn get(&self, key: &str) -> StorageResult<Option<String>> {
         if let Some(value) = lock_preview_storage(&self.overlay).get(key).cloned() {
             return Ok(Some(value));
         }
@@ -775,19 +775,19 @@ impl StorageAdapter for NotificationPreviewStorage {
         self.base.get(key)
     }
 
-    fn put(&self, key: &str, value: String) -> nostr_double_ratchet::Result<()> {
+    fn put(&self, key: &str, value: String) -> StorageResult<()> {
         lock_preview_storage(&self.overlay).insert(key.to_string(), value);
         lock_preview_storage(&self.deleted).remove(key);
         Ok(())
     }
 
-    fn del(&self, key: &str) -> nostr_double_ratchet::Result<()> {
+    fn del(&self, key: &str) -> StorageResult<()> {
         lock_preview_storage(&self.overlay).remove(key);
         lock_preview_storage(&self.deleted).insert(key.to_string());
         Ok(())
     }
 
-    fn list(&self, prefix: &str) -> nostr_double_ratchet::Result<Vec<String>> {
+    fn list(&self, prefix: &str) -> StorageResult<Vec<String>> {
         let mut keys: HashSet<String> = self.base.list(prefix)?.into_iter().collect();
         let deleted = lock_preview_storage(&self.deleted);
         keys.retain(|key| !deleted.contains(key));

@@ -1,7 +1,7 @@
 #[test]
 fn appcore_sender_key_repair_request_survives_restart_and_throttles() {
     let bob_storage =
-        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     let mut devices = (0..3)
         .map(|_| SenderKeyMatrixDevice::new())
         .collect::<Vec<_>>();

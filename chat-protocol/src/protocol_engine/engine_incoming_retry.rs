@@ -802,7 +802,7 @@ impl ProtocolEngine {
 #[cfg(test)]
 mod incoming_retry_tests {
     use super::*;
-    use nostr_double_ratchet_runtime::InMemoryStorage;
+    use crate::InMemoryStorage;
 
     fn test_engine(owner: &Keys, device: &Keys) -> ProtocolEngine {
         ProtocolEngine::load_or_create_for_local_device(

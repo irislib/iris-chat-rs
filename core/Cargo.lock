@@ -1415,11 +1415,11 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64",
+ "flate2",
  "nostr 0.44.2",
  "nostr-double-ratchet",
  "nostr-double-ratchet-nostr",
  "nostr-double-ratchet-pairwise-codec",
- "nostr-double-ratchet-runtime",
  "rand 0.8.5",
  "rusqlite",
  "serde",
@@ -1726,7 +1726,6 @@ version = "0.0.147"
 dependencies = [
  "base64",
  "crossbeam-channel",
- "flate2",
  "hex",
  "nostr 0.44.2",
  "nostr-double-ratchet",

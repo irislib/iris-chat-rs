@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use nostr_double_ratchet_runtime::{
+use iris_chat_protocol::{
     decode_nearby_envelope_frame, encode_nearby_envelope_frame, NearbyEnvelope, NearbyInventoryItem,
 };
 use rand::RngCore;

@@ -1,10 +1,100 @@
 use super::SharedConnection;
-use nostr_double_ratchet_runtime::{Error as NdrError, Result as NdrResult, StorageAdapter};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
-/// SQLite-backed implementation of `nostr_double_ratchet::StorageAdapter`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageError {
+    message: String,
+}
+
+impl StorageError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for StorageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.message.fmt(f)
+    }
+}
+
+impl std::error::Error for StorageError {}
+
+pub type StorageResult<T> = Result<T, StorageError>;
+
+pub trait StorageAdapter: Send + Sync {
+    fn get(&self, key: &str) -> StorageResult<Option<String>>;
+    fn put(&self, key: &str, value: String) -> StorageResult<()>;
+    fn del(&self, key: &str) -> StorageResult<()>;
+    fn list(&self, prefix: &str) -> StorageResult<Vec<String>>;
+}
+
+#[derive(Clone)]
+pub struct InMemoryStorage {
+    store: Arc<Mutex<HashMap<String, String>>>,
+}
+
+impl InMemoryStorage {
+    pub fn new() -> Self {
+        Self {
+            store: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+impl Default for InMemoryStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StorageAdapter for InMemoryStorage {
+    fn get(&self, key: &str) -> StorageResult<Option<String>> {
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| StorageError::new("storage mutex poisoned"))?;
+        Ok(store.get(key).cloned())
+    }
+
+    fn put(&self, key: &str, value: String) -> StorageResult<()> {
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| StorageError::new("storage mutex poisoned"))?;
+        store.insert(key.to_string(), value);
+        Ok(())
+    }
+
+    fn del(&self, key: &str) -> StorageResult<()> {
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| StorageError::new("storage mutex poisoned"))?;
+        store.remove(key);
+        Ok(())
+    }
+
+    fn list(&self, prefix: &str) -> StorageResult<Vec<String>> {
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| StorageError::new("storage mutex poisoned"))?;
+        Ok(store
+            .keys()
+            .filter(|key| key.starts_with(prefix))
+            .cloned()
+            .collect())
+    }
+}
+
+/// SQLite-backed implementation of `iris_chat_protocol::StorageAdapter`.
 /// Keys are namespaced by (owner_pubkey_hex, device_pubkey_hex) so a
 /// single database serves multiple owner accounts and devices without
-/// keyspace collisions — matching the per-(owner, device) directory
+/// keyspace collisions, matching the per-(owner, device) directory
 /// scoping the previous file-backed adapter used.
 pub struct SqliteStorageAdapter {
     conn: SharedConnection,
@@ -25,17 +115,17 @@ impl SqliteStorageAdapter {
         }
     }
 
-    fn map_err<E: std::fmt::Display>(error: E) -> NdrError {
-        NdrError::Storage(error.to_string())
+    fn map_err<E: std::fmt::Display>(error: E) -> StorageError {
+        StorageError::new(error.to_string())
     }
 }
 
 impl StorageAdapter for SqliteStorageAdapter {
-    fn get(&self, key: &str) -> NdrResult<Option<String>> {
+    fn get(&self, key: &str) -> StorageResult<Option<String>> {
         let conn = self
             .conn
             .lock()
-            .map_err(|_| NdrError::Storage("ndr_kv connection mutex poisoned".to_string()))?;
+            .map_err(|_| StorageError::new("ndr_kv connection mutex poisoned"))?;
         conn.query_row(
             "SELECT value FROM ndr_kv WHERE owner_pubkey_hex = ?1 AND device_pubkey_hex = ?2 AND key = ?3",
             (&self.owner_pubkey_hex, &self.device_pubkey_hex, key),
@@ -48,11 +138,11 @@ impl StorageAdapter for SqliteStorageAdapter {
         })
     }
 
-    fn put(&self, key: &str, value: String) -> NdrResult<()> {
+    fn put(&self, key: &str, value: String) -> StorageResult<()> {
         let conn = self
             .conn
             .lock()
-            .map_err(|_| NdrError::Storage("ndr_kv connection mutex poisoned".to_string()))?;
+            .map_err(|_| StorageError::new("ndr_kv connection mutex poisoned"))?;
         conn.execute(
             "INSERT INTO ndr_kv (owner_pubkey_hex, device_pubkey_hex, key, value)
              VALUES (?1, ?2, ?3, ?4)
@@ -63,11 +153,11 @@ impl StorageAdapter for SqliteStorageAdapter {
         Ok(())
     }
 
-    fn del(&self, key: &str) -> NdrResult<()> {
+    fn del(&self, key: &str) -> StorageResult<()> {
         let conn = self
             .conn
             .lock()
-            .map_err(|_| NdrError::Storage("ndr_kv connection mutex poisoned".to_string()))?;
+            .map_err(|_| StorageError::new("ndr_kv connection mutex poisoned"))?;
         conn.execute(
             "DELETE FROM ndr_kv WHERE owner_pubkey_hex = ?1 AND device_pubkey_hex = ?2 AND key = ?3",
             (&self.owner_pubkey_hex, &self.device_pubkey_hex, key),
@@ -76,11 +166,11 @@ impl StorageAdapter for SqliteStorageAdapter {
         Ok(())
     }
 
-    fn list(&self, prefix: &str) -> NdrResult<Vec<String>> {
+    fn list(&self, prefix: &str) -> StorageResult<Vec<String>> {
         let conn = self
             .conn
             .lock()
-            .map_err(|_| NdrError::Storage("ndr_kv connection mutex poisoned".to_string()))?;
+            .map_err(|_| StorageError::new("ndr_kv connection mutex poisoned"))?;
         let mut stmt = conn
             .prepare(
                 "SELECT key FROM ndr_kv
