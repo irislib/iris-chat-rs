@@ -23,7 +23,7 @@ MACOS_APP_NAME="${IRIS_MACOS_APP_NAME:-Iris Chat.app}"
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/macos-build <macos-gen-swift|macos-rust|macos-xcframework|macos-xcodeproj|macos-build|macos-test|macos-app|macos-notarize|macos-dmg|macos-updater-archive>
+usage: ./scripts/macos-build <macos-gen-swift|macos-rust|macos-xcframework|macos-xcodeproj|macos-build|macos-test|macos-ui-test|macos-app|macos-notarize|macos-dmg|macos-updater-archive>
 
 Signing & notarization (login-keychain mode, recommended):
   MACOS_SIGNING_IDENTITY  e.g. "Developer ID Application: Your Name (TEAMID)"
@@ -31,6 +31,10 @@ Signing & notarization (login-keychain mode, recommended):
   MACOS_NOTARY_PROFILE    notarytool keychain profile name (created via
                           xcrun notarytool store-credentials <name>); skipping
                           notarization is fine for ad-hoc local testing
+
+Focused UI tests:
+  IRIS_MACOS_ONLY_TESTING  comma or space separated Xcode test identifiers,
+                          e.g. IrisChatMacUITests/IrisChatUITests/testName
 EOF
 }
 
@@ -269,6 +273,31 @@ run_macos_test() {
     test
 }
 
+run_macos_ui_test() {
+  local host_arch
+  local only_testing_args=()
+  local raw_only="${IRIS_MACOS_ONLY_TESTING:-}"
+  local test_id
+  host_arch="$(uname -m)"
+
+  raw_only="${raw_only//,/ }"
+  for test_id in ${raw_only}; do
+    [[ -n "$test_id" ]] || continue
+    only_testing_args+=("-only-testing:${test_id}")
+  done
+
+  run_macos_xcframework
+  run_macos_xcodeproj
+  xcodebuild \
+    -project "$MACOS_DIR/IrisChatMac.xcodeproj" \
+    -scheme IrisChatMacUI \
+    -derivedDataPath "$MACOS_DERIVED_DATA" \
+    -destination "platform=macOS,arch=$host_arch" \
+    CODE_SIGNING_ALLOWED=NO \
+    "${only_testing_args[@]}" \
+    test
+}
+
 run_macos_app() {
   PROFILE="release"
   TARGETS="${IRIS_MACOS_RUST_TARGETS:-aarch64-apple-darwin}"
@@ -496,6 +525,7 @@ case "${1:-}" in
   macos-xcodeproj) run_macos_xcodeproj ;;
   macos-build) run_macos_build ;;
   macos-test) run_macos_test ;;
+  macos-ui-test) run_macos_ui_test ;;
   macos-app) run_macos_app ;;
   macos-notarize) run_macos_notarize ;;
   macos-dmg) run_macos_dmg ;;

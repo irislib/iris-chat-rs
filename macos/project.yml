@@ -29,6 +29,17 @@ schemes:
     archive:
       config: Release
 
+  IrisChatMacUI:
+    build:
+      targets:
+        IrisChatMac: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - IrisChatMacUITests
+
 targets:
   IrisChatMac:
     type: application
