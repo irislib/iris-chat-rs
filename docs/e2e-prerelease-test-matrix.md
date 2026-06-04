@@ -35,6 +35,8 @@ scripts/e2e_reliability_lab.sh --tier physical --allow-physical --android-serial
 
 For release gating, `scripts/test-release-gate --reliability-lab` runs the long simulator/emulator GUI lab (`daily` plus `soak`) as an opt-in lane. The Docker CLI lane remains available through `--production-cli` or through `scripts/e2e_reliability_lab.sh --tier release`.
 
+Fresh simulator/emulator smoke proof: `/var/folders/d9/v1t4mn_529l8hftnc0tdns600000gn/T/iris-reliability-lab-20260604T231203Z` ran on 2026-06-05 with `scripts/e2e_reliability_lab.sh --tier smoke --relay local --headless --ios-simulators "Iris Chat iPhone|Iris Chat iPhone 2" --android-avds "Medium_Phone_API_36.1|Pixel_Fold"`. All three smoke steps passed without using connected physical phones: F15 iOS secret-key restore restored the original user ID/profile and exchanged direct messages both ways exactly once; F06 Android emulator offline/restart queued direct and group sends while the local message server was down, force-stopped/relaunched both apps, restored the server, and delivered all four offline messages exactly once; F16 mixed iOS-simulator to Android-emulator cold group invite discovered the group and delivered both group message directions exactly once.
+
 Android local recovery flows can pair a connected phone with an emulator:
 
 ```sh
