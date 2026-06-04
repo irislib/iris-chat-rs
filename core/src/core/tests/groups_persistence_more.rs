@@ -774,140 +774,12 @@ fn unknown_group_sender_key_outer_event(sender_event: &Keys) -> Event {
         .expect("unknown group sender-key outer")
 }
 
-fn delivered_texts() -> &'static std::sync::Mutex<std::collections::HashMap<usize, Vec<String>>> {
-    static DELIVERED: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<usize, Vec<String>>>,
-    > = std::sync::OnceLock::new();
-    DELIVERED.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-}
-
-fn runtime_key(runtime: &NdrRuntime) -> usize {
-    runtime as *const NdrRuntime as usize
-}
-
-fn deliver_published_events(from: &NdrRuntime, signer: &Keys, to: &NdrRuntime) {
-    for event in drain_signed_events(from, signer) {
-        deliver_event_to_runtime(to, event);
-    }
-}
-
-fn deliver_runtime_effects(
-    from: &NdrRuntime,
-    signer: &Keys,
-    effects: Vec<SessionManagerEvent>,
-    to: &NdrRuntime,
-) {
-    apply_runtime_persist_effects(from, &effects);
-    let events = signed_events_from_effects(effects, signer);
-    for event in &events {
-        deliver_event_to_runtime(to, event.clone());
-    }
-    for event in events {
-        from.ack_prepared_publish(&event.id.to_string())
-            .expect("ack prepared publish");
-        apply_runtime_persist_effects(from, &from.drain_events());
-    }
-}
-
-fn accept_invite_and_deliver(
-    acceptor: &NdrRuntime,
-    acceptor_keys: &Keys,
-    invite: &Invite,
-    inviter_pubkey: PublicKey,
-    inviter: &NdrRuntime,
-) {
-    acceptor
-        .accept_invite(invite, Some(inviter_pubkey))
-        .expect("accept invite");
-    deliver_runtime_effects(acceptor, acceptor_keys, acceptor.drain_events(), inviter);
-}
-
-fn deliver_event_to_runtime(to: &NdrRuntime, event: Event) {
-    to.process_received_event(event);
-    let effects = to.drain_events();
-    apply_runtime_persist_effects(to, &effects);
-    let mut messages = Vec::new();
-    for effect in effects {
-        if let SessionManagerEvent::DecryptedMessage { content, .. } = effect {
-            messages.push(
-                serde_json::from_str::<UnsignedEvent>(&content)
-                    .ok()
-                    .map(|event| event.content)
-                    .unwrap_or(content),
-            );
-        }
-    }
-    if !messages.is_empty() {
-        delivered_texts()
-            .lock()
-            .unwrap()
-            .entry(runtime_key(to))
-            .or_default()
-            .extend(messages);
-    }
-}
-
-fn apply_runtime_persist_effects(_runtime: &NdrRuntime, _effects: &[SessionManagerEvent]) {
-    // Runtime persistence is internal. This helper keeps existing simulated
-    // relay-delivery tests readable where they previously modeled app steps.
-}
-
 fn pending_events_with_kind(core: &AppCore, kind: u32) -> Vec<Event> {
     core.pending_relay_publishes
         .values()
         .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
         .filter(|event| event.kind.as_u16() as u32 == kind)
         .collect()
-}
-
-fn complete_first_contact(
-    acceptor: &NdrRuntime,
-    acceptor_keys: &Keys,
-    inviter_pubkey: PublicKey,
-    inviter: &NdrRuntime,
-) {
-    acceptor
-        .send_text(
-            inviter_pubkey,
-            "__ndr_first_contact_bootstrap__".to_string(),
-            None,
-        )
-        .expect("first-contact bootstrap send");
-    deliver_runtime_effects(acceptor, acceptor_keys, acceptor.drain_events(), inviter);
-}
-
-fn signed_events_from_effects(effects: Vec<SessionManagerEvent>, signer: &Keys) -> Vec<Event> {
-    effects
-        .into_iter()
-        .filter_map(|event| match event {
-            SessionManagerEvent::Publish(unsigned) if unsigned.pubkey == signer.public_key() => {
-                unsigned.sign_with_keys(signer).ok()
-            }
-            SessionManagerEvent::PublishSigned(event) => Some(event),
-            SessionManagerEvent::PublishSignedForInnerEvent { event, .. } => Some(event),
-            _ => None,
-        })
-        .collect()
-}
-
-fn drain_signed_events(runtime: &NdrRuntime, signer: &Keys) -> Vec<Event> {
-    let mut effects = runtime.drain_events();
-    if effects.is_empty() {
-        runtime.reload_from_storage().expect("reload runtime");
-        effects.extend(runtime.drain_events());
-    }
-    let mut seen = HashSet::new();
-    let events = signed_events_from_effects(effects, signer)
-        .into_iter()
-        .filter(|event| seen.insert(event.id))
-        .collect::<Vec<_>>();
-    for event in &events {
-        runtime
-            .ack_prepared_publish(&event.id.to_string())
-            .expect("ack prepared publish");
-        apply_runtime_persist_effects(runtime, &runtime.drain_events());
-    }
-    events
 }
 
 fn serializable_key_pair_for_test(keys: &Keys) -> nostr_double_ratchet::SerializableKeyPair {
@@ -936,14 +808,6 @@ fn compact_event_payload_for_apns_test(event: &Event) -> serde_json::Value {
         object.insert("tags".to_string(), serde_json::Value::Array(header_tags));
     }
     value
-}
-
-fn drain_text_messages(runtime: &NdrRuntime) -> Vec<String> {
-    delivered_texts()
-        .lock()
-        .unwrap()
-        .remove(&runtime_key(runtime))
-        .unwrap_or_default()
 }
 
 /// End-to-end round-trip: upload a real image to the hashtree network and

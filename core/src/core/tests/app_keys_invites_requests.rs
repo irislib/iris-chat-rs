@@ -1515,99 +1515,8 @@ fn unknown_direct_message_author_is_ignored_instead_of_bootstrapping_public_back
     let bob_keys = Keys::generate();
     let mallory_keys = Keys::generate();
     let carol_keys = Keys::generate();
-    let mut alice_invite = Invite::create_new(
-        alice_keys.public_key(),
-        Some(alice_keys.public_key().to_hex()),
-        Some(1),
-    )
-    .expect("invite");
-    alice_invite.owner_public_key = Some(alice_keys.public_key());
-    let alice = NdrRuntime::new(
-        alice_keys.public_key(),
-        alice_keys.secret_key().to_secret_bytes(),
-        alice_keys.public_key().to_hex(),
-        alice_keys.public_key(),
-        None,
-        Some(alice_invite.clone()),
-    );
-    alice.init().expect("alice init");
-    let bob_runtime = NdrRuntime::new(
-        bob_keys.public_key(),
-        bob_keys.secret_key().to_secret_bytes(),
-        bob_keys.public_key().to_hex(),
-        bob_keys.public_key(),
-        None,
-        None,
-    );
-    bob_runtime.init().expect("bob init");
-    accept_invite_and_deliver(
-        &bob_runtime,
-        &bob_keys,
-        &alice_invite,
-        alice_keys.public_key(),
-        &alice,
-    );
-    complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
-    let alice_session_state = bob_runtime
-        .get_message_push_session_states(alice_keys.public_key())
-        .into_iter()
-        .next()
-        .expect("Bob has Alice session")
-        .state;
-
-    let mut mallory_invite = Invite::create_new(
-        mallory_keys.public_key(),
-        Some(mallory_keys.public_key().to_hex()),
-        Some(1),
-    )
-    .expect("mallory invite");
-    mallory_invite.owner_public_key = Some(mallory_keys.public_key());
-    let mallory = NdrRuntime::new(
-        mallory_keys.public_key(),
-        mallory_keys.secret_key().to_secret_bytes(),
-        mallory_keys.public_key().to_hex(),
-        mallory_keys.public_key(),
-        None,
-        Some(mallory_invite.clone()),
-    );
-    mallory.init().expect("mallory init");
-    let carol_runtime = NdrRuntime::new(
-        carol_keys.public_key(),
-        carol_keys.secret_key().to_secret_bytes(),
-        carol_keys.public_key().to_hex(),
-        carol_keys.public_key(),
-        None,
-        None,
-    );
-    carol_runtime.init().expect("carol init");
-    accept_invite_and_deliver(
-        &carol_runtime,
-        &carol_keys,
-        &mallory_invite,
-        mallory_keys.public_key(),
-        &mallory,
-    );
-    complete_first_contact(
-        &carol_runtime,
-        &carol_keys,
-        mallory_keys.public_key(),
-        &mallory,
-    );
-    mallory
-        .send_text(
-            carol_keys.public_key(),
-            "queued until unrelated protocol state arrives".to_string(),
-            None,
-        )
-        .expect("mallory sends");
-    let carol_message_authors = carol_runtime.get_all_message_push_author_pubkeys();
-    let message_event = drain_signed_events(&mallory, &mallory_keys)
-        .into_iter()
-        .find(|event| {
-            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
-                && carol_message_authors.contains(&event.pubkey)
-        })
-        .expect("message event for Carol");
+    let alice_session_state = established_peer_session_state_for_test(&alice_keys, &bob_keys);
+    let message_event = unrelated_direct_message_event_for_test(&mallory_keys, &carol_keys);
     let message_event_id = message_event.id.to_string();
 
     let mut core = logged_in_test_core("pending-inbound-keeps-bootstrap", &bob_keys, &bob_keys);
@@ -1896,6 +1805,99 @@ fn wait_for_relay_event_with_kind(
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     panic!("relay event with kind {kind} was not published");
+}
+
+fn established_peer_session_state_for_test(
+    peer_keys: &Keys,
+    local_keys: &Keys,
+) -> nostr_double_ratchet::SessionState {
+    use nostr_double_ratchet_nostr::SessionNostrExt;
+
+    let mut invite = Invite::create_new(
+        peer_keys.public_key(),
+        Some(peer_keys.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("invite");
+    invite.owner_public_key = Some(peer_keys.public_key());
+
+    let (mut local_session, response) = invite
+        .accept_with_owner(
+            local_keys.public_key(),
+            local_keys.secret_key().to_secret_bytes(),
+            Some(local_keys.public_key().to_hex()),
+            Some(local_keys.public_key()),
+        )
+        .expect("local accepts peer invite");
+    let response_event = invite_response_event(&response).expect("invite response event");
+    let mut peer_session = nostr_double_ratchet_nostr::process_invite_response_event(
+        &invite,
+        &response_event,
+        peer_keys.secret_key().to_secret_bytes(),
+    )
+    .expect("peer processes response")
+    .expect("response addressed to peer")
+    .session;
+
+    let local_bootstrap = local_session
+        .send_event(
+            nostr_double_ratchet_nostr::build_text_rumor(
+                local_keys.public_key(),
+                "bootstrap",
+                vec![],
+            )
+            .expect("bootstrap rumor"),
+        )
+        .expect("local bootstrap event");
+    peer_session
+        .receive(&local_bootstrap)
+        .expect("peer receives local bootstrap");
+
+    let peer_reply = peer_session
+        .send_event(
+            nostr_double_ratchet_nostr::build_text_rumor(
+                peer_keys.public_key(),
+                "reply",
+                vec![],
+            )
+            .expect("reply rumor"),
+        )
+        .expect("peer reply event");
+    local_session
+        .receive(&peer_reply)
+        .expect("local receives peer reply");
+
+    local_session.state
+}
+
+fn unrelated_direct_message_event_for_test(sender: &Keys, receiver: &Keys) -> Event {
+    use nostr_double_ratchet_nostr::SessionNostrExt;
+
+    let mut invite = Invite::create_new(
+        sender.public_key(),
+        Some(sender.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("invite");
+    invite.owner_public_key = Some(sender.public_key());
+    let (mut receiver_session, _response) = invite
+        .accept_with_owner(
+            receiver.public_key(),
+            receiver.secret_key().to_secret_bytes(),
+            Some(receiver.public_key().to_hex()),
+            Some(receiver.public_key()),
+        )
+        .expect("receiver accepts unrelated invite");
+    receiver_session
+        .send_event(
+            nostr_double_ratchet_nostr::build_text_rumor(
+                receiver.public_key(),
+                "queued until unrelated protocol state arrives",
+                vec![],
+            )
+            .expect("unrelated rumor"),
+        )
+        .expect("unrelated message event")
 }
 
 fn install_local_sibling_session_for_test(

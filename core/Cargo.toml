@@ -63,5 +63,4 @@ url = "2"
 urlencoding = "2"
 
 [dev-dependencies]
-nostr-double-ratchet-runtime = { version = "0.0.147", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-runtime" }
 tempfile = "3"
