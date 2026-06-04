@@ -613,6 +613,14 @@ private func writePendingShare(
     return url
 }
 final class IrisChatTests: XCTestCase {
+    func testOnboardingTermsAcceptanceIsIOSOnly() {
+#if os(iOS)
+        XCTAssertTrue(irisRequiresOnboardingTermsAcceptance())
+#else
+        XCTAssertFalse(irisRequiresOnboardingTermsAcceptance())
+#endif
+    }
+
     func testGroupSenderNameColorsAvoidBrandPurpleAndSpreadDeterministically() {
         let names = [
             "Alice", "Bob", "Charlie", "Dina", "Eve", "Frank",

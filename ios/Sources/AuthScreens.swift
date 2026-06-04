@@ -80,6 +80,14 @@ struct WelcomeScreen: View {
     }
 }
 
+func irisRequiresOnboardingTermsAcceptance() -> Bool {
+#if os(iOS)
+    return true
+#else
+    return false
+#endif
+}
+
 private struct OnboardingTermsAgreement: View {
     @Environment(\.irisPalette) private var palette
     @Binding var accepted: Bool
@@ -127,11 +135,7 @@ struct CreateAccountScreen: View {
     }
 
     private var requiresTermsAcceptance: Bool {
-#if os(iOS)
-        true
-#else
-        false
-#endif
+        irisRequiresOnboardingTermsAcceptance()
     }
 
     private var canCreateAccount: Bool {

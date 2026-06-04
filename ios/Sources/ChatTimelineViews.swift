@@ -531,6 +531,10 @@ struct ChatMessageRow: View, Equatable {
                             groupSenderAvatar
                         }
 
+                        if message.isOutgoing {
+                            desktopActionDockSlot()
+                        }
+
                         VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4) {
                             if showsGroupSenderName {
                                 Text(message.author)
@@ -716,12 +720,6 @@ struct ChatMessageRow: View, Equatable {
                             }
                         }
 #if canImport(AppKit)
-                        // Keep the dock anchored to the drawn bubble, not
-                        // the invisible max-width frame that only caps long
-                        // messages.
-                        .overlay(alignment: message.isOutgoing ? .leading : .trailing) {
-                            actionDockOverlay(isOutgoing: message.isOutgoing)
-                        }
                         // Cap bubble width on macOS; iOS has no hover and
                         // phone widths self-limit.
                         .frame(
@@ -735,6 +733,7 @@ struct ChatMessageRow: View, Equatable {
                         .applyMessageBubbleSwipe(offset: swipeOffset)
 
                         if !message.isOutgoing {
+                            desktopActionDockSlot()
                             Spacer(minLength: SignalConversationLayout.messageDirectionSpacing)
                         }
                     }
@@ -755,21 +754,19 @@ struct ChatMessageRow: View, Equatable {
             : SignalConversationLayout.compactMessageSpacing
     }
 
-    @ViewBuilder
-    private func actionDockOverlay(isOutgoing: Bool) -> some View {
 #if canImport(AppKit)
-        if showActionDock {
-            actionDock()
-                .fixedSize()
-                .onHover(perform: updateActionDockHover)
-                .offset(
-                    x: isOutgoing
-                        ? -(ChatMessageActionDock.dockWidth + SignalConversationLayout.messageActionDockSpacing)
-                        : ChatMessageActionDock.dockWidth + SignalConversationLayout.messageActionDockSpacing
-                )
-        }
-#endif
+    private func desktopActionDockSlot() -> some View {
+        actionDock()
+            .fixedSize()
+            .opacity(showActionDock ? 1 : 0)
+            .allowsHitTesting(showActionDock)
+            .accessibilityHidden(!showActionDock)
+            .onHover(perform: updateActionDockHover)
+            .frame(width: ChatMessageActionDock.dockWidth)
     }
+#else
+    private func desktopActionDockSlot() -> EmptyView { EmptyView() }
+#endif
 
     private func updateActionDockHover(_ hovering: Bool) {
         hideActionDockTask?.cancel()

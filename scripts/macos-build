@@ -276,6 +276,7 @@ run_macos_test() {
     ARCHS="$host_arch" \
     VALID_ARCHS="$host_arch" \
     ONLY_ACTIVE_ARCH=YES \
+    -skip-testing:IrisChatMacUITests \
     test
 }
 

@@ -980,6 +980,10 @@ final class IrisChatUITests: XCTestCase {
     ) {
         tapWelcomeAction(app, "welcomeCreateAction", file: file, line: line)
         XCTAssertTrue(element(app, "createAccountScreen").waitForExistence(timeout: 15), file: file, line: line)
+#if os(macOS)
+        XCTAssertFalse(element(app, "onboardingTermsAgreementToggle").exists, file: file, line: line)
+        XCTAssertFalse(element(app, "onboardingTermsNotice").exists, file: file, line: line)
+#endif
         let nameField = editableElement(app, "signupNameField")
         XCTAssertTrue(nameField.waitForExistence(timeout: 15), file: file, line: line)
         XCTAssertTrue(nameField.isEnabled, file: file, line: line)
