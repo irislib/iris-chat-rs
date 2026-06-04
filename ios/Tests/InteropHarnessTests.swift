@@ -1221,6 +1221,8 @@ final class InteropHarnessTests: XCTestCase {
             status("chat_id", chatID)
             status("message", message)
             status("absent", "true")
+        case "same_process_multi_device_mesh":
+            try await runSameProcessMultiDeviceMesh(env: env, rootDataDir: dataDir)
         default:
             throw HarnessError.unexpected("unknown harness action: \(action)")
         }
