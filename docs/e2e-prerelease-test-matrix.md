@@ -17,6 +17,23 @@ wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://temp.iris.to
 | Android public | `IRIS_ANDROID_E2E_AVDS="A B C D" scripts/e2e_android_public_prerelease.sh --fresh` | Public | Four Android emulators with the same topology. |
 | Mixed public | `IRIS_ANDROID_E2E_AVDS="A B" scripts/e2e_mixed_public_prerelease.sh --fresh` | Public | Alice is multi-device across iOS and Android. |
 | Local recovery | `scripts/e2e_prerelease_matrix.sh --relay local --flow <id>` | Local | Deterministic relay stop/start and recovery cases. |
+| Reliability lab | `scripts/e2e_reliability_lab.sh --tier release --headless` | Local plus Docker/public CLI | Simulator/emulator-first restore, offline/restart, group, revocation, multi-device mesh, soak, and Docker CLI coverage. |
+
+## Reliability Lab
+
+Use the reliability lab when we want one repeatable command for real-use GUI coverage without touching connected phones:
+
+```sh
+scripts/e2e_reliability_lab.sh --tier daily --tier soak --headless
+```
+
+The default tiers unset Android serial environment variables and pass explicit AVDs, so connected Android phones are ignored even if they are plugged in for other work. `--tier release` adds the Docker production CLI relay E2E. `--tier physical` is intentionally separate and requires both `--allow-physical` and `--android-serials` because those flows reset app state on the selected phones:
+
+```sh
+scripts/e2e_reliability_lab.sh --tier physical --allow-physical --android-serials R58TB02242W --android-avds Medium_Phone_API_36.1 --headless
+```
+
+For release gating, `scripts/test-release-gate --reliability-lab` runs the long simulator/emulator GUI lab (`daily` plus `soak`) as an opt-in lane. The Docker CLI lane remains available through `--production-cli` or through `scripts/e2e_reliability_lab.sh --tier release`.
 
 Android local recovery flows can pair a connected phone with an emulator:
 

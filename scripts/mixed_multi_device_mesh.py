@@ -38,6 +38,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--phone-serial", help="Preferred connected Android phone serial.")
     parser.add_argument("--serial", help="Alias for --phone-serial.")
     parser.add_argument("--serials", help="ADB serials, space/comma separated. First values are used.")
+    parser.add_argument(
+        "--android-avd-only",
+        action="store_true",
+        help="Use Android AVDs only; ignore connected phones and Android serial environment variables.",
+    )
     parser.add_argument("--android-avd", help="Preferred Android AVD for the second Android device.")
     parser.add_argument("--avd", help="Alias for --android-avd.")
     parser.add_argument("--avds", help="Android AVD names, space/comma separated. First values are used.")
@@ -130,14 +135,16 @@ def unique(values: list[str]) -> list[str]:
 
 
 def select_android_targets(args: argparse.Namespace) -> tuple[dict[str, str], dict[str, str]]:
-    explicit_serials = []
-    if args.phone_serial:
-        explicit_serials.append(args.phone_serial)
-    if args.serial:
-        explicit_serials.append(args.serial)
-    explicit_serials.extend(split_list(args.serials))
-    explicit_serials.extend(split_list(os.environ.get("IRIS_ANDROID_E2E_SERIALS")))
-    serials = unique(explicit_serials + connected_android_serials())
+    serials: list[str] = []
+    if not args.android_avd_only:
+        explicit_serials = []
+        if args.phone_serial:
+            explicit_serials.append(args.phone_serial)
+        if args.serial:
+            explicit_serials.append(args.serial)
+        explicit_serials.extend(split_list(args.serials))
+        explicit_serials.extend(split_list(os.environ.get("IRIS_ANDROID_E2E_SERIALS")))
+        serials = unique(explicit_serials + connected_android_serials())
 
     explicit_avds = []
     if args.android_avd:
@@ -159,7 +166,7 @@ def select_android_targets(args: argparse.Namespace) -> tuple[dict[str, str], di
         targets.append({"avd": avd})
     if len(targets) < 2:
         raise SystemExit(
-            "Need two Android targets for mixed F17. Connect a phone and provide an AVD, "
+            "Need two Android targets for mixed F17. Provide two AVDs, connect a phone and provide an AVD, "
             "or set --serials/--avds with two usable targets."
         )
     return targets[0], targets[1]

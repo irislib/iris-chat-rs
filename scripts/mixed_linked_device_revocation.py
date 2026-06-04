@@ -46,6 +46,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--android-relay-url", help="URL compiled into the Android debug app.")
     parser.add_argument("--serial", help="ADB serial for the Android linked device.")
     parser.add_argument("--serials", help="ADB serials, space/comma separated. First value is used.")
+    parser.add_argument(
+        "--android-avd-only",
+        action="store_true",
+        help="Use an Android AVD only; ignore connected phones and Android serial environment variables.",
+    )
     parser.add_argument("--avd", help="Android AVD name for the linked device.")
     parser.add_argument("--avds", help="Android AVD names, space/comma separated. First value is used.")
     parser.add_argument("--simulators", help="Two iOS simulator names, comma separated.")
@@ -86,11 +91,12 @@ def discover_avds(limit: int) -> list[str]:
 
 def select_android_target(args: argparse.Namespace) -> dict[str, str]:
     serials = []
-    if args.serial:
-        serials.append(args.serial)
-    serials.extend(split_list(args.serials))
-    serials.extend(split_list(os.environ.get("IRIS_ANDROID_E2E_SERIALS")))
-    serials = unique(serials + connected_android_serials())
+    if not args.android_avd_only:
+        if args.serial:
+            serials.append(args.serial)
+        serials.extend(split_list(args.serials))
+        serials.extend(split_list(os.environ.get("IRIS_ANDROID_E2E_SERIALS")))
+        serials = unique(serials + connected_android_serials())
     if serials:
         return {"serial": serials[0]}
 
