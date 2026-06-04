@@ -294,6 +294,7 @@ def remove_carol(scenario: Scenario, chat_id: str) -> dict[str, str]:
     )
     counts = {"alice1": statuses.get("member_count", "")}
     counts["bob1"] = wait_member_count(scenario, "bob1", chat_id, 2)
+    counts["carol1"] = wait_member_count(scenario, "carol1", chat_id, 2)
     return counts
 
 
