@@ -11,6 +11,7 @@ RUN_DIR="${IRIS_MACOS_VM_E2E_RUN_DIR:-${RUN_TMPDIR}/iris-macos-vm-prerelease-$(i
 RELAYS="${IRIS_E2E_RELAYS:-$(iris_e2e_default_public_relays)}"
 TIMEOUT_SECS="${IRIS_MACOS_VM_E2E_TIMEOUT_SECS:-180}"
 RUN_GUI=1
+GUI_MODE="${IRIS_MACOS_VM_E2E_GUI_MODE:-full}"
 RUN_PUBLIC=1
 RUN_MESH=1
 REBUILD_HARNESS=1
@@ -28,6 +29,7 @@ Options:
   --relays LIST          Public message servers, comma or | separated.
   --timeout-secs N       Harness wait timeout. Default: 180.
   --skip-gui             Skip the macOS GUI UI test suite.
+  --gui-smoke            Run the Accessibility GUI smoke instead of XCTest UI.
   --skip-public          Skip the public relay restart/restore/group journey.
   --skip-mesh            Skip the four-device same-process mesh.
   --skip-build           Reuse existing harness build.
@@ -55,6 +57,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-gui)
       RUN_GUI=0
+      shift
+      ;;
+    --gui-smoke)
+      GUI_MODE=smoke
       shift
       ;;
     --skip-public)
@@ -106,6 +112,7 @@ iris_e2e_record_repo_trace "${ROOT_DIR}" "${RUN_DIR}" || true
   printf 'relays=%s\n' "${RELAYS}"
   printf 'timeout_secs=%s\n' "${TIMEOUT_SECS}"
   printf 'run_gui=%s\n' "${RUN_GUI}"
+  printf 'gui_mode=%s\n' "${GUI_MODE}"
   printf 'run_public=%s\n' "${RUN_PUBLIC}"
   printf 'run_mesh=%s\n' "${RUN_MESH}"
   printf 'rebuild_harness=%s\n' "${REBUILD_HARNESS}"
@@ -229,7 +236,18 @@ wait_direct() {
 }
 
 run_gui_suite() {
-  run_step "macOS GUI UI suite" "${ROOT_DIR}/scripts/macos-build" macos-ui-test
+  case "${GUI_MODE}" in
+    full)
+      run_step "macOS GUI UI suite" "${ROOT_DIR}/scripts/macos-build" macos-ui-test
+      ;;
+    smoke)
+      run_step "macOS Accessibility GUI smoke" "${ROOT_DIR}/scripts/macos_gui_smoke.sh" --skip-build
+      ;;
+    *)
+      echo "Unsupported GUI mode: ${GUI_MODE}" >&2
+      return 2
+      ;;
+  esac
 }
 
 run_public_journey() {
