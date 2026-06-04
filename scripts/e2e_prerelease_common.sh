@@ -50,9 +50,15 @@ iris_e2e_record_repo_trace() {
   local root_dir="$1"
   local run_dir="$2"
   {
-    printf 'iris_chat_rs_head=%s\n' "$(git -C "${root_dir}" rev-parse HEAD)"
-    printf 'iris_chat_rs_branch=%s\n' "$(git -C "${root_dir}" rev-parse --abbrev-ref HEAD)"
-    if [[ -d "${root_dir}/../nostr-double-ratchet/.git" ]]; then
+    if command -v git >/dev/null 2>&1 && git -C "${root_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      printf 'iris_chat_rs_head=%s\n' "$(git -C "${root_dir}" rev-parse HEAD)"
+      printf 'iris_chat_rs_branch=%s\n' "$(git -C "${root_dir}" rev-parse --abbrev-ref HEAD)"
+    else
+      printf 'iris_chat_rs_head=unavailable\n'
+      printf 'iris_chat_rs_branch=unavailable\n'
+      printf 'iris_chat_rs_source=%s\n' "${root_dir}"
+    fi
+    if command -v git >/dev/null 2>&1 && [[ -d "${root_dir}/../nostr-double-ratchet/.git" ]]; then
       printf 'nostr_double_ratchet_head=%s\n' "$(git -C "${root_dir}/../nostr-double-ratchet" rev-parse HEAD)"
       printf 'nostr_double_ratchet_branch=%s\n' "$(git -C "${root_dir}/../nostr-double-ratchet" rev-parse --abbrev-ref HEAD)"
     fi

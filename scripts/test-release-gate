@@ -14,6 +14,7 @@ RUN_ONDEVICE="${IRIS_TEST_GATE_ONDEVICE:-0}"
 RUN_NOTIFICATIONS="${IRIS_TEST_GATE_NOTIFICATIONS:-0}"
 RUN_LAN_AVAILABLE="${IRIS_TEST_GATE_LAN_AVAILABLE:-0}"
 RUN_RELIABILITY_LAB="${IRIS_TEST_GATE_RELIABILITY_LAB:-0}"
+RUN_MACOS_VM_E2E="${IRIS_TEST_GATE_MACOS_VM_E2E:-0}"
 
 usage() {
   cat <<'EOF'
@@ -28,6 +29,7 @@ Options:
   --production-cli     Include Docker CLI test against production message servers.
   --app-store-review   Include iOS App Store block/report simulator e2e.
   --reliability-lab    Include long simulator/emulator messaging reliability lab.
+  --macos-vm-e2e       Include macOS VM public-relay prerelease E2E.
   --on-device          Require Android + iPhone + Mac LAN visibility.
   --lan-available      Run LAN visibility if at least two participants are available.
   --no-core-lan        Skip same-host core LAN visibility smoke.
@@ -40,6 +42,7 @@ Environment:
   IRIS_TEST_GATE_PRODUCTION_CLI=1
   IRIS_TEST_GATE_APP_STORE_REVIEW=1
   IRIS_TEST_GATE_RELIABILITY_LAB=1
+  IRIS_TEST_GATE_MACOS_VM_E2E=1
   IRIS_TEST_GATE_CORE_LAN=0
   IRIS_TEST_GATE_ONDEVICE=1
   IRIS_TEST_GATE_NOTIFICATIONS=1
@@ -74,6 +77,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --reliability-lab)
       RUN_RELIABILITY_LAB=1
+      shift
+      ;;
+    --macos-vm-e2e)
+      RUN_MACOS_VM_E2E=1
       shift
       ;;
     --on-device)
@@ -222,6 +229,15 @@ if [[ "${RUN_RELIABILITY_LAB}" == "1" ]]; then
   fi
   run_step "simulator/emulator reliability lab" \
     "${ROOT_DIR}/scripts/e2e_reliability_lab.sh" --tier daily --tier soak --headless
+fi
+
+if [[ "${RUN_MACOS_VM_E2E}" == "1" ]]; then
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "macOS VM prerelease E2E requires macOS." >&2
+    exit 1
+  fi
+  run_step "macOS VM prerelease E2E" \
+    "${ROOT_DIR}/scripts/e2e_macos_vm_prerelease.sh"
 fi
 
 if [[ "${RUN_ONDEVICE}" == "1" ]]; then
