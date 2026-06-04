@@ -229,12 +229,7 @@ wait_direct() {
 }
 
 run_gui_suite() {
-  run_step "macOS GUI UI suite" xcodebuild \
-    test-without-building \
-    -project "${ROOT_DIR}/macos/IrisChatMac.xcodeproj" \
-    -scheme IrisChatMacUI \
-    -destination "platform=macOS" \
-    -derivedDataPath "${ROOT_DIR}/macos/.build/DerivedData"
+  run_step "macOS GUI UI suite" "${ROOT_DIR}/scripts/macos-build" macos-ui-test
 }
 
 run_public_journey() {

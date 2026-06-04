@@ -7,6 +7,7 @@ during the test so the harness needs to avoid blocking dialogs.
 from __future__ import annotations
 import argparse
 import os
+import platform
 import plistlib
 import shutil
 import subprocess
@@ -18,8 +19,10 @@ import re
 ROOT_DIR = Path(__file__).resolve().parent.parent
 MACOS_DIR = ROOT_DIR / "macos"
 PROJECT_PATH = MACOS_DIR / "IrisChatMac.xcodeproj"
+CORE_FRAMEWORK_PATH = MACOS_DIR / "Frameworks" / "IrisChatCore.xcframework"
 SCHEME = "IrisChatMac"
 DERIVED_DATA = MACOS_DIR / ".build" / "harness-derived-data"
+HOST_ARCH = platform.machine() or "arm64"
 ONLY_TEST = "IrisChatMacTests/InteropHarnessTests/testHarnessAction"
 STATUS_PATTERN = re.compile(r"^HARNESS_STATUS: ([^=]+)=(.*)$")
 TARGET_NAME = "IrisChatMacTests"
@@ -50,6 +53,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def ensure_build(rebuild: bool) -> Path:
+    ensure_project_inputs()
     xctestrun_path = find_xctestrun()
     if xctestrun_path is not None and not rebuild:
         return xctestrun_path
@@ -61,12 +65,17 @@ def ensure_build(rebuild: bool) -> Path:
         "-scheme",
         SCHEME,
         "-destination",
-        "platform=macOS",
+        f"platform=macOS,arch={HOST_ARCH}",
         "-derivedDataPath",
         str(DERIVED_DATA),
         "-only-testing:" + ONLY_TEST,
         "build-for-testing",
         "CODE_SIGNING_ALLOWED=NO",
+        f"ARCHS={HOST_ARCH}",
+        f"VALID_ARCHS={HOST_ARCH}",
+        "ONLY_ACTIVE_ARCH=YES",
+        "ENABLE_TESTABILITY=YES",
+        "SWIFT_OPTIMIZATION_LEVEL=-Onone",
     ]
     completed = subprocess.run(
         command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
@@ -79,6 +88,22 @@ def ensure_build(rebuild: bool) -> Path:
     if xctestrun_path is None:
         raise SystemExit("xctestrun file was not produced by build-for-testing.")
     return xctestrun_path
+
+
+def run_macos_build_action(action: str) -> None:
+    command = [str(ROOT_DIR / "scripts" / "macos-build"), action]
+    completed = subprocess.run(
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    )
+    sys.stdout.write(completed.stdout)
+    if completed.returncode != 0:
+        raise SystemExit(completed.returncode)
+
+
+def ensure_project_inputs() -> None:
+    if not CORE_FRAMEWORK_PATH.exists():
+        run_macos_build_action("macos-xcframework")
+    run_macos_build_action("macos-xcodeproj")
 
 
 def find_xctestrun() -> Path | None:
@@ -146,7 +171,7 @@ def run_test(xctestrun_path: Path) -> subprocess.CompletedProcess[str]:
         "-xctestrun",
         str(xctestrun_path),
         "-destination",
-        "platform=macOS",
+        f"platform=macOS,arch={HOST_ARCH}",
         "-only-testing:" + ONLY_TEST,
     ]
     process = subprocess.Popen(

@@ -13,6 +13,10 @@ settings:
     VERSIONING_SYSTEM: apple-generic
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: 5.0
+  configs:
+    Debug:
+      ENABLE_TESTABILITY: YES
+      SWIFT_OPTIMIZATION_LEVEL: -Onone
 
 schemes:
   IrisChatMac:

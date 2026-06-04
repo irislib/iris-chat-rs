@@ -256,6 +256,9 @@ run_macos_build() {
     -derivedDataPath "$MACOS_DERIVED_DATA" \
     -destination "platform=macOS,arch=$host_arch" \
     CODE_SIGNING_ALLOWED=NO \
+    ARCHS="$host_arch" \
+    VALID_ARCHS="$host_arch" \
+    ONLY_ACTIVE_ARCH=YES \
     build
 }
 
@@ -270,6 +273,9 @@ run_macos_test() {
     -derivedDataPath "$MACOS_DERIVED_DATA" \
     -destination "platform=macOS,arch=$host_arch" \
     CODE_SIGNING_ALLOWED=NO \
+    ARCHS="$host_arch" \
+    VALID_ARCHS="$host_arch" \
+    ONLY_ACTIVE_ARCH=YES \
     test
 }
 
@@ -277,8 +283,15 @@ run_macos_ui_test() {
   local host_arch
   local only_testing_args=()
   local raw_only="${IRIS_MACOS_ONLY_TESTING:-}"
+  local timeout_secs="${IRIS_MACOS_UI_TEST_XCODEBUILD_TIMEOUT_SECS:-1800}"
+  local xcode_status=0
   local test_id
   host_arch="$(uname -m)"
+
+  if [[ ! "$timeout_secs" =~ ^[0-9]+$ || "$timeout_secs" -le 0 ]]; then
+    echo "IRIS_MACOS_UI_TEST_XCODEBUILD_TIMEOUT_SECS must be a positive integer." >&2
+    exit 2
+  fi
 
   raw_only="${raw_only//,/ }"
   for test_id in ${raw_only}; do
@@ -288,14 +301,56 @@ run_macos_ui_test() {
 
   run_macos_xcframework
   run_macos_xcodeproj
-  xcodebuild \
-    -project "$MACOS_DIR/IrisChatMac.xcodeproj" \
-    -scheme IrisChatMacUI \
-    -derivedDataPath "$MACOS_DERIVED_DATA" \
-    -destination "platform=macOS,arch=$host_arch" \
-    CODE_SIGNING_ALLOWED=NO \
-    "${only_testing_args[@]}" \
+  local xcode_args=(
+    -project "$MACOS_DIR/IrisChatMac.xcodeproj"
+    -scheme IrisChatMacUI
+    -derivedDataPath "$MACOS_DERIVED_DATA"
+    -destination "platform=macOS,arch=$host_arch"
+    CODE_SIGNING_ALLOWED=NO
+    ARCHS="$host_arch"
+    VALID_ARCHS="$host_arch"
+    ONLY_ACTIVE_ARCH=YES
+  )
+  if [[ "${#only_testing_args[@]}" -gt 0 ]]; then
+    xcode_args+=("${only_testing_args[@]}")
+  fi
+  xcode_args+=(
+    -test-timeouts-enabled YES
+    -default-test-execution-time-allowance 60
+    -maximum-test-execution-time-allowance 180
     test
+  )
+  python3 - "$timeout_secs" "${xcode_args[@]}" <<'PY' || xcode_status=$?
+import os
+import signal
+import subprocess
+import sys
+
+timeout_secs = int(sys.argv[1])
+cmd = ["xcodebuild", *sys.argv[2:]]
+proc = subprocess.Popen(cmd, start_new_session=True)
+try:
+    raise SystemExit(proc.wait(timeout=timeout_secs))
+except subprocess.TimeoutExpired:
+    print(f"xcodebuild timed out after {timeout_secs}s", file=sys.stderr)
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
+    raise SystemExit(124)
+PY
+  if [[ "$xcode_status" -ne 0 ]]; then
+    pkill -f "IrisChatMacUITests-Runner" 2>/dev/null || true
+  fi
+  return "$xcode_status"
 }
 
 run_macos_app() {
