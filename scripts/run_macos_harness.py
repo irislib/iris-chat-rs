@@ -6,6 +6,7 @@ during the test so the harness needs to avoid blocking dialogs.
 """
 from __future__ import annotations
 import argparse
+import os
 import plistlib
 import shutil
 import subprocess
@@ -90,7 +91,10 @@ def find_xctestrun() -> Path | None:
 
 def prepare_xctestrun(source: Path, env_vars: dict[str, str]) -> Path:
     temp_dir = source.parent
-    target = temp_dir / f"{source.stem}.harness.xctestrun"
+    run_id = env_vars.get("IRIS_IOS_HARNESS_RUN_ID", "run")
+    action = env_vars.get("IRIS_IOS_HARNESS_ACTION", "action")
+    suffix = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{run_id}-{action}")[:80]
+    target = temp_dir / f"{source.stem}.{os.getpid()}.{suffix}.harness.xctestrun"
     if target.exists():
         target.unlink()
     shutil.copy2(source, target)
@@ -145,9 +149,22 @@ def run_test(xctestrun_path: Path) -> subprocess.CompletedProcess[str]:
         "platform=macOS",
         "-only-testing:" + ONLY_TEST,
     ]
-    return subprocess.run(
-        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
     )
+    output_parts: list[str] = []
+    assert process.stdout is not None
+    for line in process.stdout:
+        output_parts.append(line)
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        emit_status_line(line)
+    returncode = process.wait()
+    return subprocess.CompletedProcess(command, returncode, "".join(output_parts))
 
 
 def build_env(args: argparse.Namespace) -> dict[str, str]:
@@ -177,12 +194,17 @@ def build_env(args: argparse.Namespace) -> dict[str, str]:
     return env_vars
 
 
-def emit_status_lines(output: str, success: bool) -> None:
-    for line in output.splitlines():
-        match = STATUS_PATTERN.match(line.strip())
-        if match:
-            key, value = match.groups()
-            print(f"INSTRUMENTATION_STATUS: {key.lower()}={value}")
+def emit_status_line(line: str) -> None:
+    match = STATUS_PATTERN.match(line.strip())
+    if match:
+        key, value = match.groups()
+        print(f"INSTRUMENTATION_STATUS: {key.lower()}={value}", flush=True)
+
+
+def emit_status_lines(output: str, success: bool, include_statuses: bool = True) -> None:
+    if include_statuses:
+        for line in output.splitlines():
+            emit_status_line(line)
     if success:
         print("INSTRUMENTATION_CODE: -1")
 
@@ -192,9 +214,19 @@ def main() -> int:
     xctestrun_source = ensure_build(rebuild=args.rebuild)
     env_vars = build_env(args)
     xctestrun_path = prepare_xctestrun(xctestrun_source, env_vars)
-    completed = run_test(xctestrun_path)
-    sys.stdout.write(completed.stdout)
-    emit_status_lines(completed.stdout, success=completed.returncode == 0)
+    try:
+        completed = run_test(xctestrun_path)
+    finally:
+        if xctestrun_path != xctestrun_source:
+            try:
+                xctestrun_path.unlink()
+            except FileNotFoundError:
+                pass
+    emit_status_lines(
+        completed.stdout,
+        success=completed.returncode == 0,
+        include_statuses=False,
+    )
     if completed.returncode != 0:
         print("INSTRUMENTATION_FAILED: macOS harness test failed")
     return completed.returncode
