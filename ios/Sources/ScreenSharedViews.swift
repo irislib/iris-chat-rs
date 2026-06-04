@@ -69,6 +69,31 @@ final class SecretKeyDraft: ObservableObject {
 final class BindingSecureTextField: NSSecureTextField {
     var onTextChange: ((String) -> Void)?
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if event.type == .keyDown,
+           flags.contains(.command),
+           event.charactersIgnoringModifiers?.lowercased() == "v" {
+            pasteFromGeneralPasteboard()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    private func pasteFromGeneralPasteboard() {
+        guard let pasted = NSPasteboard.general.string(forType: .string),
+              !pasted.isEmpty else {
+            return
+        }
+        if let editor = currentEditor() {
+            editor.insertText(pasted)
+            stringValue = editor.string
+        } else {
+            stringValue = pasted
+        }
+        onTextChange?(stringValue)
+    }
+
     override func textDidChange(_ notification: Notification) {
         super.textDidChange(notification)
         onTextChange?(stringValue)

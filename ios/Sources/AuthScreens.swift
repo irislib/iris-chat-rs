@@ -126,8 +126,18 @@ struct CreateAccountScreen: View {
         displayName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var requiresTermsAcceptance: Bool {
+#if os(iOS)
+        true
+#else
+        false
+#endif
+    }
+
     private var canCreateAccount: Bool {
-        termsAccepted && !trimmedDisplayName.isEmpty && !manager.state.busy.creatingAccount
+        (!requiresTermsAcceptance || termsAccepted) &&
+            !trimmedDisplayName.isEmpty &&
+            !manager.state.busy.creatingAccount
     }
 
     var body: some View {
@@ -149,7 +159,9 @@ struct CreateAccountScreen: View {
                     .onSubmit(submitCreateAccount)
                     .accessibilityIdentifier("signupNameField")
 
-                OnboardingTermsAgreement(accepted: $termsAccepted)
+                if requiresTermsAcceptance {
+                    OnboardingTermsAgreement(accepted: $termsAccepted)
+                }
 
                 Button(manager.state.busy.creatingAccount ? "Creating…" : "Create profile") {
                     submitCreateAccount()

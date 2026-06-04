@@ -675,6 +675,7 @@ struct IrisDeliveryGlyph: View {
 
 struct ChatMessageActionDock: View {
     @Environment(\.irisPalette) private var palette
+    @Binding var isOverflowPresented: Bool
     let onShowReactionPicker: () -> Void
     let onReply: () -> Void
     let onForward: () -> Void
@@ -698,11 +699,9 @@ struct ChatMessageActionDock: View {
             .buttonStyle(.irisPlain)
             .accessibilityIdentifier("messageReactButton")
             dockButton("arrowshape.turn.up.left", identifier: "messageReplyButton", action: onReply)
-            Menu {
-                Button("Forward", action: onForward)
-                Button("Copy text", action: onCopy)
-                Button("Info", action: onInfo)
-                Button("Delete message", role: .destructive, action: onDelete)
+            dockButton("info.circle", identifier: "messageInfoButton", action: onInfo)
+            Button {
+                isOverflowPresented.toggle()
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 14, weight: .bold))
@@ -711,9 +710,15 @@ struct ChatMessageActionDock: View {
                     // contentShape pushes it back out to the full button frame.
                     .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
             .buttonStyle(.irisPlain)
+            .popover(isPresented: $isOverflowPresented, arrowEdge: .bottom) {
+                ChatMessageOverflowActionsPopover(
+                    onForward: onForward,
+                    onCopy: onCopy,
+                    onDelete: onDelete,
+                    onClose: { isOverflowPresented = false }
+                )
+            }
             .accessibilityIdentifier("messageMoreButton")
         }
         .foregroundStyle(palette.muted)
@@ -737,6 +742,73 @@ struct ChatMessageActionDock: View {
 
     fileprivate static let buttonWidth: CGFloat = 30
     fileprivate static let buttonHeight: CGFloat = 28
+    static let dockWidth: CGFloat = buttonWidth * 4 + 2 * 3 + 5 * 2
+}
+
+private struct ChatMessageOverflowActionsPopover: View {
+    @Environment(\.irisPalette) private var palette
+    let onForward: () -> Void
+    let onCopy: () -> Void
+    let onDelete: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            actionButton(
+                "Forward",
+                systemName: "arrowshape.turn.up.right",
+                identifier: "messageForwardMenuItem",
+                action: onForward
+            )
+            actionButton(
+                "Copy text",
+                systemName: "doc.on.doc",
+                identifier: "messageCopyMenuItem",
+                action: onCopy
+            )
+            actionButton(
+                "Delete message",
+                systemName: "trash",
+                identifier: "messageDeleteMenuItem",
+                destructive: true,
+                action: onDelete
+            )
+        }
+        .padding(.vertical, 6)
+        .frame(width: 178)
+        .background(palette.panel)
+    }
+
+    private func actionButton(
+        _ title: String,
+        systemName: String,
+        identifier: String,
+        destructive: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            onClose()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                action()
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: systemName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 18)
+                Text(title)
+                    .font(.system(.callout, design: .rounded, weight: .medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(destructive ? Color.red : palette.textPrimary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.irisPlain)
+        .accessibilityIdentifier(identifier)
+    }
 }
 
 let quickReactionEmojis: [String] = ["❤️", "👍", "😂", "😮", "😢", "🙏", "🔥"]

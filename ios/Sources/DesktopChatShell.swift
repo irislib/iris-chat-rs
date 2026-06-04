@@ -97,7 +97,15 @@ struct DesktopChatShell: View {
                         )
                     )
                 } ?? AnyView(EmptyView()),
-                trailing: AnyView(EmptyView())
+                trailing: AnyView(
+                    InChatSearchButton(
+                        manager: manager,
+                        target: InChatSearchTarget(
+                            chatId: chatId,
+                            displayName: chat?.displayName ?? "Chat"
+                        )
+                    )
+                )
             )
             ChatScreen(manager: manager, chatId: chatId)
                 .id(chatId)

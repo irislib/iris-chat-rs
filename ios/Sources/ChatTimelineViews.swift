@@ -437,9 +437,11 @@ struct ChatMessageRow: View, Equatable {
     @State private var isHovering = false
     @State private var showReactionPicker = false
     @State private var showActionsSheet = false
+    @State private var showOverflowActions = false
+    @State private var hideActionDockTask: DispatchWorkItem?
 
     private var showActionDock: Bool {
-        IrisLayout.usesDesktopChrome && isHovering
+        IrisLayout.usesDesktopChrome && (isHovering || showOverflowActions)
     }
 
     private var postReactionSuggestions: [String] {
@@ -449,6 +451,7 @@ struct ChatMessageRow: View, Equatable {
     @ViewBuilder
     private func actionDock() -> some View {
         ChatMessageActionDock(
+            isOverflowPresented: $showOverflowActions,
             onShowReactionPicker: { showReactionPicker = true },
             onReply: onReply,
             onForward: onForward,
@@ -715,8 +718,7 @@ struct ChatMessageRow: View, Equatable {
 #if canImport(AppKit)
                         // Keep the dock anchored to the drawn bubble, not
                         // the invisible max-width frame that only caps long
-                        // messages. Alignment guides put the dock just
-                        // outside the bubble without hard-coding its width.
+                        // messages.
                         .overlay(alignment: message.isOutgoing ? .leading : .trailing) {
                             actionDockOverlay(isOutgoing: message.isOutgoing)
                         }
@@ -739,7 +741,7 @@ struct ChatMessageRow: View, Equatable {
                 }
                 .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
                 .contentShape(Rectangle())
-                .onHover { isHovering = $0 }
+                .onHover(perform: updateActionDockHover)
                 .padding(.top, rowTopSpacing)
             }
         }
@@ -755,21 +757,33 @@ struct ChatMessageRow: View, Equatable {
 
     @ViewBuilder
     private func actionDockOverlay(isOutgoing: Bool) -> some View {
+#if canImport(AppKit)
         if showActionDock {
-            if isOutgoing {
-                actionDock()
-                    .fixedSize()
-                    .alignmentGuide(.leading) { dimensions in
-                        dimensions.width + SignalConversationLayout.messageActionDockSpacing
-                    }
-            } else {
-                actionDock()
-                    .fixedSize()
-                    .alignmentGuide(.trailing) { _ in
-                        -SignalConversationLayout.messageActionDockSpacing
-                    }
+            actionDock()
+                .fixedSize()
+                .onHover(perform: updateActionDockHover)
+                .offset(
+                    x: isOutgoing
+                        ? -(ChatMessageActionDock.dockWidth + SignalConversationLayout.messageActionDockSpacing)
+                        : ChatMessageActionDock.dockWidth + SignalConversationLayout.messageActionDockSpacing
+                )
+        }
+#endif
+    }
+
+    private func updateActionDockHover(_ hovering: Bool) {
+        hideActionDockTask?.cancel()
+        if hovering {
+            isHovering = true
+            return
+        }
+        let task = DispatchWorkItem {
+            if !showOverflowActions {
+                isHovering = false
             }
         }
+        hideActionDockTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: task)
     }
 
     @ViewBuilder

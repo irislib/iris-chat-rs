@@ -144,8 +144,9 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "messageActionsSheet").waitForExistence(timeout: 5))
 #else
         app.staticTexts["hello from ios ui test"].tap()
+        Thread.sleep(forTimeInterval: 0.15)
         let moreButton = element(app, "messageMoreButton")
-        XCTAssertTrue(moreButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(moreButton.exists)
         let actionGap = messageText.frame.minX - moreButton.frame.maxX
         XCTAssertGreaterThan(
             actionGap,
@@ -157,13 +158,19 @@ final class IrisChatUITests: XCTestCase {
             90,
             "Outgoing message action dock drifted \(actionGap)pt from the bubble"
         )
-        moreButton.tap()
+        let infoButton = element(app, "messageInfoButton")
+        XCTAssertTrue(infoButton.exists)
+        infoButton.tap()
 #endif
+        #if os(macOS)
+        XCTAssertTrue(element(app, "messageInfoStatus").waitForExistence(timeout: 5))
+        #else
         let messageInfoAction = app.buttons["Info"].firstMatch
         XCTAssertTrue(messageInfoAction.waitForExistence(timeout: 5))
         messageInfoAction.tap()
         XCTAssertTrue(element(app, "messageInfoSheet").waitForExistence(timeout: 5))
         XCTAssertTrue(element(app, "messageInfoStatus").waitForExistence(timeout: 5))
+        #endif
     }
 
     func testComposerKeepsSequentialTypingOrder() throws {
@@ -568,7 +575,11 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(waitUntil(timeout: 5) { !searchField.exists })
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
 
-        let oldestTimelineMessage = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'FIRST_SCROLL_SENTINEL'")).firstMatch
+        let oldestTimelineMessage = app.staticTexts.matching(
+            NSPredicate(
+                format: "label BEGINSWITH 'FIRST_SCROLL_SENTINEL' OR value BEGINSWITH 'FIRST_SCROLL_SENTINEL'"
+            )
+        ).firstMatch
         XCTAssertTrue(
             oldestTimelineMessage.waitForExistence(timeout: 15),
             "search hit outside the initial 80-message page did not load into the chat timeline"
