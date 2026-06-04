@@ -324,6 +324,48 @@ final class IrisChatUITests: XCTestCase {
 #endif
     }
 
+    func testShortReplyBubbleDoesNotExpandToTimelineWidth() throws {
+#if os(macOS)
+        throw XCTSkip("Mobile reply sheets are covered on iOS")
+#else
+        let app = launchCleanApp()
+
+        createAccount(app)
+        openChatWithPeer(app)
+
+        let original = "tiny \(String(UUID().uuidString.prefix(6)).lowercased())"
+        typeText(original, into: editableElement(app, "chatMessageInput"), app: app)
+        element(app, "chatSendButton").tap()
+        dismissNotificationPromptIfPresent(app: app)
+
+        let originalText = app.staticTexts[original].firstMatch
+        XCTAssertTrue(originalText.waitForExistence(timeout: 15))
+        originalText.press(forDuration: 0.6)
+        XCTAssertTrue(element(app, "messageActionsSheet").waitForExistence(timeout: 5))
+        app.buttons["Reply"].firstMatch.tap()
+        XCTAssertTrue(element(app, "chatReplyComposer").waitForExistence(timeout: 5))
+
+        let reply = "ok \(String(UUID().uuidString.prefix(4)).lowercased())"
+        typeText(reply, into: editableElement(app, "chatMessageInput"), app: app)
+        element(app, "chatSendButton").tap()
+
+        let replyText = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", reply)
+        ).firstMatch
+        XCTAssertTrue(replyText.waitForExistence(timeout: 15))
+        let replyPreview = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", original)
+        ).firstMatch
+        XCTAssertTrue(replyPreview.waitForExistence(timeout: 5))
+
+        XCTAssertLessThan(
+            replyPreview.frame.width,
+            app.windows.firstMatch.frame.width * 0.55,
+            "Short reply preview expanded to \(replyPreview.frame.width)pt wide"
+        )
+#endif
+    }
+
     func testChatListRowHorizontalSwipeStillShowsActions() throws {
 #if os(macOS)
         throw XCTSkip("Chat list row swipes are iOS-only")

@@ -435,15 +435,9 @@ struct ReplyPreviewView: View {
                         .multilineTextAlignment(.leading)
                         .opacity(0.82)
                 }
-                Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            // Stretch the rounded background to the bubble's full inner
-            // width so the quote pill matches what the body text below
-            // gets. Spacer above pushes the rule+text to leading; the
-            // frame here just lets the surrounding fill grow.
-            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill((isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs).opacity(0.12))
