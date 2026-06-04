@@ -284,12 +284,17 @@ run_macos_ui_test() {
   local only_testing_args=()
   local raw_only="${IRIS_MACOS_ONLY_TESTING:-}"
   local timeout_secs="${IRIS_MACOS_UI_TEST_XCODEBUILD_TIMEOUT_SECS:-1800}"
+  local suspended_runner_timeout_secs="${IRIS_MACOS_UI_TEST_SUSPENDED_RUNNER_TIMEOUT_SECS:-90}"
   local xcode_status=0
   local test_id
   host_arch="$(uname -m)"
 
   if [[ ! "$timeout_secs" =~ ^[0-9]+$ || "$timeout_secs" -le 0 ]]; then
     echo "IRIS_MACOS_UI_TEST_XCODEBUILD_TIMEOUT_SECS must be a positive integer." >&2
+    exit 2
+  fi
+  if [[ ! "$suspended_runner_timeout_secs" =~ ^[0-9]+$ || "$suspended_runner_timeout_secs" -le 0 ]]; then
+    echo "IRIS_MACOS_UI_TEST_SUSPENDED_RUNNER_TIMEOUT_SECS must be a positive integer." >&2
     exit 2
   fi
 
@@ -320,19 +325,20 @@ run_macos_ui_test() {
     -maximum-test-execution-time-allowance 180
     test
   )
-  python3 - "$timeout_secs" "${xcode_args[@]}" <<'PY' || xcode_status=$?
+  python3 - "$timeout_secs" "$suspended_runner_timeout_secs" "${xcode_args[@]}" <<'PY' || xcode_status=$?
 import os
 import signal
 import subprocess
 import sys
+import time
 
 timeout_secs = int(sys.argv[1])
-cmd = ["xcodebuild", *sys.argv[2:]]
+suspended_runner_timeout_secs = int(sys.argv[2])
+cmd = ["xcodebuild", *sys.argv[3:]]
 proc = subprocess.Popen(cmd, start_new_session=True)
-try:
-    raise SystemExit(proc.wait(timeout=timeout_secs))
-except subprocess.TimeoutExpired:
-    print(f"xcodebuild timed out after {timeout_secs}s", file=sys.stderr)
+
+
+def terminate_process_group(exit_code):
     try:
         os.killpg(proc.pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -345,7 +351,93 @@ except subprocess.TimeoutExpired:
         except ProcessLookupError:
             pass
         proc.wait()
-    raise SystemExit(124)
+    raise SystemExit(exit_code)
+
+
+def runner_pids():
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "IrisChatMacUITests-Runner"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    pids = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if line.isdigit():
+            pids.append(line)
+    return pids
+
+
+def runner_is_launched_suspended(pid):
+    try:
+        result = subprocess.run(
+            ["vmmap", "-summary", pid],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    output = result.stdout + result.stderr
+    return "Process exists but has not started" in output
+
+
+def print_runner_diagnostics(pid):
+    print(
+        "IrisChatMacUITests-Runner stayed launched-suspended "
+        f"for {suspended_runner_timeout_secs}s; macOS UI testing is likely "
+        "blocked by the VM GUI/session/TCC handoff.",
+        file=sys.stderr,
+    )
+    print(f"suspended_runner_pid={pid}", file=sys.stderr)
+    try:
+        result = subprocess.run(
+            ["ps", "-ax", "-o", "pid,ppid,stat,comm,args"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        for line in result.stdout.splitlines():
+            if (
+                "xcodebuild" in line
+                or "IrisChatMacUITests" in line
+                or "testmanagerd" in line
+                or "Iris Chat.app" in line
+            ):
+                print(line, file=sys.stderr)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+deadline = time.monotonic() + timeout_secs
+suspended_since = {}
+while True:
+    exit_code = proc.poll()
+    if exit_code is not None:
+        raise SystemExit(exit_code)
+
+    now = time.monotonic()
+    if now >= deadline:
+        print(f"xcodebuild timed out after {timeout_secs}s", file=sys.stderr)
+        terminate_process_group(124)
+
+    for pid in runner_pids():
+        if runner_is_launched_suspended(pid):
+            suspended_since.setdefault(pid, now)
+            if now - suspended_since[pid] >= suspended_runner_timeout_secs:
+                print_runner_diagnostics(pid)
+                terminate_process_group(125)
+        else:
+            suspended_since.pop(pid, None)
+
+    time.sleep(min(5, max(0.1, deadline - now)))
 PY
   if [[ "$xcode_status" -ne 0 ]]; then
     pkill -f "IrisChatMacUITests-Runner" 2>/dev/null || true

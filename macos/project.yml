@@ -41,6 +41,7 @@ schemes:
       config: Debug
     test:
       config: Debug
+      debugEnabled: false
       targets:
         - IrisChatMacUITests
 
