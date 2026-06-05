@@ -490,19 +490,41 @@ run_macos_app() {
     )
   fi
 
-  xcodebuild \
-    -project "$MACOS_DIR/IrisChatMac.xcodeproj" \
-    -scheme IrisChatMac \
-    -configuration Release \
-    -derivedDataPath "$derived" \
-    -destination 'platform=macOS,arch=arm64' \
-    ARCHS=arm64 \
-    VALID_ARCHS=arm64 \
-    ONLY_ACTIVE_ARCH=NO \
-    "MARKETING_VERSION=$(apple_marketing_version "$IRIS_APP_VERSION_NAME")" \
-    "CURRENT_PROJECT_VERSION=$IRIS_APP_VERSION_CODE" \
-    "${sign_args[@]}" \
-    build
+  local xcode_log="$MACOS_DIST_DIR/.macos-app-xcodebuild.log"
+  local xcode_attempt=1
+  while true; do
+    rm -f "$xcode_log"
+    set +e
+    xcodebuild \
+      -project "$MACOS_DIR/IrisChatMac.xcodeproj" \
+      -scheme IrisChatMac \
+      -configuration Release \
+      -derivedDataPath "$derived" \
+      -destination 'platform=macOS,arch=arm64' \
+      ARCHS=arm64 \
+      VALID_ARCHS=arm64 \
+      ONLY_ACTIVE_ARCH=NO \
+      "MARKETING_VERSION=$(apple_marketing_version "$IRIS_APP_VERSION_NAME")" \
+      "CURRENT_PROJECT_VERSION=$IRIS_APP_VERSION_CODE" \
+      "${sign_args[@]}" \
+      build 2>&1 | tee "$xcode_log"
+    local xcode_status="${PIPESTATUS[0]}"
+    set -e
+
+    if [[ "$xcode_status" -eq 0 ]]; then
+      break
+    fi
+
+    if [[ "$xcode_attempt" -lt 3 ]] \
+      && [[ -n "$identity" ]] \
+      && grep -Fq "A timestamp was expected but was not found" "$xcode_log"; then
+      xcode_attempt=$((xcode_attempt + 1))
+      echo "macos-app: codesign timestamp was missing; retrying xcodebuild ($xcode_attempt/3)" >&2
+      sleep 3
+      continue
+    fi
+    return "$xcode_status"
+  done
 
   local app_src
   app_src="$(find "$derived/Build/Products/Release" -maxdepth 1 -name '*.app' | head -n 1)"
