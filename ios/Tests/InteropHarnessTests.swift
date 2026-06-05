@@ -150,7 +150,10 @@ final class InteropHarnessTests: XCTestCase {
             }
             status("link_url", link.url)
             status("device_input", link.deviceInput)
-            let snapshot: AccountSnapshot = try await waitFor(label: "linked-device authorization", timeout: 240) {
+            let authorizationTimeout = TimeInterval(
+                Double(env["IRIS_IOS_HARNESS_AUTHORIZATION_TIMEOUT_SECS"] ?? "") ?? 240
+            )
+            let snapshot: AccountSnapshot = try await waitFor(label: "linked-device authorization", timeout: authorizationTimeout) {
                 guard let account = manager.state.account else {
                     return nil
                 }

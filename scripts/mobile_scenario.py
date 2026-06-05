@@ -262,6 +262,9 @@ class Scenario:
             entry["run_id"] = device.get("run_id", device_id)
             entry["user"] = device.get("user", device_id)
             entry["simulator"] = device.get("simulator", "")
+            for key in ("linked_to", "link_timeout_secs", "authorization_timeout_secs", "relay_drain_timeout_secs"):
+                if key in device:
+                    entry[key] = device[key]
             if device.get("udid"):
                 entry["udid"] = device["udid"]
             elif device.get("simulator") in udids:
@@ -398,6 +401,9 @@ class Scenario:
             entry["run_id"] = device.get("run_id", device_id)
             entry["user"] = device.get("user", device_id)
             entry["avd"] = device.get("avd", "")
+            for key in ("linked_to", "link_timeout_secs", "authorization_timeout_secs", "relay_drain_timeout_secs"):
+                if key in device:
+                    entry[key] = device[key]
             if device.get("serial"):
                 entry["serial"] = device["serial"]
             elif device.get("avd") in serials:
@@ -887,6 +893,10 @@ class Scenario:
         relay_urls = self.relay_urls_for_device(device_id)
         if platform == "ios" and relay_urls:
             args["relay_urls"] = ",".join(relay_urls)
+        if platform == "ios":
+            timeout_secs = self.state["devices"][device_id].get("authorization_timeout_secs")
+            if timeout_secs is not None:
+                args["authorization_timeout_secs"] = str(timeout_secs)
         if platform == "android":
             args["authorization_state"] = "AUTHORIZED"
         return args
