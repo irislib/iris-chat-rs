@@ -26,6 +26,7 @@ INSTALL_SERVICE_FLAKE_PATTERNS = (
     "Failed to create promise",
     "Failed to locate promise",
 )
+TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -46,6 +47,14 @@ def parse_args() -> argparse.Namespace:
         default=int(os.environ.get("IRIS_IOS_HARNESS_XCODEBUILD_TIMEOUT_SECS", "420")),
         help="Hard timeout for xcodebuild test execution.",
     )
+    parser.add_argument(
+        "--build-timeout-secs",
+        type=int,
+        default=int(os.environ["IRIS_IOS_HARNESS_XCODEBUILD_BUILD_TIMEOUT_SECS"])
+        if os.environ.get("IRIS_IOS_HARNESS_XCODEBUILD_BUILD_TIMEOUT_SECS")
+        else None,
+        help="Hard timeout for xcodebuild build-for-testing. Defaults to --timeout-secs.",
+    )
     return parser.parse_args()
 
 
@@ -60,19 +69,16 @@ def resolve_udid(name: str) -> str:
 
 
 def is_simulator_udid(udid: str) -> bool:
-    command = ["xcrun", "simctl", "list", "-j", "devices"]
-    completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-    if completed.returncode != 0:
-        return False
-    try:
-        data = json.loads(completed.stdout)
-    except json.JSONDecodeError:
-        return False
-    for devices in data.get("devices", {}).values():
-        for device in devices:
-            if device.get("udid") == udid:
-                return True
-    return False
+    command = ["xcrun", "simctl", "list", "devices"]
+    completed = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return f"({udid})" in completed.stdout
 
 
 def simulator_is_booted(udid: str) -> bool:
@@ -133,14 +139,127 @@ def is_install_service_flake(output: str) -> bool:
     return any(pattern in output for pattern in INSTALL_SERVICE_FLAKE_PATTERNS)
 
 
-def ensure_build(udid: str, rebuild: bool) -> Path:
+def env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in TRUTHY_VALUES
+
+
+def xcodebuild_binary() -> str:
+    return shutil.which("xcodebuild") or "/usr/bin/xcodebuild"
+
+
+def console_user() -> tuple[str, str] | None:
+    completed = subprocess.run(
+        ["stat", "-f", "%Su", "/dev/console"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    user = completed.stdout.strip()
+    if not user or user == "root":
+        user = os.environ.get("USER", "").strip()
+    if not user:
+        return None
+    uid_completed = subprocess.run(
+        ["id", "-u", user],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    uid = uid_completed.stdout.strip()
+    if uid_completed.returncode != 0 or not uid:
+        return None
+    return user, uid
+
+
+def xcodebuild_command(args: list[str]) -> list[str]:
+    command = [xcodebuild_binary(), *args]
+    if not env_truthy("IRIS_IOS_HARNESS_XCODEBUILD_AQUA"):
+        return command
+    if sys.platform != "darwin":
+        raise SystemExit("IRIS_IOS_HARNESS_XCODEBUILD_AQUA is supported only on macOS.")
+    user_info = console_user()
+    if user_info is None:
+        raise SystemExit("Unable to resolve the macOS console user for Aqua xcodebuild.")
+    user, uid = user_info
+    sudo_ready = subprocess.run(
+        ["sudo", "-n", "true"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ).returncode == 0
+    if not sudo_ready:
+        raise SystemExit("Aqua xcodebuild requires passwordless sudo for launchctl asuser.")
+    print(f"INSTRUMENTATION_RETRY: running xcodebuild in Aqua session for {user}", flush=True)
+    return ["sudo", "-n", "launchctl", "asuser", uid, "sudo", "-n", "-u", user, *command]
+
+
+def run_xcodebuild(args: list[str], timeout_secs: int, phase: str) -> subprocess.CompletedProcess[str]:
+    command = xcodebuild_command(args)
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+        start_new_session=True,
+    )
+    assert process.stdout is not None
+    lines: list[str] = []
+    lines_lock = threading.Lock()
+
+    def read_output() -> None:
+        assert process.stdout is not None
+        for line in process.stdout:
+            with lines_lock:
+                lines.append(line)
+            sys.stdout.write(line)
+            sys.stdout.flush()
+
+    reader = threading.Thread(target=read_output, daemon=True)
+    reader.start()
+
+    try:
+        process.wait(timeout=timeout_secs)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+        reader.join(timeout=5)
+        timeout_line = f"\nINSTRUMENTATION_FAILED: xcodebuild {phase} timed out after {timeout_secs}s\n"
+        with lines_lock:
+            lines.append(timeout_line)
+            stdout = "".join(lines)
+        sys.stdout.write(timeout_line)
+        sys.stdout.flush()
+        return subprocess.CompletedProcess(command, 124, stdout)
+
+    reader.join(timeout=5)
+    with lines_lock:
+        stdout = "".join(lines)
+    return subprocess.CompletedProcess(command, process.returncode, stdout)
+
+
+def ensure_build(udid: str, rebuild: bool, timeout_secs: int) -> Path:
     prefer_simulator = is_simulator_udid(udid)
     xctestrun_path = find_xctestrun(prefer_simulator=prefer_simulator)
     if xctestrun_path is not None and not rebuild:
         return xctestrun_path
 
     command = [
-        "xcodebuild",
         "-project",
         str(PROJECT_PATH),
         "-scheme",
@@ -151,8 +270,7 @@ def ensure_build(udid: str, rebuild: bool) -> Path:
         str(DERIVED_DATA),
         "build-for-testing",
     ]
-    completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    sys.stdout.write(completed.stdout)
+    completed = run_xcodebuild(command, timeout_secs=timeout_secs, phase="build-for-testing")
     if completed.returncode != 0:
         raise SystemExit(completed.returncode)
 
@@ -181,7 +299,10 @@ def find_xctestrun(prefer_simulator: bool | None = None) -> Path | None:
 
 def prepare_xctestrun(source: Path, env_vars: dict[str, str]) -> Path:
     temp_dir = source.parent
-    target = temp_dir / f"{source.stem}.harness.xctestrun"
+    run_id = env_vars.get("IRIS_IOS_HARNESS_RUN_ID", "run")
+    action = env_vars.get("IRIS_IOS_HARNESS_ACTION", "action")
+    suffix = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{run_id}-{action}")[:80]
+    target = temp_dir / f"{source.stem}.{os.getpid()}.{suffix}.harness.xctestrun"
     if target.exists():
         target.unlink()
     shutil.copy2(source, target)
@@ -228,7 +349,6 @@ def prepare_xctestrun(source: Path, env_vars: dict[str, str]) -> Path:
 
 def run_test(udid: str, xctestrun_path: Path, timeout_secs: int) -> subprocess.CompletedProcess[str]:
     command = [
-        "xcodebuild",
         "test-without-building",
         "-xctestrun",
         str(xctestrun_path),
@@ -236,59 +356,7 @@ def run_test(udid: str, xctestrun_path: Path, timeout_secs: int) -> subprocess.C
         f"id={udid}",
         "-only-testing:" + ONLY_TEST,
     ]
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-        start_new_session=True,
-    )
-    assert process.stdout is not None
-    lines: list[str] = []
-    lines_lock = threading.Lock()
-
-    def read_output() -> None:
-        assert process.stdout is not None
-        for line in process.stdout:
-            with lines_lock:
-                lines.append(line)
-            sys.stdout.write(line)
-            sys.stdout.flush()
-
-    reader = threading.Thread(target=read_output, daemon=True)
-    reader.start()
-
-    try:
-        process.wait(timeout=timeout_secs)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait()
-        reader.join(timeout=5)
-        timeout_line = f"\nINSTRUMENTATION_FAILED: xcodebuild timed out after {timeout_secs}s\n"
-        with lines_lock:
-            lines.append(timeout_line)
-            stdout = "".join(lines)
-        sys.stdout.write(timeout_line)
-        sys.stdout.flush()
-        return subprocess.CompletedProcess(command, 124, stdout)
-
-    reader.join(timeout=5)
-    with lines_lock:
-        stdout = "".join(lines)
-    return subprocess.CompletedProcess(command, process.returncode, stdout)
+    return run_xcodebuild(command, timeout_secs=timeout_secs, phase="test-without-building")
 
 
 def build_env(args: argparse.Namespace) -> dict[str, str]:
@@ -327,17 +395,25 @@ def emit_status_lines(output: str, success: bool) -> None:
 def main() -> int:
     args = parse_args()
     udid = args.udid or resolve_udid(args.simulator)
+    build_timeout_secs = args.build_timeout_secs or args.timeout_secs
     simulator = is_simulator_udid(udid)
     if simulator:
         ensure_simulator_booted(udid)
-    xctestrun_source = ensure_build(udid, rebuild=args.rebuild)
+    xctestrun_source = ensure_build(udid, rebuild=args.rebuild, timeout_secs=build_timeout_secs)
     env_vars = build_env(args)
     xctestrun_path = prepare_xctestrun(xctestrun_source, env_vars)
-    completed = run_test(udid, xctestrun_path, timeout_secs=args.timeout_secs)
-    if completed.returncode != 0 and simulator and is_install_service_flake(completed.stdout):
-        print("INSTRUMENTATION_RETRY: iOS simulator install service was not ready; rebooting simulator and retrying")
-        reboot_simulator(udid)
+    try:
         completed = run_test(udid, xctestrun_path, timeout_secs=args.timeout_secs)
+        if completed.returncode != 0 and simulator and is_install_service_flake(completed.stdout):
+            print("INSTRUMENTATION_RETRY: iOS simulator install service was not ready; rebooting simulator and retrying")
+            reboot_simulator(udid)
+            completed = run_test(udid, xctestrun_path, timeout_secs=args.timeout_secs)
+    finally:
+        if xctestrun_path != xctestrun_source:
+            try:
+                xctestrun_path.unlink()
+            except FileNotFoundError:
+                pass
     emit_status_lines(completed.stdout, success=completed.returncode == 0)
     if completed.returncode != 0:
         print("INSTRUMENTATION_FAILED: iOS harness test failed")

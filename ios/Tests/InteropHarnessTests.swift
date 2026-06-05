@@ -129,6 +129,7 @@ final class InteropHarnessTests: XCTestCase {
             let updated = try await waitFor(label: "profile metadata applied", timeout: 60) {
                 manager.state.account?.displayName == displayName ? manager.state.account : nil
             }
+            try await waitForRelayDrainIfRequested(manager: manager, dataDir: dataDir, env: env)
             status("display_name", updated.displayName)
             status("public_key_hex", updated.publicKeyHex)
         case "start_linked_device_and_report_identity":

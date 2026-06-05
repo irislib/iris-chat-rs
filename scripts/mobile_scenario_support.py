@@ -245,28 +245,27 @@ def quit_idle_ios_simulator_app() -> None:
 def shutdown_stale_ios_simulators(keep_names: list[str]) -> None:
     if os.environ.get("IRIS_E2E_CLOSE_STALE_IOS_SIMS", "1") == "0":
         return
-    completed = run(
-        ["xcrun", "simctl", "list", "-j", "devices"],
-        capture=True,
-        check=False,
+    completed = subprocess.run(
+        ["xcrun", "simctl", "list", "devices", "booted"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
-    if completed.returncode != 0:
-        return
-    try:
-        data = json.loads(completed.stdout)
-    except json.JSONDecodeError:
-        return
     keep = set(keep_names)
-    for devices in data.get("devices", {}).values():
-        for device in devices:
-            if device.get("state") != "Booted" or device.get("name") in keep:
-                continue
-            udid = device.get("udid")
-            if udid:
-                if simulator_has_active_xcodebuild(udid):
-                    print(f"Keeping active iOS simulator {udid}")
-                    continue
-                run(["xcrun", "simctl", "shutdown", udid], capture=True, check=False)
+    for line in completed.stdout.splitlines():
+        match = re.match(r"^\s*(.+?) \(([0-9A-F-]{36})\) \(Booted\)", line)
+        if not match:
+            continue
+        name, udid = match.groups()
+        if name in keep:
+            continue
+        if simulator_has_active_xcodebuild(udid):
+            print(f"Keeping active iOS simulator {udid}")
+            continue
+        print(f"Shutting down stale iOS simulator {udid}")
+        subprocess.run(["xcrun", "simctl", "shutdown", udid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     quit_idle_ios_simulator_app()
 
 

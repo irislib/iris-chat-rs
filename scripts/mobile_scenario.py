@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import signal
+
 from mobile_scenario_support import *
 
 
@@ -122,6 +124,15 @@ class Scenario:
     def stop_relay(self) -> None:
         if not self.uses_local_relay():
             return
+        pid = self.state.get("relay", {}).get("pid")
+        if pid:
+            try:
+                os.killpg(int(pid), signal.SIGTERM)
+                time.sleep(0.2)
+            except (ProcessLookupError, ValueError):
+                pass
+            except PermissionError:
+                os.kill(int(pid), signal.SIGTERM)
         label = str(self.relay_config()["label"])
         run(["launchctl", "remove", label], capture=True, check=False)
 
@@ -172,8 +183,30 @@ class Scenario:
             f"exec {shlex.quote(str(relay_binary))} {shlex.quote(bind_addr)} "
             f">> {shlex.quote(str(log_file))} 2>&1"
         )
-        run(["launchctl", "submit", "-l", str(relay["label"]), "--", "/bin/bash", "-lc", command])
-        wait_for_tcp("127.0.0.1", port, 30)
+        launch = run(["launchctl", "submit", "-l", str(relay["label"]), "--", "/bin/bash", "-lc", command], check=False)
+        relay_pid = ""
+        if launch.returncode != 0:
+            print(f"launchctl submit failed with {launch.returncode}; starting relay directly.", flush=True)
+            relay_env = os.environ.copy()
+            relay_env["IRIS_LOCAL_RELAY_DROP_EVENT_IDS_FILE"] = str(drop_file)
+            with log_file.open("ab") as handle:
+                process = subprocess.Popen(
+                    [str(relay_binary), bind_addr],
+                    env=relay_env,
+                    stdout=handle,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+            relay_pid = str(process.pid)
+        try:
+            wait_for_tcp("127.0.0.1", port, 30)
+        except BaseException:
+            if relay_pid:
+                try:
+                    os.killpg(int(relay_pid), signal.SIGTERM)
+                except (ProcessLookupError, ValueError):
+                    pass
+            raise
         self.state["relay"] = {
             "label": relay["label"],
             "port": port,
@@ -182,6 +215,8 @@ class Scenario:
             "log_file": str(log_file),
             "set_id": relay["set_id"],
         }
+        if relay_pid:
+            self.state["relay"]["pid"] = relay_pid
         self.save_state()
 
     def boot_ios(self) -> None:
