@@ -5,6 +5,8 @@ import signal
 
 from mobile_scenario_support import *
 
+TRUTHY_VALUES = {"1", "true", "yes", "on"}
+
 
 class Scenario:
     def __init__(self, config_path: Path):
@@ -92,6 +94,12 @@ class Scenario:
         if device.get("platform") == "android":
             return parse_relay_urls(self.android_relay_url())
         return parse_relay_urls(self.relay_url())
+
+    def lazy_ios_boot_enabled(self) -> bool:
+        value = os.environ.get("IRIS_E2E_LAZY_IOS_BOOT")
+        if value is not None:
+            return value.strip().lower() in TRUTHY_VALUES
+        return str(self.config.get("ios", {}).get("lazy_boot", "")).strip().lower() in TRUTHY_VALUES
 
     def configure_android_relay_access(self) -> None:
         android_devices = [
@@ -233,12 +241,20 @@ class Scenario:
         ]
         udids: dict[str, str] = {}
         if names:
-            shutdown_stale_ios_simulators(names)
-            completed = run([str(IOS_SIMULATORS), "--no-open", *names])
-            for line in completed.stdout.splitlines():
-                match = re.match(r"^(.+) ([0-9A-F-]{36}) ", line)
-                if match:
-                    udids[match.group(1)] = match.group(2)
+            if self.lazy_ios_boot_enabled():
+                print("Lazy iOS boot enabled; resolving simulator UDIDs without batch boot", flush=True)
+                for name in names:
+                    udid = self.resolve_or_create_ios_simulator(name)
+                    udids[name] = udid
+                    self.shutdown_ios_simulator(udid)
+                quit_idle_ios_simulator_app()
+            else:
+                shutdown_stale_ios_simulators(names)
+                completed = run([str(IOS_SIMULATORS), "--no-open", *names])
+                for line in completed.stdout.splitlines():
+                    match = re.match(r"^(.+) ([0-9A-F-]{36}) ", line)
+                    if match:
+                        udids[match.group(1)] = match.group(2)
         for device in ios_devices:
             device_id = device["id"]
             entry = self.state["devices"].setdefault(device_id, {})
@@ -253,6 +269,102 @@ class Scenario:
             else:
                 raise SystemExit(f"Unable to resolve UDID for iOS device {device_id}")
         self.save_state()
+
+    def simctl_output(self, args: list[str], *, timeout: int = 30) -> str:
+        command = ["xcrun", "simctl", *args]
+        print("+ " + " ".join(shlex.quote(part) for part in command), flush=True)
+        completed = subprocess.run(
+            command,
+            cwd=str(ROOT_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+        if completed.stdout:
+            print(completed.stdout, end="")
+        if completed.returncode != 0:
+            raise SystemExit(completed.returncode)
+        return completed.stdout
+
+    def preferred_ios_runtime_and_device_type(self) -> tuple[str, str]:
+        runtimes = self.simctl_output(["list", "runtimes", "available"])
+        runtime_candidates: list[tuple[tuple[int, ...], str]] = []
+        for line in runtimes.splitlines():
+            if "com.apple.CoreSimulator.SimRuntime.iOS" not in line:
+                continue
+            match = re.search(r"(com\.apple\.CoreSimulator\.SimRuntime\.iOS[-A-Za-z0-9_.]+)", line)
+            if not match:
+                continue
+            version_parts = tuple(int(part) for part in re.findall(r"\d+", match.group(1)))
+            runtime_candidates.append((version_parts, match.group(1)))
+        if not runtime_candidates:
+            raise SystemExit("No available iOS simulator runtime found.")
+        runtime_id = max(runtime_candidates, key=lambda item: item[0])[1]
+
+        devicetypes = self.simctl_output(["list", "devicetypes"])
+        preferred_names = ["iPhone 16", "iPhone 16 Pro", "iPhone 15", "iPhone 14"]
+        for name in preferred_names:
+            pattern = rf"^\s*{re.escape(name)} \((com\.apple\.CoreSimulator\.SimDeviceType\.[^)]+)\)"
+            match = re.search(pattern, devicetypes, flags=re.MULTILINE)
+            if match:
+                return runtime_id, match.group(1)
+        match = re.search(r"^\s*iPhone [^(]+ \((com\.apple\.CoreSimulator\.SimDeviceType\.[^)]+)\)", devicetypes, flags=re.MULTILINE)
+        if not match:
+            raise SystemExit("No iPhone simulator device type found.")
+        return runtime_id, match.group(1)
+
+    def resolve_or_create_ios_simulator(self, simulator_name: str) -> str:
+        devices = self.simctl_output(["list", "devices", "available"])
+        pattern = rf"^\s*{re.escape(simulator_name)} \(([0-9A-F-]{{36}})\)"
+        match = re.search(pattern, devices, flags=re.MULTILINE)
+        if match:
+            return match.group(1)
+        runtime_id, device_type_id = self.preferred_ios_runtime_and_device_type()
+        command = ["xcrun", "simctl", "create", simulator_name, device_type_id, runtime_id]
+        print("+ " + " ".join(shlex.quote(part) for part in command), flush=True)
+        completed = subprocess.run(
+            command,
+            cwd=str(ROOT_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        if completed.stdout:
+            print(completed.stdout, end="")
+        if completed.returncode != 0:
+            raise SystemExit(completed.returncode)
+        udid = completed.stdout.strip()
+        if not re.fullmatch(r"[0-9A-F-]{36}", udid):
+            raise SystemExit(f"Unexpected simctl create output for {simulator_name}: {udid}")
+        return udid
+
+    def shutdown_ios_simulator(self, udid: str) -> None:
+        try:
+            subprocess.run(
+                ["xcrun", "simctl", "shutdown", udid],
+                cwd=str(ROOT_DIR),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=15,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"Timed out shutting down iOS simulator {udid}; continuing", flush=True)
+
+    def shutdown_ios_devices_except(self, keep_device_ids: set[str]) -> None:
+        if not self.lazy_ios_boot_enabled():
+            return
+        for device_id, device in self.state.get("devices", {}).items():
+            if device_id in keep_device_ids:
+                continue
+            if device.get("platform") == "ios" and device.get("udid"):
+                self.shutdown_ios_simulator(device["udid"])
+        quit_idle_ios_simulator_app()
 
     def boot_android(self) -> None:
         android_devices = [
@@ -546,6 +658,8 @@ class Scenario:
 
     def create_account(self, device: dict[str, Any], *, rebuild: bool) -> None:
         device_id = device["id"]
+        if device.get("platform") == "ios":
+            self.shutdown_ios_devices_except({device_id})
         self.harness(
             device_id,
             "create_account_and_report_identity",
@@ -607,6 +721,7 @@ class Scenario:
         owner = self.state["users"].get(owner_user)
         if not owner:
             raise SystemExit(f"Cannot link {device_id}; owner user {owner_user} has no identity")
+        self.shutdown_ios_devices_except({device_id, owner_device_id})
         status_file = self.work_dir / f"{device_id}-link.status"
         log_file = self.work_dir / f"{device_id}-link.log"
         status_file.unlink(missing_ok=True)
@@ -628,10 +743,12 @@ class Scenario:
                 start_new_session=True,
             )
         try:
-            link_url = wait_for_status_in_files(
+            link_url = self.wait_for_background_status(
+                process,
                 [status_file, log_file],
                 self.link_status_key(device_id),
                 int(device.get("link_timeout_secs", 180)),
+                log_file=log_file,
             )
         except BaseException:
             self.stop_background_harness(process)
@@ -662,6 +779,29 @@ class Scenario:
         if status_file.exists():
             status_output = status_file.read_text(encoding="utf-8", errors="replace")
         self.record_identity(device_id, parse_status(output + "\n" + status_output))
+
+    def wait_for_background_status(
+        self,
+        process: subprocess.Popen[str],
+        paths: list[Path],
+        key: str,
+        timeout_secs: int,
+        *,
+        log_file: Path,
+    ) -> str:
+        deadline = time.monotonic() + timeout_secs
+        while time.monotonic() < deadline:
+            for path in paths:
+                if path.exists():
+                    value = parse_status(path.read_text(encoding="utf-8", errors="replace")).get(key)
+                    if value:
+                        return value
+            exit_code = process.poll()
+            if exit_code is not None:
+                raise SystemExit(f"Background harness exited before reporting {key} (code {exit_code})")
+            time.sleep(1)
+        joined = ", ".join(str(path) for path in paths)
+        raise SystemExit(f"Timed out waiting for {key} in {joined}")
 
     def stop_background_harness(self, process: subprocess.Popen[str]) -> None:
         if process.poll() is not None:
