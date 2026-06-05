@@ -8,19 +8,15 @@ import AppKit
 final class InMemorySecretStore: AccountSecretStore {
     var bundle: StoredAccountBundle?
     var clearSucceeds = true
-
     init(bundle: StoredAccountBundle? = nil) {
         self.bundle = bundle
     }
-
     func load() -> StoredAccountBundle? {
         bundle
     }
-
     func save(_ bundle: StoredAccountBundle) {
         self.bundle = bundle
     }
-
     @discardableResult
     func clear() -> Bool {
         guard clearSucceeds else {
@@ -33,7 +29,6 @@ final class InMemorySecretStore: AccountSecretStore {
 
 private final class MockDesktopNotificationPoster: DesktopNotificationPosting {
     var posts: [(title: String, body: String)] = []
-
     func post(title: String, body: String) {
         posts.append((title: title, body: body))
     }
@@ -58,13 +53,11 @@ final class MockRustApp: RustAppClient {
     private var shutdownCalls = 0
     private let shutdownLock = NSLock()
     private var reconciler: AppReconciler?
-
     var dispatchedActions: [AppAction] {
         dispatchedActionsLock.lock()
         defer { dispatchedActionsLock.unlock() }
         return dispatchedActionsStorage
     }
-
     func clearDispatchedActions() { dispatchedActionsLock.lock(); dispatchedActionsStorage.removeAll(); dispatchedActionsLock.unlock() }
 
     var chatSnapshotCallCount: Int {
