@@ -14,8 +14,8 @@ from mobile_scenario import ANDROID_APP_PACKAGE, ROOT_DIR, Scenario
 
 
 DEFAULT_PUBLIC_RELAYS = "wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://temp.iris.to"
-USER_VISIBLE_TIMEOUT_SECS = "60"
-USER_VISIBLE_TIMEOUT_MS = "60000"
+USER_VISIBLE_TIMEOUT_SECS = os.environ.get("IRIS_E2E_USER_VISIBLE_TIMEOUT_SECS", "60")
+USER_VISIBLE_TIMEOUT_MS = str(int(USER_VISIBLE_TIMEOUT_SECS) * 1000)
 
 
 def run(command: list[str], *, cwd: Path = ROOT_DIR, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -110,6 +110,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--serials", help="One or two adb serials, space-separated. Can be combined with --avds.")
     parser.add_argument("--avds", help="One or two AVD names, space-separated. Can be combined with --serials.")
     return parser.parse_args()
+
+
+def validate_args(args: argparse.Namespace) -> None:
+    if (
+        args.skip_build
+        and args.relay_mode == "local"
+        and not (args.relay_port or args.relay_url or args.android_relay_url)
+    ):
+        raise SystemExit(
+            "--skip-build with a local relay needs --relay-port, --relay-url, or --android-relay-url. "
+            "Restoring clears app data, so the debug app falls back to the relay baked into the installed APK."
+        )
 
 
 def build_config(args: argparse.Namespace, artifact_dir: Path) -> Path:
@@ -346,6 +358,7 @@ def run_flow(scenario: Scenario, artifact_dir: Path) -> dict[str, Any]:
 
 def main() -> int:
     args = parse_args()
+    validate_args(args)
     run_id = stamp()
     suffix = f"{args.relay_mode}-{run_id}"
     artifact_dir = (args.artifact_dir or Path(f"/tmp/iris-android-restore-profile-{suffix}")).resolve()

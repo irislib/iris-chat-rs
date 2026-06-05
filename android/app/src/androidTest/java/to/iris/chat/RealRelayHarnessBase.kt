@@ -349,27 +349,58 @@ abstract class RealRelayHarnessBase {
                 .coerceAtLeast(1_000L)
         val wakeRelay = relayWakeCallback()
         wakeRelay()
-        val status =
-            waitForState("relay publish drain", timeoutMs = timeoutMs) {
-                wakeRelay()
-                val pendingDurablePublishCount = pendingRelayPublishCount()
-                appManager()
-                    .state
-                    .value
-                    .networkStatus
-                    ?.takeIf { status ->
-                        (status.relayUrls.isEmpty() || status.connectedRelayCount > 0UL) &&
-                            !status.syncing &&
-                            pendingDurablePublishCount == 0 &&
-                            (runtimeOnly || status.pendingOutboundCount == 0UL) &&
-                            status.pendingGroupControlCount == 0UL
-                    }
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        var lastStatus = appManager().state.value.networkStatus
+        var lastPendingDurablePublishCount = pendingRelayPublishCount()
+        while (SystemClock.elapsedRealtime() < deadline) {
+            wakeRelay()
+            lastPendingDurablePublishCount = pendingRelayPublishCount()
+            lastStatus = appManager().state.value.networkStatus
+            val status = lastStatus
+            if (
+                status != null &&
+                    (status.relayUrls.isEmpty() || status.connectedRelayCount > 0UL) &&
+                    !status.syncing &&
+                    lastPendingDurablePublishCount == 0 &&
+                    (runtimeOnly || status.pendingOutboundCount == 0UL) &&
+                    status.pendingGroupControlCount == 0UL
+            ) {
+                reportStatus(
+                    "pending_outbound_count" to status.pendingOutboundCount.toString(),
+                    "pending_runtime_outbound_count" to pendingRelayPublishCount().toString(),
+                    "pending_group_control_count" to status.pendingGroupControlCount.toString(),
+                    "network_syncing" to status.syncing.toString(),
+                )
+                return
             }
+            SystemClock.sleep(100)
+        }
+        val sqlite = readSqliteCoreSnapshot()
+        val debug = readLiveRuntimeDebugSnapshot()
+        val status = lastStatus
+        val runtimePendingSummary = debug?.let(::runtimePendingSummary).orEmpty()
+        val pendingRuntimePublishes =
+            summarizeRuntimePendingRelayPublishes(debug?.optJSONArray("pending_relay_publishes"))
         reportStatus(
-            "pending_outbound_count" to status.pendingOutboundCount.toString(),
-            "pending_runtime_outbound_count" to pendingRelayPublishCount().toString(),
-            "pending_group_control_count" to status.pendingGroupControlCount.toString(),
-            "network_syncing" to status.syncing.toString(),
+            "pending_outbound_count" to (status?.pendingOutboundCount?.toString() ?: ""),
+            "pending_runtime_outbound_count" to lastPendingDurablePublishCount.toString(),
+            "pending_group_control_count" to (status?.pendingGroupControlCount?.toString() ?: ""),
+            "network_syncing" to (status?.syncing?.toString() ?: ""),
+            "network_connected_relay_count" to (status?.connectedRelayCount?.toString() ?: ""),
+            "network_relay_urls" to (status?.relayUrls?.joinToString(",") ?: ""),
+            "runtime_pending_summary" to runtimePendingSummary,
+            "pending_relay_publishes" to pendingRuntimePublishes,
+            "sqlite_pending_relay_publishes" to sqlite.pendingRelayPublishes,
+        )
+        throw AssertionError(
+            "Timed out waiting for relay publish drain; " +
+                "connected=${status?.connectedRelayCount ?: ""} " +
+                "syncing=${status?.syncing ?: ""} " +
+                "pending_outbound=${status?.pendingOutboundCount ?: ""} " +
+                "pending_runtime=$lastPendingDurablePublishCount " +
+                "pending_group_control=${status?.pendingGroupControlCount ?: ""} " +
+                "runtime=$runtimePendingSummary " +
+                "sqlite_pending=${sqlite.pendingRelayPublishes}",
         )
     }
 

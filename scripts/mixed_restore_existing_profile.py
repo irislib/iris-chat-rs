@@ -16,8 +16,8 @@ from mobile_scenario import ANDROID_APP_PACKAGE, ROOT_DIR, Scenario, discover_an
 
 DEFAULT_SIMULATOR = "Iris Chat iPhone"
 DEFAULT_PUBLIC_RELAYS = "wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://temp.iris.to"
-USER_VISIBLE_TIMEOUT_SECS = "60"
-USER_VISIBLE_TIMEOUT_MS = "60000"
+USER_VISIBLE_TIMEOUT_SECS = os.environ.get("IRIS_E2E_USER_VISIBLE_TIMEOUT_SECS", "60")
+USER_VISIBLE_TIMEOUT_MS = str(int(USER_VISIBLE_TIMEOUT_SECS) * 1000)
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,6 +44,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--simulator", default=DEFAULT_SIMULATOR, help=f"iOS simulator name. Default: {DEFAULT_SIMULATOR}.")
     parser.add_argument("--udid", help="iOS simulator/device UDID.")
     return parser.parse_args()
+
+
+def validate_args(args: argparse.Namespace) -> None:
+    if (
+        args.skip_build
+        and args.relay_mode == "local"
+        and not (args.relay_port or args.relay_url or args.android_relay_url)
+    ):
+        raise SystemExit(
+            "--skip-build with a local relay needs --relay-port, --relay-url, or --android-relay-url. "
+            "Restoring clears app data, so apps fall back to the relay baked into the installed artifacts."
+        )
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -442,6 +454,7 @@ def run_flow(scenario: Scenario, artifact_dir: Path, source_platform: str) -> di
 
 def main() -> int:
     args = parse_args()
+    validate_args(args)
     run_id = stamp()
     mode_suffix = "public" if args.relay_mode == "public" else "local"
     suffix = f"{mode_suffix}-{run_id}-{args.source_platform}-source"
