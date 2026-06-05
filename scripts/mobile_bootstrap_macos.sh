@@ -63,8 +63,8 @@ fi
 
 if [[ -n "${XCRUN_BIN}" ]]; then
   echo "---"
-  IOS_RUNTIME_COUNT="$("${XCRUN_BIN}" simctl list runtimes available 2>/dev/null | rg -c "iOS" || true)"
-  IOS_DEVICE_COUNT="$("${XCRUN_BIN}" simctl list devices available 2>/dev/null | rg -c "^[[:space:]]+[A-Za-z0-9]" || true)"
+  IOS_RUNTIME_COUNT="$("${XCRUN_BIN}" simctl list runtimes available 2>/dev/null | grep -c "iOS" || true)"
+  IOS_DEVICE_COUNT="$("${XCRUN_BIN}" simctl list devices available 2>/dev/null | grep -Ec "^[[:space:]]+[A-Za-z0-9]" || true)"
   print_status "Available iOS runtimes" "${IOS_RUNTIME_COUNT}"
   print_status "Available iOS devices" "${IOS_DEVICE_COUNT}"
 fi
