@@ -66,7 +66,7 @@ class PikaLikeUiTest {
 
         composeRule.waitForTag("myProfileSheet")
         composeRule.waitForDisplayedTag("settingsProfileQrButton")
-        composeRule.waitForDisplayedTag("settingsDevicesRow")
+        composeRule.waitForDisplayedTagAfterScroll("settingsDevicesRow")
         composeRule.openSettingsPage("settingsProfileRow")
         composeRule.waitForDisplayedTagAfterScroll("myProfileShowQrButton")
         composeRule.waitForDisplayedTagAfterScroll("myProfileDisplayNameInput")
@@ -308,8 +308,8 @@ class PikaLikeUiTest {
             composeRule.onNodeWithTag("chatMessageInput", useUnmergedTree = true)
                 .performTextInput(message)
             composeRule.onNodeWithTag("chatSendButton", useUnmergedTree = true).performClick()
-            composeRule.waitForText(message)
-            composeRule.onNodeWithText(message, useUnmergedTree = true).assertIsDisplayed()
+            composeRule.waitForCurrentChatMessage(message)
+            composeRule.waitForDisplayedText(message)
         }
     }
 
@@ -392,8 +392,7 @@ class PikaLikeUiTest {
         composeRule.waitForTag("linkDeviceQrCode")
         composeRule.onNodeWithTag("linkDeviceQrCode", useUnmergedTree = true)
             .assertIsDisplayed()
-        composeRule.onNodeWithTag("linkDeviceCopyButton", useUnmergedTree = true)
-            .assertIsDisplayed()
+        composeRule.waitForDisplayedTagAfterScroll("linkDeviceCopyButton")
     }
 
     @Test
@@ -546,6 +545,27 @@ class PikaLikeUiTest {
             runCatching {
                 onAllNodesWithText(text, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }.getOrDefault(false)
+        }
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitForDisplayedText(
+        text: String,
+        timeoutMillis: Long = 20_000,
+    ) {
+        waitUntil(timeoutMillis) {
+            runCatching {
+                onNodeWithText(text, useUnmergedTree = true).assertIsDisplayed()
+                true
+            }.getOrDefault(false)
+        }
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitForCurrentChatMessage(
+        message: String,
+        timeoutMillis: Long = 15_000,
+    ) {
+        waitUntil(timeoutMillis) {
+            currentChatMessageBodies().contains(message)
         }
     }
 
