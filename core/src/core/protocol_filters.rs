@@ -12,11 +12,12 @@ pub(super) fn summarize_protocol_plan(plan: Option<&ProtocolSubscriptionPlan>) -
         return "none".to_string();
     };
     format!(
-        "runtime={} roster_authors={} invite_authors={} message_authors={} group_sender_key_authors={} invite_response_recipient={}",
+        "runtime={} roster_authors={} invite_authors={} message_authors={} message_recipients={} group_sender_key_authors={} invite_response_recipient={}",
         plan.runtime_subscriptions.join(","),
         plan.roster_authors.len(),
         plan.invite_authors.len(),
         plan.message_authors.len(),
+        plan.message_recipients.len(),
         plan.group_sender_key_authors.len(),
         plan.invite_response_recipient.as_deref().unwrap_or("")
     )

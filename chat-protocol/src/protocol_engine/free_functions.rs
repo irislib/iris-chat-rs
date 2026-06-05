@@ -14,7 +14,7 @@ fn protocol_effects_from_prepared(
         });
     }
     for delivery in &prepared.deliveries {
-        let event = message_event(&delivery.envelope)?;
+        let event = message_event_for_delivery(delivery)?;
         event_ids.push(event.id.to_string());
         let publish = ProtocolPublish {
             event,
@@ -42,7 +42,7 @@ fn protocol_effects_from_group_prepared_publish(
         });
     }
     for delivery in &prepared.deliveries {
-        let event = message_event(&delivery.envelope)?;
+        let event = message_event_for_delivery(delivery)?;
         event_ids.push(event.id.to_string());
         let publish = ProtocolPublish {
             event,
@@ -61,6 +61,36 @@ fn protocol_effects_from_group_prepared_publish(
         });
     }
     Ok(publishes.into_iter().map(ProtocolEffect::Publish).collect())
+}
+
+fn message_event_for_delivery(delivery: &Delivery) -> anyhow::Result<Event> {
+    let envelope = &delivery.envelope;
+    let author_secret_key = nostr::SecretKey::from_slice(&envelope.signer_secret_key)?;
+    let author_keys = Keys::new(author_secret_key);
+    let derived_sender = NdrDevicePubkey::from_bytes(author_keys.public_key().to_bytes());
+    if derived_sender != envelope.sender {
+        anyhow::bail!("sender does not match signer secret");
+    }
+
+    let recipient = public_device_pubkey(delivery.device_pubkey)?;
+    let recipient_hex = recipient.to_hex();
+    let unsigned = nostr::EventBuilder::new(
+        Kind::from(MESSAGE_EVENT_KIND as u16),
+        envelope.ciphertext.clone(),
+    )
+    .tag(nostr::Tag::parse([
+        "header",
+        envelope.encrypted_header.as_str(),
+    ])?)
+    .tag(nostr::Tag::parse(["p", recipient_hex.as_str()])?)
+    .custom_created_at(Timestamp::from(envelope.created_at.get()))
+    .build(public_device_pubkey(envelope.sender)?);
+
+    Ok(unsigned.sign_with_keys(&author_keys)?)
+}
+
+fn public_device_pubkey(device_pubkey: NdrDevicePubkey) -> anyhow::Result<PublicKey> {
+    Ok(PublicKey::from_slice(&device_pubkey.to_bytes())?)
 }
 
 fn classify_group_pairwise_payload(payload: &[u8]) -> anyhow::Result<(bool, bool)> {

@@ -208,7 +208,11 @@ impl AppCore {
                     .as_ref()
                     .is_some_and(|engine| !engine.is_known_message_author(event.pubkey));
                 if unknown_message_author {
-                    if !message_has_header || self.private_chat_invites.is_empty() {
+                    let targets_local_recipient =
+                        message_has_header && self.message_targets_local_protocol_recipient(&event);
+                    if !message_has_header
+                        || (self.private_chat_invites.is_empty() && !targets_local_recipient)
+                    {
                         self.push_debug_log(
                             "appcore.protocol.message.ignored",
                             "unknown message author",
@@ -326,6 +330,12 @@ impl AppCore {
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
+    }
+
+    fn message_targets_local_protocol_recipient(&self, event: &Event) -> bool {
+        self.protocol_message_recipient_pubkeys()
+            .into_iter()
+            .any(|pubkey| event_has_pubkey_tag(event, pubkey))
     }
 
     fn handle_pending_link_device_response(&mut self, event: Event) -> bool {
@@ -532,6 +542,15 @@ fn event_has_tag(event: &Event, name: &str) -> bool {
         .tags
         .iter()
         .any(|tag| tag.as_slice().first().map(|value| value.as_str()) == Some(name))
+}
+
+fn event_has_pubkey_tag(event: &Event, pubkey: PublicKey) -> bool {
+    let pubkey_hex = pubkey.to_hex();
+    event.tags.iter().any(|tag| {
+        let values = tag.as_slice();
+        values.first().map(|value| value.as_str()) == Some("p")
+            && values.get(1).map(|value| value.as_str()) == Some(pubkey_hex.as_str())
+    })
 }
 
 #[cfg(test)]

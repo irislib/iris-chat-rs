@@ -577,7 +577,8 @@ impl AppCore {
                 let should_fetch_tracked_peer_messages =
                     self.protocol_subscription_runtime.desired_plan
                         != self.protocol_subscription_runtime.applied_plan
-                        || self.protocol_subscription_runtime.refresh_dirty;
+                        || self.protocol_subscription_runtime.refresh_dirty
+                        || self.message_recipient_bootstrap_needed();
                 self.push_debug_log(
                     "protocol.catch_up.schedule",
                     format!("fetch tracked peers messages={should_fetch_tracked_peer_messages}"),

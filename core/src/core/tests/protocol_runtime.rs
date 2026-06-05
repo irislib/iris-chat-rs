@@ -91,6 +91,7 @@ fn protocol_plan_for_test(
             .into_iter()
             .map(|pubkey| pubkey.to_hex())
             .collect(),
+        message_recipients: Vec::new(),
         group_sender_key_authors: group_sender_key_authors
             .into_iter()
             .map(|pubkey| pubkey.to_hex())

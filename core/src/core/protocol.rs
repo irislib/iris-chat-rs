@@ -5,7 +5,8 @@ mod backfill;
 mod retry_helpers;
 
 use self::backfill::{
-    direct_message_history_filter, group_sender_key_history_filter, protocol_event_summary,
+    direct_message_history_filter, direct_message_recipient_history_filter,
+    group_sender_key_history_filter, protocol_event_summary,
     NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS, PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE,
 };
 
@@ -400,6 +401,32 @@ impl AppCore {
         self.spawn_protocol_author_backfills(client, relay_urls, filters, "direct_message_authors");
     }
 
+    fn fetch_recent_messages_for_recipients(&mut self, recipient_pubkeys: Vec<PublicKey>) {
+        let Some((client, relay_urls)) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
+        else {
+            return;
+        };
+        if recipient_pubkeys.is_empty() {
+            return;
+        }
+        let now = unix_now();
+        let filters = recipient_pubkeys
+            .chunks(PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE)
+            .map(|recipient_chunk| {
+                direct_message_recipient_history_filter(recipient_chunk.to_vec(), now)
+            })
+            .collect::<Vec<_>>();
+        self.spawn_protocol_author_backfills(
+            client,
+            relay_urls,
+            filters,
+            "direct_message_recipients",
+        );
+    }
+
     fn spawn_protocol_author_backfills(
         &mut self,
         client: Client,
@@ -544,6 +571,17 @@ impl AppCore {
                     .map(ProtocolEngine::known_message_author_pubkeys)
                     .unwrap_or_default()
             });
+        let direct_recipients = self
+            .protocol_subscription_runtime
+            .desired_plan
+            .as_ref()
+            .map(|plan| {
+                plan.message_recipients
+                    .iter()
+                    .filter_map(|hex| PublicKey::parse(hex).ok())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| self.protocol_message_recipient_pubkeys());
         let group_authors = self
             .protocol_subscription_runtime
             .desired_plan
@@ -565,6 +603,7 @@ impl AppCore {
         } else {
             self.fetch_recent_messages_for_authors(direct_authors);
         }
+        self.fetch_recent_messages_for_recipients(direct_recipients);
         self.fetch_recent_group_sender_key_messages_for_authors(group_authors);
     }
 
@@ -626,6 +665,14 @@ impl AppCore {
             let message_authors = pubkeys_from_hexes(&plan.message_authors);
             if !message_authors.is_empty() {
                 filters.push(direct_message_history_filter(message_authors));
+            }
+
+            let message_recipients = pubkeys_from_hexes(&plan.message_recipients);
+            if !message_recipients.is_empty() {
+                filters.push(direct_message_recipient_history_filter(
+                    message_recipients,
+                    now,
+                ));
             }
 
             let group_sender_key_authors = pubkeys_from_hexes(&plan.group_sender_key_authors);
@@ -699,6 +746,30 @@ impl AppCore {
         pubkeys.sort_by_key(|pubkey| pubkey.to_hex());
         pubkeys.dedup();
         pubkeys
+    }
+
+    pub(super) fn message_recipient_bootstrap_needed(&self) -> bool {
+        let Some(engine) = self.protocol_engine.as_ref() else {
+            return false;
+        };
+        self.tracked_peer_owner_hexes().iter().any(|owner_hex| {
+            self.app_keys.contains_key(owner_hex)
+                && PublicKey::parse(owner_hex).is_ok_and(|owner_pubkey| {
+                    engine
+                        .message_author_pubkeys_for_owner(owner_pubkey)
+                        .is_empty()
+                })
+        })
+    }
+
+    pub(super) fn protocol_message_recipient_pubkeys(&self) -> Vec<PublicKey> {
+        if !self.message_recipient_bootstrap_needed() {
+            return Vec::new();
+        }
+        self.logged_in
+            .as_ref()
+            .map(|logged_in| vec![logged_in.device_keys.public_key()])
+            .unwrap_or_default()
     }
 
     pub(super) fn fetch_recent_protocol_state(&mut self) -> bool {
@@ -1152,6 +1223,12 @@ impl AppCore {
             .collect::<HashSet<_>>();
         let invite_authors = sorted_hexes(invite_authors);
         let message_authors = sorted_hexes(self.subscribable_message_author_hexes());
+        let message_recipients = self
+            .protocol_message_recipient_pubkeys()
+            .into_iter()
+            .map(|pubkey| pubkey.to_hex())
+            .collect::<HashSet<_>>();
+        let message_recipients = sorted_hexes(message_recipients);
         let group_sender_key_authors = self
             .protocol_engine
             .as_ref()
@@ -1172,6 +1249,7 @@ impl AppCore {
         let has_filters = !roster_authors.is_empty()
             || !invite_authors.is_empty()
             || !message_authors.is_empty()
+            || !message_recipients.is_empty()
             || !group_sender_key_authors.is_empty()
             || invite_response_recipient.is_some();
         has_filters.then_some(ProtocolSubscriptionPlan {
@@ -1179,6 +1257,7 @@ impl AppCore {
             roster_authors,
             invite_authors,
             message_authors,
+            message_recipients,
             group_sender_key_authors,
             invite_response_recipient,
         })
@@ -1436,8 +1515,9 @@ impl AppCore {
                 || self.protocol_subscription_runtime.refresh_dirty
                 || desired_unapplied);
         let should_retry_protocol = should_retry_backfill || pending_protocol_retry_needed;
-        let should_fetch_tracked_peer_messages =
-            desired_unapplied || self.protocol_subscription_runtime.refresh_dirty;
+        let should_fetch_tracked_peer_messages = desired_unapplied
+            || self.protocol_subscription_runtime.refresh_dirty
+            || self.message_recipient_bootstrap_needed();
         self.push_debug_log(
             "protocol.liveness",
             format!(
@@ -1741,6 +1821,7 @@ pub(super) fn build_protocol_subscription_filters(plan: &ProtocolSubscriptionPla
     let roster_authors = pubkeys_from_hexes(&plan.roster_authors);
     let invite_authors = pubkeys_from_hexes(&plan.invite_authors);
     let message_authors = pubkeys_from_hexes(&plan.message_authors);
+    let message_recipients = pubkeys_from_hexes(&plan.message_recipients);
     let group_sender_key_authors = pubkeys_from_hexes(&plan.group_sender_key_authors);
     let invite_response_recipients = plan
         .invite_response_recipient
@@ -1775,6 +1856,13 @@ pub(super) fn build_protocol_subscription_filters(plan: &ProtocolSubscriptionPla
             Filter::new()
                 .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
                 .authors(message_authors),
+        );
+    }
+    if !message_recipients.is_empty() {
+        filters.push(
+            Filter::new()
+                .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
+                .pubkeys(message_recipients),
         );
     }
     if !group_sender_key_authors.is_empty() {

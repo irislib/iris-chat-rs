@@ -23,6 +23,20 @@ pub(super) fn direct_message_history_filter(
         .authors(unique_pubkeys(author_pubkeys))
 }
 
+pub(super) fn direct_message_recipient_history_filter(
+    recipient_pubkeys: impl IntoIterator<Item = PublicKey>,
+    now: UnixSeconds,
+) -> Filter {
+    Filter::new()
+        .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
+        .pubkeys(unique_pubkeys(recipient_pubkeys))
+        .since(Timestamp::from(
+            now.get()
+                .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
+        ))
+        .limit(DEVICE_INVITE_DISCOVERY_LIMIT)
+}
+
 pub(super) fn group_sender_key_history_filter(
     author_pubkeys: impl IntoIterator<Item = PublicKey>,
 ) -> Filter {

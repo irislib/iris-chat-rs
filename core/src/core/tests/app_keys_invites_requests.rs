@@ -1333,6 +1333,7 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
         roster_authors: vec![owner.public_key().to_hex()],
         invite_authors: vec![invite_author.public_key().to_hex()],
         message_authors: vec![message_author.public_key().to_hex()],
+        message_recipients: Vec::new(),
         group_sender_key_authors: vec![group_author.public_key().to_hex()],
         invite_response_recipient: Some(invite_response_recipient.public_key().to_hex()),
     };
@@ -1664,7 +1665,7 @@ fn has_bootstrap_message_filter(filters: &[Filter]) -> bool {
                         .iter()
                         .any(|kind| kind.as_u64() == Some(MESSAGE_EVENT_KIND as u64))
                 });
-            has_message_kind && filter.get("authors").is_none()
+            has_message_kind && filter.get("authors").is_none() && filter.get("#p").is_none()
         })
 }
 
