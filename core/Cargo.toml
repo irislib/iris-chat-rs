@@ -41,7 +41,7 @@ hashtree-core = "0.2.55"
 hashtree-resolver = { version = "0.2.56", features = ["nostr"] }
 hashtree-updater = "0.2.56"
 hmac = "0.12"
-iris-chat-protocol = { version = "0.1.1", path = "../chat-protocol" }
+iris-chat-protocol = { version = "0.1.2", path = "../chat-protocol" }
 nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
 nostr35 = { package = "nostr", version = "0.35.0", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
