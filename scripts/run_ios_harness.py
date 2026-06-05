@@ -172,25 +172,46 @@ def wait_for_simulator_boot(udid: str) -> None:
 def ensure_simulator_booted(udid: str) -> None:
     if simulator_is_booted(udid):
         return
-    try:
-        subprocess.run(["xcrun", "simctl", "boot", udid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
-    except subprocess.TimeoutExpired:
-        print(f"INSTRUMENTATION_RETRY: simctl boot timed out for {udid}; checking bootstatus")
+    boot_simulator(udid)
     wait_for_simulator_boot(udid)
+
+
+def boot_simulator(udid: str, attempts: int = 3) -> None:
+    last_error: subprocess.CalledProcessError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            subprocess.run(
+                ["xcrun", "simctl", "boot", udid],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+                timeout=20,
+            )
+            return
+        except subprocess.TimeoutExpired:
+            print(f"INSTRUMENTATION_RETRY: simctl boot timed out for {udid}; checking bootstatus", flush=True)
+            return
+        except subprocess.CalledProcessError as error:
+            if simulator_is_booted(udid):
+                return
+            last_error = error
+            if attempt < attempts:
+                print(
+                    f"INSTRUMENTATION_RETRY: simctl boot failed for {udid} "
+                    f"with {error.returncode}; retrying",
+                    flush=True,
+                )
+                time.sleep(5)
+    if last_error is not None:
+        raise last_error
 
 
 def reboot_simulator(udid: str) -> None:
     try:
         subprocess.run(["xcrun", "simctl", "shutdown", udid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
     except subprocess.TimeoutExpired:
-        print(f"INSTRUMENTATION_RETRY: simctl shutdown timed out for {udid}; continuing reboot")
-    try:
-        subprocess.run(["xcrun", "simctl", "boot", udid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=20)
-    except subprocess.TimeoutExpired:
-        print(f"INSTRUMENTATION_RETRY: simctl boot timed out for {udid}; checking bootstatus")
-    except subprocess.CalledProcessError:
-        if not simulator_is_booted(udid):
-            raise
+        print(f"INSTRUMENTATION_RETRY: simctl shutdown timed out for {udid}; continuing reboot", flush=True)
+    boot_simulator(udid)
     wait_for_simulator_boot(udid)
 
 
