@@ -186,6 +186,15 @@ wait_for_bootstatus() {
   while kill -0 "${pid}" >/dev/null 2>&1; do
     if (( SECONDS >= deadline )); then
       kill "${pid}" >/dev/null 2>&1 || true
+      for _ in 1 2 3 4 5; do
+        if ! kill -0 "${pid}" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 1
+      done
+      if kill -0 "${pid}" >/dev/null 2>&1; then
+        kill -9 "${pid}" >/dev/null 2>&1 || true
+      fi
       wait "${pid}" >/dev/null 2>&1 || true
       if xcrun simctl list devices booted | grep -q "(${udid}) (Booted)"; then
         echo "Timed out waiting for iOS simulator ${udid} bootstatus; continuing because simctl reports Booted." >&2

@@ -57,6 +57,20 @@ extension InteropHarnessTests {
         }
     }
 
+    func applyHarnessRelaysIfProvided(manager: AppManager, env: [String: String]) async throws {
+        let relayURLs = parseList(env["IRIS_IOS_HARNESS_RELAY_URLS"] ?? env["IRIS_IOS_HARNESS_RELAY_URL"] ?? "")
+            .map(normalizedHarnessRelayURL)
+        guard !relayURLs.isEmpty else {
+            return
+        }
+        manager.dispatch(.setNostrRelays(relayUrls: relayURLs))
+        _ = try await waitFor(label: "set relays", timeout: 30) {
+            manager.state.preferences.nostrRelayUrls == relayURLs ? true : nil
+        }
+        status("relay_count", String(manager.state.preferences.nostrRelayUrls.count))
+        status("relays", manager.state.preferences.nostrRelayUrls.joined(separator: "|"))
+    }
+
     func ensureChatOpen(
         manager: AppManager,
         dataDir: URL,

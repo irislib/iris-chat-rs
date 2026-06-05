@@ -191,68 +191,95 @@ def tcp_open(host: str, port: int) -> bool:
 
 
 def simulator_has_active_xcodebuild(udid: str) -> bool:
-    completed = subprocess.run(
-        ["pgrep", "-fl", "xcodebuild"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    try:
+        completed = subprocess.run(
+            ["pgrep", "-fl", "xcodebuild"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        return True
     return f"id={udid}" in completed.stdout
 
 
 def quit_idle_ios_simulator_app() -> None:
     if os.environ.get("IRIS_E2E_KEEP_IOS_SIMS", "0") == "1":
         return
-    booted = subprocess.run(
-        ["xcrun", "simctl", "list", "devices", "booted"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    try:
+        booted = subprocess.run(
+            ["xcrun", "simctl", "list", "devices", "booted"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        print("Timed out checking booted iOS simulators; leaving Simulator app running", flush=True)
+        return
     if booted.returncode == 0 and "(Booted)" in booted.stdout:
         return
-    xcodebuild = subprocess.run(
-        ["pgrep", "-fl", "xcodebuild"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    try:
+        xcodebuild = subprocess.run(
+            ["pgrep", "-fl", "xcodebuild"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        print("Timed out checking xcodebuild processes; leaving Simulator app running", flush=True)
+        return
     if re.search(r"id=[0-9A-F-]{36}|platform=iOS Simulator|iphonesimulator", xcodebuild.stdout):
         return
-    simulator = subprocess.run(
-        ["pgrep", "-x", "Simulator"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    try:
+        simulator = subprocess.run(
+            ["pgrep", "-x", "Simulator"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        return
     if simulator.returncode != 0:
         return
     print("Quitting idle iOS Simulator app", flush=True)
-    quit_result = subprocess.run(
-        ["osascript", "-e", 'tell application "Simulator" to quit'],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    try:
+        quit_result = subprocess.run(
+            ["osascript", "-e", 'tell application "Simulator" to quit'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        quit_result = subprocess.CompletedProcess([], 124)
     if quit_result.returncode != 0:
-        subprocess.run(["pkill", "-x", "Simulator"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["pkill", "-x", "Simulator"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
 
 
 def shutdown_stale_ios_simulators(keep_names: list[str]) -> None:
     if os.environ.get("IRIS_E2E_CLOSE_STALE_IOS_SIMS", "1") == "0":
         return
-    completed = subprocess.run(
-        ["xcrun", "simctl", "list", "devices", "booted"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    try:
+        completed = subprocess.run(
+            ["xcrun", "simctl", "list", "devices", "booted"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        print("Timed out checking stale iOS simulators; continuing with existing booted devices", flush=True)
+        return
     keep = set(keep_names)
     for line in completed.stdout.splitlines():
         match = re.match(r"^\s*(.+?) \(([0-9A-F-]{36})\) \(Booted\)", line)
@@ -265,7 +292,15 @@ def shutdown_stale_ios_simulators(keep_names: list[str]) -> None:
             print(f"Keeping active iOS simulator {udid}")
             continue
         print(f"Shutting down stale iOS simulator {udid}")
-        subprocess.run(["xcrun", "simctl", "shutdown", udid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            subprocess.run(
+                ["xcrun", "simctl", "shutdown", udid],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"Timed out shutting down stale iOS simulator {udid}; continuing", flush=True)
     quit_idle_ios_simulator_app()
 
 

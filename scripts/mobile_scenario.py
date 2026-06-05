@@ -625,12 +625,19 @@ class Scenario:
                 stdout=handle,
                 stderr=subprocess.STDOUT,
                 text=True,
+                start_new_session=True,
             )
-        link_url = wait_for_status_in_files(
-            [status_file, log_file],
-            self.link_status_key(device_id),
-            int(device.get("link_timeout_secs", 180)),
-        )
+        try:
+            link_url = wait_for_status_in_files(
+                [status_file, log_file],
+                self.link_status_key(device_id),
+                int(device.get("link_timeout_secs", 180)),
+            )
+        except BaseException:
+            self.stop_background_harness(process)
+            if log_file.exists():
+                print(log_file.read_text(encoding="utf-8", errors="replace"))
+            raise
         self.harness(
             owner_device_id,
             "add_authorized_device_from_args",
@@ -640,7 +647,13 @@ class Scenario:
                 "relay_drain_timeout_secs": str(device.get("relay_drain_timeout_secs", 60)),
             },
         )
-        exit_code = process.wait(timeout=int(device.get("authorization_timeout_secs", 300)))
+        try:
+            exit_code = process.wait(timeout=int(device.get("authorization_timeout_secs", 300)))
+        except subprocess.TimeoutExpired:
+            self.stop_background_harness(process)
+            output = log_file.read_text(encoding="utf-8", errors="replace")
+            print(output)
+            raise SystemExit(f"Linked device authorization timed out for {device_id}")
         output = log_file.read_text(encoding="utf-8", errors="replace")
         if exit_code != 0 or "INSTRUMENTATION_CODE: -1" not in output:
             print(output)
@@ -649,6 +662,28 @@ class Scenario:
         if status_file.exists():
             status_output = status_file.read_text(encoding="utf-8", errors="replace")
         self.record_identity(device_id, parse_status(output + "\n" + status_output))
+
+    def stop_background_harness(self, process: subprocess.Popen[str]) -> None:
+        if process.poll() is not None:
+            return
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            process.kill()
+        process.wait(timeout=5)
 
     def harness_command(
         self,
@@ -709,6 +744,9 @@ class Scenario:
     def link_wait_args(self, device_id: str, owner_input: str, status_file: Path) -> dict[str, str]:
         platform = self.state["devices"][device_id]["platform"]
         args = {"owner_input": owner_input, "status_file": str(status_file)}
+        relay_urls = self.relay_urls_for_device(device_id)
+        if platform == "ios" and relay_urls:
+            args["relay_urls"] = ",".join(relay_urls)
         if platform == "android":
             args["authorization_state"] = "AUTHORIZED"
         return args

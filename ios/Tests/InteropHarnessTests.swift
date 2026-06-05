@@ -133,6 +133,7 @@ final class InteropHarnessTests: XCTestCase {
             status("display_name", updated.displayName)
             status("public_key_hex", updated.publicKeyHex)
         case "start_linked_device_and_report_identity":
+            try await applyHarnessRelaysIfProvided(manager: manager, env: env)
             let ownerInput = env["IRIS_IOS_HARNESS_OWNER_INPUT"] ?? ""
             manager.startLinkedDevice(ownerInput: ownerInput)
             let link = try await waitFor(label: "linked-device invite", timeout: 90) {
@@ -141,6 +142,7 @@ final class InteropHarnessTests: XCTestCase {
             status("link_url", link.url)
             status("device_input", link.deviceInput)
         case "start_linked_device_wait_authorized_from_args":
+            try await applyHarnessRelaysIfProvided(manager: manager, env: env)
             let ownerInput = env["IRIS_IOS_HARNESS_OWNER_INPUT"] ?? ""
             manager.startLinkedDevice(ownerInput: ownerInput)
             let link = try await waitFor(label: "linked-device invite", timeout: 90) {

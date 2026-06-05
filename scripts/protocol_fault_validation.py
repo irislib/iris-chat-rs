@@ -41,6 +41,17 @@ DEFAULT_CASES = [
     "direct_group_offline_restart_recovery",
 ]
 
+CAROL_PEER_CASES = {
+    "sender_key_distribution_repair",
+    "sender_key_distribution_repair_after_receiver_restart",
+    "sender_key_distribution_repair_after_sender_restart",
+    "sender_key_distribution_duplicate_replay_idempotent",
+    "sender_key_distribution_multiple_messages",
+    "sender_key_removed_member_repair_denied",
+    "sender_key_late_member_post_add_repair",
+    "sender_key_late_member_pre_add_denied",
+}
+
 
 from protocol_fault_common import CaseResult, ValidationFailure
 from protocol_fault_cases import ProtocolFaultCasesMixin
@@ -53,7 +64,10 @@ def run(
     log_path: Path | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    completed = subprocess.run(
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+    output_parts: list[str] = []
+    with subprocess.Popen(
         command,
         cwd=cwd,
         stdout=subprocess.PIPE,
@@ -61,10 +75,23 @@ def run(
         text=True,
         encoding="utf-8",
         errors="replace",
-    )
-    if log_path is not None:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text("+ " + " ".join(command) + "\n" + completed.stdout, encoding="utf-8")
+    ) as process:
+        log_handle = log_path.open("w", encoding="utf-8") if log_path is not None else None
+        try:
+            if log_handle is not None:
+                log_handle.write("+ " + " ".join(command) + "\n")
+                log_handle.flush()
+            assert process.stdout is not None
+            for line in process.stdout:
+                output_parts.append(line)
+                if log_handle is not None:
+                    log_handle.write(line)
+                    log_handle.flush()
+            returncode = process.wait()
+        finally:
+            if log_handle is not None:
+                log_handle.close()
+    completed = subprocess.CompletedProcess(command, returncode, "".join(output_parts))
     if check and completed.returncode != 0:
         sys.stdout.write(completed.stdout)
         raise ValidationFailure(f"command failed ({completed.returncode}): {' '.join(command)}")
@@ -114,6 +141,7 @@ class ProtocolFaultValidation(ProtocolFaultCasesMixin):
             else Path(f"/tmp/iris-protocol-fault-validation-{self.stamp}")
         )
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
+        self.requested_cases = DEFAULT_CASES if args.all else list(args.case)
         self.config = self.prepare_config(args.config.resolve())
         self.work_dir = scenario_work_dir(self.config)
         self.state: dict[str, Any] = {}
@@ -163,7 +191,8 @@ class ProtocolFaultValidation(ProtocolFaultCasesMixin):
             config["ios"]["build"] = False
 
         devices = config.setdefault("devices", [])
-        if not any(device.get("id") == "carol1" for device in devices):
+        needs_carol = any(name in CAROL_PEER_CASES for name in self.requested_cases)
+        if needs_carol and not any(device.get("id") == "carol1" for device in devices):
             devices.append(
                 {
                     "id": "carol1",
@@ -178,6 +207,9 @@ class ProtocolFaultValidation(ProtocolFaultCasesMixin):
         for device in devices:
             if device.get("platform") == "ios":
                 device["reset"] = True
+                if device.get("linked_to"):
+                    device.setdefault("link_timeout_secs", 600)
+                    device.setdefault("authorization_timeout_secs", 600)
 
         config_path = self.artifact_dir / "protocol-fault-validation-config.json"
         write_json(config_path, config)

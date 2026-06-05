@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
 
 def resolve_udid(name: str) -> str:
     command = ["xcrun", "simctl", "list", "devices", "available"]
-    completed = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    completed = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=20)
     pattern = re.compile(rf"^\s*{re.escape(name)} \(([0-9A-F-]+)\)", re.MULTILINE)
     match = pattern.search(completed.stdout)
     if not match:
@@ -70,24 +70,32 @@ def resolve_udid(name: str) -> str:
 
 def is_simulator_udid(udid: str) -> bool:
     command = ["xcrun", "simctl", "list", "devices"]
-    completed = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+        )
+    except subprocess.TimeoutExpired:
+        return True
     return f"({udid})" in completed.stdout
 
 
 def simulator_is_booted(udid: str) -> bool:
-    completed = subprocess.run(
-        ["xcrun", "simctl", "list", "devices", "booted"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            ["xcrun", "simctl", "list", "devices", "booted"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=20,
+        )
+    except subprocess.TimeoutExpired:
+        return False
     return f"({udid}) (Booted)" in completed.stdout
 
 
@@ -125,18 +133,40 @@ def wait_for_simulator_boot(udid: str) -> None:
 def ensure_simulator_booted(udid: str) -> None:
     if simulator_is_booted(udid):
         return
-    subprocess.run(["xcrun", "simctl", "boot", udid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        subprocess.run(["xcrun", "simctl", "boot", udid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+    except subprocess.TimeoutExpired:
+        print(f"INSTRUMENTATION_RETRY: simctl boot timed out for {udid}; checking bootstatus")
     wait_for_simulator_boot(udid)
 
 
 def reboot_simulator(udid: str) -> None:
-    subprocess.run(["xcrun", "simctl", "shutdown", udid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run(["xcrun", "simctl", "boot", udid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    try:
+        subprocess.run(["xcrun", "simctl", "shutdown", udid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+    except subprocess.TimeoutExpired:
+        print(f"INSTRUMENTATION_RETRY: simctl shutdown timed out for {udid}; continuing reboot")
+    try:
+        subprocess.run(["xcrun", "simctl", "boot", udid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=20)
+    except subprocess.TimeoutExpired:
+        print(f"INSTRUMENTATION_RETRY: simctl boot timed out for {udid}; checking bootstatus")
+    except subprocess.CalledProcessError:
+        if not simulator_is_booted(udid):
+            raise
     wait_for_simulator_boot(udid)
 
 
 def is_install_service_flake(output: str) -> bool:
     return any(pattern in output for pattern in INSTALL_SERVICE_FLAKE_PATTERNS)
+
+
+def test_body_started(output: str) -> bool:
+    return "HARNESS_STATUS: action=" in output
+
+
+def is_pre_test_start_failure(completed: subprocess.CompletedProcess[str]) -> bool:
+    if completed.returncode == 0:
+        return False
+    return not test_body_started(completed.stdout)
 
 
 def env_truthy(name: str) -> bool:
@@ -406,6 +436,10 @@ def main() -> int:
         completed = run_test(udid, xctestrun_path, timeout_secs=args.timeout_secs)
         if completed.returncode != 0 and simulator and is_install_service_flake(completed.stdout):
             print("INSTRUMENTATION_RETRY: iOS simulator install service was not ready; rebooting simulator and retrying")
+            reboot_simulator(udid)
+            completed = run_test(udid, xctestrun_path, timeout_secs=args.timeout_secs)
+        elif simulator and is_pre_test_start_failure(completed):
+            print("INSTRUMENTATION_RETRY: iOS harness did not reach test body; rebooting simulator and retrying")
             reboot_simulator(udid)
             completed = run_test(udid, xctestrun_path, timeout_secs=args.timeout_secs)
     finally:
