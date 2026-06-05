@@ -48,6 +48,12 @@ def parse_args() -> argparse.Namespace:
         help="Hard timeout for xcodebuild test execution.",
     )
     parser.add_argument(
+        "--pre-body-timeout-secs",
+        type=int,
+        default=int(os.environ.get("IRIS_IOS_HARNESS_PRE_BODY_TIMEOUT_SECS", "0")),
+        help="Optional timeout for test-without-building runs that do not reach the harness test body.",
+    )
+    parser.add_argument(
         "--build-timeout-secs",
         type=int,
         default=int(os.environ["IRIS_IOS_HARNESS_XCODEBUILD_BUILD_TIMEOUT_SECS"])
@@ -226,7 +232,13 @@ def xcodebuild_command(args: list[str]) -> list[str]:
     return ["sudo", "-n", "launchctl", "asuser", uid, "sudo", "-n", "-u", user, *command]
 
 
-def run_xcodebuild(args: list[str], timeout_secs: int, phase: str) -> subprocess.CompletedProcess[str]:
+def run_xcodebuild(
+    args: list[str],
+    timeout_secs: int,
+    phase: str,
+    *,
+    pre_body_timeout_secs: int = 0,
+) -> subprocess.CompletedProcess[str]:
     command = xcodebuild_command(args)
     process = subprocess.Popen(
         command,
@@ -253,9 +265,34 @@ def run_xcodebuild(args: list[str], timeout_secs: int, phase: str) -> subprocess
     reader = threading.Thread(target=read_output, daemon=True)
     reader.start()
 
-    try:
-        process.wait(timeout=timeout_secs)
-    except subprocess.TimeoutExpired:
+    timed_out_reason: str | None = None
+    deadline = time.monotonic() + timeout_secs
+    pre_body_deadline = (
+        time.monotonic() + pre_body_timeout_secs
+        if pre_body_timeout_secs > 0 and phase == "test-without-building"
+        else None
+    )
+    while True:
+        if process.poll() is not None:
+            break
+        now = time.monotonic()
+        if now >= deadline:
+            timed_out_reason = f"xcodebuild {phase} timed out after {timeout_secs}s"
+            break
+        if pre_body_deadline is not None:
+            with lines_lock:
+                stdout_so_far = "".join(lines)
+            if test_body_started(stdout_so_far):
+                pre_body_deadline = None
+            elif now >= pre_body_deadline:
+                timed_out_reason = (
+                    f"xcodebuild {phase} did not reach harness test body "
+                    f"after {pre_body_timeout_secs}s"
+                )
+                break
+        time.sleep(0.5)
+
+    if timed_out_reason is not None:
         try:
             os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
@@ -269,7 +306,7 @@ def run_xcodebuild(args: list[str], timeout_secs: int, phase: str) -> subprocess
                 pass
             process.wait()
         reader.join(timeout=5)
-        timeout_line = f"\nINSTRUMENTATION_FAILED: xcodebuild {phase} timed out after {timeout_secs}s\n"
+        timeout_line = f"\nINSTRUMENTATION_FAILED: {timed_out_reason}\n"
         with lines_lock:
             lines.append(timeout_line)
             stdout = "".join(lines)
@@ -377,7 +414,13 @@ def prepare_xctestrun(source: Path, env_vars: dict[str, str]) -> Path:
     return target
 
 
-def run_test(udid: str, xctestrun_path: Path, timeout_secs: int) -> subprocess.CompletedProcess[str]:
+def run_test(
+    udid: str,
+    xctestrun_path: Path,
+    timeout_secs: int,
+    *,
+    pre_body_timeout_secs: int = 0,
+) -> subprocess.CompletedProcess[str]:
     command = [
         "test-without-building",
         "-xctestrun",
@@ -386,7 +429,12 @@ def run_test(udid: str, xctestrun_path: Path, timeout_secs: int) -> subprocess.C
         f"id={udid}",
         "-only-testing:" + ONLY_TEST,
     ]
-    return run_xcodebuild(command, timeout_secs=timeout_secs, phase="test-without-building")
+    return run_xcodebuild(
+        command,
+        timeout_secs=timeout_secs,
+        phase="test-without-building",
+        pre_body_timeout_secs=pre_body_timeout_secs,
+    )
 
 
 def build_env(args: argparse.Namespace) -> dict[str, str]:
@@ -433,15 +481,30 @@ def main() -> int:
     env_vars = build_env(args)
     xctestrun_path = prepare_xctestrun(xctestrun_source, env_vars)
     try:
-        completed = run_test(udid, xctestrun_path, timeout_secs=args.timeout_secs)
+        completed = run_test(
+            udid,
+            xctestrun_path,
+            timeout_secs=args.timeout_secs,
+            pre_body_timeout_secs=args.pre_body_timeout_secs,
+        )
         if completed.returncode != 0 and simulator and is_install_service_flake(completed.stdout):
             print("INSTRUMENTATION_RETRY: iOS simulator install service was not ready; rebooting simulator and retrying")
             reboot_simulator(udid)
-            completed = run_test(udid, xctestrun_path, timeout_secs=args.timeout_secs)
+            completed = run_test(
+                udid,
+                xctestrun_path,
+                timeout_secs=args.timeout_secs,
+                pre_body_timeout_secs=args.pre_body_timeout_secs,
+            )
         elif simulator and is_pre_test_start_failure(completed):
             print("INSTRUMENTATION_RETRY: iOS harness did not reach test body; rebooting simulator and retrying")
             reboot_simulator(udid)
-            completed = run_test(udid, xctestrun_path, timeout_secs=args.timeout_secs)
+            completed = run_test(
+                udid,
+                xctestrun_path,
+                timeout_secs=args.timeout_secs,
+                pre_body_timeout_secs=args.pre_body_timeout_secs,
+            )
     finally:
         if xctestrun_path != xctestrun_source:
             try:
