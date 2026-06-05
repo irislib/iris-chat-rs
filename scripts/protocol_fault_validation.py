@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import re
 import shutil
 import socket
@@ -55,6 +56,9 @@ CAROL_PEER_CASES = {
 
 from protocol_fault_common import CaseResult, ValidationFailure
 from protocol_fault_cases import ProtocolFaultCasesMixin
+
+
+TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
 
 def run(
@@ -280,6 +284,38 @@ class ProtocolFaultValidation(ProtocolFaultCasesMixin):
             raise ValidationFailure(f"scenario state is missing device `{device_id}`")
         return device
 
+    def exclusive_ios_harness_enabled(self) -> bool:
+        value = os.environ.get("IRIS_IOS_HARNESS_EXCLUSIVE_SIMULATOR")
+        if value is not None:
+            return value.strip().lower() in TRUTHY_VALUES
+        try:
+            ios_config = load_json(self.config).get("ios", {})
+        except Exception:
+            return False
+        return str(ios_config.get("exclusive_harness_simulators", "")).strip().lower() in TRUTHY_VALUES
+
+    def shutdown_other_ios_simulators(self, keep_device_id: str) -> None:
+        if not self.exclusive_ios_harness_enabled():
+            return
+        for device_id, device in sorted(self.state.get("devices", {}).items()):
+            if device_id == keep_device_id:
+                continue
+            if device.get("platform") != "ios" or not device.get("udid"):
+                continue
+            try:
+                subprocess.run(
+                    ["xcrun", "simctl", "shutdown", device["udid"]],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=20,
+                )
+            except subprocess.TimeoutExpired:
+                print(
+                    f"INSTRUMENTATION_RETRY: simctl shutdown timed out for {device_id}; "
+                    "continuing exclusive iOS harness action",
+                    flush=True,
+                )
+
     def group(self, group_key: str = "alice-bob") -> dict[str, Any]:
         group = self.state.get("groups", {}).get(group_key)
         if not group:
@@ -299,6 +335,7 @@ class ProtocolFaultValidation(ProtocolFaultCasesMixin):
         device = self.device(device_id)
         if device["platform"] != "ios":
             raise ValidationFailure("protocol fault validation v1 supports iOS harness devices")
+        self.shutdown_other_ios_simulators(device_id)
         command = [
             sys.executable,
             str(IOS_HARNESS),
