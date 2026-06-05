@@ -831,6 +831,19 @@ class Scenario:
             process.kill()
         process.wait(timeout=5)
 
+    def linked_ios_xcodebuild_timeout_secs(self, device: dict[str, Any]) -> int:
+        def positive_int(value: Any, default: int) -> int:
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                return default
+            return parsed if parsed > 0 else default
+
+        configured = positive_int(os.environ.get("IRIS_IOS_HARNESS_XCODEBUILD_TIMEOUT_SECS"), 420)
+        link_timeout = positive_int(device.get("link_timeout_secs"), 180)
+        authorization_timeout = positive_int(device.get("authorization_timeout_secs"), 300)
+        return max(configured, link_timeout + authorization_timeout + 120)
+
     def harness_command(
         self,
         device_id: str,
@@ -854,6 +867,8 @@ class Scenario:
             ]
             if reset:
                 command.append("--reset")
+            if action == "start_linked_device_wait_authorized_from_args":
+                command.extend(["--timeout-secs", str(self.linked_ios_xcodebuild_timeout_secs(device))])
         elif device["platform"] == "android":
             adb = str(self.adb())
             if reset:
