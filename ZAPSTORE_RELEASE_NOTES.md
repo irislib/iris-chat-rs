@@ -1,3 +1,10 @@
+# Iris Chat 2026.6.5
+
+- Messages recover more reliably after phones or linked devices were closed, restarted, or offline.
+- Direct and group chats now have broader real-device coverage across Android phones and iOS simulators.
+- Restoring an existing profile with a secret key is tested across iOS and Android.
+- Multi-device accounts now sync direct and group messages more reliably.
+
 # Iris Chat 2026.6.3
 
 - Messages recover more reliably after the app was closed, restarted, or offline.
