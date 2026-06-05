@@ -35,7 +35,7 @@ Commands:
   status   print current public TestFlight status
   groups   list TestFlight groups for the app
   expire-older
-           expire older non-current builds that are still in Beta App Review
+           expire stale review builds; expire older public builds only after current approval
 EOF
     ;;
   *)

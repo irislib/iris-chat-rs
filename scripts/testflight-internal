@@ -30,7 +30,7 @@ Commands:
   public-status
            print current public TestFlight status
   public-expire-older
-           expire older non-current builds that are still in Beta App Review
+           expire stale review builds; expire older public builds only after current approval
 
 Environment:
   IRIS_TESTFLIGHT_GROUPS          optional comma-separated internal group names or IDs
@@ -636,8 +636,15 @@ def expire_older_external_group_builds(current_build, selected_groups):
 
 
 def expire_older_public_builds(current_build, selected_groups):
-    expire_older_external_group_builds(current_build, selected_groups)
     expire_older_public_review_builds(current_build)
+    state = beta_review_state(current_build)
+    if state != "APPROVED":
+        print(
+            "Keeping older external TestFlight group builds alive because "
+            f"current build {BUILD_NUMBER} is not public-approved yet: {state}"
+        )
+        return
+    expire_older_external_group_builds(current_build, selected_groups)
 
 
 def submit_beta_review(build):
