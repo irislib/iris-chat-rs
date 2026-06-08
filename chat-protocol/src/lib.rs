@@ -1,3 +1,4 @@
+mod direct_messages;
 mod nearby;
 mod protocol_engine;
 mod storage;
@@ -7,10 +8,10 @@ use nostr::{Event, Filter, Keys, Kind, PublicKey, Timestamp};
 use nostr_double_ratchet::{
     AuthorizedDevice, Delivery, DevicePubkey as NdrDevicePubkey, DeviceRoster, DomainError,
     Error as NdrError, GroupIncomingEvent, GroupManagerSnapshot, GroupPairwiseCommand,
-    GroupPayloadCodec, GroupPendingFanout, GroupPreparedPublish, GroupPreparedSend,
-    GroupProtocol, GroupSenderKeyHandleResult, GroupSenderKeyMessage, GroupSnapshot,
-    MessageEnvelope, OwnerPubkey as NdrOwnerPubkey, PreparedSend, ProtocolContext, RelayGap,
-    SenderKeyRepairRequest, SessionManager,
+    GroupPayloadCodec, GroupPendingFanout, GroupPreparedPublish, GroupPreparedSend, GroupProtocol,
+    GroupSenderKeyHandleResult, GroupSenderKeyMessage, GroupSnapshot, MessageEnvelope,
+    OwnerPubkey as NdrOwnerPubkey, PreparedSend, ProtocolContext, RelayGap, SenderKeyRepairRequest,
+    SessionManager,
 };
 use nostr_double_ratchet_nostr::{
     group_sender_key_message_event, invite_response_event, parse_group_sender_key_message_event,
@@ -23,6 +24,10 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub use direct_messages::{
+    DirectChatSnapshot, DirectMessageCommand, DirectMessageDelivery, DirectMessageService,
+    DirectMessageSnapshot, DirectThreadSnapshot,
+};
 pub use nearby::{
     decode_nearby_envelope_frame, decode_nearby_envelope_json, decode_nearby_frame_json,
     encode_nearby_envelope_frame, encode_nearby_envelope_json, encode_nearby_frame_json,
