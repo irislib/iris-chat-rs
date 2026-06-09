@@ -3,8 +3,6 @@ const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
 const LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS: u64 = 120;
-const DELIVERED_GROUP_SENDER_KEY_ACK_LIMIT: usize = 512;
-const ANSWERED_GROUP_SENDER_KEY_REPAIR_LIMIT: usize = 512;
 
 fn default_true() -> bool {
     true

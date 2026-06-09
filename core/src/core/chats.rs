@@ -3,8 +3,8 @@ use super::*;
 mod helpers;
 
 use self::helpers::{
-    delivery_trace_for_source_event, is_supported_group_pairwise_payload,
-    push_unique, summarize_group_send_effect_targets,
+    delivery_trace_for_source_event, is_supported_group_pairwise_payload, push_unique,
+    summarize_group_send_effect_targets,
 };
 
 const OPEN_CHAT_MESSAGES_PER_PAGE: usize = 80;

@@ -181,7 +181,7 @@ impl ProtocolEngine {
                         self.sender_key_repair_response_effects(
                             repair.requester_owner,
                             &repair.request,
-                            now,
+                            NdrUnixSeconds(unix_now().get()),
                         )?;
                     self.persist()?;
                     return Ok(ProtocolGroupIncomingResult {
@@ -195,9 +195,6 @@ impl ProtocolEngine {
                 let mut queued_targets = Vec::new();
                 if sender_owner != self.local_owner {
                     if let GroupIncomingEvent::MetadataUpdated(group) = &event {
-                        for pending in &mut self.pending_group_pairwise_payloads {
-                            pending.next_retry_at_secs = 0;
-                        }
                         let (sync_effects, sync_targets) = self.sync_group_to_local_siblings(group)?;
                         effects.extend(sync_effects);
                         queued_targets.extend(sync_targets);
@@ -682,17 +679,6 @@ impl ProtocolEngine {
             result.effects.extend(outcome.effects);
         }
         self.pending_group_sender_key_messages = still_sender_keys;
-        for (group_id, sender_event_pubkey, key_id, message_number) in stale_sender_repairs {
-            if !self.has_pending_group_sender_key_candidate(&group_id, sender_event_pubkey) {
-                persist_needed |= self.clear_group_sender_key_repairs(
-                    &group_id,
-                    sender_event_pubkey,
-                    key_id,
-                    message_number,
-                );
-            }
-        }
-        persist_needed |= self.prune_pending_group_sender_key_work_for_inactive_local_groups();
         let repair_effects = self.retry_pending_group_sender_key_repairs(now)?;
         if !repair_effects.is_empty() {
             result.effects.extend(repair_effects);
