@@ -47,6 +47,9 @@ impl ProtocolEngine {
             self.invalidate_known_message_author_cache();
             return Err(error);
         }
+        if owner_pubkey == self.owner_pubkey {
+            self.local_app_keys_observed = true;
+        }
         self.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))
     }
 

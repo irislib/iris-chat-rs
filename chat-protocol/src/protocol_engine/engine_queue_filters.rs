@@ -79,10 +79,27 @@ impl ProtocolEngine {
             .is_some_and(|roster| !roster.devices().is_empty())
     }
 
+    fn has_authoritative_local_roster(&self) -> bool {
+        if self.local_app_keys_observed {
+            return true;
+        }
+        self.session_manager
+            .snapshot()
+            .users
+            .into_iter()
+            .find(|user| user.owner_pubkey == self.local_owner)
+            .and_then(|user| user.roster)
+            .is_some_and(|roster| {
+                let devices = roster.devices();
+                !devices.is_empty()
+                    && (devices.len() > 1 || devices[0].device_pubkey != self.local_device)
+            })
+    }
+
     fn needs_local_sibling_roster_probe(&self, prepared: &PreparedSend) -> bool {
         prepared.deliveries.is_empty()
             && prepared.relay_gaps.is_empty()
-            && !self.has_roster_for_owner(self.local_owner)
+            && !self.has_authoritative_local_roster()
     }
 
     fn append_queued_protocol_backfill(

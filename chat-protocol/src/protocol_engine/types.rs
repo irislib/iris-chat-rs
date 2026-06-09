@@ -397,6 +397,7 @@ pub struct ProtocolEngine {
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     known_message_author_cache: std::cell::RefCell<Option<KnownMessageAuthorCache>>,
     known_message_author_cache_build_count: std::cell::Cell<u64>,
+    local_app_keys_observed: bool,
     subscription_generation: u64,
     last_backfill_attempt_secs: u64,
     /// While > 0, `persist()` only flips `batch_persist_dirty` instead of

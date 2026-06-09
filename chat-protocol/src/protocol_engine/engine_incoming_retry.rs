@@ -207,6 +207,9 @@ impl ProtocolEngine {
                 let mut queued_targets = Vec::new();
                 if sender_owner != self.local_owner {
                     if let GroupIncomingEvent::MetadataUpdated(group) = &event {
+                        for pending in &mut self.pending_group_pairwise_payloads {
+                            pending.next_retry_at_secs = 0;
+                        }
                         let (sync_effects, sync_targets) = self.sync_group_to_local_siblings(group)?;
                         effects.extend(sync_effects);
                         queued_targets.extend(sync_targets);
@@ -299,7 +302,7 @@ impl ProtocolEngine {
                 self.remaining_local_sibling_targets(&pending.delivered_local_device_hexes);
             if pending.probe_local_sibling_roster
                 && local_targets.is_empty()
-                && (self.has_roster_for_owner(self.local_owner)
+                && (self.has_authoritative_local_roster()
                     || now.get().saturating_sub(pending.created_at_secs)
                         > LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS)
             {
