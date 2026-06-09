@@ -13,9 +13,8 @@ use self::backfill::{
 pub(super) use self::subscription_helpers::build_protocol_subscription_filters;
 use self::subscription_helpers::{
     current_client_relay_statuses, fetch_events_for_filters, normalize_protocol_queued_targets,
-    pubkeys_from_comma_separated_hexes, pubkeys_from_hexes,
-    subscribe_protocol_filters_with_id, wait_for_connected_relays,
-    ProtocolSubscriptionApplyOutput,
+    pubkeys_from_comma_separated_hexes, pubkeys_from_hexes, subscribe_protocol_filters_with_id,
+    wait_for_connected_relays, ProtocolSubscriptionApplyOutput,
 };
 
 const PROTOCOL_SUBSCRIPTION_ID: &str = "ndr-protocol";
@@ -199,8 +198,11 @@ impl AppCore {
         let Some(protocol_engine) = self.protocol_engine.as_mut() else {
             return;
         };
-        let results = match protocol_engine.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))
-        {
+        let now = NdrUnixSeconds(unix_now().get());
+        if !protocol_engine.has_due_pending_retry_work(now) {
+            return;
+        }
+        let results = match protocol_engine.retry_pending_protocol(now) {
             Ok(results) => results,
             Err(error) => {
                 self.push_debug_log("appcore.protocol.retry.error", error.to_string());
@@ -943,51 +945,77 @@ impl AppCore {
     }
 
     pub(super) fn start_relay_status_watchers(&mut self) {
-        let Some(client) = self
+        let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
-            .map(|logged_in| logged_in.client.clone())
+            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
         else {
             return;
         };
-        let relays = self.runtime.block_on(client.relays());
-        for (relay_url, relay) in relays {
-            let relay_url = normalize_nostr_relay_url(&relay_url.to_string())
-                .unwrap_or_else(|_| relay_url.to_string());
-            if !self.relay_status_watch_urls.insert(relay_url.clone()) {
-                continue;
-            }
-            let generation = self.relay_status_watch_generation;
-            let mut notifications = relay.notifications();
-            let tx = self.core_sender.clone();
-            self.runtime.spawn(async move {
-                loop {
-                    match notifications.recv().await {
-                        Ok(RelayNotification::RelayStatus { status }) => {
-                            let _ = tx.send(CoreMsg::Internal(Box::new(
-                                InternalEvent::RelayStatusChanged {
-                                    relay_url: relay_url.clone(),
-                                    status,
-                                    generation,
-                                },
-                            )));
-                        }
-                        Ok(RelayNotification::Shutdown) => {
-                            let _ = tx.send(CoreMsg::Internal(Box::new(
-                                InternalEvent::RelayStatusChanged {
-                                    relay_url: relay_url.clone(),
-                                    status: RelayStatus::Terminated,
-                                    generation,
-                                },
-                            )));
-                        }
-                        Ok(_) => {}
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-            });
+        if relay_urls.is_empty() {
+            return;
         }
+
+        let mut watch_urls = HashSet::new();
+        for relay_url in &relay_urls {
+            let normalized = normalize_nostr_relay_url(&relay_url.to_string())
+                .unwrap_or_else(|_| relay_url.to_string());
+            if self.relay_status_watch_urls.insert(normalized.clone()) {
+                watch_urls.insert(normalized);
+            }
+        }
+        if watch_urls.is_empty() {
+            return;
+        }
+
+        let generation = self.relay_status_watch_generation;
+        let tx = self.core_sender.clone();
+        self.runtime.spawn(async move {
+            ensure_session_relays_configured(&client, &relay_urls).await;
+            for (relay_url, relay) in client.relays().await {
+                let relay_url = normalize_nostr_relay_url(&relay_url.to_string())
+                    .unwrap_or_else(|_| relay_url.to_string());
+                if !watch_urls.contains(&relay_url) {
+                    continue;
+                }
+                let _ = tx.send(CoreMsg::Internal(Box::new(
+                    InternalEvent::RelayStatusChanged {
+                        relay_url: relay_url.clone(),
+                        status: relay.status(),
+                        generation,
+                    },
+                )));
+                let mut notifications = relay.notifications();
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    loop {
+                        match notifications.recv().await {
+                            Ok(RelayNotification::RelayStatus { status }) => {
+                                let _ = tx.send(CoreMsg::Internal(Box::new(
+                                    InternalEvent::RelayStatusChanged {
+                                        relay_url: relay_url.clone(),
+                                        status,
+                                        generation,
+                                    },
+                                )));
+                            }
+                            Ok(RelayNotification::Shutdown) => {
+                                let _ = tx.send(CoreMsg::Internal(Box::new(
+                                    InternalEvent::RelayStatusChanged {
+                                        relay_url: relay_url.clone(),
+                                        status: RelayStatus::Terminated,
+                                        generation,
+                                    },
+                                )));
+                            }
+                            Ok(_) => {}
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                });
+            }
+        });
     }
 
     pub(super) fn schedule_session_connect(&mut self) {
@@ -1407,6 +1435,7 @@ impl AppCore {
         self.emit_state();
     }
 
+    #[cfg(test)]
     pub(super) fn refresh_relay_connection_status(&mut self) {
         let relay_statuses = self.current_client_relay_statuses();
         self.apply_relay_statuses(relay_statuses);
@@ -1440,6 +1469,7 @@ impl AppCore {
         }
     }
 
+    #[cfg(test)]
     fn current_client_relay_statuses(&self) -> Vec<(String, RelayStatus)> {
         self.logged_in
             .as_ref()
@@ -1498,21 +1528,8 @@ impl AppCore {
         {
             return;
         }
-        let connected_relays = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| {
-                self.runtime.block_on(async {
-                    logged_in
-                        .client
-                        .relays()
-                        .await
-                        .values()
-                        .filter(|relay| relay.status() == RelayStatus::Connected)
-                        .count()
-                })
-            })
-            .unwrap_or(0);
+        self.refresh_relay_connection_status_from_cached_statuses();
+        let connected_relays = self.relay_connected_count as usize;
         let desired_unapplied = self.protocol_subscription_runtime.desired_plan
             != self.protocol_subscription_runtime.applied_plan;
         let tracked_peer_backfill_needed = self.tracked_peer_protocol_backfill_needed();
@@ -1587,7 +1604,7 @@ impl AppCore {
             );
             return;
         }
-        self.refresh_relay_connection_status();
+        self.refresh_relay_connection_status_from_cached_statuses();
         if self.relay_connected_count == 0 {
             self.protocol_subscription_runtime.refresh_dirty = true;
             self.protocol_subscription_runtime.force_reconnect_dirty |= force_reconnect_if_offline;

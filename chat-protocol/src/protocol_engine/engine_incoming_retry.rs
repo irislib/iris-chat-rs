@@ -1,4 +1,16 @@
 impl ProtocolEngine {
+    pub fn has_due_pending_retry_work(&self, now: NdrUnixSeconds) -> bool {
+        !self.pending_outbound.is_empty()
+            || !self.pending_inbound.is_empty()
+            || !self.pending_group_fanouts.is_empty()
+            || !self.pending_group_pairwise_payloads.is_empty()
+            || self
+                .pending_group_sender_key_repairs
+                .iter()
+                .any(|pending| pending.next_retry_at_secs <= now.get())
+            || !self.pending_decrypted_deliveries.is_empty()
+    }
+
     pub fn process_direct_message_event(
         &mut self,
         event: &Event,

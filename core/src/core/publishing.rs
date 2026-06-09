@@ -197,7 +197,7 @@ impl AppCore {
             return;
         }
 
-        self.refresh_relay_connection_status();
+        self.refresh_relay_connection_status_from_cached_statuses();
         if self.relay_connected_count == 0 {
             self.relay_transport_runtime.publish_drain_dirty = true;
             self.relay_transport_runtime.last_drain_reason = Some(reason.to_string());
