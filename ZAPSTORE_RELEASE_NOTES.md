@@ -1,3 +1,9 @@
+# Iris Chat 2026.6.9
+
+- Messages recover more reliably after restart, offline use, or message-server reconnects.
+- Startup no longer waits on message-server status before chat recovery can continue.
+- Linked devices and queued messages retry missing chat state more reliably.
+
 # Iris Chat 2026.6.5
 
 - Messages recover more reliably after phones or linked devices were closed, restarted, or offline.
