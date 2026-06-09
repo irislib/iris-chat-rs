@@ -584,10 +584,10 @@ fn removing_authorized_device_advances_app_keys_timestamp() {
 
 #[test]
 fn removing_authorized_device_beats_equal_timestamp_roster_merge() {
-    assert_eq!(account::next_removed_app_keys_created_at(100, 80, 90), 102);
-    assert_eq!(account::next_removed_app_keys_created_at(100, 110, 90), 112);
-    assert_eq!(account::next_removed_app_keys_created_at(100, 80, 120), 122);
-    assert_eq!(account::next_removed_app_keys_created_at(100, 100, 90), 102);
+    assert_eq!(account_app_keys::next_removed_app_keys_created_at(100, 80, 90), 102);
+    assert_eq!(account_app_keys::next_removed_app_keys_created_at(100, 110, 90), 112);
+    assert_eq!(account_app_keys::next_removed_app_keys_created_at(100, 80, 120), 122);
+    assert_eq!(account_app_keys::next_removed_app_keys_created_at(100, 100, 90), 102);
 }
 
 #[test]

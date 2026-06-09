@@ -20,7 +20,7 @@ use nostr_double_ratchet_nostr::{
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 

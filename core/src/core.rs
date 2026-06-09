@@ -54,6 +54,7 @@ use nostr_double_ratchet_nostr::{
 use rand::rngs::OsRng;
 
 mod account;
+mod account_app_keys;
 mod attachment_upload;
 mod attachments;
 mod chat_reactions;
@@ -93,8 +94,8 @@ pub(super) const APPCORE_PROTOCOL_LABEL: &str = "appcore-protocol";
 type OwnerPubkey = PublicKey;
 type DevicePubkey = PublicKey;
 
-use account::known_app_keys_from_ndr;
-use account::known_app_keys_to_ndr;
+use account_app_keys::known_app_keys_from_ndr;
+use account_app_keys::known_app_keys_to_ndr;
 use attachment_upload::upload_profile_picture_to_hashtree;
 use attachments::*;
 use config::*;

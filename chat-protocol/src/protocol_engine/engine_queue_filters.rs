@@ -79,15 +79,10 @@ impl ProtocolEngine {
             .is_some_and(|roster| !roster.devices().is_empty())
     }
 
-    fn has_app_keys_for_owner(&self, owner: NdrOwnerPubkey) -> bool {
-        self.latest_app_keys_created_at
-            .contains_key(&owner.to_hex())
-    }
-
     fn needs_local_sibling_roster_probe(&self, prepared: &PreparedSend) -> bool {
         prepared.deliveries.is_empty()
             && prepared.relay_gaps.is_empty()
-            && !self.has_app_keys_for_owner(self.local_owner)
+            && !self.has_roster_for_owner(self.local_owner)
     }
 
     fn append_queued_protocol_backfill(
@@ -334,7 +329,6 @@ impl ProtocolEngine {
             version: PROTOCOL_ENGINE_STATE_VERSION,
             session_manager: self.session_manager.snapshot(),
             group_manager: self.group_manager.snapshot(),
-            latest_app_keys_created_at: self.latest_app_keys_created_at.clone(),
             pending_outbound: self.pending_outbound.clone(),
             pending_inbound: self.pending_inbound.clone(),
             pending_group_fanouts: self.pending_group_fanouts.clone(),

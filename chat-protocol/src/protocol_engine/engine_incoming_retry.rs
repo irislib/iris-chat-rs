@@ -287,7 +287,7 @@ impl ProtocolEngine {
                 self.remaining_local_sibling_targets(&pending.delivered_local_device_hexes);
             if pending.probe_local_sibling_roster
                 && local_targets.is_empty()
-                && (self.has_app_keys_for_owner(self.local_owner)
+                && (self.has_roster_for_owner(self.local_owner)
                     || now.get().saturating_sub(pending.created_at_secs)
                         > LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS)
             {

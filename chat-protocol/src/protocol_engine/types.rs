@@ -3,6 +3,8 @@ const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
 const LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS: u64 = 120;
+const DELIVERED_GROUP_SENDER_KEY_ACK_LIMIT: usize = 512;
+const ANSWERED_GROUP_SENDER_KEY_REPAIR_LIMIT: usize = 512;
 
 fn default_true() -> bool {
     true
@@ -17,8 +19,6 @@ struct ProtocolEnginePersistedState {
     version: u32,
     session_manager: SessionManagerSnapshot,
     group_manager: GroupManagerSnapshot,
-    #[serde(default)]
-    latest_app_keys_created_at: BTreeMap<String, u64>,
     #[serde(default)]
     pending_outbound: Vec<ProtocolPendingOutbound>,
     #[serde(default)]
@@ -353,7 +353,6 @@ pub struct ProtocolEngineDebugSnapshot {
     pub pending_group_fanout_targets: Vec<String>,
     pub subscription_generation: u64,
     pub last_backfill_attempt_secs: u64,
-    pub latest_app_keys_owner_count: usize,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -386,7 +385,6 @@ pub struct ProtocolEngine {
     storage: Arc<dyn StorageAdapter>,
     session_manager: SessionManager,
     group_manager: NostrGroupManager,
-    latest_app_keys_created_at: BTreeMap<String, u64>,
     pending_outbound: Vec<ProtocolPendingOutbound>,
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
@@ -416,7 +414,6 @@ pub struct ProtocolEngine {
 struct ProtocolEngineCheckpoint {
     session_manager: SessionManager,
     group_manager: NostrGroupManager,
-    latest_app_keys_created_at: BTreeMap<String, u64>,
     pending_outbound: Vec<ProtocolPendingOutbound>,
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,

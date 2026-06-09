@@ -5,19 +5,8 @@ impl ProtocolEngine {
         app_keys: AppKeys,
         created_at: u64,
     ) -> anyhow::Result<ProtocolRetryBatch> {
-        let session_checkpoint = self.session_manager.clone();
-        let latest_checkpoint = self.latest_app_keys_created_at.clone();
-        let pending_outbound_checkpoint = self.pending_outbound.clone();
-        let pending_inbound_checkpoint = self.pending_inbound.clone();
-        let pending_group_fanouts_checkpoint = self.pending_group_fanouts.clone();
-        let pending_group_pairwise_checkpoint = self.pending_group_pairwise_payloads.clone();
-        let owner_hex = owner_pubkey.to_hex();
+        let checkpoint = self.state_checkpoint();
         let owner = ndr_owner(owner_pubkey);
-        let latest = self
-            .latest_app_keys_created_at
-            .get(&owner_hex)
-            .copied()
-            .unwrap_or(0);
         let roster = DeviceRoster::new(
             NdrUnixSeconds(created_at),
             app_keys
@@ -31,44 +20,34 @@ impl ProtocolEngine {
                 })
                 .collect(),
         );
-        if created_at < latest
-            || (created_at == latest
-                && self
-                    .current_roster_for_owner(owner)
-                    .as_ref()
-                    .is_some_and(|current| current == &roster))
-        {
-            return Ok(ProtocolRetryBatch::default());
-        }
-        self.latest_app_keys_created_at
-            .insert(owner_hex, created_at);
-        if owner_pubkey == self.owner_pubkey {
-            self.session_manager.replace_local_roster(roster);
+        let decision = if owner_pubkey == self.owner_pubkey {
+            if should_replace_provisional_local_roster(
+                &self.session_manager.snapshot(),
+                self.owner_pubkey,
+                self.local_device,
+                &roster,
+            ) {
+                self.session_manager.replace_local_roster(roster)
+            } else {
+                self.session_manager.apply_local_roster(roster)
+            }
         } else {
-            self.session_manager.observe_peer_roster(owner, roster);
+            self.session_manager.observe_peer_roster(owner, roster)
+        };
+        if matches!(
+            decision,
+            nostr_double_ratchet::RosterSnapshotDecision::Stale
+        ) {
+            return Ok(ProtocolRetryBatch::default());
         }
         self.invalidate_known_message_author_cache();
         self.wake_pending_protocol_for_owner(owner);
         if let Err(error) = self.persist() {
-            self.session_manager = session_checkpoint;
-            self.latest_app_keys_created_at = latest_checkpoint;
-            self.pending_outbound = pending_outbound_checkpoint;
-            self.pending_inbound = pending_inbound_checkpoint;
-            self.pending_group_fanouts = pending_group_fanouts_checkpoint;
-            self.pending_group_pairwise_payloads = pending_group_pairwise_checkpoint;
+            self.restore_checkpoint(checkpoint);
             self.invalidate_known_message_author_cache();
             return Err(error);
         }
         self.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))
-    }
-
-    fn current_roster_for_owner(&self, owner: NdrOwnerPubkey) -> Option<DeviceRoster> {
-        self.session_manager
-            .snapshot()
-            .users
-            .into_iter()
-            .find(|user| user.owner_pubkey == owner)
-            .and_then(|user| user.roster)
     }
 
     pub fn observe_invite_event(&mut self, event: &Event) -> anyhow::Result<ProtocolRetryBatch> {
@@ -825,4 +804,33 @@ impl ProtocolEngine {
             queued_targets,
         })
     }
+}
+
+fn should_replace_provisional_local_roster(
+    snapshot: &SessionManagerSnapshot,
+    owner_pubkey: PublicKey,
+    local_device_pubkey: NdrDevicePubkey,
+    incoming_roster: &DeviceRoster,
+) -> bool {
+    let incoming_devices = incoming_roster.devices();
+    if incoming_devices.len() <= 1
+        || !incoming_devices
+            .iter()
+            .any(|entry| entry.device_pubkey == local_device_pubkey)
+    {
+        return false;
+    }
+
+    let Some(current_roster) = snapshot
+        .users
+        .iter()
+        .find(|user| user.owner_pubkey == ndr_owner(owner_pubkey))
+        .and_then(|user| user.roster.as_ref())
+    else {
+        return false;
+    };
+    let current_devices = current_roster.devices();
+    current_devices.len() == 1
+        && current_devices[0].device_pubkey == local_device_pubkey
+        && current_roster.created_at > incoming_roster.created_at
 }

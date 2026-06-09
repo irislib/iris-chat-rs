@@ -12,7 +12,6 @@ fn seed_protocol_storage_for_test(
         "version": 1,
         "session_manager": seed_session_manager,
         "group_manager": seed_group_manager,
-        "latest_app_keys_created_at": {},
         "pending_outbound": [],
         "pending_inbound": [],
         "pending_group_fanouts": [],
