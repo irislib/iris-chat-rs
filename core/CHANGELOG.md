@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.31
+
+- Publish the protocol retry fixes with `iris-chat-protocol` 0.1.3 so packaged builds use the new retry scheduler API.
+- Let chat recovery retry missing protocol state after restart, offline use, or message-server reconnects.
+
 ## 0.1.30
 
 - Update to `nostr-double-ratchet` 0.0.147 so new group messages and one-to-many protocol messages no longer expose sender-key key ids or message counters to message servers.
