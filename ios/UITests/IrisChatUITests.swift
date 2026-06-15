@@ -768,6 +768,13 @@ final class IrisChatUITests: XCTestCase {
         tapWelcomeAction(app, "welcomeRestoreAction")
 
         XCTAssertTrue(element(app, "restoreAccountScreen").waitForExistence(timeout: 10))
+#if os(iOS)
+        let restoreButton = element(app, "importKeyButton")
+        XCTAssertTrue(restoreButton.waitForExistence(timeout: 10))
+        XCTAssertFalse(restoreButton.isEnabled)
+        acceptOnboardingTermsIfNeeded(app)
+        XCTAssertTrue(waitUntil(timeout: 5) { restoreButton.isEnabled })
+#endif
         XCTAssertTrue(element(app, "importKeyField").waitForExistence(timeout: 10))
         typeText(validOwnerNsec, into: editableElement(app, "importKeyField"), app: app)
         if !waitForChatList(app, timeout: 2) {
@@ -783,6 +790,9 @@ final class IrisChatUITests: XCTestCase {
         tapWelcomeAction(app, "welcomeRestoreAction")
 
         XCTAssertTrue(element(app, "restoreAccountScreen").waitForExistence(timeout: 10))
+#if os(iOS)
+        acceptOnboardingTermsIfNeeded(app)
+#endif
         XCTAssertTrue(element(app, "importKeyField").waitForExistence(timeout: 10))
         typeText("not a secret key", into: editableElement(app, "importKeyField"), app: app)
         element(app, "importKeyButton").tap()
@@ -801,6 +811,9 @@ final class IrisChatUITests: XCTestCase {
         )
         tapWelcomeAction(app, "welcomeRestoreAction")
         XCTAssertTrue(element(app, "restoreAccountScreen").waitForExistence(timeout: 10))
+#if os(iOS)
+        acceptOnboardingTermsIfNeeded(app)
+#endif
         XCTAssertTrue(element(app, "restoreLinkDeviceAction").waitForExistence(timeout: 10))
         element(app, "restoreLinkDeviceAction").tap()
         XCTAssertTrue(element(app, "addDeviceScreen").waitForExistence(timeout: 10))
@@ -832,8 +845,14 @@ final class IrisChatUITests: XCTestCase {
         let app = launchCleanApp()
 
         tapWelcomeAction(app, "welcomeRestoreAction")
-        XCTAssertTrue(element(app, "restoreLinkDeviceAction").waitForExistence(timeout: 10))
-        element(app, "restoreLinkDeviceAction").tap()
+        let linkAction = element(app, "restoreLinkDeviceAction")
+        XCTAssertTrue(linkAction.waitForExistence(timeout: 10))
+#if os(iOS)
+        XCTAssertFalse(linkAction.isEnabled)
+        acceptOnboardingTermsIfNeeded(app)
+        XCTAssertTrue(waitUntil(timeout: 5) { linkAction.isEnabled })
+#endif
+        linkAction.tap()
 
         XCTAssertTrue(element(app, "addDeviceScreen").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "linkDeviceQrCode").waitForExistence(timeout: 20))
