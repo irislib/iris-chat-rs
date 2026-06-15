@@ -190,8 +190,21 @@ struct CreateAccountScreen: View {
 
 struct RestoreAccountScreen: View {
     @ObservedObject var manager: AppManager
+    @AppStorage(irisTermsAcceptedDefaultsKey) private var termsAccepted = false
     @StateObject private var restoreSecret = SecretKeyDraft()
     @State private var lastSubmittedSecret: String?
+
+    private var requiresTermsAcceptance: Bool {
+        irisRequiresOnboardingTermsAcceptance()
+    }
+
+    private var canUseRestoreActions: Bool {
+        !requiresTermsAcceptance || termsAccepted
+    }
+
+    private var canRestoreAccount: Bool {
+        canUseRestoreActions && !manager.state.busy.restoringSession
+    }
 
     var body: some View {
         IrisScrollScreen {
@@ -216,11 +229,15 @@ struct RestoreAccountScreen: View {
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
+                if requiresTermsAcceptance {
+                    OnboardingTermsAgreement(accepted: $termsAccepted)
+                }
+
                 Button(manager.state.busy.restoringSession ? "Restoring…" : "Restore profile") {
                     submitRestore(restoreSecret.text, force: true)
                 }
                 .buttonStyle(IrisPrimaryButtonStyle())
-                .disabled(manager.state.busy.restoringSession)
+                .disabled(!canRestoreAccount)
                 .accessibilityIdentifier("importKeyButton")
 
                 Text("or")
@@ -236,6 +253,7 @@ struct RestoreAccountScreen: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(IrisSecondaryButtonStyle())
+                .disabled(!canUseRestoreActions)
                 .accessibilityIdentifier("restoreLinkDeviceAction")
             }
         }
@@ -248,10 +266,12 @@ struct RestoreAccountScreen: View {
         guard shouldAutoSubmitSecret(previous: previous, current: current) else {
             return
         }
+        guard canUseRestoreActions else { return }
         submitRestore(current)
     }
 
     private func submitRestore(_ value: String, force: Bool = false) {
+        guard canUseRestoreActions else { return }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             manager.restoreSession(ownerNsec: trimmed)
@@ -271,7 +291,16 @@ struct AddDeviceScreen: View {
     @ObservedObject var manager: AppManager
     let awaitingApproval: Bool
 
+    @AppStorage(irisTermsAcceptedDefaultsKey) private var termsAccepted = false
     @State private var showingLogoutConfirmation = false
+
+    private var requiresTermsAcceptance: Bool {
+        irisRequiresOnboardingTermsAcceptance()
+    }
+
+    private var canUseLinkDevice: Bool {
+        !requiresTermsAcceptance || termsAccepted
+    }
 
     var body: some View {
         IrisScrollScreen {
@@ -280,11 +309,10 @@ struct AddDeviceScreen: View {
                 .frame(maxWidth: .infinity)
         }
         .onAppear {
-            if !awaitingApproval,
-               manager.state.linkDevice == nil,
-               !manager.state.busy.linkingDevice {
-                manager.startLinkedDevice(ownerInput: "")
-            }
+            startLinkedDeviceIfNeeded()
+        }
+        .irisOnChange(of: termsAccepted) { _ in
+            startLinkedDeviceIfNeeded()
         }
         .alert("Delete all local data?", isPresented: $showingLogoutConfirmation) {
             Button("Cancel", role: .cancel) {}
@@ -306,11 +334,25 @@ struct AddDeviceScreen: View {
             CardHeader(
                 title: awaitingApproval ? "Finish linking" : "Link this device",
                 subtitle: awaitingApproval
-                    ? "Waiting for approval from your signed-in device."
-                    : "Scan this code with your signed-in device."
+                    ? (canUseLinkDevice
+                        ? "Waiting for approval from your signed-in device."
+                        : "Accept the terms before finishing device linking.")
+                    : (canUseLinkDevice
+                        ? "Scan this code with your signed-in device."
+                        : "Accept the terms before linking this device.")
             )
 
-            if awaitingApproval {
+            if !canUseLinkDevice {
+                OnboardingTermsAgreement(accepted: $termsAccepted)
+
+                if awaitingApproval {
+                    Button("Sign out") {
+                        showingLogoutConfirmation = true
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle())
+                    .accessibilityIdentifier("awaitingApprovalLogoutButton")
+                }
+            } else if awaitingApproval {
                 Button("Sign out") {
                     showingLogoutConfirmation = true
                 }
@@ -336,13 +378,22 @@ struct AddDeviceScreen: View {
                         manager.startLinkedDevice(ownerInput: "")
                     }
                     .buttonStyle(IrisSecondaryButtonStyle())
-                    .disabled(manager.state.busy.linkingDevice)
+                    .disabled(!canUseLinkDevice || manager.state.busy.linkingDevice)
                     .accessibilityIdentifier("linkDeviceRefreshButton")
                 }
             } else {
                 ProgressView()
                     .accessibilityIdentifier("linkDeviceCreating")
             }
+        }
+    }
+
+    private func startLinkedDeviceIfNeeded() {
+        if !awaitingApproval,
+           canUseLinkDevice,
+           manager.state.linkDevice == nil,
+           !manager.state.busy.linkingDevice {
+            manager.startLinkedDevice(ownerInput: "")
         }
     }
 }

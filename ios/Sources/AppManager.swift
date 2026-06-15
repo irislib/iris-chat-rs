@@ -961,6 +961,7 @@ final class AppManager: ObservableObject {
         if environment["IRIS_UI_TEST_RESET"] == "1" {
             resolvedSecretStore.clear()
             try? fileManager.removeItem(at: resolvedDataDir)
+            UserDefaults.standard.removeObject(forKey: irisTermsAcceptedDefaultsKey)
         }
         if let peer = environment["IRIS_UI_TEST_SEED_PEER"]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !peer.isEmpty,
