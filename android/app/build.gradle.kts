@@ -13,9 +13,6 @@ val ndkVersionValue = "28.2.13676358"
 val rustAppDir = rootProject.file("../core")
 val rustManifestPath = rustAppDir.resolve("Cargo.toml")
 val rustSourceDir = rustAppDir.resolve("src")
-val rustPathDependencyDirs =
-    listOf(rootProject.file("../../nostr-double-ratchet/rust/crates"))
-        .filter { it.exists() }
 val generatedJniDir = layout.buildDirectory.dir("generated/jniLibs")
 val generatedUniffiDir = layout.buildDirectory.dir("generated/source/uniffi/main/java")
 val localProperties =
@@ -324,7 +321,6 @@ val buildRustHostDebug by tasks.registering(Exec::class) {
     inputs.file(rustManifestPath)
     inputs.file(rustAppDir.resolve("uniffi.toml"))
     inputs.dir(rustSourceDir)
-    rustPathDependencyDirs.forEach { inputs.dir(it) }
     inputs.property("ndrAppVersion", appVersionName)
     inputs.property("ndrBuildChannel", "debug")
     inputs.property("ndrBuildGitSha", buildGitSha)
@@ -418,7 +414,6 @@ fun registerRustAndroidTask(
         inputs.file(rustManifestPath)
         inputs.file(rustAppDir.resolve("uniffi.toml"))
         inputs.dir(rustSourceDir)
-        rustPathDependencyDirs.forEach { inputs.dir(it) }
         inputs.property("ndrAppVersion", appVersionName)
         inputs.property("ndrBuildChannel", buildChannel)
         inputs.property("ndrBuildGitSha", buildGitSha)
