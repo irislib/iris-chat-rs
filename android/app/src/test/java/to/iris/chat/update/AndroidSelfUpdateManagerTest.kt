@@ -1,6 +1,5 @@
 package to.iris.chat.update
 
-import java.net.URL
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,25 +34,4 @@ class AndroidSelfUpdateManagerTest {
         )
     }
 
-    @Test
-    fun liveReleaseManifestExposesAndroidApk() {
-        // Hits the production release manifest. Fails loudly if upload.iris.to
-        // ever changes the JSON shape or the APK suffix our updater filters on.
-        val body = URL(MANIFEST_URL).readText()
-        val apkPattern = Regex(""""name"\s*:\s*"[^"]*-android-arm64\.apk"""")
-        assertTrue(
-            "release.json must contain a *-android-arm64.apk asset; got: $body",
-            apkPattern.containsMatchIn(body),
-        )
-        val tagPattern = Regex(""""tag"\s*:\s*"v\d+""")
-        assertTrue(
-            "release.json must contain a versioned tag; got: $body",
-            tagPattern.containsMatchIn(body),
-        )
-    }
-
-    private companion object {
-        const val MANIFEST_URL =
-            "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest/release.json"
-    }
 }

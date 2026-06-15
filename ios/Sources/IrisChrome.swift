@@ -82,10 +82,7 @@ extension View {
 // scroll-to-bottom button, and any other "floating chrome" element
 // that should let the timeline ghost through. Mirrors Signal-iOS's
 // strategy:
-//   * iOS 26+ : SwiftUI's native `.glassEffect`, which is the
-//     Liquid Glass material — adapts to content underneath, stays
-//     interactive, no extra tint needed.
-//   * iOS 16-25: `.regularMaterial` blur — the thickest of the
+//   * Default: `.regularMaterial` blur — the thickest of the
 //     visible-translucent materials, no palette tint so the blur
 //     itself reads as the surface.
 //   * Reduce Transparency: solid panel-tone fill so accessibility
@@ -94,12 +91,10 @@ struct IrisGlassSurface<S: Shape>: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.irisPalette) private var palette
     let shape: S
-    let isInteractive: Bool
     let solidWhenReduced: Bool
 
-    init(shape: S, isInteractive: Bool = true, solidWhenReduced: Bool = true) {
+    init(shape: S, solidWhenReduced: Bool = true) {
         self.shape = shape
-        self.isInteractive = isInteractive
         self.solidWhenReduced = solidWhenReduced
     }
 
@@ -107,30 +102,7 @@ struct IrisGlassSurface<S: Shape>: ViewModifier {
         if reduceTransparency && solidWhenReduced {
             content.background(palette.toolbar, in: shape)
         } else {
-            #if os(iOS)
-            if #available(iOS 26.0, *) {
-                // Apple Liquid Glass — the real thing. Content
-                // underneath shows through with light bending,
-                // depth, and adaptive contrast.
-                content.glassEffect(
-                    isInteractive ? .regular.interactive() : .regular,
-                    in: shape
-                )
-            } else {
-                content.background(.regularMaterial, in: shape)
-            }
-            #elseif os(macOS)
-            if #available(macOS 26.0, *) {
-                content.glassEffect(
-                    isInteractive ? .regular.interactive() : .regular,
-                    in: shape
-                )
-            } else {
-                content.background(.regularMaterial, in: shape)
-            }
-            #else
             content.background(.regularMaterial, in: shape)
-            #endif
         }
     }
 }
@@ -141,10 +113,9 @@ extension View {
     /// `RoundedRectangle` or `Capsule`).
     func irisGlassSurface<S: Shape>(
         in shape: S,
-        isInteractive: Bool = true,
         solidWhenReduced: Bool = true
     ) -> some View {
-        modifier(IrisGlassSurface(shape: shape, isInteractive: isInteractive, solidWhenReduced: solidWhenReduced))
+        modifier(IrisGlassSurface(shape: shape, solidWhenReduced: solidWhenReduced))
     }
 
     /// Anchor a `ScrollView`'s initial offset to the bottom edge so a

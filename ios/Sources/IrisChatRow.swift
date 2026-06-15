@@ -159,11 +159,7 @@ struct IrisChatRow: View {
     }
 }
 
-// Signal-style send button label. On iOS 26+ we get the real
-// `prominentGlass` configuration via .glassEffect with a tint —
-// the button reads as a colored glass disc that the timeline
-// bends light through, distinct from a flat accent bubble. On
-// older iOS we approximate with a solid accent fill + a bright
+// Signal-style send button label: a solid accent fill plus a bright
 // halo ring so it can't be confused with an outgoing bubble.
 struct IrisSendButtonLabel: View {
     @Environment(\.irisPalette) private var palette
@@ -175,33 +171,19 @@ struct IrisSendButtonLabel: View {
             .foregroundStyle(palette.onAccent)
             .frame(width: 40, height: 40)
         #if os(iOS)
-        if #available(iOS 26.0, *) {
-            return AnyView(
-                icon
-                    .glassEffect(
-                        .regular.tint(palette.accent).interactive(),
-                        in: Circle()
-                    )
-                    .overlay(
-                        Circle()
-                            .strokeBorder(Color.white.opacity(0.55), lineWidth: 1)
-                    )
-            )
-        } else {
-            return AnyView(
-                icon
-                    .background(Circle().fill(palette.accent))
-                    .overlay(
-                        Circle()
-                            .strokeBorder(Color.white.opacity(0.55), lineWidth: 1)
-                    )
-                    .overlay(
-                        Circle()
-                            .strokeBorder(palette.accent.opacity(0.6), lineWidth: 1)
-                            .padding(-2)
-                    )
-            )
-        }
+        return AnyView(
+            icon
+                .background(Circle().fill(palette.accent))
+                .overlay(
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.55), lineWidth: 1)
+                )
+                .overlay(
+                    Circle()
+                        .strokeBorder(palette.accent.opacity(0.6), lineWidth: 1)
+                        .padding(-2)
+                )
+        )
         #else
         return AnyView(
             icon
@@ -225,11 +207,9 @@ struct IrisDayChip: View {
             .foregroundStyle(palette.textPrimary)
             .padding(.horizontal, 12)
             .padding(.vertical, 3)
-            // Signal-style glass day separator. iOS 26+ gets a real
-            // capsule glass effect; older iOS falls back to a
-            // regular-material blur — both via IrisGlassSurface so
-            // the same modifier path applies as the composer and FAB.
-            .irisGlassSurface(in: Capsule(style: .continuous), isInteractive: false)
+            // Signal-style glass day separator using the same material
+            // path as the composer and FAB.
+            .irisGlassSurface(in: Capsule(style: .continuous))
     }
 }
 
