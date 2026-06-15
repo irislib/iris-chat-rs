@@ -1,0 +1,257 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_DIR: iris-chat-rs
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust and repo checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+    defaults:
+      run:
+        working-directory: iris-chat-rs
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+        with:
+          path: ${{ env.APP_DIR }}
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
+
+      - name: Static checks
+        run: |
+          ./scripts/check-palettes
+          ./scripts/check-no-accent-text
+          ./scripts/check-source-file-sizes
+          ./scripts/check-rust-panics
+          ./scripts/test_release_publish_guard
+          ./scripts/test_homebrew_tap
+
+      - name: Rust formatting
+        run: |
+          cargo fmt --manifest-path chat-protocol/Cargo.toml -- --check
+          cargo fmt --manifest-path core/Cargo.toml -- --check
+          cargo fmt --manifest-path protocol-ffi/Cargo.toml -- --check
+          cargo fmt --manifest-path linux/Cargo.toml -- --check
+
+      - name: Rust tests
+        run: |
+          cargo test --manifest-path chat-protocol/Cargo.toml --locked
+          cargo test --manifest-path protocol-ffi/Cargo.toml --locked
+          cargo test --manifest-path core/Cargo.toml --locked
+
+  android:
+    name: Android build and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+    defaults:
+      run:
+        working-directory: iris-chat-rs
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+        with:
+          path: ${{ env.APP_DIR }}
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-linux-android
+
+      - name: Install Android SDK components
+        run: |
+          android_sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          if [[ -z "$android_sdk_root" ]]; then
+            echo "ANDROID_HOME or ANDROID_SDK_ROOT must be set." >&2
+            exit 1
+          fi
+          sdkmanager_bin="$android_sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager_bin" --licenses >/dev/null || true
+          "$sdkmanager_bin" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+
+      - name: Cache Cargo and Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ${{ github.workspace }}/cargo-target
+          key: android-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/android/**/*.gradle*', 'iris-chat-rs/android/gradle/**/*.toml') }}
+          restore-keys: |
+            android-${{ runner.os }}-
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Assemble debug APK
+        run: ./scripts/android-build android-assemble
+
+      - name: Android unit and compile checks
+        run: ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin
+        working-directory: iris-chat-rs/android
+
+  linux:
+    name: Linux build and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+    defaults:
+      run:
+        working-directory: iris-chat-rs
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+        with:
+          path: ${{ env.APP_DIR }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            libadwaita-1-dev \
+            libclang-dev \
+            libglib2.0-dev \
+            libgtk-4-dev \
+            libsecret-1-dev \
+            libsoup-3.0-dev \
+            libssl-dev \
+            libv4l-dev \
+            pkg-config
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: linux-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
+          restore-keys: |
+            linux-${{ runner.os }}-
+
+      - name: Linux tests
+        run: cargo test --manifest-path linux/Cargo.toml --locked
+
+  macos:
+    name: macOS build and tests
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+    defaults:
+      run:
+        working-directory: iris-chat-rs
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+        with:
+          path: ${{ env.APP_DIR }}
+
+      - name: Install build tools
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-darwin
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+            ${{ github.workspace }}/iris-chat-rs/macos/.build/cargo-target
+          key: macos-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/macos/project.yml') }}
+          restore-keys: |
+            macos-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: macOS tests
+        run: ./scripts/test-macos
+
+  ios:
+    name: iOS simulator build
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+    defaults:
+      run:
+        working-directory: iris-chat-rs
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+        with:
+          path: ${{ env.APP_DIR }}
+
+      - name: Install build tools
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: ios-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/ios/project.yml') }}
+          restore-keys: |
+            ios-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: iOS simulator build
+        run: ./scripts/ios-build ios-build-sim

@@ -216,6 +216,26 @@ struct MessageRequestDeclineModifier: ViewModifier {
     let manager: AppManager
 
     func body(content: Content) -> some View {
+        content
+            .modifier(MessageRequestDeclineChoiceDialog(
+                target: $target,
+                blockTarget: $blockTarget,
+                reportTarget: $reportTarget,
+                deleteTarget: $deleteTarget
+            ))
+            .modifier(MessageRequestBlockDialog(target: $blockTarget, manager: manager))
+            .modifier(MessageRequestReportDialog(target: $reportTarget, manager: manager))
+            .modifier(MessageRequestDeleteDialog(target: $deleteTarget, manager: manager))
+    }
+}
+
+private struct MessageRequestDeclineChoiceDialog: ViewModifier {
+    @Binding var target: MessageRequestDeclineTarget?
+    @Binding var blockTarget: MessageRequestDeclineTarget?
+    @Binding var reportTarget: MessageRequestDeclineTarget?
+    @Binding var deleteTarget: MessageRequestDeclineTarget?
+
+    func body(content: Content) -> some View {
         content.confirmationDialog(
             target.map { "Decline \($0.displayName)?" } ?? "Decline request?",
             isPresented: Binding(
@@ -257,24 +277,32 @@ struct MessageRequestDeclineModifier: ViewModifier {
                 Text("No notification is sent.")
             }
         )
-        .confirmationDialog(
-            blockTarget.map { "Block \($0.displayName)?" } ?? "Block?",
+    }
+}
+
+private struct MessageRequestBlockDialog: ViewModifier {
+    @Binding var target: MessageRequestDeclineTarget?
+    let manager: AppManager
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            target.map { "Block \($0.displayName)?" } ?? "Block?",
             isPresented: Binding(
-                get: { blockTarget != nil },
+                get: { target != nil },
                 set: { presented in
-                    if !presented { blockTarget = nil }
+                    if !presented { target = nil }
                 }
             ),
             titleVisibility: .visible,
-            presenting: blockTarget,
+            presenting: target,
             actions: { item in
                 Button("Block", role: .destructive) {
                     manager.setUserBlocked(item.chatId, blocked: true)
-                    blockTarget = nil
+                    target = nil
                 }
                 .accessibilityIdentifier("messageRequestBlockConfirmKeep")
                 Button("Report and block", role: .destructive) {
-                    blockTarget = nil
+                    target = nil
                     irisReportUser(
                         manager: manager,
                         chatId: item.chatId,
@@ -284,7 +312,7 @@ struct MessageRequestDeclineModifier: ViewModifier {
                 }
                 .accessibilityIdentifier("messageRequestBlockAndReportButton")
                 Button("Cancel", role: .cancel) {
-                    blockTarget = nil
+                    target = nil
                 }
                 .accessibilityIdentifier("messageRequestBlockCancelButton")
             },
@@ -292,19 +320,27 @@ struct MessageRequestDeclineModifier: ViewModifier {
                 Text("They won't be able to message you. No notification is sent.")
             }
         )
-        .confirmationDialog(
-            reportTarget.map { "Report \($0.displayName)?" } ?? "Report?",
+    }
+}
+
+private struct MessageRequestReportDialog: ViewModifier {
+    @Binding var target: MessageRequestDeclineTarget?
+    let manager: AppManager
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            target.map { "Report \($0.displayName)?" } ?? "Report?",
             isPresented: Binding(
-                get: { reportTarget != nil },
+                get: { target != nil },
                 set: { presented in
-                    if !presented { reportTarget = nil }
+                    if !presented { target = nil }
                 }
             ),
             titleVisibility: .visible,
-            presenting: reportTarget,
+            presenting: target,
             actions: { item in
                 Button("Report only", role: .destructive) {
-                    reportTarget = nil
+                    target = nil
                     irisReportUser(
                         manager: manager,
                         chatId: item.chatId,
@@ -314,7 +350,7 @@ struct MessageRequestDeclineModifier: ViewModifier {
                 }
                 .accessibilityIdentifier("messageRequestReportOnlyButton")
                 Button("Report and block", role: .destructive) {
-                    reportTarget = nil
+                    target = nil
                     irisReportUser(
                         manager: manager,
                         chatId: item.chatId,
@@ -324,7 +360,7 @@ struct MessageRequestDeclineModifier: ViewModifier {
                 }
                 .accessibilityIdentifier("messageRequestReportAndBlockButton")
                 Button("Cancel", role: .cancel) {
-                    reportTarget = nil
+                    target = nil
                 }
                 .accessibilityIdentifier("messageRequestReportCancelButton")
             },
@@ -332,25 +368,33 @@ struct MessageRequestDeclineModifier: ViewModifier {
                 Text("This prepares a report for support. No notification is sent.")
             }
         )
-        .confirmationDialog(
-            deleteTarget.map { "Delete chat with \($0.displayName)?" } ?? "Delete chat?",
+    }
+}
+
+private struct MessageRequestDeleteDialog: ViewModifier {
+    @Binding var target: MessageRequestDeclineTarget?
+    let manager: AppManager
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            target.map { "Delete chat with \($0.displayName)?" } ?? "Delete chat?",
             isPresented: Binding(
-                get: { deleteTarget != nil },
+                get: { target != nil },
                 set: { presented in
-                    if !presented { deleteTarget = nil }
+                    if !presented { target = nil }
                 }
             ),
             titleVisibility: .visible,
-            presenting: deleteTarget,
+            presenting: target,
             actions: { item in
                 Button("Delete chat", role: .destructive) {
                     manager.dispatch(.deleteChat(chatId: item.chatId))
                     manager.navigateBack()
-                    deleteTarget = nil
+                    target = nil
                 }
                 .accessibilityIdentifier("messageRequestDeleteChatConfirmButton")
                 Button("Cancel", role: .cancel) {
-                    deleteTarget = nil
+                    target = nil
                 }
                 .accessibilityIdentifier("messageRequestDeleteChatCancelButton")
             },
