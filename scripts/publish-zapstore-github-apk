@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+REPO="${GITHUB_REPOSITORY:-irislib/iris-chat-rs}"
+WORKFLOW="android-release-apk.yml"
+RUN_ID=""
+ARTIFACT_NAME=""
+MODE="publish"
+DOWNLOAD_DIR=""
+KEEP_DOWNLOAD=0
+
+usage() {
+  cat <<'EOF'
+usage: ./scripts/publish-zapstore-github-apk [options]
+
+Downloads a signed APK artifact from the Android Release APK GitHub Actions
+workflow, stages it as dist/android/IrisChat-release-latest.apk, then runs the
+local Zapstore publisher against that already-signed APK.
+
+Options:
+  --run-id <id>         Use this GitHub Actions run. Defaults to latest successful run.
+  --repo <owner/repo>   GitHub repo to read from. Default: irislib/iris-chat-rs.
+  --artifact <name>     Artifact name to download. Defaults to all artifacts from the run.
+  --download-dir <dir>  Download/extract artifacts here. Defaults to a temp dir.
+  --keep-download       Do not delete the download dir after publishing.
+  --check               Run zsp publish --check instead of publishing.
+  --wizard              Run interactive zsp publish --wizard.
+  --publish             Publish to Zapstore. This is the default.
+  -h, --help            Show this help.
+
+Assumptions:
+  - gh is authenticated with access to the repo.
+  - zsp is installed and on PATH.
+  - zapstore.yaml has the intended pubkey and release metadata.
+  - .env.zapstore.local or the shell sets NOSTR_KEY_PATH/SIGN_WITH.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --run-id)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --run-id" >&2
+        exit 2
+      fi
+      RUN_ID="$2"; shift
+      ;;
+    --repo)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --repo" >&2
+        exit 2
+      fi
+      REPO="$2"; shift
+      ;;
+    --artifact)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --artifact" >&2
+        exit 2
+      fi
+      ARTIFACT_NAME="$2"; shift
+      ;;
+    --download-dir)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --download-dir" >&2
+        exit 2
+      fi
+      DOWNLOAD_DIR="$2"; shift
+      ;;
+    --keep-download)
+      KEEP_DOWNLOAD=1
+      ;;
+    --check)
+      MODE="check"
+      ;;
+    --wizard)
+      MODE="wizard"
+      ;;
+    --publish)
+      MODE="publish"
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown arg: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+cleanup() {
+  if [[ "$KEEP_DOWNLOAD" -eq 0 && -n "${DOWNLOAD_DIR:-}" && -d "$DOWNLOAD_DIR" ]]; then
+    rm -rf "$DOWNLOAD_DIR"
+  fi
+}
+
+trap cleanup EXIT
+
+latest_successful_run_id() {
+  gh run list \
+    --repo "$REPO" \
+    --workflow "$WORKFLOW" \
+    --status success \
+    --limit 1 \
+    --json databaseId \
+    --jq '.[0].databaseId'
+}
+
+select_apk() {
+  local dir="$1"
+  local apk
+
+  apk="$(find "$dir" -type f -name 'IrisChat-release-*.apk' ! -name '*latest*' | sort | tail -n 1)"
+  if [[ -n "$apk" ]]; then
+    printf '%s\n' "$apk"
+    return 0
+  fi
+
+  apk="$(find "$dir" -type f -name '*.apk' | sort | tail -n 1)"
+  if [[ -n "$apk" ]]; then
+    printf '%s\n' "$apk"
+    return 0
+  fi
+
+  echo "No APK found in downloaded artifact directory: $dir" >&2
+  return 1
+}
+
+stage_downloaded_files() {
+  local source_dir="$1"
+  local apk="$2"
+  local dist_dir="$ROOT/dist/android"
+  local file
+
+  mkdir -p "$dist_dir"
+  while IFS= read -r file; do
+    cp "$file" "$dist_dir/"
+  done < <(find "$source_dir" -type f \( \
+    -name '*.apk' -o \
+    -name '*.env' -o \
+    -name '*.metadata.env' -o \
+    -name '*.sha256' -o \
+    -name '*.apksigner.txt' -o \
+    -name '*.badging.txt' \
+  \))
+
+  cp "$apk" "$dist_dir/IrisChat-release-latest.apk"
+}
+
+print_metadata() {
+  local metadata
+  metadata="$(find "$ROOT/dist/android" -maxdepth 1 -type f -name '*.metadata.env' | sort | tail -n 1)"
+  if [[ -z "$metadata" ]]; then
+    return 0
+  fi
+
+  echo "Using CI APK metadata:"
+  sed -n \
+    -e 's/^package_name=/  package: /p' \
+    -e 's/^app_version_name=/  versionName: /p' \
+    -e 's/^app_version_code=/  versionCode: /p' \
+    -e 's/^apk_sha256=/  apk sha256: /p' \
+    -e 's/^signing_cert_sha256=/  signing cert sha256: /p' \
+    "$metadata"
+}
+
+require_cmd gh
+require_cmd zsp
+
+if [[ -z "$RUN_ID" ]]; then
+  RUN_ID="$(latest_successful_run_id)"
+fi
+if [[ -z "$RUN_ID" || "$RUN_ID" == "null" ]]; then
+  echo "Could not find a successful $WORKFLOW run in $REPO. Pass --run-id." >&2
+  exit 1
+fi
+
+if [[ -z "$DOWNLOAD_DIR" ]]; then
+  DOWNLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/iris-zapstore-apk.XXXXXX")"
+else
+  mkdir -p "$DOWNLOAD_DIR"
+  KEEP_DOWNLOAD=1
+fi
+
+echo "Downloading Android Release APK run $RUN_ID from $REPO..."
+download_args=(run download "$RUN_ID" --repo "$REPO" --dir "$DOWNLOAD_DIR")
+if [[ -n "$ARTIFACT_NAME" ]]; then
+  download_args+=("--name" "$ARTIFACT_NAME")
+fi
+gh "${download_args[@]}"
+
+APK="$(select_apk "$DOWNLOAD_DIR")"
+stage_downloaded_files "$DOWNLOAD_DIR" "$APK"
+print_metadata
+
+echo
+echo "Publishing with local Zapstore signer..."
+ZAPSTORE_APK_PATH="$ROOT/dist/android/IrisChat-release-latest.apk" \
+  "$ROOT/scripts/publish-zapstore-android.sh" "$MODE"

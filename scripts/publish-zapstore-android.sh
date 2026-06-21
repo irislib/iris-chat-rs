@@ -35,6 +35,7 @@ ZAPSTORE_CONFIG="${ZAPSTORE_CONFIG:-$ROOT/zapstore.yaml}"
 ZAPSTORE_CHANNEL="${ZAPSTORE_CHANNEL:-main}"
 ZAPSTORE_IDENTITY_RELAYS="${ZAPSTORE_IDENTITY_RELAYS:-wss://relay.zapstore.dev}"
 APK_PATH="$ROOT/dist/android/IrisChat-release-latest.apk"
+ZAPSTORE_APK_PATH="${ZAPSTORE_APK_PATH:-${IRIS_ZAPSTORE_APK_PATH:-}}"
 
 TEMP_DIR=""
 TEMP_P12_PATH=""
@@ -43,6 +44,11 @@ TEMP_IDENTITY_EVENT_PATH=""
 usage() {
   cat <<'EOF'
 usage: ./scripts/publish-zapstore-android.sh <print-config|doctor|build|check|link-identity|wizard|publish>
+
+Environment:
+  ZAPSTORE_APK_PATH         Use this already-signed APK instead of building locally.
+                            The APK is copied to dist/android/IrisChat-release-latest.apk
+                            because zapstore.yaml references that stable path.
 EOF
 }
 
@@ -109,6 +115,37 @@ build_release_apk() {
   fi
 }
 
+stage_existing_apk() {
+  local source_path="$1"
+
+  if [[ -z "$source_path" ]]; then
+    echo "ZAPSTORE_APK_PATH must not be empty" >&2
+    exit 1
+  fi
+  if [[ ! -f "$source_path" ]]; then
+    echo "Existing Zapstore APK not found: $source_path" >&2
+    exit 1
+  fi
+
+  ensure_dir "$(dirname "$APK_PATH")"
+  if [[ "$(cd "$(dirname "$source_path")" && pwd)/$(basename "$source_path")" != "$APK_PATH" ]]; then
+    cp "$source_path" "$APK_PATH"
+  fi
+  printf '%s\n' "$APK_PATH"
+}
+
+prepare_release_apk() {
+  if [[ -n "${ZAPSTORE_APK_PATH:-}" ]]; then
+    stage_existing_apk "$ZAPSTORE_APK_PATH" >/dev/null
+  else
+    build_release_apk
+  fi
+  if [[ ! -f "$APK_PATH" ]]; then
+    echo "Expected release APK at $APK_PATH" >&2
+    exit 1
+  fi
+}
+
 export_pkcs12() {
   ensure_release_signing
   require_cmd keytool
@@ -138,6 +175,7 @@ zapstore.signing.method=$(signing_method_label)
 zapstore.identity.relays=$ZAPSTORE_IDENTITY_RELAYS
 zapstore.env.file=$ZAPSTORE_ENV_FILE
 release.keystore.path=${IRIS_RELEASE_KEYSTORE_PATH:-}
+release.apk.source=${ZAPSTORE_APK_PATH:-build}
 release.apk.path=$APK_PATH
 release.version.name=$IRIS_APP_VERSION_NAME
 release.version.code=$IRIS_APP_VERSION_CODE
@@ -190,7 +228,7 @@ EOF
 
 check_publish_config() {
   ensure_config
-  build_release_apk
+  prepare_release_apk
   require_cmd zsp
   zsp publish --check "$ZAPSTORE_CONFIG"
 }
@@ -214,7 +252,7 @@ run_publish() {
   local extra_flags=()
 
   ensure_config
-  build_release_apk
+  prepare_release_apk
   require_cmd zsp
 
   if [[ "$mode" == "wizard" ]]; then
@@ -240,7 +278,7 @@ case "${1:-}" in
     doctor
     ;;
   build)
-    build_release_apk
+    prepare_release_apk
     printf '%s\n' "$APK_PATH"
     ;;
   check)
