@@ -18,8 +18,8 @@ from PIL import Image
 
 REPO = Path(__file__).resolve().parent.parent
 SVG_SOURCE = REPO / "assets/iris-chat-logo.svg"
-BG = (0, 0, 0, 255)
-LOGO_FRACTION = 0.75
+BG = (5, 5, 7, 255)
+LOGO_FRACTION = 0.69
 ANDROID_LEGACY_FRACTION = 0.52
 ANDROID_FOREGROUND_FRACTION = 0.46
 ANDROID_SPLASH_FRACTION = 0.54

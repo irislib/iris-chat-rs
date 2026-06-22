@@ -215,16 +215,6 @@ struct DirectChatInfoScreen: View {
 
                         Divider().overlay(palette.border)
 
-#if os(iOS)
-                        // The mailto: hand-off to irismessenger@pm.me is
-                        // wired specifically for the iOS App Store
-                        // user-generated-content review process — Apple
-                        // requires every UGC-bearing iOS app to expose
-                        // a way to flag abusive content. Other platforms
-                        // route abuse handling through their own surfaces
-                        // (Zapstore listing, GitHub issues, the irischat.org
-                        // contact), so the in-app Report button is
-                        // intentionally iOS-only.
                         Button(role: .destructive) {
                             showingReportConfirmation = true
                         } label: {
@@ -242,7 +232,6 @@ struct DirectChatInfoScreen: View {
                         .accessibilityIdentifier("directChatReportButton")
 
                         Divider().overlay(palette.border)
-#endif
 
                         Button(role: .destructive) {
                             manager.dispatch(.deleteChat(chatId: chatId))

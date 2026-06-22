@@ -10,7 +10,9 @@ usage() {
   cat <<EOF
 Usage: scripts/local_relay_scenario_soak.sh [--iterations N]
 
-Runs the core test suite repeatedly.
+Runs the core test suite repeatedly in serial. A single pass is redundant with
+scripts/test_rust.sh; use this when intentionally looking for order-dependent
+flakes or soaking local-relay scenarios.
 
 Options:
   --iterations N   Number of full scenario-suite passes. Default: ${ITERATIONS}

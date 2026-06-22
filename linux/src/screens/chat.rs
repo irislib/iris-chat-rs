@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::sync::{Mutex, OnceLock};
 
 use adw::prelude::*;
+use gtk::glib;
 use iris_chat_core::{
     peer_input_to_npub, proxied_image_url, AppAction, AppState, ChatKind, ChatMessageKind,
     ChatMessageSnapshot, ChatThreadSnapshot, CurrentChatSnapshot, DeliveryState,
@@ -16,8 +17,13 @@ use crate::widgets::image_cache;
 
 mod chat_links;
 mod composer;
+mod safety;
 
 use chat_links::{install_link_actions, linkified_text};
+use safety::{
+    blocked_bar, is_user_blocked, message_request_bar, present_block_user_dialog,
+    present_report_user_dialog,
+};
 
 #[derive(Clone)]
 pub struct ChatInfoSnapshot {
@@ -56,7 +62,15 @@ pub fn render(chat_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk:
 
     container.append(&ttl_strip(chat, manager));
     container.append(&messages_view(chat, &state.preferences, manager));
-    container.append(&composer::composer(chat, state, manager));
+    let composer_blocked =
+        matches!(chat.kind, ChatKind::Direct) && is_user_blocked(&state.preferences, &chat.chat_id);
+    if composer_blocked {
+        container.append(&blocked_bar(chat, manager));
+    } else if matches!(chat.kind, ChatKind::Direct) && chat.is_request {
+        container.append(&message_request_bar(chat, manager));
+    } else {
+        container.append(&composer::composer(chat, state, manager));
+    }
 
     container.upcast()
 }
@@ -168,6 +182,58 @@ pub fn present_chat_info(
         });
     });
     content.append(&mute);
+
+    let blocked = is_user_blocked(&info.preferences, &info.chat_id);
+    let block = gtk::Button::with_label(if blocked {
+        "Unblock user"
+    } else {
+        "Block user"
+    });
+    if !blocked {
+        block.add_css_class("destructive-action");
+    }
+    block.set_halign(gtk::Align::Start);
+    let manager_for_block = manager.clone();
+    let chat_id_for_block = info.chat_id.clone();
+    let display_name_for_block = info.display_name.clone();
+    block.connect_clicked(move |btn| {
+        if blocked {
+            manager_for_block.dispatch(AppAction::SetUserBlocked {
+                owner_pubkey_hex: chat_id_for_block.clone(),
+                blocked: false,
+            });
+            return;
+        }
+        let parent = btn
+            .root()
+            .and_then(|root| root.downcast::<gtk::Window>().ok());
+        present_block_user_dialog(
+            parent.as_ref(),
+            chat_id_for_block.clone(),
+            display_name_for_block.clone(),
+            manager_for_block.clone(),
+        );
+    });
+    content.append(&block);
+
+    let report = gtk::Button::with_label("Report user");
+    report.add_css_class("destructive-action");
+    report.set_halign(gtk::Align::Start);
+    let manager_for_report = manager.clone();
+    let chat_id_for_report = info.chat_id.clone();
+    let display_name_for_report = info.display_name.clone();
+    report.connect_clicked(move |btn| {
+        let parent = btn
+            .root()
+            .and_then(|root| root.downcast::<gtk::Window>().ok());
+        present_report_user_dialog(
+            parent.as_ref(),
+            chat_id_for_report.clone(),
+            display_name_for_report.clone(),
+            manager_for_report.clone(),
+        );
+    });
+    content.append(&report);
 
     let delete = gtk::Button::with_label("Delete chat");
     delete.add_css_class("destructive-action");

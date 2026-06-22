@@ -18,7 +18,7 @@ namespace IrisChat;
 /// Windows shell-side AppManager. Mirrors the iOS/macOS AppManager.swift
 /// contract: build the Rust core, restore secure credentials, render Rust
 /// state, dispatch actions, persist secret side effects.
-public sealed class AppManager : INotifyPropertyChanged
+public sealed partial class AppManager : INotifyPropertyChanged
 {
     private const string CoreRestartToast = "Iris needs restart. Copy support bundle in Settings.";
     private const string DispatchFailureToast = "Action failed. Copy support bundle in Settings.";

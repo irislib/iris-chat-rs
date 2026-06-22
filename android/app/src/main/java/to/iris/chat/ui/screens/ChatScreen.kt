@@ -33,7 +33,6 @@ import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.ui.draw.clip
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -76,7 +75,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
@@ -98,18 +96,14 @@ import to.iris.chat.rust.ChatMessageSnapshot
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.DeliveryState
 import to.iris.chat.rust.OutgoingAttachment
-import to.iris.chat.rust.PeerProfileDebugSnapshot
 import to.iris.chat.rust.Screen
 import to.iris.chat.rust.SearchResultSnapshot
-import to.iris.chat.rust.peerInputToNpub
 import to.iris.chat.rust.proxiedImageUrl
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisIcons
-import to.iris.chat.ui.components.IrisInlineAction
 import to.iris.chat.ui.components.IrisSearchViewMoreRow
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisChatListRow
-import to.iris.chat.ui.components.IrisDivider
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.formatRelativeTime
 import androidx.compose.foundation.lazy.items
@@ -165,6 +159,7 @@ fun ChatScreen(
     val lastUserActivityAtSecs by appManager.lastUserActivityAtSecs.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
+    val clipboard = rememberIrisClipboard()
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val chat = currentChat?.takeIf { it.chatId == chatId }
@@ -188,6 +183,8 @@ fun ChatScreen(
     val latestHasSentTyping by rememberUpdatedState(hasSentTyping)
     var inChatSearchOpen by remember(chatId) { mutableStateOf(false) }
     var composerBounds by remember { mutableStateOf<Rect?>(null) }
+    var showMessageRequestBlockDialog by remember(chatId) { mutableStateOf(false) }
+    var showMessageRequestBlockAndReportDialog by remember(chatId) { mutableStateOf(false) }
     val composerFocusRequester = remember { FocusRequester() }
     val backUnreadCount by remember(chatId) {
         derivedStateOf {
@@ -489,6 +486,8 @@ fun ChatScreen(
             return@Scaffold
         }
         val visibleMessages = chat.messages
+        val composerBlocked = chat.kind == ChatKind.DIRECT && isUserBlocked(preferences, chat.chatId)
+        val isMessageRequest = chat.kind == ChatKind.DIRECT && chat.isRequest && !composerBlocked
         var scrollDateHeaderVisible by remember(chatId) { mutableStateOf(false) }
         var scrollDateHeaderLabel by remember(chatId) { mutableStateOf<String?>(null) }
 
@@ -656,83 +655,111 @@ fun ChatScreen(
                     }
                 }
 
-                replyTarget?.let { reply ->
-                    ReplyComposerStrip(
-                        message = reply,
-                        onCancel = { replyTarget = null },
-                    )
+                if (!composerBlocked && !isMessageRequest) {
+                    replyTarget?.let { reply ->
+                        ReplyComposerStrip(
+                            message = reply,
+                            onCancel = { replyTarget = null },
+                        )
+                    }
                 }
 
-                ComposerBar(
-                    draft = draft,
-                    selectedAttachments = selectedAttachments,
-                    isSending = busy.sendingMessage,
-                    isUploading = busy.uploadingAttachment,
-                    uploadFraction = busy.uploadProgress?.let { progress ->
-                        if (progress.totalBytes > 0u) {
-                            (progress.bytesUploaded.toDouble() / progress.totalBytes.toDouble())
-                                .toFloat()
-                                .coerceIn(0f, 1f)
-                        } else {
-                            null
-                        }
-                    },
-                    focusRequester = composerFocusRequester,
-                    modifier = Modifier.onGloballyPositioned { coordinates ->
-                        composerBounds = coordinates.boundsInParent()
-                    },
-                    onDraftChange = { value ->
-                        draft = value
-                        if (value.isBlank()) {
-                            if (hasSentTyping) {
-                                hasSentTyping = false
-                                lastTypingSentMs = 0L
-                                appManager.dispatch(AppAction.StopTyping(chatId))
-                            }
-                        } else {
-                            val nowMs = System.currentTimeMillis()
-                            if (nowMs - lastTypingSentMs >= 3_000L) {
-                                lastTypingSentMs = nowMs
-                                hasSentTyping = true
-                                appManager.dispatch(AppAction.SendTyping(chatId))
-                            }
-                        }
-                    },
-                    onAttach = { attachmentPicker.launch(arrayOf("*/*")) },
-                    onRemoveAttachment = { attachment ->
-                        selectedAttachments = selectedAttachments - attachment
-                    },
-                    onSend = {
-                        shouldFollowLatest = true
-                        forceScrollToLatest = true
-                        val outgoingDraft = replyEncodedMessage(replyTarget, draft.trim())
-                        replyTarget = null
-                        if (selectedAttachments.isEmpty()) {
-                            appManager.sendText(chatId, outgoingDraft)
-                        } else {
-                            appManager.sendAttachments(
-                                chatId = chatId,
-                                attachments =
-                                    selectedAttachments.map { attachment ->
-                                        OutgoingAttachment(
-                                            filePath = attachment.path,
-                                            filename = attachment.filename,
-                                        )
-                                    },
-                                caption = outgoingDraft,
-                            )
-                            selectedAttachments = emptyList()
-                        }
-                        draft = ""
-                        lastPersistedDraft = ""
-                        appManager.dispatch(AppAction.SetChatDraft(chatId, ""))
-                        if (hasSentTyping) {
-                            hasSentTyping = false
-                            lastTypingSentMs = 0L
-                            appManager.dispatch(AppAction.StopTyping(chatId))
-                        }
-                    },
-                )
+                when {
+                    composerBlocked -> {
+                        BlockedComposerBar(
+                            onUnblock = {
+                                appManager.dispatch(AppAction.SetUserBlocked(chat.chatId, false))
+                            },
+                            onDelete = {
+                                appManager.dispatch(AppAction.DeleteChat(chat.chatId))
+                                appManager.navigateBack()
+                            },
+                        )
+                    }
+                    isMessageRequest -> {
+                        MessageRequestBar(
+                            displayName = chat.displayName,
+                            onBlock = { showMessageRequestBlockDialog = true },
+                            onBlockAndReport = { showMessageRequestBlockAndReportDialog = true },
+                            onAccept = {
+                                appManager.dispatch(AppAction.SetMessageRequestAccepted(chat.chatId))
+                                composerFocusRequester.requestFocus()
+                            },
+                        )
+                    }
+                    else -> {
+                        ComposerBar(
+                            draft = draft,
+                            selectedAttachments = selectedAttachments,
+                            isSending = busy.sendingMessage,
+                            isUploading = busy.uploadingAttachment,
+                            uploadFraction = busy.uploadProgress?.let { progress ->
+                                if (progress.totalBytes > 0u) {
+                                    (progress.bytesUploaded.toDouble() / progress.totalBytes.toDouble())
+                                        .toFloat()
+                                        .coerceIn(0f, 1f)
+                                } else {
+                                    null
+                                }
+                            },
+                            focusRequester = composerFocusRequester,
+                            modifier = Modifier.onGloballyPositioned { coordinates ->
+                                composerBounds = coordinates.boundsInParent()
+                            },
+                            onDraftChange = { value ->
+                                draft = value
+                                if (value.isBlank()) {
+                                    if (hasSentTyping) {
+                                        hasSentTyping = false
+                                        lastTypingSentMs = 0L
+                                        appManager.dispatch(AppAction.StopTyping(chatId))
+                                    }
+                                } else {
+                                    val nowMs = System.currentTimeMillis()
+                                    if (nowMs - lastTypingSentMs >= 3_000L) {
+                                        lastTypingSentMs = nowMs
+                                        hasSentTyping = true
+                                        appManager.dispatch(AppAction.SendTyping(chatId))
+                                    }
+                                }
+                            },
+                            onAttach = { attachmentPicker.launch(arrayOf("*/*")) },
+                            onRemoveAttachment = { attachment ->
+                                selectedAttachments = selectedAttachments - attachment
+                            },
+                            onSend = {
+                                shouldFollowLatest = true
+                                forceScrollToLatest = true
+                                val outgoingDraft = replyEncodedMessage(replyTarget, draft.trim())
+                                replyTarget = null
+                                if (selectedAttachments.isEmpty()) {
+                                    appManager.sendText(chatId, outgoingDraft)
+                                } else {
+                                    appManager.sendAttachments(
+                                        chatId = chatId,
+                                        attachments =
+                                            selectedAttachments.map { attachment ->
+                                                OutgoingAttachment(
+                                                    filePath = attachment.path,
+                                                    filename = attachment.filename,
+                                                )
+                                            },
+                                        caption = outgoingDraft,
+                                    )
+                                    selectedAttachments = emptyList()
+                                }
+                                draft = ""
+                                lastPersistedDraft = ""
+                                appManager.dispatch(AppAction.SetChatDraft(chatId, ""))
+                                if (hasSentTyping) {
+                                    hasSentTyping = false
+                                    lastTypingSentMs = 0L
+                                    appManager.dispatch(AppAction.StopTyping(chatId))
+                                }
+                            },
+                        )
+                    }
+                }
             }
 
             if (showJumpToBottom) {
@@ -795,6 +822,42 @@ fun ChatScreen(
                 )
             }
         }
+
+        if (showMessageRequestBlockDialog) {
+            MessageRequestBlockDialog(
+                displayName = chat.displayName,
+                onDismiss = { showMessageRequestBlockDialog = false },
+                onBlock = {
+                    appManager.dispatch(AppAction.SetUserBlocked(chat.chatId, true))
+                    showMessageRequestBlockDialog = false
+                },
+                onReportAndBlock = {
+                    reportUser(context, appManager, clipboard, chat.chatId, chat.displayName, block = true)
+                    showMessageRequestBlockDialog = false
+                },
+                onDelete = {
+                    appManager.dispatch(AppAction.DeleteChat(chat.chatId))
+                    appManager.navigateBack()
+                    showMessageRequestBlockDialog = false
+                },
+            )
+        }
+
+        if (showMessageRequestBlockAndReportDialog) {
+            MessageRequestBlockAndReportDialog(
+                displayName = chat.displayName,
+                onDismiss = { showMessageRequestBlockAndReportDialog = false },
+                onBlockAndReport = {
+                    reportUser(context, appManager, clipboard, chat.chatId, chat.displayName, block = true)
+                    showMessageRequestBlockAndReportDialog = false
+                },
+                onDelete = {
+                    appManager.dispatch(AppAction.DeleteChat(chat.chatId))
+                    appManager.navigateBack()
+                    showMessageRequestBlockAndReportDialog = false
+                },
+            )
+        }
     }
 }
 
@@ -833,581 +896,6 @@ private fun TimelineDaySeparator(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-    }
-}
-
-@Composable
-fun DirectChatInfoScreen(
-    appManager: AppManager,
-    chatId: String,
-    onBack: () -> Unit,
-    showMessageAction: Boolean = false,
-    onMessage: () -> Unit = { appManager.openChat(chatId) },
-) {
-    val currentChat by appManager.currentChat.collectAsStateWithLifecycle()
-    val preferences by appManager.preferences.collectAsStateWithLifecycle()
-    val chat = currentChat?.takeIf { it.chatId == chatId } ?: return
-    val avatarBytes by rememberNhashImageData(appManager, chat.pictureUrl)
-    var advancedOpen by remember(chatId) { mutableStateOf(false) }
-    var profileDebug by remember(chatId) { mutableStateOf<PeerProfileDebugSnapshot?>(null) }
-    var commonGroups by remember(chatId) { mutableStateOf<List<ChatThreadSnapshot>>(emptyList()) }
-    var nicknameDraft by remember(chatId) { mutableStateOf(chat.nickname.orEmpty()) }
-    var editingNickname by remember(chatId) { mutableStateOf(false) }
-    val proxiedAvatarUrl =
-        chat.pictureUrl
-            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-            ?.let { url ->
-                proxiedImageUrl(
-                    originalSrc = url,
-                    preferences = preferences,
-                    width = 192u,
-                    height = 192u,
-                    square = true,
-                )
-            }
-
-    LaunchedEffect(advancedOpen, chatId) {
-        if (advancedOpen && profileDebug == null) {
-            profileDebug = appManager.peerProfileDebug(chatId)
-        }
-    }
-    LaunchedEffect(chatId) {
-        commonGroups = appManager.mutualGroups(chatId)
-    }
-    LaunchedEffect(chatId, chat.nickname) {
-        nicknameDraft = chat.nickname.orEmpty()
-    }
-
-    BackHandler {
-        onBack()
-    }
-
-    Surface(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .testTag("directChatInfoScreen"),
-        color = MaterialTheme.colorScheme.background,
-    ) {
-        Scaffold(
-            containerColor = MaterialTheme.colorScheme.background,
-            topBar = {
-                IrisTopBar(
-                    title = chat.displayName,
-                    onBack = onBack,
-                )
-            },
-        ) { padding ->
-            // Chat info exposes the peer's hex pubkey + npub +
-            // their relay debug counters — make them all
-            // long-press-to-copy. SelectionContainer is inert for
-            // buttons, IconButtons, and the avatar; only Text
-            // children pick up selection.
-            SelectionContainer(
-                modifier =
-                    Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-            ) {
-                Column(
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        IrisAvatar(
-                            label = chat.displayName,
-                            size = 72.dp,
-                            emphasize = true,
-                            imageUrl = proxiedAvatarUrl,
-                            imageData = avatarBytes,
-                        )
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Text(
-                                text = chat.displayName,
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Bold,
-                            )
-                            chat.subtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
-                                Text(
-                                    text = subtitle,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = IrisTheme.palette.muted,
-                                )
-                            }
-                        }
-                    }
-                    val clipboard = rememberIrisClipboard()
-                    ProfileAboutCard(
-                        about = chat.about,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    ContactNicknameCard(
-                        chat = chat,
-                        nicknameDraft = nicknameDraft,
-                        onNicknameChange = { nicknameDraft = it },
-                        onSave = {
-                            appManager.dispatch(
-                                AppAction.SetContactNickname(chatId, nicknameDraft),
-                            )
-                            editingNickname = false
-                        },
-                        onRemove = {
-                            nicknameDraft = ""
-                            editingNickname = false
-                            appManager.dispatch(AppAction.SetContactNickname(chatId, ""))
-                        },
-                        editing = editingNickname,
-                        onToggleEditing = { editingNickname = !editingNickname },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    if (showMessageAction) {
-                        IrisInlineAction(
-                            text = "Message",
-                            onClick = onMessage,
-                            modifier = Modifier.testTag("directChatMessageButton"),
-                        ) {
-                            Icon(imageVector = IrisIcons.NewChat, contentDescription = null)
-                        }
-                    }
-                    if (commonGroups.isNotEmpty()) {
-                        CommonGroupsCard(
-                            appManager = appManager,
-                            groups = commonGroups,
-                            onBack = onBack,
-                        )
-                    }
-                    IrisInlineAction(
-                        text = "Copy user ID",
-                        onClick = { clipboard.setText("User ID", peerInputToNpub(chatId)) },
-                        modifier = Modifier.testTag("directChatCopyUserIdButton"),
-                    ) {
-                        Icon(imageVector = IrisIcons.Copy, contentDescription = null)
-                    }
-                    IrisInlineAction(
-                        text = if (chat.isMuted) "Unmute chat" else "Mute chat",
-                        onClick = {
-                            appManager.dispatch(AppAction.SetChatMuted(chatId, !chat.isMuted))
-                        },
-                        modifier = Modifier.testTag("directChatMuteButton"),
-                    ) {
-                        Icon(
-                            imageVector =
-                                if (chat.isMuted) {
-                                    IrisIcons.Notifications
-                                } else {
-                                    IrisIcons.NotificationsOff
-                                },
-                            contentDescription = null,
-                        )
-                    }
-                    DisappearingMessagesCard(
-                        currentTtlSeconds = chat.messageTtlSeconds,
-                        onSelect = { ttlSeconds ->
-                            appManager.dispatch(AppAction.SetChatMessageTtl(chatId, ttlSeconds))
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    DirectChatAdvancedCard(
-                        debug = profileDebug,
-                        expanded = advancedOpen,
-                        onToggle = { advancedOpen = !advancedOpen },
-                        modifier = Modifier.testTag("directChatAdvancedCard"),
-                    )
-                    IrisInlineAction(
-                        text = "Delete chat",
-                        onClick = {
-                            appManager.dispatch(AppAction.DeleteChat(chatId))
-                            onBack()
-                        },
-                        modifier = Modifier.testTag("directChatDeleteButton"),
-                    ) {
-                        Icon(
-                            imageVector = IrisIcons.DeleteForever,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ProfileAboutCard(
-    about: String?,
-    modifier: Modifier = Modifier,
-) {
-    val text = about?.trim()?.takeIf { it.isNotEmpty() } ?: return
-    val linkColor = MaterialTheme.colorScheme.primary
-    IrisSectionCard(modifier = modifier.testTag("directChatAboutCard")) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            Icon(
-                imageVector = IrisIcons.Edit,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier =
-                    Modifier
-                        .padding(top = 2.dp)
-                        .size(22.dp),
-            )
-            Text(
-                text = remember(text, linkColor) { linkHighlightedText(text, linkColor) },
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-private fun linkHighlightedText(
-    text: String,
-    linkColor: Color,
-): AnnotatedString =
-    buildAnnotatedString {
-        var cursor = 0
-        for (match in messageUrlMatches(text)) {
-            val range = match.range
-            if (range.first > cursor) {
-                append(text.substring(cursor, range.first))
-            }
-            withStyle(
-                SpanStyle(
-                    color = linkColor,
-                    textDecoration = TextDecoration.Underline,
-                ),
-            ) {
-                append(match.visible)
-            }
-            cursor = match.range.last + 1
-        }
-        if (cursor < text.length) {
-            append(text.substring(cursor))
-        }
-    }
-
-@Composable
-private fun ContactNicknameCard(
-    chat: to.iris.chat.rust.CurrentChatSnapshot,
-    nicknameDraft: String,
-    onNicknameChange: (String) -> Unit,
-    onSave: () -> Unit,
-    onRemove: () -> Unit,
-    editing: Boolean,
-    onToggleEditing: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val storedNickname = chat.nickname?.trim().orEmpty()
-    val primaryName = storedNickname.ifEmpty { chat.displayName.trim() }
-    val profileName =
-        chat.profileName
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() && !it.equals(primaryName, ignoreCase = true) }
-
-    IrisSectionCard(modifier = modifier) {
-        Row(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onToggleEditing)
-                    .testTag("directChatNicknameRow"),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Nickname",
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            if (storedNickname.isNotEmpty()) {
-                Text(
-                    text = storedNickname,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        profileName?.let { name ->
-            IrisDivider()
-            Row(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .testTag("directChatProfileNameRow"),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Profile name",
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = IrisTheme.palette.muted,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        if (editing) {
-            IrisDivider()
-            TextField(
-                value = nicknameDraft,
-                onValueChange = onNicknameChange,
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .testTag("directChatNicknameField"),
-                label = { Text("Nickname") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                colors = irisTextFieldColors(),
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IrisInlineAction(
-                    text = "Save",
-                    onClick = onSave,
-                    modifier = Modifier.testTag("directChatSaveNicknameButton"),
-                ) {
-                    Icon(imageVector = IrisIcons.Check, contentDescription = null)
-                }
-                if (storedNickname.isNotEmpty()) {
-                    IrisInlineAction(
-                        text = "Remove",
-                        onClick = onRemove,
-                        modifier = Modifier.testTag("directChatRemoveNicknameButton"),
-                    ) {
-                        Icon(imageVector = IrisIcons.Close, contentDescription = null)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CommonGroupsCard(
-    appManager: AppManager,
-    groups: List<ChatThreadSnapshot>,
-    onBack: () -> Unit,
-) {
-    IrisSectionCard {
-        Text(
-            text = "Groups in common",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        groups.forEachIndexed { index, group ->
-            CommonGroupRow(
-                appManager = appManager,
-                group = group,
-                onBack = onBack,
-            )
-            if (index < groups.lastIndex) {
-                IrisDivider(modifier = Modifier.padding(start = 50.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun CommonGroupRow(
-    appManager: AppManager,
-    group: ChatThreadSnapshot,
-    onBack: () -> Unit,
-) {
-    val haptics = rememberIrisHapticFeedback()
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clickable {
-                    val groupId = groupIdFromChatId(group.chatId) ?: return@clickable
-                    haptics.press()
-                    onBack()
-                    appManager.dispatch(AppAction.PushScreen(Screen.GroupDetails(groupId)))
-                }
-                .padding(vertical = 2.dp)
-                .testTag("directChatCommonGroup-${group.chatId.take(12)}"),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IrisAvatar(
-            label = group.displayName,
-            size = 38.dp,
-            imageUrl = group.pictureUrl,
-        )
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            Text(
-                text = group.displayName,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = "${group.memberCount} people",
-                style = MaterialTheme.typography.bodyMedium,
-                color = IrisTheme.palette.muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Icon(
-            imageVector = IrisIcons.ChevronRight,
-            contentDescription = null,
-            tint = IrisTheme.palette.muted,
-            modifier = Modifier.size(22.dp),
-        )
-    }
-}
-
-private fun groupIdFromChatId(chatId: String): String? {
-    val trimmed = chatId.trim()
-    val prefix = "group:"
-    if (!trimmed.startsWith(prefix, ignoreCase = true)) {
-        return null
-    }
-    return trimmed.drop(prefix.length).trim().takeIf { it.isNotEmpty() }
-}
-
-@Composable
-private fun DirectChatAdvancedCard(
-    debug: PeerProfileDebugSnapshot?,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val haptics = rememberIrisHapticFeedback()
-    val interactionSource = remember { MutableInteractionSource() }
-    IrisSectionCard(modifier = modifier) {
-        Row(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .clickable(
-                        interactionSource = interactionSource,
-                        indication = null,
-                    ) {
-                        haptics.press()
-                        onToggle()
-                    },
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = IrisIcons.Devices,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = "Debug",
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Icon(
-                imageVector = IrisIcons.ChevronRight,
-                contentDescription = null,
-                tint = IrisTheme.palette.muted,
-                modifier = Modifier.graphicsLayer { rotationZ = if (expanded) 90f else 0f },
-            )
-        }
-
-        if (expanded) {
-            if (debug == null) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(18.dp),
-                    strokeWidth = 2.dp,
-                    color = IrisTheme.palette.accent,
-                )
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ProfileDebugRow("Sessions", debug.sessionCount.toString())
-                    ProfileDebugRow("Active sessions", debug.activeSessionCount.toString())
-                    ProfileDebugRow("Receiving sessions", debug.receivingSessionCount.toString())
-                    ProfileDebugRow("Known devices", debug.knownDeviceCount.toString())
-                    ProfileDebugRow("Device roster", debug.rosterDeviceCount.toString())
-                    ProfileDebugRow("Tracked senders", debug.trackedSenderCount.toString())
-                    ProfileDebugRow("Recent handshakes", debug.recentHandshakeDeviceCount.toString())
-                    ProfileDebugRow("Last handshake", lastHandshakeText(debug.lastHandshakeAtSecs))
-                    ProfileDebugRow("Message tracking", if (debug.trackedForMessages) "On" else "Off")
-                    ProfileDebugRow("User ID", debug.ownerNpub, monospaced = true)
-                    ProfileDebugRow("Public key", debug.ownerPubkeyHex, monospaced = true)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ProfileDebugRow(
-    label: String,
-    value: String,
-    monospaced: Boolean = false,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier.weight(0.9f),
-            style = MaterialTheme.typography.bodyMedium,
-            color = IrisTheme.palette.muted,
-        )
-        Text(
-            text = value,
-            modifier = Modifier.weight(1.1f),
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold,
-            fontFamily = if (monospaced) FontFamily.Monospace else null,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-    }
-}
-
-private fun lastHandshakeText(seconds: ULong?): String {
-    val value = seconds?.toLong() ?: return "Never"
-    val ageSecs = ((System.currentTimeMillis() / 1_000L) - value).coerceAtLeast(0L)
-    return when {
-        ageSecs < 60L -> "Just now"
-        ageSecs < 3_600L -> "${ageSecs / 60L}m ago"
-        ageSecs < 86_400L -> "${ageSecs / 3_600L}h ago"
-        else -> "${ageSecs / 86_400L}d ago"
     }
 }
 

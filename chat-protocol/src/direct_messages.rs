@@ -2,12 +2,14 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use nostr::{Event, Filter, Keys, PublicKey, UnsignedEvent};
+use nostr_double_ratchet::Invite;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
-    is_app_keys_event, AppKeys, ProtocolDecryptedMessage, ProtocolEffect, ProtocolEngine,
-    ProtocolRetryBatch, SharedConnection, SqliteStorageAdapter, UnixSeconds, APP_KEYS_EVENT_KIND,
-    CHAT_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
+    invite_unsigned_event, is_app_keys_event, parse_invite_url, AppKeys, ProtocolDecryptedMessage,
+    ProtocolEffect, ProtocolEngine, ProtocolRetryBatch, SharedConnection, SqliteStorageAdapter,
+    UnixSeconds, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND,
+    MESSAGE_EVENT_KIND,
 };
 
 const SCHEMA: &str = r#"
@@ -134,7 +136,27 @@ impl DirectMessageService {
         service
     }
 
+    pub fn memory_for_local_device(owner_public_key: PublicKey, device_keys: &Keys) -> Self {
+        Self::memory().with_protocol_engine_for_local_device(owner_public_key, device_keys)
+    }
+
     pub fn open(data_dir: &Path, owner_keys: Option<&Keys>) -> Self {
+        match owner_keys {
+            Some(keys) => Self::open_for_local_device(data_dir, keys.public_key(), keys),
+            None => Self::open_without_protocol_engine(data_dir),
+        }
+    }
+
+    pub fn open_for_local_device(
+        data_dir: &Path,
+        owner_public_key: PublicKey,
+        device_keys: &Keys,
+    ) -> Self {
+        Self::open_without_protocol_engine(data_dir)
+            .with_protocol_engine_for_local_device(owner_public_key, device_keys)
+    }
+
+    fn open_without_protocol_engine(data_dir: &Path) -> Self {
         let path = data_dir.join("private-chat.sqlite3");
         let conn = Connection::open(path).or_else(|_| Connection::open_in_memory());
         let conn = match conn {
@@ -159,11 +181,7 @@ impl DirectMessageService {
             last_error: None,
         };
         service.ensure_schema();
-        if let Some(keys) = owner_keys {
-            service.with_protocol_engine(keys)
-        } else {
-            service
-        }
+        service
     }
 
     pub fn activate(&mut self, keys: &Keys) -> Vec<DirectMessageCommand> {
@@ -233,15 +251,42 @@ impl DirectMessageService {
     pub fn open_chat(
         &mut self,
         peer_input: &str,
-        _keys: &Keys,
+        keys: &Keys,
     ) -> Result<(DirectThreadSnapshot, Vec<DirectMessageCommand>), String> {
-        let public_key = PublicKey::parse(peer_input).map_err(|error| error.to_string())?;
+        let public_key = match PublicKey::parse(peer_input) {
+            Ok(public_key) => public_key,
+            Err(_) => return self.accept_invite(peer_input, keys),
+        };
         let chat_id = public_key.to_hex();
         self.ensure_thread(&chat_id, unix_now());
         let commands = self.protocol_subscription_commands();
         let thread = self
             .thread(&chat_id)
             .ok_or_else(|| "Chat open failed".to_string())?;
+        Ok((thread, commands))
+    }
+
+    pub fn accept_invite(
+        &mut self,
+        invite_input: &str,
+        _keys: &Keys,
+    ) -> Result<(DirectThreadSnapshot, Vec<DirectMessageCommand>), String> {
+        let invite = parse_direct_invite_input(invite_input)?;
+        let owner = invite.owner_public_key.unwrap_or(invite.inviter);
+        let chat_id = owner.to_hex();
+        self.ensure_thread(&chat_id, unix_now());
+        let engine = self
+            .protocol_engine
+            .as_mut()
+            .ok_or_else(|| "Direct message runtime is not ready".to_string())?;
+        let result = engine
+            .accept_invite(&invite, Some(owner))
+            .map_err(|error| error.to_string())?;
+        let mut commands = self.commands_from_effects(result.effects);
+        commands.extend(self.protocol_subscription_commands());
+        let thread = self
+            .thread(&chat_id)
+            .ok_or_else(|| "Invite chat open failed".to_string())?;
         Ok((thread, commands))
     }
 
@@ -362,6 +407,17 @@ impl DirectMessageService {
         authors
     }
 
+    pub fn local_invite_event(&self, device_keys: &Keys) -> Option<Event> {
+        let invite = self.protocol_engine.as_ref()?.local_invite()?;
+        if invite.inviter_device_pubkey.to_bytes() != device_keys.public_key().to_bytes() {
+            return None;
+        }
+        invite_unsigned_event(&invite)
+            .ok()?
+            .sign_with_keys(device_keys)
+            .ok()
+    }
+
     fn subscription_command(&mut self) -> Option<DirectMessageCommand> {
         let engine = self.protocol_engine.as_ref()?;
         let authors = engine
@@ -398,15 +454,23 @@ impl DirectMessageService {
         })
     }
 
-    fn with_protocol_engine(mut self, keys: &Keys) -> Self {
-        let owner = keys.public_key();
+    fn with_protocol_engine(self, keys: &Keys) -> Self {
+        self.with_protocol_engine_for_local_device(keys.public_key(), keys)
+    }
+
+    fn with_protocol_engine_for_local_device(
+        mut self,
+        owner: PublicKey,
+        device_keys: &Keys,
+    ) -> Self {
         let owner_hex = owner.to_hex();
+        let device_hex = device_keys.public_key().to_hex();
         let storage = Arc::new(SqliteStorageAdapter::new(
             Arc::clone(&self.conn),
             owner_hex.clone(),
-            owner_hex,
+            device_hex,
         ));
-        match ProtocolEngine::load_or_create_for_local_device(storage, owner, keys) {
+        match ProtocolEngine::load_or_create_for_local_device(storage, owner, device_keys) {
             Ok(engine) => {
                 self.protocol_engine = Some(engine);
                 self.owner_public_key = Some(owner);
@@ -663,9 +727,154 @@ fn normalize_pubkey(input: &str) -> Result<String, String> {
         .map_err(|error| error.to_string())
 }
 
+fn parse_direct_invite_input(input: &str) -> Result<Invite, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("Invite link is required".to_string());
+    }
+    if let Ok(invite) = parse_invite_url(trimmed) {
+        return Ok(invite);
+    }
+
+    let mut candidates = vec![trimmed.to_string()];
+    if let Some((_, fragment)) = trimmed.split_once('#') {
+        candidates.push(fragment.to_string());
+        candidates.push(fragment.trim_start_matches('/').to_string());
+        candidates.extend(
+            fragment
+                .split(['/', '?', '&', '='])
+                .filter(|part| !part.trim().is_empty())
+                .map(ToString::to_string),
+        );
+    }
+    if let Some((_, query)) = trimmed.split_once('?') {
+        candidates.extend(
+            query
+                .split(['/', '?', '&', '='])
+                .filter(|part| !part.trim().is_empty())
+                .map(ToString::to_string),
+        );
+    }
+
+    for candidate in candidates {
+        let candidate = candidate.trim().trim_start_matches('/');
+        let candidate = candidate.strip_prefix("invite/").unwrap_or(candidate);
+        if candidate.is_empty() || candidate.eq_ignore_ascii_case("invite") {
+            continue;
+        }
+        for wrapped in [
+            candidate.to_string(),
+            format!("https://chat.iris.to#{candidate}"),
+            format!("https://chat.iris.to#/{candidate}"),
+        ] {
+            if let Ok(invite) = parse_invite_url(&wrapped) {
+                return Ok(invite);
+            }
+        }
+    }
+
+    parse_invite_url(trimmed).map_err(|error| error.to_string())
+}
+
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{invite_url, parse_invite_event};
+    use nostr::Kind;
+
+    fn publish_events(commands: Vec<DirectMessageCommand>) -> Vec<Event> {
+        commands
+            .into_iter()
+            .filter_map(|command| match command {
+                DirectMessageCommand::Publish(event) => Some(event),
+                DirectMessageCommand::Subscribe { .. } => None,
+            })
+            .collect()
+    }
+
+    fn publish_kinds(commands: &[DirectMessageCommand]) -> Vec<Kind> {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                DirectMessageCommand::Publish(event) => Some(event.kind),
+                DirectMessageCommand::Subscribe { .. } => None,
+            })
+            .collect()
+    }
+
+    fn route_wrapped_invite_url(invite: &Invite) -> String {
+        let raw = invite_url(invite, "https://chat.iris.to").expect("invite url");
+        let Some((_, fragment)) = raw.split_once('#') else {
+            return raw;
+        };
+        let payload = fragment.trim_start_matches('/');
+        if payload.starts_with("invite/") {
+            raw
+        } else {
+            format!("https://chat.iris.to/#/invite/{payload}")
+        }
+    }
+
+    #[test]
+    fn accepts_route_wrapped_invite_and_sends_direct_message() {
+        let inviter_keys = Keys::generate();
+        let accepter_keys = Keys::generate();
+        let mut inviter =
+            DirectMessageService::memory_for_local_device(inviter_keys.public_key(), &inviter_keys);
+        let mut accepter = DirectMessageService::memory_for_local_device(
+            accepter_keys.public_key(),
+            &accepter_keys,
+        );
+        let invite_event = inviter
+            .local_invite_event(&inviter_keys)
+            .expect("local invite event");
+        let invite = parse_invite_event(&invite_event).expect("invite event");
+        let invite_url = route_wrapped_invite_url(&invite);
+
+        let (thread, accept_commands) = accepter
+            .accept_invite(&invite_url, &accepter_keys)
+            .expect("accept invite");
+        assert_eq!(thread.chat.chat_id, inviter_keys.public_key().to_hex());
+        let accept_kinds = publish_kinds(&accept_commands);
+        assert!(accept_kinds.contains(&Kind::from(INVITE_RESPONSE_KIND as u16)));
+        assert!(accept_kinds.contains(&Kind::from(MESSAGE_EVENT_KIND as u16)));
+
+        for event in publish_events(accept_commands) {
+            inviter.process_event(event, &inviter_keys);
+        }
+
+        let send_commands = accepter
+            .send_message(
+                &inviter_keys.public_key().to_hex(),
+                "hello from invite accepter",
+                &accepter_keys,
+            )
+            .expect("send message");
+        assert!(publish_kinds(&send_commands).contains(&Kind::from(MESSAGE_EVENT_KIND as u16)));
+
+        for event in publish_events(send_commands) {
+            inviter.process_event(event, &inviter_keys);
+        }
+
+        let inviter_thread = inviter
+            .thread(&accepter_keys.public_key().to_hex())
+            .expect("inviter thread");
+        assert_eq!(inviter_thread.messages.len(), 1);
+        assert_eq!(
+            inviter_thread.messages[0].body,
+            "hello from invite accepter"
+        );
+        assert!(!inviter_thread.messages[0].is_outgoing);
+        assert_eq!(
+            inviter_thread.messages[0].delivery,
+            DirectMessageDelivery::Received
+        );
+    }
 }

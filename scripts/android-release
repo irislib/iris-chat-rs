@@ -14,7 +14,7 @@ ANDROID_DIST_DIR="$ROOT/dist/android"
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/android-release <print-config|beta-apk|beta-bundle|release-apk|release-bundle>
+usage: ./scripts/android-release <print-config|beta-apk|beta-bundle|release-apk|release-bundle|release-artifacts>
 EOF
 }
 
@@ -108,6 +108,34 @@ build_variant() {
   copy_artifact "$artifact_source" "$channel" "$extension"
 }
 
+latest_artifact() {
+  local outputs_subdir="$1"
+  local extension="$2"
+  local artifact_source
+  artifact_source="$(find "$ANDROID_DIR/app/build/outputs/${outputs_subdir}" -maxdepth 1 -type f -name "*.${extension}" | sort | tail -n 1)"
+  if [[ -z "${artifact_source:-}" ]]; then
+    echo "Android artifact was not produced in $outputs_subdir" >&2
+    exit 1
+  fi
+  printf '%s\n' "$artifact_source"
+}
+
+build_release_artifacts() {
+  require_var IRIS_RELEASE_KEYSTORE_PATH
+  require_var IRIS_RELEASE_KEYSTORE_PASSWORD
+  require_var IRIS_RELEASE_KEY_ALIAS
+  require_var IRIS_RELEASE_KEY_PASSWORD
+
+  ensure_local_properties
+  (
+    cd "$ANDROID_DIR"
+    ./gradlew :app:bundleRelease :app:assembleSelfHosted
+  )
+
+  copy_artifact "$(latest_artifact bundle/release aab)" release aab
+  copy_artifact "$(latest_artifact apk/selfHosted apk)" release apk
+}
+
 case "${1:-}" in
   print-config)
     print_config
@@ -123,6 +151,9 @@ case "${1:-}" in
     ;;
   release-bundle)
     build_variant release bundleRelease bundle/release aab
+    ;;
+  release-artifacts)
+    build_release_artifacts
     ;;
   -h|--help|help)
     usage

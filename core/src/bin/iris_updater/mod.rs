@@ -39,7 +39,6 @@ const DEFAULT_UPDATE_RELAYS: &[&str] = &[
 ];
 const DEFAULT_BLOSSOM_READ_SERVERS: &[&str] = &[
     "https://cdn.iris.to",
-    "https://hashtree.iris.to",
     "https://upload.iris.to",
     "https://blossom.primal.net",
 ];

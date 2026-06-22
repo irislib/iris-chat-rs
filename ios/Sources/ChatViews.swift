@@ -10,18 +10,27 @@ import AppKit
 struct IrisBlockedComposerBar: View {
     @Environment(\.irisPalette) private var palette
     let onUnblock: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "nosign")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(.red)
-            Text("User blocked")
-                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                .foregroundStyle(palette.textPrimary)
-            Spacer(minLength: 0)
-            Button("Unblock", action: onUnblock)
-                .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: "nosign")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.red)
+                Text("User blocked")
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                Button("Delete chat", role: .destructive, action: onDelete)
+                    .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                    .accessibilityIdentifier("blockedDeleteChatButton")
+                Button("Unblock", action: onUnblock)
+                    .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                    .accessibilityIdentifier("blockedUnblockButton")
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -41,7 +50,8 @@ struct IrisMessageRequestBar: View {
     @Environment(\.irisPalette) private var palette
     let displayName: String
     let onAccept: () -> Void
-    let onDecline: () -> Void
+    let onBlock: () -> Void
+    let onBlockAndReport: () -> Void
 
     var body: some View {
         VStack(spacing: 10) {
@@ -54,10 +64,18 @@ struct IrisMessageRequestBar: View {
 
             HStack(spacing: 8) {
                 requestButton(
-                    "Decline",
-                    accessibilityId: "messageRequestDeclineButton",
+                    "Block",
+                    accessibilityId: "messageRequestBlockButton",
+                    role: .destructive,
+                    destructive: true,
+                    action: onBlock
+                )
+                requestButton(
+                    "Block and report",
+                    accessibilityId: "messageRequestBlockAndReportButton",
                     role: nil,
-                    action: onDecline
+                    destructive: true,
+                    action: onBlockAndReport
                 )
                 requestButton(
                     "Accept",
@@ -81,13 +99,14 @@ struct IrisMessageRequestBar: View {
         accessibilityId: String,
         role: ButtonRole?,
         emphasized: Bool = false,
+        destructive: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(role: role, action: action) {
             Text(label)
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
                 .frame(maxWidth: .infinity, minHeight: 36)
-                .foregroundStyle(emphasized ? Color.white : palette.textPrimary)
+                .foregroundStyle(emphasized ? Color.white : (destructive ? Color.red : palette.textPrimary))
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(emphasized ? palette.accent : palette.panelAlt)
@@ -139,7 +158,9 @@ struct ChatScreen: View {
     /// reply; sending a message naturally clears `isRequest` for good
     /// because there's now an outgoing message in the thread.
     @State private var acceptedRequestChatId: String?
-    @State private var messageRequestDeclineChat: MessageRequestDeclineTarget?
+    @State private var messageRequestBlockChat: MessageRequestActionTarget?
+    @State private var messageRequestReportChat: MessageRequestActionTarget?
+    @State private var messageRequestDeleteChat: MessageRequestActionTarget?
     @FocusState private var isComposerFocused: Bool
 
     private var chat: CurrentChatSnapshot? {
@@ -513,6 +534,9 @@ struct ChatScreen: View {
                                     if composerBlocked {
                                         IrisBlockedComposerBar {
                                             manager.setUserBlocked(chat.chatId, blocked: false)
+                                        } onDelete: {
+                                            manager.dispatch(.deleteChat(chatId: chat.chatId))
+                                            manager.navigateBack()
                                         }
                                     } else if isRequest {
                                         IrisMessageRequestBar(
@@ -522,8 +546,14 @@ struct ChatScreen: View {
                                                 manager.dispatch(.setMessageRequestAccepted(chatId: chat.chatId))
                                                 isComposerFocused = true
                                             },
-                                            onDecline: {
-                                                messageRequestDeclineChat = MessageRequestDeclineTarget(
+                                            onBlock: {
+                                                messageRequestBlockChat = MessageRequestActionTarget(
+                                                    chatId: chat.chatId,
+                                                    displayName: chat.displayName
+                                                )
+                                            },
+                                            onBlockAndReport: {
+                                                messageRequestReportChat = MessageRequestActionTarget(
                                                     chatId: chat.chatId,
                                                     displayName: chat.displayName
                                                 )
@@ -617,7 +647,12 @@ struct ChatScreen: View {
                 reactorsSelection = nil
             }
         }
-        .modifier(MessageRequestDeclineModifier(target: $messageRequestDeclineChat, manager: manager))
+        .modifier(MessageRequestSafetyModifier(
+            blockTarget: $messageRequestBlockChat,
+            reportTarget: $messageRequestReportChat,
+            deleteTarget: $messageRequestDeleteChat,
+            manager: manager
+        ))
         .onDisappear {
             pendingScrollSettle?.cancel()
             pendingScrollSettle = nil

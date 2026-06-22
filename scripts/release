@@ -428,8 +428,7 @@ build_android() {
     return 0
   fi
 
-  "$ROOT/scripts/android-release" release-bundle >/dev/null
-  "$ROOT/scripts/android-release" release-apk    >/dev/null
+  "$ROOT/scripts/android-release" release-artifacts >/dev/null
 
   local sha="$IRIS_BUILD_GIT_SHA"
   local base="IrisChat-release-${IRIS_APP_VERSION_NAME}+${IRIS_APP_VERSION_CODE}-${sha}"

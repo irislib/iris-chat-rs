@@ -3,6 +3,8 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT_DIR}/scripts/parallel_steps.sh"
 
 MODE="${IRIS_TEST_GATE_MODE:-local}"
 RUN_NATIVE_CONTRACT="${IRIS_TEST_GATE_NATIVE_CONTRACT:-1}"
@@ -181,10 +183,16 @@ run_core_package_check() {
 
 echo "iris chat release gate (${MODE})"
 
-run_step "release publish guard" "${ROOT_DIR}/scripts/test_release_publish_guard"
-run_step "Homebrew tap packaging" "${ROOT_DIR}/scripts/test_homebrew_tap"
+parallel_step_start "release publish guard" "${ROOT_DIR}/scripts/test_release_publish_guard"
+parallel_step_start "Homebrew tap packaging" "${ROOT_DIR}/scripts/test_homebrew_tap"
 
-run_step "fast local tests" "${ROOT_DIR}/scripts/test_fast.sh"
+fast_status=0
+prereq_status=0
+run_step "fast local tests" "${ROOT_DIR}/scripts/test_fast.sh" || fast_status=$?
+parallel_step_wait || prereq_status=$?
+if [[ "$fast_status" -ne 0 || "$prereq_status" -ne 0 ]]; then
+  exit 1
+fi
 
 if [[ "${RUN_CORE_LAN}" == "1" ]]; then
   run_step "core LAN nearby smoke" "${ROOT_DIR}/scripts/nearby_lan_core_smoke.sh"

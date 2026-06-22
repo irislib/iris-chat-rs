@@ -113,6 +113,68 @@
                    Margin="20,2,0,4"
                    Visibility="Collapsed" />
 
-        <chrome:ComposerBar x:Name="Composer" Grid.Row="3" />
+        <Grid Grid.Row="3">
+            <StackPanel x:Name="BlockedPanel"
+                        Visibility="Collapsed"
+                        Background="{StaticResource Toolbar}"
+                        Margin="14,10">
+                <TextBlock Text="User blocked"
+                           Foreground="{StaticResource TextPrimary}"
+                           FontWeight="SemiBold"
+                           Margin="0,0,0,8" />
+                <StackPanel Orientation="Horizontal">
+                    <Button Style="{StaticResource GhostButton}"
+                            Click="OnBlockedDeleteChat"
+                            Margin="0,0,8,0">
+                        <TextBlock Text="Delete chat"
+                                   Foreground="{StaticResource Danger}" />
+                    </Button>
+                    <Button Style="{StaticResource GhostButton}"
+                            Click="OnBlockedUnblock">
+                        <TextBlock Text="Unblock" />
+                    </Button>
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel x:Name="MessageRequestPanel"
+                        Visibility="Collapsed"
+                        Background="{StaticResource Toolbar}"
+                        Margin="14,10">
+                <TextBlock x:Name="MessageRequestText"
+                           Foreground="{StaticResource TextMuted}"
+                           FontSize="12"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap"
+                           Margin="0,0,0,8" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Column="0"
+                            Style="{StaticResource GhostButton}"
+                            Click="OnMessageRequestBlock"
+                            Margin="0,0,6,0">
+                        <TextBlock Text="Block"
+                                   Foreground="{StaticResource Danger}" />
+                    </Button>
+                    <Button Grid.Column="1"
+                            Style="{StaticResource GhostButton}"
+                            Click="OnMessageRequestReport"
+                            Margin="0,0,6,0">
+                        <TextBlock Text="Block and report"
+                                   Foreground="{StaticResource Danger}" />
+                    </Button>
+                    <Button Grid.Column="2"
+                            Style="{StaticResource PrimaryButton}"
+                            Click="OnMessageRequestAccept">
+                        <TextBlock Text="Accept" />
+                    </Button>
+                </Grid>
+            </StackPanel>
+
+            <chrome:ComposerBar x:Name="Composer" />
+        </Grid>
     </Grid>
 </UserControl>

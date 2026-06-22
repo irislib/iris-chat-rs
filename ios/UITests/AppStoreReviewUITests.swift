@@ -28,8 +28,8 @@ final class AppStoreReviewUITests: XCTestCase {
         case "block_report":
             let app = launchReviewApp(runID: runID, reset: false)
             openIncomingMessageRequest(app, message: message)
-            assertMessageRequestDeclineActionsReachable(app)
-            blockIncomingRequest(app)
+            blockAndReportIncomingRequest(app)
+            assertBlockedRequestControlsAndRemove(app)
         default:
             XCTFail("Unknown \(phaseKey): \(phase)")
         }
@@ -96,29 +96,13 @@ final class AppStoreReviewUITests: XCTestCase {
 
         XCTAssertTrue(element(app, "messageRequestBar").waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts[message].firstMatch.waitForExistence(timeout: 20))
-        XCTAssertTrue(messageRequestDeclineAction(app).waitForExistence(timeout: 5))
+        XCTAssertTrue(reportDialogButton(app, "messageRequestBlockButton", fallbackLabel: "Block").waitForExistence(timeout: 5))
     }
 
-    private func blockIncomingRequest(_ app: XCUIApplication) {
-        var blockAction = reportDialogButton(app, "messageRequestDeclineBlockButton", fallbackLabel: "Block")
-        if !blockAction.waitForExistence(timeout: 1) {
-            openMessageRequestDeclineActions(app)
-            blockAction = reportDialogButton(app, "messageRequestDeclineBlockButton", fallbackLabel: "Block")
-        }
-        XCTAssertTrue(blockAction.waitForExistence(timeout: 5))
-        blockAction.tap()
-
-        XCTAssertTrue(reportDialogButton(app, "messageRequestBlockAndReportButton", fallbackLabel: "Report and block").waitForExistence(timeout: 5))
-        let identifiedConfirm = app.buttons["messageRequestBlockConfirmKeep"].firstMatch
-        if identifiedConfirm.waitForExistence(timeout: 5) {
-            identifiedConfirm.tap()
-        } else {
-            let fallbackConfirm = app.buttons["Block"].firstMatch
-            XCTAssertTrue(fallbackConfirm.waitForExistence(timeout: 5))
-            fallbackConfirm.tap()
-        }
-
+    private func assertBlockedRequestControlsAndRemove(_ app: XCUIApplication) {
         XCTAssertTrue(element(app, "blockedComposerBar").waitForExistence(timeout: 10))
+        XCTAssertTrue(reportDialogButton(app, "blockedUnblockButton", fallbackLabel: "Unblock").waitForExistence(timeout: 5))
+        XCTAssertTrue(reportDialogButton(app, "blockedDeleteChatButton", fallbackLabel: "Delete chat").waitForExistence(timeout: 5))
         let backButton = element(app, "navigationBackButton")
         XCTAssertTrue(backButton.waitForExistence(timeout: 5))
         backButton.tap()
@@ -126,27 +110,16 @@ final class AppStoreReviewUITests: XCTestCase {
         XCTAssertTrue(waitForNoChatRows(app, timeout: 15), "blocked request stayed in the chat list")
     }
 
-    private func messageRequestDeclineAction(_ app: XCUIApplication) -> XCUIElement {
-        let identified = element(app, "messageRequestDeclineButton")
-        if identified.exists {
-            return identified
-        }
-        return app.buttons["Decline"].firstMatch
-    }
-
-    private func openMessageRequestDeclineActions(_ app: XCUIApplication) {
-        let declineButton = messageRequestDeclineAction(app)
-        XCTAssertTrue(declineButton.waitForExistence(timeout: 5))
-        declineButton.tap()
-    }
-
-    private func assertMessageRequestDeclineActionsReachable(_ app: XCUIApplication) {
-        openMessageRequestDeclineActions(app)
-
-        XCTAssertTrue(reportDialogButton(app, "messageRequestDeclineBlockButton", fallbackLabel: "Block").waitForExistence(timeout: 5))
-        let reportAction = reportDialogButton(app, "messageRequestDeclineReportButton", fallbackLabel: "Report")
-        XCTAssertTrue(reportAction.waitForExistence(timeout: 5))
-        XCTAssertTrue(reportDialogButton(app, "messageRequestDeclineDeleteButton", fallbackLabel: "Delete chat").waitForExistence(timeout: 5))
+    private func blockAndReportIncomingRequest(_ app: XCUIApplication) {
+        XCTAssertTrue(reportDialogButton(app, "messageRequestBlockButton", fallbackLabel: "Block").waitForExistence(timeout: 5))
+        let blockAndReportAction = reportDialogButton(app, "messageRequestBlockAndReportButton", fallbackLabel: "Block and report")
+        XCTAssertTrue(blockAndReportAction.waitForExistence(timeout: 5))
+        XCTAssertTrue(reportDialogButton(app, "messageRequestAcceptButton", fallbackLabel: "Accept").waitForExistence(timeout: 5))
+        blockAndReportAction.tap()
+        let confirm = reportDialogButton(app, "messageRequestBlockAndReportConfirmButton", fallbackLabel: "Block and report")
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        XCTAssertTrue(reportDialogButton(app, "messageRequestBlockAndReportDeleteChatButton", fallbackLabel: "Delete chat").waitForExistence(timeout: 5))
+        confirm.tap()
     }
 
     private func waitForChatList(_ app: XCUIApplication, timeout: TimeInterval) -> Bool {

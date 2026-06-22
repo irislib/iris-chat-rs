@@ -7,6 +7,8 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 ## Unreleased
 
+- Message requests now show Accept, Block, and Block and report actions directly, with Delete chat and Unblock available from the safety flow.
+
 ## 2026.6.9
 
 - Messages recover more reliably after restart, offline use, or message-server reconnects.

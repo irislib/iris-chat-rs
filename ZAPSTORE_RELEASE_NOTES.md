@@ -6,6 +6,7 @@
 
 # Iris Chat 2026.6.5
 
+- Message requests now show Accept, Block, and Block and report actions directly, with Delete chat and Unblock available from the safety flow.
 - Messages recover more reliably after phones or linked devices were closed, restarted, or offline.
 - Direct and group chats now have broader real-device coverage across Android phones and iOS simulators.
 - Restoring an existing profile with a secret key is tested across iOS and Android.
