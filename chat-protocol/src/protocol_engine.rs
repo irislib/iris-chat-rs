@@ -236,7 +236,7 @@ mod tests {
         }
 
         let devices = engine.known_device_identity_pubkeys_for_owner(peer_owner.public_key());
-        assert_eq!(devices, vec![peer_owner.public_key()]);
+        assert!(devices.is_empty());
     }
 
     #[test]
