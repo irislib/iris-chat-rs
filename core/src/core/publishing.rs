@@ -79,7 +79,18 @@ impl AppCore {
         self.publish_runtime_event(event, GROUP_ROSTER_PUBLISH_LABEL, None)
     }
 
-    pub(super) fn publish_local_nostr_identity_roster_ops(&mut self) -> anyhow::Result<()> {
+    pub(super) fn publish_nostr_identity_add_app_key_op(
+        &mut self,
+        device_pubkey: PublicKey,
+    ) -> anyhow::Result<()> {
+        self.publish_nostr_identity_add_app_key_op_inner(device_pubkey, false)
+    }
+
+    fn publish_nostr_identity_add_app_key_op_inner(
+        &mut self,
+        device_pubkey: PublicKey,
+        force_bootstrap: bool,
+    ) -> anyhow::Result<()> {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return Ok(());
         };
@@ -89,29 +100,129 @@ impl AppCore {
         let owner_keys = owner_keys.clone();
         let owner_pubkey = logged_in.owner_pubkey;
         let local_device_pubkey = logged_in.device_keys.public_key();
-        let Some(local_app_keys) = self.app_keys.get(&owner_pubkey.to_hex()).cloned() else {
-            return Ok(());
+        let Some(protocol_engine) = self.protocol_engine.as_ref() else {
+            anyhow::bail!("Protocol engine is not ready.");
         };
+        let has_nostr_identity_history =
+            protocol_engine.has_nostr_identity_roster_history_for_owner(owner_pubkey);
+        let latest_nostr_identity_created_at =
+            protocol_engine.latest_nostr_identity_roster_created_at_for_owner(owner_pubkey);
+        let mut parent_ids =
+            protocol_engine.nostr_identity_roster_parent_ids_for_owner(owner_pubkey);
 
-        let event_created_at = unix_now().get();
+        let event_created_at = latest_nostr_identity_created_at
+            .map(|latest| unix_now().get().max(latest.saturating_add(1)))
+            .unwrap_or_else(|| unix_now().get());
+        let mut next_event_created_at = event_created_at;
+        let mut event_devices = HashSet::new();
         let mut events = Vec::new();
-        for device in &local_app_keys.devices {
-            let device_pubkey = PublicKey::parse(&device.identity_pubkey_hex)?;
+        if force_bootstrap || !has_nostr_identity_history {
+            events.push(build_nostr_identity_owner_admin_event(
+                &owner_keys,
+                owner_pubkey,
+                parent_ids.clone(),
+                event_created_at,
+                next_event_created_at,
+            )?);
+            remember_nostr_identity_roster_parent_id(&mut parent_ids, events.last());
+            next_event_created_at = next_event_created_at.saturating_add(1);
+
+            let mut compatibility_devices = Vec::new();
+            if let Some(local_app_keys) = self.app_keys.get(&owner_pubkey.to_hex()) {
+                for device in &local_app_keys.devices {
+                    let existing_device_pubkey = PublicKey::parse(&device.identity_pubkey_hex)?;
+                    compatibility_devices.push((existing_device_pubkey, device.created_at_secs));
+                }
+            }
+            let local_device_added_at = compatibility_devices
+                .iter()
+                .find(|(device, _)| *device == local_device_pubkey)
+                .map(|(_, created_at)| *created_at)
+                .unwrap_or(event_created_at);
+            if event_devices.insert(local_device_pubkey.to_hex()) {
+                events.push(build_nostr_identity_add_app_key_event(
+                    &owner_keys,
+                    owner_pubkey,
+                    local_device_pubkey,
+                    parent_ids.clone(),
+                    local_device_added_at,
+                    next_event_created_at,
+                    local_device_pubkey == owner_pubkey,
+                )?);
+                remember_nostr_identity_roster_parent_id(&mut parent_ids, events.last());
+                next_event_created_at = next_event_created_at.saturating_add(1);
+            }
+            for (existing_device_pubkey, device_created_at) in compatibility_devices {
+                if event_devices.insert(existing_device_pubkey.to_hex()) {
+                    events.push(build_nostr_identity_add_app_key_event(
+                        &owner_keys,
+                        owner_pubkey,
+                        existing_device_pubkey,
+                        parent_ids.clone(),
+                        device_created_at,
+                        next_event_created_at,
+                        existing_device_pubkey == owner_pubkey,
+                    )?);
+                    remember_nostr_identity_roster_parent_id(&mut parent_ids, events.last());
+                    next_event_created_at = next_event_created_at.saturating_add(1);
+                }
+            }
+        }
+        if event_devices.insert(device_pubkey.to_hex()) {
             events.push(build_nostr_identity_add_app_key_event(
                 &owner_keys,
                 owner_pubkey,
                 device_pubkey,
-                device.created_at_secs,
-                event_created_at,
+                parent_ids,
+                next_event_created_at,
+                next_event_created_at,
                 device_pubkey == local_device_pubkey,
             )?);
         }
-
         for event in events {
             self.publish_runtime_event(event.clone(), NOSTR_IDENTITY_ROSTER_PUBLISH_LABEL, None);
             self.apply_nostr_identity_roster_op_event(&event)?;
         }
         Ok(())
+    }
+
+    pub(super) fn publish_local_nostr_identity_roster_if_needed(&mut self) {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return;
+        };
+        if logged_in.owner_keys.is_none() {
+            return;
+        }
+        let owner_pubkey = logged_in.owner_pubkey;
+        let local_device_pubkey = logged_in.device_keys.public_key();
+        let Some(protocol_engine) = self.protocol_engine.as_ref() else {
+            return;
+        };
+        let needs_publish = !protocol_engine
+            .has_nostr_identity_roster_history_for_owner(owner_pubkey)
+            || !protocol_engine
+                .has_device_roster_entry_for_owner(owner_pubkey, local_device_pubkey);
+        if !needs_publish {
+            return;
+        }
+        if let Err(error) = self.publish_nostr_identity_add_app_key_op(local_device_pubkey) {
+            self.push_debug_log("nostr_identity.roster.publish", error.to_string());
+        }
+    }
+
+    pub(super) fn publish_local_nostr_identity_roster_snapshot(&mut self) {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return;
+        };
+        if logged_in.owner_keys.is_none() {
+            return;
+        }
+        let local_device_pubkey = logged_in.device_keys.public_key();
+        if let Err(error) =
+            self.publish_nostr_identity_add_app_key_op_inner(local_device_pubkey, true)
+        {
+            self.push_debug_log("nostr_identity.roster.publish", error.to_string());
+        }
     }
 
     pub(super) fn sync_local_app_keys_to_protocol_engine(&mut self, label: &'static str) {
@@ -854,6 +965,22 @@ impl AppCore {
     }
 
     pub(super) fn republish_local_identity_artifacts(&mut self) {
+        self.publish_local_nostr_identity_roster_if_needed();
         self.publish_local_identity_artifacts();
+    }
+}
+
+fn remember_nostr_identity_roster_parent_id(parent_ids: &mut Vec<String>, event: Option<&Event>) {
+    let Some(event) = event else {
+        return;
+    };
+    let Ok(signed) = nostr_identity::parse_nostr_identity_roster_op_event(event) else {
+        return;
+    };
+    if !parent_ids
+        .iter()
+        .any(|parent_id| parent_id == &signed.op_id)
+    {
+        parent_ids.push(signed.op_id);
     }
 }

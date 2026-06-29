@@ -98,6 +98,8 @@ type DevicePubkey = PublicKey;
 
 use account_app_keys::known_app_keys_from_ndr;
 use account_app_keys::known_app_keys_to_ndr;
+use account_app_keys::next_app_keys_created_at;
+use account_app_keys::preserve_known_app_key_labels;
 use attachment_upload::upload_profile_picture_to_hashtree;
 use attachments::*;
 use config::*;
@@ -114,7 +116,9 @@ pub(crate) use mobile_push::{
 };
 pub(crate) use model::ProtocolSubscriptionPlan;
 use model::*;
-use nostr_identity_adapter::build_nostr_identity_add_app_key_event;
+use nostr_identity_adapter::{
+    build_nostr_identity_add_app_key_event, build_nostr_identity_owner_admin_event,
+};
 use payloads::*;
 use profile_helpers::*;
 use protocol_filters::*;

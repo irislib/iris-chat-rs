@@ -55,8 +55,9 @@ impl ProtocolEngine {
         let checkpoint = self.state_checkpoint();
         let (owner_pubkey, profile_events, created_at) =
             self.remember_nostr_identity_roster_op_event(&profile_id, event);
-        let app_keys = match AppKeys::from_nostr_identity_roster_events(
+        let app_keys = match app_keys_from_nostr_identity_roster_events(
             &profile_id,
+            owner_pubkey,
             profile_events.iter(),
         ) {
             Ok(app_keys) => app_keys,
@@ -153,7 +154,6 @@ impl ProtocolEngine {
                         && current.updated_at > incoming.updated_at)
             })
     }
-
     pub fn ingest_app_keys_snapshot(
         &mut self,
         owner_pubkey: PublicKey,
@@ -997,59 +997,4 @@ impl ProtocolEngine {
             queued_targets,
         })
     }
-}
-
-fn should_replace_provisional_local_roster(
-    snapshot: &SessionManagerSnapshot,
-    owner_pubkey: PublicKey,
-    local_device_pubkey: NdrDevicePubkey,
-    incoming_roster: &DeviceRoster,
-) -> bool {
-    let incoming_devices = incoming_roster.devices();
-    if incoming_devices.len() <= 1
-        || !incoming_devices
-            .iter()
-            .any(|entry| entry.device_pubkey == local_device_pubkey)
-    {
-        return false;
-    }
-
-    let Some(current_roster) = snapshot
-        .users
-        .iter()
-        .find(|user| user.owner_pubkey == ndr_owner(owner_pubkey))
-        .and_then(|user| user.roster.as_ref())
-    else {
-        return false;
-    };
-    let current_devices = current_roster.devices();
-    current_devices.len() == 1
-        && current_devices[0].device_pubkey == local_device_pubkey
-        && current_roster.created_at > incoming_roster.created_at
-}
-
-fn nostr_identity_roster_profile_id(event: &Event) -> Option<String> {
-    event
-        .tags
-        .iter()
-        .find_map(|tag| {
-            let values = tag.as_slice();
-            (values.first().map(|value| value.as_str()) == Some("i")
-                && values.get(2).map(|value| value.as_str()) == Some("subject"))
-            .then(|| values.get(1).map(|value| value.trim().to_lowercase()))
-            .flatten()
-        })
-        .filter(|profile_id| is_uuid_like(profile_id))
-}
-
-fn is_uuid_like(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() == 36
-        && [8, 13, 18, 23]
-            .into_iter()
-            .all(|index| bytes[index] == b'-')
-        && bytes
-            .iter()
-            .enumerate()
-            .all(|(index, byte)| [8, 13, 18, 23].contains(&index) || byte.is_ascii_hexdigit())
 }

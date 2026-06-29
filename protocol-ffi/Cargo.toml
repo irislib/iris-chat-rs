@@ -15,7 +15,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [dependencies]
 anyhow = "1"
 hex = "0.4"
-iris-chat-protocol = { version = "0.1.3", path = "../chat-protocol" }
+iris-chat-protocol = { version = "0.1.4", path = "../chat-protocol" }
 nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -109,6 +109,7 @@ include!("tests/protocol_startup_guards.rs");
 include!("tests/protocol_runtime_replay.rs");
 include!("tests/retry_publish_ordering.rs");
 include!("tests/protocol_filters_push.rs");
+include!("tests/nostr_identity_roster.rs");
 include!("tests/app_keys_invites_requests.rs");
 include!("tests/first_contact_receiver.rs");
 include!("tests/direct_messages_typing.rs");

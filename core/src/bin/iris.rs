@@ -1019,6 +1019,7 @@ fn handle_relay_command(cli: &CliApp, command: RelayCommands) -> Result<Value> {
                 AppAction::AddNostrRelay { relay_url: url },
                 Duration::from_secs(2),
             )?;
+            wait_after_relay_change(cli)?;
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
         }
         RelayCommands::Remove { url } => {
@@ -1026,10 +1027,12 @@ fn handle_relay_command(cli: &CliApp, command: RelayCommands) -> Result<Value> {
                 AppAction::RemoveNostrRelay { relay_url: url },
                 Duration::from_secs(2),
             )?;
+            wait_after_relay_change(cli)?;
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
         }
         RelayCommands::Reset => {
             cli.dispatch_and_wait(AppAction::ResetNostrRelays, Duration::from_secs(2))?;
+            wait_after_relay_change(cli)?;
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
         }
         RelayCommands::Set { urls } => {
@@ -1037,9 +1040,18 @@ fn handle_relay_command(cli: &CliApp, command: RelayCommands) -> Result<Value> {
                 AppAction::SetNostrRelays { relay_urls: urls },
                 Duration::from_secs(3),
             )?;
+            wait_after_relay_change(cli)?;
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
         }
     }
+}
+
+fn wait_after_relay_change(cli: &CliApp) -> Result<()> {
+    let state = cli.app.state();
+    if state.account.is_some() && !state.preferences.nostr_relay_urls.is_empty() {
+        let _ = cli.wait_for_network_runtime_ready(Duration::from_secs(4), true);
+    }
+    Ok(())
 }
 
 fn handle_privacy_command(cli: &CliApp, command: PrivacyCommands) -> Result<Value> {

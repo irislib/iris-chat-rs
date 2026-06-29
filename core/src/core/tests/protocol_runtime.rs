@@ -1952,6 +1952,7 @@ fn read_protocol_engine_source() -> String {
         "chat-protocol/src/protocol_engine/types.rs",
         "chat-protocol/src/protocol_engine/engine_core.rs",
         "chat-protocol/src/protocol_engine/engine_sends.rs",
+        "chat-protocol/src/protocol_engine/roster_helpers.rs",
         "chat-protocol/src/protocol_engine/engine_incoming_retry.rs",
         "chat-protocol/src/protocol_engine/engine_resolution.rs",
         "chat-protocol/src/protocol_engine/engine_sender_key_repair.rs",

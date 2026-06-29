@@ -530,15 +530,32 @@ impl AppCore {
             .map(|logged_in| {
                 DeviceEntry::new(logged_in.device_keys.public_key(), unix_now().get())
             });
-        let applied = apply_app_keys_snapshot_with_required_device(
-            current_app_keys.as_ref(),
-            current_created_at,
-            &app_keys,
-            event.created_at.as_secs(),
-            required_device,
-        );
-        let effective_app_keys = applied.app_keys;
-        let effective_created_at = applied.created_at;
+        let (effective_app_keys, effective_created_at) = if should_publish_backfilled_owner_app_keys
+        {
+            let mut merged = current_app_keys.unwrap_or_else(|| AppKeys::new(Vec::new()));
+            for device in app_keys.get_all_devices() {
+                merged.add_device(device);
+            }
+            if let Some(required_device) = required_device {
+                merged.add_device(required_device);
+            }
+            (
+                merged,
+                next_app_keys_created_at(
+                    unix_now().get().max(event.created_at.as_secs()),
+                    current_created_at,
+                ),
+            )
+        } else {
+            let applied = apply_app_keys_snapshot_with_required_device(
+                current_app_keys.as_ref(),
+                current_created_at,
+                &app_keys,
+                event.created_at.as_secs(),
+                required_device,
+            );
+            (applied.app_keys, applied.created_at)
+        };
 
         let protocol_retry_batch = if let Some(protocol_engine) = self.protocol_engine.as_mut() {
             protocol_engine.ingest_app_keys_snapshot(
@@ -596,9 +613,19 @@ impl AppCore {
         };
 
         let owner_hex = result.owner_pubkey.to_hex();
-        let known =
+        let current = self.app_keys.get(&owner_hex).cloned();
+        let mut known =
             known_app_keys_from_ndr(result.owner_pubkey, &result.app_keys, result.created_at);
-        if self.app_keys.get(&owner_hex) != Some(&known) {
+        preserve_known_app_key_labels(&mut known, current.as_ref());
+        if let Some(device_pubkey) = self
+            .logged_in
+            .as_ref()
+            .filter(|logged_in| logged_in.owner_pubkey == result.owner_pubkey)
+            .map(|logged_in| logged_in.device_keys.public_key())
+        {
+            self.apply_current_device_labels_to_known_app_keys(&mut known, device_pubkey);
+        }
+        if current.as_ref() != Some(&known) {
             self.app_keys.insert(owner_hex, known);
         }
         self.migrate_verified_device_owner_threads(result.owner_pubkey, &result.app_keys);

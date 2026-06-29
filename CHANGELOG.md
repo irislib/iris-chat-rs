@@ -7,6 +7,9 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 ## Unreleased
 
+## 2026.6.29
+
+- Linked-device approval now writes the shared identity device roster directly, avoiding old device-list snapshots for new manual adds.
 - Message requests now show Accept, Block, and Block and report actions directly, with Delete chat and Unblock available from the safety flow.
 
 ## 2026.6.9

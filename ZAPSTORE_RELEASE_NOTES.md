@@ -1,3 +1,9 @@
+# Iris Chat 2026.6.29
+
+- Linking a device is more reliable across app restarts and fresh installs.
+- Device approvals now use the shared identity roster, keeping new linked devices in sync without the old device-list snapshot path.
+- Internal roster handling was split into smaller pieces so release checks catch regressions cleanly.
+
 # Iris Chat 2026.6.9
 
 - Messages recover more reliably after restart, offline use, or message-server reconnects.

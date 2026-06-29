@@ -3,6 +3,7 @@ use super::*;
 include!("protocol_engine/types.rs");
 include!("protocol_engine/engine_core.rs");
 include!("protocol_engine/engine_sends.rs");
+include!("protocol_engine/roster_helpers.rs");
 include!("protocol_engine/engine_incoming_retry.rs");
 include!("protocol_engine/engine_resolution.rs");
 include!("protocol_engine/engine_sender_key_repair.rs");
@@ -184,8 +185,7 @@ mod tests {
             .expect("add device fact");
 
         let devices = engine.known_device_identity_pubkeys_for_owner(peer_owner.public_key());
-        assert_eq!(devices.len(), 2);
-        assert!(devices.contains(&peer_owner.public_key()));
+        assert_eq!(devices.len(), 1);
         assert!(devices.contains(&peer_device.public_key()));
     }
 

@@ -10,7 +10,7 @@ use nostr::{Event, Keys};
 use nostr_double_ratchet::{Invite, ProtocolContext, Session, UnixSeconds};
 use nostr_double_ratchet_nostr::{
     invite_url, parse_message_event, process_invite_response_event, INVITE_RESPONSE_KIND,
-    MESSAGE_EVENT_KIND,
+    MESSAGE_EVENT_KIND, NOSTR_IDENTITY_ROSTER_OP_KIND,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -280,6 +280,28 @@ fn wait_for_relay_event(relay: &TestRelay, kind: u64) -> Event {
     panic!("timed out waiting for relay event kind {kind}; saw kinds {kinds:?}");
 }
 
+fn wait_for_relay_events(relay: &TestRelay, kind: u64, count: usize) -> Vec<Event> {
+    let started = Instant::now();
+    let mut matched = Vec::new();
+    while started.elapsed() < Duration::from_secs(10) {
+        matched = relay
+            .events()
+            .into_iter()
+            .filter(|event| event.get("kind").and_then(Value::as_u64) == Some(kind))
+            .filter_map(|event| serde_json::from_value(event).ok())
+            .collect::<Vec<_>>();
+        if matched.len() >= count {
+            return matched;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!(
+        "timed out waiting for {count} relay events kind {kind}; saw {}; relay_events={}",
+        matched.len(),
+        relay_event_summary(relay)
+    );
+}
+
 fn read_stream_message(
     relay: &TestRelay,
     receiver: &mpsc::Receiver<Value>,
@@ -448,6 +470,19 @@ fn device_linking_e2e_installs_local_sibling_session() {
 
     owner.shutdown();
     linked.shutdown();
+}
+
+#[test]
+fn cli_account_create_publishes_nostr_identity_roster_ops() {
+    let relay = TestRelay::start();
+    let data_dir = TempDir::new().unwrap();
+
+    run_iris(data_dir.path(), &["relay", "set", relay.url()]);
+    run_iris(data_dir.path(), &["account", "create", "--name", "Alice"]);
+    run_iris(data_dir.path(), &["relay", "set", relay.url()]);
+
+    let roster_ops = wait_for_relay_events(&relay, NOSTR_IDENTITY_ROSTER_OP_KIND as u64, 2);
+    assert_eq!(roster_ops.len(), 2);
 }
 
 #[test]

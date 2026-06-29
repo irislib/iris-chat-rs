@@ -379,8 +379,7 @@ impl AppCore {
             return;
         };
 
-        self.upsert_local_app_key_device(owner_pubkey, device_pubkey);
-        if let Err(error) = self.publish_local_nostr_identity_roster_ops() {
+        if let Err(error) = self.publish_nostr_identity_add_app_key_op(device_pubkey) {
             self.state.toast = Some(error.to_string());
         }
         self.rebuild_state();
@@ -417,8 +416,7 @@ impl AppCore {
                 unix_now(),
             )?;
         let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)?;
-        self.upsert_local_app_key_device(owner_pubkey, invite.inviter_device_pubkey.to_nostr()?);
-        self.publish_local_app_keys();
+        self.publish_nostr_identity_add_app_key_op(invite.inviter_device_pubkey.to_nostr()?)?;
         self.publish_runtime_event(response_event, "appcore-protocol", None);
         self.mark_mobile_push_dirty();
         self.process_protocol_engine_retry_batch("link_invite_import", retry_batch);
@@ -838,6 +836,7 @@ impl AppCore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(super) fn upsert_local_app_key_device(
         &mut self,
         owner: PublicKey,

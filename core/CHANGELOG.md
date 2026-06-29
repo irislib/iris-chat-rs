@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.32
+
+- Publish the NostrIdentity roster fact migration with `iris-chat-protocol` 0.1.4 so packaged builds use the shared fact-event roster projection and parent tracking.
+- Keep linked-device labels through NostrIdentity roster updates and republish local identity artifacts after relay/account changes.
+
 ## 0.1.31
 
 - Publish the protocol retry fixes with `iris-chat-protocol` 0.1.3 so packaged builds use the new retry scheduler API.
