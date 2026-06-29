@@ -105,6 +105,10 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(nameField.waitForExistence(timeout: 10))
         nameField.tap()
         nameField.typeText("Alex Rivera")
+        let terms = app.descendants(matching: .any)["onboardingTermsAgreementToggle"]
+        if terms.waitForExistence(timeout: 3), terms.value as? String != "1" {
+            terms.tap()
+        }
         app.descendants(matching: .any)["generateKeyButton"].tap()
     }
 
