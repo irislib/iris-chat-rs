@@ -89,8 +89,8 @@ for every iteration.
 
 The fastest external reference loop is:
 
-1. Run BitChat Android on a physical Android device first, using
-   `/Users/sirius/src/bitchat-android` and `./gradlew installDebug`.
+1. Run BitChat Android on a physical Android device first, using a local
+   checkout of `bitchat-android` and `./gradlew installDebug`.
 2. Use BitChat iOS instead when a real iPhone is already set up for local Xcode
    signing; otherwise Android is usually less friction.
 3. Implement Iris macOS as the compatibility peer.
