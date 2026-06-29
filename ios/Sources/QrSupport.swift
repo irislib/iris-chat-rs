@@ -65,6 +65,14 @@ func resolveDeviceAuthorizationInput(
         return ResolvedDeviceAuthorizationInput(deviceInput: trimmed, errorMessage: nil)
     }
 
+    let normalizedManualDevice = normalizePeerInput(input: trimmed)
+    if isValidPeerInput(input: normalizedManualDevice) {
+        return ResolvedDeviceAuthorizationInput(
+            deviceInput: normalizedManualDevice,
+            errorMessage: nil
+        )
+    }
+
     return ResolvedDeviceAuthorizationInput(
         deviceInput: "",
         errorMessage: "Not a valid link code."

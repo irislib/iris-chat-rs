@@ -170,7 +170,7 @@ class PikaLikeUiTest {
     }
 
     @Test
-    fun manage_devices_plain_device_key_keeps_authorize_action_disabled() {
+    fun manage_devices_plain_device_key_enables_authorize_action() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
         composeRule.openSettingsPage("settingsDevicesRow")
@@ -179,7 +179,7 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("deviceRosterAddInput", useUnmergedTree = true)
             .performTextInput(SECONDARY_DEVICE_NPUB)
         composeRule.onNodeWithTag("deviceRosterAddButton", useUnmergedTree = true)
-            .assertIsNotEnabled()
+            .assertIsEnabled()
     }
 
     @Test

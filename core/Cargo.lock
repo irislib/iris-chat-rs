@@ -1354,6 +1354,7 @@ dependencies = [
  "nostr-double-ratchet",
  "nostr-double-ratchet-nostr",
  "nostr-double-ratchet-pairwise-codec",
+ "nostr-identity",
  "nostr-sdk 0.44.1",
  "qrcode",
  "rand 0.8.6",
@@ -1369,6 +1370,7 @@ dependencies = [
  "uniffi",
  "url",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]
@@ -1695,6 +1697,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ade30de16869618919c6b5efc8258f47b654a98b51541eb77f85e8ec5e3c83a6"
 dependencies = [
  "nostr 0.44.3",
+]
+
+[[package]]
+name = "nostr-identity"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be1f79cc138f80bd385f513664ead443866993aaacbe6db1d163d8c011daa8fa"
+dependencies = [
+ "anyhow",
+ "nostr-sdk 0.44.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
 ]
 
 [[package]]
@@ -3076,6 +3092,18 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+
+[[package]]
+name = "uuid"
+version = "1.23.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf80a72845275afea99e7f2b434723d3bc7e38470fcd1c7ed39a599c73319a53"
+dependencies = [
+ "getrandom 0.4.2",
+ "js-sys",
+ "serde_core",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "vcpkg"

@@ -1101,6 +1101,55 @@ fn owner_device_accepts_link_invite_and_registers_new_device() {
 }
 
 #[test]
+fn owner_device_publishes_nostr_identity_roster_op_for_manual_device_npub() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let new_device = Keys::generate();
+    let mut core = logged_in_test_core("manual-device-npub-roster-op", &owner, &device);
+    core.pending_relay_publishes.clear();
+
+    core.handle_action(AppAction::AddAuthorizedDevice {
+        device_input: new_device
+            .public_key()
+            .to_bech32()
+            .expect("device npub"),
+    });
+
+    assert_eq!(core.state.toast, None);
+    assert!(
+        pending_events_with_kind(&core, APP_KEYS_EVENT_KIND).is_empty(),
+        "manual device approval must not publish legacy AppKeys snapshots"
+    );
+    let roster_ops = pending_events_with_kind(&core, NOSTR_IDENTITY_ROSTER_OP_KIND);
+    let event = roster_ops
+        .last()
+        .expect("manual device approval publishes a roster op");
+    assert!(is_nostr_identity_roster_op_event(event));
+    assert_eq!(event.pubkey, owner.public_key());
+    assert!(event.tags.iter().any(|tag| {
+        let values = tag.as_slice();
+        values.first().map(|value| value.as_str()) == Some("op")
+            && values.get(1).map(|value| value.as_str()) == Some("add_key")
+    }));
+    assert!(event.tags.iter().any(|tag| {
+        let values = tag.as_slice();
+        values.first().map(|value| value.as_str()) == Some("key_pubkey")
+            && values.get(1).map(|value| value.as_str())
+                == Some(new_device.public_key().to_hex().as_str())
+    }));
+    assert!(event.tags.iter().any(|tag| {
+        let values = tag.as_slice();
+        values.first().map(|value| value.as_str()) == Some("key_purpose")
+            && values.get(1).map(|value| value.as_str()) == Some("app")
+    }));
+    assert!(event.tags.iter().any(|tag| {
+        let values = tag.as_slice();
+        values.first().map(|value| value.as_str()) == Some("key_capability")
+            && values.get(1).map(|value| value.as_str()) == Some("write")
+    }));
+}
+
+#[test]
 fn pending_linked_device_finishes_when_owner_accepts_invite() {
     let owner = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");

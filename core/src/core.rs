@@ -72,6 +72,7 @@ mod message_expiry;
 mod mobile_push;
 mod model;
 mod nearby;
+mod nostr_identity_adapter;
 pub(crate) mod notifications;
 mod payloads;
 mod persistence;
@@ -113,6 +114,7 @@ pub(crate) use mobile_push::{
 };
 pub(crate) use model::ProtocolSubscriptionPlan;
 use model::*;
+use nostr_identity_adapter::build_nostr_identity_add_app_key_event;
 use payloads::*;
 use profile_helpers::*;
 use protocol_filters::*;

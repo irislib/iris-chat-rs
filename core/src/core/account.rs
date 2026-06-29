@@ -358,7 +358,10 @@ impl AppCore {
             self.state.busy.updating_roster = true;
             self.emit_state();
 
-            let result = self.accept_link_device_invite(invite);
+            // Legacy link invites still complete the old AppKeys-based pairing
+            // flow. Manual device IDs and approval QR payloads publish
+            // NostrIdentity roster ops instead.
+            let result = self.accept_legacy_link_device_invite(invite);
             if let Err(error) = result {
                 self.state.toast = Some(error.to_string());
             }
@@ -377,13 +380,15 @@ impl AppCore {
         };
 
         self.upsert_local_app_key_device(owner_pubkey, device_pubkey);
-        self.publish_local_app_keys();
+        if let Err(error) = self.publish_local_nostr_identity_roster_ops() {
+            self.state.toast = Some(error.to_string());
+        }
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
     }
 
-    fn accept_link_device_invite(&mut self, invite: Invite) -> anyhow::Result<()> {
+    fn accept_legacy_link_device_invite(&mut self, invite: Invite) -> anyhow::Result<()> {
         let logged_in = self
             .logged_in
             .as_ref()

@@ -529,6 +529,14 @@ private fun resolveDeviceAuthorizationInput(
         return ResolvedDeviceAuthorizationInput(deviceInput = trimmed, errorMessage = null)
     }
 
+    val normalizedManualDevice = normalizePeerInput(trimmed)
+    if (isValidPeerInput(normalizedManualDevice)) {
+        return ResolvedDeviceAuthorizationInput(
+            deviceInput = normalizedManualDevice,
+            errorMessage = null,
+        )
+    }
+
     return ResolvedDeviceAuthorizationInput(
         deviceInput = "",
         errorMessage = "Not a valid link code.",

@@ -178,7 +178,10 @@ public partial class DeviceRosterView : UserControl
             return Native.IsValidPeerInput(normalizedDevice) ? normalizedDevice : null;
         }
 
-        return IsLikelyLinkInvite(trimmed) ? trimmed : null;
+        if (IsLikelyLinkInvite(trimmed)) return trimmed;
+
+        var normalizedManualDevice = Native.NormalizePeerInput(trimmed);
+        return Native.IsValidPeerInput(normalizedManualDevice) ? normalizedManualDevice : null;
     }
 
     private static bool TryDecodeDeviceApprovalQr(string input, out string ownerInput, out string deviceInput)

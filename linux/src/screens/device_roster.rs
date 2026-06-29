@@ -138,7 +138,12 @@ fn resolve_device_authorization_input(
         return is_valid_peer_input(normalized_device.clone()).then_some(normalized_device);
     }
 
-    is_likely_link_invite(trimmed).then(|| trimmed.to_string())
+    if is_likely_link_invite(trimmed) {
+        return Some(trimmed.to_string());
+    }
+
+    let normalized_device = normalize_peer_input(trimmed.to_string());
+    is_valid_peer_input(normalized_device.clone()).then_some(normalized_device)
 }
 
 fn is_likely_link_invite(input: &str) -> bool {

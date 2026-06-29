@@ -7,6 +7,7 @@ const PENDING_RELAY_DRAIN_STALE_AFTER: Duration = RELAY_PUBLISH_ATTEMPT_TIMEOUT;
 const PENDING_RELAY_PUBLISH_IN_PROGRESS: &str = "publish attempt in progress";
 const LOCAL_INVITE_PUBLISH_LABEL: &str = "invite";
 const GROUP_ROSTER_PUBLISH_LABEL: &str = "group-roster";
+const NOSTR_IDENTITY_ROSTER_PUBLISH_LABEL: &str = "nostr-identity-roster";
 
 fn send_nearby_published_event(update_tx: &Sender<AppUpdate>, event: &Event) {
     let Ok(event_json) = serde_json::to_string(event) else {
@@ -76,6 +77,68 @@ impl AppCore {
             }
         };
         self.publish_runtime_event(event, GROUP_ROSTER_PUBLISH_LABEL, None)
+    }
+
+    pub(super) fn publish_local_nostr_identity_roster_ops(&mut self) -> anyhow::Result<()> {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return Ok(());
+        };
+        let Some(owner_keys) = logged_in.owner_keys.as_ref() else {
+            return Ok(());
+        };
+        let owner_keys = owner_keys.clone();
+        let owner_pubkey = logged_in.owner_pubkey;
+        let local_device_pubkey = logged_in.device_keys.public_key();
+        let Some(local_app_keys) = self.app_keys.get(&owner_pubkey.to_hex()).cloned() else {
+            return Ok(());
+        };
+
+        let event_created_at = unix_now().get();
+        let mut events = Vec::new();
+        for device in &local_app_keys.devices {
+            let device_pubkey = PublicKey::parse(&device.identity_pubkey_hex)?;
+            events.push(build_nostr_identity_add_app_key_event(
+                &owner_keys,
+                owner_pubkey,
+                device_pubkey,
+                device.created_at_secs,
+                event_created_at,
+                device_pubkey == local_device_pubkey,
+            )?);
+        }
+
+        for event in events {
+            self.publish_runtime_event(event.clone(), NOSTR_IDENTITY_ROSTER_PUBLISH_LABEL, None);
+            self.apply_nostr_identity_roster_op_event(&event)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn sync_local_app_keys_to_protocol_engine(&mut self, label: &'static str) {
+        let Some((owner, app_keys, created_at)) = self.logged_in.as_ref().and_then(|logged_in| {
+            self.app_keys
+                .get(&logged_in.owner_pubkey.to_hex())
+                .and_then(known_app_keys_to_ndr)
+                .map(|app_keys| {
+                    (
+                        logged_in.owner_pubkey,
+                        app_keys,
+                        self.app_keys
+                            .get(&logged_in.owner_pubkey.to_hex())
+                            .map(|known| known.created_at_secs)
+                            .unwrap_or_else(|| unix_now().get()),
+                    )
+                })
+        }) else {
+            return;
+        };
+
+        if let Some(protocol_engine) = self.protocol_engine.as_mut() {
+            if let Ok(batch) = protocol_engine.ingest_app_keys_snapshot(owner, app_keys, created_at)
+            {
+                self.process_protocol_engine_retry_batch(label, batch);
+            }
+        }
     }
 
     fn publish_runtime_event_with_metadata(
@@ -787,29 +850,7 @@ impl AppCore {
 
     pub(super) fn publish_local_app_keys(&mut self) {
         self.republish_local_identity_artifacts();
-        if let Some((owner, app_keys, created_at)) = self.logged_in.as_ref().and_then(|logged_in| {
-            self.app_keys
-                .get(&logged_in.owner_pubkey.to_hex())
-                .and_then(known_app_keys_to_ndr)
-                .map(|app_keys| {
-                    (
-                        logged_in.owner_pubkey,
-                        app_keys,
-                        self.app_keys
-                            .get(&logged_in.owner_pubkey.to_hex())
-                            .map(|known| known.created_at_secs)
-                            .unwrap_or_else(|| unix_now().get()),
-                    )
-                })
-        }) {
-            if let Some(protocol_engine) = self.protocol_engine.as_mut() {
-                if let Ok(batch) =
-                    protocol_engine.ingest_app_keys_snapshot(owner, app_keys, created_at)
-                {
-                    self.process_protocol_engine_retry_batch("publish_local_app_keys", batch);
-                }
-            }
-        }
+        self.sync_local_app_keys_to_protocol_engine("publish_local_app_keys");
     }
 
     pub(super) fn republish_local_identity_artifacts(&mut self) {
