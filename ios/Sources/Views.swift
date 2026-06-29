@@ -362,7 +362,7 @@ enum SettingsFocusSection: Hashable {
 /// Posted with a `SettingsFocusSection` in `userInfo["focus"]` (or
 /// `nil`) when a deep child wants the settings sheet opened on a
 /// specific page. `IrisRoot` listens and flips its `@State`.
-let irisOpenSettingsNotification = Notification.Name("to.iris.chat.open-settings")
+let irisOpenSettingsNotification = Notification.Name("fi.siriusbusiness.irischat.open-settings")
 #endif
 
 enum SettingsPage: String, CaseIterable, Identifiable {

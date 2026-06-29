@@ -9,7 +9,14 @@ from mobile_scenario_support import *
 class MobileScenarioHarnessMixin:
     def ios_data_dir(self, udid: str) -> str:
         completed = run(
-            ["xcrun", "simctl", "get_app_container", udid, "to.iris.chat", "group.to.iris.chat"],
+            [
+                "xcrun",
+                "simctl",
+                "get_app_container",
+                udid,
+                "fi.siriusbusiness.irischat",
+                "group.fi.siriusbusiness.irischat",
+            ],
             capture=True,
         )
         return str(Path(completed.stdout.strip()) / "iris-chat")
@@ -500,4 +507,3 @@ class MobileScenarioHarnessMixin:
         for device in self.config.get("devices", []):
             if device.get("linked_to"):
                 self.link_device(device)
-

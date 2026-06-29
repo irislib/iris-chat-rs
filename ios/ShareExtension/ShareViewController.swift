@@ -2,8 +2,8 @@ import Intents
 import UIKit
 import UniformTypeIdentifiers
 
-private let appGroupIdentifier = "group.to.iris.chat"
-private let pendingShareNotificationName = "to.iris.chat.pending-share"
+private let appGroupIdentifier = "group.fi.siriusbusiness.irischat"
+private let pendingShareNotificationName = "fi.siriusbusiness.irischat.pending-share"
 
 private struct StoredShareAttachment: Codable {
     let path: String

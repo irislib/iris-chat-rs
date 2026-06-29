@@ -12,8 +12,8 @@ import UserNotifications
 /// app — encrypted Iris placeholders are cleared instead of surfacing
 /// generic "New activity" text.
 final class NotificationService: UNNotificationServiceExtension {
-    private static let appGroupIdentifier = "group.to.iris.chat"
-    private static let keychainService = "to.iris.chat"
+    private static let appGroupIdentifier = "group.fi.siriusbusiness.irischat"
+    private static let keychainService = "fi.siriusbusiness.irischat"
     private static let keychainAccount = "stored-account-bundle"
     private static let encryptedEventPayloadKeys = [
         "event",

@@ -163,9 +163,9 @@ def harness(scenario: Scenario, device_id: str, action: str, *, reset: bool = Fa
 
 def restart_ios_app(scenario: Scenario, device_id: str) -> None:
     device = scenario.state["devices"][device_id]
-    run(["xcrun", "simctl", "terminate", device["udid"], "to.iris.chat"], check=False)
+    run(["xcrun", "simctl", "terminate", device["udid"], "fi.siriusbusiness.irischat"], check=False)
     time.sleep(1)
-    run(["xcrun", "simctl", "launch", device["udid"], "to.iris.chat"], check=False)
+    run(["xcrun", "simctl", "launch", device["udid"], "fi.siriusbusiness.irischat"], check=False)
 
 
 def run_flow(scenario: Scenario, artifact_dir: Path) -> dict[str, Any]:

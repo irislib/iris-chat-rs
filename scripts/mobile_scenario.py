@@ -285,7 +285,7 @@ class Scenario(MobileScenarioDeviceMixin, MobileScenarioHarnessMixin):
     def open_apps(self) -> None:
         for device_id, device in self.state.get("devices", {}).items():
             if device.get("platform") == "ios":
-                run(["xcrun", "simctl", "launch", device["udid"], "to.iris.chat"], capture=True, check=False)
+                run(["xcrun", "simctl", "launch", device["udid"], "fi.siriusbusiness.irischat"], capture=True, check=False)
             elif device.get("platform") == "android":
                 run(
                     [

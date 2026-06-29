@@ -144,7 +144,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var lastHelloAt = Date.distantPast
     private var lanService: IrisNearbyLanService?
     private let localDeviceName = IrisNearbyService.resolveLocalDeviceName()
-    private let codecQueue = DispatchQueue(label: "to.iris.chat.nearby.codec", qos: .utility)
+    private let codecQueue = DispatchQueue(label: "fi.siriusbusiness.irischat.nearby.codec", qos: .utility)
 
     var ingestEventJson: ((_ eventJson: String, _ transport: String) -> Bool)?
     var buildPresenceEventJson: ((String, String, String, String?) -> String)?

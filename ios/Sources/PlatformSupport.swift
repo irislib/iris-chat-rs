@@ -688,7 +688,7 @@ enum PlatformStartupAtLogin {
     }
 
     #if os(macOS)
-    private static let launchAgentLabel = "to.iris.chat.login"
+    private static let launchAgentLabel = "fi.siriusbusiness.irischat.login"
 
     private static var launchAgentURL: URL {
         FileManager.default.homeDirectoryForCurrentUser

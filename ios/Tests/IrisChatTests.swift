@@ -1405,7 +1405,7 @@ final class IrisChatTests: XCTestCase {
 #if os(macOS)
         throw XCTSkip("macOS test lane uses the file-backed test store to avoid Keychain permission UI")
 #else
-        let service = "to.iris.chat.tests.\(UUID().uuidString)"
+        let service = "fi.siriusbusiness.irischat.tests.\(UUID().uuidString)"
         let account = "stored-account-bundle"
         let probeQuery: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,

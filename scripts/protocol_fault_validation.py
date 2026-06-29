@@ -506,13 +506,13 @@ class ProtocolFaultValidation(ProtocolFaultCasesMixin):
         if device["platform"] != "ios":
             raise ValidationFailure("protocol fault validation v1 supports iOS harness devices")
         run(
-            ["xcrun", "simctl", "terminate", device["udid"], "to.iris.chat"],
+            ["xcrun", "simctl", "terminate", device["udid"], "fi.siriusbusiness.irischat"],
             log_path=case_dir / f"{device_id}-{suffix}-terminate.log",
             check=False,
         )
         time.sleep(1)
         run(
-            ["xcrun", "simctl", "launch", device["udid"], "to.iris.chat"],
+            ["xcrun", "simctl", "launch", device["udid"], "fi.siriusbusiness.irischat"],
             log_path=case_dir / f"{device_id}-{suffix}-launch.log",
             check=False,
         )

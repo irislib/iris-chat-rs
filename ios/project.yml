@@ -1,14 +1,14 @@
 name: IrisChat
 options:
-  bundleIdPrefix: to.iris.chat
+  bundleIdPrefix: fi.siriusbusiness.irischat
   deploymentTarget:
     iOS: "16.0"
   createIntermediateGroups: true
 
 settings:
   base:
-    PRODUCT_BUNDLE_IDENTIFIER: to.iris.chat
-    DEVELOPMENT_TEAM: J8PPJKD7TA
+    PRODUCT_BUNDLE_IDENTIFIER: fi.siriusbusiness.irischat
+    DEVELOPMENT_TEAM: 8G9P8AN75D
     MARKETING_VERSION: ${IRIS_XCODE_MARKETING_VERSION}
     CURRENT_PROJECT_VERSION: ${IRIS_APP_VERSION_CODE}
     VERSIONING_SYSTEM: apple-generic
@@ -54,6 +54,7 @@ targets:
           APS_ENVIRONMENT: development
         Release:
           APS_ENVIRONMENT: production
+          PROVISIONING_PROFILE_SPECIFIER: ${IRIS_IOS_PROVISIONING_PROFILE_UUID}
     dependencies:
       - framework: Frameworks/IrisChatCore.xcframework
         embed: false
@@ -72,11 +73,14 @@ targets:
     settings:
       base:
         PRODUCT_NAME: NotificationService
-        PRODUCT_BUNDLE_IDENTIFIER: to.iris.chat.NotificationService
-        DEVELOPMENT_TEAM: J8PPJKD7TA
+        PRODUCT_BUNDLE_IDENTIFIER: fi.siriusbusiness.irischat.NotificationService
+        DEVELOPMENT_TEAM: 8G9P8AN75D
         CODE_SIGN_ENTITLEMENTS: NotificationService/NotificationService.entitlements
         INFOPLIST_FILE: NotificationService/Info.plist
         SKIP_INSTALL: YES
+      configs:
+        Release:
+          PROVISIONING_PROFILE_SPECIFIER: ${IRIS_IOS_NOTIFICATION_PROVISIONING_PROFILE_UUID}
     dependencies:
       - framework: Frameworks/IrisChatCore.xcframework
         embed: false
@@ -89,11 +93,14 @@ targets:
     settings:
       base:
         PRODUCT_NAME: ShareExtension
-        PRODUCT_BUNDLE_IDENTIFIER: to.iris.chat.ShareExtension
-        DEVELOPMENT_TEAM: J8PPJKD7TA
+        PRODUCT_BUNDLE_IDENTIFIER: fi.siriusbusiness.irischat.ShareExtension
+        DEVELOPMENT_TEAM: 8G9P8AN75D
         CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
         INFOPLIST_FILE: ShareExtension/Info.plist
         SKIP_INSTALL: YES
+      configs:
+        Release:
+          PROVISIONING_PROFILE_SPECIFIER: ${IRIS_IOS_SHARE_PROVISIONING_PROFILE_UUID}
 
   IrisChatTests:
     type: bundle.unit-test

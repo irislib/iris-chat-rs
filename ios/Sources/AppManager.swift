@@ -9,7 +9,7 @@ import UserNotifications
 #endif
 
 #if os(iOS)
-private let appManagerPendingShareNotificationName = "to.iris.chat.pending-share"
+private let appManagerPendingShareNotificationName = "fi.siriusbusiness.irischat.pending-share"
 #endif
 
 struct StoredAccountBundle: Codable, Equatable {
@@ -107,7 +107,7 @@ final class KeychainSecretStore: AccountSecretStore {
 #endif
 
     init(
-        service: String = "to.iris.chat",
+        service: String = "fi.siriusbusiness.irischat",
         account: String = "stored-account-bundle",
         accessGroup: String? = nil,
         accessibility: CFString? = KeychainSecretStore.defaultAccessibility
@@ -436,7 +436,7 @@ private func irisCoreAppVersion() -> String {
 }
 
 enum AppPaths {
-    static let appGroupIdentifier = "group.to.iris.chat"
+    static let appGroupIdentifier = "group.fi.siriusbusiness.irischat"
 
     static func appVersion(bundle: Bundle = .main) -> String {
         // CFBundleShortVersionString gets stripped to 3 parts before reaching
@@ -484,7 +484,7 @@ enum AppPaths {
     }
 
     static func keychainService(environment: [String: String]) -> String {
-        let base = "to.iris.chat"
+        let base = "fi.siriusbusiness.irischat"
         guard let runId = testRunId(environment: environment) else {
             return base
         }
@@ -836,12 +836,12 @@ final class AppManager: ObservableObject {
     private static let chatAroundBeforeLimit: UInt32 = 40
     private static let chatAroundAfterLimit: UInt32 = 40
     private static let chatSnapshotCacheLimit = 12
-    private static let chatPageQueue = DispatchQueue(label: "to.iris.chat.chat-pages", qos: .userInitiated)
+    private static let chatPageQueue = DispatchQueue(label: "fi.siriusbusiness.irischat.chat-pages", qos: .userInitiated)
     private static let optimisticNavigationDispatchQueue = DispatchQueue(
-        label: "to.iris.chat.optimistic-navigation-dispatch",
+        label: "fi.siriusbusiness.irischat.optimistic-navigation-dispatch",
         qos: .userInitiated
     )
-    private static let supportBundleQueue = DispatchQueue(label: "to.iris.chat.support-bundle", qos: .utility)
+    private static let supportBundleQueue = DispatchQueue(label: "fi.siriusbusiness.irischat.support-bundle", qos: .utility)
     private static let nearbyLanPermissionPromptAttemptedKey = "nearbyLanPermissionPromptAttempted"
     private static let nearbyLanPermissionGrantedKey = "nearbyLanPermissionGranted"
 

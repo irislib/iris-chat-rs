@@ -26,7 +26,7 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
     }
 
     private let peerID: String
-    private let queue = DispatchQueue(label: "to.iris.chat.nearby.lan")
+    private let queue = DispatchQueue(label: "fi.siriusbusiness.irischat.nearby.lan")
     private let bodyLengthFromHeader: (Data) -> Int
     private let onFrame: (String, Data) -> Void
     private let onStatus: (String) -> Void

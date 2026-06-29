@@ -7,7 +7,7 @@ source "${ROOT_DIR}/scripts/e2e_prerelease_common.sh"
 source "${ROOT_DIR}/scripts/mobile_relay_common.sh"
 
 IOS_HARNESS="${ROOT_DIR}/scripts/run_ios_harness.py"
-IOS_BUNDLE_ID="${IOS_BUNDLE_ID:-to.iris.chat}"
+IOS_BUNDLE_ID="${IOS_BUNDLE_ID:-fi.siriusbusiness.irischat}"
 ALICE_UDID="${IRIS_IOS_ALICE_UDID:-5797FDF1-4808-4E9E-A2CB-7145A6766244}"
 ALICE_LINKED_UDID="${IRIS_IOS_ALICE_LINKED_UDID:-6EB8A247-5E53-4CC8-8C65-BEB613914390}"
 BOB_UDID="${IRIS_IOS_BOB_UDID:-A30E29AB-441A-4FA2-9848-764382A6C5C5}"

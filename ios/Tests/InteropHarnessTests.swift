@@ -40,7 +40,9 @@ final class InteropHarnessTests: XCTestCase {
         let action = try requiredEnv("IRIS_IOS_HARNESS_ACTION", env: env)
         let runID = env["IRIS_IOS_HARNESS_RUN_ID"] ?? UUID().uuidString
         let useAppStorage = env["IRIS_IOS_HARNESS_USE_APP_STORAGE"] == "1"
-        let service = env["IRIS_IOS_HARNESS_SERVICE"] ?? (useAppStorage ? "to.iris.chat" : "to.iris.chat.harness.\(runID)")
+        let service = env["IRIS_IOS_HARNESS_SERVICE"] ?? (
+            useAppStorage ? "fi.siriusbusiness.irischat" : "fi.siriusbusiness.irischat.harness.\(runID)"
+        )
         let account = "stored-account-bundle"
         let dataDir = useAppStorage
             ? AppPaths.dataDir(fileManager: .default, environment: [:])

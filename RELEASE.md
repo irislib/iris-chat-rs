@@ -169,7 +169,7 @@ iOS release environment:
 
 Current defaults:
 
-- bundle ID: `to.iris.chat`
+- bundle ID: `fi.siriusbusiness.irischat`
 - signing style: `automatic`
 - export method: `app-store-connect`
 

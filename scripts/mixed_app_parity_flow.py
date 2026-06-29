@@ -403,9 +403,9 @@ def live_typing(
 def restart_app(scenario: Scenario, device_id: str, *, wait_for_drain: bool = True) -> None:
     device = scenario.state["devices"][device_id]
     if device["platform"] == "ios":
-        run(["xcrun", "simctl", "terminate", device["udid"], "to.iris.chat"], check=False)
+        run(["xcrun", "simctl", "terminate", device["udid"], "fi.siriusbusiness.irischat"], check=False)
         time.sleep(1)
-        run(["xcrun", "simctl", "launch", device["udid"], "to.iris.chat"], check=False)
+        run(["xcrun", "simctl", "launch", device["udid"], "fi.siriusbusiness.irischat"], check=False)
     else:
         adb = str(scenario.adb())
         package_name = device.get("app_package") or ANDROID_APP_PACKAGE
@@ -435,7 +435,7 @@ def restart_app(scenario: Scenario, device_id: str, *, wait_for_drain: bool = Tr
 def stop_app(scenario: Scenario, device_id: str) -> None:
     device = scenario.state["devices"][device_id]
     if device["platform"] == "ios":
-        run(["xcrun", "simctl", "terminate", device["udid"], "to.iris.chat"], check=False)
+        run(["xcrun", "simctl", "terminate", device["udid"], "fi.siriusbusiness.irischat"], check=False)
         return
 
     adb = str(scenario.adb())

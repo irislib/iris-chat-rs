@@ -382,7 +382,7 @@ for index in "${!PARTICIPANT_TYPES[@]}"; do
     ios)
       output="$(run_ios_test "${id}" "${run_id}" create_account_and_report_identity)"
       if [[ "${IOS_IS_SIMULATOR}" -eq 1 ]]; then
-        xcrun simctl privacy "${id}" grant local-network to.iris.chat >/dev/null 2>&1 || true
+        xcrun simctl privacy "${id}" grant local-network fi.siriusbusiness.irischat >/dev/null 2>&1 || true
       fi
       ;;
     macos)

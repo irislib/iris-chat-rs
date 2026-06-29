@@ -9,7 +9,7 @@ source "$ROOT/scripts/release_common.sh"
 load_release_env "$ROOT"
 resolve_shared_build_metadata "$ROOT"
 
-IOS_BUNDLE_ID="${IRIS_IOS_BUNDLE_ID:-to.iris.chat}"
+IOS_BUNDLE_ID="${IRIS_IOS_BUNDLE_ID:-fi.siriusbusiness.irischat}"
 ACTION="${1:-put}"
 
 usage() {

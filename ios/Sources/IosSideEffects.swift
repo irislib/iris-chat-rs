@@ -84,7 +84,7 @@ private struct ShareSuggestionEntry: Codable {
 final class ShareSuggestionsExporter {
     private let appGroupIdentifier: String
     private let fileManager: FileManager
-    private let queue = DispatchQueue(label: "to.iris.chat.share-suggestions", qos: .utility)
+    private let queue = DispatchQueue(label: "fi.siriusbusiness.irischat.share-suggestions", qos: .utility)
     private var lastWritten: Data?
 
     init(appGroupIdentifier: String, fileManager: FileManager = .default) {
