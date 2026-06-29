@@ -92,6 +92,8 @@ fn protocol_plan_for_test(
             .map(|pubkey| pubkey.to_hex())
             .collect(),
         message_recipients: Vec::new(),
+        group_roster_group_ids: Vec::new(),
+        group_roster_authors: Vec::new(),
         group_sender_key_authors: group_sender_key_authors
             .into_iter()
             .map(|pubkey| pubkey.to_hex())
@@ -1501,7 +1503,7 @@ fn targeted_protocol_fetch_is_single_flight() {
 
     let filters = vec![Filter::new()
         .author(peer.public_key())
-        .kind(Kind::Custom(APP_KEYS_EVENT_KIND as u16))];
+        .kind(Kind::Custom(NOSTR_IDENTITY_ROSTER_OP_KIND as u16))];
     assert!(
         !core.fetch_protocol_state_for_filters(filters, "test"),
         "existing protocol fetch should block duplicate targeted engine fetch"

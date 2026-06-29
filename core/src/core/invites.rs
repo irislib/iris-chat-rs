@@ -213,7 +213,7 @@ impl AppCore {
 
         let result = match parse_public_invite_or_direct_chat_input(trimmed) {
             Ok(PublicInviteInput::Invite(invite)) => {
-                self.preload_invite_owner_app_keys(&invite);
+                self.preload_invite_owner_device_roster(&invite);
                 self.accept_parsed_invite(invite)
             }
             Ok(PublicInviteInput::DirectChat) => self.open_direct_chat_from_peer_input(trimmed),
@@ -259,7 +259,7 @@ impl AppCore {
         Ok(chat_id)
     }
 
-    fn preload_invite_owner_app_keys(&mut self, invite: &Invite) {
+    fn preload_invite_owner_device_roster(&mut self, invite: &Invite) {
         let Some(owner_pubkey) = invite.owner_public_key else {
             return;
         };
@@ -276,9 +276,8 @@ impl AppCore {
         };
 
         let filter = Filter::new()
-            .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
+            .kind(Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16))
             .author(owner_pubkey)
-            .identifier(NDR_APP_KEYS_D_TAG)
             .limit(10);
         let fetched = self.runtime.block_on(async {
             ensure_session_relays_configured(&client, &relay_urls).await;
@@ -288,36 +287,49 @@ impl AppCore {
 
         let Ok(events) = fetched else {
             self.push_debug_log(
-                "invite.app_keys.preload",
+                "invite.device_roster.preload",
                 format!("owner={} result=fetch_failed", owner_pubkey.to_hex()),
             );
             return;
         };
 
-        let latest = events
-            .iter()
-            .filter(|event| is_app_keys_event(event))
-            .max_by_key(|event| (event.created_at.as_secs(), event.id.to_hex()))
-            .cloned();
-        let Some(event) = latest else {
+        let mut roster_events = events
+            .into_iter()
+            .filter(|event| is_nostr_identity_roster_op_event(event))
+            .collect::<Vec<_>>();
+        if roster_events.is_empty() {
             self.push_debug_log(
-                "invite.app_keys.preload",
+                "invite.device_roster.preload",
                 format!("owner={} result=not_found", owner_pubkey.to_hex()),
             );
             return;
-        };
+        }
 
-        let created_at = event.created_at.as_secs();
-        match self.apply_app_keys_event(&event) {
+        roster_events.sort_by(|left, right| {
+            left.created_at
+                .as_secs()
+                .cmp(&right.created_at.as_secs())
+                .then_with(|| left.id.to_hex().cmp(&right.id.to_hex()))
+        });
+        let latest_created_at = roster_events
+            .iter()
+            .map(|event| event.created_at.as_secs())
+            .max()
+            .unwrap_or_default();
+        let applied = roster_events.iter().try_fold(0usize, |count, event| {
+            self.apply_nostr_identity_roster_op_event(event)
+                .map(|changed| count + usize::from(changed))
+        });
+        match applied {
             Ok(_) => self.push_debug_log(
-                "invite.app_keys.preload",
+                "invite.device_roster.preload",
                 format!(
-                    "owner={} result=applied created_at={created_at}",
+                    "owner={} result=applied created_at={latest_created_at}",
                     owner_pubkey.to_hex()
                 ),
             ),
             Err(error) => self.push_debug_log(
-                "invite.app_keys.preload",
+                "invite.device_roster.preload",
                 format!(
                     "owner={} result=apply_failed error={error}",
                     owner_pubkey.to_hex()

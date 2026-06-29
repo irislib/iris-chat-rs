@@ -4,11 +4,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use iris_chat_protocol::{
-    invite_unsigned_event, invite_url, is_app_keys_event, parse_invite_event,
-    parse_invite_response_event, parse_invite_url, parse_message_event, AppKeys, DeviceEntry,
-    FileStorageAdapter, InMemoryStorage, NdrUnixSeconds, ProtocolDecryptedMessage, ProtocolEffect,
-    ProtocolEngine, ProtocolRetryBatch, StorageAdapter, UnixSeconds, APP_KEYS_EVENT_KIND,
-    INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
+    invite_unsigned_event, invite_url, is_app_keys_event, is_nostr_identity_roster_op_event,
+    parse_invite_event, parse_invite_response_event, parse_invite_url, parse_message_event,
+    AppKeys, DeviceEntry, FileStorageAdapter, InMemoryStorage, NdrUnixSeconds,
+    ProtocolDecryptedMessage, ProtocolEffect, ProtocolEngine, ProtocolRetryBatch, StorageAdapter,
+    UnixSeconds, APP_KEYS_EVENT_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
+    NOSTR_IDENTITY_ROSTER_OP_KIND,
 };
 use nostr::{Event, Filter, Keys, Kind, PublicKey, SecretKey};
 
@@ -657,6 +658,12 @@ fn process_event_inner(inner: &mut SessionManagerInner, event: Event) -> Result<
         inner.enqueue_retry_batch(retry)?;
         return Ok(());
     }
+    if kind == NOSTR_IDENTITY_ROSTER_OP_KIND && is_nostr_identity_roster_op_event(&event) {
+        if let Some(result) = engine.ingest_nostr_identity_roster_op_event(&event)? {
+            inner.enqueue_retry_batch(result.retry_batch)?;
+        }
+        return Ok(());
+    }
     if kind == INVITE_EVENT_KIND {
         let retry = engine.observe_invite_event(&event)?;
         inner.enqueue_retry_batch(retry)?;
@@ -768,18 +775,6 @@ mod tests {
             .collect()
     }
 
-    fn app_keys_events(events: Vec<PubSubEvent>) -> Vec<String> {
-        events
-            .into_iter()
-            .filter_map(|event| event.event_json)
-            .filter(|event_json| {
-                serde_json::from_str::<Event>(event_json)
-                    .ok()
-                    .is_some_and(|event| is_app_keys_event(&event))
-            })
-            .collect()
-    }
-
     #[test]
     fn oob_invite_handshake_and_direct_message_round_trip() {
         let alice_keys = Keys::generate();
@@ -845,7 +840,7 @@ mod tests {
     }
 
     #[test]
-    fn processing_app_keys_after_bootstrap_retries_queued_direct_send() {
+    fn processing_device_roster_fact_after_bootstrap_retries_queued_direct_send() {
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
         let alice = manager(&alice_keys);
@@ -858,11 +853,20 @@ mod tests {
             .first()
             .expect("alice invite")
             .clone();
-        let bob_startup_events = bob.drain_events().expect("bob startup drain");
-        let bob_app_keys = app_keys_events(bob_startup_events)
-            .first()
-            .expect("bob app keys")
-            .clone();
+        let _ = bob.drain_events().expect("bob startup drain");
+        let roster_created_at = now_secs().saturating_add(1);
+        let bob_roster_fact = nostr_identity_roster_event_for_test(
+            &bob_keys,
+            vec![
+                roster_tag_values(["op", "add_key"]),
+                roster_tag_values(["key_pubkey", bob_keys.public_key().to_hex().as_str()]),
+                roster_tag_values(["key_purpose", "app"]),
+                roster_tag_values(["key_capability", "admin"]),
+                roster_tag_values(["key_capability", "write"]),
+                roster_tag_values(["key_added_at", roster_created_at.to_string().as_str()]),
+            ],
+            roster_created_at,
+        );
 
         bob.accept_invite_from_event_json(alice_invite, None)
             .expect("bob accepts alice invite");
@@ -904,7 +908,7 @@ mod tests {
         let after_bootstrap = alice.drain_events().expect("alice bootstrap drain");
         assert!(
             publish_events(after_bootstrap.clone(), MESSAGE_EVENT_KIND).is_empty(),
-            "queued direct send should wait for the recipient AppKeys roster"
+            "queued direct send should wait for the recipient device roster"
         );
         let bootstrap_delivery_count = after_bootstrap
             .iter()
@@ -916,13 +920,45 @@ mod tests {
         assert_eq!(bootstrap_delivery_count, 1);
 
         alice
-            .process_event(bob_app_keys)
-            .expect("alice processes bob app keys");
-        let after_app_keys = alice.drain_events().expect("alice app keys drain");
+            .process_event(serde_json::to_string(&bob_roster_fact).expect("roster fact json"))
+            .expect("alice processes bob device roster");
+        let after_roster = alice.drain_events().expect("alice roster drain");
         assert!(
-            !publish_events(after_app_keys, MESSAGE_EVENT_KIND).is_empty(),
-            "queued direct send should publish after recipient AppKeys processing"
+            !publish_events(after_roster, MESSAGE_EVENT_KIND).is_empty(),
+            "queued direct send should publish after recipient device roster processing"
         );
+    }
+
+    fn nostr_identity_roster_event_for_test(
+        signer: &Keys,
+        facts: Vec<Vec<String>>,
+        created_at: u64,
+    ) -> Event {
+        const PROFILE_ID: &str = "123e4567-e89b-42d3-a456-426614174000";
+        let created_at_string = created_at.to_string();
+        let signer_hex = signer.public_key().to_hex();
+        let nonce = format!("nonce-{created_at}");
+        let mut tags = vec![
+            nostr::Tag::parse(["i", PROFILE_ID, "subject"]).expect("profile tag"),
+            nostr::Tag::parse(["type", "nostr_identity_roster_op"]).expect("type tag"),
+            nostr::Tag::parse(["schema", "1"]).expect("schema tag"),
+            nostr::Tag::parse(["actor_pubkey", signer_hex.as_str()]).expect("actor tag"),
+            nostr::Tag::parse(["client_nonce", nonce.as_str()]).expect("nonce tag"),
+            nostr::Tag::parse(["created_at", created_at_string.as_str()]).expect("created_at tag"),
+        ];
+        for fact in facts {
+            let values = fact.iter().map(String::as_str).collect::<Vec<_>>();
+            tags.push(nostr::Tag::parse(values).expect("fact tag"));
+        }
+        nostr::EventBuilder::new(Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16), "")
+            .tags(tags)
+            .custom_created_at(nostr::Timestamp::from(created_at))
+            .sign_with_keys(signer)
+            .expect("signed roster event")
+    }
+
+    fn roster_tag_values<const N: usize>(values: [&str; N]) -> Vec<String> {
+        values.into_iter().map(ToString::to_string).collect()
     }
 
     #[test]

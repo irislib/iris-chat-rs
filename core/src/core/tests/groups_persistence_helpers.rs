@@ -276,6 +276,18 @@ fn create_group_allows_self_only_group() {
     );
     assert_eq!(group.members, vec![owner]);
     assert_eq!(group.admins, vec![owner]);
+    assert!(
+        core.pending_relay_publishes.values().any(|pending| {
+            serde_json::from_str::<Event>(&pending.event_json)
+                .ok()
+                .filter(nostr_double_ratchet_nostr::is_group_roster_fact_event)
+                .and_then(|event| {
+                    nostr_double_ratchet_nostr::parse_group_roster_fact_event(&event).ok()
+                })
+                .is_some_and(|fact| fact.group_id == group_id && fact.snapshot.name == "Notes")
+        }),
+        "creating a group should queue a signed group roster fact"
+    );
 }
 
 #[test]
@@ -820,4 +832,3 @@ fn delete_chat_removes_thread_and_navigates_back() {
         "chat_list snapshot reflects removal"
     );
 }
-

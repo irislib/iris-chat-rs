@@ -647,9 +647,8 @@ impl AppCore {
         if !owners.is_empty() {
             filters.push(
                 Filter::new()
-                    .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
+                    .kind(Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16))
                     .authors(owners.clone())
-                    .identifier(NDR_APP_KEYS_D_TAG)
                     .since(Timestamp::from(
                         now.get()
                             .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
@@ -689,6 +688,18 @@ impl AppCore {
             if !group_sender_key_authors.is_empty() {
                 filters.push(group_sender_key_history_filter(group_sender_key_authors));
             }
+        }
+
+        if !plan.group_roster_group_ids.is_empty() {
+            let mut filter = build_group_roster_fact_filter(
+                plan.group_roster_group_ids.iter(),
+                pubkeys_from_hexes(&plan.group_roster_authors),
+            );
+            filter = filter.since(Timestamp::from(
+                now.get()
+                    .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
+            ));
+            filters.push(filter.limit(DEVICE_INVITE_DISCOVERY_LIMIT));
         }
 
         let private_invite_response_pubkeys = plan
@@ -1274,6 +1285,16 @@ impl AppCore {
             .map(|pubkey| pubkey.to_hex())
             .collect::<HashSet<_>>();
         let group_sender_key_authors = sorted_hexes(group_sender_key_authors);
+        let group_roster_group_ids = self.groups.keys().cloned().collect::<HashSet<_>>();
+        let group_roster_group_ids = sorted_hexes(group_roster_group_ids);
+        let group_roster_authors = self
+            .groups
+            .values()
+            .flat_map(|group| group.admins.iter())
+            .filter_map(|owner| PublicKey::from_slice(&owner.to_bytes()).ok())
+            .map(|pubkey| pubkey.to_hex())
+            .collect::<HashSet<_>>();
+        let group_roster_authors = sorted_hexes(group_roster_authors);
         let invite_response_recipient = self
             .protocol_invite_response_pubkeys()
             .into_iter()
@@ -1286,6 +1307,7 @@ impl AppCore {
             || !invite_authors.is_empty()
             || !message_authors.is_empty()
             || !message_recipients.is_empty()
+            || !group_roster_group_ids.is_empty()
             || !group_sender_key_authors.is_empty()
             || invite_response_recipient.is_some();
         has_filters.then_some(ProtocolSubscriptionPlan {
@@ -1294,6 +1316,8 @@ impl AppCore {
             invite_authors,
             message_authors,
             message_recipients,
+            group_roster_group_ids,
+            group_roster_authors,
             group_sender_key_authors,
             invite_response_recipient,
         })

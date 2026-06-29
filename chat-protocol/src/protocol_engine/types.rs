@@ -39,6 +39,10 @@ struct ProtocolEnginePersistedState {
     #[serde(default)]
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     #[serde(default)]
+    nostr_identity_roster_histories: BTreeMap<String, NostrIdentityRosterHistory>,
+    #[serde(default)]
+    group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
+    #[serde(default)]
     subscription_generation: u64,
     #[serde(default)]
     last_backfill_attempt_secs: u64,
@@ -193,6 +197,17 @@ struct ProtocolPendingDecryptedDelivery {
     created_at_secs: u64,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+struct NostrIdentityRosterHistory {
+    owner_pubkey: Option<PublicKey>,
+    events: Vec<Event>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+struct GroupRosterFactHistory {
+    events: Vec<Event>,
+}
+
 #[derive(Clone, Debug)]
 struct KnownMessageAuthorCache {
     pubkeys: Vec<PublicKey>,
@@ -252,6 +267,20 @@ impl ProtocolRetryBatch {
             && self.direct_messages.is_empty()
             && self.effects.is_empty()
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct ProtocolDeviceRosterIngestionResult {
+    pub owner_pubkey: PublicKey,
+    pub app_keys: AppKeys,
+    pub created_at: u64,
+    pub retry_batch: ProtocolRetryBatch,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProtocolGroupRosterIngestionResult {
+    pub snapshot: Option<GroupSnapshot>,
+    pub retry_batch: ProtocolRetryBatch,
 }
 
 #[allow(dead_code)]
@@ -395,6 +424,8 @@ pub struct ProtocolEngine {
     delivered_group_sender_key_acks: Vec<ProtocolDeliveredGroupSenderKeyAck>,
     answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
+    nostr_identity_roster_histories: BTreeMap<String, NostrIdentityRosterHistory>,
+    group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
     known_message_author_cache: std::cell::RefCell<Option<KnownMessageAuthorCache>>,
     known_message_author_cache_build_count: std::cell::Cell<u64>,
     local_app_keys_observed: bool,
@@ -425,6 +456,8 @@ struct ProtocolEngineCheckpoint {
     delivered_group_sender_key_acks: Vec<ProtocolDeliveredGroupSenderKeyAck>,
     answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
+    nostr_identity_roster_histories: BTreeMap<String, NostrIdentityRosterHistory>,
+    group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
     subscription_generation: u64,
     last_backfill_attempt_secs: u64,
 }

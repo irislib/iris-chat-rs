@@ -6,6 +6,7 @@ const PENDING_RELAY_DRAIN_BATCH_SIZE: usize = 16;
 const PENDING_RELAY_DRAIN_STALE_AFTER: Duration = RELAY_PUBLISH_ATTEMPT_TIMEOUT;
 const PENDING_RELAY_PUBLISH_IN_PROGRESS: &str = "publish attempt in progress";
 const LOCAL_INVITE_PUBLISH_LABEL: &str = "invite";
+const GROUP_ROSTER_PUBLISH_LABEL: &str = "group-roster";
 
 fn send_nearby_published_event(update_tx: &Sender<AppUpdate>, event: &Event) {
     let Ok(event_json) = serde_json::to_string(event) else {
@@ -43,6 +44,38 @@ impl AppCore {
             Some(publish.chat_id),
             publish.inner_event_id,
         )
+    }
+
+    pub(super) fn publish_group_roster_fact(&mut self, group: &GroupSnapshot) -> bool {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return false;
+        };
+        let Some(owner_keys) = logged_in.owner_keys.as_ref() else {
+            return false;
+        };
+        let local_owner =
+            nostr_double_ratchet::OwnerPubkey::from_bytes(logged_in.owner_pubkey.to_bytes());
+        if !group.admins.contains(&local_owner) {
+            return false;
+        }
+        let unsigned = match nostr_double_ratchet_nostr::group_roster_unsigned_event(
+            logged_in.owner_pubkey,
+            group,
+        ) {
+            Ok(unsigned) => unsigned,
+            Err(error) => {
+                self.push_debug_log("group.roster_fact.publish", error.to_string());
+                return false;
+            }
+        };
+        let event = match unsigned.sign_with_keys(owner_keys) {
+            Ok(event) => event,
+            Err(error) => {
+                self.push_debug_log("group.roster_fact.publish", error.to_string());
+                return false;
+            }
+        };
+        self.publish_runtime_event(event, GROUP_ROSTER_PUBLISH_LABEL, None)
     }
 
     fn publish_runtime_event_with_metadata(

@@ -19,10 +19,11 @@ use nostr_double_ratchet::{
     UnixSeconds as NdrUnixSeconds,
 };
 use nostr_double_ratchet_nostr::{
-    apply_app_keys_snapshot_with_required_device, is_app_keys_event, AppKeys, DeviceEntry,
-    APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_SENDER_KEY_MESSAGE_KIND,
-    INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND,
-    TYPING_KIND,
+    apply_app_keys_snapshot_with_required_device, is_app_keys_event, is_group_roster_fact_event,
+    is_nostr_identity_roster_op_event, AppKeys, DeviceEntry, APP_KEYS_EVENT_KIND,
+    CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_ROSTER_FACT_KIND, GROUP_SENDER_KEY_MESSAGE_KIND,
+    INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND, NOSTR_IDENTITY_ROSTER_OP_KIND,
+    REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
 };
 use nostr_double_ratchet_nostr::{
     parse_group_sender_key_message_event, parse_group_sender_key_message_event_unchecked,

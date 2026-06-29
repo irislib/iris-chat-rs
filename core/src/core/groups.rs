@@ -82,11 +82,11 @@ impl AppCore {
                     return;
                 };
                 let chat_id = group_chat_id(&group.group_id);
-                self.apply_group_snapshot_to_threads(&group, now.get());
-                self.groups.insert(group.group_id.clone(), group.clone());
+                self.apply_group_roster_snapshot(group.clone(), now.get());
                 self.active_chat_id = Some(chat_id.clone());
                 self.screen_stack = vec![Screen::Chat { chat_id }];
                 self.apply_group_metadata_notice(None, &group);
+                self.publish_group_roster_fact(&group);
                 self.request_protocol_subscription_refresh();
                 self.schedule_tracked_peer_catch_up(Duration::from_secs(
                     RESUBSCRIBE_CATCH_UP_DELAY_SECS,
@@ -452,11 +452,20 @@ impl AppCore {
         group: GroupSnapshot,
         debug_category: &'static str,
     ) {
-        self.groups.insert(group.group_id.clone(), group.clone());
-        self.apply_group_snapshot_to_threads(&group, unix_now().get());
+        self.apply_group_roster_snapshot(group.clone(), unix_now().get());
         self.push_debug_log(debug_category, group.group_id.clone());
         self.apply_group_metadata_notice(previous, &group);
+        self.publish_group_roster_fact(&group);
         self.request_protocol_subscription_refresh();
+    }
+
+    pub(super) fn apply_group_roster_snapshot(
+        &mut self,
+        group: GroupSnapshot,
+        updated_at_secs: u64,
+    ) {
+        self.apply_group_snapshot_to_threads(&group, updated_at_secs);
+        self.groups.insert(group.group_id.clone(), group);
     }
 
     pub(super) fn apply_group_snapshot_to_threads(
@@ -472,9 +481,8 @@ impl AppCore {
         match event {
             GroupIncomingEvent::MetadataUpdated(group) => {
                 let previous = self.groups.get(&group.group_id).cloned();
-                self.groups.insert(group.group_id.clone(), group.clone());
-                self.apply_group_snapshot_to_threads(
-                    &group,
+                self.apply_group_roster_snapshot(
+                    group.clone(),
                     unix_now().get().max(group.updated_at.get()),
                 );
                 self.apply_group_metadata_notice(previous.as_ref(), &group);

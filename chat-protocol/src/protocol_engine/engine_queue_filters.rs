@@ -234,9 +234,8 @@ impl ProtocolEngine {
         if !owner_authors.is_empty() {
             filters.push(
                 Filter::new()
-                    .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
+                    .kind(Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16))
                     .authors(owner_authors)
-                    .identifier(NDR_APP_KEYS_D_TAG)
                     .since(Timestamp::from(
                         now.get()
                             .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
@@ -355,6 +354,8 @@ impl ProtocolEngine {
             delivered_group_sender_key_acks: self.delivered_group_sender_key_acks.clone(),
             answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
             pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
+            nostr_identity_roster_histories: self.nostr_identity_roster_histories.clone(),
+            group_roster_fact_histories: self.group_roster_fact_histories.clone(),
             subscription_generation: self.subscription_generation,
             last_backfill_attempt_secs: self.last_backfill_attempt_secs,
         };

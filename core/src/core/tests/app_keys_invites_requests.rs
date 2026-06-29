@@ -114,6 +114,67 @@ fn current_device_labels_update_app_keys_and_roster_snapshot() {
 }
 
 #[test]
+fn nostr_identity_roster_facts_update_core_device_roster() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("nostr-identity-roster-facts", &owner, &device);
+
+    let bootstrap = nostr_identity_roster_event_for_test(
+        &peer_owner,
+        vec![
+            roster_tag_values(["op", "add_key"]),
+            roster_tag_values(["key_pubkey", peer_owner.public_key().to_hex().as_str()]),
+            roster_tag_values(["key_purpose", "app"]),
+            roster_tag_values(["key_capability", "admin"]),
+            roster_tag_values(["key_capability", "write"]),
+            roster_tag_values(["key_added_at", "10"]),
+        ],
+        10,
+    );
+    let add_device = nostr_identity_roster_event_for_test(
+        &peer_owner,
+        vec![
+            roster_tag_values(["op", "add_key"]),
+            roster_tag_values(["key_pubkey", peer_device.public_key().to_hex().as_str()]),
+            roster_tag_values(["key_purpose", "app"]),
+            roster_tag_values(["key_capability", "write"]),
+            roster_tag_values(["key_added_at", "11"]),
+        ],
+        11,
+    );
+
+    core.handle_relay_event(bootstrap);
+    core.handle_relay_event(add_device);
+
+    let cached = core
+        .app_keys
+        .get(&peer_owner.public_key().to_hex())
+        .expect("projected peer roster");
+    let device_hexes = cached
+        .devices
+        .iter()
+        .map(|device| device.identity_pubkey_hex.clone())
+        .collect::<Vec<_>>();
+    let mut expected_device_hexes = vec![
+        peer_owner.public_key().to_hex(),
+        peer_device.public_key().to_hex(),
+    ];
+    expected_device_hexes.sort();
+    assert_eq!(device_hexes, expected_device_hexes);
+
+    let engine_devices = core
+        .protocol_engine
+        .as_ref()
+        .expect("protocol engine")
+        .known_device_identity_pubkeys_for_owner(peer_owner.public_key());
+    assert_eq!(engine_devices.len(), 2);
+    assert!(engine_devices.contains(&peer_owner.public_key()));
+    assert!(engine_devices.contains(&peer_device.public_key()));
+}
+
+#[test]
 fn peer_profile_debug_reports_known_user_context() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -148,6 +209,38 @@ fn peer_profile_debug_reports_known_user_context() {
     assert_eq!(debug.recent_handshake_device_count, 1);
     assert_eq!(debug.last_handshake_at_secs, Some(123));
     assert!(debug.tracked_for_messages);
+}
+
+fn nostr_identity_roster_event_for_test(
+    signer: &Keys,
+    facts: Vec<Vec<String>>,
+    created_at: u64,
+) -> Event {
+    const PROFILE_ID: &str = "123e4567-e89b-42d3-a456-426614174000";
+    let created_at_string = created_at.to_string();
+    let signer_hex = signer.public_key().to_hex();
+    let nonce = format!("nonce-{created_at}");
+    let mut tags = vec![
+        nostr::Tag::parse(["i", PROFILE_ID, "subject"]).expect("profile tag"),
+        nostr::Tag::parse(["type", "nostr_identity_roster_op"]).expect("type tag"),
+        nostr::Tag::parse(["schema", "1"]).expect("schema tag"),
+        nostr::Tag::parse(["actor_pubkey", signer_hex.as_str()]).expect("actor tag"),
+        nostr::Tag::parse(["client_nonce", nonce.as_str()]).expect("nonce tag"),
+        nostr::Tag::parse(["created_at", created_at_string.as_str()]).expect("created_at tag"),
+    ];
+    for fact in facts {
+        let values = fact.iter().map(String::as_str).collect::<Vec<_>>();
+        tags.push(nostr::Tag::parse(values).expect("fact tag"));
+    }
+    EventBuilder::new(Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16), "")
+        .tags(tags)
+        .custom_created_at(Timestamp::from(created_at))
+        .sign_with_keys(signer)
+        .expect("signed roster event")
+}
+
+fn roster_tag_values<const N: usize>(values: [&str; N]) -> Vec<String> {
+    values.into_iter().map(ToString::to_string).collect()
 }
 
 #[test]
@@ -1326,6 +1419,7 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
     let owner = Keys::generate();
     let invite_author = Keys::generate();
     let message_author = Keys::generate();
+    let group_admin = Keys::generate();
     let group_author = Keys::generate();
     let invite_response_recipient = Keys::generate();
     let plan = ProtocolSubscriptionPlan {
@@ -1334,6 +1428,8 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
         invite_authors: vec![invite_author.public_key().to_hex()],
         message_authors: vec![message_author.public_key().to_hex()],
         message_recipients: Vec::new(),
+        group_roster_group_ids: vec!["test-group".to_string()],
+        group_roster_authors: vec![group_admin.public_key().to_hex()],
         group_sender_key_authors: vec![group_author.public_key().to_hex()],
         invite_response_recipient: Some(invite_response_recipient.public_key().to_hex()),
     };
@@ -1341,18 +1437,8 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
     let filters = build_protocol_subscription_filters(&plan);
 
     assert!(
-        has_filter_with_kind_author(&filters, APP_KEYS_EVENT_KIND, owner.public_key()),
-        "app-key filters must be derived from roster authors"
-    );
-    assert!(
-        has_filter_with_kind_author_tag(
-            &filters,
-            APP_KEYS_EVENT_KIND,
-            owner.public_key(),
-            "#d",
-            NDR_APP_KEYS_D_TAG
-        ),
-        "app-key filters must not fetch unrelated parameterized app data"
+        has_filter_with_kind_author(&filters, NOSTR_IDENTITY_ROSTER_OP_KIND, owner.public_key()),
+        "device roster fact filters must be derived from roster authors"
     );
     assert!(
         has_filter_with_kind_author(&filters, INVITE_EVENT_KIND, invite_author.public_key()),
@@ -1375,6 +1461,24 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
     assert!(
         has_filter_with_kind_author(&filters, MESSAGE_EVENT_KIND, message_author.public_key()),
         "message filters must be derived from message authors"
+    );
+    assert!(
+        has_filter_with_kind_author(
+            &filters,
+            GROUP_ROSTER_FACT_KIND,
+            group_admin.public_key()
+        ),
+        "group roster fact filters must be derived from group admins"
+    );
+    assert!(
+        has_filter_with_kind_author_tag(
+            &filters,
+            GROUP_ROSTER_FACT_KIND,
+            group_admin.public_key(),
+            "#i",
+            "test-group"
+        ),
+        "group roster fact filters must be scoped to known group ids"
     );
     assert!(
         has_filter_with_kind_author(

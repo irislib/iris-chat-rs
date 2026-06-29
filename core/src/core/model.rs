@@ -138,6 +138,8 @@ pub(crate) struct ProtocolSubscriptionPlan {
     pub(crate) invite_authors: Vec<String>,
     pub(crate) message_authors: Vec<String>,
     pub(crate) message_recipients: Vec<String>,
+    pub(crate) group_roster_group_ids: Vec<String>,
+    pub(crate) group_roster_authors: Vec<String>,
     pub(crate) group_sender_key_authors: Vec<String>,
     pub(crate) invite_response_recipient: Option<String>,
 }
@@ -295,6 +297,10 @@ pub(super) struct RuntimeProtocolPlanDebug {
     pub(super) message_authors: Vec<String>,
     #[serde(default)]
     pub(super) message_recipients: Vec<String>,
+    #[serde(default)]
+    pub(super) group_roster_group_ids: Vec<String>,
+    #[serde(default)]
+    pub(super) group_roster_authors: Vec<String>,
     #[serde(default)]
     pub(super) group_sender_key_authors: Vec<String>,
     #[serde(default)]

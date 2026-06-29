@@ -6,10 +6,10 @@ use nostr_double_ratchet::Invite;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
-    invite_unsigned_event, is_app_keys_event, parse_invite_url, AppKeys, ProtocolDecryptedMessage,
-    ProtocolEffect, ProtocolEngine, ProtocolRetryBatch, SharedConnection, SqliteStorageAdapter,
-    UnixSeconds, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND,
-    MESSAGE_EVENT_KIND,
+    invite_unsigned_event, is_app_keys_event, is_nostr_identity_roster_op_event, parse_invite_url,
+    AppKeys, ProtocolDecryptedMessage, ProtocolEffect, ProtocolEngine, ProtocolRetryBatch,
+    SharedConnection, SqliteStorageAdapter, UnixSeconds, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND,
+    INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND, NOSTR_IDENTITY_ROSTER_OP_KIND,
 };
 
 const SCHEMA: &str = r#"
@@ -352,12 +352,27 @@ impl DirectMessageService {
                         true
                     }
                     Err(error) => {
-                        self.last_error = Some(format!("Direct message app keys failed: {error}"));
+                        self.last_error =
+                            Some(format!("Direct message device roster failed: {error}"));
                         false
                     }
                 },
                 Err(_) => false,
             },
+            NOSTR_IDENTITY_ROSTER_OP_KIND if is_nostr_identity_roster_op_event(&event) => {
+                match engine.ingest_nostr_identity_roster_op_event(&event) {
+                    Ok(Some(result)) => {
+                        retry_batch = result.retry_batch;
+                        true
+                    }
+                    Ok(None) => false,
+                    Err(error) => {
+                        self.last_error =
+                            Some(format!("Direct message device roster failed: {error}"));
+                        false
+                    }
+                }
+            }
             INVITE_EVENT_KIND => match engine.observe_invite_event(&event) {
                 Ok(batch) => {
                     retry_batch = batch;
@@ -444,7 +459,7 @@ impl DirectMessageService {
                 nostr::Kind::from(MESSAGE_EVENT_KIND as u16),
                 nostr::Kind::from(INVITE_EVENT_KIND as u16),
                 nostr::Kind::from(INVITE_RESPONSE_KIND as u16),
-                nostr::Kind::from(APP_KEYS_EVENT_KIND as u16),
+                nostr::Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16),
             ])
             .limit(500);
         Some(DirectMessageCommand::Subscribe {

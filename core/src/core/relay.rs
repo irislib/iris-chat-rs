@@ -20,6 +20,10 @@ impl AppCore {
         let event_id = event.id.to_string();
         let kind = event.kind.as_u16() as u32;
         let is_app_keys_protocol_event = kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event);
+        let is_nostr_identity_roster_protocol_event =
+            kind == NOSTR_IDENTITY_ROSTER_OP_KIND && is_nostr_identity_roster_op_event(&event);
+        let is_group_roster_protocol_event =
+            kind == GROUP_ROSTER_FACT_KIND && is_group_roster_fact_event(&event);
         let is_invite_protocol_event = is_protocol_invite_event(&event);
         let is_invite_response_protocol_event = kind == INVITE_RESPONSE_KIND;
         let message_has_header = kind == MESSAGE_EVENT_KIND && event_has_tag(&event, "header");
@@ -57,6 +61,8 @@ impl AppCore {
 
         self.push_debug_log("relay.event", format!("kind_raw={} id={event_id}", kind));
         let protocol_inputs_changed = is_app_keys_protocol_event
+            || is_nostr_identity_roster_protocol_event
+            || is_group_roster_protocol_event
             || is_invite_protocol_event
             || is_invite_response_protocol_event;
 
@@ -85,6 +91,70 @@ impl AppCore {
                     }
                     Err(error) => {
                         self.push_debug_log("appcore.protocol.app_keys.error", error.to_string());
+                        self.rebuild_state();
+                        self.emit_state();
+                    }
+                }
+                return;
+            }
+            NOSTR_IDENTITY_ROSTER_OP_KIND if is_nostr_identity_roster_protocol_event => {
+                self.debug_event_counters.app_keys_events += 1;
+                match self.apply_nostr_identity_roster_op_event(&event) {
+                    Ok(_) => {
+                        self.remember_event(event_id);
+                        self.request_protocol_subscription_refresh();
+                        self.persist_best_effort();
+                        self.rebuild_state();
+                        self.emit_state();
+                    }
+                    Err(error) => {
+                        self.push_debug_log(
+                            "appcore.protocol.device_roster.error",
+                            error.to_string(),
+                        );
+                        self.rebuild_state();
+                        self.emit_state();
+                    }
+                }
+                return;
+            }
+            GROUP_ROSTER_FACT_KIND if is_group_roster_protocol_event => {
+                match self
+                    .protocol_engine
+                    .as_mut()
+                    .map(|engine| engine.ingest_group_roster_fact_event(&event))
+                    .transpose()
+                {
+                    Ok(Some(Some(result))) => {
+                        if let Some(snapshot) = result.snapshot {
+                            let previous = self.groups.get(&snapshot.group_id).cloned();
+                            self.apply_group_roster_snapshot(
+                                snapshot.clone(),
+                                unix_now().get().max(snapshot.updated_at.get()),
+                            );
+                            self.apply_group_metadata_notice(previous.as_ref(), &snapshot);
+                            self.request_protocol_subscription_refresh();
+                        }
+                        self.process_protocol_engine_retry_batch(
+                            "group_roster_fact",
+                            result.retry_batch,
+                        );
+                        self.remember_event(event_id);
+                        self.persist_best_effort();
+                        self.rebuild_state();
+                        self.emit_state();
+                    }
+                    Ok(Some(None)) => {
+                        self.remember_event(event_id);
+                    }
+                    Ok(None) => {
+                        self.remember_event(event_id);
+                    }
+                    Err(error) => {
+                        self.push_debug_log(
+                            "appcore.protocol.group_roster.error",
+                            error.to_string(),
+                        );
                         self.rebuild_state();
                         self.emit_state();
                     }
@@ -508,6 +578,36 @@ impl AppCore {
         if should_publish_backfilled_owner_app_keys {
             self.publish_local_app_keys();
         }
+        Ok(true)
+    }
+
+    pub(super) fn apply_nostr_identity_roster_op_event(
+        &mut self,
+        event: &Event,
+    ) -> anyhow::Result<bool> {
+        let Some(result) = self
+            .protocol_engine
+            .as_mut()
+            .map(|engine| engine.ingest_nostr_identity_roster_op_event(event))
+            .transpose()?
+            .flatten()
+        else {
+            return Ok(false);
+        };
+
+        let owner_hex = result.owner_pubkey.to_hex();
+        let known =
+            known_app_keys_from_ndr(result.owner_pubkey, &result.app_keys, result.created_at);
+        if self.app_keys.get(&owner_hex) != Some(&known) {
+            self.app_keys.insert(owner_hex, known);
+        }
+        self.migrate_verified_device_owner_threads(result.owner_pubkey, &result.app_keys);
+        self.mark_mobile_push_dirty();
+        let _authorization_changed = self.refresh_local_authorization_state();
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+        self.process_protocol_engine_retry_batch("device_roster", result.retry_batch);
         Ok(true)
     }
 }

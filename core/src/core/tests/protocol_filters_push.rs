@@ -15,7 +15,7 @@ fn queued_direct_send_starts_targeted_owner_protocol_fetch() {
 
     core.send_direct_message(
         &peer.public_key().to_hex(),
-        "queued until targeted app keys arrive",
+        "queued until targeted device roster arrives",
         UnixSeconds(1_777_000_000),
         None,
     );
@@ -27,7 +27,7 @@ fn queued_direct_send_starts_targeted_owner_protocol_fetch() {
         }) && core.debug_log.iter().any(|entry| {
             entry.category == "protocol.engine_fetch.fetch" && entry.detail.contains("filters=1")
         }),
-        "queued direct owner work should start a narrow AppKeys fetch for {target}"
+        "queued direct owner work should start a narrow device roster fetch for {target}"
     );
 }
 
@@ -44,7 +44,7 @@ fn retry_batch_coalesces_duplicate_queued_protocol_fetches() {
     let target = format!("owner:{}", peer.public_key().to_hex());
     let filters = vec![Filter::new()
         .author(peer.public_key())
-        .kind(Kind::Custom(APP_KEYS_EVENT_KIND as u16))];
+        .kind(Kind::Custom(NOSTR_IDENTITY_ROSTER_OP_KIND as u16))];
     let result = ProtocolRetryResult {
         message_id: "message-1".to_string(),
         chat_id: peer.public_key().to_hex(),
@@ -124,7 +124,7 @@ fn queued_protocol_filters_are_narrow_for_missing_owner_roster() {
     assert_eq!(filters.len(), 1);
     assert!(has_filter_with_kind_author(
         &filters,
-        APP_KEYS_EVENT_KIND,
+        NOSTR_IDENTITY_ROSTER_OP_KIND,
         peer.public_key()
     ));
     assert!(
@@ -171,7 +171,7 @@ fn queued_self_send_fetches_owner_appkeys_for_concrete_sibling_target() {
 
     assert!(has_filter_with_kind_author(
         &filters,
-        APP_KEYS_EVENT_KIND,
+        NOSTR_IDENTITY_ROSTER_OP_KIND,
         owner.public_key()
     ));
     assert!(has_filter_with_kind_author_tag(

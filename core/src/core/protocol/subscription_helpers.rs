@@ -21,6 +21,7 @@ pub(in crate::core) fn build_protocol_subscription_filters(
     let invite_authors = pubkeys_from_hexes(&plan.invite_authors);
     let message_authors = pubkeys_from_hexes(&plan.message_authors);
     let message_recipients = pubkeys_from_hexes(&plan.message_recipients);
+    let group_roster_authors = pubkeys_from_hexes(&plan.group_roster_authors);
     let group_sender_key_authors = pubkeys_from_hexes(&plan.group_sender_key_authors);
     let invite_response_recipients = plan
         .invite_response_recipient
@@ -32,9 +33,8 @@ pub(in crate::core) fn build_protocol_subscription_filters(
     if !roster_authors.is_empty() {
         filters.push(
             Filter::new()
-                .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
-                .authors(roster_authors)
-                .identifier(NDR_APP_KEYS_D_TAG),
+                .kind(Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16))
+                .authors(roster_authors),
         );
     }
     if !invite_authors.is_empty() {
@@ -63,6 +63,12 @@ pub(in crate::core) fn build_protocol_subscription_filters(
                 .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
                 .pubkeys(message_recipients),
         );
+    }
+    if !plan.group_roster_group_ids.is_empty() {
+        filters.push(build_group_roster_fact_filter(
+            plan.group_roster_group_ids.iter(),
+            group_roster_authors,
+        ));
     }
     if !group_sender_key_authors.is_empty() {
         filters.push(

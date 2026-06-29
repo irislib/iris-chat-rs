@@ -338,6 +338,8 @@ impl From<ProtocolSubscriptionPlan> for RuntimeProtocolPlanDebug {
             invite_authors: plan.invite_authors,
             message_authors: plan.message_authors,
             message_recipients: plan.message_recipients,
+            group_roster_group_ids: plan.group_roster_group_ids,
+            group_roster_authors: plan.group_roster_authors,
             group_sender_key_authors: plan.group_sender_key_authors,
             invite_response_recipient: plan.invite_response_recipient,
         }

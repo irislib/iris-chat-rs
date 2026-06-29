@@ -30,6 +30,8 @@ impl ProtocolEngine {
             delivered_group_sender_key_acks: Vec::new(),
             answered_group_sender_key_repairs: Vec::new(),
             pending_decrypted_deliveries: Vec::new(),
+            nostr_identity_roster_histories: BTreeMap::new(),
+            group_roster_fact_histories: BTreeMap::new(),
             known_message_author_cache: std::cell::RefCell::new(None),
             known_message_author_cache_build_count: std::cell::Cell::new(0),
             local_app_keys_observed: false,
@@ -108,6 +110,8 @@ impl ProtocolEngine {
             delivered_group_sender_key_acks,
             answered_group_sender_key_repairs,
             pending_decrypted_deliveries: state.pending_decrypted_deliveries,
+            nostr_identity_roster_histories: state.nostr_identity_roster_histories,
+            group_roster_fact_histories: state.group_roster_fact_histories,
             known_message_author_cache: std::cell::RefCell::new(None),
             known_message_author_cache_build_count: std::cell::Cell::new(0),
             local_app_keys_observed: false,
@@ -508,11 +512,14 @@ impl ProtocolEngine {
             .users
             .into_iter()
             .find(|user| user.owner_pubkey == owner)
-            .map(|user| {
-                user.devices
-                    .into_iter()
-                    .filter_map(|device| public_device(device.device_pubkey).ok())
-                    .collect::<Vec<_>>()
+            .and_then(|user| {
+                user.roster.map(|roster| {
+                    roster
+                        .devices()
+                        .iter()
+                        .filter_map(|device| public_device(device.device_pubkey).ok())
+                        .collect::<Vec<_>>()
+                })
             })
             .unwrap_or_default();
         devices.sort_by_key(|pubkey| pubkey.to_hex());
@@ -689,6 +696,8 @@ impl ProtocolEngine {
             delivered_group_sender_key_acks: self.delivered_group_sender_key_acks.clone(),
             answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
             pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
+            nostr_identity_roster_histories: self.nostr_identity_roster_histories.clone(),
+            group_roster_fact_histories: self.group_roster_fact_histories.clone(),
             subscription_generation: self.subscription_generation,
             last_backfill_attempt_secs: self.last_backfill_attempt_secs,
         }
@@ -706,6 +715,8 @@ impl ProtocolEngine {
         self.delivered_group_sender_key_acks = checkpoint.delivered_group_sender_key_acks;
         self.answered_group_sender_key_repairs = checkpoint.answered_group_sender_key_repairs;
         self.pending_decrypted_deliveries = checkpoint.pending_decrypted_deliveries;
+        self.nostr_identity_roster_histories = checkpoint.nostr_identity_roster_histories;
+        self.group_roster_fact_histories = checkpoint.group_roster_fact_histories;
         self.subscription_generation = checkpoint.subscription_generation;
         self.last_backfill_attempt_secs = checkpoint.last_backfill_attempt_secs;
         self.invalidate_known_message_author_cache();

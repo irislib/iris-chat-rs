@@ -111,7 +111,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_discovery_effects_fetch_appkeys_and_invites_for_owner() {
+    fn protocol_discovery_effects_fetch_device_roster_facts_and_invites_for_owner() {
         let owner = Keys::generate();
         let device = Keys::generate();
         let peer = Keys::generate();
@@ -134,7 +134,7 @@ mod tests {
         assert_eq!(filters.len(), 2);
         assert!(has_filter_with_kind_author(
             &filters,
-            APP_KEYS_EVENT_KIND,
+            NOSTR_IDENTITY_ROSTER_OP_KIND,
             peer.public_key()
         ));
         assert!(has_filter_with_kind_author(
@@ -142,6 +142,171 @@ mod tests {
             INVITE_EVENT_KIND,
             peer.public_key()
         ));
+    }
+
+    #[test]
+    fn nostr_identity_roster_op_events_update_device_roster() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let peer_owner = Keys::generate();
+        let peer_device = Keys::generate();
+        let mut engine = test_engine(&owner, &device);
+
+        let bootstrap = nostr_identity_roster_event(
+            &peer_owner,
+            vec![
+                tag_values(["op", "add_key"]),
+                tag_values(["key_pubkey", peer_owner.public_key().to_hex().as_str()]),
+                tag_values(["key_purpose", "app"]),
+                tag_values(["key_capability", "admin"]),
+                tag_values(["key_capability", "write"]),
+                tag_values(["key_added_at", "10"]),
+            ],
+            10,
+        );
+        let add_device = nostr_identity_roster_event(
+            &peer_owner,
+            vec![
+                tag_values(["op", "add_key"]),
+                tag_values(["key_pubkey", peer_device.public_key().to_hex().as_str()]),
+                tag_values(["key_purpose", "app"]),
+                tag_values(["key_capability", "write"]),
+                tag_values(["key_added_at", "11"]),
+            ],
+            11,
+        );
+
+        engine
+            .ingest_nostr_identity_roster_op_event(&bootstrap)
+            .expect("bootstrap fact");
+        engine
+            .ingest_nostr_identity_roster_op_event(&add_device)
+            .expect("add device fact");
+
+        let devices = engine.known_device_identity_pubkeys_for_owner(peer_owner.public_key());
+        assert_eq!(devices.len(), 2);
+        assert!(devices.contains(&peer_owner.public_key()));
+        assert!(devices.contains(&peer_device.public_key()));
+    }
+
+    #[test]
+    fn nostr_identity_roster_op_history_applies_tombstones() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let peer_owner = Keys::generate();
+        let peer_device = Keys::generate();
+        let mut engine = test_engine(&owner, &device);
+
+        for event in [
+            nostr_identity_roster_event(
+                &peer_owner,
+                vec![
+                    tag_values(["op", "add_key"]),
+                    tag_values(["key_pubkey", peer_owner.public_key().to_hex().as_str()]),
+                    tag_values(["key_purpose", "app"]),
+                    tag_values(["key_capability", "admin"]),
+                    tag_values(["key_capability", "write"]),
+                    tag_values(["key_added_at", "10"]),
+                ],
+                10,
+            ),
+            nostr_identity_roster_event(
+                &peer_owner,
+                vec![
+                    tag_values(["op", "add_key"]),
+                    tag_values(["key_pubkey", peer_device.public_key().to_hex().as_str()]),
+                    tag_values(["key_purpose", "app"]),
+                    tag_values(["key_capability", "write"]),
+                    tag_values(["key_added_at", "11"]),
+                ],
+                11,
+            ),
+            nostr_identity_roster_event(
+                &peer_owner,
+                vec![
+                    tag_values(["op", "tombstone_key"]),
+                    tag_values(["target_pubkey", peer_device.public_key().to_hex().as_str()]),
+                ],
+                12,
+            ),
+        ] {
+            engine
+                .ingest_nostr_identity_roster_op_event(&event)
+                .expect("roster fact");
+        }
+
+        let devices = engine.known_device_identity_pubkeys_for_owner(peer_owner.public_key());
+        assert_eq!(devices, vec![peer_owner.public_key()]);
+    }
+
+    #[test]
+    fn group_roster_fact_events_update_group_snapshot() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let admin = Keys::generate();
+        let member = Keys::generate();
+        let mut engine = test_engine(&owner, &device);
+        let snapshot = group_snapshot_for_test(
+            "group-roster-fact",
+            "Fact Group",
+            3,
+            &admin,
+            &[admin.public_key(), member.public_key()],
+        );
+        let event = group_roster_fact_event_for_test(&admin, &snapshot);
+
+        let result = engine
+            .ingest_group_roster_fact_event(&event)
+            .expect("group roster fact")
+            .expect("valid fact should be consumed");
+
+        assert_eq!(
+            result.snapshot.as_ref().map(|group| group.revision),
+            Some(3)
+        );
+        let installed = engine
+            .group_manager
+            .group("group-roster-fact")
+            .expect("installed group");
+        assert_eq!(installed.name, "Fact Group");
+        assert_eq!(installed.members.len(), 2);
+    }
+
+    #[test]
+    fn group_roster_fact_history_keeps_newest_snapshot() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let admin = Keys::generate();
+        let mut engine = test_engine(&owner, &device);
+        let old = group_snapshot_for_test(
+            "group-roster-fact",
+            "Old Group",
+            1,
+            &admin,
+            &[admin.public_key()],
+        );
+        let new = GroupSnapshot {
+            name: "New Group".to_string(),
+            revision: 2,
+            updated_at: NdrUnixSeconds(20),
+            ..old.clone()
+        };
+
+        engine
+            .ingest_group_roster_fact_event(&group_roster_fact_event_for_test(&admin, &new))
+            .expect("new fact");
+        let stale_result = engine
+            .ingest_group_roster_fact_event(&group_roster_fact_event_for_test(&admin, &old))
+            .expect("old fact")
+            .expect("stale valid fact should be consumed");
+
+        assert!(stale_result.snapshot.is_none());
+        let installed = engine
+            .group_manager
+            .group("group-roster-fact")
+            .expect("installed group");
+        assert_eq!(installed.name, "New Group");
+        assert_eq!(installed.revision, 2);
     }
 
     fn has_filter_with_kind_author(filters: &[Filter], kind: u32, author: PublicKey) -> bool {
@@ -168,5 +333,66 @@ mod tests {
                     });
                 has_kind && has_author
             })
+    }
+
+    fn nostr_identity_roster_event(
+        signer: &Keys,
+        facts: Vec<Vec<String>>,
+        created_at: u64,
+    ) -> Event {
+        const PROFILE_ID: &str = "123e4567-e89b-42d3-a456-426614174000";
+        let created_at_string = created_at.to_string();
+        let signer_hex = signer.public_key().to_hex();
+        let nonce = format!("nonce-{created_at}");
+        let mut tags = vec![
+            nostr::Tag::parse(["i", PROFILE_ID, "subject"]).expect("profile tag"),
+            nostr::Tag::parse(["type", "nostr_identity_roster_op"]).expect("type tag"),
+            nostr::Tag::parse(["schema", "1"]).expect("schema tag"),
+            nostr::Tag::parse(["actor_pubkey", signer_hex.as_str()]).expect("actor tag"),
+            nostr::Tag::parse(["client_nonce", nonce.as_str()]).expect("nonce tag"),
+            nostr::Tag::parse(["created_at", created_at_string.as_str()]).expect("created_at tag"),
+        ];
+        for fact in facts {
+            let values = fact.iter().map(String::as_str).collect::<Vec<_>>();
+            tags.push(nostr::Tag::parse(values).expect("fact tag"));
+        }
+        nostr::EventBuilder::new(Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16), "")
+            .tags(tags)
+            .custom_created_at(Timestamp::from(created_at))
+            .sign_with_keys(signer)
+            .expect("signed roster event")
+    }
+
+    fn tag_values<const N: usize>(values: [&str; N]) -> Vec<String> {
+        values.into_iter().map(ToString::to_string).collect()
+    }
+
+    fn group_snapshot_for_test(
+        group_id: &str,
+        name: &str,
+        revision: u64,
+        admin: &Keys,
+        members: &[PublicKey],
+    ) -> GroupSnapshot {
+        GroupSnapshot {
+            group_id: group_id.to_string(),
+            protocol: GroupProtocol::sender_key_v1(),
+            name: name.to_string(),
+            picture: None,
+            about: None,
+            created_by: ndr_owner(admin.public_key()),
+            members: members.iter().copied().map(ndr_owner).collect(),
+            admins: vec![ndr_owner(admin.public_key())],
+            revision,
+            created_at: NdrUnixSeconds(10),
+            updated_at: NdrUnixSeconds(10 + revision),
+        }
+    }
+
+    fn group_roster_fact_event_for_test(admin: &Keys, snapshot: &GroupSnapshot) -> Event {
+        group_roster_unsigned_event(admin.public_key(), snapshot)
+            .expect("unsigned group roster fact")
+            .sign_with_keys(admin)
+            .expect("signed group roster fact")
     }
 }
