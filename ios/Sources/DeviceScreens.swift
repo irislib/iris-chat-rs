@@ -100,6 +100,9 @@ struct DeviceRosterContent: View {
                     .textFieldStyle(.plain)
                     .irisInputField()
                     .accessibilityIdentifier("deviceRosterAddInput")
+                    .onChange(of: deviceInput) { _ in
+                        submitDeviceInputIfReady()
+                    }
 
                 if let error = resolvedInput?.errorMessage {
                     Text(error)
@@ -110,21 +113,10 @@ struct DeviceRosterContent: View {
                 VStack(spacing: 10) {
                     if irisSupportsQrScanning {
                         Button("Scan code") { showingScanner = true }
-                            .buttonStyle(IrisSecondaryButtonStyle())
+                            .buttonStyle(IrisPrimaryButtonStyle())
+                            .disabled(roster.canManageDevices == false || manager.state.busy.updatingRoster)
                             .accessibilityIdentifier("deviceRosterScanButton")
                     }
-                    Button(manager.state.busy.updatingRoster ? "Linking…" : "Link device") {
-                        let normalized = resolvedInput?.deviceInput ?? ""
-                        manager.addAuthorizedDevice(deviceInput: normalized)
-                        deviceInput = ""
-                    }
-                    .buttonStyle(IrisPrimaryButtonStyle())
-                    .disabled(
-                        roster.canManageDevices == false ||
-                        manager.state.busy.updatingRoster ||
-                        (resolvedInput?.deviceInput.isEmpty ?? true)
-                    )
-                    .accessibilityIdentifier("deviceRosterAddButton")
                 }
             }
 
@@ -158,6 +150,19 @@ struct DeviceRosterContent: View {
                     .foregroundStyle(palette.textPrimary)
             }
         }
+    }
+
+    private func submitDeviceInputIfReady() {
+        guard let roster = manager.state.deviceRoster,
+              roster.canManageDevices,
+              !manager.state.busy.updatingRoster,
+              let resolved = resolvedInput,
+              resolved.errorMessage == nil,
+              !resolved.deviceInput.isEmpty else {
+            return
+        }
+        manager.addAuthorizedDevice(deviceInput: resolved.deviceInput)
+        deviceInput = ""
     }
 }
 

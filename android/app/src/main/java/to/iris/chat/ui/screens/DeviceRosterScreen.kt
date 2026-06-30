@@ -91,10 +91,6 @@ fun DeviceRosterContent(
             )
         }
     val normalizedInput = resolvedInput?.deviceInput.orEmpty()
-    val canAddDevice =
-        roster?.canManageDevices == true &&
-            normalizedInput.isNotBlank() &&
-            !appState.busy.updatingRoster
     val isCurrentDeviceRegistered =
         roster?.devices?.any { it.devicePubkeyHex == roster.currentDevicePublicKeyHex } == true
 
@@ -109,6 +105,23 @@ fun DeviceRosterContent(
             Text("Loading devices…")
         }
         return
+    }
+
+    LaunchedEffect(
+        normalizedInput,
+        resolvedInput?.errorMessage,
+        roster.canManageDevices,
+        appState.busy.updatingRoster,
+    ) {
+        if (
+            roster.canManageDevices &&
+            normalizedInput.isNotBlank() &&
+            resolvedInput?.errorMessage == null &&
+            !appState.busy.updatingRoster
+        ) {
+            appManager.addAuthorizedDevice(normalizedInput)
+            deviceInput = ""
+        }
     }
 
     Column(
@@ -186,35 +199,21 @@ fun DeviceRosterContent(
                     )
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    IrisSecondaryButton(
-                        text = "Scan code",
-                        onClick = { showScanner = true },
-                        modifier = Modifier.testTag("deviceRosterScanButton"),
-                        icon = {
-                            Icon(
-                                imageVector = IrisIcons.ScanQr,
-                                contentDescription = null,
-                            )
-                        },
-                    )
-
-                    IrisPrimaryButton(
-                        text = if (appState.busy.updatingRoster) "Linking…" else "Link device",
-                        onClick = {
-                            appManager.addAuthorizedDevice(normalizedInput)
-                            deviceInput = ""
-                        },
-                        enabled = canAddDevice,
-                        modifier = Modifier.testTag("deviceRosterAddButton"),
-                        icon = {
-                            Icon(
-                                imageVector = IrisIcons.Devices,
-                                contentDescription = null,
-                            )
-                        },
-                    )
-                }
+                IrisPrimaryButton(
+                    text = "Scan code",
+                    onClick = { showScanner = true },
+                    enabled = !appState.busy.updatingRoster,
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .testTag("deviceRosterScanButton"),
+                    icon = {
+                        Icon(
+                            imageVector = IrisIcons.ScanQr,
+                            contentDescription = null,
+                        )
+                    },
+                )
             }
         }
 
@@ -268,7 +267,8 @@ fun DeviceRosterContent(
                 if (resolved.errorMessage != null) {
                     resolved.errorMessage
                 } else {
-                    deviceInput = scanned.trim()
+                    appManager.addAuthorizedDevice(resolved.deviceInput)
+                    deviceInput = ""
                     showScanner = false
                     null
                 }

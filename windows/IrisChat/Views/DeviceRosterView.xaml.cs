@@ -9,6 +9,8 @@ namespace IrisChat.Views;
 
 public partial class DeviceRosterView : UserControl
 {
+    private bool _isSubmittingDeviceInput;
+
     public DeviceRosterView()
     {
         InitializeComponent();
@@ -35,7 +37,6 @@ public partial class DeviceRosterView : UserControl
         }
 
         AddBlock.Visibility = roster.canManageDevices ? Visibility.Visible : Visibility.Collapsed;
-        UpdateAddButton();
 
         HeaderHint.Text = roster.canManageDevices
             ? "These devices can use your profile."
@@ -144,22 +145,24 @@ public partial class DeviceRosterView : UserControl
         return d.isCurrentDevice ? "This device" : "Linked device";
     }
 
-    private void OnDeviceInputChanged(object sender, TextChangedEventArgs e) => UpdateAddButton();
-
-    private void UpdateAddButton()
+    private void OnDeviceInputChanged(object sender, TextChangedEventArgs e)
     {
+        if (_isSubmittingDeviceInput) return;
         var roster = App.CurrentManager.DeviceRoster;
-        AddButton.IsEnabled = roster?.canManageDevices == true
-            && !App.CurrentManager.Busy.updatingRoster
-            && ResolveDeviceAuthorizationInput(DeviceInput.Text, roster) != null;
-    }
-
-    private void OnAdd(object sender, RoutedEventArgs e)
-    {
+        if (roster?.canManageDevices != true || App.CurrentManager.Busy.updatingRoster) return;
         var input = ResolveDeviceAuthorizationInput(DeviceInput.Text, App.CurrentManager.DeviceRoster);
         if (string.IsNullOrEmpty(input)) return;
-        App.CurrentManager.AddAuthorizedDevice(input);
-        DeviceInput.Clear();
+
+        _isSubmittingDeviceInput = true;
+        try
+        {
+            App.CurrentManager.AddAuthorizedDevice(input);
+            DeviceInput.Clear();
+        }
+        finally
+        {
+            _isSubmittingDeviceInput = false;
+        }
     }
 
     private static string? ResolveDeviceAuthorizationInput(string? rawInput, DeviceRosterSnapshot? roster)

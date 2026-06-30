@@ -34,7 +34,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import to.iris.chat.qr.DeviceApprovalQr
+import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.ui.screens.QrScannerTestOverrides
 
 @RunWith(AndroidJUnit4::class)
@@ -157,20 +157,7 @@ class PikaLikeUiTest {
     }
 
     @Test
-    fun manage_devices_valid_link_code_enables_authorize_action() {
-        composeRule.ensureChatList()
-        composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
-        composeRule.openSettingsPage("settingsDevicesRow")
-
-        composeRule.waitForTag("deviceRosterAddInput")
-        composeRule.onNodeWithTag("deviceRosterAddInput", useUnmergedTree = true)
-            .performTextInput(LINK_DEVICE_INVITE_URL)
-        composeRule.onNodeWithTag("deviceRosterAddButton", useUnmergedTree = true)
-            .assertIsEnabled()
-    }
-
-    @Test
-    fun manage_devices_plain_device_key_enables_authorize_action() {
+    fun manage_devices_plain_device_key_authorizes_on_paste() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
         composeRule.openSettingsPage("settingsDevicesRow")
@@ -178,8 +165,32 @@ class PikaLikeUiTest {
         composeRule.waitForTag("deviceRosterAddInput")
         composeRule.onNodeWithTag("deviceRosterAddInput", useUnmergedTree = true)
             .performTextInput(SECONDARY_DEVICE_NPUB)
-        composeRule.onNodeWithTag("deviceRosterAddButton", useUnmergedTree = true)
+        composeRule.onAllNodesWithTag("deviceRosterAddButton", useUnmergedTree = true)
+            .assertCountEquals(0)
+        composeRule.waitUntil(20_000) {
+            val roster =
+                (composeRule.activity.application as IrisChatApp)
+                    .container
+                    .appManager
+                    .state
+                    .value
+                    .deviceRoster
+            roster?.devices?.any { it.deviceNpub == SECONDARY_DEVICE_NPUB && it.isAuthorized } == true
+        }
+    }
+
+    @Test
+    fun manage_devices_scan_code_is_primary_action() {
+        composeRule.ensureChatList()
+        composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
+        composeRule.openSettingsPage("settingsDevicesRow")
+
+        composeRule.waitForTag("deviceRosterAddInput")
+        composeRule.onNodeWithTag("deviceRosterScanButton", useUnmergedTree = true)
+            .assertIsDisplayed()
             .assertIsEnabled()
+        composeRule.onAllNodesWithTag("deviceRosterAddButton", useUnmergedTree = true)
+            .assertCountEquals(0)
     }
 
     @Test
@@ -189,33 +200,11 @@ class PikaLikeUiTest {
         composeRule.openSettingsPage("settingsDevicesRow")
 
         composeRule.waitForTag("deviceRosterOwnerNpub")
-        val ownerNpub =
-            (composeRule.activity.application as IrisChatApp)
-                .container
-                .appManager
-                .state
-                .value
-                .deviceRoster
-                ?.ownerNpub
-                .orEmpty()
-
         composeRule.runOnUiThread {
             QrScannerTestOverrides.nextScannedValue =
-                DeviceApprovalQr.encode(
-                    ownerInput = ownerNpub,
-                    deviceInput = SECONDARY_DEVICE_NPUB,
-                )
+                compactDeviceApprovalCode(SECONDARY_DEVICE_NPUB)
         }
         composeRule.onNodeWithTag("deviceRosterScanButton", useUnmergedTree = true).performClick()
-        composeRule.waitUntil(10_000) {
-            runCatching {
-                composeRule
-                    .onNodeWithTag("deviceRosterAddButton", useUnmergedTree = true)
-                    .assertIsEnabled()
-                true
-            }.getOrDefault(false)
-        }
-        composeRule.onNodeWithTag("deviceRosterAddButton", useUnmergedTree = true).performClick()
         composeRule.waitUntil(20_000) {
             val roster =
                 (composeRule.activity.application as IrisChatApp)
@@ -576,8 +565,11 @@ class PikaLikeUiTest {
             "nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw"
         private const val SECONDARY_DEVICE_NPUB =
             "npub1p34efzmkewwdsksmpp2r0tk7quke9jcfdz2zl7ezk8wnsj43uz2s8x5sp4"
-        private const val LINK_DEVICE_INVITE_URL =
-            "https://chat.iris.to/#%7B%22purpose%22%3A%22link%22%2C%22ephemeralKey%22%3A%22x%22%2C%22sharedSecret%22%3A%22y%22%7D"
+
+        private fun compactDeviceApprovalCode(deviceNpub: String): String {
+            val requestSecretKeyHex = "1".repeat(64)
+            return "nostr-identity://device-approval/${normalizePeerInput(deviceNpub)}.$requestSecretKeyHex"
+        }
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.ensureChatList() {

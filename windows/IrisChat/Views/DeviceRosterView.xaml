@@ -30,13 +30,6 @@
                                Margin="0,0,0,8" />
                     <TextBox x:Name="DeviceInput"
                              TextChanged="OnDeviceInputChanged" />
-                    <Button x:Name="AddButton"
-                            Style="{StaticResource PrimaryButton}"
-                            Click="OnAdd"
-                            IsEnabled="False"
-                            Margin="0,12,0,0">
-                        <TextBlock Text="Link device" />
-                    </Button>
                 </StackPanel>
             </Border>
         </StackPanel>

@@ -8,6 +8,7 @@ use iris_chat_core::{
 
 use crate::app_manager::AppManager;
 use crate::screens::chat_list::{relative_time, unix_now};
+use crate::screens::scan_qr_button;
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let scrolled = gtk::ScrolledWindow::new();
@@ -61,58 +62,63 @@ fn authorize_card(
 ) -> gtk::Widget {
     let group = adw::PreferencesGroup::builder()
         .title("Link another device")
+        .description("Scan the code from the device you want to link, or paste it.")
         .build();
 
     let entry = adw::EntryRow::builder().title("Link code").build();
     let busy = state.busy.updating_roster;
-    let submit = gtk::Button::with_label(if busy { "Linking…" } else { "Link device" });
-    submit.add_css_class("suggested-action");
-    submit.set_valign(gtk::Align::Center);
-    submit.set_sensitive(false);
 
     let roster_for_changed = roster.clone();
-    let submit_for_changed = submit.clone();
+    let manager_for_changed = manager.clone();
     entry.connect_changed(move |row| {
-        submit_for_changed.set_sensitive(
-            !busy
-                && resolve_device_authorization_input(row.text().as_str(), &roster_for_changed)
-                    .is_some(),
-        );
+        if !busy
+            && dispatch_authorized_device_input(
+                row.text().as_str(),
+                &roster_for_changed,
+                &manager_for_changed,
+            )
+        {
+            row.set_text("");
+        }
     });
 
-    let entry_for_btn = entry.clone();
-    let roster_for_btn = roster.clone();
-    let manager_for_btn = manager.clone();
-    submit.connect_clicked(move |btn| {
-        let Some(value) =
-            resolve_device_authorization_input(entry_for_btn.text().as_str(), &roster_for_btn)
-        else {
-            return;
-        };
-        btn.set_sensitive(false);
-        entry_for_btn.set_text("");
-        manager_for_btn.dispatch(AppAction::AddAuthorizedDevice {
-            device_input: value,
-        });
+    let roster_for_scan = roster.clone();
+    let manager_for_scan = manager.clone();
+    let scan = scan_qr_button("Scan code", move |text| {
+        dispatch_authorized_device_input(&text, &roster_for_scan, &manager_for_scan);
     });
-    entry.add_suffix(&submit);
+    scan.add_css_class("suggested-action");
+    scan.set_sensitive(!busy);
 
     let manager_for_apply = manager.clone();
     let roster_for_apply = roster.clone();
     entry.connect_apply(move |row| {
-        let Some(value) =
-            resolve_device_authorization_input(row.text().as_str(), &roster_for_apply)
-        else {
-            return;
-        };
-        row.set_text("");
-        manager_for_apply.dispatch(AppAction::AddAuthorizedDevice {
-            device_input: value,
-        });
+        if dispatch_authorized_device_input(
+            row.text().as_str(),
+            &roster_for_apply,
+            &manager_for_apply,
+        ) {
+            row.set_text("");
+        }
     });
 
+    group.add(&scan);
     group.add(&entry);
     group.upcast()
+}
+
+fn dispatch_authorized_device_input(
+    raw_input: &str,
+    roster: &DeviceRosterSnapshot,
+    manager: &Rc<AppManager>,
+) -> bool {
+    let Some(value) = resolve_device_authorization_input(raw_input, roster) else {
+        return false;
+    };
+    manager.dispatch(AppAction::AddAuthorizedDevice {
+        device_input: value,
+    });
+    true
 }
 
 fn resolve_device_authorization_input(
