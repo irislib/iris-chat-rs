@@ -45,7 +45,7 @@ iris-chat-protocol = { version = "0.1.4", path = "../chat-protocol" }
 nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
 nostr35 = { package = "nostr", version = "0.35.0", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
-nostr-identity = "0.1.1"
+nostr-identity = "0.1.2"
 nostr-double-ratchet = "0.0.149"
 nostr-double-ratchet-nostr = "0.0.149"
 nostr-double-ratchet-pairwise-codec = "0.0.149"

@@ -42,11 +42,15 @@ pub struct DeviceApprovalQrPayload {
     pub device_input: String,
 }
 
-const DEVICE_APPROVAL_QR_SCHEME: &str = "ndrdemo";
-const DEVICE_APPROVAL_QR_HOST: &str = "device-link";
+const LEGACY_DEVICE_APPROVAL_QR_SCHEME: &str = "ndrdemo";
+const LEGACY_DEVICE_APPROVAL_QR_HOST: &str = "device-link";
 
 #[uniffi::export]
 pub fn encode_device_approval_qr(owner_input: String, device_input: String) -> String {
+    encode_legacy_device_approval_qr(owner_input, device_input)
+}
+
+fn encode_legacy_device_approval_qr(owner_input: String, device_input: String) -> String {
     let owner = owner_input.trim();
     let device = device_input.trim();
     if owner.is_empty() || device.is_empty() {
@@ -64,6 +68,21 @@ pub fn encode_device_approval_qr(owner_input: String, device_input: String) -> S
 
 #[uniffi::export]
 pub fn decode_device_approval_qr(raw: String) -> Option<DeviceApprovalQrPayload> {
+    decode_nostr_identity_device_approval_qr(&raw)
+        .or_else(|| decode_legacy_device_approval_qr(&raw))
+}
+
+fn decode_nostr_identity_device_approval_qr(raw: &str) -> Option<DeviceApprovalQrPayload> {
+    let request = nostr_identity::parse_nostr_identity_device_approval_request(raw.trim(), &[])
+        .ok()
+        .flatten()?;
+    Some(DeviceApprovalQrPayload {
+        owner_input: request.admin_app_key_pubkey?,
+        device_input: request.device_app_key_pubkey,
+    })
+}
+
+fn decode_legacy_device_approval_qr(raw: &str) -> Option<DeviceApprovalQrPayload> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;
@@ -72,13 +91,13 @@ pub fn decode_device_approval_qr(raw: String) -> Option<DeviceApprovalQrPayload>
     let parsed = Url::parse(trimmed).ok()?;
     if !parsed
         .scheme()
-        .eq_ignore_ascii_case(DEVICE_APPROVAL_QR_SCHEME)
+        .eq_ignore_ascii_case(LEGACY_DEVICE_APPROVAL_QR_SCHEME)
     {
         return None;
     }
     if !parsed
         .host_str()
-        .is_some_and(|host| host.eq_ignore_ascii_case(DEVICE_APPROVAL_QR_HOST))
+        .is_some_and(|host| host.eq_ignore_ascii_case(LEGACY_DEVICE_APPROVAL_QR_HOST))
     {
         return None;
     }
@@ -112,9 +131,15 @@ pub fn decode_device_approval_qr(raw: String) -> Option<DeviceApprovalQrPayload>
 #[cfg(test)]
 mod tests {
     use super::{decode_device_approval_qr, encode_device_approval_qr, DeviceApprovalQrPayload};
+    use nostr_identity::{
+        create_nostr_identity_device_approval_request,
+        encode_nostr_identity_device_approval_request,
+        CreateNostrIdentityDeviceApprovalRequestOptions, NostrIdentityId,
+    };
+    use nostr_sdk::Keys;
 
     #[test]
-    fn device_approval_qr_round_trip() {
+    fn legacy_device_approval_qr_round_trip() {
         let encoded = encode_device_approval_qr("npub-owner".into(), "npub-device".into());
         let decoded = decode_device_approval_qr(encoded).expect("decode");
         assert_eq!(
@@ -127,7 +152,7 @@ mod tests {
     }
 
     #[test]
-    fn device_approval_qr_rejects_wrong_inputs() {
+    fn legacy_device_approval_qr_rejects_wrong_inputs() {
         assert!(decode_device_approval_qr("".into()).is_none());
         assert!(decode_device_approval_qr("npub1plainvalue".into()).is_none());
         assert!(decode_device_approval_qr("https://example.com".into()).is_none());
@@ -139,5 +164,32 @@ mod tests {
             decode_device_approval_qr("ndrdemo://device-link?device=npub1deviceonly".into())
                 .is_none()
         );
+    }
+
+    #[test]
+    fn shared_nostr_identity_device_approval_qr_decodes_to_owner_and_device() {
+        let admin = Keys::generate();
+        let device = Keys::generate();
+        let request = create_nostr_identity_device_approval_request(
+            &device,
+            CreateNostrIdentityDeviceApprovalRequestOptions {
+                request_keys: None,
+                request_secret: None,
+                requested_at: 123,
+                request_type: Some("device_link".to_string()),
+                resources: Vec::new(),
+                expires_at: None,
+                profile_id: Some(NostrIdentityId::new_v4()),
+                admin_app_key_pubkey: Some(admin.public_key().to_hex()),
+                label: Some("Phone".to_string()),
+            },
+        )
+        .expect("approval request");
+        let encoded =
+            encode_nostr_identity_device_approval_request(&request.request, None).expect("encode");
+
+        let decoded = decode_device_approval_qr(encoded).expect("decode shared request");
+        assert_eq!(decoded.owner_input, admin.public_key().to_hex());
+        assert_eq!(decoded.device_input, device.public_key().to_hex());
     }
 }
