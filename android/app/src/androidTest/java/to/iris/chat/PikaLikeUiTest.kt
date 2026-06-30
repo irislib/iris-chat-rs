@@ -34,7 +34,6 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.ui.screens.QrScannerTestOverrides
 
 @RunWith(AndroidJUnit4::class)
@@ -202,7 +201,7 @@ class PikaLikeUiTest {
         composeRule.waitForTag("deviceRosterOwnerNpub")
         composeRule.runOnUiThread {
             QrScannerTestOverrides.nextScannedValue =
-                compactDeviceApprovalCode(SECONDARY_DEVICE_NPUB)
+                compactDeviceApprovalCode()
         }
         composeRule.onNodeWithTag("deviceRosterScanButton", useUnmergedTree = true).performClick()
         composeRule.waitUntil(20_000) {
@@ -565,10 +564,12 @@ class PikaLikeUiTest {
             "nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw"
         private const val SECONDARY_DEVICE_NPUB =
             "npub1p34efzmkewwdsksmpp2r0tk7quke9jcfdz2zl7ezk8wnsj43uz2s8x5sp4"
+        private const val SECONDARY_DEVICE_HEX =
+            "0c6b948b76cb9cd85a1b085437aede072d92cb0968942ffb22b1dd384ab1e095"
 
-        private fun compactDeviceApprovalCode(deviceNpub: String): String {
+        private fun compactDeviceApprovalCode(): String {
             val requestSecretKeyHex = "1".repeat(64)
-            return "nostr-identity://device-approval/${normalizePeerInput(deviceNpub)}.$requestSecretKeyHex"
+            return "$SECONDARY_DEVICE_HEX.$requestSecretKeyHex"
         }
     }
 

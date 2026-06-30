@@ -42,8 +42,6 @@ pub struct DeviceApprovalQrPayload {
     pub device_input: String,
 }
 
-const DEVICE_APPROVAL_QR_PREFIX: &str = "nostr-identity://device-approval/";
-
 #[uniffi::export]
 pub fn encode_device_approval_qr(_owner_input: String, _device_input: String) -> String {
     String::new()
@@ -62,14 +60,7 @@ pub fn decode_device_approval_qr(raw: String) -> Option<DeviceApprovalQrPayload>
 pub(crate) fn parse_compact_nostr_identity_device_approval_request(
     raw: &str,
 ) -> Option<nostr_identity::NostrIdentityDeviceApprovalRequest> {
-    let trimmed = raw.trim();
-    let payload = trimmed
-        .strip_prefix(DEVICE_APPROVAL_QR_PREFIX)
-        .or_else(|| {
-            trimmed
-                .strip_prefix("nostr:")
-                .and_then(|value| value.strip_prefix(DEVICE_APPROVAL_QR_PREFIX))
-        })?;
+    let payload = raw.trim();
     let mut parts = payload.split('.');
     let device_app_key_pubkey = parts.next()?.trim().to_ascii_lowercase();
     let request_secret = parts.next()?.trim().to_ascii_lowercase();
@@ -118,6 +109,12 @@ mod tests {
         assert!(decode_device_approval_qr("npub1plainvalue".into()).is_none());
         assert!(decode_device_approval_qr("https://example.com".into()).is_none());
         assert!(decode_device_approval_qr("nostr-identity://device-approval/abc".into()).is_none());
+        assert!(decode_device_approval_qr(format!(
+            "nostr-identity://device-approval/{}.{}",
+            "1".repeat(64),
+            "1".repeat(64)
+        ))
+        .is_none());
     }
 
     #[test]
@@ -125,12 +122,12 @@ mod tests {
         let device = Keys::generate();
         let request = Keys::generate();
         let encoded = format!(
-            "nostr-identity://device-approval/{}.{}",
+            "{}.{}",
             device.public_key().to_hex(),
             request.secret_key().to_secret_hex()
         );
 
-        let decoded = decode_device_approval_qr(encoded).expect("decode compact request");
+        let decoded = decode_device_approval_qr(encoded.clone()).expect("decode compact request");
         assert_eq!(
             decoded,
             DeviceApprovalQrPayload {
@@ -138,5 +135,8 @@ mod tests {
                 device_input: device.public_key().to_hex(),
             }
         );
+
+        let prefixed = format!("nostr-identity://device-approval/{encoded}");
+        assert!(decode_device_approval_qr(prefixed).is_none());
     }
 }

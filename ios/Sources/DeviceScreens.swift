@@ -27,13 +27,38 @@ struct DeviceRosterScreen: View {
         }
         .sheet(isPresented: $showingScanner) {
             QrScannerSheet { code in
-                deviceInput = code
+                let resolved = submitDeviceAuthorizationScan(code, manager: manager)
+                deviceInput = resolved.errorMessage == nil ? "" : code
                 showingScanner = false
             }
             .irisModalSurface()
             .irisDismissOnMacOutsideClick { showingScanner = false }
         }
     }
+}
+
+@discardableResult
+@MainActor
+func submitDeviceAuthorizationScan(
+    _ rawInput: String,
+    manager: AppManager
+) -> ResolvedDeviceAuthorizationInput {
+    guard let roster = manager.state.deviceRoster,
+          roster.canManageDevices,
+          !manager.state.busy.updatingRoster else {
+        return ResolvedDeviceAuthorizationInput(deviceInput: "", errorMessage: nil)
+    }
+    let resolved = resolveDeviceAuthorizationInput(
+        rawInput: rawInput,
+        ownerNpub: roster.ownerNpub,
+        ownerPublicKeyHex: roster.ownerPublicKeyHex
+    )
+    guard resolved.errorMessage == nil,
+          !resolved.deviceInput.isEmpty else {
+        return resolved
+    }
+    manager.addAuthorizedDevice(deviceInput: resolved.deviceInput)
+    return resolved
 }
 
 struct DeviceRosterContent: View {

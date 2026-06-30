@@ -131,7 +131,7 @@ fn owner_device_accepts_ownerless_nostr_identity_approval_request_and_publishes_
     let owner_hex = owner.public_key().to_hex();
     let linked_device_hex = linked_device.public_key().to_hex();
     let request_url = format!(
-        "nostr-identity://device-approval/{}.{}",
+        "{}.{}",
         linked_device_hex,
         request_keys.secret_key().to_secret_hex()
     );

@@ -938,7 +938,7 @@ fn app_keys_event_rerenders_device_roster_even_when_authorization_is_unchanged()
 }
 
 #[test]
-fn start_linked_device_creates_ownerless_link_invite() {
+fn start_linked_device_creates_compact_device_approval_code() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let mut core = AppCore::new(
         flume::unbounded().0,
@@ -957,19 +957,153 @@ fn start_linked_device_creates_ownerless_link_invite() {
         .link_device
         .as_ref()
         .expect("link-device snapshot");
-    let invite =
-        super::invites::parse_public_invite_input(&snapshot.url).expect("parse link invite");
-    assert_eq!(invite.purpose.as_deref(), Some("link"));
-    assert!(invite.owner_public_key.is_none());
+    let request = crate::qr::parse_compact_nostr_identity_device_approval_request(&snapshot.url)
+        .expect("parse compact approval request");
+    assert!(!snapshot.url.contains("://"));
+    assert!(!snapshot.url.contains("chat.iris.to"));
+    assert_eq!(snapshot.url.len(), 129);
+    assert_eq!(snapshot.url.split('.').count(), 2);
     assert_eq!(
-        invite.inviter.to_bech32().ok().as_deref(),
+        request.device_app_key_pubkey,
+        core.pending_linked_device
+            .as_ref()
+            .expect("pending link")
+            .device_keys
+            .public_key()
+            .to_hex()
+    );
+    assert_eq!(
+        PublicKey::parse(&request.device_app_key_pubkey)
+            .ok()
+            .and_then(|pubkey| pubkey.to_bech32().ok())
+            .as_deref(),
         Some(snapshot.device_input.as_str())
     );
     assert!(matches!(core.screen_stack.as_slice(), [Screen::AddDevice]));
 }
 
 #[test]
-fn owner_device_accepts_link_invite_and_registers_new_device() {
+fn compact_link_invite_derivation_is_time_independent() {
+    let device = Keys::generate().public_key();
+    let request_secret = Keys::generate().secret_key().to_secret_hex();
+    let first = account::deterministic_link_invite_for_device(device, &request_secret)
+        .expect("first invite");
+
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let second = account::deterministic_link_invite_for_device(device, &request_secret)
+        .expect("second invite");
+
+    assert_eq!(first.created_at.get(), 0);
+    assert_eq!(second.created_at.get(), 0);
+    assert_eq!(
+        first.inviter_ephemeral_public_key,
+        second.inviter_ephemeral_public_key
+    );
+    assert_eq!(first.shared_secret, second.shared_secret);
+}
+
+#[test]
+fn compact_link_request_finishes_pairing_and_authorizes_linked_device() {
+    let owner = Keys::generate();
+    let temp_dir_primary = tempfile::TempDir::new().expect("primary temp dir");
+    let temp_dir_linked = tempfile::TempDir::new().expect("linked temp dir");
+    let mut primary = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir_primary.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    primary.preferences.nostr_relay_urls.clear();
+    primary
+        .start_primary_session(owner.clone(), owner.clone(), false, false)
+        .expect("primary session");
+    primary.pending_relay_publishes.clear();
+
+    let mut linked = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir_linked.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    linked.preferences.nostr_relay_urls.clear();
+    linked.handle_action(AppAction::StartLinkedDevice {
+        owner_input: String::new(),
+    });
+    let compact_code = linked
+        .state
+        .link_device
+        .as_ref()
+        .expect("compact link code")
+        .url
+        .clone();
+
+    primary.handle_action(AppAction::AddAuthorizedDevice {
+        device_input: compact_code,
+    });
+
+    assert_eq!(primary.state.toast, None);
+    let response_event = pending_events_with_kind(&primary, INVITE_RESPONSE_KIND)
+        .into_iter()
+        .next()
+        .expect("compact approval publishes deterministic invite response");
+    linked.handle_relay_event(response_event);
+    let linked_device = linked
+        .logged_in
+        .as_ref()
+        .expect("linked session")
+        .device_keys
+        .public_key();
+
+    let mut roster_events = pending_events_with_kind(&primary, NOSTR_IDENTITY_ROSTER_OP_KIND)
+        .into_iter()
+        .filter(is_nostr_identity_roster_op_event)
+        .collect::<Vec<_>>();
+    roster_events.sort_by(|left, right| {
+        left.created_at
+            .as_secs()
+            .cmp(&right.created_at.as_secs())
+            .then_with(|| left.id.to_hex().cmp(&right.id.to_hex()))
+    });
+    assert!(
+        !roster_events.is_empty(),
+        "compact approval must publish a public roster op for the linked device"
+    );
+    for event in roster_events {
+        linked.handle_relay_event(event);
+    }
+
+    linked.refresh_local_authorization_state();
+    linked.rebuild_state();
+    let logged_in = linked.logged_in.as_ref().expect("linked logged in");
+    let active_session_count = linked
+        .protocol_engine
+        .as_ref()
+        .map(|engine| engine.active_session_count_for_owner(owner.public_key()))
+        .unwrap_or_default();
+    assert_eq!(logged_in.owner_pubkey, owner.public_key());
+    assert_eq!(
+        logged_in.authorization_state,
+        LocalAuthorizationState::Authorized,
+        "linked_device={} active_sessions={} app_keys={:?} debug={:?}",
+        linked_device.to_hex(),
+        active_session_count,
+        linked.app_keys,
+        linked.debug_log
+    );
+    assert!(linked.pending_linked_device.is_none());
+    assert!(active_session_count > 0);
+    let roster = linked
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .expect("linked learned owner roster");
+    assert!(roster
+        .devices
+        .iter()
+        .any(|device| device.identity_pubkey_hex == linked_device.to_hex()));
+}
+
+#[test]
+fn owner_device_rejects_legacy_link_invite_for_device_approval() {
     let owner = Keys::generate();
     let new_device = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -996,15 +1130,12 @@ fn owner_device_accepts_link_invite_and_registers_new_device() {
         device_input: invite_url,
     });
 
-    let known = core
-        .app_keys
-        .get(&owner.public_key().to_hex())
-        .expect("owner app keys");
-    assert!(known
-        .devices
-        .iter()
+    let known = core.app_keys.get(&owner.public_key().to_hex());
+    assert!(!known
+        .into_iter()
+        .flat_map(|known| known.devices.iter())
         .any(|device| device.identity_pubkey_hex == new_device.public_key().to_hex()));
-    assert_eq!(core.state.toast, None);
+    assert_eq!(core.state.toast.as_deref(), Some("Invalid device key."));
 }
 
 #[test]

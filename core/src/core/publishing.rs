@@ -148,7 +148,7 @@ impl AppCore {
             owner_pubkey,
             local_device_pubkey,
             device_pubkey,
-            false,
+            true,
         )?;
         let approval_event = events
             .last()
@@ -195,8 +195,11 @@ impl AppCore {
             protocol_engine.has_nostr_identity_roster_history_for_owner(owner_pubkey);
         let latest_nostr_identity_created_at =
             protocol_engine.latest_nostr_identity_roster_created_at_for_owner(owner_pubkey);
-        let mut parent_ids =
-            protocol_engine.nostr_identity_roster_parent_ids_for_owner(owner_pubkey);
+        let mut parent_ids = if force_bootstrap {
+            Vec::new()
+        } else {
+            protocol_engine.nostr_identity_roster_parent_ids_for_owner(owner_pubkey)
+        };
 
         let event_created_at = latest_nostr_identity_created_at
             .map(|latest| unix_now().get().max(latest.saturating_add(1)))
@@ -1049,6 +1052,27 @@ impl AppCore {
                 })));
             }
         });
+    }
+
+    pub(super) fn publish_local_protocol_invite(&mut self) -> bool {
+        let Some((device_keys, local_invite)) = self.logged_in.as_ref().and_then(|logged_in| {
+            self.protocol_engine
+                .as_ref()
+                .and_then(ProtocolEngine::local_invite)
+                .map(|invite| (logged_in.device_keys.clone(), invite))
+        }) else {
+            return false;
+        };
+        let event = match nostr_double_ratchet_nostr::invite_unsigned_event(&local_invite)
+            .and_then(|unsigned| unsigned.sign_with_keys(&device_keys).map_err(Into::into))
+        {
+            Ok(event) => event,
+            Err(error) => {
+                self.push_debug_log("publish.local_invite", error.to_string());
+                return false;
+            }
+        };
+        self.publish_runtime_event(event, LOCAL_INVITE_PUBLISH_LABEL, None)
     }
 
     pub(super) fn publish_local_app_keys(&mut self) {

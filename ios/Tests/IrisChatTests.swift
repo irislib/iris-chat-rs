@@ -1373,10 +1373,9 @@ final class IrisChatTests: XCTestCase {
 
     func testResolveDeviceAuthorizationInputPreservesCompactApprovalCode() {
         let ownerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
-        let device = "npub1p34efzmkewwdsksmpp2r0tk7quke9jcfdz2zl7ezk8wnsj43uz2s8x5sp4"
-        let deviceHex = normalizePeerInput(input: device)
+        let deviceHex = "0c6b948b76cb9cd85a1b085437aede072d92cb0968942ffb22b1dd384ab1e095"
         let requestSecret = String(repeating: "1", count: 64)
-        let code = "nostr-identity://device-approval/\(deviceHex).\(requestSecret)"
+        let code = "\(deviceHex).\(requestSecret)"
 
         let resolved = resolveDeviceAuthorizationInput(
             rawInput: code,
@@ -1386,6 +1385,14 @@ final class IrisChatTests: XCTestCase {
 
         XCTAssertEqual(resolved.deviceInput, code)
         XCTAssertNil(resolved.errorMessage)
+
+        let prefixed = resolveDeviceAuthorizationInput(
+            rawInput: "nostr-identity://device-approval/\(code)",
+            ownerNpub: ownerNpub,
+            ownerPublicKeyHex: normalizePeerInput(input: ownerNpub)
+        )
+        XCTAssertEqual(prefixed.deviceInput, "")
+        XCTAssertEqual(prefixed.errorMessage, "Not a valid link code.")
     }
 
     func testResolveDeviceAuthorizationInputAcceptsPlainDeviceKey() {
@@ -2347,6 +2354,41 @@ final class IrisChatTests: XCTestCase {
         manager.addAuthorizedDevice(deviceInput: "  device-hex  ")
 
         XCTAssertEqual(rust.dispatchedActions.last, .addAuthorizedDevice(deviceInput: "device-hex"))
+    }
+
+    @MainActor
+    func testDeviceAuthorizationScanDispatchesCompactCodeImmediately() async {
+        let ownerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
+        let deviceHex = "0c6b948b76cb9cd85a1b085437aede072d92cb0968942ffb22b1dd384ab1e095"
+        let ownerHex = normalizePeerInput(input: ownerNpub)
+        let compactCode = "\(deviceHex).\(String(repeating: "1", count: 64))"
+        var state = makeAppState()
+        state.deviceRoster = DeviceRosterSnapshot(
+            ownerPublicKeyHex: ownerHex,
+            ownerNpub: ownerNpub,
+            currentDevicePublicKeyHex: ownerHex,
+            currentDeviceNpub: ownerNpub,
+            canManageDevices: true,
+            authorizationState: .authorized,
+            devices: []
+        )
+        let rust = MockRustApp(state: state)
+        let store = InMemorySecretStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        let resolved = submitDeviceAuthorizationScan(compactCode, manager: manager)
+
+        XCTAssertNil(resolved.errorMessage)
+        XCTAssertEqual(resolved.deviceInput, compactCode)
+        XCTAssertEqual(rust.dispatchedActions.last, .addAuthorizedDevice(deviceInput: compactCode))
     }
 
     @MainActor

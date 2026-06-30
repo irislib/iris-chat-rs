@@ -1,9 +1,11 @@
 use super::account_app_keys::{
     known_app_keys_to_ndr, next_app_keys_created_at, next_removed_app_keys_created_at,
-    normalize_device_label, parse_link_device_invite_input,
+    normalize_device_label,
 };
-use super::invites::{chat_invite_url, load_private_chat_invites};
+use super::invites::load_private_chat_invites;
 use super::*;
+use nostr_double_ratchet::{DevicePubkey as NdrDevicePubkey, ProtocolContext};
+use rand::{rngs::StdRng, SeedableRng};
 
 impl AppCore {
     pub(super) fn create_account(&mut self, name: &str) {
@@ -192,7 +194,7 @@ impl AppCore {
     }
 
     pub(super) fn start_linked_device(&mut self, _owner_input: &str) {
-        self.push_debug_log("session.start_linked", "create ownerless link invite");
+        self.push_debug_log("session.start_linked", "create compact link request");
         self.state.busy.linking_device = true;
         self.emit_state();
 
@@ -212,18 +214,21 @@ impl AppCore {
 
         let device_keys = Keys::generate();
         let device_pubkey = device_keys.public_key();
-        let device_id = device_pubkey.to_hex();
-        let mut invite = Invite::create_new(device_pubkey, Some(device_id), Some(1))?;
-        invite.purpose = Some("link".to_string());
-        let url = chat_invite_url(&invite)?;
+        let approval_request_keys = Keys::generate();
+        let request_secret = approval_request_keys.secret_key().to_secret_hex();
+        let invite = deterministic_link_invite_for_device(device_pubkey, &request_secret)?;
+        let url = compact_device_approval_url(device_pubkey, &request_secret);
 
         let client = Client::new(device_keys.clone());
         let relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
         self.start_notifications_loop(client.clone());
 
-        let filter = Filter::new()
+        let invite_response_filter = Filter::new()
             .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
             .pubkeys(vec![invite.inviter_ephemeral_public_key.to_nostr()?]);
+        let approval_receipt_filter = Filter::new()
+            .kind(Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16))
+            .pubkeys(vec![approval_request_keys.public_key()]);
         let client_for_subscription = client.clone();
         let relay_urls_for_subscription = relay_urls.clone();
         self.runtime.spawn(async move {
@@ -238,7 +243,18 @@ impl AppCore {
             )
             .await;
             let _ = client_for_subscription
-                .subscribe_with_id(SubscriptionId::new("link-device-response"), filter, None)
+                .subscribe_with_id(
+                    SubscriptionId::new("link-device-response"),
+                    invite_response_filter,
+                    None,
+                )
+                .await;
+            let _ = client_for_subscription
+                .subscribe_with_id(
+                    SubscriptionId::new("link-device-approval"),
+                    approval_receipt_filter,
+                    None,
+                )
                 .await;
         });
 
@@ -353,33 +369,13 @@ impl AppCore {
             return;
         }
 
-        let owner_pubkey = logged_in.owner_pubkey;
         if let Some(request) =
             crate::qr::parse_compact_nostr_identity_device_approval_request(device_input.trim())
         {
             self.state.busy.updating_roster = true;
             self.emit_state();
 
-            let result = self.publish_nostr_identity_device_approval_request(request);
-            if let Err(error) = result {
-                self.state.toast = Some(error.to_string());
-            }
-
-            self.state.busy.updating_roster = false;
-            self.rebuild_state();
-            self.persist_best_effort();
-            self.emit_state();
-            return;
-        }
-
-        if let Ok(invite) = parse_link_device_invite_input(device_input, owner_pubkey) {
-            self.state.busy.updating_roster = true;
-            self.emit_state();
-
-            // Legacy link invites still complete the old AppKeys-based pairing
-            // flow. Manual device IDs and approval QR payloads publish
-            // NostrIdentity roster ops instead.
-            let result = self.accept_legacy_link_device_invite(invite);
+            let result = self.accept_compact_link_device_approval_request(request);
             if let Err(error) = result {
                 self.state.toast = Some(error.to_string());
             }
@@ -405,7 +401,16 @@ impl AppCore {
         self.emit_state();
     }
 
-    fn accept_legacy_link_device_invite(&mut self, invite: Invite) -> anyhow::Result<()> {
+    fn accept_compact_link_device_approval_request(
+        &mut self,
+        request: nostr_identity::NostrIdentityDeviceApprovalRequest,
+    ) -> anyhow::Result<()> {
+        let invite = deterministic_link_invite_for_approval_request(&request)?;
+        self.publish_nostr_identity_device_approval_request(request)?;
+        self.accept_link_device_invite_session(invite)
+    }
+
+    fn accept_link_device_invite_session(&mut self, invite: Invite) -> anyhow::Result<()> {
         let logged_in = self
             .logged_in
             .as_ref()
@@ -434,8 +439,8 @@ impl AppCore {
                 unix_now(),
             )?;
         let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)?;
-        self.publish_nostr_identity_add_app_key_op(invite.inviter_device_pubkey.to_nostr()?)?;
         self.publish_runtime_event(response_event, "appcore-protocol", None);
+        self.publish_local_protocol_invite();
         self.mark_mobile_push_dirty();
         self.process_protocol_engine_retry_batch("link_invite_import", retry_batch);
         Ok(())
@@ -1094,4 +1099,36 @@ impl AppCore {
             _ => LocalAuthorizationState::AwaitingApproval,
         }
     }
+}
+
+fn compact_device_approval_url(device_pubkey: PublicKey, request_secret: &str) -> String {
+    format!("{}.{}", device_pubkey.to_hex(), request_secret)
+}
+
+fn deterministic_link_invite_for_approval_request(
+    request: &nostr_identity::NostrIdentityDeviceApprovalRequest,
+) -> anyhow::Result<Invite> {
+    let device_pubkey = PublicKey::parse(&request.device_app_key_pubkey)
+        .map_err(|error| anyhow::anyhow!("Invalid device key: {error}"))?;
+    deterministic_link_invite_for_device(device_pubkey, &request.request_secret)
+}
+
+pub(super) fn deterministic_link_invite_for_device(
+    device_pubkey: PublicKey,
+    request_secret: &str,
+) -> anyhow::Result<Invite> {
+    let request_keys = Keys::parse(request_secret)
+        .map_err(|error| anyhow::anyhow!("Invalid link secret: {error}"))?;
+    let seed = request_keys.secret_key().to_secret_bytes();
+    let mut rng = StdRng::from_seed(seed);
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(0), &mut rng);
+    let mut invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(device_pubkey.to_bytes()),
+        None,
+        Some(1),
+    )?;
+    invite.purpose = Some("link".to_string());
+    invite.device_id = Some(device_pubkey.to_hex());
+    Ok(invite)
 }

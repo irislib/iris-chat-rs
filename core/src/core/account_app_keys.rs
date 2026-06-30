@@ -1,4 +1,3 @@
-use super::invites::parse_public_invite_input;
 use super::*;
 
 impl AppCore {
@@ -41,23 +40,6 @@ impl AppCore {
         self.app_keys.insert(owner_hex, known);
         Some((applied.app_keys, applied.created_at))
     }
-}
-
-pub(super) fn parse_link_device_invite_input(
-    input: &str,
-    owner_pubkey: PublicKey,
-) -> anyhow::Result<Invite> {
-    let invite = parse_public_invite_input(input)?;
-    if invite.purpose.as_deref() != Some("link") {
-        return Err(anyhow::anyhow!("Invalid link code."));
-    }
-    if invite
-        .owner_public_key
-        .is_some_and(|invite_owner| invite_owner != owner_pubkey)
-    {
-        return Err(anyhow::anyhow!("This code is for a different profile."));
-    }
-    Ok(invite)
 }
 
 pub(super) fn next_app_keys_created_at(now: u64, current: u64) -> u64 {
