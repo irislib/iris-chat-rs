@@ -7,6 +7,9 @@ impl ProtocolEngine {
             return Ok(None);
         }
         let fact = parse_group_roster_fact_event(event)?;
+        if !self.group_roster_fact_is_authorized(&fact) {
+            return Ok(None);
+        }
 
         let checkpoint = self.state_checkpoint();
         let Some(snapshot) = self.remember_group_roster_fact_event(&fact.group_id, event) else {
@@ -121,6 +124,17 @@ impl ProtocolEngine {
         project_group_roster_fact_events(history.events.iter())
             .into_iter()
             .find(|snapshot| snapshot.group_id == group_id)
+    }
+
+    fn group_roster_fact_is_authorized(&self, fact: &GroupRosterFact) -> bool {
+        let signer_owner = ndr_owner(fact.signer_pubkey);
+        if let Some(current) = self.group_manager.group(&fact.group_id) {
+            return current.admins.contains(&signer_owner);
+        }
+
+        let local_owner = self.group_manager.snapshot().local_owner_pubkey;
+        fact.snapshot.admins.contains(&signer_owner)
+            && fact.snapshot.members.contains(&local_owner)
     }
 
     fn install_group_roster_snapshot(&mut self, snapshot: GroupSnapshot) -> anyhow::Result<bool> {

@@ -150,51 +150,8 @@ fn resolve_device_authorization_input(
         return Some(normalized_device);
     }
 
-    if is_likely_link_invite(trimmed) {
-        return Some(trimmed.to_string());
-    }
-
     let normalized_device = normalize_peer_input(trimmed.to_string());
     is_valid_peer_input(normalized_device.clone()).then_some(normalized_device)
-}
-
-fn is_likely_link_invite(input: &str) -> bool {
-    let lower = input.to_ascii_lowercase();
-    if !lower.starts_with("https://chat.iris.to/#") && !lower.starts_with("https://chat.iris.to/?")
-    {
-        return false;
-    }
-    let decoded = percent_decode_lossy(input);
-    decoded.contains("\"purpose\":\"link\"")
-        && decoded.contains("\"ephemeralKey\"")
-        && decoded.contains("\"sharedSecret\"")
-}
-
-fn percent_decode_lossy(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(high), Some(low)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2])) {
-                out.push(high << 4 | low);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }
 
 fn devices_card(

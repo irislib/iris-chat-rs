@@ -251,7 +251,7 @@ mod tests {
             "Fact Group",
             3,
             &admin,
-            &[admin.public_key(), member.public_key()],
+            &[admin.public_key(), member.public_key(), owner.public_key()],
         );
         let event = group_roster_fact_event_for_test(&admin, &snapshot);
 
@@ -269,7 +269,7 @@ mod tests {
             .group("group-roster-fact")
             .expect("installed group");
         assert_eq!(installed.name, "Fact Group");
-        assert_eq!(installed.members.len(), 2);
+        assert_eq!(installed.members.len(), 3);
     }
 
     #[test]
@@ -283,7 +283,7 @@ mod tests {
             "Old Group",
             1,
             &admin,
-            &[admin.public_key()],
+            &[admin.public_key(), owner.public_key()],
         );
         let new = GroupSnapshot {
             name: "New Group".to_string(),
@@ -307,6 +307,47 @@ mod tests {
             .expect("installed group");
         assert_eq!(installed.name, "New Group");
         assert_eq!(installed.revision, 2);
+    }
+
+    #[test]
+    fn group_roster_fact_rejects_update_not_signed_by_existing_admin() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let admin = Keys::generate();
+        let attacker = Keys::generate();
+        let mut engine = test_engine(&owner, &device);
+        let original = group_snapshot_for_test(
+            "group-roster-admin-check",
+            "Original Group",
+            1,
+            &admin,
+            &[admin.public_key(), owner.public_key()],
+        );
+        engine
+            .ingest_group_roster_fact_event(&group_roster_fact_event_for_test(&admin, &original))
+            .expect("original fact")
+            .expect("original fact consumed");
+
+        let malicious = group_snapshot_for_test(
+            "group-roster-admin-check",
+            "Pwned Group",
+            2,
+            &attacker,
+            &[attacker.public_key(), owner.public_key()],
+        );
+        let result = engine
+            .ingest_group_roster_fact_event(&group_roster_fact_event_for_test(
+                &attacker, &malicious,
+            ))
+            .expect("malicious fact is ignored without failing sync");
+
+        assert!(result.is_none());
+        let installed = engine
+            .group_manager
+            .group("group-roster-admin-check")
+            .expect("installed group");
+        assert_eq!(installed.name, "Original Group");
+        assert_eq!(installed.revision, 1);
     }
 
     fn has_filter_with_kind_author(filters: &[Filter], kind: u32, author: PublicKey) -> bool {

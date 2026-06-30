@@ -185,36 +185,7 @@ public partial class DeviceRosterView : UserControl
             return string.IsNullOrWhiteSpace(normalizedOwner) ? trimmed : normalizedDevice;
         }
 
-        if (IsLikelyLinkInvite(trimmed)) return trimmed;
-
         var normalizedManualDevice = Native.NormalizePeerInput(trimmed);
         return Native.IsValidPeerInput(normalizedManualDevice) ? normalizedManualDevice : null;
-    }
-
-    private static bool IsLikelyLinkInvite(string input)
-    {
-        var lower = input.ToLowerInvariant();
-        if (!lower.StartsWith("https://chat.iris.to/#") &&
-            !lower.StartsWith("https://chat.iris.to/?"))
-        {
-            return false;
-        }
-
-        var decoded = UriUnescape(input);
-        return decoded.Contains("\"purpose\":\"link\"")
-            && decoded.Contains("\"ephemeralKey\"")
-            && decoded.Contains("\"sharedSecret\"");
-    }
-
-    private static string UriUnescape(string input)
-    {
-        try
-        {
-            return Uri.UnescapeDataString(input);
-        }
-        catch (UriFormatException)
-        {
-            return input;
-        }
     }
 }

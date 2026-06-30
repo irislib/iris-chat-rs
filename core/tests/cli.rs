@@ -414,7 +414,11 @@ fn link_create_outputs_device_invite() {
     run_iris(dir.path(), &["relay", "set"]);
 
     let link = run_iris(dir.path(), &["link", "create"]);
-    assert!(link["data"]["url"].as_str().unwrap().contains("iris"));
+    let url = link["data"]["url"].as_str().unwrap();
+    assert!(!url.contains("://"));
+    assert!(!url.contains("chat.iris.to"));
+    assert_eq!(url.len(), 129);
+    assert_eq!(url.split('.').count(), 2);
     assert!(link["data"]["device_input"]
         .as_str()
         .unwrap()
