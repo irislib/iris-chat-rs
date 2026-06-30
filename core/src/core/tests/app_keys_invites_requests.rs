@@ -1513,7 +1513,7 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
             &filters,
             GROUP_ROSTER_FACT_KIND,
             group_admin.public_key(),
-            "#i",
+            "#d",
             "test-group"
         ),
         "group roster fact filters must be scoped to known group ids"

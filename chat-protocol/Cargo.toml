@@ -13,9 +13,9 @@ base64 = "0.22"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
 nostr-identity = "0.1.2"
-nostr-double-ratchet = "0.0.150"
-nostr-double-ratchet-nostr = "0.0.150"
-nostr-double-ratchet-pairwise-codec = "0.0.150"
+nostr-double-ratchet = "0.0.151"
+nostr-double-ratchet-nostr = "0.0.151"
+nostr-double-ratchet-pairwise-codec = "0.0.151"
 rand = "0.8"
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
