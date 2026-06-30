@@ -1365,26 +1365,27 @@ final class IrisChatTests: XCTestCase {
         _ = manager
     }
 
-    func testDeviceApprovalQrRoundTrip() {
+    func testDeviceApprovalQrLegacyEncoderIsRemoved() {
         let encoded = DeviceApprovalQr.encode(ownerInput: "npub-owner", deviceInput: "npub-device")
-        let decoded = DeviceApprovalQr.decode(encoded)
-        XCTAssertEqual(decoded, DeviceApprovalQrPayload(ownerInput: "npub-owner", deviceInput: "npub-device"))
+        XCTAssertEqual(encoded, "")
+        XCTAssertNil(DeviceApprovalQr.decode(encoded))
     }
 
-    func testResolveDeviceAuthorizationInputRejectsDifferentOwner() {
+    func testResolveDeviceAuthorizationInputPreservesCompactApprovalCode() {
         let ownerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
-        let otherOwner = "npub1m40q2j9vq7yrmgaf4q4f5a30gq2r6hwhzmu7t4j50c5f8ga2g8vs3hmzdt"
         let device = "npub1p34efzmkewwdsksmpp2r0tk7quke9jcfdz2zl7ezk8wnsj43uz2s8x5sp4"
-        let qr = DeviceApprovalQr.encode(ownerInput: otherOwner, deviceInput: device)
+        let deviceHex = normalizePeerInput(input: device)
+        let requestSecret = String(repeating: "1", count: 64)
+        let code = "nostr-identity://device-approval/\(deviceHex).\(requestSecret)"
 
         let resolved = resolveDeviceAuthorizationInput(
-            rawInput: qr,
+            rawInput: code,
             ownerNpub: ownerNpub,
             ownerPublicKeyHex: normalizePeerInput(input: ownerNpub)
         )
 
-        XCTAssertEqual(resolved.deviceInput, "")
-        XCTAssertEqual(resolved.errorMessage, "This code is for a different profile.")
+        XCTAssertEqual(resolved.deviceInput, code)
+        XCTAssertNil(resolved.errorMessage)
     }
 
     func testResolveDeviceAuthorizationInputAcceptsPlainDeviceKey() {

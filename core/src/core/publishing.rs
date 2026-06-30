@@ -1,5 +1,6 @@
 use super::*;
 use crate::core::protocol::PROTOCOL_RECONNECT_CHECK_SECS;
+use nostr::JsonUtil;
 
 const PENDING_RELAY_DRAIN_CONCURRENCY: usize = 4;
 const PENDING_RELAY_DRAIN_BATCH_SIZE: usize = 16;
@@ -100,6 +101,93 @@ impl AppCore {
         let owner_keys = owner_keys.clone();
         let owner_pubkey = logged_in.owner_pubkey;
         let local_device_pubkey = logged_in.device_keys.public_key();
+        let events = self.build_nostr_identity_add_app_key_events(
+            &owner_keys,
+            owner_pubkey,
+            local_device_pubkey,
+            device_pubkey,
+            force_bootstrap,
+        )?;
+        self.publish_nostr_identity_roster_events(&events)?;
+        Ok(())
+    }
+
+    pub(super) fn publish_nostr_identity_device_approval_request(
+        &mut self,
+        request: nostr_identity::NostrIdentityDeviceApprovalRequest,
+    ) -> anyhow::Result<()> {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return Ok(());
+        };
+        let Some(owner_keys) = logged_in.owner_keys.as_ref() else {
+            return Ok(());
+        };
+        let owner_keys = owner_keys.clone();
+        let owner_pubkey = logged_in.owner_pubkey;
+        let owner_pubkey_hex = owner_pubkey.to_hex();
+        let profile_id = nostr_identity_profile_id_for_owner(owner_pubkey);
+        if request
+            .profile_id
+            .is_some_and(|request_profile_id| request_profile_id != profile_id)
+        {
+            anyhow::bail!("This code is for a different profile.");
+        }
+        if request
+            .admin_app_key_pubkey
+            .as_ref()
+            .is_some_and(|admin| admin != &owner_pubkey_hex)
+        {
+            anyhow::bail!("This code is for a different profile.");
+        }
+
+        let device_pubkey = PublicKey::parse(&request.device_app_key_pubkey)
+            .map_err(|error| anyhow::anyhow!("Invalid device key: {error}"))?;
+        let local_device_pubkey = logged_in.device_keys.public_key();
+        let events = self.build_nostr_identity_add_app_key_events(
+            &owner_keys,
+            owner_pubkey,
+            local_device_pubkey,
+            device_pubkey,
+            false,
+        )?;
+        let approval_event = events
+            .last()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No device approval event was created."))?;
+        let approval_op = nostr_identity::parse_nostr_identity_roster_op_event(&approval_event)
+            .map_err(|error| anyhow::anyhow!(error))?;
+
+        self.publish_nostr_identity_roster_events(&events)?;
+
+        let receipt = nostr_identity::NostrIdentityDeviceApprovalReceipt {
+            schema: nostr_identity::NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
+            profile_id,
+            request_pubkey: request.request_pubkey,
+            device_app_key_pubkey: request.device_app_key_pubkey,
+            approved_by_pubkey: owner_pubkey_hex.clone(),
+            approved_at: approval_op.content.created_at,
+            request_secret: request.request_secret,
+            subject_pubkey: Some(owner_pubkey_hex),
+            roster_op_id: Some(approval_op.op_id),
+            signed_roster_event: Some(approval_event.as_json()),
+        };
+        let receipt_event = nostr_identity::build_nostr_identity_device_approval_receipt_event(
+            &owner_keys,
+            receipt,
+        )
+        .map_err(|error| anyhow::anyhow!(error))?;
+        self.publish_runtime_event(receipt_event, "nostr-identity-approval-receipt", None);
+        Ok(())
+    }
+
+    fn build_nostr_identity_add_app_key_events(
+        &self,
+        owner_keys: &Keys,
+        owner_pubkey: PublicKey,
+        local_device_pubkey: PublicKey,
+        device_pubkey: PublicKey,
+        force_bootstrap: bool,
+    ) -> anyhow::Result<Vec<Event>> {
         let Some(protocol_engine) = self.protocol_engine.as_ref() else {
             anyhow::bail!("Protocol engine is not ready.");
         };
@@ -118,7 +206,7 @@ impl AppCore {
         let mut events = Vec::new();
         if force_bootstrap || !has_nostr_identity_history {
             events.push(build_nostr_identity_owner_admin_event(
-                &owner_keys,
+                owner_keys,
                 owner_pubkey,
                 parent_ids.clone(),
                 event_created_at,
@@ -141,7 +229,7 @@ impl AppCore {
                 .unwrap_or(event_created_at);
             if event_devices.insert(local_device_pubkey.to_hex()) {
                 events.push(build_nostr_identity_add_app_key_event(
-                    &owner_keys,
+                    owner_keys,
                     owner_pubkey,
                     local_device_pubkey,
                     parent_ids.clone(),
@@ -155,7 +243,7 @@ impl AppCore {
             for (existing_device_pubkey, device_created_at) in compatibility_devices {
                 if event_devices.insert(existing_device_pubkey.to_hex()) {
                     events.push(build_nostr_identity_add_app_key_event(
-                        &owner_keys,
+                        owner_keys,
                         owner_pubkey,
                         existing_device_pubkey,
                         parent_ids.clone(),
@@ -170,7 +258,7 @@ impl AppCore {
         }
         if event_devices.insert(device_pubkey.to_hex()) {
             events.push(build_nostr_identity_add_app_key_event(
-                &owner_keys,
+                owner_keys,
                 owner_pubkey,
                 device_pubkey,
                 parent_ids,
@@ -179,6 +267,10 @@ impl AppCore {
                 device_pubkey == local_device_pubkey,
             )?);
         }
+        Ok(events)
+    }
+
+    fn publish_nostr_identity_roster_events(&mut self, events: &[Event]) -> anyhow::Result<()> {
         for event in events {
             self.publish_runtime_event(event.clone(), NOSTR_IDENTITY_ROSTER_PUBLISH_LABEL, None);
             self.apply_nostr_identity_roster_op_event(&event)?;

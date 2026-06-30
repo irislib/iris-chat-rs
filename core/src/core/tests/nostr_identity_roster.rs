@@ -123,6 +123,73 @@ fn owner_device_publishes_nostr_identity_roster_op_for_manual_device_npub() {
 }
 
 #[test]
+fn owner_device_accepts_ownerless_nostr_identity_approval_request_and_publishes_receipt() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let linked_device = Keys::generate();
+    let request_keys = Keys::generate();
+    let owner_hex = owner.public_key().to_hex();
+    let linked_device_hex = linked_device.public_key().to_hex();
+    let request_url = format!(
+        "nostr-identity://device-approval/{}.{}",
+        linked_device_hex,
+        request_keys.secret_key().to_secret_hex()
+    );
+
+    let mut core = logged_in_test_core("ownerless-nostr-identity-approval", &owner, &device);
+    core.upsert_local_app_key_device(owner.public_key(), device.public_key());
+    core.sync_local_app_keys_to_protocol_engine("test_seed_appkeys");
+    core.pending_relay_publishes.clear();
+
+    core.handle_action(AppAction::AddAuthorizedDevice {
+        device_input: request_url,
+    });
+
+    assert_eq!(core.state.toast, None);
+    let pending_events = pending_events_with_kind(&core, NOSTR_IDENTITY_ROSTER_OP_KIND);
+    let approval_event = pending_events
+        .iter()
+        .find(|event| {
+            is_nostr_identity_roster_op_event(event)
+                && event_has_tag_value(event, "key_pubkey", &linked_device_hex)
+        })
+        .expect("owner approval publishes a roster op for the linked device");
+    let approval_op = nostr_identity::parse_nostr_identity_roster_op_event(approval_event)
+        .expect("parse approval roster op");
+    assert_eq!(approval_op.content.actor_pubkey, owner_hex);
+    match &approval_op.content.op {
+        nostr_identity::NostrIdentityRosterOp::AddFacet { facet } => {
+            assert_eq!(facet.pubkey, linked_device_hex);
+        }
+        _ => panic!("approval roster op should add the linked device"),
+    }
+
+    let receipt_event = pending_events
+        .iter()
+        .find(|event| {
+            event_has_tag_value(
+                event,
+                "type",
+                nostr_identity::NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE,
+            )
+        })
+        .expect("owner approval publishes an encrypted receipt for the requester");
+    assert_eq!(receipt_event.pubkey, owner.public_key());
+    let receipt = nostr_identity::parse_nostr_identity_device_approval_receipt_event(
+        receipt_event,
+        &request_keys,
+    )
+    .expect("linked device can decrypt approval receipt");
+    assert_eq!(receipt.request_pubkey, request_keys.public_key().to_hex());
+    assert_eq!(receipt.device_app_key_pubkey, linked_device_hex);
+    assert_eq!(receipt.subject_pubkey.as_deref(), Some(owner_hex.as_str()));
+    let receipt_roster_op =
+        nostr_identity::parse_nostr_identity_device_approval_receipt_roster_op(&receipt)
+            .expect("receipt carries signed roster approval");
+    assert_eq!(receipt_roster_op.op_id, approval_op.op_id);
+}
+
+#[test]
 fn create_account_bootstraps_nostr_identity_roster_ops() {
     let mut core = AppCore::new(
         flume::unbounded().0,

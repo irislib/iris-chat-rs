@@ -167,42 +167,25 @@ public partial class DeviceRosterView : UserControl
         var trimmed = rawInput?.Trim();
         if (string.IsNullOrEmpty(trimmed) || roster == null) return null;
 
-        if (TryDecodeDeviceApprovalQr(trimmed, out var ownerInput, out var deviceInput))
+        var approvalPayload = Native.DecodeDeviceApprovalQr(trimmed);
+        if (approvalPayload is not null)
         {
-            var normalizedOwner = Native.NormalizePeerInput(ownerInput);
+            var normalizedOwner = Native.NormalizePeerInput(approvalPayload.ownerInput);
             var ownerNpub = Native.NormalizePeerInput(roster.ownerNpub);
             var ownerHex = Native.NormalizePeerInput(roster.ownerPublicKeyHex);
-            if (normalizedOwner != ownerNpub && normalizedOwner != ownerHex) return null;
+            if (!string.IsNullOrWhiteSpace(normalizedOwner) &&
+                normalizedOwner != ownerNpub &&
+                normalizedOwner != ownerHex) return null;
 
-            var normalizedDevice = Native.NormalizePeerInput(deviceInput);
-            return Native.IsValidPeerInput(normalizedDevice) ? normalizedDevice : null;
+            var normalizedDevice = Native.NormalizePeerInput(approvalPayload.deviceInput);
+            if (!Native.IsValidPeerInput(normalizedDevice)) return null;
+            return string.IsNullOrWhiteSpace(normalizedOwner) ? trimmed : normalizedDevice;
         }
 
         if (IsLikelyLinkInvite(trimmed)) return trimmed;
 
         var normalizedManualDevice = Native.NormalizePeerInput(trimmed);
         return Native.IsValidPeerInput(normalizedManualDevice) ? normalizedManualDevice : null;
-    }
-
-    private static bool TryDecodeDeviceApprovalQr(string input, out string ownerInput, out string deviceInput)
-    {
-        ownerInput = "";
-        deviceInput = "";
-        if (!Uri.TryCreate(input, UriKind.Absolute, out var uri)) return false;
-        if (!uri.Scheme.Equals("ndrdemo", StringComparison.OrdinalIgnoreCase)) return false;
-        if (!string.Equals(uri.Host, "device-link", StringComparison.OrdinalIgnoreCase)) return false;
-
-        var query = uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries);
-        foreach (var part in query)
-        {
-            var pieces = part.Split('=', 2);
-            if (pieces.Length != 2) continue;
-            var key = UriUnescape(pieces[0]).ToLowerInvariant();
-            var value = UriUnescape(pieces[1]).Trim();
-            if (key == "owner") ownerInput = value;
-            if (key == "device") deviceInput = value;
-        }
-        return !string.IsNullOrEmpty(ownerInput) && !string.IsNullOrEmpty(deviceInput);
     }
 
     private static bool IsLikelyLinkInvite(string input)

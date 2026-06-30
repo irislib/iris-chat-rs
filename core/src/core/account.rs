@@ -354,6 +354,24 @@ impl AppCore {
         }
 
         let owner_pubkey = logged_in.owner_pubkey;
+        if let Some(request) =
+            crate::qr::parse_compact_nostr_identity_device_approval_request(device_input.trim())
+        {
+            self.state.busy.updating_roster = true;
+            self.emit_state();
+
+            let result = self.publish_nostr_identity_device_approval_request(request);
+            if let Err(error) = result {
+                self.state.toast = Some(error.to_string());
+            }
+
+            self.state.busy.updating_roster = false;
+            self.rebuild_state();
+            self.persist_best_effort();
+            self.emit_state();
+            return;
+        }
+
         if let Ok(invite) = parse_link_device_invite_input(device_input, owner_pubkey) {
             self.state.busy.updating_roster = true;
             self.emit_state();

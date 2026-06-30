@@ -118,6 +118,7 @@ pub(crate) use model::ProtocolSubscriptionPlan;
 use model::*;
 use nostr_identity_adapter::{
     build_nostr_identity_add_app_key_event, build_nostr_identity_owner_admin_event,
+    nostr_identity_profile_id_for_owner,
 };
 use payloads::*;
 use profile_helpers::*;

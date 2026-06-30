@@ -130,12 +130,18 @@ fn resolve_device_authorization_input(
             normalize_peer_input(roster.owner_npub.clone()),
             normalize_peer_input(roster.owner_public_key_hex.clone()),
         ];
-        if !owner_inputs.contains(&normalized_owner) {
+        if !normalized_owner.is_empty() && !owner_inputs.contains(&normalized_owner) {
             return None;
         }
 
         let normalized_device = normalize_peer_input(payload.device_input);
-        return is_valid_peer_input(normalized_device.clone()).then_some(normalized_device);
+        if !is_valid_peer_input(normalized_device.clone()) {
+            return None;
+        }
+        if normalized_owner.is_empty() {
+            return Some(trimmed.to_string());
+        }
+        return Some(normalized_device);
     }
 
     if is_likely_link_invite(trimmed) {

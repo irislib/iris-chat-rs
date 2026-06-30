@@ -77,7 +77,9 @@ pub(super) fn build_nostr_identity_owner_admin_event(
     .map_err(|error| anyhow::anyhow!(error))
 }
 
-fn nostr_identity_profile_id_for_owner(owner_pubkey: PublicKey) -> nostr_identity::NostrIdentityId {
+pub(super) fn nostr_identity_profile_id_for_owner(
+    owner_pubkey: PublicKey,
+) -> nostr_identity::NostrIdentityId {
     let mut hasher = Sha256::new();
     hasher.update(b"iris-chat:nostr-identity-profile:");
     hasher.update(owner_pubkey.to_hex().as_bytes());

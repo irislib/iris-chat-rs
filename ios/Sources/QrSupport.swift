@@ -44,7 +44,7 @@ func resolveDeviceAuthorizationInput(
             normalizePeerInput(input: ownerNpub),
             normalizePeerInput(input: ownerPublicKeyHex),
         ])
-        if !acceptedOwnerInputs.contains(normalizedOwner) {
+        if !normalizedOwner.isEmpty && !acceptedOwnerInputs.contains(normalizedOwner) {
             return ResolvedDeviceAuthorizationInput(
                 deviceInput: "",
                 errorMessage: "This code is for a different profile."
@@ -57,6 +57,9 @@ func resolveDeviceAuthorizationInput(
                 deviceInput: "",
                 errorMessage: "That code is not valid."
             )
+        }
+        if normalizedOwner.isEmpty {
+            return ResolvedDeviceAuthorizationInput(deviceInput: trimmed, errorMessage: nil)
         }
         return ResolvedDeviceAuthorizationInput(deviceInput: normalizedDevice, errorMessage: nil)
     }

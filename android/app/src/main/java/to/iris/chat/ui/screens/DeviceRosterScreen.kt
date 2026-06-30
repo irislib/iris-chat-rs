@@ -508,7 +508,7 @@ private fun resolveDeviceAuthorizationInput(
                 normalizePeerInput(ownerNpub),
                 normalizePeerInput(ownerPublicKeyHex),
             )
-        if (normalizedOwner !in acceptedOwnerInputs) {
+        if (normalizedOwner.isNotBlank() && normalizedOwner !in acceptedOwnerInputs) {
             return ResolvedDeviceAuthorizationInput(
                 deviceInput = "",
                 errorMessage = "This code is for a different profile.",
@@ -521,6 +521,9 @@ private fun resolveDeviceAuthorizationInput(
                 deviceInput = "",
                 errorMessage = "That code is not valid.",
             )
+        }
+        if (normalizedOwner.isBlank()) {
+            return ResolvedDeviceAuthorizationInput(deviceInput = trimmed, errorMessage = null)
         }
         return ResolvedDeviceAuthorizationInput(deviceInput = normalizedDevice, errorMessage = null)
     }
