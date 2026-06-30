@@ -741,11 +741,15 @@ mod tests {
     use super::*;
 
     fn manager(keys: &Keys) -> Arc<SessionManagerHandle> {
+        manager_with_owner(keys, keys.public_key())
+    }
+
+    fn manager_with_owner(keys: &Keys, owner_pubkey: PublicKey) -> Arc<SessionManagerHandle> {
         SessionManagerHandle::new(
             keys.public_key().to_hex(),
             keys.secret_key().to_secret_hex(),
             keys.public_key().to_hex(),
-            None,
+            Some(owner_pubkey.to_hex()),
         )
         .expect("manager")
     }
@@ -840,125 +844,77 @@ mod tests {
     }
 
     #[test]
-    fn processing_device_roster_fact_after_bootstrap_retries_queued_direct_send() {
+    fn processing_nostr_identity_roster_facts_tracks_peer_owner() {
         let alice_keys = Keys::generate();
-        let bob_keys = Keys::generate();
+        let bob_owner_keys = Keys::generate();
+        let bob_device_keys = Keys::generate();
         let alice = manager(&alice_keys);
-        let bob = manager(&bob_keys);
 
         alice.init().expect("alice init");
-        bob.init().expect("bob init");
-
-        let alice_invite = invite_events(alice.drain_events().expect("alice startup drain"))
-            .first()
-            .expect("alice invite")
-            .clone();
-        let _ = bob.drain_events().expect("bob startup drain");
+        let _ = alice.drain_events().expect("alice startup drain");
         let roster_created_at = now_secs().saturating_add(1);
-        let bob_roster_fact = nostr_identity_roster_event_for_test(
-            &bob_keys,
-            vec![
-                roster_tag_values(["op", "add_key"]),
-                roster_tag_values(["key_pubkey", bob_keys.public_key().to_hex().as_str()]),
-                roster_tag_values(["key_purpose", "app"]),
-                roster_tag_values(["key_capability", "admin"]),
-                roster_tag_values(["key_capability", "write"]),
-                roster_tag_values(["key_added_at", roster_created_at.to_string().as_str()]),
-            ],
+        let bob_roster_bootstrap = nostr_identity_roster_event_for_test(
+            &bob_owner_keys,
+            bob_owner_keys.public_key(),
             roster_created_at,
+            true,
+            Vec::new(),
+        );
+        let bob_roster_device = nostr_identity_roster_event_for_test(
+            &bob_owner_keys,
+            bob_device_keys.public_key(),
+            roster_created_at.saturating_add(1),
+            false,
+            vec![bob_roster_bootstrap.id.to_hex()],
         );
 
-        bob.accept_invite_from_event_json(alice_invite, None)
-            .expect("bob accepts alice invite");
-        let bob_accept_events = bob.drain_events().expect("bob accept drain");
-        let bob_response = publish_events(bob_accept_events.clone(), INVITE_RESPONSE_KIND)
-            .first()
-            .expect("bob invite response")
-            .clone();
-        let bob_bootstrap = publish_events(bob_accept_events, MESSAGE_EVENT_KIND)
-            .first()
-            .expect("bob bootstrap")
-            .clone();
-        let bob_bootstrap_id = serde_json::from_str::<Event>(&bob_bootstrap)
-            .expect("bootstrap event")
-            .id
-            .to_string();
-
-        alice
-            .process_event(bob_response)
-            .expect("alice processes invite response");
-        assert!(alice
-            .get_active_session_state(bob_keys.public_key().to_hex())
-            .expect("alice state")
-            .is_some());
-
-        alice
-            .send_text(
-                bob_keys.public_key().to_hex(),
-                "queued before bootstrap".to_string(),
-                None,
-            )
-            .expect("queued send");
-        let queued_send_events = alice.drain_events().expect("alice queued send drain");
-        assert!(publish_events(queued_send_events, MESSAGE_EVENT_KIND).is_empty());
-
-        alice
-            .process_event(bob_bootstrap)
-            .expect("alice processes bob bootstrap");
-        let after_bootstrap = alice.drain_events().expect("alice bootstrap drain");
-        assert!(
-            publish_events(after_bootstrap.clone(), MESSAGE_EVENT_KIND).is_empty(),
-            "queued direct send should wait for the recipient device roster"
-        );
-        let bootstrap_delivery_count = after_bootstrap
-            .iter()
-            .filter(|event| {
-                event.kind == "decrypted_message"
-                    && event.event_id.as_deref() == Some(bob_bootstrap_id.as_str())
-            })
-            .count();
-        assert_eq!(bootstrap_delivery_count, 1);
-
-        alice
-            .process_event(serde_json::to_string(&bob_roster_fact).expect("roster fact json"))
-            .expect("alice processes bob device roster");
+        for event in [bob_roster_bootstrap, bob_roster_device] {
+            alice
+                .process_event(serde_json::to_string(&event).expect("roster fact json"))
+                .expect("alice processes bob device roster");
+        }
         let after_roster = alice.drain_events().expect("alice roster drain");
+        assert!(publish_events(after_roster, MESSAGE_EVENT_KIND).is_empty());
         assert!(
-            !publish_events(after_roster, MESSAGE_EVENT_KIND).is_empty(),
-            "queued direct send should publish after recipient device roster processing"
+            alice
+                .known_peer_owner_pubkeys()
+                .contains(&bob_owner_keys.public_key().to_hex()),
+            "shared NostrIdentity roster ops should surface the peer owner"
         );
     }
 
     fn nostr_identity_roster_event_for_test(
         signer: &Keys,
-        facts: Vec<Vec<String>>,
+        device_pubkey: PublicKey,
         created_at: u64,
+        can_admin: bool,
+        parents: Vec<String>,
     ) -> Event {
         const PROFILE_ID: &str = "123e4567-e89b-42d3-a456-426614174000";
-        let created_at_string = created_at.to_string();
-        let signer_hex = signer.public_key().to_hex();
-        let nonce = format!("nonce-{created_at}");
-        let mut tags = vec![
-            nostr::Tag::parse(["i", PROFILE_ID, "subject"]).expect("profile tag"),
-            nostr::Tag::parse(["type", "nostr_identity_roster_op"]).expect("type tag"),
-            nostr::Tag::parse(["schema", "1"]).expect("schema tag"),
-            nostr::Tag::parse(["actor_pubkey", signer_hex.as_str()]).expect("actor tag"),
-            nostr::Tag::parse(["client_nonce", nonce.as_str()]).expect("nonce tag"),
-            nostr::Tag::parse(["created_at", created_at_string.as_str()]).expect("created_at tag"),
-        ];
-        for fact in facts {
-            let values = fact.iter().map(String::as_str).collect::<Vec<_>>();
-            tags.push(nostr::Tag::parse(values).expect("fact tag"));
-        }
-        nostr::EventBuilder::new(Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16), "")
-            .tags(tags)
-            .custom_created_at(nostr::Timestamp::from(created_at))
-            .sign_with_keys(signer)
-            .expect("signed roster event")
-    }
-
-    fn roster_tag_values<const N: usize>(values: [&str; N]) -> Vec<String> {
-        values.into_iter().map(ToString::to_string).collect()
+        let created_at = i64::try_from(created_at).expect("created_at fits i64");
+        let profile_id = PROFILE_ID
+            .parse::<nostr_identity::NostrIdentityId>()
+            .expect("test profile id");
+        let capabilities = if can_admin {
+            nostr_identity::NostrIdentityCapabilities::app_admin()
+        } else {
+            nostr_identity::NostrIdentityCapabilities::app_writer()
+        };
+        let facet = nostr_identity::NostrIdentityFacet::app_key(
+            device_pubkey.to_hex(),
+            created_at,
+            None,
+            capabilities,
+        );
+        nostr_identity::build_nostr_identity_roster_op_event(
+            signer,
+            profile_id,
+            parents,
+            None,
+            nostr_identity::NostrIdentityRosterOp::AddFacet { facet },
+            created_at,
+        )
+        .expect("signed roster event")
     }
 
     #[test]
