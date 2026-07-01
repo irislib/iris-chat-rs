@@ -417,8 +417,7 @@ fn link_create_outputs_device_invite() {
     let url = link["data"]["url"].as_str().unwrap();
     assert!(!url.contains("://"));
     assert!(!url.contains("chat.iris.to"));
-    assert_eq!(url.len(), 129);
-    assert_eq!(url.split('.').count(), 2);
+    assert_eq!(url.split('.').count(), 3);
     assert!(link["data"]["device_input"]
         .as_str()
         .unwrap()

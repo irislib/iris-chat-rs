@@ -437,7 +437,10 @@ private func makeLargeChatList(replacingFirstWith chat: ChatThreadSnapshot) -> [
     return rows
 }
 
-private func makeAccount() -> AccountSnapshot {
+private func makeAccount(
+    hasOwnerSigningAuthority: Bool = true,
+    authorizationState: DeviceAuthorizationState = .authorized
+) -> AccountSnapshot {
     AccountSnapshot(
         publicKeyHex: "owner",
         npub: "npub-owner",
@@ -446,8 +449,8 @@ private func makeAccount() -> AccountSnapshot {
         about: nil,
         devicePublicKeyHex: "device",
         deviceNpub: "npub-device",
-        hasOwnerSigningAuthority: true,
-        authorizationState: .authorized
+        hasOwnerSigningAuthority: hasOwnerSigningAuthority,
+        authorizationState: authorizationState
     )
 }
 
@@ -1709,6 +1712,47 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
+    func testRevokedCurrentDeviceSnapshotLogsOutAndClearsSecretStore() async {
+        let firstRust = MockRustApp(state: makeLargeFixtureState(rev: 1, account: makeAccount()))
+        let freshRust = MockRustApp(state: makeAppState(rev: 0))
+        let store = InMemorySecretStore(
+            bundle: StoredAccountBundle(
+                ownerNsec: nil,
+                ownerPubkeyHex: "owner",
+                deviceNsec: "nsec1device"
+            )
+        )
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let staleFile = tempDir.appendingPathComponent("revoked-stale.txt")
+        FileManager.default.createFile(atPath: staleFile.path, contents: Data("old".utf8))
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: firstRust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:],
+            rustFactory: { freshRust }
+        )
+
+        await Task.yield()
+        firstRust.emit(.fullState(makeLargeFixtureState(
+            rev: 2,
+            router: Router(defaultScreen: .deviceRevoked, screenStack: []),
+            account: makeAccount(hasOwnerSigningAuthority: false, authorizationState: .revoked)
+        )))
+        await Task.yield()
+
+        XCTAssertTrue(firstRust.dispatchedActions.contains(.logout))
+        XCTAssertEqual(firstRust.shutdownCallCount, 1)
+        XCTAssertNil(store.load())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staleFile.path))
+        XCTAssertEqual(manager.state.router.defaultScreen, .welcome)
+        XCTAssertEqual(manager.state.rev, 0)
+    }
+
+    @MainActor
     func testLogoutRebindsFreshRustCoreBeforeFutureRestore() async {
         let firstRust = MockRustApp(state: makeLargeFixtureState(rev: 7))
         firstRust.onDispatch = { action in
@@ -2357,7 +2401,7 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
-    func testDeviceAuthorizationScanDispatchesCompactCodeImmediately() async {
+    func testDeviceAuthorizationScanRequiresConfirmationBeforeDispatch() async {
         let ownerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
         let deviceHex = "0c6b948b76cb9cd85a1b085437aede072d92cb0968942ffb22b1dd384ab1e095"
         let ownerHex = normalizePeerInput(input: ownerNpub)
@@ -2388,7 +2432,8 @@ final class IrisChatTests: XCTestCase {
 
         XCTAssertNil(resolved.errorMessage)
         XCTAssertEqual(resolved.deviceInput, compactCode)
-        XCTAssertEqual(rust.dispatchedActions.last, .addAuthorizedDevice(deviceInput: compactCode))
+        XCTAssertTrue(resolved.requiresConfirmation)
+        XCTAssertTrue(rust.dispatchedActions.isEmpty)
     }
 
     @MainActor

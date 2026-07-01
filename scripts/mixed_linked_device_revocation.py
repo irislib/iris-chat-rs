@@ -263,14 +263,40 @@ def expect_send_rejected_to_bob(scenario: Scenario, message: str) -> dict[str, s
     )
 
 
+def report_device_roster(scenario: Scenario, device_id: str) -> dict[str, str]:
+    return harness(scenario, device_id, "report_device_roster_snapshot")
+
+
+def roster_device_hexes(roster: dict[str, str]) -> set[str]:
+    devices = roster.get("devices", "")
+    result: set[str] = set()
+    for row in devices.split("|"):
+        fields = [field.strip() for field in row.split(",")]
+        if fields and fields[0]:
+            result.add(fields[0].lower())
+    return result
+
+
+def require_roster_contains(roster: dict[str, str], device_hex: str, label: str) -> None:
+    if device_hex.lower() not in roster_device_hexes(roster):
+        raise AssertionError(
+            f"{label}: expected roster to contain device {device_hex}; got {roster.get('devices', '')}"
+        )
+
+
+def require_roster_omits(roster: dict[str, str], device_hex: str, label: str) -> None:
+    if device_hex.lower() in roster_device_hexes(roster):
+        raise AssertionError(
+            f"{label}: expected roster to omit device {device_hex}; got {roster.get('devices', '')}"
+        )
+
+
 def revoke_linked_device(scenario: Scenario) -> dict[str, str]:
     return harness(
         scenario,
         "alice1",
         "remove_authorized_device_from_args",
         device_input=scenario.state["devices"]["alice2"]["device_hex"],
-        wait_for_relay_drain="true",
-        relay_drain_timeout_secs="240",
     )
 
 
@@ -329,7 +355,21 @@ def run_flow(scenario: Scenario, artifact_dir: Path, relay_mode: str) -> dict[st
         ).get("matching_count", ""),
     }
 
+    owner_roster_before_revoke = report_device_roster(scenario, "alice1")
+    require_roster_contains(
+        owner_roster_before_revoke,
+        alice_linked["device_hex"],
+        "owner roster before revoke",
+    )
     revoke = revoke_linked_device(scenario)
+    if revoke.get("device_removed") != "true":
+        raise AssertionError(f"owner revoke did not remove linked device from roster: {revoke}")
+    owner_roster_after_revoke = report_device_roster(scenario, "alice1")
+    require_roster_omits(
+        owner_roster_after_revoke,
+        alice_linked["device_hex"],
+        "owner roster after revoke",
+    )
     revoked = wait_revoked(scenario)
 
     rejected_message = f"mixed-revoke-linked-after-{flow_stamp}"
@@ -369,7 +409,9 @@ def run_flow(scenario: Scenario, artifact_dir: Path, relay_mode: str) -> dict[st
         "reply_counts": reply_counts,
         "linked_message": linked_message,
         "linked_counts": linked_counts,
+        "owner_roster_before_revoke": owner_roster_before_revoke,
         "revoke": revoke,
+        "owner_roster_after_revoke": owner_roster_after_revoke,
         "revoked": revoked,
         "rejected_message": rejected_message,
         "rejected": rejected,

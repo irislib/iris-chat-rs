@@ -204,6 +204,8 @@ class PikaLikeUiTest {
                 compactDeviceApprovalCode()
         }
         composeRule.onNodeWithTag("deviceRosterScanButton", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("deviceRosterConfirmAdd")
+        composeRule.onNodeWithTag("deviceRosterConfirmAdd", useUnmergedTree = true).performClick()
         composeRule.waitUntil(20_000) {
             val roster =
                 (composeRule.activity.application as IrisChatApp)

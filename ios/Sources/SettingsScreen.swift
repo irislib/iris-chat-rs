@@ -74,8 +74,8 @@ struct SettingsScreen: View {
         }
         .sheet(isPresented: $showingDeviceRosterScanner) {
             QrScannerSheet { code in
-                let resolved = submitDeviceAuthorizationScan(code, manager: manager)
-                deviceRosterInput = resolved.errorMessage == nil ? "" : code
+                _ = submitDeviceAuthorizationScan(code, manager: manager)
+                deviceRosterInput = code
                 showingDeviceRosterScanner = false
             }
             .irisModalSurface()

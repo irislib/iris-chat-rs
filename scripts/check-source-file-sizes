@@ -28,8 +28,8 @@ cd "$ROOT_DIR"
 baseline_limit_for() {
   case "$1" in
     android/app/src/androidTest/java/to/iris/chat/RealRelayHarnessTest.kt) echo 2697 ;;
-    android/app/src/androidTest/java/to/iris/chat/core/AppManagerContractTest.kt) echo 1109 ;;
-    android/app/src/main/java/to/iris/chat/core/AppManager.kt) echo 2065 ;;
+    android/app/src/androidTest/java/to/iris/chat/core/AppManagerContractTest.kt) echo 1158 ;;
+    android/app/src/main/java/to/iris/chat/core/AppManager.kt) echo 2080 ;;
     android/app/src/main/java/to/iris/chat/nearby/IrisNearbyService.kt) echo 2416 ;;
     android/app/src/main/java/to/iris/chat/ui/components/IrisChrome.kt) echo 1057 ;;
     android/app/src/main/java/to/iris/chat/ui/navigation/NdrApp.kt) echo 1219 ;;
@@ -42,10 +42,10 @@ baseline_limit_for() {
     core/src/core/account.rs) echo 1223 ;;
     core/src/core/chats.rs) echo 1898 ;;
     core/src/core/mobile_push.rs) echo 1526 ;;
-    core/src/core/projection.rs) echo 1052 ;;
+    core/src/core/projection.rs) echo 1053 ;;
     core/src/core/protocol.rs) echo 1918 ;;
     core/src/core/storage/store.rs) echo 2765 ;;
-    core/src/core/tests/app_keys_invites_requests.rs) echo 2404 ;;
+    core/src/core/tests/app_keys_invites_requests.rs) echo 2536 ;;
     core/src/core/tests/direct_messages_typing.rs) echo 2347 ;;
     core/src/core/tests/groups_persistence_more.rs) echo 1006 ;;
     core/src/core/tests/groups_sender_key.rs) echo 2190 ;;
@@ -57,13 +57,13 @@ baseline_limit_for() {
     ios/Sources/ChatViews.swift) echo 1214 ;;
     ios/Sources/IrisNearbyService.swift) echo 2559 ;;
     ios/Tests/InteropHarnessTests.swift) echo 2178 ;;
-    ios/Tests/IrisChatTests.swift) echo 2446 ;;
+    ios/Tests/IrisChatTests.swift) echo 2477 ;;
     ios/UITests/IrisChatUITests.swift) echo 1180 ;;
     linux/src/screens/chat.rs) echo 2846 ;;
     macos/Sources/MacBitchatNearbyService.swift) echo 1152 ;;
     scripts/protocol_fault_validation.py) echo 1342 ;;
     scripts/release) echo 1293 ;;
-    windows/IrisChat/AppManager.cs) echo 1463 ;;
+    windows/IrisChat/AppManager.cs) echo 1489 ;;
     *) echo "$MAX_LINES" ;;
   esac
 }

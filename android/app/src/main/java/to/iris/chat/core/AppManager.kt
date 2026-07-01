@@ -52,6 +52,7 @@ import to.iris.chat.rust.BusyState
 import to.iris.chat.rust.ChatMessageSnapshot
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.CurrentChatSnapshot
+import to.iris.chat.rust.DeviceAuthorizationState
 import to.iris.chat.rust.DeviceRosterSnapshot
 import to.iris.chat.rust.GroupDetailsSnapshot
 import to.iris.chat.rust.NetworkStatusSnapshot
@@ -373,6 +374,7 @@ class AppManager(
     private var cachedAccountBundle: StoredAccountBundle? = null
     private var lastMobilePushSyncInput: AndroidMobilePushSyncInput? = null
     private var lastSyncedDeviceLabelsKey: String? = null
+    private var automaticRevocationLogoutInFlight = false
     private var pendingNavigationOverride: PendingNavigationOverride? = null
     private val olderChatPageLoads = Collections.synchronizedSet(mutableSetOf<String>())
     private val exhaustedOlderChatPages = Collections.synchronizedSet(mutableSetOf<String>())
@@ -448,8 +450,10 @@ class AppManager(
         IrisDebugLog.enabled = initial.preferences.debugLoggingEnabled
         IrisDebugLog.d(TAG, "init rev=${initial.rev} defaultScreen=${initial.router.defaultScreen}")
         publishState(initial)
-        applicationScope.launch(ioDispatcher) {
-            restoreSessionFromSecureStore()
+        if (!automaticRevocationLogoutInFlight) {
+            applicationScope.launch(ioDispatcher) {
+                restoreSessionFromSecureStore()
+            }
         }
     }
 
@@ -1176,6 +1180,7 @@ class AppManager(
         }
 
     fun logout() {
+        automaticRevocationLogoutInFlight = true
         applicationScope.launch(ioDispatcher) {
             // Logout is owned by Rust. The shell clears native secrets and then swaps in a fresh core
             // instead of fabricating a shell-authored logged-out snapshot.
@@ -1186,6 +1191,7 @@ class AppManager(
                 persistedBundle?.ownerNsec,
             )
             if (!clearNativeSecretsBeforeReset()) {
+                automaticRevocationLogoutInFlight = false
                 return@launch
             }
             dispatchToRust(AppAction.Logout)
@@ -1773,6 +1779,7 @@ class AppManager(
         val initial = bindRust(createRustApp())
         restoreCheckComplete = true
         publishState(initial)
+        automaticRevocationLogoutInFlight = false
     }
 
     private fun wipeAppStorage() {
@@ -1905,6 +1912,14 @@ class AppManager(
     private fun publishState(snapshot: AppState) {
         IrisDebugLog.enabled = snapshot.preferences.debugLoggingEnabled
         mutableState.value = snapshot
+        if (
+            snapshot.account?.authorizationState == DeviceAuthorizationState.REVOKED &&
+            !automaticRevocationLogoutInFlight
+        ) {
+            automaticRevocationLogoutInFlight = true
+            logout()
+            return
+        }
         syncCurrentDeviceLabelsIfNeeded(snapshot)
         if (!restoreCheckComplete) {
             mutableBootstrapState.value = AccountBootstrapState.Loading

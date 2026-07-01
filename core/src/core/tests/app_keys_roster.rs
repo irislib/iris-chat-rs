@@ -15,7 +15,7 @@ fn owner_device_publishes_app_keys_snapshot_for_manual_device_npub() {
             .expect("device npub"),
     });
 
-    assert_eq!(core.state.toast, None);
+    assert_eq!(core.state.toast.as_deref(), Some("Device added"));
     let app_keys_events = pending_events_with_kind(&core, APP_KEYS_EVENT_KIND);
     assert_eq!(
         app_keys_events.len(),
@@ -53,11 +53,14 @@ fn owner_device_accepts_compact_link_request_and_publishes_app_keys_snapshot() {
     let linked_device = Keys::generate();
     let request_keys = Keys::generate();
     let linked_device_hex = linked_device.public_key().to_hex();
-    let request_url = format!(
-        "{}.{}",
-        linked_device_hex,
-        request_keys.secret_key().to_secret_hex()
-    );
+    let request_url = encode_compact_device_link_request(
+        linked_device.public_key(),
+        &request_keys.secret_key().to_secret_hex(),
+        Some("Safari on macOS"),
+        Some("Iris Chat Web"),
+        Some(41),
+    )
+    .expect("compact request");
 
     let mut core = logged_in_test_core("owner-compact-appkeys-approval", &owner, &device);
     core.upsert_local_app_key_device(owner.public_key(), device.public_key());
@@ -68,7 +71,7 @@ fn owner_device_accepts_compact_link_request_and_publishes_app_keys_snapshot() {
         device_input: request_url,
     });
 
-    assert_eq!(core.state.toast, None);
+    assert_eq!(core.state.toast.as_deref(), Some("Device added"));
     let app_keys_events = pending_events_with_kind(&core, APP_KEYS_EVENT_KIND);
     assert_eq!(
         app_keys_events.len(),
@@ -93,6 +96,13 @@ fn owner_device_accepts_compact_link_request_and_publishes_app_keys_snapshot() {
         .devices
         .iter()
         .any(|device| device.identity_pubkey_hex == linked_device_hex));
+    let linked = known
+        .devices
+        .iter()
+        .find(|device| device.identity_pubkey_hex == linked_device_hex)
+        .expect("linked device");
+    assert_eq!(linked.device_label.as_deref(), Some("Safari on macOS"));
+    assert_eq!(linked.client_label.as_deref(), Some("Iris Chat Web"));
 }
 
 #[test]

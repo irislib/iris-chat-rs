@@ -71,11 +71,15 @@ fn authorize_card(
     let roster_for_changed = roster.clone();
     let manager_for_changed = manager.clone();
     entry.connect_changed(move |row| {
+        let parent = row
+            .root()
+            .and_then(|root| root.downcast::<gtk::Window>().ok());
         if !busy
             && dispatch_authorized_device_input(
                 row.text().as_str(),
                 &roster_for_changed,
                 &manager_for_changed,
+                parent.as_ref(),
             )
         {
             row.set_text("");
@@ -85,7 +89,7 @@ fn authorize_card(
     let roster_for_scan = roster.clone();
     let manager_for_scan = manager.clone();
     let scan = scan_qr_button("Scan code", move |text| {
-        dispatch_authorized_device_input(&text, &roster_for_scan, &manager_for_scan);
+        dispatch_authorized_device_input(&text, &roster_for_scan, &manager_for_scan, None);
     });
     scan.add_css_class("suggested-action");
     scan.set_sensitive(!busy);
@@ -93,10 +97,14 @@ fn authorize_card(
     let manager_for_apply = manager.clone();
     let roster_for_apply = roster.clone();
     entry.connect_apply(move |row| {
+        let parent = row
+            .root()
+            .and_then(|root| root.downcast::<gtk::Window>().ok());
         if dispatch_authorized_device_input(
             row.text().as_str(),
             &roster_for_apply,
             &manager_for_apply,
+            parent.as_ref(),
         ) {
             row.set_text("");
         }
@@ -111,20 +119,33 @@ fn dispatch_authorized_device_input(
     raw_input: &str,
     roster: &DeviceRosterSnapshot,
     manager: &Rc<AppManager>,
+    parent: Option<&gtk::Window>,
 ) -> bool {
-    let Some(value) = resolve_device_authorization_input(raw_input, roster) else {
+    let Some(resolved) = resolve_device_authorization_input(raw_input, roster) else {
         return false;
     };
+    if resolved.requires_confirmation {
+        present_link_device_confirmation(parent, manager.clone(), resolved);
+        return true;
+    }
     manager.dispatch(AppAction::AddAuthorizedDevice {
-        device_input: value,
+        device_input: resolved.device_input,
     });
     true
+}
+
+#[derive(Clone)]
+struct ResolvedDeviceAuthorizationInput {
+    device_input: String,
+    requires_confirmation: bool,
+    device_label: Option<String>,
+    client_label: Option<String>,
 }
 
 fn resolve_device_authorization_input(
     raw_input: &str,
     roster: &DeviceRosterSnapshot,
-) -> Option<String> {
+) -> Option<ResolvedDeviceAuthorizationInput> {
     let trimmed = raw_input.trim();
     if trimmed.is_empty() {
         return None;
@@ -145,13 +166,112 @@ fn resolve_device_authorization_input(
             return None;
         }
         if normalized_owner.is_empty() {
-            return Some(trimmed.to_string());
+            return Some(ResolvedDeviceAuthorizationInput {
+                device_input: trimmed.to_string(),
+                requires_confirmation: true,
+                device_label: payload.device_label.clone(),
+                client_label: payload.client_label.clone(),
+            });
         }
-        return Some(normalized_device);
+        return Some(ResolvedDeviceAuthorizationInput {
+            device_input: normalized_device,
+            requires_confirmation: true,
+            device_label: payload.device_label.clone(),
+            client_label: payload.client_label.clone(),
+        });
     }
 
     let normalized_device = normalize_peer_input(trimmed.to_string());
-    is_valid_peer_input(normalized_device.clone()).then_some(normalized_device)
+    is_valid_peer_input(normalized_device.clone()).then_some(ResolvedDeviceAuthorizationInput {
+        device_input: normalized_device,
+        requires_confirmation: false,
+        device_label: None,
+        client_label: None,
+    })
+}
+
+fn present_link_device_confirmation(
+    parent: Option<&gtk::Window>,
+    manager: Rc<AppManager>,
+    input: ResolvedDeviceAuthorizationInput,
+) {
+    let dialog = adw::Dialog::builder()
+        .title(link_device_confirmation_title(&input))
+        .content_width(340)
+        .build();
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    content.set_margin_top(24);
+    content.set_margin_bottom(20);
+    content.set_margin_start(20);
+    content.set_margin_end(20);
+
+    let title = gtk::Label::new(Some(&link_device_confirmation_title(&input)));
+    title.add_css_class("title-2");
+    title.set_halign(gtk::Align::Start);
+    content.append(&title);
+
+    let message = gtk::Label::new(Some(&link_device_confirmation_message(&input)));
+    message.set_wrap(true);
+    message.set_xalign(0.0);
+    message.add_css_class("dim-label");
+    content.append(&message);
+
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    buttons.set_halign(gtk::Align::End);
+
+    let cancel = gtk::Button::with_label("Cancel");
+    cancel.add_css_class("pill");
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| {
+            dialog.close();
+        });
+    }
+    buttons.append(&cancel);
+
+    let link = gtk::Button::with_label("Link device");
+    link.add_css_class("pill");
+    link.add_css_class("suggested-action");
+    {
+        let dialog = dialog.clone();
+        let device_input = input.device_input.clone();
+        link.connect_clicked(move |_| {
+            manager.dispatch(AppAction::AddAuthorizedDevice {
+                device_input: device_input.clone(),
+            });
+            dialog.close();
+        });
+    }
+    buttons.append(&link);
+
+    content.append(&buttons);
+    dialog.set_child(Some(&content));
+    dialog.present(parent);
+}
+
+fn link_device_confirmation_title(input: &ResolvedDeviceAuthorizationInput) -> String {
+    let name = link_device_confirmation_name(input);
+    if name == "this device" {
+        "Link this device?".to_string()
+    } else {
+        format!("Link {name}?")
+    }
+}
+
+fn link_device_confirmation_message(input: &ResolvedDeviceAuthorizationInput) -> String {
+    if let Some(client) = non_empty(input.client_label.as_deref()) {
+        format!("{client} will be able to use your profile.")
+    } else {
+        "This device will be able to use your profile.".to_string()
+    }
+}
+
+fn link_device_confirmation_name(input: &ResolvedDeviceAuthorizationInput) -> String {
+    non_empty(input.device_label.as_deref())
+        .or_else(|| non_empty(input.client_label.as_deref()))
+        .unwrap_or("this device")
+        .to_string()
 }
 
 fn devices_card(

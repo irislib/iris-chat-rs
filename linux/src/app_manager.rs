@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use iris_chat_core::{
     AppAction, AppReconciler, AppState, AppUpdate, ChatThreadSnapshot, DesktopNearbyObserver,
-    DesktopNearbySnapshot, FfiApp, FfiDesktopNearby, OutgoingAttachment, Router, Screen,
-    SearchResultSnapshot,
+    DesktopNearbySnapshot, DeviceAuthorizationState, FfiApp, FfiDesktopNearby, OutgoingAttachment,
+    Router, Screen, SearchResultSnapshot,
 };
 use serde::Serialize;
 
@@ -73,6 +73,7 @@ pub struct AppManager {
     window_active: Cell<bool>,
     last_user_activity: RefCell<Instant>,
     last_synced_device_labels_key: RefCell<Option<String>>,
+    automatic_revocation_logout_in_flight: Cell<bool>,
 }
 
 struct Reconciler {
@@ -147,7 +148,12 @@ impl AppManager {
             );
         }
 
-        let persisted_bundle = secret_store.load();
+        let initial_device_revoked = current_device_revoked(&initial_state);
+        let persisted_bundle = if initial_device_revoked {
+            None
+        } else {
+            secret_store.load()
+        };
         let mut persisted_restore_in_flight = persisted_bundle.is_some();
         if let Some(bundle) = persisted_bundle {
             persisted_restore_in_flight = catch_ffi("ffiapp.restore_account_bundle", false, || {
@@ -181,8 +187,11 @@ impl AppManager {
             window_active: Cell::new(false),
             last_user_activity: RefCell::new(Instant::now()),
             last_synced_device_labels_key: RefCell::new(None),
+            automatic_revocation_logout_in_flight: Cell::new(false),
         };
-        manager.sync_current_device_labels_if_needed(&manager.current_state());
+        if !manager.logout_if_current_device_revoked(&manager.current_state()) {
+            manager.sync_current_device_labels_if_needed(&manager.current_state());
+        }
         manager
     }
 
@@ -354,6 +363,12 @@ impl AppManager {
                 let reconciled = self.state_by_reconciling_pending_navigation(state);
                 self.last_rev_applied.set(rev);
                 *self.local_state.borrow_mut() = reconciled.clone();
+                if !current_device_revoked(&reconciled) {
+                    self.automatic_revocation_logout_in_flight.set(false);
+                }
+                if self.logout_if_current_device_revoked(&reconciled) {
+                    return Some(AppUpdate::FullState(reconciled));
+                }
                 self.settle_bootstrap_if_needed(&reconciled);
                 self.sync_current_device_labels_if_needed(&reconciled);
                 Some(AppUpdate::FullState(reconciled))
@@ -690,13 +705,23 @@ impl AppManager {
 
     #[allow(dead_code)]
     pub fn logout(&self) {
+        self.automatic_revocation_logout_in_flight.set(true);
         if !self.secret_store.clear() {
+            self.automatic_revocation_logout_in_flight.set(false);
             self.show_toast(SECRET_CLEAR_FAILURE_TOAST);
             return;
         }
         self.dispatch_to_rust(AppAction::Logout, false);
         let _ = std::fs::remove_dir_all(&self.data_dir);
         let _ = std::fs::create_dir_all(&self.data_dir);
+    }
+
+    fn logout_if_current_device_revoked(&self, state: &AppState) -> bool {
+        if !current_device_revoked(state) || self.automatic_revocation_logout_in_flight.get() {
+            return false;
+        }
+        self.logout();
+        true
     }
 
     fn start_nearby_safely(&self, show_toast_on_failure: bool) -> bool {
@@ -849,6 +874,13 @@ fn app_state_restart_required() -> AppState {
     let mut state = AppState::empty();
     state.toast = Some(RESTART_REQUIRED_TOAST.to_string());
     state
+}
+
+fn current_device_revoked(state: &AppState) -> bool {
+    state
+        .account
+        .as_ref()
+        .is_some_and(|account| account.authorization_state == DeviceAuthorizationState::Revoked)
 }
 
 fn empty_nearby_snapshot() -> DesktopNearbySnapshot {

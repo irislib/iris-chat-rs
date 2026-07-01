@@ -910,7 +910,7 @@ fn handle_invite_device_command(cli: &CliApp, command: InviteDeviceTopCommands) 
                 Duration::from_secs(4),
             )?;
             let state = cli.app.state();
-            fail_on_toast(&state)?;
+            fail_on_toast_except(&state, &["Device added"])?;
             Ok(json!({
                 "accepted": true,
                 "device_roster": state.device_roster.map(|roster| {
@@ -1780,7 +1780,14 @@ fn require_account(state: &AppState) -> Result<iris_chat_core::AccountSnapshot> 
 }
 
 fn fail_on_toast(state: &AppState) -> Result<()> {
+    fail_on_toast_except(state, &[])
+}
+
+fn fail_on_toast_except(state: &AppState, allowed: &[&str]) -> Result<()> {
     if let Some(toast) = &state.toast {
+        if allowed.iter().any(|allowed| toast == allowed) {
+            return Ok(());
+        }
         anyhow::bail!(toast.clone());
     }
     Ok(())

@@ -62,6 +62,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
     private DesktopNearbySnapshot _nearbySnapshot;
     private ulong _lastRevApplied;
     private bool _persistedRestoreInFlight;
+    private bool _automaticRevocationLogoutInFlight;
     private PendingNavigationOverride? _pendingNavigationOverride;
     private string? _lastSyncedDeviceLabelsKey;
 
@@ -81,10 +82,12 @@ public sealed partial class AppManager : INotifyPropertyChanged
         _nearbySnapshot = SafeNearbySnapshot();
 
         ListenForUpdatesSafely();
-        SyncCurrentDeviceLabels(_state);
-        SyncStartupAtLoginPreference();
-
-        TryRestorePersistedSession();
+        if (!LogoutIfCurrentDeviceRevoked(_state))
+        {
+            SyncCurrentDeviceLabels(_state);
+            SyncStartupAtLoginPreference();
+            TryRestorePersistedSession();
+        }
         StartDesktopUpdateChecks();
     }
 
@@ -282,8 +285,10 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
     public void Logout()
     {
+        _automaticRevocationLogoutInFlight = true;
         if (!_secretStore.Clear())
         {
+            _automaticRevocationLogoutInFlight = false;
             ShowToast("Could not clear secret key.");
             return;
         }
@@ -802,6 +807,15 @@ public sealed partial class AppManager : INotifyPropertyChanged
                 var next = StateByReconcilingPendingNavigation(f.v1);
                 _state = next;
                 _lastRevApplied = f.v1.rev;
+                if (next.account?.authorizationState != DeviceAuthorizationState.Revoked)
+                {
+                    _automaticRevocationLogoutInFlight = false;
+                }
+                if (LogoutIfCurrentDeviceRevoked(next))
+                {
+                    NotifyAll();
+                    break;
+                }
                 SettleBootstrapIfNeeded(next);
                 SyncCurrentDeviceLabels(next);
 
@@ -820,6 +834,18 @@ public sealed partial class AppManager : INotifyPropertyChanged
                 _ = Task.Run(() => PublishNearbySafely(nearby));
                 break;
         }
+    }
+
+    private bool LogoutIfCurrentDeviceRevoked(AppState next)
+    {
+        if (next.account?.authorizationState != DeviceAuthorizationState.Revoked ||
+            _automaticRevocationLogoutInFlight)
+        {
+            return false;
+        }
+
+        Logout();
+        return true;
     }
 
     private void SettleBootstrapIfNeeded(AppState next)

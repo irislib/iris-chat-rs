@@ -81,6 +81,9 @@ fun DeviceRosterContent(
     val clipboard = rememberIrisClipboard()
     var deviceInput by remember { mutableStateOf("") }
     var showScanner by remember { mutableStateOf(false) }
+    var pendingDeviceConfirmation by remember {
+        mutableStateOf<ResolvedDeviceAuthorizationInput?>(null)
+    }
     val resolvedInput =
         roster?.let {
             resolveDeviceAuthorizationInput(
@@ -112,13 +115,18 @@ fun DeviceRosterContent(
         roster.canManageDevices,
         appState.busy.updatingRoster,
     ) {
+        val resolved = resolvedInput ?: return@LaunchedEffect
         if (
             roster.canManageDevices &&
             normalizedInput.isNotBlank() &&
-            resolvedInput?.errorMessage == null &&
+            resolved.errorMessage == null &&
             !appState.busy.updatingRoster
         ) {
-            appManager.addAuthorizedDevice(normalizedInput)
+            if (resolved.requiresConfirmation) {
+                pendingDeviceConfirmation = resolved
+            } else {
+                appManager.addAuthorizedDevice(normalizedInput)
+            }
             deviceInput = ""
         }
     }
@@ -265,11 +273,40 @@ fun DeviceRosterContent(
                     )
                 if (resolved.errorMessage != null) {
                     resolved.errorMessage
+                } else if (resolved.requiresConfirmation) {
+                    pendingDeviceConfirmation = resolved
+                    deviceInput = ""
+                    showScanner = false
+                    null
                 } else {
                     appManager.addAuthorizedDevice(resolved.deviceInput)
                     deviceInput = ""
                     showScanner = false
                     null
+                }
+            },
+        )
+    }
+
+    pendingDeviceConfirmation?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { pendingDeviceConfirmation = null },
+            title = { Text(linkDeviceConfirmationTitle(pending)) },
+            text = { Text(linkDeviceConfirmationMessage(pending)) },
+            dismissButton = {
+                IrisTextButton(onClick = { pendingDeviceConfirmation = null }) {
+                    Text("Cancel")
+                }
+            },
+            confirmButton = {
+                IrisTextButton(
+                    onClick = {
+                        pendingDeviceConfirmation = null
+                        appManager.addAuthorizedDevice(pending.deviceInput)
+                    },
+                    modifier = Modifier.testTag("deviceRosterConfirmAdd"),
+                ) {
+                    Text("Link device")
                 }
             },
         )
@@ -487,6 +524,9 @@ private fun DeviceStateChip(
 private data class ResolvedDeviceAuthorizationInput(
     val deviceInput: String,
     val errorMessage: String?,
+    val requiresConfirmation: Boolean = false,
+    val deviceLabel: String? = null,
+    val clientLabel: String? = null,
 )
 
 private fun resolveDeviceAuthorizationInput(
@@ -522,9 +562,21 @@ private fun resolveDeviceAuthorizationInput(
             )
         }
         if (normalizedOwner.isBlank()) {
-            return ResolvedDeviceAuthorizationInput(deviceInput = trimmed, errorMessage = null)
+            return ResolvedDeviceAuthorizationInput(
+                deviceInput = trimmed,
+                errorMessage = null,
+                requiresConfirmation = true,
+                deviceLabel = approvalPayload.deviceLabel,
+                clientLabel = approvalPayload.clientLabel,
+            )
         }
-        return ResolvedDeviceAuthorizationInput(deviceInput = normalizedDevice, errorMessage = null)
+        return ResolvedDeviceAuthorizationInput(
+            deviceInput = normalizedDevice,
+            errorMessage = null,
+            requiresConfirmation = true,
+            deviceLabel = approvalPayload.deviceLabel,
+            clientLabel = approvalPayload.clientLabel,
+        )
     }
 
     val normalizedManualDevice = normalizePeerInput(trimmed)
@@ -540,3 +592,26 @@ private fun resolveDeviceAuthorizationInput(
         errorMessage = "Not a valid link code.",
     )
 }
+
+private fun linkDeviceConfirmationTitle(input: ResolvedDeviceAuthorizationInput): String {
+    val name = linkDeviceConfirmationName(input)
+    return if (name == "this device") {
+        "Link this device?"
+    } else {
+        "Link $name?"
+    }
+}
+
+private fun linkDeviceConfirmationMessage(input: ResolvedDeviceAuthorizationInput): String {
+    val client = input.clientLabel?.trim()?.takeIf { it.isNotEmpty() }
+    return if (client != null) {
+        "$client will be able to use your profile."
+    } else {
+        "This device will be able to use your profile."
+    }
+}
+
+private fun linkDeviceConfirmationName(input: ResolvedDeviceAuthorizationInput): String =
+    input.deviceLabel?.trim()?.takeIf { it.isNotEmpty() }
+        ?: input.clientLabel?.trim()?.takeIf { it.isNotEmpty() }
+        ?: "this device"

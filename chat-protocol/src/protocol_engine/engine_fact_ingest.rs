@@ -22,7 +22,7 @@ impl ProtocolEngine {
                 return Err(error);
             }
         };
-        let retry_batch = if applied {
+        let mut retry_batch = if applied {
             match self.retry_pending_protocol(NdrUnixSeconds(event.created_at.as_secs())) {
                 Ok(retry_batch) => retry_batch,
                 Err(error) => {
@@ -33,6 +33,23 @@ impl ProtocolEngine {
         } else {
             ProtocolRetryBatch::default()
         };
+        if applied {
+            match self.sync_group_to_local_siblings(&snapshot) {
+                Ok((effects, queued_targets)) => {
+                    retry_batch.group_result.effects.extend(effects);
+                    retry_batch
+                        .group_result
+                        .queued_targets
+                        .extend(queued_targets);
+                    retry_batch.group_result.queued_targets.sort();
+                    retry_batch.group_result.queued_targets.dedup();
+                }
+                Err(error) => {
+                    self.restore_checkpoint(checkpoint);
+                    return Err(error);
+                }
+            }
+        }
         if let Err(error) = self.persist() {
             self.restore_checkpoint(checkpoint);
             return Err(error);

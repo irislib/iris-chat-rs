@@ -17,6 +17,23 @@ extension InteropHarnessTests {
         status("authorization_state", String(describing: snapshot.authorizationState))
     }
 
+    func reportDeviceRoster(_ roster: DeviceRosterSnapshot) {
+        status("owner_npub", roster.ownerNpub)
+        status("current_device_npub", roster.currentDeviceNpub)
+        status("authorization_state", String(describing: roster.authorizationState))
+        status("can_manage_devices", String(roster.canManageDevices))
+        status("device_count", String(roster.devices.count))
+        status("devices", roster.devices.map { device in
+            [
+                device.devicePubkeyHex,
+                device.deviceNpub,
+                String(device.isCurrentDevice),
+                String(device.isAuthorized),
+                String(device.isStale),
+            ].joined(separator: ",")
+        }.joined(separator: "|"))
+    }
+
     func reportNearbySnapshot(manager: AppManager) {
         let peers = manager.nearbyIris.peers.map { peer in
             [

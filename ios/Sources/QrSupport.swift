@@ -26,6 +26,9 @@ private func normalizeDeviceApprovalQr(_ raw: String) -> String {
 struct ResolvedDeviceAuthorizationInput: Equatable {
     let deviceInput: String
     let errorMessage: String?
+    let requiresConfirmation: Bool
+    let deviceLabel: String?
+    let clientLabel: String?
 }
 
 func resolveDeviceAuthorizationInput(
@@ -35,7 +38,13 @@ func resolveDeviceAuthorizationInput(
 ) -> ResolvedDeviceAuthorizationInput {
     let trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty {
-        return ResolvedDeviceAuthorizationInput(deviceInput: "", errorMessage: nil)
+        return ResolvedDeviceAuthorizationInput(
+            deviceInput: "",
+            errorMessage: nil,
+            requiresConfirmation: false,
+            deviceLabel: nil,
+            clientLabel: nil
+        )
     }
 
     if let payload = DeviceApprovalQr.decode(trimmed) {
@@ -47,7 +56,10 @@ func resolveDeviceAuthorizationInput(
         if !normalizedOwner.isEmpty && !acceptedOwnerInputs.contains(normalizedOwner) {
             return ResolvedDeviceAuthorizationInput(
                 deviceInput: "",
-                errorMessage: "This code is for a different profile."
+                errorMessage: "This code is for a different profile.",
+                requiresConfirmation: false,
+                deviceLabel: nil,
+                clientLabel: nil
             )
         }
 
@@ -55,26 +67,47 @@ func resolveDeviceAuthorizationInput(
         if !isValidPeerInput(input: normalizedDevice) {
             return ResolvedDeviceAuthorizationInput(
                 deviceInput: "",
-                errorMessage: "That code is not valid."
+                errorMessage: "That code is not valid.",
+                requiresConfirmation: false,
+                deviceLabel: nil,
+                clientLabel: nil
             )
         }
         if normalizedOwner.isEmpty {
-            return ResolvedDeviceAuthorizationInput(deviceInput: trimmed, errorMessage: nil)
+            return ResolvedDeviceAuthorizationInput(
+                deviceInput: trimmed,
+                errorMessage: nil,
+                requiresConfirmation: true,
+                deviceLabel: payload.deviceLabel,
+                clientLabel: payload.clientLabel
+            )
         }
-        return ResolvedDeviceAuthorizationInput(deviceInput: normalizedDevice, errorMessage: nil)
+        return ResolvedDeviceAuthorizationInput(
+            deviceInput: normalizedDevice,
+            errorMessage: nil,
+            requiresConfirmation: true,
+            deviceLabel: payload.deviceLabel,
+            clientLabel: payload.clientLabel
+        )
     }
 
     let normalizedManualDevice = normalizePeerInput(input: trimmed)
     if isValidPeerInput(input: normalizedManualDevice) {
         return ResolvedDeviceAuthorizationInput(
             deviceInput: normalizedManualDevice,
-            errorMessage: nil
+            errorMessage: nil,
+            requiresConfirmation: false,
+            deviceLabel: nil,
+            clientLabel: nil
         )
     }
 
     return ResolvedDeviceAuthorizationInput(
         deviceInput: "",
-        errorMessage: "Not a valid link code."
+        errorMessage: "Not a valid link code.",
+        requiresConfirmation: false,
+        deviceLabel: nil,
+        clientLabel: nil
     )
 }
 

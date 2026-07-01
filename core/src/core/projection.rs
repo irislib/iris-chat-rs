@@ -627,6 +627,7 @@ impl AppCore {
             right
                 .is_current_device
                 .cmp(&left.is_current_device)
+                .then_with(|| right.added_at_secs.cmp(&left.added_at_secs))
                 .then_with(|| left.device_pubkey_hex.cmp(&right.device_pubkey_hex))
         });
 

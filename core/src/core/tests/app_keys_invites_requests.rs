@@ -468,6 +468,63 @@ fn removing_authorized_device_advances_app_keys_timestamp() {
 }
 
 #[test]
+fn remove_authorized_device_action_updates_roster_immediately() {
+    let owner = Keys::generate();
+    let current_device = Keys::generate();
+    let linked_device = Keys::generate();
+    let mut core = logged_in_test_core(
+        "device-roster-remove-immediate",
+        &owner,
+        &current_device,
+    );
+
+    core.handle_action(AppAction::AddAuthorizedDevice {
+        device_input: linked_device.public_key().to_hex(),
+    });
+    assert!(core
+        .state
+        .device_roster
+        .as_ref()
+        .expect("device roster after add")
+        .devices
+        .iter()
+        .any(|entry| entry.device_pubkey_hex == linked_device.public_key().to_hex()));
+
+    let rev_before_remove = core.state.rev;
+    core.handle_action(AppAction::RemoveAuthorizedDevice {
+        device_pubkey_hex: linked_device.public_key().to_hex(),
+    });
+
+    let roster = core
+        .state
+        .device_roster
+        .as_ref()
+        .expect("device roster after remove");
+    assert!(
+        !core.state.busy.updating_roster,
+        "remove device must not wait for a roster publish drain"
+    );
+    assert!(
+        core.state.rev > rev_before_remove,
+        "remove device should emit an immediate state update"
+    );
+    assert!(
+        roster
+            .devices
+            .iter()
+            .all(|entry| entry.device_pubkey_hex != linked_device.public_key().to_hex()),
+        "removed linked device should disappear from the visible roster"
+    );
+    assert!(core
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .expect("local app keys roster")
+        .devices
+        .iter()
+        .all(|entry| entry.identity_pubkey_hex != linked_device.public_key().to_hex()));
+}
+
+#[test]
 fn removing_authorized_device_beats_equal_timestamp_roster_merge() {
     assert_eq!(account_app_keys::next_removed_app_keys_created_at(100, 80, 90), 102);
     assert_eq!(account_app_keys::next_removed_app_keys_created_at(100, 110, 90), 112);
@@ -790,6 +847,59 @@ fn app_keys_event_rerenders_device_roster_even_when_authorization_is_unchanged()
 }
 
 #[test]
+fn device_roster_lists_current_device_then_newest_linked_devices() {
+    let owner = Keys::generate();
+    let current_device = Keys::generate();
+    let older_device = Keys::generate();
+    let newer_device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.start_primary_session(owner.clone(), current_device.clone(), false, false)
+        .expect("primary session");
+    let remote_created_at = core
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .expect("local app keys")
+        .created_at_secs
+        + 10;
+    let remote_app_keys = AppKeys::new(vec![
+        DeviceEntry::new(older_device.public_key(), remote_created_at + 1),
+        DeviceEntry::new(newer_device.public_key(), remote_created_at + 3),
+        DeviceEntry::new(current_device.public_key(), remote_created_at + 2),
+    ]);
+    let remote_event = remote_app_keys
+        .get_event_at(owner.public_key(), remote_created_at)
+        .sign_with_keys(&owner)
+        .expect("app keys event");
+
+    core.apply_app_keys_event(&remote_event)
+        .expect("apply remote app keys");
+
+    let ordered_devices = core
+        .state
+        .device_roster
+        .as_ref()
+        .expect("device roster")
+        .devices
+        .iter()
+        .map(|entry| entry.device_pubkey_hex.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ordered_devices,
+        vec![
+            current_device.public_key().to_hex(),
+            newer_device.public_key().to_hex(),
+            older_device.public_key().to_hex(),
+        ]
+    );
+}
+
+#[test]
 fn start_linked_device_creates_compact_device_approval_code() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let mut core = AppCore::new(
@@ -800,6 +910,10 @@ fn start_linked_device_creates_compact_device_approval_code() {
     );
     core.preferences.nostr_relay_urls.clear();
 
+    core.handle_action(AppAction::SetCurrentDeviceLabels {
+        device_label: "Safari on macOS".to_string(),
+        client_label: "Iris Chat Web".to_string(),
+    });
     core.handle_action(AppAction::StartLinkedDevice {
         owner_input: String::new(),
     });
@@ -813,8 +927,7 @@ fn start_linked_device_creates_compact_device_approval_code() {
         .expect("parse compact approval request");
     assert!(!snapshot.url.contains("://"));
     assert!(!snapshot.url.contains("chat.iris.to"));
-    assert_eq!(snapshot.url.len(), 129);
-    assert_eq!(snapshot.url.split('.').count(), 2);
+    assert_eq!(snapshot.url.split('.').count(), 3);
     assert_eq!(
         request.device_app_key_pubkey,
         core.pending_linked_device
@@ -823,6 +936,8 @@ fn start_linked_device_creates_compact_device_approval_code() {
             .device_keys
             .public_key()
     );
+    assert_eq!(request.device_label.as_deref(), Some("Safari on macOS"));
+    assert_eq!(request.client_label.as_deref(), Some("Iris Chat Web"));
     assert_eq!(
         request.device_app_key_pubkey.to_bech32().ok().as_deref(),
         Some(snapshot.device_input.as_str())
@@ -865,6 +980,10 @@ fn compact_link_request_finishes_pairing_and_authorizes_linked_device() {
         Arc::new(RwLock::new(AppState::empty())),
     );
     linked.preferences.nostr_relay_urls.clear();
+    linked.handle_action(AppAction::SetCurrentDeviceLabels {
+        device_label: "Safari on macOS".to_string(),
+        client_label: "Iris Chat Web".to_string(),
+    });
     linked.handle_action(AppAction::StartLinkedDevice {
         owner_input: String::new(),
     });
@@ -887,7 +1006,7 @@ fn compact_link_request_finishes_pairing_and_authorizes_linked_device() {
         device_input: compact_code,
     });
 
-    assert_eq!(primary.state.toast, None);
+    assert_eq!(primary.state.toast.as_deref(), Some("Device added"));
     let response_event = pending_events_with_kind(&primary, INVITE_RESPONSE_KIND)
         .into_iter()
         .next()
@@ -939,6 +1058,24 @@ fn compact_link_request_finishes_pairing_and_authorizes_linked_device() {
         .devices
         .iter()
         .any(|device| device.identity_pubkey_hex == linked_device.to_hex()));
+    let linked_roster_device = primary
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .and_then(|roster| {
+            roster
+                .devices
+                .iter()
+                .find(|device| device.identity_pubkey_hex == linked_device.to_hex())
+        })
+        .expect("primary signed linked device labels");
+    assert_eq!(
+        linked_roster_device.device_label.as_deref(),
+        Some("Safari on macOS")
+    );
+    assert_eq!(
+        linked_roster_device.client_label.as_deref(),
+        Some("Iris Chat Web")
+    );
 }
 
 #[test]

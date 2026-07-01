@@ -596,6 +596,38 @@ class AppManagerContractTest {
     }
 
     @Test
+    fun revoked_current_device_snapshot_logs_out_and_clears_native_secrets() {
+        rustFactory.initialStates += makeLoggedInState(rev = 1u)
+        rustFactory.initialStates += makeAppState(rev = 0u)
+        val appManager = createManager()
+        val firstRust = rustFactory.instances.single()
+        persistStoredSecret(
+            StoredAccountBundle(
+                ownerNsec = null,
+                ownerPubkeyHex = "owner-hex",
+                deviceNsec = "nsec1device",
+            ).toJson(),
+        )
+        val staleFile = appContext.filesDir.resolve("contract-revoked-${UUID.randomUUID()}.txt")
+        staleFile.writeText("stale")
+
+        firstRust.emit(AppUpdate.FullState(makeRevokedState(rev = 2u)))
+
+        waitFor("fresh rust core after revoked snapshot") {
+            rustFactory.instances.size == 2
+        }
+        val secondRust = rustFactory.instances[1]
+
+        assertTrue(firstRust.dispatchedActions.contains(AppAction.Logout))
+        assertEquals(1, firstRust.shutdownCount)
+        assertEquals(1, secureSecretStore.clearCount)
+        assertNull(loadPersistedBundle())
+        assertFalse(staleFile.exists())
+        assertEquals(secondRust.currentState, appManager.state.value)
+        assertTrue(appManager.bootstrapState.value is AccountBootstrapState.NeedsLogin)
+    }
+
+    @Test
     fun logout_does_not_delete_local_data_when_secure_secret_clear_fails() {
         rustFactory.initialStates += makeLoggedInState(rev = 5u)
         val appManager = createManager()
@@ -884,6 +916,24 @@ class AppManagerContractTest {
                     deviceNpub = "npub1device",
                     hasOwnerSigningAuthority = true,
                     authorizationState = DeviceAuthorizationState.AUTHORIZED,
+                ),
+        )
+
+    private fun makeRevokedState(rev: ULong): AppState =
+        makeLargeFixtureState(
+            rev = rev,
+            router = Router(Screen.DeviceRevoked, emptyList()),
+            account =
+                AccountSnapshot(
+                    publicKeyHex = "owner-hex",
+                    npub = "npub1owner",
+                    displayName = "Owner",
+                    pictureUrl = null,
+                    about = null,
+                    devicePublicKeyHex = "device-hex",
+                    deviceNpub = "npub1device",
+                    hasOwnerSigningAuthority = false,
+                    authorizationState = DeviceAuthorizationState.REVOKED,
                 ),
         )
 

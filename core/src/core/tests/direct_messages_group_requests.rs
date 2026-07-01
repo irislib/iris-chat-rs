@@ -217,7 +217,7 @@ fn compact_linked_device_group_messages_sync_to_primary_without_request() {
     primary.handle_action(AppAction::AddAuthorizedDevice {
         device_input: compact_code,
     });
-    assert_eq!(primary.state.toast, None);
+    assert_eq!(primary.state.toast.as_deref(), Some("Device added"));
 
     for event in sorted_pending_events_for_test(&primary)
         .into_iter()

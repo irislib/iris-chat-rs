@@ -915,6 +915,7 @@ final class AppManager: ObservableObject {
     private var backgroundSuspendPrepared = false
     private var storedAccountBundle: StoredAccountBundle?
     private var persistedRestoreInFlight = false
+    private var automaticRevocationLogoutInFlight = false
     private var nearbySettingsWasOpened = false
     // UI-test escape hatch: when IRIS_UI_TEST_SEED_PEER + IRIS_UI_TEST_SEED_COUNT
     // are set, AppManager auto-creates a chat with that peer once the account
@@ -1028,8 +1029,11 @@ final class AppManager: ObservableObject {
 #endif
 
         resolvedRust.listenForUpdates(reconciler: reconciler)
-        syncCurrentDeviceLabelsIfNeeded(state: initialState)
-        if AppPaths.testRunId(environment: environment) == nil {
+        let initialDeviceRevoked = initialState.account?.authorizationState == .revoked
+        if !initialDeviceRevoked {
+            syncCurrentDeviceLabelsIfNeeded(state: initialState)
+        }
+        if !initialDeviceRevoked, AppPaths.testRunId(environment: environment) == nil {
             syncStartupAtLoginPreference(initialState.preferences.startupAtLoginEnabled)
         }
 #if os(iOS)
@@ -1091,8 +1095,10 @@ final class AppManager: ObservableObject {
         }
 #endif
 
-        Task {
-            restorePersistedSession()
+        if !logoutIfCurrentDeviceRevoked(initialState) {
+            Task {
+                restorePersistedSession()
+            }
         }
         Task {
             // Safety net: the loading overlay must never be permanently
@@ -2575,10 +2581,12 @@ final class AppManager: ObservableObject {
 
     func logout() {
         // Logout ownership stays in Rust. The shell clears native secrets and local files only.
+        automaticRevocationLogoutInFlight = true
 #if os(iOS)
         mobilePushRuntime.unregisterStoredSubscription(state: state, ownerNsec: storedAccountBundle?.ownerNsec ?? secretStore.load()?.ownerNsec)
 #endif
         guard secretStore.clear() else {
+            automaticRevocationLogoutInFlight = false
             showToast("Could not clear secret key.")
             return
         }
@@ -2606,6 +2614,7 @@ final class AppManager: ObservableObject {
         rust = nextRust
         nextRust.listenForUpdates(reconciler: reconciler)
         applyFullState(nextRust.state(), force: true)
+        automaticRevocationLogoutInFlight = false
 #if os(iOS)
         applyIosFreshInstallNotificationDefaultsIfNeeded()
 #endif
@@ -2715,8 +2724,11 @@ final class AppManager: ObservableObject {
         reconciledState = stateByApplyingScreenshotFixture(reconciledState)
 #endif
         lastRevApplied = nextState.rev
-        postDesktopNotifications(from: oldState, to: reconciledState)
         state = reconciledState
+        if logoutIfCurrentDeviceRevoked(reconciledState) {
+            return
+        }
+        postDesktopNotifications(from: oldState, to: reconciledState)
         syncCurrentDeviceLabelsIfNeeded(state: reconciledState)
         rememberCurrentChatIfPresent()
         irisSetDebugLoggingEnabled(reconciledState.preferences.debugLoggingEnabled)
@@ -2735,6 +2747,17 @@ final class AppManager: ObservableObject {
 #if os(iOS)
         processPendingShareFilesIfNeeded()
 #endif
+    }
+
+    @discardableResult
+    private func logoutIfCurrentDeviceRevoked(_ nextState: AppState) -> Bool {
+        guard nextState.account?.authorizationState == .revoked,
+              !automaticRevocationLogoutInFlight else {
+            return false
+        }
+        automaticRevocationLogoutInFlight = true
+        logout()
+        return true
     }
 
     private func runPendingTestSeedIfNeeded() {

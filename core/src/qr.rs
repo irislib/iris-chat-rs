@@ -39,6 +39,8 @@ pub fn encode_text_qr(text: String) -> Option<QrCodeMatrix> {
 pub struct DeviceApprovalQrPayload {
     pub owner_input: String,
     pub device_input: String,
+    pub device_label: Option<String>,
+    pub client_label: Option<String>,
 }
 
 #[uniffi::export]
@@ -53,12 +55,15 @@ pub fn decode_device_approval_qr(raw: String) -> Option<DeviceApprovalQrPayload>
         .map(|request| DeviceApprovalQrPayload {
             owner_input: String::new(),
             device_input: request.device_app_key_pubkey.to_hex(),
+            device_label: request.device_label,
+            client_label: request.client_label,
         })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{decode_device_approval_qr, encode_device_approval_qr, DeviceApprovalQrPayload};
+    use nostr_double_ratchet::encode_compact_device_link_request;
     use nostr_sdk::Keys;
 
     #[test]
@@ -73,21 +78,26 @@ mod tests {
         assert!(decode_device_approval_qr("npub1plainvalue".into()).is_none());
         assert!(decode_device_approval_qr("https://example.com".into()).is_none());
         assert!(decode_device_approval_qr("not-a-compact-link-code".into()).is_none());
-        assert!(
-            decode_device_approval_qr(format!("{}.{}.extra", "1".repeat(64), "1".repeat(64)))
-                .is_none()
-        );
+        assert!(decode_device_approval_qr(format!(
+            "{}.{}.not-base64!*",
+            "1".repeat(64),
+            "1".repeat(64)
+        ))
+        .is_none());
     }
 
     #[test]
     fn compact_device_link_qr_decodes_to_device() {
         let device = Keys::generate();
         let request = Keys::generate();
-        let encoded = format!(
-            "{}.{}",
-            device.public_key().to_hex(),
-            request.secret_key().to_secret_hex()
-        );
+        let encoded = encode_compact_device_link_request(
+            device.public_key(),
+            &request.secret_key().to_secret_hex(),
+            Some("Safari on macOS"),
+            Some("Iris Chat Web"),
+            Some(41),
+        )
+        .expect("encode compact request");
 
         let decoded = decode_device_approval_qr(encoded.clone()).expect("decode compact request");
         assert_eq!(
@@ -95,6 +105,8 @@ mod tests {
             DeviceApprovalQrPayload {
                 owner_input: String::new(),
                 device_input: device.public_key().to_hex(),
+                device_label: Some("Safari on macOS".to_string()),
+                client_label: Some("Iris Chat Web".to_string()),
             }
         );
 

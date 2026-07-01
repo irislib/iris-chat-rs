@@ -27,8 +27,8 @@ struct DeviceRosterScreen: View {
         }
         .sheet(isPresented: $showingScanner) {
             QrScannerSheet { code in
-                let resolved = submitDeviceAuthorizationScan(code, manager: manager)
-                deviceInput = resolved.errorMessage == nil ? "" : code
+                _ = submitDeviceAuthorizationScan(code, manager: manager)
+                deviceInput = code
                 showingScanner = false
             }
             .irisModalSurface()
@@ -46,7 +46,13 @@ func submitDeviceAuthorizationScan(
     guard let roster = manager.state.deviceRoster,
           roster.canManageDevices,
           !manager.state.busy.updatingRoster else {
-        return ResolvedDeviceAuthorizationInput(deviceInput: "", errorMessage: nil)
+        return ResolvedDeviceAuthorizationInput(
+            deviceInput: "",
+            errorMessage: nil,
+            requiresConfirmation: false,
+            deviceLabel: nil,
+            clientLabel: nil
+        )
     }
     let resolved = resolveDeviceAuthorizationInput(
         rawInput: rawInput,
@@ -57,7 +63,6 @@ func submitDeviceAuthorizationScan(
           !resolved.deviceInput.isEmpty else {
         return resolved
     }
-    manager.addAuthorizedDevice(deviceInput: resolved.deviceInput)
     return resolved
 }
 
@@ -66,6 +71,7 @@ struct DeviceRosterContent: View {
     @ObservedObject var manager: AppManager
     @Binding var deviceInput: String
     @Binding var showingScanner: Bool
+    @State private var pendingDeviceConfirmation: ResolvedDeviceAuthorizationInput?
 
     private var resolvedInput: ResolvedDeviceAuthorizationInput? {
         guard let roster = manager.state.deviceRoster else {
@@ -99,81 +105,107 @@ struct DeviceRosterContent: View {
     }
 
     var body: some View {
-        if let roster = manager.state.deviceRoster {
-            IrisSectionCard(accent: true) {
-                CardHeader(
-                    title: "Linked devices",
-                    subtitle: "These devices can use your profile."
-                )
+        Group {
+            if let roster = manager.state.deviceRoster {
+                IrisSectionCard(accent: true) {
+                    CardHeader(
+                        title: "Linked devices",
+                        subtitle: "These devices can use your profile."
+                    )
 
-                IrisCopyButton(
-                    label: "Copy user ID",
-                    value: roster.ownerNpub,
-                    style: .menuRow
-                )
-                .accessibilityIdentifier("deviceRosterOwnerNpub")
-            }
-
-            IrisSectionCard {
-                CardHeader(
-                    title: "Link another device",
-                    subtitle: deviceAccessSubtitle
-                )
-
-                TextField("Link code", text: $deviceInput)
-                    .irisIdentifierInputModifiers()
-                    .textFieldStyle(.plain)
-                    .irisInputField()
-                    .accessibilityIdentifier("deviceRosterAddInput")
-                    .onChange(of: deviceInput) { _ in
-                        submitDeviceInputIfReady()
-                    }
-
-                if let error = resolvedInput?.errorMessage {
-                    Text(error)
-                        .font(.system(.footnote, design: .rounded))
-                        .foregroundStyle(.red)
+                    IrisCopyButton(
+                        label: "Copy user ID",
+                        value: roster.ownerNpub,
+                        style: .menuRow
+                    )
+                    .accessibilityIdentifier("deviceRosterOwnerNpub")
                 }
 
-                VStack(spacing: 10) {
-                    if irisSupportsQrScanning {
-                        Button("Scan code") { showingScanner = true }
-                            .buttonStyle(IrisPrimaryButtonStyle())
-                            .disabled(roster.canManageDevices == false || manager.state.busy.updatingRoster)
-                            .accessibilityIdentifier("deviceRosterScanButton")
+                IrisSectionCard {
+                    CardHeader(
+                        title: "Link another device",
+                        subtitle: deviceAccessSubtitle
+                    )
+
+                    TextField("Link code", text: $deviceInput)
+                        .irisIdentifierInputModifiers()
+                        .textFieldStyle(.plain)
+                        .irisInputField()
+                        .accessibilityIdentifier("deviceRosterAddInput")
+                        .onChange(of: deviceInput) { _ in
+                            submitDeviceInputIfReady()
+                        }
+
+                    if let error = resolvedInput?.errorMessage {
+                        Text(error)
+                            .font(.system(.footnote, design: .rounded))
+                            .foregroundStyle(.red)
                     }
-                }
-            }
 
-            IrisSectionCard {
-                CardHeader(
-                    title: "Devices",
-                    subtitle: "\(roster.devices.count) linked"
-                )
-
-                if roster.devices.isEmpty {
-                    Text("No linked devices")
-                        .font(.system(.headline, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.textPrimary)
-                        .accessibilityIdentifier("deviceRosterEmptyState")
-                    Text("Linked devices will appear here.")
-                        .font(.system(.body, design: .rounded))
-                        .foregroundStyle(palette.muted)
-                } else {
-                    ForEach(Array(roster.devices.enumerated()), id: \.element.devicePubkeyHex) { index, device in
-                        DeviceRosterRow(manager: manager, device: device, canManageDevices: roster.canManageDevices)
-                        if index < roster.devices.count - 1 {
-                            Divider().overlay(palette.border)
+                    VStack(spacing: 10) {
+                        if irisSupportsQrScanning {
+                            Button("Scan code") { showingScanner = true }
+                                .buttonStyle(IrisPrimaryButtonStyle())
+                                .disabled(roster.canManageDevices == false || manager.state.busy.updatingRoster)
+                                .accessibilityIdentifier("deviceRosterScanButton")
                         }
                     }
                 }
+
+                IrisSectionCard {
+                    CardHeader(
+                        title: "Devices",
+                        subtitle: "\(roster.devices.count) linked"
+                    )
+
+                    if roster.devices.isEmpty {
+                        Text("No linked devices")
+                            .font(.system(.headline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(palette.textPrimary)
+                            .accessibilityIdentifier("deviceRosterEmptyState")
+                        Text("Linked devices will appear here.")
+                            .font(.system(.body, design: .rounded))
+                            .foregroundStyle(palette.muted)
+                    } else {
+                        ForEach(Array(roster.devices.enumerated()), id: \.element.devicePubkeyHex) { index, device in
+                            DeviceRosterRow(manager: manager, device: device, canManageDevices: roster.canManageDevices)
+                            if index < roster.devices.count - 1 {
+                                Divider().overlay(palette.border)
+                            }
+                        }
+                    }
+                }
+            } else {
+                IrisSectionCard {
+                    Text("Devices unavailable.")
+                        .font(.system(.headline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                }
             }
-        } else {
-            IrisSectionCard {
-                Text("Devices unavailable.")
-                    .font(.system(.headline, design: .rounded, weight: .semibold))
-                    .foregroundStyle(palette.textPrimary)
+        }
+        .alert(
+            linkDeviceConfirmationTitle(pendingDeviceConfirmation),
+            isPresented: Binding(
+                get: { pendingDeviceConfirmation != nil },
+                set: { visible in
+                    if !visible {
+                        pendingDeviceConfirmation = nil
+                    }
+                }
+            )
+        ) {
+            Button("Cancel", role: .cancel) {
+                pendingDeviceConfirmation = nil
             }
+            Button("Link device") {
+                if let pending = pendingDeviceConfirmation {
+                    manager.addAuthorizedDevice(deviceInput: pending.deviceInput)
+                }
+                pendingDeviceConfirmation = nil
+            }
+            .accessibilityIdentifier("deviceRosterConfirmAdd")
+        } message: {
+            Text(linkDeviceConfirmationMessage(pendingDeviceConfirmation))
         }
     }
 
@@ -186,9 +218,38 @@ struct DeviceRosterContent: View {
               !resolved.deviceInput.isEmpty else {
             return
         }
-        manager.addAuthorizedDevice(deviceInput: resolved.deviceInput)
+        if resolved.requiresConfirmation {
+            pendingDeviceConfirmation = resolved
+        } else {
+            manager.addAuthorizedDevice(deviceInput: resolved.deviceInput)
+        }
         deviceInput = ""
     }
+}
+
+private func linkDeviceConfirmationTitle(_ input: ResolvedDeviceAuthorizationInput?) -> String {
+    let name = linkDeviceConfirmationName(input)
+    return name == "this device" ? "Link this device?" : "Link \(name)?"
+}
+
+private func linkDeviceConfirmationMessage(_ input: ResolvedDeviceAuthorizationInput?) -> String {
+    if let client = input?.clientLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !client.isEmpty {
+        return "\(client) will be able to use your profile."
+    }
+    return "This device will be able to use your profile."
+}
+
+private func linkDeviceConfirmationName(_ input: ResolvedDeviceAuthorizationInput?) -> String {
+    if let device = input?.deviceLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !device.isEmpty {
+        return device
+    }
+    if let client = input?.clientLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !client.isEmpty {
+        return client
+    }
+    return "this device"
 }
 
 struct DeviceRosterRow: View {

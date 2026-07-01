@@ -88,6 +88,12 @@ final class InteropHarnessTests: XCTestCase {
             let snapshot = try await ensureLoggedIn(manager: manager, env: env)
             try await waitForRelayDrainIfRequested(manager: manager, dataDir: dataDir, env: env)
             reportIdentity(snapshot)
+        case "report_device_roster_snapshot":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let roster: DeviceRosterSnapshot = try await waitFor(label: "device roster snapshot", timeout: 90) {
+                manager.state.deviceRoster
+            }
+            reportDeviceRoster(roster)
         case "export_secret_key":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             guard let secretKey = manager.exportOwnerNsec() else {
@@ -199,21 +205,30 @@ final class InteropHarnessTests: XCTestCase {
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let deviceInput = try requiredEnv("IRIS_IOS_HARNESS_DEVICE_INPUT", env: env)
             let normalizedDevice = normalizePeerInput(input: deviceInput)
+            let initialRev = manager.state.rev
             manager.removeAuthorizedDevice(devicePubkeyHex: normalizedDevice)
-            let roster = try await waitFor(label: "removed authorized device \(normalizedDevice)", timeout: 90) {
+            let roster = try await waitFor(label: "removed authorized device \(normalizedDevice)", timeout: 5) {
                 manager.state.deviceRoster.flatMap { roster in
-                    let stillAuthorized = roster.devices.contains { device in
-                        self.sameIdentifier(device.devicePubkeyHex, normalizedDevice) &&
-                            device.isAuthorized &&
-                            !device.isStale
+                    let stillListed = roster.devices.contains { device in
+                        self.sameIdentifier(device.devicePubkeyHex, normalizedDevice)
                     }
-                    return stillAuthorized ? nil : roster
+                    return stillListed ? nil : roster
                 }
             }
             status("device_pubkey_hex", normalizedDevice)
             status("device_removed", String(!roster.devices.contains { self.sameIdentifier($0.devicePubkeyHex, normalizedDevice) }))
             status("device_stale", String(roster.devices.first(where: { self.sameIdentifier($0.devicePubkeyHex, normalizedDevice) })?.isStale ?? false))
-            try await waitForRelayDrainIfRequested(manager: manager, dataDir: dataDir, env: env)
+            status("device_count", String(roster.devices.count))
+            status("devices", roster.devices.map { device in
+                [
+                    device.devicePubkeyHex,
+                    device.deviceNpub,
+                    String(device.isCurrentDevice),
+                    String(device.isAuthorized),
+                    String(device.isStale),
+                ].joined(separator: ",")
+            }.joined(separator: "|"))
+            status("state_rev_changed", String(manager.state.rev > initialRev))
         case "wait_for_revoked_state":
             let snapshot: AccountSnapshot = try await waitFor(label: "revoked device state", timeout: 180) {
                 guard let account = manager.state.account else {

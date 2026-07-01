@@ -216,7 +216,18 @@ impl AppCore {
         let request_keys = Keys::generate();
         let request_secret = request_keys.secret_key().to_secret_hex();
         let invite = deterministic_link_invite_for_device(device_pubkey, &request_secret)?;
-        let url = encode_compact_device_link_request(device_pubkey, &request_secret)?;
+        let current_device_labels = self.current_device_labels.clone();
+        let url = encode_compact_device_link_request(
+            device_pubkey,
+            &request_secret,
+            current_device_labels
+                .as_ref()
+                .and_then(|labels| labels.device_label.as_deref()),
+            current_device_labels
+                .as_ref()
+                .and_then(|labels| labels.client_label.as_deref()),
+            Some(unix_now().get()),
+        )?;
 
         let client = Client::new(device_keys.clone());
         let relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
@@ -377,6 +388,8 @@ impl AppCore {
             let result = self.accept_compact_link_device_approval_request(request);
             if let Err(error) = result {
                 self.state.toast = Some(error.to_string());
+            } else {
+                self.state.toast = Some("Device added".to_string());
             }
 
             self.state.busy.updating_roster = false;
@@ -397,6 +410,7 @@ impl AppCore {
             self.upsert_local_app_key_device_with_labels(owner_pubkey, device_pubkey, None, true);
         if changed {
             self.publish_local_app_keys();
+            self.state.toast = Some("Device added".to_string());
         }
         self.rebuild_state();
         self.persist_best_effort();
@@ -413,10 +427,26 @@ impl AppCore {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?;
         let owner_pubkey = logged_in.owner_pubkey;
+        let request_labels = CurrentDeviceLabels {
+            device_label: request
+                .device_label
+                .as_deref()
+                .and_then(normalize_device_label),
+            client_label: request
+                .client_label
+                .as_deref()
+                .and_then(normalize_device_label),
+        };
+        let request_labels =
+            if request_labels.device_label.is_some() || request_labels.client_label.is_some() {
+                Some(request_labels)
+            } else {
+                None
+            };
         let changed = self.upsert_local_app_key_device_with_labels(
             owner_pubkey,
             request.device_app_key_pubkey,
-            None,
+            request_labels.as_ref(),
             true,
         );
         if changed {

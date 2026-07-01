@@ -187,6 +187,67 @@ mod tests {
     }
 
     #[test]
+    fn group_roster_fact_ingest_syncs_installed_group_to_local_siblings() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let sibling = Keys::generate();
+        let admin = Keys::generate();
+        let mut engine = test_engine(&owner, &device);
+        engine
+            .session_manager
+            .replace_local_roster(DeviceRoster::new(
+                NdrUnixSeconds(1),
+                vec![
+                    AuthorizedDevice::new(ndr_device(device.public_key()), NdrUnixSeconds(1)),
+                    AuthorizedDevice::new(ndr_device(sibling.public_key()), NdrUnixSeconds(1)),
+                ],
+            ));
+        let snapshot = group_snapshot_for_test(
+            "group-roster-fact-local-sibling",
+            "Fact Group",
+            1,
+            &admin,
+            &[admin.public_key(), owner.public_key()],
+        );
+        let event = group_roster_fact_event_for_test(&admin, &snapshot);
+
+        let result = engine
+            .ingest_group_roster_fact_event(&event)
+            .expect("group roster fact")
+            .expect("valid fact should be consumed");
+
+        assert_eq!(
+            result
+                .snapshot
+                .as_ref()
+                .map(|group| group.group_id.as_str()),
+            Some("group-roster-fact-local-sibling")
+        );
+        assert!(
+            result
+                .retry_batch
+                .group_result
+                .queued_targets
+                .contains(&owner.public_key().to_hex()),
+            "installed public roster facts should queue local-sibling protocol sync"
+        );
+        assert!(result
+            .retry_batch
+            .group_result
+            .effects
+            .iter()
+            .any(|effect| {
+                matches!(
+                    effect,
+                    ProtocolEffect::FetchProtocolState {
+                        reason: "group_local_sibling_sync",
+                        ..
+                    }
+                )
+            }));
+    }
+
+    #[test]
     fn group_roster_fact_history_keeps_newest_snapshot() {
         let owner = Keys::generate();
         let device = Keys::generate();

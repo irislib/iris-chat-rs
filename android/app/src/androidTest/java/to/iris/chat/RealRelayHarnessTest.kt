@@ -457,7 +457,9 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
             waitForState("accepted link invite", timeoutMs = 90_000) {
                 val state = appManager().state.value
                 state.toast?.takeIf { it.isNotBlank() }?.let { toast ->
-                    fail("Link invite accept failed: $toast")
+                    if (toast != "Device added") {
+                        fail("Link invite accept failed: $toast")
+                    }
                 }
                 state.deviceRoster?.takeIf { roster ->
                     !state.busy.updatingRoster && roster.devices.size > initialDeviceCount
@@ -480,14 +482,12 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
         appManager().removeAuthorizedDevice(normalizedDeviceHex)
 
         val roster =
-            waitForState("device removal reflected in roster", timeoutMs = 90_000) {
+            waitForState("device removal reflected in roster", timeoutMs = 5_000) {
                 val state = appManager().state.value
                 val roster = state.deviceRoster
                 val removed =
                     roster?.devices?.none { device ->
-                        deviceMatchesInput(device.devicePubkeyHex, device.deviceNpub, deviceInput) &&
-                            device.isAuthorized &&
-                            !device.isStale
+                        deviceMatchesInput(device.devicePubkeyHex, device.deviceNpub, deviceInput)
                     } == true
                 if (removed) {
                     return@waitForState roster
@@ -524,11 +524,20 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
                 entry.devicePubkeyHex.equals(normalizedDeviceHex, ignoreCase = true)
             }
 
-        waitForRelayDrainIfRequested()
         reportStatus(
             "device_pubkey_hex" to normalizedDeviceHex,
             "device_removed" to (removedEntry == null).toString(),
             "device_stale" to (removedEntry?.isStale ?: false).toString(),
+            "device_count" to roster.devices.size.toString(),
+            "devices" to roster.devices.joinToString("|") { device ->
+                listOf(
+                    device.devicePubkeyHex,
+                    device.deviceNpub,
+                    device.isCurrentDevice.toString(),
+                    device.isAuthorized.toString(),
+                    device.isStale.toString(),
+                ).joinToString(",")
+            },
         )
     }
 
