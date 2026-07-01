@@ -453,6 +453,46 @@ extension InteropHarnessTests {
         return UInt64(sqlite3_column_int64(stmt, 0))
     }
 
+    func reportSqliteStorageCounts(dataDir: URL) {
+        let dbURL = dataDir.appendingPathComponent("core.sqlite3")
+        let dbPath = dbURL.path
+        status("sqlite_file_present", String(FileManager.default.fileExists(atPath: dbPath)))
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: dbPath)[.size] as? NSNumber)?
+            .int64Value ?? 0
+        status("sqlite_file_bytes", String(fileSize))
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(db)
+            status("sqlite_open", "error")
+            return
+        }
+        defer { sqlite3_close(db) }
+
+        for table in [
+            "app_meta",
+            "app_keys",
+            "groups",
+            "threads",
+            "messages",
+            "seen_events",
+            "pending_relay_publishes",
+            "ndr_kv",
+        ] {
+            status("sqlite_\(table)_count", String(sqliteInt(db: db, sql: "SELECT COUNT(*) FROM \(table)") ?? -1))
+        }
+        let protocolStateBytes = sqliteInt(
+            db: db,
+            sql: """
+                SELECT length(value)
+                FROM ndr_kv
+                WHERE key = 'appcore/protocol-engine-state-v1'
+                ORDER BY length(value) DESC
+                LIMIT 1
+            """
+        ) ?? 0
+        status("sqlite_protocol_engine_state_bytes", String(protocolStateBytes))
+    }
+
     func readSqliteCoreSnapshot(dataDir: URL) -> SqliteCoreSnapshot {
         let dbPath = dataDir.appendingPathComponent("core.sqlite3").path
         guard FileManager.default.fileExists(atPath: dbPath) else {
@@ -564,6 +604,18 @@ extension InteropHarnessTests {
             rows.append(row(stmt))
         }
         return rows.joined(separator: "|")
+    }
+
+    func sqliteInt(db: OpaquePointer?, sql: String) -> Int64? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            return nil
+        }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else {
+            return nil
+        }
+        return sqlite3_column_int64(stmt, 0)
     }
 
     func sqliteColumnString(_ stmt: OpaquePointer?, _ index: Int32) -> String {

@@ -68,6 +68,13 @@ final class InteropHarnessTests: XCTestCase {
             try? FileManager.default.removeItem(at: dataDir)
         }
         try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
+        if action == "report_storage_counts_without_bootstrap" {
+            status("action", action)
+            status("run_id", runID)
+            status("data_dir", dataDir.path)
+            reportSqliteStorageCounts(dataDir: dataDir)
+            return
+        }
 
         let managerEnvironment = harnessManagerEnvironment(runID: runID)
         let bootstrapStartedAt = Date()
