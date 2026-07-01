@@ -23,6 +23,8 @@ struct ScreenshotFixture {
     let timelines: [String: [Message]]
     /// Synthetic peers shown in the Nearby modal.
     let nearbyPeers: [NearbyPeer]
+    private static let readyProtocolReadiness =
+        ProtocolReadinessSnapshot(canSend: true, reason: .ready, message: "Ready")
 
     struct NearbyPeer {
         let id: String
@@ -288,7 +290,8 @@ extension ScreenshotFixture {
             isMuted: thread.isMuted,
             isPinned: thread.isPinned,
             draft: "",
-            isRequest: false
+            isRequest: false,
+            protocolReadiness: Self.readyProtocolReadiness
         )
     }
 
@@ -324,7 +327,8 @@ extension ScreenshotFixture {
             messages: messages,
             typingIndicators: [],
             draft: "",
-            isRequest: false
+            isRequest: false,
+            protocolReadiness: Self.readyProtocolReadiness
         )
     }
 

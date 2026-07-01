@@ -1145,23 +1145,31 @@ fn write_chat_ttls(tx: &Transaction, ttls: &BTreeMap<String, u64>) -> anyhow::Re
 }
 
 fn load_app_keys(conn: &rusqlite::Connection) -> anyhow::Result<Vec<KnownAppKeys>> {
-    let mut stmt =
-        conn.prepare("SELECT owner_pubkey_hex, created_at_secs, devices_json FROM app_keys")?;
+    let mut stmt = conn.prepare(
+        "SELECT owner_pubkey_hex, created_at_secs, devices_json, raw_event_json FROM app_keys",
+    )?;
     let rows = stmt.query_map([], |row| {
         let owner_pubkey_hex: String = row.get(0)?;
         let created_at_secs: i64 = row.get(1)?;
         let devices_json: String = row.get(2)?;
-        Ok((owner_pubkey_hex, created_at_secs, devices_json))
+        let raw_event_json: Option<String> = row.get(3)?;
+        Ok((
+            owner_pubkey_hex,
+            created_at_secs,
+            devices_json,
+            raw_event_json,
+        ))
     })?;
     let mut entries = Vec::new();
     for row in rows {
-        let (owner_pubkey_hex, created_at_secs, devices_json) = row?;
+        let (owner_pubkey_hex, created_at_secs, devices_json, raw_event_json) = row?;
         let devices: Vec<KnownAppKeyDevice> =
             serde_json::from_str(&devices_json).unwrap_or_default();
         entries.push(KnownAppKeys {
             owner_pubkey_hex,
             created_at_secs: created_at_secs as u64,
             devices,
+            raw_event_json,
         });
     }
     Ok(entries)
@@ -1173,8 +1181,8 @@ fn write_app_keys(
 ) -> anyhow::Result<()> {
     tx.execute("DELETE FROM app_keys", [])?;
     let mut stmt = tx.prepare_cached(
-        "INSERT INTO app_keys(owner_pubkey_hex, created_at_secs, devices_json)
-         VALUES (?1, ?2, ?3)",
+        "INSERT INTO app_keys(owner_pubkey_hex, created_at_secs, devices_json, raw_event_json)
+         VALUES (?1, ?2, ?3, ?4)",
     )?;
     for entry in app_keys.values() {
         let devices_json = serde_json::to_string(&entry.devices)?;
@@ -1182,6 +1190,7 @@ fn write_app_keys(
             entry.owner_pubkey_hex,
             entry.created_at_secs as i64,
             devices_json,
+            entry.raw_event_json.as_deref(),
         ])?;
     }
     Ok(())

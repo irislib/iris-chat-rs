@@ -2,7 +2,8 @@ use crate::{
     AccountSnapshot, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot, ChatThreadSnapshot,
     CurrentChatSnapshot, DeliveryState, DeviceAuthorizationState, GroupDetailsSnapshot,
     GroupMemberSnapshot, MessageDeliveryTraceSnapshot, MessageReactionSnapshot, MessageReactor,
-    MessageSearchHit, PreferencesSnapshot, Router, Screen, SearchResultSnapshot,
+    MessageSearchHit, PreferencesSnapshot, ProtocolReadinessSnapshot, Router, Screen,
+    SearchResultSnapshot,
 };
 
 const MAX_FIXTURE_THREADS: u32 = 2_000;
@@ -59,6 +60,7 @@ pub fn build_large_test_app_state(
         typing_indicators: Vec::new(),
         draft: current_thread.draft.clone(),
         is_request: current_thread.is_request,
+        protocol_readiness: current_thread.protocol_readiness.clone(),
     };
 
     AppState {
@@ -150,6 +152,7 @@ fn fixture_account() -> AccountSnapshot {
         device_npub: "npub1fixturedevice".to_string(),
         has_owner_signing_authority: true,
         authorization_state: DeviceAuthorizationState::Authorized,
+        protocol_readiness: ProtocolReadinessSnapshot::ready(),
     }
 }
 
@@ -200,6 +203,7 @@ fn fixture_thread(kind: ChatKind, index: u32) -> ChatThreadSnapshot {
             String::new()
         },
         is_request: false,
+        protocol_readiness: ProtocolReadinessSnapshot::ready(),
     }
 }
 
@@ -324,6 +328,7 @@ fn fixture_group_details(group_count: u32) -> GroupDetailsSnapshot {
                 is_local_owner: index == 0,
             })
             .collect(),
+        protocol_readiness: ProtocolReadinessSnapshot::ready(),
     }
 }
 

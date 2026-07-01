@@ -58,8 +58,6 @@ impl AppCore {
         }];
         self.republish_local_identity_artifacts();
         self.request_protocol_subscription_refresh();
-        self.fetch_recent_protocol_state();
-        self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));
         Ok(chat_id)
     }
 
@@ -212,11 +210,11 @@ impl AppCore {
     pub(super) fn normalize_chat_id(&self, chat_id: &str) -> Option<String> {
         if is_group_chat_id(chat_id) {
             let group_id = parse_group_id_from_chat_id(chat_id)?;
-            let group_chat_id = group_chat_id(&group_id);
-            if self.groups.contains_key(&group_id) || self.threads.contains_key(&group_chat_id) {
-                return Some(group_chat_id);
+            if group_id.trim().is_empty() {
+                return None;
             }
-            return None;
+            let group_chat_id = group_chat_id(&group_id);
+            return Some(group_chat_id);
         }
 
         parse_peer_input(chat_id)
@@ -315,8 +313,6 @@ impl AppCore {
         self.republish_local_identity_artifacts();
         self.persist_best_effort();
         self.request_protocol_subscription_refresh();
-        self.fetch_recent_protocol_state();
-        self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));
         self.rebuild_state();
         self.emit_state();
     }
@@ -466,6 +462,13 @@ impl AppCore {
             return;
         }
 
+        let readiness = self.chat_protocol_readiness(&normalized_chat_id);
+        if !readiness.can_send {
+            self.state.toast = Some(readiness.message);
+            self.emit_state();
+            return;
+        }
+
         let now = unix_now();
         self.active_chat_id = Some(normalized_chat_id.clone());
         self.screen_stack = vec![Screen::Chat {
@@ -533,10 +536,9 @@ impl AppCore {
                 self.push_debug_log(
                     "message.direct.send.appcore",
                     format!(
-                        "chat_id={normalized_chat_id} message_id={} event_ids={} queued_targets={}",
+                        "chat_id={normalized_chat_id} message_id={} event_ids={}",
                         result.message_id,
-                        result.event_ids.len(),
-                        result.queued_targets.len()
+                        result.event_ids.len()
                     ),
                 );
                 self.push_outgoing_message_with_id(
@@ -550,9 +552,6 @@ impl AppCore {
                 self.process_protocol_engine_effects(result.effects);
                 self.sync_message_delivery_trace(&normalized_chat_id, &result.message_id);
                 self.reconcile_outgoing_message_delivery(&normalized_chat_id, &result.message_id);
-                if !result.queued_targets.is_empty() {
-                    self.handle_queued_protocol_targets("message.direct", &result.queued_targets);
-                }
             }
             Err(error) => {
                 self.state.toast = Some(error.to_string());
@@ -638,12 +637,11 @@ impl AppCore {
                 self.push_debug_log(
                     "message.group.send.appcore",
                     format!(
-                        "chat_id={chat_id} message_id={message_id} event_ids={} effects={} signed={} delivery_publish={} queued_targets={} targets={}",
+                        "chat_id={chat_id} message_id={message_id} event_ids={} effects={} signed={} delivery_publish={} targets={}",
                         result.event_ids.len(),
                         result.effects.len(),
                         publish_effects,
                         delivery_publish_effects,
-                        result.queued_targets.len(),
                         summarize_group_send_effect_targets(&result.effects)
                     ),
                 );
@@ -658,9 +656,6 @@ impl AppCore {
                 self.process_protocol_engine_effects(result.effects);
                 self.sync_message_delivery_trace(chat_id, &message_id);
                 self.reconcile_outgoing_message_delivery(chat_id, &message_id);
-                if !result.queued_targets.is_empty() {
-                    self.handle_queued_protocol_targets("message.group", &result.queued_targets);
-                }
             }
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
             None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
@@ -1291,12 +1286,6 @@ impl AppCore {
         match result {
             Some(Ok(result)) => {
                 self.process_protocol_engine_effects(result.effects);
-                if !result.queued_targets.is_empty() {
-                    self.request_protocol_subscription_refresh();
-                    if self.fetch_recent_protocol_state() {
-                        self.state.busy.syncing_network = true;
-                    }
-                }
             }
             Some(Err(error)) => self.push_debug_log("group.control.send", error.to_string()),
             None => {}
@@ -1527,12 +1516,20 @@ impl AppCore {
         if !group_outcome.consumed
             && group_outcome.events.is_empty()
             && group_outcome.effects.is_empty()
-            && group_outcome.queued_targets.is_empty()
         {
             return false;
         }
-        if !group_outcome.queued_targets.is_empty() {
-            self.handle_queued_protocol_targets("group.pairwise", &group_outcome.queued_targets);
+        if group_outcome.pending {
+            self.push_debug_log(
+                "appcore.protocol.group.payload.pending",
+                format!(
+                    "sender_owner={} sender_device={}",
+                    sender_owner,
+                    sender_device
+                        .map(|device| device.to_string())
+                        .unwrap_or_else(|| "unknown".to_string())
+                ),
+            );
         }
         for group_event in group_outcome.events {
             self.apply_group_decrypted_event(group_event);
@@ -1700,17 +1697,11 @@ impl AppCore {
             .protocol_engine
             .as_ref()
             .and_then(|protocol_engine| protocol_engine.owner_hint_for_device(device_pubkey))?;
-        if hint.verified || self.should_trust_claimed_direct_owner(hint.owner) {
+        if hint.verified {
             Some(hint.owner)
         } else {
             None
         }
-    }
-
-    fn should_trust_claimed_direct_owner(&self, owner: PublicKey) -> bool {
-        let owner_hex = owner.to_hex();
-        self.tracked_peer_owner_hexes().contains(&owner_hex)
-            || self.owner_profiles.contains_key(&owner_hex)
     }
 
     fn is_known_local_owner_device_pubkey(&self, device_pubkey: PublicKey) -> bool {

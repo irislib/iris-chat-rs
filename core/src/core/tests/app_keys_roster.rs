@@ -16,7 +16,10 @@ fn owner_device_publishes_app_keys_snapshot_for_manual_device_npub() {
     });
 
     assert_eq!(core.state.toast, None);
-    let app_keys_events = pending_events_with_kind(&core, APP_KEYS_EVENT_KIND);
+    let app_keys_events = pending_events_with_kind(&core, APP_KEYS_EVENT_KIND)
+        .into_iter()
+        .filter(is_app_keys_event)
+        .collect::<Vec<_>>();
     assert_eq!(
         app_keys_events.len(),
         1,
@@ -25,11 +28,6 @@ fn owner_device_publishes_app_keys_snapshot_for_manual_device_npub() {
     let app_keys_event = &app_keys_events[0];
     assert!(is_app_keys_event(app_keys_event));
     assert_eq!(app_keys_event.pubkey, owner.public_key());
-    assert!(event_has_tag_value(
-        app_keys_event,
-        "owner_pubkey",
-        &owner.public_key().to_hex()
-    ));
     assert!(event_has_tag_value(
         app_keys_event,
         "device",
@@ -69,7 +67,10 @@ fn owner_device_accepts_compact_link_request_and_publishes_app_keys_snapshot() {
     });
 
     assert_eq!(core.state.toast, None);
-    let app_keys_events = pending_events_with_kind(&core, APP_KEYS_EVENT_KIND);
+    let app_keys_events = pending_events_with_kind(&core, APP_KEYS_EVENT_KIND)
+        .into_iter()
+        .filter(is_app_keys_event)
+        .collect::<Vec<_>>();
     assert_eq!(
         app_keys_events.len(),
         1,
@@ -112,7 +113,10 @@ fn create_account_publishes_app_keys_snapshot() {
     });
 
     assert_eq!(core.state.toast, None);
-    let app_keys_events = pending_events_with_kind(&core, APP_KEYS_EVENT_KIND);
+    let app_keys_events = pending_events_with_kind(&core, APP_KEYS_EVENT_KIND)
+        .into_iter()
+        .filter(is_app_keys_event)
+        .collect::<Vec<_>>();
     assert_eq!(
         app_keys_events.len(),
         1,

@@ -228,8 +228,8 @@ impl AppCore {
             refresh_in_flight: runtime.refresh_in_flight,
             refresh_dirty: runtime.refresh_dirty,
             force_reconnect_dirty: runtime.force_reconnect_dirty,
-            protocol_fetch_in_flight: runtime.protocol_fetch_in_flight,
-            author_backfill_in_flight: runtime.protocol_author_backfill_in_flight,
+            protocol_fetch_in_flight: false,
+            author_backfill_in_flight: 0,
         }
     }
 

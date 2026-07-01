@@ -198,9 +198,8 @@ final class MockRustApp: RustAppClient {
             isMuted: thread?.isMuted ?? false,
             participants: [],
             messages: [],
-            typingIndicators: [],
-            draft: thread?.draft ?? "",
-            isRequest: thread?.isRequest ?? false
+            typingIndicators: [], draft: thread?.draft ?? "",
+            isRequest: thread?.isRequest ?? false, protocolReadiness: thread?.protocolReadiness ?? readyProtocolReadiness()
         )
     }
 
@@ -447,9 +446,11 @@ private func makeAccount() -> AccountSnapshot {
         devicePublicKeyHex: "device",
         deviceNpub: "npub-device",
         hasOwnerSigningAuthority: true,
-        authorizationState: .authorized
+        authorizationState: .authorized, protocolReadiness: readyProtocolReadiness()
     )
 }
+
+private func readyProtocolReadiness() -> ProtocolReadinessSnapshot { ProtocolReadinessSnapshot(canSend: true, reason: .ready, message: "Ready") }
 
 private func makeChatThread(
     unreadCount: UInt64,
@@ -475,7 +476,7 @@ private func makeChatThread(
         isMuted: false,
         isPinned: false,
         draft: "",
-        isRequest: false
+        isRequest: false, protocolReadiness: readyProtocolReadiness()
     )
 }
 
@@ -499,9 +500,8 @@ private func makeCurrentChat(
         isMuted: false,
         participants: [],
         messages: messages,
-        typingIndicators: [],
-        draft: "",
-        isRequest: false
+        typingIndicators: [], draft: "",
+        isRequest: false, protocolReadiness: readyProtocolReadiness()
     )
 }
 

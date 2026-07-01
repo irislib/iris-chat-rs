@@ -1,3 +1,19 @@
+fn signed_app_keys_event_json(owner: &Keys, devices: &[PublicKey], created_at: u64) -> String {
+    let app_keys = AppKeys::new(
+        devices
+            .iter()
+            .copied()
+            .map(|device| DeviceEntry::new(device, created_at))
+            .collect(),
+    );
+    let event = app_keys
+        .get_encrypted_event_at(owner, created_at)
+        .expect("app keys event")
+        .sign_with_keys(owner)
+        .expect("sign app keys");
+    serde_json::to_string(&event).expect("serialize app keys event")
+}
+
 #[test]
 fn peer_profile_debug_reports_known_user_context() {
     let owner = Keys::generate();
@@ -538,7 +554,7 @@ fn app_keys_runtime_storage_failure_does_not_mark_seen_or_mutate_app_cache() {
 
 #[test]
 fn invite_runtime_storage_failure_does_not_mark_seen() {
-    use nostr_double_ratchet::InviteNostrExt;
+    use nostr_double_ratchet_nostr::InviteNostrExt;
 
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -830,17 +846,6 @@ fn start_linked_device_creates_compact_device_approval_code() {
     assert!(matches!(core.screen_stack.as_slice(), [Screen::AddDevice]));
 }
 
-fn signed_app_keys_authorization_event(
-    owner: &Keys,
-    device_pubkey: PublicKey,
-    created_at: u64,
-) -> Event {
-    AppKeys::new(vec![DeviceEntry::new(device_pubkey, created_at)])
-        .get_event_at(owner.public_key(), created_at)
-        .sign_with_keys(owner)
-        .expect("signed app keys authorization")
-}
-
 #[test]
 fn compact_link_request_finishes_pairing_and_authorizes_linked_device() {
     let owner = Keys::generate();
@@ -894,15 +899,15 @@ fn compact_link_request_finishes_pairing_and_authorizes_linked_device() {
         .expect("compact approval publishes deterministic invite response");
     let app_keys_event = pending_events_with_kind(&primary, APP_KEYS_EVENT_KIND)
         .into_iter()
+        .filter(is_app_keys_event)
         .find(|event| event_has_tag_value(event, "device", &linked_device_hex))
         .expect("compact approval publishes AppKeys authorization");
 
     linked.handle_relay_event(response_event);
     assert!(
-        linked.pending_linked_device.is_some(),
-        "invite response alone must wait for owner-signed AppKeys authorization"
+        linked.pending_linked_device.is_none(),
+        "invite response carries the owner-signed AppKeys authorization"
     );
-
     linked.handle_relay_event(app_keys_event);
     let linked_device = linked
         .logged_in
@@ -992,40 +997,29 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
         owner_input: String::new(),
     });
 
-    let linked_device_pubkey = core
-        .pending_linked_device
-        .as_ref()
-        .expect("pending link invite")
-        .device_keys
-        .public_key();
     let pending = core
         .pending_linked_device
         .as_ref()
         .expect("pending link invite");
+    let linked_device_pubkey = pending
+        .pairing_invite
+        .inviter_device_pubkey
+        .to_nostr()
+        .expect("linked device pubkey");
+    let app_keys_event_json =
+        signed_app_keys_event_json(&owner, &[owner.public_key(), linked_device_pubkey], 1);
     let (_owner_session, response_envelope) = pending
         .pairing_invite
-        .accept_with_owner(
+        .accept_with_roster_proof(
             owner.public_key(),
             owner.secret_key().to_secret_bytes(),
-            Some(owner.public_key().to_hex()),
-            Some(owner.public_key()),
+            app_keys_event_json,
         )
         .expect("owner accepts");
-    let response_event = nostr_double_ratchet::invite_response_event(&response_envelope)
+    let response_event = invite_response_event(&response_envelope)
         .expect("invite response event");
 
     core.handle_relay_event(response_event);
-    assert!(
-        core.pending_linked_device.is_some(),
-        "invite response waits for owner-signed AppKeys authorization"
-    );
-    assert!(core.logged_in.is_none());
-
-    core.handle_relay_event(signed_app_keys_authorization_event(
-        &owner,
-        linked_device_pubkey,
-        42,
-    ));
 
     let logged_in = core.logged_in.as_ref().expect("linked session");
     assert_eq!(logged_in.owner_pubkey, owner.public_key());
@@ -1060,26 +1054,25 @@ fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
         .as_ref()
         .expect("pending link invite");
     let pairing_invite = pending.pairing_invite.clone();
-    let linked_device_pubkey = pending.device_keys.public_key();
     assert_eq!(pairing_invite.purpose.as_deref(), Some("link"));
     assert!(pairing_invite.owner_public_key.is_none());
+    let linked_device_pubkey = pairing_invite
+        .inviter_device_pubkey
+        .to_nostr()
+        .expect("linked device pubkey");
+    let app_keys_event_json =
+        signed_app_keys_event_json(&owner, &[owner.public_key(), linked_device_pubkey], 1);
 
     let (_owner_session, response_envelope) = pairing_invite
-        .accept_with_owner(
+        .accept_with_roster_proof(
             owner.public_key(),
             owner.secret_key().to_secret_bytes(),
-            Some(owner.public_key().to_hex()),
-            Some(owner.public_key()),
+            app_keys_event_json,
         )
         .expect("owner accepts");
-    let response_event = nostr_double_ratchet::invite_response_event(&response_envelope)
+    let response_event = invite_response_event(&response_envelope)
         .expect("invite response event");
 
-    core.handle_relay_event(signed_app_keys_authorization_event(
-        &owner,
-        linked_device_pubkey,
-        42,
-    ));
     core.handle_relay_event(response_event);
 
     let stable_invite = core
@@ -1220,7 +1213,7 @@ fn local_relay_pairing_e2e_uses_stable_protocol_invite_after_login() {
         pairing_invite.inviter_ephemeral_public_key
     );
 
-    let filters = linked.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    let filters = current_protocol_filters(&linked);
     assert!(
         has_filter_with_kind_pubkey(&filters, INVITE_RESPONSE_KIND, stable_response_pubkey),
         "protocol filters must track the stable invite response key"
@@ -1240,7 +1233,7 @@ fn local_relay_pairing_e2e_uses_stable_protocol_invite_after_login() {
 }
 
 #[test]
-fn recent_protocol_filters_include_runtime_invite_response_backfill() {
+fn protocol_subscription_filters_include_runtime_invite_response_recipient() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let core = logged_in_test_core("protocol-backfill-invite-response", &owner, &device);
@@ -1252,7 +1245,7 @@ fn recent_protocol_filters_include_runtime_invite_response_backfill() {
         .inviter_ephemeral_public_key
         .to_hex();
 
-    let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    let filters = current_protocol_filters(&core);
     let response_filter = filters
         .iter()
         .map(|filter| serde_json::to_value(filter).expect("filter json"))
@@ -1275,13 +1268,11 @@ fn recent_protocol_filters_include_runtime_invite_response_backfill() {
                 });
             has_response_kind && has_invite_pubkey
         })
-        .expect("invite response backfill filter");
+        .expect("invite response subscription filter");
 
-    assert_eq!(
-        response_filter
-            .get("since")
-            .and_then(|since| since.as_u64()),
-        Some(1_777_159_500 - DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS)
+    assert!(
+        response_filter.get("since").is_none(),
+        "live subscription filters should not be procedural backfill windows"
     );
 }
 
@@ -1299,10 +1290,10 @@ fn protocol_filters_track_invite_responses_by_known_device_authors() {
     );
     core.active_chat_id = Some(peer_owner.public_key().to_hex());
 
-    let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    let filters = current_protocol_filters(&core);
     assert!(
         has_filter_with_kind_author(&filters, INVITE_RESPONSE_KIND, peer_device.public_key()),
-        "invite response backfill should not depend only on #p indexing"
+        "invite response subscription should not depend only on #p indexing"
     );
 
     let relay = crate::local_relay::TestRelay::start();
@@ -1415,7 +1406,7 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
 }
 
 #[test]
-fn recent_protocol_filters_backfill_messages_without_time_or_count_bounds() {
+fn protocol_subscription_filters_track_messages_without_time_or_count_bounds() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let message_author = Keys::generate();
@@ -1426,7 +1417,7 @@ fn recent_protocol_filters_backfill_messages_without_time_or_count_bounds() {
         vec![group_author.public_key()],
     ));
 
-    let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    let filters = current_protocol_filters(&core);
     let find_filter = |kind: u32, author: PublicKey| {
         let author_hex = author.to_hex();
         filters
@@ -1451,7 +1442,7 @@ fn recent_protocol_filters_backfill_messages_without_time_or_count_bounds() {
                     });
                 has_kind && has_author
             })
-            .expect("history backfill filter")
+            .expect("message subscription filter")
     };
     let message_filter = find_filter(MESSAGE_EVENT_KIND, message_author.public_key());
     let group_filter = find_filter(GROUP_SENDER_KEY_MESSAGE_KIND, group_author.public_key());
@@ -1459,17 +1450,17 @@ fn recent_protocol_filters_backfill_messages_without_time_or_count_bounds() {
     for filter in [message_filter, group_filter] {
         assert!(
             filter.get("since").is_none(),
-            "message history catch-up must not have a time bound"
+            "message subscriptions must not have a time bound"
         );
         assert!(
             filter.get("limit").is_none(),
-            "message history catch-up must not have a count bound"
+            "message subscriptions must not have a count bound"
         );
     }
 }
 
 #[test]
-fn recent_protocol_filters_scope_message_backfill_to_known_authors() {
+fn protocol_subscription_filters_scope_messages_to_known_authors() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let message_author = Keys::generate();
@@ -1479,7 +1470,7 @@ fn recent_protocol_filters_scope_message_backfill_to_known_authors() {
         Vec::new(),
     ));
 
-    let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    let filters = current_protocol_filters(&core);
     let message_author_hex = message_author.public_key().to_hex();
     let message_filter = filters
         .iter()
@@ -1507,22 +1498,22 @@ fn recent_protocol_filters_scope_message_backfill_to_known_authors() {
 
     assert!(
         message_filter.get("authors").is_some(),
-        "message history catch-up must remain scoped to known authors"
+        "message subscriptions must remain scoped to known authors"
     );
 }
 
 #[test]
-fn recent_protocol_filters_do_not_include_unscoped_message_backfill_for_cold_tracked_peer() {
+fn protocol_subscription_filters_do_not_include_unscoped_messages_for_cold_tracked_peer() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
     let mut core = logged_in_test_core("protocol-backfill-cold-peer", &owner, &device);
     core.active_chat_id = Some(peer.public_key().to_hex());
 
-    let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    let filters = current_protocol_filters(&core);
     assert!(
         !has_bootstrap_message_filter(&filters),
-        "cold peer discovery must fetch protocol state, not unscoped public message events"
+        "cold peer discovery must not create unscoped public message subscriptions"
     );
 }
 
@@ -1570,7 +1561,7 @@ fn unknown_direct_message_author_is_ignored_instead_of_bootstrapping_public_back
         "tracked peer starts with app keys and known message authors"
     );
     assert!(
-        !has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
+        !has_bootstrap_message_filter(&current_protocol_filters(&core)),
         "without pending inbound work the known peer no longer needs broad bootstrap"
     );
     core.handle_relay_event(message_event);
@@ -1587,13 +1578,13 @@ fn unknown_direct_message_author_is_ignored_instead_of_bootstrapping_public_back
         "ignored encrypted message events must stay retryable because later bootstrap state can make the sender decryptable"
     );
     assert!(
-        !has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
-        "ignored unknown messages must not enable unscoped public backfill"
+        !has_bootstrap_message_filter(&current_protocol_filters(&core)),
+        "ignored unknown messages must not enable unscoped public subscriptions"
     );
 }
 
 #[test]
-fn direct_message_discovery_backfill_stays_scoped_for_partial_tracked_peer_state() {
+fn direct_message_discovery_subscription_stays_scoped_for_partial_tracked_peer_state() {
     let owner = Keys::generate();
     let linked_device = Keys::generate();
     let primary_device = Keys::generate();
@@ -1625,8 +1616,8 @@ fn direct_message_discovery_backfill_stays_scoped_for_partial_tracked_peer_state
     core.active_chat_id = Some(peer.public_key().to_hex());
 
     assert!(
-        !has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
-        "partial peer state must not trigger unscoped public message backfill"
+        !has_bootstrap_message_filter(&current_protocol_filters(&core)),
+        "partial peer state must not trigger unscoped public message subscriptions"
     );
 
     let relay = crate::local_relay::TestRelay::start();
@@ -1638,7 +1629,7 @@ fn direct_message_discovery_backfill_stays_scoped_for_partial_tracked_peer_state
     let active_filters = desired_protocol_filters(&core);
     assert!(
         !has_bootstrap_message_filter(&active_filters),
-        "unscoped live message subscriptions flood public relays; bootstrap discovery must stay bounded to backfill"
+        "unscoped live message subscriptions flood public relays"
     );
 }
 
@@ -1651,8 +1642,8 @@ fn direct_message_discovery_does_not_install_cold_peer_live_bootstrap_subscripti
     core.active_chat_id = Some(peer.public_key().to_hex());
 
     assert!(
-        !has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
-        "cold tracked peer discovery should stay on protocol-state filters"
+        !has_bootstrap_message_filter(&current_protocol_filters(&core)),
+        "cold tracked peer discovery should not install unscoped message filters"
     );
 
     let relay = crate::local_relay::TestRelay::start();
@@ -1683,6 +1674,16 @@ fn has_bootstrap_message_filter(filters: &[Filter]) -> bool {
                 });
             has_message_kind && filter.get("authors").is_none() && filter.get("#p").is_none()
         })
+}
+
+fn current_protocol_filters(core: &AppCore) -> Vec<Filter> {
+    core.protocol_subscription_runtime
+        .desired_plan
+        .clone()
+        .or_else(|| core.compute_protocol_subscription_plan())
+        .as_ref()
+        .map(build_protocol_subscription_filters)
+        .unwrap_or_default()
 }
 
 fn desired_protocol_filters(core: &AppCore) -> Vec<Filter> {
@@ -1828,7 +1829,7 @@ fn established_peer_session_state_for_test(
     peer_keys: &Keys,
     local_keys: &Keys,
 ) -> nostr_double_ratchet::SessionState {
-    use nostr_double_ratchet::SessionNostrExt;
+    use nostr_double_ratchet_nostr::SessionNostrExt;
 
     let mut invite = Invite::create_new(
         peer_keys.public_key(),
@@ -1837,17 +1838,18 @@ fn established_peer_session_state_for_test(
     )
     .expect("invite");
     invite.owner_public_key = Some(peer_keys.public_key());
+    let app_keys_event_json =
+        signed_app_keys_event_json(local_keys, &[local_keys.public_key()], 1);
 
     let (mut local_session, response) = invite
-        .accept_with_owner(
+        .accept_with_roster_proof(
             local_keys.public_key(),
             local_keys.secret_key().to_secret_bytes(),
-            Some(local_keys.public_key().to_hex()),
-            Some(local_keys.public_key()),
+            app_keys_event_json,
         )
         .expect("local accepts peer invite");
     let response_event = invite_response_event(&response).expect("invite response event");
-    let mut peer_session = nostr_double_ratchet::process_invite_response_event(
+    let mut peer_session = process_invite_response_event(
         &invite,
         &response_event,
         peer_keys.secret_key().to_secret_bytes(),
@@ -1858,7 +1860,7 @@ fn established_peer_session_state_for_test(
 
     let local_bootstrap = local_session
         .send_event(
-            nostr_double_ratchet::build_text_rumor(
+            build_text_rumor(
                 local_keys.public_key(),
                 "bootstrap",
                 vec![],
@@ -1872,7 +1874,7 @@ fn established_peer_session_state_for_test(
 
     let peer_reply = peer_session
         .send_event(
-            nostr_double_ratchet::build_text_rumor(
+            build_text_rumor(
                 peer_keys.public_key(),
                 "reply",
                 vec![],
@@ -1888,7 +1890,7 @@ fn established_peer_session_state_for_test(
 }
 
 fn unrelated_direct_message_event_for_test(sender: &Keys, receiver: &Keys) -> Event {
-    use nostr_double_ratchet::SessionNostrExt;
+    use nostr_double_ratchet_nostr::SessionNostrExt;
 
     let mut invite = Invite::create_new(
         sender.public_key(),
@@ -1897,17 +1899,18 @@ fn unrelated_direct_message_event_for_test(sender: &Keys, receiver: &Keys) -> Ev
     )
     .expect("invite");
     invite.owner_public_key = Some(sender.public_key());
+    let app_keys_event_json =
+        signed_app_keys_event_json(receiver, &[receiver.public_key()], 1);
     let (mut receiver_session, _response) = invite
-        .accept_with_owner(
+        .accept_with_roster_proof(
             receiver.public_key(),
             receiver.secret_key().to_secret_bytes(),
-            Some(receiver.public_key().to_hex()),
-            Some(receiver.public_key()),
+            app_keys_event_json,
         )
         .expect("receiver accepts unrelated invite");
     receiver_session
         .send_event(
-            nostr_double_ratchet::build_text_rumor(
+            build_text_rumor(
                 receiver.public_key(),
                 "queued until unrelated protocol state arrives",
                 vec![],
@@ -1930,7 +1933,16 @@ fn install_local_sibling_session_for_test(
     core.protocol_engine
         .as_mut()
         .expect("protocol engine")
-        .ingest_app_keys_snapshot(owner.public_key(), local_app_keys, 1)
+        .ingest_app_keys_snapshot_with_raw_event_json(
+            owner.public_key(),
+            local_app_keys,
+            1,
+            Some(signed_app_keys_event_json(
+                owner,
+                &[primary_device.public_key(), linked_device.public_key()],
+                1,
+            )),
+        )
         .expect("local appkeys");
 
     let linked_invite = core
@@ -1940,16 +1952,19 @@ fn install_local_sibling_session_for_test(
         .local_invite()
         .expect("linked invite");
     let (_primary_session, response) = linked_invite
-        .accept_with_owner(
+        .accept_with_roster_proof(
             primary_device.public_key(),
             primary_device.secret_key().to_secret_bytes(),
-            Some(primary_device.public_key().to_hex()),
-            Some(owner.public_key()),
+            signed_app_keys_event_json(
+                owner,
+                &[primary_device.public_key(), linked_device.public_key()],
+                1,
+            ),
         )
         .expect("primary accepts linked invite");
-    let linked_response = nostr_double_ratchet::process_invite_response_event(
+    let linked_response = process_invite_response_event(
         &linked_invite,
-        &nostr_double_ratchet::invite_response_event(&response)
+        &invite_response_event(&response)
             .expect("invite response event"),
         linked_device.secret_key().to_secret_bytes(),
     )
@@ -2013,7 +2028,7 @@ fn create_invite_generates_private_link_without_public_republish() {
     );
 
     let invite_pubkey_hex = invite.inviter_ephemeral_public_key.to_string();
-    let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    let filters = current_protocol_filters(&core);
     let subscribed_for_response = filters
         .iter()
         .map(|filter| serde_json::to_value(filter).expect("filter json"))

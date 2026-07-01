@@ -57,7 +57,7 @@ fn direct_group_pairwise_payload_that_looks_like_runtime_rumor_is_applied() {
         vec![admin_owner.public_key()],
         1,
     );
-    let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
+    let codec = JsonGroupPayloadCodecV1;
     let payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
         nostr_double_ratchet::GroupPayloadEncodeContext {

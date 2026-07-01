@@ -133,14 +133,13 @@ fn ffi_search_returns_grouped_contacts_groups_and_messages() {
 
     // Two direct chats and one group so we can exercise contact /
     // group / message grouping in one fixture.
-    let bob_npub = ensure_account(&TempDir::new().unwrap(), "Bob");
-    let carol_npub = ensure_account(&TempDir::new().unwrap(), "Carol");
-    let dora_npub = ensure_account(&TempDir::new().unwrap(), "Dora");
+    let bob = ensure_account_with_invite(&TempDir::new().unwrap(), "Bob");
+    let carol = ensure_account_with_invite(&TempDir::new().unwrap(), "Carol");
 
-    let bob_chat = create_chat_and_send(&app, &inbox, &bob_npub, "hello there bob");
-    let _carol_chat = create_chat_and_send(&app, &inbox, &carol_npub, "carol catch up later");
-    let group_chat =
-        create_group_and_send(&app, &inbox, "Project Hello", &dora_npub, "kickoff agenda");
+    let bob_chat = accept_invite_and_send(&app, &inbox, &bob.invite_url, "hello there bob");
+    let _carol_chat =
+        accept_invite_and_send(&app, &inbox, &carol.invite_url, "carol catch up later");
+    let group_chat = create_group_and_send(&app, &inbox, "Project Hello", "kickoff agenda");
     let _ = group_chat; // group chat id consumed for grouping assertions below
     app.dispatch(AppAction::SetChatDraft {
         chat_id: bob_chat.clone(),
@@ -282,15 +281,15 @@ fn prior_chat_id(inbox: &ReconcilerInbox) -> String {
         .unwrap_or_default()
 }
 
-fn create_chat_and_send(
+fn accept_invite_and_send(
     app: &FfiApp,
     inbox: &ReconcilerInbox,
-    peer_input: &str,
+    invite_input: &str,
     body: &str,
 ) -> String {
     let prior = prior_chat_id(inbox);
-    app.dispatch(AppAction::CreateChat {
-        peer_input: peer_input.to_string(),
+    app.dispatch(AppAction::AcceptInvite {
+        invite_input: invite_input.to_string(),
     });
     let chat_id = inbox.current_chat_id_different_from(&prior, Duration::from_secs(5));
     app.dispatch(AppAction::SendMessage {
@@ -310,17 +309,35 @@ fn create_chat_and_send(
     chat_id
 }
 
-fn create_group_and_send(
-    app: &FfiApp,
-    inbox: &ReconcilerInbox,
-    name: &str,
-    member_npub: &str,
-    body: &str,
-) -> String {
+struct AccountFixture {
+    invite_url: String,
+}
+
+fn ensure_account_with_invite(temp: &TempDir, name: &str) -> AccountFixture {
+    let app = FfiApp::new(
+        temp.path().to_string_lossy().to_string(),
+        String::new(),
+        "test".to_string(),
+    );
+    let inbox = ReconcilerInbox::install(&app);
+    app.dispatch(AppAction::CreateAccount {
+        name: name.to_string(),
+    });
+    inbox.wait_until(Duration::from_secs(5), |state| state.account.is_some());
+    app.dispatch(AppAction::CreatePublicInvite);
+    inbox.wait_until(Duration::from_secs(5), |state| {
+        state.public_invite.is_some()
+    });
+    let invite_url = inbox.snapshot().public_invite.expect("invite").url;
+    app.shutdown();
+    AccountFixture { invite_url }
+}
+
+fn create_group_and_send(app: &FfiApp, inbox: &ReconcilerInbox, name: &str, body: &str) -> String {
     let prior = prior_chat_id(inbox);
     app.dispatch(AppAction::CreateGroup {
         name: name.to_string(),
-        member_inputs: vec![member_npub.to_string()],
+        member_inputs: Vec::new(),
     });
     let chat_id = inbox.current_chat_id_different_from(&prior, Duration::from_secs(5));
     app.dispatch(AppAction::SendMessage {

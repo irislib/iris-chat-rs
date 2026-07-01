@@ -655,7 +655,7 @@ fun ChatScreen(
                     }
                 }
 
-                if (!composerBlocked && !isMessageRequest) {
+                if (!composerBlocked && !isMessageRequest && chat.protocolReadiness.canSend) {
                     replyTarget?.let { reply ->
                         ReplyComposerStrip(
                             message = reply,
@@ -686,6 +686,9 @@ fun ChatScreen(
                                 composerFocusRequester.requestFocus()
                             },
                         )
+                    }
+                    !chat.protocolReadiness.canSend -> {
+                        ProtocolReadinessBar(chat.protocolReadiness.message)
                     }
                     else -> {
                         ComposerBar(

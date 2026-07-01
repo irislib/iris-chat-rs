@@ -22,17 +22,7 @@ impl ProtocolEngine {
                 return Err(error);
             }
         };
-        let retry_batch = if applied {
-            match self.retry_pending_protocol(NdrUnixSeconds(event.created_at.as_secs())) {
-                Ok(retry_batch) => retry_batch,
-                Err(error) => {
-                    self.restore_checkpoint(checkpoint);
-                    return Err(error);
-                }
-            }
-        } else {
-            ProtocolRetryBatch::default()
-        };
+        let retry_batch = ProtocolRetryBatch::default();
         if let Err(error) = self.persist() {
             self.restore_checkpoint(checkpoint);
             return Err(error);
@@ -108,7 +98,7 @@ impl ProtocolEngine {
         manager_snapshot
             .groups
             .sort_by(|left, right| left.group_id.cmp(&right.group_id));
-        self.group_manager = GroupEventManager::from_snapshot(manager_snapshot)?;
+        self.group_manager = NostrGroupManager::from_snapshot(manager_snapshot)?;
         Ok(true)
     }
 

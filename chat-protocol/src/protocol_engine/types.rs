@@ -1,14 +1,8 @@
 const PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
 const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
-const PENDING_RETRY_DELAY_SECS: u64 = 2;
-const LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS: u64 = 120;
 const DELIVERED_GROUP_SENDER_KEY_ACK_LIMIT: usize = 512;
 const ANSWERED_GROUP_SENDER_KEY_REPAIR_LIMIT: usize = 512;
-
-fn default_true() -> bool {
-    true
-}
 
 fn group_chat_id(group_id: &str) -> String {
     format!("group:{group_id}")
@@ -19,19 +13,6 @@ struct ProtocolEnginePersistedState {
     version: u32,
     session_manager: SessionManagerSnapshot,
     group_manager: GroupManagerSnapshot,
-    #[serde(default)]
-    pending_outbound: Vec<ProtocolPendingOutbound>,
-    #[serde(default)]
-    pending_inbound: Vec<ProtocolPendingInbound>,
-    #[serde(default)]
-    pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
-    #[serde(default)]
-    pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
-    #[serde(default)]
-    pending_group_sender_key_messages:
-        Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
-    #[serde(default)]
-    pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     #[serde(default)]
     delivered_group_sender_key_acks: Vec<ProtocolDeliveredGroupSenderKeyAck>,
     #[serde(default)]
@@ -56,109 +37,6 @@ pub struct ProtocolPublish {
 #[derive(Clone, Debug)]
 pub enum ProtocolEffect {
     Publish(ProtocolPublish),
-    FetchProtocolState {
-        filters: Vec<Filter>,
-        reason: &'static str,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ProtocolPendingOutbound {
-    pub message_id: String,
-    pub chat_id: String,
-    recipient_owner_hex: String,
-    #[serde(default = "default_true")]
-    send_remote: bool,
-    remote_payload: Vec<u8>,
-    local_sibling_payload: Option<Vec<u8>>,
-    inner_event_id: Option<String>,
-    #[serde(default)]
-    delivered_remote_device_hexes: Vec<String>,
-    #[serde(default)]
-    delivered_local_device_hexes: Vec<String>,
-    #[serde(default)]
-    probe_local_sibling_roster: bool,
-    created_at_secs: u64,
-    next_retry_at_secs: u64,
-    reason: ProtocolPendingReason,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ProtocolPendingReason {
-    MissingRoster,
-    MissingDeviceInvite,
-    PublishRetry,
-}
-
-impl ProtocolPendingOutbound {
-    fn waits_for_remote_protocol_state(&self) -> bool {
-        matches!(
-            self.reason,
-            ProtocolPendingReason::MissingRoster | ProtocolPendingReason::MissingDeviceInvite
-        )
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct ProtocolPendingInbound {
-    event: Event,
-    created_at_secs: u64,
-    next_retry_at_secs: u64,
-    #[serde(default)]
-    event_id: String,
-    #[serde(default)]
-    envelope: Option<MessageEnvelope>,
-    #[serde(default)]
-    sender_message_pubkey_hex: Option<String>,
-    #[serde(default)]
-    resolved_owner_pubkey_hex: Option<String>,
-    #[serde(default)]
-    claimed_owner_pubkey_hex: Option<String>,
-    #[serde(default)]
-    metadata_verified: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProtocolPendingInboundTestDebug {
-    pub event_id: String,
-    pub sender_message_pubkey_hex: Option<String>,
-    pub claimed_owner_pubkey_hex: Option<String>,
-    pub has_envelope: bool,
-    pub metadata_verified: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct ProtocolPendingGroupFanout {
-    group_id: String,
-    fanout: GroupPendingFanout,
-    inner_event_id: Option<String>,
-    created_at_secs: u64,
-    next_retry_at_secs: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct ProtocolPendingGroupPairwisePayload {
-    sender_owner: NdrOwnerPubkey,
-    sender_device: Option<NdrDevicePubkey>,
-    payload: Vec<u8>,
-    created_at_secs: u64,
-    next_retry_at_secs: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct ProtocolPendingGroupSenderKeyRepair {
-    group_id: String,
-    sender_event_pubkey_hex: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    key_id: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    message_number: Option<u32>,
-    #[serde(default)]
-    required_revision: Option<u64>,
-    created_at_secs: u64,
-    last_requested_at_secs: u64,
-    request_count: u32,
-    next_retry_at_secs: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -204,7 +82,6 @@ struct GroupRosterFactHistory {
 struct KnownMessageAuthorCache {
     pubkeys: Vec<PublicKey>,
     pubkey_set: HashSet<PublicKey>,
-    hexes: HashSet<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -212,7 +89,6 @@ pub struct ProtocolDirectSendResult {
     pub message_id: String,
     pub event_ids: Vec<String>,
     pub effects: Vec<ProtocolEffect>,
-    pub queued_targets: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -221,7 +97,6 @@ pub struct ProtocolRetryResult {
     pub chat_id: String,
     pub event_ids: Vec<String>,
     pub effects: Vec<ProtocolEffect>,
-    pub queued_targets: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -230,14 +105,12 @@ pub struct ProtocolGroupSendResult {
     pub message_id: Option<String>,
     pub event_ids: Vec<String>,
     pub effects: Vec<ProtocolEffect>,
-    pub queued_targets: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct ProtocolGroupIncomingResult {
     pub events: Vec<GroupIncomingEvent>,
     pub effects: Vec<ProtocolEffect>,
-    pub queued_targets: Vec<String>,
     pub consumed: bool,
     pub pending: bool,
 }
@@ -255,7 +128,6 @@ impl ProtocolRetryBatch {
         self.direct_results.is_empty()
             && self.group_result.events.is_empty()
             && self.group_result.effects.is_empty()
-            && self.group_result.queued_targets.is_empty()
             && self.direct_messages.is_empty()
             && self.effects.is_empty()
     }
@@ -304,11 +176,6 @@ enum ProtocolSenderOwnerResolution {
     Verified {
         owner: NdrOwnerPubkey,
     },
-    PendingOwnerClaim {
-        storage_owner: NdrOwnerPubkey,
-        claimed_owner: NdrOwnerPubkey,
-        sender_device: NdrDevicePubkey,
-    },
     ProvisionalDeviceOwner {
         owner: NdrOwnerPubkey,
     },
@@ -318,17 +185,6 @@ enum ProtocolSenderOwnerResolution {
 struct ProtocolSenderDeviceRecord {
     storage_owner: NdrOwnerPubkey,
     device_pubkey: NdrDevicePubkey,
-    claimed_owner_pubkey: Option<NdrOwnerPubkey>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct ProtocolPendingInboundMetadata {
-    event_id: String,
-    envelope: Option<MessageEnvelope>,
-    sender_message_pubkey_hex: Option<String>,
-    resolved_owner_pubkey_hex: Option<String>,
-    claimed_owner_pubkey_hex: Option<String>,
-    metadata_verified: bool,
 }
 
 impl From<ProtocolPendingDecryptedDelivery> for ProtocolDecryptedMessage {
@@ -405,14 +261,7 @@ pub struct ProtocolEngine {
     local_device: NdrDevicePubkey,
     storage: Arc<dyn StorageAdapter>,
     session_manager: SessionManager,
-    group_manager: GroupEventManager,
-    pending_outbound: Vec<ProtocolPendingOutbound>,
-    pending_inbound: Vec<ProtocolPendingInbound>,
-    pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
-    pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
-    pending_group_sender_key_messages:
-        Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
-    pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
+    group_manager: NostrGroupManager,
     delivered_group_sender_key_acks: Vec<ProtocolDeliveredGroupSenderKeyAck>,
     answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
@@ -436,14 +285,7 @@ pub struct ProtocolEngine {
 #[derive(Clone)]
 struct ProtocolEngineCheckpoint {
     session_manager: SessionManager,
-    group_manager: GroupEventManager,
-    pending_outbound: Vec<ProtocolPendingOutbound>,
-    pending_inbound: Vec<ProtocolPendingInbound>,
-    pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
-    pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
-    pending_group_sender_key_messages:
-        Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
-    pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
+    group_manager: NostrGroupManager,
     delivered_group_sender_key_acks: Vec<ProtocolDeliveredGroupSenderKeyAck>,
     answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,

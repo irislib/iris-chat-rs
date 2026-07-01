@@ -25,7 +25,7 @@ impl AppCore {
                 trimmed_name
             };
             self.set_local_profile_name(&profile_name);
-            self.republish_local_identity_artifacts();
+            self.publish_local_app_keys();
         }
 
         self.state.busy.creating_account = false;
@@ -49,9 +49,6 @@ impl AppCore {
         self.push_debug_log("app.foreground", "refresh relay session");
         self.schedule_session_connect();
         self.request_protocol_subscription_refresh_forced_reconnect_if_offline();
-        let _fetching_recent_protocol_state = self.fetch_recent_protocol_state();
-        self.fetch_recent_messages_for_tracked_peers();
-        self.retry_protocol_engine_pending_outbound("app_foreground");
         self.retry_pending_relay_publishes("app_foreground");
         self.refresh_protocol_sync_busy();
         self.rebuild_state();
@@ -261,9 +258,6 @@ impl AppCore {
             pairing_client: client,
             pairing_invite: invite,
             pairing_url: url,
-            authorized_owner_pubkey: None,
-            authorized_app_keys_event: None,
-            pending_response: None,
         });
         Ok(())
     }
@@ -285,9 +279,19 @@ impl AppCore {
         peer_device_id: String,
         session_state: SessionState,
         device_keys: Keys,
+        app_keys_event_json: String,
     ) -> anyhow::Result<()> {
+        let app_keys_event: Event = serde_json::from_str(&app_keys_event_json)?;
+        if app_keys_event.pubkey != owner_pubkey {
+            return Err(anyhow::anyhow!(
+                "embedded app keys proof belongs to a different owner"
+            ));
+        }
+        AppKeys::from_event(&app_keys_event)?;
         self.stop_pending_linked_device();
         self.start_session(owner_pubkey, None, device_keys, false, false)?;
+        self.apply_app_keys_event(&app_keys_event)?;
+        self.refresh_local_authorization_state();
         let retry_batch = self
             .protocol_engine
             .as_mut()
@@ -300,8 +304,8 @@ impl AppCore {
             )?;
         self.mark_mobile_push_dirty();
         self.process_protocol_engine_retry_batch("linked_device_import", retry_batch);
+        self.refresh_local_authorization_state();
         self.request_protocol_subscription_refresh_forced();
-        self.fetch_recent_protocol_state();
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
@@ -437,12 +441,17 @@ impl AppCore {
         }
         let owner_pubkey = logged_in.owner_pubkey;
         let device_pubkey = logged_in.device_keys.public_key();
-        let (session, response) = invite.accept_with_owner(
-            device_pubkey,
-            logged_in.device_keys.secret_key().to_secret_bytes(),
-            Some(device_pubkey.to_hex()),
-            Some(owner_pubkey),
-        )?;
+        let device_secret = logged_in.device_keys.secret_key().to_secret_bytes();
+        self.upsert_local_app_key_device_with_labels(
+            owner_pubkey,
+            invite.inviter_device_pubkey.to_nostr()?,
+            None,
+            true,
+        );
+        let app_keys_event = self.sign_and_cache_local_app_keys_event()?;
+        let app_keys_event_json = serde_json::to_string(&app_keys_event)?;
+        let (session, response) =
+            invite.accept_with_roster_proof(device_pubkey, device_secret, app_keys_event_json)?;
         let retry_batch = self
             .protocol_engine
             .as_mut()
@@ -453,7 +462,8 @@ impl AppCore {
                 session.state,
                 unix_now(),
             )?;
-        let response_event = nostr_double_ratchet::invite_response_event(&response)?;
+        let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)?;
+        self.publish_local_app_keys();
         self.publish_runtime_event(response_event, "appcore-protocol", None);
         self.publish_local_protocol_invite();
         self.mark_mobile_push_dirty();
@@ -766,10 +776,11 @@ impl AppCore {
                 known_app_keys_to_ndr(&app_keys),
             ) {
                 if let Some(protocol_engine) = self.protocol_engine.as_mut() {
-                    if let Ok(batch) = protocol_engine.ingest_app_keys_snapshot(
+                    if let Ok(batch) = protocol_engine.ingest_app_keys_snapshot_with_raw_event_json(
                         owner,
                         keys,
                         app_keys.created_at_secs,
+                        app_keys.raw_event_json.clone(),
                     ) {
                         Self::append_protocol_retry_batch(&mut app_keys_retry_batch, batch);
                     }
@@ -811,11 +822,9 @@ impl AppCore {
         self.emit_account_bundle_update(owner_keys.as_ref(), &device_keys);
         self.republish_local_identity_artifacts();
         self.drain_pending_mobile_push_events();
-        self.retry_protocol_engine_pending_outbound("session_start");
         self.retry_pending_relay_publishes("session_start");
         self.schedule_next_message_expiry();
         self.request_protocol_subscription_refresh();
-        self.fetch_recent_protocol_state();
         self.refresh_protocol_sync_busy();
         self.rebuild_state();
         self.persist_best_effort();
@@ -828,7 +837,6 @@ impl AppCore {
                 device_pubkey.to_hex()
             ),
         );
-        self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));
         Ok(())
     }
 
@@ -860,6 +868,7 @@ impl AppCore {
                 owner_pubkey_hex: owner_hex,
                 created_at_secs: now,
                 devices: Vec::new(),
+                raw_event_json: None,
             });
         let device_hex = device.to_hex();
         if let Some(existing) = entry
@@ -883,6 +892,7 @@ impl AppCore {
             existing.client_label = labels.client_label.clone();
             existing.label_updated_at_secs = next_created_at;
             entry.created_at_secs = next_created_at;
+            entry.raw_event_json = None;
             return true;
         }
         let next_created_at = next_app_keys_created_at(now, entry.created_at_secs);
@@ -894,6 +904,7 @@ impl AppCore {
             label_updated_at_secs: labels.map(|_| next_created_at).unwrap_or_default(),
         });
         entry.created_at_secs = next_created_at;
+        entry.raw_event_json = None;
         entry
             .devices
             .sort_by(|left, right| left.identity_pubkey_hex.cmp(&right.identity_pubkey_hex));
@@ -943,6 +954,7 @@ impl AppCore {
         device.client_label = labels.client_label.clone();
         device.label_updated_at_secs = next_created_at;
         known.created_at_secs = next_created_at;
+        known.raw_event_json = None;
         true
     }
 
@@ -966,6 +978,7 @@ impl AppCore {
                 entry.created_at_secs,
                 latest_device_created_at,
             );
+            entry.raw_event_json = None;
         }
     }
 

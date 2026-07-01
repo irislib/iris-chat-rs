@@ -628,7 +628,8 @@ final class IrisChatUITests: XCTestCase {
         typeText("Trip crew", into: editableElement(app, "newGroupNameInput"), app: app)
         element(app, "newGroupCreateButton").tap()
 
-        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 45))
+        XCTAssertTrue(element(app, "protocolReadinessComposerBar").waitForExistence(timeout: 45))
+        XCTAssertTrue(app.staticTexts["This group is not ready yet. Waiting for member app keys."].exists)
         openGroupDetails(app)
 
         XCTAssertTrue(element(app, "groupDetailsScreen").waitForExistence(timeout: 10))
@@ -757,9 +758,16 @@ final class IrisChatUITests: XCTestCase {
 
     private func openChatWithPeer(_ app: XCUIApplication) {
         tapNewChat(app)
-        XCTAssertTrue(element(app, "newChatPeerInput").waitForExistence(timeout: 10))
-        typeText(validPeerNpub, into: editableElement(app, "newChatPeerInput"), app: app)
-        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 15))
+        XCTAssertTrue(element(app, "newChatNewGroupButton").waitForExistence(timeout: 10))
+        element(app, "newChatNewGroupButton").tap()
+        XCTAssertTrue(element(app, "newGroupMemberStep").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "newGroupNextButton").isEnabled)
+        element(app, "newGroupNextButton").tap()
+        XCTAssertTrue(element(app, "newGroupNameInput").waitForExistence(timeout: 10))
+        typeText("UI ready chat", into: editableElement(app, "newGroupNameInput"), app: app)
+        XCTAssertTrue(element(app, "newGroupCreateButton").isEnabled)
+        element(app, "newGroupCreateButton").tap()
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 45))
     }
 
     func testRestoreAccountOpensDedicatedScreenAndEntersChatList() {

@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn is_supported_group_pairwise_payload(payload: &[u8]) -> bool {
-    let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
+    let codec = JsonGroupPayloadCodecV1;
     let Ok(Some(command)) =
         nostr_double_ratchet::GroupPayloadCodec::decode_pairwise_command(&codec, payload)
     else {
@@ -20,9 +20,7 @@ pub(super) fn is_supported_group_pairwise_payload(payload: &[u8]) -> bool {
 pub(super) fn summarize_group_send_effect_targets(effects: &[ProtocolEffect]) -> String {
     let mut targets = Vec::new();
     for effect in effects {
-        let ProtocolEffect::Publish(publish) = effect else {
-            continue;
-        };
+        let ProtocolEffect::Publish(publish) = effect;
         let stage = if publish.inner_event_id.is_some() {
             "delivery"
         } else {

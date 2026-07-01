@@ -48,6 +48,7 @@ just run
 just build
 just run-android
 just run-ios
+just run-ios-sims 4
 just run-linux
 just run-macos
 just run-windows

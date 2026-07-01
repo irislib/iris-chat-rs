@@ -13,8 +13,8 @@ fn protocol_effects_from_prepared(
             inner_event_id: None,
         });
     }
-    for delivery in &prepared.deliveries {
-        let event = message_event_for_delivery(delivery)?;
+    for (index, delivery) in prepared.deliveries.iter().enumerate() {
+        let event = message_event_for_delivery_with_offset(delivery, index as u64)?;
         event_ids.push(event.id.to_string());
         let publish = ProtocolPublish {
             event,
@@ -51,8 +51,17 @@ fn protocol_effects_from_group_prepared_publish(
         };
         publishes.push(publish);
     }
-    for sender_key_message in &prepared.sender_key_messages {
-        let event = group_sender_key_message_event(sender_key_message)?;
+    let sender_key_offset = prepared.deliveries.len() as u64;
+    for (index, sender_key_message) in prepared.sender_key_messages.iter().enumerate() {
+        let mut sender_key_message = sender_key_message.clone();
+        sender_key_message.created_at = NdrUnixSeconds(
+            sender_key_message
+                .created_at
+                .get()
+                .saturating_add(sender_key_offset)
+                .saturating_add(index as u64),
+        );
+        let event = group_sender_key_message_event(&sender_key_message)?;
         event_ids.push(event.id.to_string());
         publishes.push(ProtocolPublish {
             event,
@@ -64,6 +73,13 @@ fn protocol_effects_from_group_prepared_publish(
 }
 
 fn message_event_for_delivery(delivery: &Delivery) -> anyhow::Result<Event> {
+    message_event_for_delivery_with_offset(delivery, 0)
+}
+
+fn message_event_for_delivery_with_offset(
+    delivery: &Delivery,
+    created_at_offset_secs: u64,
+) -> anyhow::Result<Event> {
     let envelope = &delivery.envelope;
     let author_secret_key = nostr::SecretKey::from_slice(&envelope.signer_secret_key)?;
     let author_keys = Keys::new(author_secret_key);
@@ -83,7 +99,12 @@ fn message_event_for_delivery(delivery: &Delivery) -> anyhow::Result<Event> {
         envelope.encrypted_header.as_str(),
     ])?)
     .tag(nostr::Tag::parse(["p", recipient_hex.as_str()])?)
-    .custom_created_at(Timestamp::from(envelope.created_at.get()))
+    .custom_created_at(Timestamp::from(
+        envelope
+            .created_at
+            .get()
+            .saturating_add(created_at_offset_secs),
+    ))
     .build(public_device_pubkey(envelope.sender)?);
 
     Ok(unsigned.sign_with_keys(&author_keys)?)
@@ -105,67 +126,6 @@ fn classify_group_pairwise_payload(payload: &[u8]) -> anyhow::Result<(bool, bool
         _ => false,
     };
     Ok((true, supported))
-}
-
-fn sort_dedup_protocol_pubkeys(pubkeys: &mut Vec<PublicKey>) {
-    pubkeys.sort_by_key(|pubkey| pubkey.to_hex());
-    pubkeys.dedup();
-}
-
-fn pending_retry_delay_secs(created_at_secs: u64, now: NdrUnixSeconds) -> u64 {
-    let age_secs = now.get().saturating_sub(created_at_secs);
-    match age_secs {
-        0..=29 => PENDING_RETRY_DELAY_SECS,
-        30..=119 => 15,
-        _ => 60,
-    }
-}
-
-fn next_pending_retry_at_secs(created_at_secs: u64, now: NdrUnixSeconds) -> u64 {
-    now.get()
-        .saturating_add(pending_retry_delay_secs(created_at_secs, now))
-}
-
-fn group_publish_from_prepared_send(
-    prepared: PreparedSend,
-    fanout: GroupPendingFanout,
-) -> GroupPreparedPublish {
-    let pending_fanouts = if prepared.relay_gaps.is_empty() {
-        Vec::new()
-    } else {
-        vec![fanout]
-    };
-    GroupPreparedPublish {
-        deliveries: prepared.deliveries,
-        invite_responses: prepared.invite_responses,
-        sender_key_messages: Vec::new(),
-        relay_gaps: prepared.relay_gaps,
-        pending_fanouts,
-    }
-}
-
-fn delivered_device_hexes(prepared: &PreparedSend) -> Vec<String> {
-    let mut devices = prepared
-        .deliveries
-        .iter()
-        .map(|delivery| delivery.device_pubkey.to_hex())
-        .collect::<Vec<_>>();
-    devices.sort();
-    devices.dedup();
-    devices
-}
-
-fn pending_reason_from_gaps(gaps: &[RelayGap]) -> ProtocolPendingReason {
-    if gaps
-        .iter()
-        .any(|gap| matches!(gap, RelayGap::MissingRoster { .. }))
-    {
-        ProtocolPendingReason::MissingRoster
-    } else if gaps.is_empty() {
-        ProtocolPendingReason::PublishRetry
-    } else {
-        ProtocolPendingReason::MissingDeviceInvite
-    }
 }
 
 fn collect_expected_sender_pubkeys(session: &SessionState, out: &mut HashSet<PublicKey>) {
@@ -190,89 +150,6 @@ fn session_state_matches_sender(session: &SessionState, sender: NdrDevicePubkey)
     session.their_current_nostr_public_key == Some(sender)
         || session.their_next_nostr_public_key == Some(sender)
         || session.skipped_keys.contains_key(&sender)
-}
-
-fn sender_resolution_owner_matches(
-    resolution: ProtocolSenderOwnerResolution,
-    owner: NdrOwnerPubkey,
-) -> bool {
-    match resolution {
-        ProtocolSenderOwnerResolution::Verified {
-            owner: resolved_owner,
-        }
-        | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner {
-            owner: resolved_owner,
-        } => resolved_owner == owner,
-        ProtocolSenderOwnerResolution::PendingOwnerClaim { claimed_owner, .. } => {
-            claimed_owner == owner
-        }
-    }
-}
-
-fn pending_inbound_owner_hexes_from_resolution(
-    resolution: ProtocolSenderOwnerResolution,
-) -> (Option<String>, Option<String>) {
-    match resolution {
-        ProtocolSenderOwnerResolution::Verified { owner }
-        | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => {
-            (Some(owner.to_hex()), None)
-        }
-        ProtocolSenderOwnerResolution::PendingOwnerClaim {
-            storage_owner,
-            claimed_owner,
-            ..
-        } => (Some(storage_owner.to_hex()), Some(claimed_owner.to_hex())),
-    }
-}
-
-fn pending_inbound_sender_pubkey(pending: &ProtocolPendingInbound) -> Option<NdrDevicePubkey> {
-    if let Some(envelope) = pending.envelope.as_ref() {
-        return Some(envelope.sender);
-    }
-    pending
-        .sender_message_pubkey_hex
-        .as_deref()
-        .and_then(|pubkey_hex| PublicKey::parse(pubkey_hex).ok())
-        .map(ndr_device)
-}
-
-fn pending_inbound_sender_pubkey_hex(pending: &ProtocolPendingInbound) -> Option<String> {
-    pending_inbound_sender_pubkey(pending)
-        .and_then(|sender| public_device(sender).ok())
-        .map(|sender| sender.to_hex())
-        .or_else(|| Some(pending.event.pubkey.to_hex()))
-}
-
-fn apply_pending_inbound_metadata(
-    pending: &mut ProtocolPendingInbound,
-    metadata: ProtocolPendingInboundMetadata,
-) -> bool {
-    let mut changed = false;
-    if pending.event_id.is_empty() && !metadata.event_id.is_empty() {
-        pending.event_id = metadata.event_id;
-        changed = true;
-    }
-    if pending.envelope.is_none() && metadata.envelope.is_some() {
-        pending.envelope = metadata.envelope;
-        changed = true;
-    }
-    if pending.sender_message_pubkey_hex.is_none() && metadata.sender_message_pubkey_hex.is_some() {
-        pending.sender_message_pubkey_hex = metadata.sender_message_pubkey_hex;
-        changed = true;
-    }
-    if pending.resolved_owner_pubkey_hex.is_none() && metadata.resolved_owner_pubkey_hex.is_some() {
-        pending.resolved_owner_pubkey_hex = metadata.resolved_owner_pubkey_hex;
-        changed = true;
-    }
-    if pending.claimed_owner_pubkey_hex.is_none() && metadata.claimed_owner_pubkey_hex.is_some() {
-        pending.claimed_owner_pubkey_hex = metadata.claimed_owner_pubkey_hex;
-        changed = true;
-    }
-    if metadata.metadata_verified && !pending.metadata_verified {
-        pending.metadata_verified = true;
-        changed = true;
-    }
-    changed
 }
 
 fn provisional_owner_from_sender_pubkey(sender: NdrDevicePubkey) -> NdrOwnerPubkey {
@@ -324,14 +201,6 @@ fn protocol_event_has_tag(event: &Event, name: &str) -> bool {
         .tags
         .iter()
         .any(|tag| tag.as_slice().first().map(|value| value.as_str()) == Some(name))
-}
-
-fn delivered_device_set(device_hexes: &[String]) -> HashSet<NdrDevicePubkey> {
-    device_hexes
-        .iter()
-        .filter_map(|hex| PublicKey::parse(hex).ok())
-        .map(ndr_device)
-        .collect()
 }
 
 fn public_owner(pubkey: NdrOwnerPubkey) -> anyhow::Result<PublicKey> {

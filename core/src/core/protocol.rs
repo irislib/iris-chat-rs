@@ -1,20 +1,13 @@
 use super::*;
 use crate::core::projection::relay_connection_status;
 
-mod backfill;
 mod retry_helpers;
 mod subscription_helpers;
 
-use self::backfill::{
-    direct_message_history_filter, direct_message_recipient_history_filter,
-    group_sender_key_history_filter, protocol_event_summary,
-    NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS, PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE,
-};
 pub(super) use self::subscription_helpers::build_protocol_subscription_filters;
 use self::subscription_helpers::{
-    current_client_relay_statuses, fetch_events_for_filters, normalize_protocol_queued_targets,
-    pubkeys_from_comma_separated_hexes, pubkeys_from_hexes, subscribe_protocol_filters_with_id,
-    wait_for_connected_relays, ProtocolSubscriptionApplyOutput,
+    current_client_relay_statuses, subscribe_protocol_filters_with_id, wait_for_connected_relays,
+    ProtocolSubscriptionApplyOutput,
 };
 
 const PROTOCOL_SUBSCRIPTION_ID: &str = "ndr-protocol";
@@ -89,15 +82,11 @@ impl AppCore {
                 self.push_debug_log(
                     "appcore.protocol.send",
                     format!(
-                        "reason={reason} chat_id={chat_id} event_ids={} queued_targets={}",
-                        result.event_ids.len(),
-                        result.queued_targets.len()
+                        "reason={reason} chat_id={chat_id} event_ids={}",
+                        result.event_ids.len()
                     ),
                 );
                 self.process_protocol_engine_effects(result.effects);
-                if !result.queued_targets.is_empty() {
-                    self.handle_queued_protocol_targets(reason, &result.queued_targets);
-                }
                 true
             }
             Err(error) => {
@@ -119,17 +108,13 @@ impl AppCore {
             return;
         }
         let mut published = 0usize;
-        let mut queued_targets = Vec::new();
         let mut direct_effects = Vec::new();
         let mut direct_message_refs = Vec::new();
         for result in batch.direct_results {
             published = published.saturating_add(result.event_ids.len());
-            queued_targets.extend(result.queued_targets.clone());
             direct_effects.extend(result.effects);
             direct_message_refs.push((result.chat_id, result.message_id));
         }
-        queued_targets.extend(batch.group_result.queued_targets.clone());
-        normalize_protocol_queued_targets(&mut queued_targets);
         self.process_protocol_engine_effects(direct_effects);
         for (chat_id, message_id) in direct_message_refs {
             self.sync_message_delivery_trace(&chat_id, &message_id);
@@ -155,65 +140,13 @@ impl AppCore {
         }
         self.push_debug_log(
             "appcore.protocol.retry",
-            format!(
-                "reason={reason} published={published} queued_targets={}",
-                queued_targets.len()
-            ),
+            format!("reason={reason} published={published}"),
         );
-        if queued_targets.is_empty() {
-            self.request_protocol_subscription_refresh();
-            self.schedule_fast_protocol_retry_if_pending();
-        } else {
-            self.handle_queued_protocol_targets(reason, &queued_targets);
-        }
+        self.request_protocol_subscription_refresh();
+        self.schedule_fast_protocol_retry_if_pending();
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
-    }
-
-    pub(super) fn handle_queued_protocol_targets(
-        &mut self,
-        reason: &'static str,
-        queued_targets: &[String],
-    ) {
-        if queued_targets.is_empty() {
-            return;
-        }
-        let mut queued_targets = queued_targets.to_vec();
-        normalize_protocol_queued_targets(&mut queued_targets);
-        if queued_targets.is_empty() {
-            return;
-        }
-        self.push_debug_log(
-            "appcore.protocol.queued",
-            format!("reason={reason} targets={}", queued_targets.join(",")),
-        );
-        self.request_protocol_subscription_refresh();
-        self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
-            PROTOCOL_RECONNECT_CHECK_SECS,
-        ));
-    }
-
-    pub(super) fn retry_protocol_engine_pending_outbound(&mut self, reason: &'static str) {
-        let Some(protocol_engine) = self.protocol_engine.as_mut() else {
-            return;
-        };
-        let now = NdrUnixSeconds(unix_now().get());
-        if !protocol_engine.has_due_pending_retry_work(now) {
-            return;
-        }
-        let results = match protocol_engine.retry_pending_protocol(now) {
-            Ok(results) => results,
-            Err(error) => {
-                self.push_debug_log("appcore.protocol.retry.error", error.to_string());
-                return;
-            }
-        };
-        if results.is_empty() {
-            self.schedule_fast_protocol_retry_if_pending();
-            return;
-        }
-        self.process_protocol_engine_retry_batch(reason, results);
     }
 
     pub(super) fn append_protocol_retry_batch(
@@ -229,10 +162,6 @@ impl AppCore {
             .group_result
             .effects
             .append(&mut source.group_result.effects);
-        target
-            .group_result
-            .queued_targets
-            .append(&mut source.group_result.queued_targets);
         target.direct_messages.append(&mut source.direct_messages);
         target.effects.append(&mut source.effects);
     }
@@ -311,34 +240,6 @@ impl AppCore {
         owners
     }
 
-    pub(super) fn schedule_tracked_peer_catch_up(&mut self, after: Duration) {
-        let due_at = Instant::now() + after;
-        if self
-            .protocol_subscription_runtime
-            .tracked_peer_catch_up_due_at
-            .is_some_and(|existing| existing <= due_at)
-        {
-            return;
-        }
-        self.protocol_subscription_runtime
-            .tracked_peer_catch_up_due_at = Some(due_at);
-        self.protocol_subscription_runtime
-            .tracked_peer_catch_up_token = self
-            .protocol_subscription_runtime
-            .tracked_peer_catch_up_token
-            .wrapping_add(1);
-        let token = self
-            .protocol_subscription_runtime
-            .tracked_peer_catch_up_token;
-        let tx = self.core_sender.clone();
-        self.runtime.spawn(async move {
-            sleep_until(due_at).await;
-            let _ = tx.send(CoreMsg::Internal(Box::new(
-                InternalEvent::FetchTrackedPeerCatchUp { token },
-            )));
-        });
-    }
-
     pub(super) fn schedule_protocol_subscription_liveness_check(&mut self, after: Duration) {
         if !self.has_protocol_liveness_work() {
             self.protocol_subscription_runtime.liveness_due_at = None;
@@ -381,332 +282,10 @@ impl AppCore {
 
     pub(super) fn refresh_protocol_sync_busy(&mut self) {
         let subscription = &self.protocol_subscription_runtime;
-        self.state.busy.syncing_network = subscription.protocol_fetch_in_flight
-            || subscription.protocol_author_backfill_in_flight > 0
-            || subscription.refresh_in_flight
+        self.state.busy.syncing_network = subscription.refresh_in_flight
             || subscription.refresh_dirty
             || subscription.applying_plan.is_some()
             || subscription.desired_plan != subscription.applied_plan;
-    }
-
-    pub(super) fn fetch_recent_messages_for_author(&mut self, author_pubkey: PublicKey) {
-        self.fetch_recent_messages_for_authors(vec![author_pubkey]);
-    }
-
-    fn fetch_recent_messages_for_authors(&mut self, author_pubkeys: Vec<PublicKey>) {
-        let Some((client, relay_urls)) = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
-        else {
-            return;
-        };
-        if author_pubkeys.is_empty() {
-            return;
-        }
-        let filters = author_pubkeys
-            .chunks(PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE)
-            .map(|author_chunk| direct_message_history_filter(author_chunk.to_vec()))
-            .collect::<Vec<_>>();
-        self.spawn_protocol_author_backfills(client, relay_urls, filters, "direct_message_authors");
-    }
-
-    fn fetch_recent_messages_for_recipients(&mut self, recipient_pubkeys: Vec<PublicKey>) {
-        let Some((client, relay_urls)) = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
-        else {
-            return;
-        };
-        if recipient_pubkeys.is_empty() {
-            return;
-        }
-        let now = unix_now();
-        let filters = recipient_pubkeys
-            .chunks(PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE)
-            .map(|recipient_chunk| {
-                direct_message_recipient_history_filter(recipient_chunk.to_vec(), now)
-            })
-            .collect::<Vec<_>>();
-        self.spawn_protocol_author_backfills(
-            client,
-            relay_urls,
-            filters,
-            "direct_message_recipients",
-        );
-    }
-
-    fn spawn_protocol_author_backfills(
-        &mut self,
-        client: Client,
-        relay_urls: Vec<RelayUrl>,
-        filters: Vec<Filter>,
-        reason: &'static str,
-    ) {
-        if filters.is_empty() {
-            return;
-        }
-        self.protocol_subscription_runtime
-            .protocol_author_backfill_in_flight = self
-            .protocol_subscription_runtime
-            .protocol_author_backfill_in_flight
-            .saturating_add(filters.len() as u64);
-        self.refresh_protocol_sync_busy();
-        self.emit_state();
-        self.push_debug_log(
-            "protocol.author_backfill.fetch",
-            format!("reason={reason} filters={}", filters.len()),
-        );
-        for filter in filters {
-            let tx = self.core_sender.clone();
-            let client = client.clone();
-            let relay_urls = relay_urls.clone();
-            self.runtime.spawn(async move {
-                ensure_session_relays_configured(&client, &relay_urls).await;
-                connect_client_with_timeout(&client, Duration::from_secs(5)).await;
-                match client.fetch_events(filter, Duration::from_secs(5)).await {
-                    Ok(events) => {
-                        let collected = events.iter().cloned().collect::<Vec<_>>();
-                        let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                            category: "protocol.author_backfill.result".to_string(),
-                            detail: format!(
-                                "reason={reason} events={} summary={}",
-                                collected.len(),
-                                protocol_event_summary(&collected)
-                            ),
-                        })));
-                        if !collected.is_empty() {
-                            let _ = tx.send(CoreMsg::Internal(Box::new(
-                                InternalEvent::FetchCatchUpEvents(collected),
-                            )));
-                        }
-                    }
-                    Err(error) => {
-                        let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                            category: "protocol.author_backfill.error".to_string(),
-                            detail: format!("reason={reason} error={error}"),
-                        })));
-                    }
-                }
-                let _ = tx.send(CoreMsg::Internal(Box::new(
-                    InternalEvent::ProtocolAuthorBackfillComplete {
-                        reason: reason.to_string(),
-                    },
-                )));
-            });
-        }
-    }
-
-    fn schedule_new_message_author_backfill(&self, author_pubkeys: Vec<PublicKey>) {
-        let Some((client, relay_urls)) = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
-        else {
-            return;
-        };
-        if author_pubkeys.is_empty() {
-            return;
-        }
-        for delay_ms in NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS {
-            let client = client.clone();
-            let relay_urls = relay_urls.clone();
-            let authors = author_pubkeys.clone();
-            let tx = self.core_sender.clone();
-            self.runtime.spawn(async move {
-                sleep(Duration::from_millis(delay_ms)).await;
-                let filter = direct_message_history_filter(authors);
-                ensure_session_relays_configured(&client, &relay_urls).await;
-                connect_client_with_timeout(&client, Duration::from_secs(5)).await;
-                if let Ok(events) = client.fetch_events(filter, Duration::from_secs(5)).await {
-                    let collected = events.iter().cloned().collect::<Vec<_>>();
-                    if !collected.is_empty() {
-                        let _ = tx.send(CoreMsg::Internal(Box::new(
-                            InternalEvent::FetchCatchUpEvents(collected),
-                        )));
-                    }
-                }
-            });
-        }
-    }
-
-    pub(super) fn fetch_recent_group_sender_key_messages_for_author(
-        &mut self,
-        author_pubkey: PublicKey,
-    ) {
-        self.fetch_recent_group_sender_key_messages_for_authors(vec![author_pubkey]);
-    }
-
-    fn fetch_recent_group_sender_key_messages_for_authors(
-        &mut self,
-        author_pubkeys: Vec<PublicKey>,
-    ) {
-        let Some((client, relay_urls)) = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
-        else {
-            return;
-        };
-        if author_pubkeys.is_empty() {
-            return;
-        }
-        let filters = author_pubkeys
-            .chunks(PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE)
-            .map(|author_chunk| group_sender_key_history_filter(author_chunk.to_vec()))
-            .collect::<Vec<_>>();
-        self.spawn_protocol_author_backfills(
-            client,
-            relay_urls,
-            filters,
-            "group_sender_key_authors",
-        );
-    }
-
-    pub(super) fn fetch_recent_messages_for_tracked_peers(&mut self) {
-        let direct_authors = self
-            .protocol_subscription_runtime
-            .desired_plan
-            .as_ref()
-            .map(|plan| {
-                plan.message_authors
-                    .iter()
-                    .filter_map(|hex| PublicKey::parse(hex).ok())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|| {
-                self.protocol_engine
-                    .as_ref()
-                    .map(ProtocolEngine::known_message_author_pubkeys)
-                    .unwrap_or_default()
-            });
-        let direct_recipients = self
-            .protocol_subscription_runtime
-            .desired_plan
-            .as_ref()
-            .map(|plan| {
-                plan.message_recipients
-                    .iter()
-                    .filter_map(|hex| PublicKey::parse(hex).ok())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|| self.protocol_message_recipient_pubkeys());
-        let group_authors = self
-            .protocol_subscription_runtime
-            .desired_plan
-            .as_ref()
-            .map(|plan| {
-                plan.group_sender_key_authors
-                    .iter()
-                    .filter_map(|hex| PublicKey::parse(hex).ok())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|| {
-                self.protocol_engine
-                    .as_ref()
-                    .map(ProtocolEngine::known_group_sender_event_pubkeys)
-                    .unwrap_or_default()
-            });
-        if let [author] = direct_authors.as_slice() {
-            self.fetch_recent_messages_for_author(*author);
-        } else {
-            self.fetch_recent_messages_for_authors(direct_authors);
-        }
-        self.fetch_recent_messages_for_recipients(direct_recipients);
-        self.fetch_recent_group_sender_key_messages_for_authors(group_authors);
-    }
-
-    pub(super) fn recent_protocol_filters(&self, now: UnixSeconds) -> Vec<Filter> {
-        self.recent_protocol_filters_inner(now, true)
-    }
-
-    fn recent_protocol_metadata_filters(&self, now: UnixSeconds) -> Vec<Filter> {
-        self.recent_protocol_filters_inner(now, false)
-    }
-
-    fn recent_protocol_filters_inner(
-        &self,
-        now: UnixSeconds,
-        include_message_history: bool,
-    ) -> Vec<Filter> {
-        let Some(plan) = self
-            .protocol_subscription_runtime
-            .desired_plan
-            .clone()
-            .or_else(|| self.compute_protocol_subscription_plan())
-        else {
-            return Vec::new();
-        };
-        let owners = pubkeys_from_hexes(&plan.roster_authors);
-        let mut filters = if owners.is_empty() {
-            Vec::new()
-        } else {
-            vec![Filter::new().kind(Kind::Metadata).authors(owners.clone())]
-        };
-        let invite_authors = pubkeys_from_hexes(&plan.invite_authors);
-        filters.extend(build_protocol_discovery_filters(
-            owners.clone(),
-            invite_authors.clone(),
-            DEVICE_INVITE_DISCOVERY_LIMIT,
-        ));
-        if include_message_history {
-            let message_authors = pubkeys_from_hexes(&plan.message_authors);
-            if !message_authors.is_empty() {
-                filters.push(direct_message_history_filter(message_authors));
-            }
-
-            let message_recipients = pubkeys_from_hexes(&plan.message_recipients);
-            if !message_recipients.is_empty() {
-                filters.push(direct_message_recipient_history_filter(
-                    message_recipients,
-                    now,
-                ));
-            }
-
-            let group_sender_key_authors = pubkeys_from_hexes(&plan.group_sender_key_authors);
-            if !group_sender_key_authors.is_empty() {
-                filters.push(group_sender_key_history_filter(group_sender_key_authors));
-            }
-        }
-
-        if !plan.group_roster_group_ids.is_empty() {
-            let filter = build_group_roster_fact_filter(
-                plan.group_roster_group_ids.iter(),
-                pubkeys_from_hexes(&plan.group_roster_authors),
-            );
-            filters.push(filter);
-        }
-
-        let private_invite_response_pubkeys = plan
-            .invite_response_recipient
-            .as_deref()
-            .map(pubkeys_from_comma_separated_hexes)
-            .unwrap_or_default();
-        if !private_invite_response_pubkeys.is_empty() {
-            filters.push(
-                Filter::new()
-                    .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
-                    .pubkeys(private_invite_response_pubkeys)
-                    .since(Timestamp::from(
-                        now.get()
-                            .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
-                    )),
-            );
-        }
-        if !invite_authors.is_empty() {
-            filters.push(
-                Filter::new()
-                    .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
-                    .authors(invite_authors)
-                    .since(Timestamp::from(
-                        now.get()
-                            .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
-                    ))
-                    .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
-            );
-        }
-        filters
     }
 
     fn protocol_invite_author_pubkeys(&self, owners: &[PublicKey]) -> Vec<PublicKey> {
@@ -769,147 +348,8 @@ impl AppCore {
             .unwrap_or_default()
     }
 
-    pub(super) fn fetch_recent_protocol_state(&mut self) -> bool {
-        self.fetch_recent_protocol_state_inner(true)
-    }
-
-    pub(super) fn fetch_recent_protocol_metadata_state(&mut self) -> bool {
-        self.fetch_recent_protocol_state_inner(false)
-    }
-
-    fn fetch_recent_protocol_state_inner(&mut self, include_message_history: bool) -> bool {
-        if self.protocol_subscription_runtime.protocol_fetch_in_flight {
-            self.push_debug_log("protocol.catch_up.skip", "fetch already in flight");
-            return false;
-        }
-        if let Some(delay) = self.protocol_fetch_rate_limit_delay() {
-            self.push_debug_log(
-                "protocol.catch_up.skip",
-                format!("rate limited for {}ms", delay.as_millis()),
-            );
-            self.schedule_tracked_peer_catch_up(delay);
-            return false;
-        }
-        let Some((client, relay_urls)) = self
-            .logged_in
-            .as_ref()
-            .filter(|logged_in| !logged_in.relay_urls.is_empty())
-            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
-        else {
-            return false;
-        };
-        let now = unix_now();
-        let filters = if include_message_history {
-            self.recent_protocol_filters(now)
-        } else {
-            self.recent_protocol_metadata_filters(now)
-        };
-        if filters.is_empty() {
-            return false;
-        }
-        self.push_debug_log(
-            "protocol.catch_up.fetch",
-            format!(
-                "filters={} messages={include_message_history}",
-                filters.len()
-            ),
-        );
-        self.state.busy.syncing_network = true;
-        self.protocol_subscription_runtime.protocol_fetch_in_flight = true;
-        self.protocol_subscription_runtime
-            .protocol_fetch_last_started_at = Some(Instant::now());
-
-        let tx = self.core_sender.clone();
-        self.runtime.spawn(async move {
-            ensure_session_relays_configured(&client, &relay_urls).await;
-            connect_client_with_timeout(&client, Duration::from_secs(5)).await;
-            match fetch_events_for_filters(&client, filters, Duration::from_secs(5)).await {
-                Ok(collected) => {
-                    let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                        category: "protocol.catch_up.result".to_string(),
-                        detail: format!("events={}", collected.len()),
-                    })));
-                    if !collected.is_empty() {
-                        let _ = tx.send(CoreMsg::Internal(Box::new(
-                            InternalEvent::FetchCatchUpEvents(collected),
-                        )));
-                    }
-                }
-                Err(error) => {
-                    let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                        category: "protocol.catch_up.error".to_string(),
-                        detail: error.to_string(),
-                    })));
-                }
-            }
-            let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::SyncComplete)));
-        });
-        true
-    }
-
-    pub(super) fn fetch_protocol_state_for_filters(
-        &mut self,
-        filters: Vec<Filter>,
-        reason: &'static str,
-    ) -> bool {
-        if self.protocol_subscription_runtime.protocol_fetch_in_flight {
-            self.push_debug_log(
-                "protocol.engine_fetch.skip",
-                format!("reason={reason} fetch already in flight"),
-            );
-            self.schedule_tracked_peer_catch_up(Duration::from_secs(PROTOCOL_RECONNECT_CHECK_SECS));
-            return false;
-        }
-        let Some((client, relay_urls)) = self
-            .logged_in
-            .as_ref()
-            .filter(|logged_in| !logged_in.relay_urls.is_empty())
-            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
-        else {
-            return false;
-        };
-        if filters.is_empty() {
-            return false;
-        }
-        self.push_debug_log(
-            "protocol.engine_fetch.fetch",
-            format!("reason={reason} filters={}", filters.len()),
-        );
-        self.state.busy.syncing_network = true;
-        self.protocol_subscription_runtime.protocol_fetch_in_flight = true;
-        self.protocol_subscription_runtime
-            .protocol_fetch_last_started_at = Some(Instant::now());
-
-        let tx = self.core_sender.clone();
-        self.runtime.spawn(async move {
-            ensure_session_relays_configured(&client, &relay_urls).await;
-            connect_client_with_timeout(&client, Duration::from_secs(5)).await;
-            match fetch_events_for_filters(&client, filters, Duration::from_secs(5)).await {
-                Ok(collected) => {
-                    let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                        category: "protocol.engine_fetch.result".to_string(),
-                        detail: format!("events={}", collected.len()),
-                    })));
-                    if !collected.is_empty() {
-                        let _ = tx.send(CoreMsg::Internal(Box::new(
-                            InternalEvent::FetchCatchUpEvents(collected),
-                        )));
-                    }
-                }
-                Err(error) => {
-                    let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                        category: "protocol.engine_fetch.error".to_string(),
-                        detail: error.to_string(),
-                    })));
-                }
-            }
-            let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::SyncComplete)));
-        });
-        true
-    }
-
     pub(super) fn fetch_pending_device_invites_for_local_owner(&mut self) {
-        self.fetch_recent_protocol_state();
+        self.request_protocol_subscription_refresh();
     }
 
     pub(super) fn start_notifications_loop(&self, client: Client) {
@@ -1124,7 +564,6 @@ impl AppCore {
             self.relay_transport_runtime.next_retry_due_at = None;
             self.relay_transport_runtime.next_retry_reason = None;
             self.reconcile_protocol_subscriptions("relay_transport_connected", false);
-            self.retry_protocol_engine_pending_outbound("relay_transport_connected");
             self.retry_pending_relay_publishes("relay_transport_connected");
         } else {
             self.schedule_relay_transport_retry("connect_failed");
@@ -1318,15 +757,6 @@ impl AppCore {
         if !added_message_authors.is_empty() {
             self.mark_mobile_push_dirty();
         }
-        let added_message_author_pubkeys = added_message_authors
-            .into_iter()
-            .filter_map(|author_hex| PublicKey::parse(&author_hex).ok())
-            .collect::<Vec<_>>();
-        if !added_message_author_pubkeys.is_empty() {
-            self.fetch_recent_messages_for_authors(added_message_author_pubkeys.clone());
-            self.schedule_new_message_author_backfill(added_message_author_pubkeys);
-        }
-
         let previous_group_authors = previous
             .map(|plan| {
                 plan.group_sender_key_authors
@@ -1348,20 +778,9 @@ impl AppCore {
             .cloned()
             .collect::<Vec<_>>();
         added_group_authors.sort();
-        for author_hex in added_group_authors {
-            if let Ok(author) = PublicKey::parse(&author_hex) {
-                self.fetch_recent_group_sender_key_messages_for_author(author);
-            }
+        if !added_group_authors.is_empty() {
+            self.mark_mobile_push_dirty();
         }
-    }
-
-    #[cfg(test)]
-    pub(super) fn handle_relay_status_changed(&mut self, relay_url: String, status: RelayStatus) {
-        self.handle_relay_status_changed_for_generation(
-            relay_url,
-            status,
-            self.relay_status_watch_generation,
-        );
     }
 
     pub(super) fn handle_relay_status_changed_for_generation(
@@ -1409,9 +828,6 @@ impl AppCore {
         match status {
             RelayStatus::Connected if !was_connected && is_connected => {
                 self.reconcile_protocol_subscriptions("relay_connected", false);
-                self.fetch_recent_protocol_state();
-                self.fetch_recent_messages_for_tracked_peers();
-                self.retry_protocol_engine_pending_outbound("relay_connected");
                 self.retry_pending_relay_publishes("relay_connected");
                 self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
                     PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS,
@@ -1523,49 +939,20 @@ impl AppCore {
             || self.protocol_subscription_runtime.refresh_in_flight
             || self.protocol_subscription_runtime.refresh_dirty;
         let has_pending_relay_publishes = !self.pending_relay_publishes.is_empty();
-        let pending_protocol_retry_needed = self.has_pending_protocol_engine_retry_work();
-        if !has_subscription_work && !has_pending_relay_publishes && !pending_protocol_retry_needed
-        {
+        if !has_subscription_work && !has_pending_relay_publishes {
             return;
         }
         self.refresh_relay_connection_status_from_cached_statuses();
         let connected_relays = self.relay_connected_count as usize;
-        let desired_unapplied = self.protocol_subscription_runtime.desired_plan
-            != self.protocol_subscription_runtime.applied_plan;
-        let tracked_peer_backfill_needed = self.tracked_peer_protocol_backfill_needed();
-        let should_retry_backfill = self.protocol_subscription_runtime.desired_plan.is_some()
-            && (connected_relays == 0
-                || tracked_peer_backfill_needed
-                || self.protocol_subscription_runtime.refresh_in_flight
-                || self.protocol_subscription_runtime.refresh_dirty
-                || desired_unapplied);
-        let should_retry_protocol = should_retry_backfill || pending_protocol_retry_needed;
-        let should_fetch_tracked_peer_messages = desired_unapplied
-            || self.protocol_subscription_runtime.refresh_dirty
-            || self.message_recipient_bootstrap_needed();
         self.push_debug_log(
             "protocol.liveness",
             format!(
-                "connected={connected_relays} retry_protocol={should_retry_protocol} tracked_messages={should_fetch_tracked_peer_messages} pending_protocol={pending_protocol_retry_needed} pending_publishes={}",
+                "connected={connected_relays} pending_publishes={}",
                 self.pending_relay_publishes.len()
             ),
         );
         if has_subscription_work {
             self.reconcile_protocol_subscriptions("liveness_check", true);
-        }
-        if should_retry_protocol {
-            let queued_targets = self.current_queued_protocol_targets();
-            if self.protocol_subscription_runtime.desired_plan.is_some()
-                && queued_targets.is_empty()
-            {
-                self.fetch_recent_protocol_metadata_state();
-            }
-            if self.protocol_subscription_runtime.desired_plan.is_some()
-                && should_fetch_tracked_peer_messages
-            {
-                self.fetch_recent_messages_for_tracked_peers();
-            }
-            self.retry_protocol_engine_pending_outbound("liveness_check");
         }
         if has_pending_relay_publishes {
             self.retry_pending_relay_publishes("liveness_check");
@@ -1741,7 +1128,6 @@ impl AppCore {
             ),
         );
         if connected_after > 0 {
-            self.retry_protocol_engine_pending_outbound("subscription_reconciled");
             self.retry_pending_relay_publishes("subscription_reconciled");
         } else {
             self.schedule_protocol_subscription_liveness_check(Duration::from_secs(

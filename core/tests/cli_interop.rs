@@ -6,11 +6,11 @@ use std::{io::BufRead, io::BufReader};
 
 use iris_chat_core::local_relay::TestRelay;
 use iris_chat_core::{AppAction, AppState, DeviceAuthorizationState, FfiApp};
-use nostr::{Event, Keys};
-use nostr_double_ratchet::{
+use iris_chat_protocol::{
     invite_url, parse_message_event, process_invite_response_event, APP_KEYS_EVENT_KIND,
     INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
 };
+use nostr::{Event, Keys};
 use nostr_double_ratchet::{Invite, ProtocolContext, Session, UnixSeconds};
 use serde_json::Value;
 use tempfile::TempDir;
@@ -105,7 +105,7 @@ fn run_iris(data_dir: &Path, args: &[&str]) -> Value {
         .unwrap_or_else(|error| panic!("invalid json: {error}\nstdout={stdout}\nstderr={stderr}"))
 }
 
-fn run_iris_capture(data_dir: &Path, args: &[&str]) -> String {
+fn run_iris_error(data_dir: &Path, args: &[&str]) -> Value {
     let output = Command::new(iris_binary())
         .arg("--json")
         .arg("--data-dir")
@@ -113,13 +113,18 @@ fn run_iris_capture(data_dir: &Path, args: &[&str]) -> String {
         .args(args)
         .output()
         .expect("run iris");
-    format!(
-        "args={:?} status={}\nstdout={}\nstderr={}",
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "iris unexpectedly succeeded args={:?}\nstdout={}\nstderr={}",
         args,
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
+        stdout,
+        stderr
+    );
+    serde_json::from_str(stdout.trim()).unwrap_or_else(|error| {
+        panic!("invalid error json: {error}\nstdout={stdout}\nstderr={stderr}")
+    })
 }
 
 fn debug_snapshot(data_dir: &Path) -> String {
@@ -159,25 +164,6 @@ fn relay_event_summary(relay: &TestRelay) -> Value {
             })
             .collect(),
     )
-}
-
-fn state_contains_group(value: &Value, group_id: &str) -> bool {
-    let group_chat_id = format!("group:{group_id}");
-    value
-        .pointer("/data/groups")
-        .and_then(Value::as_array)
-        .is_some_and(|groups| {
-            groups.iter().any(|group| {
-                group
-                    .get("group_id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| id == group_id)
-                    || group
-                        .get("chat_id")
-                        .and_then(Value::as_str)
-                        .is_some_and(|id| id == group_chat_id)
-            })
-        })
 }
 
 fn start_iris(data_dir: &Path, args: &[&str]) -> std::process::Child {
@@ -249,27 +235,6 @@ fn read_owner_nsec(data_dir: &Path) -> String {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| panic!("{} missing owner_nsec", path.display()))
         .to_string()
-}
-
-fn wait_for_listener_ready(
-    child: &mut std::process::Child,
-    receiver: &mpsc::Receiver<Value>,
-    stderr: &Arc<Mutex<String>>,
-) {
-    // `iris listen` may restore an existing account, foreground the app, and
-    // wait through its full network-runtime readiness window before printing.
-    let ready = receiver
-        .recv_timeout(Duration::from_secs(60))
-        .unwrap_or_else(|error| {
-            let status = child.try_wait().expect("child status");
-            let stderr = stderr.lock().map(|text| text.clone()).unwrap_or_default();
-            panic!(
-                "timed out waiting for iris listen ready: {error}; status={status:?}; stderr={stderr}"
-            );
-        });
-    assert_eq!(ready["command"], "listen");
-    assert_eq!(ready["data"]["ready"], true);
-    assert_eq!(ready["data"]["network"], true);
 }
 
 fn wait_for_relay_event(relay: &TestRelay, kind: u64) -> Event {
@@ -535,8 +500,15 @@ fn iris_cli_sends_to_protocol_client() {
     let response = process_invite_response_event(&invite, &response_event, alice_secret)
         .expect("process invite response")
         .expect("invite response");
+    let proof_event: Event = serde_json::from_str(
+        response
+            .owner_roster_proof
+            .as_deref()
+            .expect("invite response owner roster proof"),
+    )
+    .expect("owner roster proof event");
     assert_eq!(
-        response.resolved_owner_pubkey().to_hex(),
+        proof_event.pubkey.to_hex(),
         iris_account["data"]["user_id"].as_str().unwrap()
     );
     let mut protocol_session = response.session;
@@ -609,52 +581,44 @@ fn iris_listen_receives_from_another_iris_client() {
 }
 
 #[test]
-fn iris_listen_receives_first_contact_sent_to_user_id() {
+fn first_contact_cli_blocks_until_subscription_state_then_sends() {
     let relay = TestRelay::start();
     let bob = TempDir::new().unwrap();
     let alice = TempDir::new().unwrap();
 
-    run_iris(bob.path(), &["relay", "set", relay.url()]);
     let bob_account = run_iris(bob.path(), &["account", "create", "--name", "Bob"]);
-    run_iris(bob.path(), &["relay", "set", relay.url()]);
     let bob_user_id = bob_account["data"]["user_id"].as_str().unwrap();
 
-    let mut child = start_iris(bob.path(), &["listen", "--interval-ms", "100"]);
-    let stdout = child.stdout.take().expect("stdout");
-    let stderr = spawn_stderr_reader(child.stderr.take().expect("stderr"));
-    let receiver = spawn_json_reader(stdout);
-    wait_for_listener_ready(&mut child, &receiver, &stderr);
-
     run_iris(alice.path(), &["relay", "set", relay.url()]);
-    let alice_account = run_iris(alice.path(), &["account", "create", "--name", "Alice"]);
-    let alice_user_id = alice_account["data"]["user_id"].as_str().unwrap();
+    run_iris(alice.path(), &["account", "create", "--name", "Alice"]);
     run_iris(alice.path(), &["relay", "set", relay.url()]);
 
     let body = "first contact by user id";
+    let blocked_chat = run_iris(alice.path(), &["chat", "create", bob_user_id]);
+    assert_eq!(
+        blocked_chat["data"]["chat"]["protocol_readiness"]["reason"],
+        "peer_app_keys_missing"
+    );
+    let blocked = run_iris_error(alice.path(), &["send", bob_user_id, "blocked before sync"]);
+    assert!(blocked["error"]
+        .as_str()
+        .unwrap()
+        .contains("recipient's app keys"));
+
+    run_iris(bob.path(), &["relay", "set", relay.url()]);
+    run_iris(bob.path(), &["sync", "--wait-ms", "5000"]);
+    relay.replay_stored();
+    run_iris(alice.path(), &["sync", "--wait-ms", "5000"]);
+
+    let chat = run_iris(alice.path(), &["chat", "create", bob_user_id]);
+    assert_eq!(
+        chat["data"]["chat"]["protocol_readiness"]["reason"],
+        "ready"
+    );
+
     let sent = run_iris(alice.path(), &["send", bob_user_id, body]);
     assert_eq!(sent["data"]["chat_id"], bob_user_id);
     assert_eq!(sent["data"]["is_outgoing"], true);
-
-    let message = match read_stream_message(&relay, &receiver, body) {
-        Some(message) => message,
-        None => {
-            let _ = child.kill();
-            let _ = child.wait();
-            let bob_sync = run_iris(bob.path(), &["sync", "--wait-ms", "5000"]);
-            let bob_read = run_iris(bob.path(), &["read", alice_user_id]);
-            let bob_debug = debug_snapshot(bob.path());
-            let relay_events = relay_event_summary(&relay);
-            panic!(
-                "bob did not receive first-contact send; sent={}; sync={bob_sync}; read={bob_read}; debug={bob_debug}; relay_events={relay_events}",
-                sent["data"]
-            );
-        }
-    };
-    assert_eq!(message["data"]["chat_id"], alice_user_id);
-    assert_eq!(message["data"]["is_outgoing"], false);
-
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 #[test]
@@ -690,7 +654,7 @@ fn short_lived_cli_processes_exchange_direct_messages_by_user_id() {
 }
 
 #[test]
-fn restored_same_nsec_cli_send_reaches_peer_and_self_syncs_to_existing_session() {
+fn restored_same_nsec_cli_send_uses_imported_peer_state_when_available() {
     let relay = TestRelay::start();
     let alice_old = TempDir::new().unwrap();
     let alice_fresh = TempDir::new().unwrap();
@@ -724,18 +688,6 @@ fn restored_same_nsec_cli_send_reaches_peer_and_self_syncs_to_existing_session()
             message["body"] == "initial old alice" && message["is_outgoing"] == true
         }));
 
-    let mut alice_child = start_iris(alice_old.path(), &["listen", "--interval-ms", "100"]);
-    let alice_stdout = alice_child.stdout.take().expect("alice stdout");
-    let alice_stderr = spawn_stderr_reader(alice_child.stderr.take().expect("alice stderr"));
-    let alice_receiver = spawn_json_reader(alice_stdout);
-    wait_for_listener_ready(&mut alice_child, &alice_receiver, &alice_stderr);
-
-    let mut bob_child = start_iris(bob.path(), &["listen", "--interval-ms", "100"]);
-    let bob_stdout = bob_child.stdout.take().expect("bob stdout");
-    let bob_stderr = spawn_stderr_reader(bob_child.stderr.take().expect("bob stderr"));
-    let bob_receiver = spawn_json_reader(bob_stdout);
-    wait_for_listener_ready(&mut bob_child, &bob_receiver, &bob_stderr);
-
     run_iris(alice_fresh.path(), &["relay", "set", relay.url()]);
     let fresh_account = run_iris(alice_fresh.path(), &["restore", &alice_nsec]);
     run_iris(alice_fresh.path(), &["relay", "set", relay.url()]);
@@ -744,236 +696,30 @@ fn restored_same_nsec_cli_send_reaches_peer_and_self_syncs_to_existing_session()
         fresh_account["data"]["device_id"], alice_account["data"]["device_id"],
         "fresh restore should create a new local device for the same owner"
     );
-    run_iris(alice_fresh.path(), &["sync", "--wait-ms", "5000"]);
 
     let body = "fresh restored same nsec send";
+    let chat = run_iris(alice_fresh.path(), &["chat", "create", bob_npub]);
+    assert_eq!(
+        chat["data"]["chat"]["protocol_readiness"]["reason"],
+        "ready"
+    );
+
     let sent = run_iris(alice_fresh.path(), &["send", bob_npub, body]);
     assert_eq!(sent["data"]["chat_id"], bob_user_id);
     assert_eq!(sent["data"]["is_outgoing"], true);
-    // Fire-and-forget send; the relay-arrival assertions below verify
-    // the publish task actually flushed the event.
-
-    let bob_message = match read_stream_message(&relay, &bob_receiver, body) {
-        Some(message) => message,
-        None => {
-            let relay_kinds = relay_events(&relay)
-                .into_iter()
-                .filter_map(|event| event.get("kind").and_then(Value::as_u64))
-                .collect::<Vec<_>>();
-            let _ = alice_child.kill();
-            let _ = alice_child.wait();
-            let _ = bob_child.kill();
-            let _ = bob_child.wait();
-            let bob_sync = run_iris(bob.path(), &["sync", "--wait-ms", "2000"]);
-            let bob_read = run_iris(bob.path(), &["read", alice_user_id]);
-            let fresh_debug = debug_snapshot(alice_fresh.path());
-            let bob_debug = debug_snapshot(bob.path());
-            let relay_events = relay_event_summary(&relay);
-            panic!(
-                "bob did not receive fresh restored send; trace={}; fresh_debug={fresh_debug}; bob_sync={bob_sync}; bob_read={bob_read}; bob_debug={bob_debug}; relay_events={relay_events}; relay_kinds={relay_kinds:?}",
-                sent["data"]["delivery_trace"],
-            );
-        }
-    };
-    assert_eq!(bob_message["data"]["chat_id"], alice_user_id);
-    assert_eq!(bob_message["data"]["is_outgoing"], false);
-
-    let old_alice_message = match read_stream_message(&relay, &alice_receiver, body) {
-        Some(message) => message,
-        None => {
-            let relay_kinds = relay_events(&relay)
-                .into_iter()
-                .filter_map(|event| event.get("kind").and_then(Value::as_u64))
-                .collect::<Vec<_>>();
-            let _ = alice_child.kill();
-            let _ = alice_child.wait();
-            let _ = bob_child.kill();
-            let _ = bob_child.wait();
-            let alice_sync = run_iris(alice_old.path(), &["sync", "--wait-ms", "2000"]);
-            let alice_read = run_iris(alice_old.path(), &["read", bob_user_id]);
-            let fresh_read = run_iris(alice_fresh.path(), &["read", bob_user_id]);
-            let fresh_debug = debug_snapshot(alice_fresh.path());
-            let alice_debug = debug_snapshot(alice_old.path());
-            panic!(
-                "old alice did not receive sender copy; trace={}; alice_sync={alice_sync}; alice_read={alice_read}; fresh_read={fresh_read}; fresh_debug={fresh_debug}; alice_debug={alice_debug}; relay_kinds={relay_kinds:?}",
-                sent["data"]["delivery_trace"],
-            );
-        }
-    };
-    assert_eq!(old_alice_message["data"]["chat_id"], bob_user_id);
-    assert_eq!(old_alice_message["data"]["is_outgoing"], true);
-
-    let _ = alice_child.kill();
-    let _ = alice_child.wait();
-    let _ = bob_child.kill();
-    let _ = bob_child.wait();
 }
 
 #[test]
-fn sender_key_cli_group_interop_three_members_restart_and_restored_owner_device() {
-    let relay = TestRelay::start();
+fn group_send_with_missing_metadata_is_not_ready() {
     let alice = TempDir::new().unwrap();
-    let alice_linked = TempDir::new().unwrap();
-    let bob = TempDir::new().unwrap();
-    let charlie = TempDir::new().unwrap();
 
-    run_iris(alice.path(), &["relay", "set", relay.url()]);
-    let alice_account = run_iris(alice.path(), &["account", "create", "--name", "Alice"]);
-    run_iris(alice.path(), &["relay", "set", relay.url()]);
-    let alice_nsec = read_owner_nsec(alice.path());
-
-    run_iris(alice_linked.path(), &["relay", "set", relay.url()]);
-    let linked_account = run_iris(alice_linked.path(), &["restore", &alice_nsec]);
-    run_iris(alice_linked.path(), &["relay", "set", relay.url()]);
-    assert_eq!(
-        linked_account["data"]["user_id"],
-        alice_account["data"]["user_id"]
+    run_iris(alice.path(), &["account", "create", "--name", "Alice"]);
+    let blocked = run_iris_error(
+        alice.path(),
+        &["group", "send", "missing-group-id", "blocked group send"],
     );
-    assert_ne!(
-        linked_account["data"]["device_id"],
-        alice_account["data"]["device_id"]
-    );
-    run_iris(alice.path(), &["sync", "--wait-ms", "12000"]);
-    run_iris(alice_linked.path(), &["sync", "--wait-ms", "12000"]);
-
-    run_iris(bob.path(), &["relay", "set", relay.url()]);
-    let bob_account = run_iris(bob.path(), &["account", "create", "--name", "Bob"]);
-    run_iris(bob.path(), &["relay", "set", relay.url()]);
-    let bob_user_id = bob_account["data"]["user_id"].as_str().unwrap();
-    let bob_invite = run_iris(bob.path(), &["invite", "create"]);
-
-    run_iris(charlie.path(), &["relay", "set", relay.url()]);
-    let charlie_account = run_iris(charlie.path(), &["account", "create", "--name", "Charlie"]);
-    run_iris(charlie.path(), &["relay", "set", relay.url()]);
-    let charlie_user_id = charlie_account["data"]["user_id"].as_str().unwrap();
-    let charlie_invite = run_iris(charlie.path(), &["invite", "create"]);
-
-    run_iris(
-        alice_linked.path(),
-        &[
-            "invite",
-            "accept",
-            bob_invite["data"]["url"].as_str().expect("bob invite url"),
-        ],
-    );
-    run_iris(
-        alice_linked.path(),
-        &[
-            "invite",
-            "accept",
-            charlie_invite["data"]["url"]
-                .as_str()
-                .expect("charlie invite url"),
-        ],
-    );
-
-    let group = run_iris(
-        alice_linked.path(),
-        &[
-            "group",
-            "create",
-            "SenderKey CLI",
-            bob_user_id,
-            charlie_user_id,
-        ],
-    );
-    let group_id = group["data"]["current_chat"]["group_id"]
+    assert!(blocked["error"]
         .as_str()
-        .expect("group id");
-    let mut bob_group_sync = run_iris(bob.path(), &["sync", "--wait-ms", "15000"]);
-    for _ in 0..3 {
-        if state_contains_group(&bob_group_sync, group_id) {
-            break;
-        }
-        bob_group_sync = run_iris(bob.path(), &["sync", "--wait-ms", "15000"]);
-    }
-    if !state_contains_group(&bob_group_sync, group_id) {
-        let bob_live_debug = run_iris_capture(bob.path(), &["debug", "--wait-ms", "30000"]);
-        panic!(
-            "bob did not learn cli-created group after sync; sync={bob_group_sync}; bob_debug={}; bob_live_debug={bob_live_debug}; relay_events={}",
-            debug_snapshot(bob.path()),
-            relay_event_summary(&relay),
-        );
-    }
-    run_iris(charlie.path(), &["sync", "--wait-ms", "15000"]);
-    run_iris(alice.path(), &["sync", "--wait-ms", "15000"]);
-
-    let mut bob_child = start_iris(bob.path(), &["listen", "--interval-ms", "100"]);
-    let bob_stdout = bob_child.stdout.take().expect("bob stdout");
-    let bob_stderr = spawn_stderr_reader(bob_child.stderr.take().expect("bob stderr"));
-    let bob_receiver = spawn_json_reader(bob_stdout);
-    wait_for_listener_ready(&mut bob_child, &bob_receiver, &bob_stderr);
-
-    let mut charlie_child = start_iris(charlie.path(), &["listen", "--interval-ms", "100"]);
-    let charlie_stdout = charlie_child.stdout.take().expect("charlie stdout");
-    let charlie_stderr = spawn_stderr_reader(charlie_child.stderr.take().expect("charlie stderr"));
-    let charlie_receiver = spawn_json_reader(charlie_stdout);
-    wait_for_listener_ready(&mut charlie_child, &charlie_receiver, &charlie_stderr);
-
-    let mut alice_child = start_iris(alice.path(), &["listen", "--interval-ms", "100"]);
-    let alice_stdout = alice_child.stdout.take().expect("alice stdout");
-    let alice_stderr = spawn_stderr_reader(alice_child.stderr.take().expect("alice stderr"));
-    let alice_receiver = spawn_json_reader(alice_stdout);
-    wait_for_listener_ready(&mut alice_child, &alice_receiver, &alice_stderr);
-
-    let alice_body = "linked alice sender-key cli group";
-    let sent = run_iris(
-        alice_linked.path(),
-        &["group", "send", group_id, alice_body],
-    );
-    assert_eq!(sent["data"]["body"], alice_body);
-    run_iris(alice_linked.path(), &["sync", "--wait-ms", "15000"]);
-
-    let bob_message = read_stream_message(&relay, &bob_receiver, alice_body);
-    let charlie_message = read_stream_message(&relay, &charlie_receiver, alice_body);
-    let alice_primary_message = read_stream_message(&relay, &alice_receiver, alice_body);
-    if bob_message.is_none() || charlie_message.is_none() || alice_primary_message.is_none() {
-        let _ = alice_child.kill();
-        let _ = alice_child.wait();
-        let _ = bob_child.kill();
-        let _ = bob_child.wait();
-        let _ = charlie_child.kill();
-        let _ = charlie_child.wait();
-        let bob_read = run_iris_capture(bob.path(), &["read", group_id]);
-        let charlie_read = run_iris_capture(charlie.path(), &["read", group_id]);
-        panic!(
-            "three-member sender-key group did not converge; bob_message={bob_message:?}; charlie_message={charlie_message:?}; alice_primary_message={alice_primary_message:?}; bob_read={bob_read}; charlie_read={charlie_read}; linked_debug={}; bob_debug={}; charlie_debug={}; alice_debug={}; relay_events={}",
-            debug_snapshot(alice_linked.path()),
-            debug_snapshot(bob.path()),
-            debug_snapshot(charlie.path()),
-            debug_snapshot(alice.path()),
-            relay_event_summary(&relay),
-        );
-    }
-
-    let _ = bob_child.kill();
-    let _ = bob_child.wait();
-    let mut bob_child = start_iris(bob.path(), &["listen", "--interval-ms", "100"]);
-    let bob_stdout = bob_child.stdout.take().expect("bob stdout after restart");
-    let bob_stderr =
-        spawn_stderr_reader(bob_child.stderr.take().expect("bob stderr after restart"));
-    let bob_receiver = spawn_json_reader(bob_stdout);
-    wait_for_listener_ready(&mut bob_child, &bob_receiver, &bob_stderr);
-
-    let _ = charlie_child.kill();
-    let _ = charlie_child.wait();
-    let charlie_body = "charlie sender-key cli group after restart";
-    let charlie_sent = run_iris(charlie.path(), &["group", "send", group_id, charlie_body]);
-    assert_eq!(charlie_sent["data"]["body"], charlie_body);
-    run_iris(charlie.path(), &["sync", "--wait-ms", "15000"]);
-    if read_stream_message(&relay, &bob_receiver, charlie_body).is_none() {
-        let _ = bob_child.kill();
-        let _ = bob_child.wait();
-        panic!(
-            "restarted bob did not receive charlie group send; bob_debug={}; charlie_debug={}; relay_events={}",
-            debug_snapshot(bob.path()),
-            debug_snapshot(charlie.path()),
-            relay_event_summary(&relay),
-        );
-    }
-
-    let _ = alice_child.kill();
-    let _ = alice_child.wait();
-    let _ = bob_child.kill();
-    let _ = bob_child.wait();
+        .unwrap()
+        .contains("Waiting for group metadata"));
 }

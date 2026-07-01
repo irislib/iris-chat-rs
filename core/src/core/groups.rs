@@ -72,7 +72,6 @@ impl AppCore {
         match result {
             Some(Ok(result)) => {
                 self.process_protocol_engine_effects(result.effects);
-                self.handle_queued_protocol_targets("group.create", &result.queued_targets);
                 let Some(group) = result.snapshot else {
                     self.state.toast = Some("Group could not be created.".to_string());
                     self.state.busy.creating_group = false;
@@ -88,9 +87,6 @@ impl AppCore {
                 self.apply_group_metadata_notice(None, &group);
                 self.publish_group_roster_fact(&group);
                 self.request_protocol_subscription_refresh();
-                self.schedule_tracked_peer_catch_up(Duration::from_secs(
-                    RESUBSCRIBE_CATCH_UP_DELAY_SECS,
-                ));
                 if let Some((file_path, filename)) = picture {
                     self.begin_group_picture_upload(&group.group_id, &file_path, &filename);
                 }
@@ -124,7 +120,6 @@ impl AppCore {
         match result {
             Some(Ok(result)) => {
                 self.process_protocol_engine_effects(result.effects);
-                self.handle_queued_protocol_targets("group.rename", &result.queued_targets);
                 if let Some(snapshot) = result.snapshot {
                     self.apply_local_group_snapshot(previous.as_ref(), snapshot, "group.rename")
                 }
@@ -278,7 +273,6 @@ impl AppCore {
         match result {
             Some(Ok(result)) => {
                 self.process_protocol_engine_effects(result.effects);
-                self.handle_queued_protocol_targets("group.picture", &result.queued_targets);
                 if let Some(snapshot) = result.snapshot {
                     self.apply_local_group_snapshot(previous.as_ref(), snapshot, "group.picture");
                 }
@@ -306,7 +300,6 @@ impl AppCore {
         match result {
             Some(Ok(result)) => {
                 self.process_protocol_engine_effects(result.effects);
-                self.handle_queued_protocol_targets("group.about", &result.queued_targets);
                 if let Some(snapshot) = result.snapshot {
                     self.apply_local_group_snapshot(previous.as_ref(), snapshot, "group.about");
                 }
@@ -347,7 +340,6 @@ impl AppCore {
         match result {
             Some(Ok(result)) => {
                 self.process_protocol_engine_effects(result.effects);
-                self.handle_queued_protocol_targets("group.add_members", &result.queued_targets);
                 if let Some(snapshot) = result.snapshot {
                     self.apply_local_group_snapshot(
                         previous.as_ref(),
@@ -387,14 +379,6 @@ impl AppCore {
         match result {
             Some(Ok(result)) => {
                 self.process_protocol_engine_effects(result.effects);
-                self.handle_queued_protocol_targets(
-                    if is_admin {
-                        "group.add_admin"
-                    } else {
-                        "group.remove_admin"
-                    },
-                    &result.queued_targets,
-                );
                 if let Some(snapshot) = result.snapshot {
                     self.apply_local_group_snapshot(
                         previous.as_ref(),
@@ -429,7 +413,6 @@ impl AppCore {
         match result {
             Some(Ok(result)) => {
                 self.process_protocol_engine_effects(result.effects);
-                self.handle_queued_protocol_targets("group.remove_member", &result.queued_targets);
                 if let Some(snapshot) = result.snapshot {
                     self.apply_local_group_snapshot(
                         previous.as_ref(),

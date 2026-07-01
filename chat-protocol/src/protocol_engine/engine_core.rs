@@ -20,13 +20,7 @@ impl ProtocolEngine {
             local_device,
             storage,
             session_manager: SessionManager::new(local_owner, device_secret),
-            group_manager: GroupEventManager::new(local_owner),
-            pending_outbound: Vec::new(),
-            pending_inbound: Vec::new(),
-            pending_group_fanouts: Vec::new(),
-            pending_group_pairwise_payloads: Vec::new(),
-            pending_group_sender_key_messages: Vec::new(),
-            pending_group_sender_key_repairs: Vec::new(),
+            group_manager: NostrGroupManager::new(local_owner),
             delivered_group_sender_key_acks: Vec::new(),
             answered_group_sender_key_repairs: Vec::new(),
             pending_decrypted_deliveries: Vec::new(),
@@ -77,7 +71,7 @@ impl ProtocolEngine {
         }
 
         let session_manager = SessionManager::from_snapshot(state.session_manager, device_secret)?;
-        let group_manager = GroupEventManager::from_snapshot(state.group_manager)?;
+        let group_manager = NostrGroupManager::from_snapshot(state.group_manager)?;
         let mut delivered_group_sender_key_acks = state.delivered_group_sender_key_acks;
         let excess = delivered_group_sender_key_acks
             .len()
@@ -100,12 +94,6 @@ impl ProtocolEngine {
             storage,
             session_manager,
             group_manager,
-            pending_outbound: state.pending_outbound,
-            pending_inbound: state.pending_inbound,
-            pending_group_fanouts: state.pending_group_fanouts,
-            pending_group_pairwise_payloads: state.pending_group_pairwise_payloads,
-            pending_group_sender_key_messages: state.pending_group_sender_key_messages,
-            pending_group_sender_key_repairs: state.pending_group_sender_key_repairs,
             delivered_group_sender_key_acks,
             answered_group_sender_key_repairs,
             pending_decrypted_deliveries: state.pending_decrypted_deliveries,
@@ -125,47 +113,10 @@ impl ProtocolEngine {
         local_invite_created_at: NdrUnixSeconds,
     ) -> anyhow::Result<()> {
         self.ensure_local_roster(local_invite_created_at);
-        self.hydrate_pending_inbound_metadata();
-        self.prune_untracked_pending_inbound();
-        self.prune_pending_group_sender_key_work_for_inactive_local_groups();
         self.persist()
     }
 
-    fn hydrate_pending_inbound_metadata(&mut self) {
-        let metadata = self
-            .pending_inbound
-            .iter()
-            .map(|pending| {
-                self.pending_inbound_metadata_for_event(
-                    &pending.event,
-                    pending.envelope.as_ref(),
-                    None,
-                )
-            })
-            .collect::<Vec<_>>();
-        for (pending, metadata) in self.pending_inbound.iter_mut().zip(metadata) {
-            apply_pending_inbound_metadata(pending, metadata);
-        }
-    }
-
-    fn prune_untracked_pending_inbound(&mut self) {
-        if self.pending_inbound.is_empty() {
-            return;
-        }
-        let known_authors = self.known_message_author_hexes();
-        self.pending_inbound.retain(|pending| {
-            pending_inbound_sender_pubkey_hex(pending)
-                .is_some_and(|sender| known_authors.contains(&sender))
-        });
-    }
-
     pub fn debug_snapshot(&self) -> ProtocolEngineDebugSnapshot {
-        let pending_group_sender_key_retry_count =
-            self.pending_group_sender_key_retry_count();
-        let pending_group_sender_key_unmapped_count = self
-            .pending_group_sender_key_messages
-            .len()
-            .saturating_sub(pending_group_sender_key_retry_count);
         let known_message_author_pubkeys = self
             .known_message_author_pubkeys()
             .into_iter()
@@ -181,35 +132,20 @@ impl ProtocolEngine {
             known_message_author_pubkeys,
             known_group_sender_key_author_count: known_group_sender_key_author_pubkeys.len(),
             known_group_sender_key_author_pubkeys,
-            pending_outbound_count: self.pending_outbound.len(),
-            pending_inbound_count: self.pending_inbound.len(),
-            pending_group_fanout_count: self.pending_group_fanouts.len(),
-            pending_group_pairwise_payload_count: self.pending_group_pairwise_payloads.len(),
-            pending_group_sender_key_message_count: self.pending_group_sender_key_messages.len(),
-            pending_group_sender_key_retry_count,
-            pending_group_sender_key_unmapped_count,
-            pending_group_sender_key_repair_count: self.pending_group_sender_key_repairs.len(),
-            pending_group_sender_key_repair_last_requested_at_secs: self
-                .pending_group_sender_key_repairs
-                .iter()
-                .map(|repair| repair.last_requested_at_secs)
-                .max()
-                .unwrap_or_default(),
-            pending_group_sender_key_repair_next_retry_at_secs: self
-                .pending_group_sender_key_repairs
-                .iter()
-                .map(Self::pending_group_sender_key_repair_due_at_secs)
-                .min()
-                .unwrap_or_default(),
-            pending_group_sender_key_repair_max_request_count: self
-                .pending_group_sender_key_repairs
-                .iter()
-                .map(|repair| repair.request_count)
-                .max()
-                .unwrap_or_default(),
-            pending_outbound_targets: self.queued_message_diagnostics(None),
-            pending_outbound_details: self.pending_outbound_debug_details(),
-            pending_group_fanout_targets: self.queued_group_targets(),
+            pending_outbound_count: 0,
+            pending_inbound_count: 0,
+            pending_group_fanout_count: 0,
+            pending_group_pairwise_payload_count: 0,
+            pending_group_sender_key_message_count: 0,
+            pending_group_sender_key_retry_count: 0,
+            pending_group_sender_key_unmapped_count: 0,
+            pending_group_sender_key_repair_count: 0,
+            pending_group_sender_key_repair_last_requested_at_secs: 0,
+            pending_group_sender_key_repair_next_retry_at_secs: 0,
+            pending_group_sender_key_repair_max_request_count: 0,
+            pending_outbound_targets: Vec::new(),
+            pending_outbound_details: Vec::new(),
+            pending_group_fanout_targets: Vec::new(),
             subscription_generation: self.subscription_generation,
             last_backfill_attempt_secs: self.last_backfill_attempt_secs,
         }
@@ -243,7 +179,6 @@ impl ProtocolEngine {
     ) -> Option<ProtocolDeviceOwnerHint> {
         let device = ndr_device(device_pubkey);
         let provisional_owner = ndr_owner(device_pubkey);
-        let mut claimed_owner = None;
         for user in self.session_manager.snapshot().users {
             for record in user.devices {
                 if record.device_pubkey != device {
@@ -257,17 +192,9 @@ impl ProtocolEngine {
                         }
                     });
                 }
-                if claimed_owner.is_none() {
-                    claimed_owner = record.claimed_owner_pubkey;
-                }
             }
         }
-        claimed_owner
-            .and_then(|owner| public_owner(owner).ok())
-            .map(|owner| ProtocolDeviceOwnerHint {
-                owner,
-                verified: false,
-            })
+        None
     }
 
     fn verified_roster_owner_for_device(
@@ -295,83 +222,29 @@ impl ProtocolEngine {
     }
 
     pub fn has_pending_inbound_direct_events(&self) -> bool {
-        !self.pending_inbound.is_empty()
+        false
     }
 
     pub fn has_pending_retry_work(&self) -> bool {
-        !self.pending_inbound.is_empty()
-            || !self.pending_group_fanouts.is_empty()
-            || !self.pending_group_pairwise_payloads.is_empty()
-            || self.has_pending_group_sender_key_retry_work()
-            || !self.pending_group_sender_key_repairs.is_empty()
-    }
-
-    fn has_pending_group_sender_key_retry_work(&self) -> bool {
-        self.pending_group_sender_key_retry_count() > 0
-    }
-
-    fn pending_group_sender_key_retry_count(&self) -> usize {
-        self.pending_group_sender_key_messages
-            .iter()
-            .filter(|pending| {
-                self.group_manager
-                    .group_id_for_sender_event_pubkey(pending.sender_event_pubkey)
-                    .is_some()
-            })
-            .count()
+        false
     }
 
     pub fn has_pending_inbound_direct_event_id(&self, event_id: &str) -> bool {
-        self.pending_inbound.iter().any(|pending| {
-            let pending_event_id = if pending.event_id.is_empty() {
-                pending.event.id.to_string()
-            } else {
-                pending.event_id.clone()
-            };
-            pending_event_id == event_id
-        })
+        let _ = event_id;
+        false
     }
 
     pub fn queued_owner_claim_targets(&self) -> Vec<String> {
-        let mut targets = self.pending_inbound_owner_claim_targets();
-        targets.extend(self.pending_group_pairwise_owner_claim_targets());
-        targets.sort();
-        targets.dedup();
-        targets
-    }
-
-    pub fn queued_protocol_backfill_effects(
-        &self,
-        now: NdrUnixSeconds,
-        reason: &'static str,
-    ) -> (Vec<String>, Vec<ProtocolEffect>) {
-        let mut targets = self.queued_message_diagnostics(None);
-        let mut generic_targets = self.queued_owner_claim_targets();
-        generic_targets.extend(self.queued_group_targets());
-        targets.extend(generic_targets.clone());
-        targets.sort();
-        targets.dedup();
-        let mut effects = self
-            .pending_outbound
-            .iter()
-            .flat_map(|pending| {
-                self.protocol_backfill_effects_for_pending_outbound(pending, now, reason)
-            })
-            .collect::<Vec<_>>();
-        effects.extend(self.protocol_backfill_effects_for_targets(&generic_targets, now, reason));
-        (targets, effects)
+        Vec::new()
     }
 
     pub fn queued_group_target_hexes(&self) -> Vec<String> {
-        self.queued_group_targets()
+        Vec::new()
     }
 
     pub fn has_queued_invite_author(&self, author: PublicKey) -> bool {
-        let target = ndr_device(author);
-        let snapshot = self.session_manager.snapshot();
-        self.pending_outbound.iter().any(|pending| {
-            self.pending_outbound_targets_device_with_snapshot(pending, target, &snapshot)
-        })
+        let _ = author;
+        false
     }
 
     pub fn local_invite(&self) -> Option<Invite> {
@@ -383,23 +256,6 @@ impl ProtocolEngine {
             .inviter_ephemeral_public_key
             .to_nostr()
             .ok()
-    }
-
-    pub fn pending_inbound_for_test(&self) -> Vec<ProtocolPendingInboundTestDebug> {
-        self.pending_inbound
-            .iter()
-            .map(|pending| ProtocolPendingInboundTestDebug {
-                event_id: if pending.event_id.is_empty() {
-                    pending.event.id.to_string()
-                } else {
-                    pending.event_id.clone()
-                },
-                sender_message_pubkey_hex: pending.sender_message_pubkey_hex.clone(),
-                claimed_owner_pubkey_hex: pending.claimed_owner_pubkey_hex.clone(),
-                has_envelope: pending.envelope.is_some(),
-                metadata_verified: pending.metadata_verified,
-            })
-            .collect()
     }
 
     pub fn known_message_author_pubkeys(&self) -> Vec<PublicKey> {
@@ -442,10 +298,6 @@ impl ProtocolEngine {
         self.with_known_message_author_cache(|cache| cache.pubkey_set.contains(&author))
     }
 
-    fn known_message_author_hexes(&self) -> HashSet<String> {
-        self.with_known_message_author_cache(|cache| cache.hexes.clone())
-    }
-
     fn with_known_message_author_cache<T>(
         &self,
         read: impl FnOnce(&KnownMessageAuthorCache) -> T,
@@ -464,7 +316,6 @@ impl ProtocolEngine {
         pubkeys.dedup();
         KnownMessageAuthorCache {
             pubkey_set: pubkeys.iter().copied().collect(),
-            hexes: pubkeys.iter().map(|pubkey| pubkey.to_hex()).collect(),
             pubkeys,
         }
     }
@@ -499,49 +350,6 @@ impl ProtocolEngine {
             .is_some()
     }
 
-    pub fn is_potential_group_sender_key_event(&self, event: &Event) -> bool {
-        parse_group_sender_key_message_event_unchecked(event).is_ok_and(|parsed| {
-            self.group_manager
-                .group_id_for_sender_event_pubkey(parsed.sender_event_pubkey)
-                .is_some()
-        })
-    }
-
-    pub fn is_group_sender_key_candidate_with_local_group_context(&self, event: &Event) -> bool {
-        if !protocol_event_has_tag(event, "header") || self.group_manager.snapshot().groups.is_empty()
-        {
-            return false;
-        }
-        parse_group_sender_key_message_event_unchecked(event).is_ok()
-    }
-
-    pub fn header_message_sender_has_verified_owner(&self, event: &Event) -> bool {
-        if !protocol_event_has_tag(event, "header") {
-            return false;
-        }
-        let Ok(envelope) = parse_message_event(event) else {
-            return false;
-        };
-        let Ok(sender) = public_device(envelope.sender) else {
-            return false;
-        };
-        self.owner_hint_for_device(sender)
-            .is_some_and(|hint| hint.verified)
-    }
-
-    pub fn header_message_sender_has_tracked_session(&self, event: &Event) -> bool {
-        if !protocol_event_has_tag(event, "header") {
-            return false;
-        }
-        let Ok(envelope) = parse_message_event(event) else {
-            return false;
-        };
-        !matches!(
-            self.resolve_message_sender_owner(&envelope),
-            ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { .. }
-        )
-    }
-
     pub fn known_device_identity_pubkeys_for_owner(
         &self,
         owner_pubkey: PublicKey,
@@ -553,14 +361,11 @@ impl ProtocolEngine {
             .users
             .into_iter()
             .find(|user| user.owner_pubkey == owner)
-            .and_then(|user| {
-                user.roster.map(|roster| {
-                    roster
-                        .devices()
-                        .iter()
-                        .filter_map(|device| public_device(device.device_pubkey).ok())
-                        .collect::<Vec<_>>()
-                })
+            .map(|user| {
+                user.devices
+                    .into_iter()
+                    .filter_map(|device| public_device(device.device_pubkey).ok())
+                    .collect::<Vec<_>>()
             })
             .unwrap_or_default();
         devices.sort_by_key(|pubkey| pubkey.to_hex());
@@ -650,90 +455,90 @@ impl ProtocolEngine {
         )
     }
 
-    pub fn queued_message_diagnostics(&self, message_id: Option<&str>) -> Vec<String> {
-        let mut targets = Vec::new();
-        for pending in &self.pending_outbound {
-            if message_id
-                .map(|message_id| pending.message_id != message_id)
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            targets.extend(self.pending_target_hexes(pending));
-        }
-        targets.sort();
-        targets.dedup();
-        targets
+    pub fn has_roster_for_owner(&self, owner_pubkey: PublicKey) -> bool {
+        let owner = ndr_owner(owner_pubkey);
+        self.session_manager
+            .snapshot()
+            .users
+            .iter()
+            .find(|user| user.owner_pubkey == owner)
+            .and_then(|user| user.roster.as_ref())
+            .is_some_and(|roster| !roster.devices().is_empty())
     }
 
-    fn pending_outbound_debug_details(&self) -> Vec<ProtocolPendingOutboundDebug> {
-        self.pending_outbound
+    pub fn has_direct_send_capability_for_owner(&self, owner_pubkey: PublicKey) -> bool {
+        let owner = ndr_owner(owner_pubkey);
+        self.session_manager
+            .snapshot()
+            .users
             .iter()
-            .map(|pending| {
-                let remaining_remote_targets = PublicKey::parse(&pending.recipient_owner_hex)
-                    .ok()
-                    .map(|owner| {
-                        self.remaining_remote_targets(
-                            ndr_owner(owner),
-                            &pending.delivered_remote_device_hexes,
-                        )
-                    })
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|target| target.to_hex())
-                    .collect::<Vec<_>>();
-                let remaining_local_sibling_targets = self
-                    .remaining_local_sibling_targets(&pending.delivered_local_device_hexes)
-                    .into_iter()
-                    .map(|target| target.to_hex())
-                    .collect::<Vec<_>>();
-                ProtocolPendingOutboundDebug {
-                    message_id: pending.message_id.clone(),
-                    chat_id: pending.chat_id.clone(),
-                    recipient_owner_hex: pending.recipient_owner_hex.clone(),
-                    reason: format!("{:?}", pending.reason),
-                    probe_local_sibling_roster: pending.probe_local_sibling_roster,
-                    delivered_remote_device_hexes: pending.delivered_remote_device_hexes.clone(),
-                    delivered_local_device_hexes: pending.delivered_local_device_hexes.clone(),
-                    remaining_remote_targets,
-                    remaining_local_sibling_targets,
-                    queued_targets: self.pending_target_hexes(pending),
-                    next_retry_at_secs: pending.next_retry_at_secs,
-                }
+            .find(|user| user.owner_pubkey == owner)
+            .is_some_and(|user| {
+                user.devices.iter().any(|device| {
+                    device.authorized
+                        && !device.is_stale
+                        && (device.active_session.is_some() || device.public_invite.is_some())
+                })
             })
-            .collect()
+    }
+
+    pub fn queued_message_diagnostics(&self, message_id: Option<&str>) -> Vec<String> {
+        let _ = message_id;
+        Vec::new()
     }
 
     pub fn has_delivery_blocking_message_work(&self, message_id: &str) -> bool {
-        self.pending_outbound
-            .iter()
-            .any(|pending| {
-                pending.message_id == message_id
-                    && self.pending_outbound_blocks_delivery(pending)
-            })
-            || self.pending_group_fanouts.iter().any(|pending| {
-                pending.inner_event_id.as_deref() == Some(message_id)
-            })
+        let _ = message_id;
+        false
     }
 
-    fn pending_outbound_blocks_delivery(&self, pending: &ProtocolPendingOutbound) -> bool {
-        !self.pending_remote_target_hexes(pending).is_empty()
-            || (pending.local_sibling_payload.is_some()
-                && !self
-                    .remaining_local_sibling_targets(&pending.delivered_local_device_hexes)
-                    .is_empty())
+    fn persist(&self) -> anyhow::Result<()> {
+        if self.batch_depth.get() > 0 {
+            self.batch_persist_dirty.set(true);
+            return Ok(());
+        }
+        self.persist_now()
+    }
+
+    fn persist_now(&self) -> anyhow::Result<()> {
+        let state = ProtocolEnginePersistedState {
+            version: PROTOCOL_ENGINE_STATE_VERSION,
+            session_manager: self.session_manager.snapshot(),
+            group_manager: self.group_manager.snapshot(),
+            delivered_group_sender_key_acks: self.delivered_group_sender_key_acks.clone(),
+            answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
+            pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
+            group_roster_fact_histories: self.group_roster_fact_histories.clone(),
+            subscription_generation: self.subscription_generation,
+            last_backfill_attempt_secs: self.last_backfill_attempt_secs,
+        };
+        self.batch_persist_dirty.set(false);
+        self.storage
+            .put(PROTOCOL_ENGINE_STATE_KEY, serde_json::to_string(&state)?)?;
+        Ok(())
+    }
+
+    pub fn enter_batch(&self) {
+        self.batch_depth
+            .set(self.batch_depth.get().saturating_add(1));
+    }
+
+    pub fn exit_batch(&self) -> anyhow::Result<()> {
+        let depth = self.batch_depth.get();
+        if depth == 0 {
+            return Ok(());
+        }
+        self.batch_depth.set(depth - 1);
+        if self.batch_depth.get() == 0 && self.batch_persist_dirty.get() {
+            self.persist_now()?;
+        }
+        Ok(())
     }
 
     fn state_checkpoint(&self) -> ProtocolEngineCheckpoint {
         ProtocolEngineCheckpoint {
             session_manager: self.session_manager.clone(),
             group_manager: self.group_manager.clone(),
-            pending_outbound: self.pending_outbound.clone(),
-            pending_inbound: self.pending_inbound.clone(),
-            pending_group_fanouts: self.pending_group_fanouts.clone(),
-            pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),
-            pending_group_sender_key_messages: self.pending_group_sender_key_messages.clone(),
-            pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),
             delivered_group_sender_key_acks: self.delivered_group_sender_key_acks.clone(),
             answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
             pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
@@ -746,12 +551,6 @@ impl ProtocolEngine {
     fn restore_checkpoint(&mut self, checkpoint: ProtocolEngineCheckpoint) {
         self.session_manager = checkpoint.session_manager;
         self.group_manager = checkpoint.group_manager;
-        self.pending_outbound = checkpoint.pending_outbound;
-        self.pending_inbound = checkpoint.pending_inbound;
-        self.pending_group_fanouts = checkpoint.pending_group_fanouts;
-        self.pending_group_pairwise_payloads = checkpoint.pending_group_pairwise_payloads;
-        self.pending_group_sender_key_messages = checkpoint.pending_group_sender_key_messages;
-        self.pending_group_sender_key_repairs = checkpoint.pending_group_sender_key_repairs;
         self.delivered_group_sender_key_acks = checkpoint.delivered_group_sender_key_acks;
         self.answered_group_sender_key_repairs = checkpoint.answered_group_sender_key_repairs;
         self.pending_decrypted_deliveries = checkpoint.pending_decrypted_deliveries;

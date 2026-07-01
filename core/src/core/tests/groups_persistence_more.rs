@@ -468,6 +468,7 @@ fn logged_in_test_core_with_storage(
         authorization_state: LocalAuthorizationState::Authorized,
     });
     install_test_protocol_engine(&mut core, owner, device, storage, None, None);
+    install_local_app_keys_proof_for_test(&mut core, owner, device);
     core
 }
 
@@ -492,7 +493,27 @@ fn logged_in_test_core_at_data_dir(owner: &Keys, device: &Keys, data_dir: String
         device.public_key().to_hex(),
     )) as Arc<dyn StorageAdapter>;
     install_test_protocol_engine(&mut core, owner, device, storage, None, None);
+    install_local_app_keys_proof_for_test(&mut core, owner, device);
     core
+}
+
+fn install_local_app_keys_proof_for_test(core: &mut AppCore, owner: &Keys, device: &Keys) {
+    let created_at = 1;
+    let app_keys = AppKeys::new(vec![DeviceEntry::new(device.public_key(), created_at)]);
+    let raw_event_json = signed_app_keys_event_json(owner, &[device.public_key()], created_at);
+    let mut known = known_app_keys_from_ndr(owner.public_key(), &app_keys, created_at);
+    known.raw_event_json = Some(raw_event_json.clone());
+    core.app_keys.insert(owner.public_key().to_hex(), known);
+    if let Some(protocol_engine) = core.protocol_engine.as_mut() {
+        protocol_engine
+            .ingest_app_keys_snapshot_with_raw_event_json(
+                owner.public_key(),
+                app_keys,
+                created_at,
+                Some(raw_event_json),
+            )
+            .expect("local appkeys proof");
+    }
 }
 
 fn test_chat_message(
@@ -543,7 +564,7 @@ fn test_protocol_engine_with_storage(
     let mut session_manager =
         SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();
     session_manager.local_invite = Some(local_invite);
-    let group_manager = GroupEventManager::new(local_owner).snapshot();
+    let group_manager = NostrGroupManager::new(local_owner).snapshot();
     seed_protocol_storage_if_missing_for_test(storage.as_ref(), session_manager, group_manager)
         .expect("seed protocol state");
     ProtocolEngine::load_or_create_for_local_device(
@@ -561,10 +582,15 @@ fn observe_current_device_appkeys_for_test(
 ) {
     let created_at = unix_now().get();
     engine
-        .ingest_app_keys_snapshot(
+        .ingest_app_keys_snapshot_with_raw_event_json(
             owner.public_key(),
             AppKeys::new(vec![DeviceEntry::new(device.public_key(), created_at)]),
             created_at,
+            Some(signed_app_keys_event_json(
+                owner,
+                &[device.public_key()],
+                created_at,
+            )),
         )
         .expect("local appkeys");
 }
@@ -591,7 +617,7 @@ fn observe_peer_device_invite_for_test(
         None,
     )
     .expect("peer invite");
-    let event = nostr_double_ratchet::invite_unsigned_event(&invite)
+    let event = invite_unsigned_event(&invite)
         .expect("invite event")
         .sign_with_keys(device)
         .expect("signed invite");
@@ -662,7 +688,7 @@ fn install_test_protocol_engine(
         seed_session_manager.local_invite = Some(local_invite);
     }
     let seed_group_manager = seed_group_manager.unwrap_or_else(|| {
-        GroupEventManager::new(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes())).snapshot()
+        NostrGroupManager::new(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes())).snapshot()
     });
     seed_protocol_storage_if_missing_for_test(
         storage.as_ref(),
@@ -728,86 +754,12 @@ fn stored_chat_ttl(core: &AppCore, chat_id: &str) -> Option<u64> {
         .map(|row| row.get::<_, i64>(0).unwrap() as u64)
 }
 
-fn runtime_state_json(core: &AppCore, owner: &Keys, device: &Keys) -> serde_json::Value {
-    let storage = crate::core::storage::SqliteStorageAdapter::new(
-        core.app_store.shared(),
-        owner.public_key().to_hex(),
-        device.public_key().to_hex(),
-    );
-    let value = storage
-        .get("appcore/protocol-engine-state-v1")
-        .expect("read appcore protocol state")
-        .expect("appcore protocol state exists");
-    serde_json::from_str(&value).expect("runtime state json")
-}
-
-fn stored_pending_group_sender_key_message_count(
-    core: &AppCore,
-    owner: &Keys,
-    device: &Keys,
-) -> usize {
-    runtime_state_json(core, owner, device)
-        .get("pending_group_sender_key_messages")
-        .and_then(|value| value.as_array())
-        .map(Vec::len)
-        .unwrap_or_default()
-}
-
-fn stored_pending_decrypted_delivery_count(core: &AppCore, owner: &Keys, device: &Keys) -> usize {
-    runtime_state_json(core, owner, device)
-        .get("pending_decrypted_deliveries")
-        .and_then(|value| value.as_array())
-        .map(Vec::len)
-        .unwrap_or_default()
-}
-
-fn unknown_group_sender_key_outer_event(sender_event: &Keys) -> Event {
-    use base64::Engine;
-
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&7_u32.to_be_bytes());
-    payload.extend_from_slice(&1_u32.to_be_bytes());
-    payload.extend_from_slice(&[42_u8; 32]);
-    let content = base64::engine::general_purpose::STANDARD.encode(payload);
-    EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), content)
-        .sign_with_keys(sender_event)
-        .expect("unknown group sender-key outer")
-}
-
 fn pending_events_with_kind(core: &AppCore, kind: u32) -> Vec<Event> {
     core.pending_relay_publishes
         .values()
         .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
         .filter(|event| event.kind.as_u16() as u32 == kind)
         .collect()
-}
-
-fn serializable_key_pair_for_test(keys: &Keys) -> nostr_double_ratchet::SerializableKeyPair {
-    nostr_double_ratchet::SerializableKeyPair {
-        public_key: NdrDevicePubkey::from_bytes(keys.public_key().to_bytes()),
-        private_key: keys.secret_key().to_secret_bytes(),
-    }
-}
-
-fn compact_event_payload_for_apns_test(event: &Event) -> serde_json::Value {
-    let mut value = serde_json::to_value(event).expect("event json");
-    if let Some(object) = value.as_object_mut() {
-        let header_tags = object
-            .get("tags")
-            .and_then(|tags| tags.as_array())
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|tag| {
-                tag.as_array()
-                    .and_then(|items| items.first())
-                    .and_then(|name| name.as_str())
-                    == Some("header")
-            })
-            .collect();
-        object.insert("tags".to_string(), serde_json::Value::Array(header_tags));
-    }
-    value
 }
 
 /// End-to-end round-trip: upload a real image to the hashtree network and

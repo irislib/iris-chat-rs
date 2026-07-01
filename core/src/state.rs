@@ -140,6 +140,53 @@ pub enum DeviceAuthorizationState {
     Revoked,
 }
 
+#[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
+pub enum ProtocolReadinessReason {
+    Ready,
+    AccountMissing,
+    DeviceAwaitingApproval,
+    DeviceRevoked,
+    ProtocolEngineUnavailable,
+    BlockedPeer,
+    PeerAppKeysMissing,
+    PeerSessionMissing,
+    GroupMetadataMissing,
+    GroupNotJoined,
+    GroupMemberAppKeysMissing,
+    GroupMemberSessionMissing,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct ProtocolReadinessSnapshot {
+    pub can_send: bool,
+    pub reason: ProtocolReadinessReason,
+    pub message: String,
+}
+
+impl ProtocolReadinessSnapshot {
+    pub fn ready() -> Self {
+        Self {
+            can_send: true,
+            reason: ProtocolReadinessReason::Ready,
+            message: "Ready".to_string(),
+        }
+    }
+
+    pub fn blocked(reason: ProtocolReadinessReason, message: impl Into<String>) -> Self {
+        Self {
+            can_send: false,
+            reason,
+            message: message.into(),
+        }
+    }
+}
+
+impl Default for ProtocolReadinessSnapshot {
+    fn default() -> Self {
+        Self::ready()
+    }
+}
+
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct AccountSnapshot {
     pub public_key_hex: String,
@@ -151,6 +198,7 @@ pub struct AccountSnapshot {
     pub device_npub: String,
     pub has_owner_signing_authority: bool,
     pub authorization_state: DeviceAuthorizationState,
+    pub protocol_readiness: ProtocolReadinessSnapshot,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
@@ -318,6 +366,7 @@ pub struct ChatThreadSnapshot {
     /// delivery / typing receipts, and treat the conversation as
     /// untrusted until the user accepts.
     pub is_request: bool,
+    pub protocol_readiness: ProtocolReadinessSnapshot,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
@@ -351,6 +400,7 @@ pub struct CurrentChatSnapshot {
     /// Mirrors `ChatThreadSnapshot::is_request`. Chat screens replace
     /// the composer with an Accept / Delete / Block gate when set.
     pub is_request: bool,
+    pub protocol_readiness: ProtocolReadinessSnapshot,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
@@ -378,6 +428,7 @@ pub struct GroupDetailsSnapshot {
     pub is_muted: bool,
     pub revision: u64,
     pub members: Vec<GroupMemberSnapshot>,
+    pub protocol_readiness: ProtocolReadinessSnapshot,
 }
 
 #[derive(uniffi::Record, Clone, Debug, Default, PartialEq, Eq)]

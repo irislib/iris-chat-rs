@@ -903,7 +903,7 @@ fn pending_invite_response_owner(
     }
 
     invites.into_iter().find_map(|invite| {
-        nostr_double_ratchet::process_invite_response_event(&invite, event, device_secret)
+        process_invite_response_event(&invite, event, device_secret)
             .ok()
             .flatten()
             .map(|response| response.resolved_owner_pubkey().to_hex())

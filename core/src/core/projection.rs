@@ -331,6 +331,7 @@ impl AppCore {
                     group_creator_hex.as_deref(),
                     local_owner_hex.as_deref(),
                 );
+                let protocol_readiness = self.chat_protocol_readiness(&thread.chat_id);
                 ChatThreadSnapshot {
                     chat_id: thread.chat_id.clone(),
                     kind: thread_kind,
@@ -357,6 +358,7 @@ impl AppCore {
                     is_pinned,
                     draft: thread.draft.clone(),
                     is_request,
+                    protocol_readiness,
                 }
             })
             .collect();
@@ -404,6 +406,7 @@ impl AppCore {
                     current_group_creator_hex.as_deref(),
                     local_owner_hex.as_deref(),
                 );
+                let protocol_readiness = self.chat_protocol_readiness(&thread.chat_id);
                 CurrentChatSnapshot {
                     chat_id: thread.chat_id.clone(),
                     kind: current_chat_kind,
@@ -454,6 +457,7 @@ impl AppCore {
                     typing_indicators: self.typing_indicator_snapshots(&thread.chat_id),
                     draft: thread.draft.clone(),
                     is_request,
+                    protocol_readiness,
                 }
             });
 
@@ -562,6 +566,7 @@ impl AppCore {
             device_npub,
             has_owner_signing_authority: logged_in.owner_keys.is_some(),
             authorization_state: public_authorization_state(logged_in.authorization_state),
+            protocol_readiness: self.account_protocol_readiness(),
         })
     }
 
@@ -787,6 +792,7 @@ impl AppCore {
                     draft: thread.draft.clone(),
                     // Group chats are never message-requests.
                     is_request: false,
+                    protocol_readiness: self.chat_protocol_readiness(&thread.chat_id),
                 })
             })
             .collect::<Vec<_>>();
@@ -857,6 +863,7 @@ impl AppCore {
         let is_muted = self.is_chat_muted(&group_chat_id(&group.group_id));
         let picture_url = self.group_picture_url(&group);
         let about = group.about.clone();
+        let protocol_readiness = self.group_protocol_readiness(&group.group_id);
 
         Some(GroupDetailsSnapshot {
             group_id: group.group_id,
@@ -872,6 +879,7 @@ impl AppCore {
             is_muted,
             revision: group.revision,
             members,
+            protocol_readiness,
         })
     }
 
@@ -885,15 +893,6 @@ impl AppCore {
             .picture
             .clone()
             .or_else(|| self.group_pictures.get(&group.group_id).cloned())
-    }
-
-    pub(super) fn can_use_chats(&self) -> bool {
-        matches!(
-            self.logged_in
-                .as_ref()
-                .map(|logged_in| logged_in.authorization_state),
-            Some(LocalAuthorizationState::Authorized)
-        )
     }
 
     pub(super) fn emit_account_bundle_update(&self, owner_keys: Option<&Keys>, device_keys: &Keys) {

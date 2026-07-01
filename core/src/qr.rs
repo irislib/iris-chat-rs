@@ -48,7 +48,7 @@ pub fn encode_device_approval_qr(_owner_input: String, _device_input: String) ->
 
 #[uniffi::export]
 pub fn decode_device_approval_qr(raw: String) -> Option<DeviceApprovalQrPayload> {
-    nostr_double_ratchet::parse_compact_device_link_request(&raw)
+    crate::parse_compact_device_link_request(&raw)
         .ok()
         .map(|request| DeviceApprovalQrPayload {
             owner_input: String::new(),

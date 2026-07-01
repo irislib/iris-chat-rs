@@ -36,7 +36,6 @@ fn retry_batch_publish_registration_blocks_delivery_until_relay_success() {
                     chat_id: chat_id.clone(),
                     inner_event_id: Some(message_id.clone()),
                 })],
-                queued_targets: Vec::new(),
             }],
             ..ProtocolRetryBatch::default()
         },
