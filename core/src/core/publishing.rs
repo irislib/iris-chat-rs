@@ -248,19 +248,31 @@ impl AppCore {
             self.schedule_relay_transport_retry(format!("publish_drain_offline:{reason}"));
         }
 
-        let pending = self
+        let mut pending = self
             .pending_relay_publishes
             .values()
             .cloned()
             .collect::<Vec<_>>();
-        let mut candidates = Vec::new();
-        for pending in pending {
-            if self
+        pending.retain(|pending| {
+            !self
                 .pending_relay_publish_inflight
                 .contains(&pending.event_id)
-            {
-                continue;
-            }
+        });
+        pending.sort_by(|left, right| {
+            let left_is_message = left.inner_event_id.is_some() && left.chat_id.is_some();
+            let right_is_message = right.inner_event_id.is_some() && right.chat_id.is_some();
+            (!left_is_message)
+                .cmp(&(!right_is_message))
+                .then_with(|| left.created_at_secs.cmp(&right.created_at_secs))
+                .then_with(|| left.label.cmp(&right.label))
+                .then_with(|| left.event_id.cmp(&right.event_id))
+        });
+        let truncated_to_batch = pending.len() > PENDING_RELAY_DRAIN_BATCH_SIZE;
+        if truncated_to_batch {
+            pending.truncate(PENDING_RELAY_DRAIN_BATCH_SIZE);
+        }
+        let mut candidates = Vec::new();
+        for pending in pending {
             let event = match serde_json::from_str::<Event>(&pending.event_json) {
                 Ok(event) => event,
                 Err(error) => {
@@ -277,20 +289,10 @@ impl AppCore {
             };
             candidates.push((pending, event));
         }
-        candidates.sort_by(|(left, _), (right, _)| {
-            let left_is_message = left.inner_event_id.is_some() && left.chat_id.is_some();
-            let right_is_message = right.inner_event_id.is_some() && right.chat_id.is_some();
-            (!left_is_message)
-                .cmp(&(!right_is_message))
-                .then_with(|| left.created_at_secs.cmp(&right.created_at_secs))
-                .then_with(|| left.label.cmp(&right.label))
-                .then_with(|| left.event_id.cmp(&right.event_id))
-        });
-        let truncated_to_batch = candidates.len() > PENDING_RELAY_DRAIN_BATCH_SIZE;
-        if truncated_to_batch {
-            candidates.truncate(PENDING_RELAY_DRAIN_BATCH_SIZE);
-        }
         if candidates.is_empty() {
+            if truncated_to_batch {
+                self.schedule_relay_transport_retry("pending_relay_batch_invalid");
+            }
             return;
         }
 

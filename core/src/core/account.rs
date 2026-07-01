@@ -810,17 +810,18 @@ impl AppCore {
                     .into_iter()
                     .map(|pending| (pending.event_id.clone(), pending))
                     .collect();
-                for pending in self
-                    .pending_relay_publishes
-                    .values()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                {
-                    if let (Some(chat_id), Some(message_id)) =
-                        (pending.chat_id, pending.inner_event_id)
-                    {
-                        self.sync_message_delivery_trace(&chat_id, &message_id);
-                    }
+                let restored_messages = self
+                    .threads
+                    .iter()
+                    .flat_map(|(chat_id, thread)| {
+                        thread
+                            .messages
+                            .iter()
+                            .map(|message| (chat_id.clone(), message.id.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                for (chat_id, message_id) in restored_messages {
+                    self.sync_message_delivery_trace(&chat_id, &message_id);
                 }
             }
             Err(error) => {
