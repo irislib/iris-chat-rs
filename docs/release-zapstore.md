@@ -18,7 +18,9 @@ That keeps Android signing in CI while keeping Zapstore publishing local.
 - Android application ID: `to.iris.chat`
 - Repository: `https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs`
 - Zapstore channel: `main`
-- Listing summary: `Alpha release of Iris Chat, a secure Nostr messenger built on Nostr Double Ratchet.`
+- Zapstore app metadata publisher: `npub1wyvg2agqh7sq0y6pga3rayr45uhr0fg5ucz4yjg36rmv4t8yrvrsslkwpm`
+- Automated release signer: `npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm`
+- Listing summary: `End-to-end encrypted chat app using Nostr Double Ratchet.`
 
 Treat the Android application ID, Android signing key, and Zapstore publisher
 Nostr identity as long-lived release identity. Changing them later can make
@@ -94,8 +96,9 @@ chmod 600 .env.zapstore.local
 ```
 
 If this repo does not have its own `.env.zapstore.local`, the publish script
-will use `../nostr-vpn/.env.zapstore.local` when present. That keeps Iris Chat
-on the same Zapstore publisher key as Nostr VPN.
+will use `../nostr-vpn/.env.zapstore.local` when present. Routine releases use
+that local key for release-only Zapstore events while leaving the existing app
+metadata event owned by the Zapstore app metadata publisher.
 
 ## What To Store Permanently
 
@@ -130,8 +133,9 @@ Keystore alias: iris-chat-upload
 Keystore password: <from release.env>
 Key password: <from release.env>
 Zapstore channel: main
-Zapstore publisher npub: npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm
-Zapstore publisher nsec: nsec1...
+Zapstore app metadata publisher npub: npub1wyvg2agqh7sq0y6pga3rayr45uhr0fg5ucz4yjg36rmv4t8yrvrsslkwpm
+Automated release signer npub: npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm
+Automated release signer nsec: nsec1...
 Signing mode: NOSTR_KEY_PATH
 Local keystore path: .zapstore/keystore/iris-chat-release.jks
 ```
@@ -176,14 +180,17 @@ test -f .zapstore/keystore/iris-chat-release.jks
 chmod 600 release.env .zapstore/keystore/iris-chat-release.jks
 ```
 
-Add your Zapstore publisher `npub` to `zapstore.yaml` before the first real
-publish:
+Add the Zapstore app metadata publisher `npub` to `zapstore.yaml` before the
+first real app metadata publish:
 
 ```yaml
 pubkey: npub1...
 ```
 
-Use the same key in your browser signer.
+For routine `scripts/release --publish` runs, the release script publishes
+release-only Zapstore events with `--skip-app-event` and the automated release
+signer. Use the app metadata publisher key only when intentionally replacing the
+kind `32267` app metadata event.
 
 ## Restore On A New Computer
 
@@ -322,10 +329,10 @@ Assumptions:
 
 - `gh` is authenticated with access to `irislib/iris-chat-rs`.
 - `zsp` is installed and on `PATH`.
-- `zapstore.yaml` contains the intended Zapstore publisher `npub`.
+- `zapstore.yaml` contains the intended Zapstore app metadata publisher `npub`.
 - `.env.zapstore.local` points `NOSTR_KEY_PATH` at the local `nsec`, or
   `SIGN_WITH` is set another way.
-- The Zapstore publisher identity is allowed to publish this package/listing.
+- The automated release signer identity is allowed to publish this package/listing.
   If Zapstore requires identity linking for the new Android signing key, that
   one-time link must be handled before routine publishes.
 
