@@ -129,6 +129,7 @@ pub(crate) enum InternalEvent {
         token: u64,
         result: RelayPublishDrainResult,
     },
+    SessionStartupFollowUp,
     RetryPendingRelayPublishes {
         reason: String,
     },

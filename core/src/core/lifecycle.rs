@@ -175,6 +175,7 @@ impl AppCore {
                 }
                 InternalEvent::RelayPublishDrainFinished { .. } => "RelayPublishDrainFinished",
                 InternalEvent::RelayPublishDrainProgress { .. } => "RelayPublishDrainProgress",
+                InternalEvent::SessionStartupFollowUp => "SessionStartupFollowUp",
                 InternalEvent::RetryPendingRelayPublishes { .. } => "RetryPendingRelayPublishes",
                 InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
                 InternalEvent::AttachmentUploadProgress { .. } => "AttachmentUploadProgress",
@@ -737,6 +738,9 @@ impl AppCore {
             }
             InternalEvent::RelayPublishDrainProgress { token, result } => {
                 self.handle_relay_publish_drain_progress(token, result);
+            }
+            InternalEvent::SessionStartupFollowUp => {
+                self.run_session_startup_follow_up();
             }
             InternalEvent::RetryPendingRelayPublishes { reason } => {
                 self.retry_pending_relay_publishes(&reason);

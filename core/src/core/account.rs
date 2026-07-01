@@ -781,6 +781,63 @@ impl AppCore {
             relay_urls,
             authorization_state,
         });
+        self.refresh_local_authorization_state();
+        self.push_debug_log(
+            "session.authorization",
+            format!(
+                "state={authorization_state:?} owner={} device={}",
+                owner_pubkey.to_hex(),
+                device_pubkey.to_hex()
+            ),
+        );
+        self.emit_account_bundle_update(owner_keys.as_ref(), &device_keys);
+        if allow_restore {
+            self.rebuild_state();
+            self.emit_state();
+            if !self.queue_session_startup_follow_up() {
+                self.run_session_startup_follow_up();
+            }
+        } else {
+            self.run_session_startup_follow_up();
+        }
+        Ok(())
+    }
+
+    fn queue_session_startup_follow_up(&self) -> bool {
+        self.core_sender
+            .send(CoreMsg::Internal(Box::new(
+                InternalEvent::SessionStartupFollowUp,
+            )))
+            .is_ok()
+    }
+
+    pub(super) fn run_session_startup_follow_up(&mut self) {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return;
+        };
+        let owner_pubkey = logged_in.owner_pubkey;
+
+        self.ingest_restored_app_keys_for_protocol();
+        self.load_pending_relay_publish_queue(owner_pubkey);
+        self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
+        self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
+        self.start_relay_status_watchers();
+        self.schedule_session_connect();
+        self.republish_local_identity_artifacts();
+        self.drain_pending_mobile_push_events();
+        self.retry_protocol_engine_pending_outbound("session_start");
+        self.retry_pending_relay_publishes("session_start");
+        self.schedule_next_message_expiry();
+        self.request_protocol_subscription_refresh();
+        self.fetch_recent_protocol_state();
+        self.refresh_protocol_sync_busy();
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+        self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));
+    }
+
+    fn ingest_restored_app_keys_for_protocol(&mut self) {
         let existing_app_keys = self.app_keys.values().cloned().collect::<Vec<_>>();
         let mut app_keys_retry_batch = ProtocolRetryBatch::default();
         for app_keys in existing_app_keys {
@@ -800,7 +857,9 @@ impl AppCore {
             }
         }
         self.process_protocol_engine_retry_batch("session_start_app_keys", app_keys_retry_batch);
-        self.refresh_local_authorization_state();
+    }
+
+    fn load_pending_relay_publish_queue(&mut self, owner_pubkey: PublicKey) {
         match self
             .app_store
             .load_pending_relay_publishes(&owner_pubkey.to_hex())
@@ -828,32 +887,6 @@ impl AppCore {
                 self.push_debug_log("publish.runtime.queue", format!("load_failed={error}"));
             }
         }
-        self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
-        self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
-        self.start_relay_status_watchers();
-        self.schedule_session_connect();
-        self.emit_account_bundle_update(owner_keys.as_ref(), &device_keys);
-        self.republish_local_identity_artifacts();
-        self.drain_pending_mobile_push_events();
-        self.retry_protocol_engine_pending_outbound("session_start");
-        self.retry_pending_relay_publishes("session_start");
-        self.schedule_next_message_expiry();
-        self.request_protocol_subscription_refresh();
-        self.fetch_recent_protocol_state();
-        self.refresh_protocol_sync_busy();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
-        self.push_debug_log(
-            "session.authorization",
-            format!(
-                "state={authorization_state:?} owner={} device={}",
-                owner_pubkey.to_hex(),
-                device_pubkey.to_hex()
-            ),
-        );
-        self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));
-        Ok(())
     }
 
     #[cfg(test)]
