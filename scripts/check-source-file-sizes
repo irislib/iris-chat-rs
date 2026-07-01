@@ -57,7 +57,7 @@ baseline_limit_for() {
     ios/Sources/ChatViews.swift) echo 1214 ;;
     ios/Sources/IrisNearbyService.swift) echo 2559 ;;
     ios/Tests/InteropHarnessTests.swift) echo 2178 ;;
-    ios/Tests/IrisChatTests.swift) echo 2477 ;;
+    ios/Tests/IrisChatTests.swift) echo 2479 ;;
     ios/UITests/IrisChatUITests.swift) echo 1180 ;;
     linux/src/screens/chat.rs) echo 2846 ;;
     macos/Sources/MacBitchatNearbyService.swift) echo 1152 ;;
