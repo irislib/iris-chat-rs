@@ -558,6 +558,7 @@ dependencies = [
  "flate2",
  "nostr",
  "nostr-double-ratchet",
+ "nostr-double-ratchet-nostr",
  "nostr-double-ratchet-pairwise-codec",
  "rand",
  "rusqlite",
@@ -654,9 +655,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet"
-version = "0.0.161"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "630d7f49a98161cd579a764369b7dc0153396d9b487ee832401eeac4d639a553"
+version = "0.0.147"
 dependencies = [
  "base64",
  "hex",
@@ -667,15 +666,26 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+]
+
+[[package]]
+name = "nostr-double-ratchet-nostr"
+version = "0.0.147"
+dependencies = [
+ "base64",
+ "hex",
+ "nostr",
+ "nostr-double-ratchet",
+ "rand",
+ "serde",
+ "serde_json",
+ "thiserror",
  "urlencoding",
- "uuid",
 ]
 
 [[package]]
 name = "nostr-double-ratchet-pairwise-codec"
-version = "0.0.161"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "820eee1565c011c2ab31bb13d38a6651f7c7c16a0cae737afb8fbb4ef601302e"
+version = "0.0.147"
 dependencies = [
  "nostr",
  "serde",
@@ -1116,17 +1126,6 @@ name = "utf8_iter"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
-
-[[package]]
-name = "uuid"
-version = "1.23.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf80a72845275afea99e7f2b434723d3bc7e38470fcd1c7ed39a599c73319a53"
-dependencies = [
- "getrandom 0.4.3",
- "js-sys",
- "wasm-bindgen",
-]
 
 [[package]]
 name = "vcpkg"

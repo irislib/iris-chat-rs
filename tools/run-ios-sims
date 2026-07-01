@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IOS_PROJECT="$ROOT/ios/IrisChat.xcodeproj"
+IOS_SCHEME="IrisChat"
+BUNDLE_ID="${IRIS_IOS_BUNDLE_ID:-to.iris.chat}"
+SIMULATOR_BASE_NAME="${IRIS_IOS_SIMULATOR_BASE_NAME:-Iris Chat iPhone}"
+DEFAULT_COUNT="${IRIS_IOS_SIMULATOR_COUNT:-4}"
+NO_OPEN=0
+COUNT=""
+SIMULATOR_NAMES=()
+
+usage() {
+  cat <<'EOF'
+usage: ./tools/run-ios-sims [count] [--no-open]
+
+Builds the current checkout once for iOS Simulator, boots/creates count Iris
+simulators, installs the built app on each simulator, and launches it.
+
+Environment:
+  IRIS_IOS_SIMULATOR_BASE_NAME  Base simulator name. Default: Iris Chat iPhone
+  IRIS_IOS_SIMULATOR_COUNT      Default simulator count. Default: 4
+  IRIS_IOS_BUNDLE_ID            App bundle ID. Default: to.iris.chat
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-open)
+      NO_OPEN=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      if [[ -z "$COUNT" && "$1" =~ ^[0-9]+$ ]]; then
+        COUNT="$1"
+      else
+        SIMULATOR_NAMES+=("$1")
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -n "$COUNT" && ${#SIMULATOR_NAMES[@]} -gt 0 ]]; then
+  echo "Pass either a simulator count or explicit simulator names, not both." >&2
+  usage >&2
+  exit 2
+fi
+
+if [[ ${#SIMULATOR_NAMES[@]} -eq 0 ]]; then
+  COUNT="${COUNT:-$DEFAULT_COUNT}"
+  if ! [[ "$COUNT" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Simulator count must be a positive integer." >&2
+    exit 2
+  fi
+  for index in $(seq 1 "$COUNT"); do
+    if [[ "$index" -eq 1 ]]; then
+      SIMULATOR_NAMES+=("$SIMULATOR_BASE_NAME")
+    else
+      SIMULATOR_NAMES+=("$SIMULATOR_BASE_NAME $index")
+    fi
+  done
+fi
+
+resolve_udids() {
+  local devices_json
+  devices_json="$(xcrun simctl list -j devices available)"
+  SIMCTL_DEVICES_JSON="$devices_json" python3 - "$@" <<'PY'
+import json
+import os
+import sys
+
+devices = json.loads(os.environ["SIMCTL_DEVICES_JSON"]).get("devices", {})
+for name in sys.argv[1:]:
+    booted = []
+    available = []
+    for runtime_devices in devices.values():
+        for device in runtime_devices:
+            if not device.get("isAvailable", True):
+                continue
+            if device.get("name") != name:
+                continue
+            if device.get("state") == "Booted":
+                booted.append(device["udid"])
+            else:
+                available.append(device["udid"])
+    candidates = booted + available
+    if not candidates:
+        print(f"Could not resolve simulator UDID for {name}", file=sys.stderr)
+        raise SystemExit(1)
+    print(candidates[0])
+PY
+}
+
+resolve_app_path() {
+  local destination="$1"
+  local settings
+  local target_build_dir
+  local wrapper_name
+
+  settings="$(
+    xcodebuild \
+      -project "$IOS_PROJECT" \
+      -scheme "$IOS_SCHEME" \
+      -destination "$destination" \
+      -showBuildSettings 2>/dev/null
+  )"
+  target_build_dir="$(awk -F' = ' '/^[[:space:]]*TARGET_BUILD_DIR = / { print $2; exit }' <<<"$settings")"
+  wrapper_name="$(awk -F' = ' '/^[[:space:]]*WRAPPER_NAME = / { print $2; exit }' <<<"$settings")"
+  if [[ -n "${target_build_dir:-}" && -n "${wrapper_name:-}" ]]; then
+    printf '%s/%s\n' "$target_build_dir" "$wrapper_name"
+    return 0
+  fi
+
+  python3 - "$HOME/Library/Developer/Xcode/DerivedData" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+candidates = sorted(
+    root.glob("**/Debug-iphonesimulator/IrisChat.app"),
+    key=lambda path: path.stat().st_mtime,
+    reverse=True,
+)
+if candidates:
+    print(candidates[0])
+PY
+}
+
+branch="$(git -C "$ROOT" branch --show-current 2>/dev/null || true)"
+sha="$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || true)"
+checkout="${branch:-detached}"
+if [[ -n "${sha:-}" ]]; then
+  checkout="$checkout $sha"
+fi
+
+echo "Booting ${#SIMULATOR_NAMES[@]} iOS simulator(s)."
+"$ROOT/scripts/run_ios_simulators.sh" --no-open "${SIMULATOR_NAMES[@]}"
+
+TARGET_UDIDS=()
+while IFS= read -r udid; do
+  [[ -n "$udid" ]] && TARGET_UDIDS+=("$udid")
+done < <(resolve_udids "${SIMULATOR_NAMES[@]}")
+
+if [[ ${#TARGET_UDIDS[@]} -ne ${#SIMULATOR_NAMES[@]} ]]; then
+  echo "Resolved ${#TARGET_UDIDS[@]} simulator UDID(s), expected ${#SIMULATOR_NAMES[@]}." >&2
+  exit 1
+fi
+
+destination="platform=iOS Simulator,id=${TARGET_UDIDS[0]}"
+echo "Building IrisChat from current checkout (${checkout}) for iOS Simulator."
+IRIS_IOS_SIM_DESTINATION="$destination" "$ROOT/scripts/ios-build" ios-build-sim
+
+app_path="$(resolve_app_path "$destination")"
+if [[ -z "${app_path:-}" || ! -d "$app_path" ]]; then
+  echo "Built simulator app not found." >&2
+  exit 1
+fi
+
+for index in "${!TARGET_UDIDS[@]}"; do
+  udid="${TARGET_UDIDS[$index]}"
+  name="${SIMULATOR_NAMES[$index]}"
+  echo "Installing IrisChat on ${name} (${udid})."
+  xcrun simctl install "$udid" "$app_path" >/dev/null
+  if xcrun simctl launch "$udid" "$BUNDLE_ID" >/tmp/iris-chat-ios-launch-"$udid".log 2>&1; then
+    echo "Launched IrisChat on ${name} (${udid})."
+  else
+    echo "Installed IrisChat on ${name} (${udid}); launch failed or app was already running." >&2
+  fi
+done
+
+if [[ "$NO_OPEN" -eq 0 ]]; then
+  open -a Simulator >/dev/null 2>&1 || true
+fi
+
+echo "Installed and launched IrisChat on ${#TARGET_UDIDS[@]} iOS simulator(s)."

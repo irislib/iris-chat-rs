@@ -1,38 +1,4 @@
 #[test]
-fn opening_uncached_direct_chat_starts_targeted_profile_fetch() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let peer = Keys::generate();
-    let mut core = logged_in_test_core("open-direct-profile-fetch", &owner, &device);
-    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
-    core.logged_in.as_mut().expect("logged in").relay_urls =
-        relay_urls_from_strings(&core.preferences.nostr_relay_urls);
-    core.protocol_subscription_runtime
-        .protocol_fetch_last_started_at = Some(Instant::now());
-    core.debug_log.clear();
-
-    core.handle_action(AppAction::CreateChat {
-        peer_input: peer.public_key().to_hex(),
-    });
-
-    let peer_hex = peer.public_key().to_hex();
-    assert!(
-        core.debug_log.iter().any(|entry| {
-            entry.category == "profile.metadata.fetch"
-                && entry.detail.contains("reason=open_chat")
-                && entry.detail.contains(&peer_hex)
-        }),
-        "opening an uncached direct chat should start a narrow profile metadata fetch"
-    );
-    assert!(
-        core.debug_log.iter().any(|entry| {
-            entry.category == "protocol.catch_up.skip" && entry.detail.contains("rate limited")
-        }),
-        "the broad catch-up path should remain independently rate-limited"
-    );
-}
-
-#[test]
 fn incoming_uncached_direct_message_starts_targeted_profile_fetch() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -424,83 +390,6 @@ fn incoming_direct_message_from_known_peer_device_routes_to_owner_thread() {
     assert!(
         !core.threads.contains_key(&peer_device_chat_id),
         "known peer device metadata must not create a direct chat with the device identity"
-    );
-}
-
-#[test]
-fn incoming_direct_message_from_tracked_claimed_peer_device_routes_to_owner_thread() {
-    let owner = Keys::generate();
-    let local_device = Keys::generate();
-    let peer_owner = Keys::generate();
-    let peer_device = Keys::generate();
-    let mut core = logged_in_test_core("remote-claimed-device-route", &owner, &local_device);
-    let peer_owner_chat_id = peer_owner.public_key().to_hex();
-    let peer_device_chat_id = peer_device.public_key().to_hex();
-    core.ensure_thread_record(&peer_owner_chat_id, 1);
-
-    let mut session_snapshot = SessionManager::new(
-        NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes()),
-        local_device.secret_key().to_secret_bytes(),
-    )
-    .snapshot();
-    session_snapshot
-        .users
-        .push(nostr_double_ratchet::UserRecordSnapshot {
-            owner_pubkey: NdrOwnerPubkey::from_bytes(peer_device.public_key().to_bytes()),
-            roster: None,
-            devices: vec![nostr_double_ratchet::DeviceRecordSnapshot {
-                device_pubkey: NdrDevicePubkey::from_bytes(peer_device.public_key().to_bytes()),
-                authorized: true,
-                is_stale: false,
-                stale_since: None,
-                claimed_owner_pubkey: Some(NdrOwnerPubkey::from_bytes(
-                    peer_owner.public_key().to_bytes(),
-                )),
-                public_invite: None,
-                invite_response_generated: false,
-                active_session: None,
-                inactive_sessions: Vec::new(),
-                last_activity: Some(NdrUnixSeconds(1)),
-                created_at: NdrUnixSeconds(1),
-            }],
-        });
-    let storage =
-        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
-    install_test_protocol_engine(
-        &mut core,
-        &owner,
-        &local_device,
-        storage,
-        Some(session_snapshot),
-        None,
-    );
-
-    let (content, inner_id) = runtime_rumor_json(
-        peer_owner.public_key(),
-        CHAT_MESSAGE_KIND,
-        "sent before app keys backfill",
-        1_777_159_503,
-        Vec::new(),
-    );
-
-    core.apply_decrypted_runtime_message_with_metadata(
-        peer_device.public_key(),
-        Some(peer_device.public_key()),
-        None,
-        content,
-        Some("d".repeat(64)),
-    );
-
-    let thread = core
-        .threads
-        .get(&peer_owner_chat_id)
-        .expect("peer owner thread");
-    assert_eq!(thread.messages.len(), 1);
-    assert_eq!(thread.messages[0].id, inner_id);
-    assert_eq!(thread.messages[0].body, "sent before app keys backfill");
-    assert!(
-        !core.threads.contains_key(&peer_device_chat_id),
-        "tracked claimed peer device must route to the owner chat while AppKeys are still catching up"
     );
 }
 
@@ -1059,8 +948,15 @@ fn set_chat_draft_persists_until_send() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
+    let peer_device = Keys::generate();
     let mut core = logged_in_test_core("draft-persist", &owner, &device);
     let chat_id = peer.public_key().to_hex();
+    observe_peer_device_invite_for_test(
+        core.protocol_engine.as_mut().expect("protocol engine"),
+        &peer,
+        &peer_device,
+        1,
+    );
 
     core.set_chat_draft(&chat_id, "ping…");
     let snap = core
@@ -1777,8 +1673,15 @@ fn runtime_controls_settings_reactions_and_expiration_flow() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let sender = Keys::generate();
+    let sender_device = Keys::generate();
     let mut core = logged_in_test_core("runtime-controls-flow", &owner, &device);
     let chat_id = sender.public_key().to_hex();
+    observe_peer_device_invite_for_test(
+        core.protocol_engine.as_mut().expect("protocol engine"),
+        &sender,
+        &sender_device,
+        1,
+    );
     let (message_content, message_id) = runtime_rumor_json(
         sender.public_key(),
         CHAT_MESSAGE_KIND,

@@ -40,6 +40,30 @@ struct IrisBlockedComposerBar: View {
     }
 }
 
+struct IrisReadinessComposerBar: View {
+    @Environment(\.irisPalette) private var palette
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(palette.muted)
+            Text(message)
+                .font(.system(.footnote, design: .rounded, weight: .medium))
+                .foregroundStyle(palette.muted)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity)
+        .background(.regularMaterial)
+        .accessibilityIdentifier("protocolReadinessComposerBar")
+    }
+}
+
 /// Message-request gate shown in place of the composer when the user
 /// hasn't replied to a stranger yet. Mirrors Signal's pattern — the
 /// recipient can read the message and decide whether to engage. While
@@ -525,8 +549,9 @@ struct ChatScreen: View {
                             .safeAreaInset(edge: .bottom, spacing: 0) {
                                 let composerBlocked = chat.kind == .direct && manager.isUserBlocked(chat.chatId)
                                 let isRequest = chat.isRequest && acceptedRequestChatId != chat.chatId
+                                let protocolReady = chat.protocolReadiness.canSend
                                 VStack(spacing: 0) {
-                                    if let replyTarget, !composerBlocked, !isRequest {
+                                    if let replyTarget, !composerBlocked, !isRequest, protocolReady {
                                         IrisReplyComposerStrip(message: replyTarget) {
                                             self.replyTarget = nil
                                         }
@@ -559,6 +584,8 @@ struct ChatScreen: View {
                                                 )
                                             }
                                         )
+                                    } else if !protocolReady {
+                                        IrisReadinessComposerBar(message: chat.protocolReadiness.message)
                                     } else {
                                         IrisComposerBar(
                                             draft: $draft,

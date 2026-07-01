@@ -193,6 +193,35 @@ private fun replyAttachmentLabel(attachment: MessageAttachmentSnapshot): String 
     }
 
 @Composable
+internal fun ProtocolReadinessBar(message: String) {
+    Surface(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .testTag("protocolReadinessComposerBar"),
+        color = MaterialTheme.colorScheme.background,
+        tonalElevation = 0.dp,
+    ) {
+        Surface(
+            modifier =
+                Modifier
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                    .fillMaxWidth(),
+            color = IrisTheme.palette.panelAlt,
+            shape = RoundedCornerShape(12.dp),
+        ) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = IrisTheme.palette.muted,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            )
+        }
+    }
+}
+
+@Composable
 internal fun ComposerBar(
     draft: String,
     selectedAttachments: List<PickedAttachment>,

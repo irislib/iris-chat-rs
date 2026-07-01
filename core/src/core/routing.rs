@@ -228,10 +228,6 @@ impl AppCore {
         self.emit_state();
     }
 
-    pub(super) fn is_device_roster_open(&self) -> bool {
-        matches!(self.screen_stack.last(), Some(Screen::DeviceRoster))
-    }
-
     pub(super) fn is_chat_visible(&self, chat_id: &str) -> bool {
         matches!(
             self.screen_stack.last(),

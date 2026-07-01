@@ -105,7 +105,7 @@ fn screen_chat_id(screen: &Screen) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::ChatKind;
+    use crate::state::{ChatKind, ProtocolReadinessSnapshot};
 
     fn chat(
         id: &str,
@@ -134,6 +134,7 @@ mod tests {
             is_pinned: false,
             draft: String::new(),
             is_request: false,
+            protocol_readiness: ProtocolReadinessSnapshot::ready(),
         }
     }
 

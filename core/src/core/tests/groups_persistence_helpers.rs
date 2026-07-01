@@ -3,8 +3,15 @@ fn chat_ttl_applies_to_outgoing_message_expiration() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
+    let peer_device = Keys::generate();
     let chat_id = peer.public_key().to_hex();
     let mut core = logged_in_test_core("outgoing-message-ttl", &owner, &device);
+    observe_peer_device_invite_for_test(
+        core.protocol_engine.as_mut().expect("protocol engine"),
+        &peer,
+        &peer_device,
+        1,
+    );
     core.chat_message_ttl_seconds.insert(chat_id.clone(), 60);
 
     let before = unix_now().get();
@@ -96,8 +103,15 @@ fn send_disappearing_message_action_uses_explicit_expiration_and_persists() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
+    let peer_device = Keys::generate();
     let chat_id = peer.public_key().to_hex();
     let mut core = logged_in_test_core("send-disappearing-message-action", &owner, &device);
+    observe_peer_device_invite_for_test(
+        core.protocol_engine.as_mut().expect("protocol engine"),
+        &peer,
+        &peer_device,
+        1,
+    );
     let expires_at = unix_now().get().saturating_add(600);
 
     core.handle_action(AppAction::SendDisappearingMessage {
@@ -280,9 +294,9 @@ fn create_group_allows_self_only_group() {
         core.pending_relay_publishes.values().any(|pending| {
             serde_json::from_str::<Event>(&pending.event_json)
                 .ok()
-                .filter(nostr_double_ratchet::is_group_roster_fact_event)
+                .filter(is_group_roster_fact_event)
                 .and_then(|event| {
-                    nostr_double_ratchet::parse_group_roster_fact_event(&event).ok()
+                    parse_group_roster_fact_event(&event).ok()
                 })
                 .is_some_and(|fact| fact.group_id == group_id && fact.snapshot.name == "Notes")
         }),

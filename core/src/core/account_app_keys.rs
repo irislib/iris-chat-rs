@@ -134,5 +134,6 @@ pub(super) fn known_app_keys_from_ndr(
         owner_pubkey_hex: owner.to_hex(),
         created_at_secs,
         devices,
+        raw_event_json: None,
     }
 }

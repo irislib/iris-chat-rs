@@ -730,19 +730,14 @@ impl AppCore {
         }
 
         if let (true, Some(keys), Some(app_keys)) = (publish_app_keys, owner_keys, local_app_keys) {
-            if let Some(ndr_app_keys) = known_app_keys_to_ndr(&app_keys) {
-                if let Ok(unsigned) =
-                    ndr_app_keys.get_encrypted_event_at(&keys, app_keys.created_at_secs)
-                {
-                    if let Ok(event) = unsigned.sign_with_keys(&keys) {
-                        durable_events.push(("app-keys", event));
-                    }
-                }
+            if let Ok(event) = Self::sign_known_app_keys_event(&keys, &app_keys) {
+                let _ = self.remember_signed_app_keys_event(owner_pubkey, &event);
+                durable_events.push(("app-keys", event));
             }
         }
 
         if let Some(local_invite) = local_invite {
-            if let Ok(unsigned) = nostr_double_ratchet::invite_unsigned_event(&local_invite) {
+            if let Ok(unsigned) = invite_unsigned_event(&local_invite) {
                 if let Ok(event) = unsigned.sign_with_keys(&device_keys) {
                     durable_events.push((LOCAL_INVITE_PUBLISH_LABEL, event));
                 }
@@ -781,7 +776,7 @@ impl AppCore {
         }) else {
             return false;
         };
-        let event = match nostr_double_ratchet::invite_unsigned_event(&local_invite)
+        let event = match invite_unsigned_event(&local_invite)
             .and_then(|unsigned| unsigned.sign_with_keys(&device_keys).map_err(Into::into))
         {
             Ok(event) => event,
@@ -795,11 +790,75 @@ impl AppCore {
 
     pub(super) fn publish_local_app_keys(&mut self) {
         self.republish_local_identity_artifacts();
-        self.sync_local_app_keys_to_protocol_engine("publish_local_app_keys");
+        if let Some((owner, app_keys, created_at, raw_event_json)) =
+            self.logged_in.as_ref().and_then(|logged_in| {
+                self.app_keys
+                    .get(&logged_in.owner_pubkey.to_hex())
+                    .and_then(known_app_keys_to_ndr)
+                    .map(|app_keys| {
+                        let known = self.app_keys.get(&logged_in.owner_pubkey.to_hex());
+                        (
+                            logged_in.owner_pubkey,
+                            app_keys,
+                            known
+                                .map(|known| known.created_at_secs)
+                                .unwrap_or_else(|| unix_now().get()),
+                            known.and_then(|known| known.raw_event_json.clone()),
+                        )
+                    })
+            })
+        {
+            if let Some(protocol_engine) = self.protocol_engine.as_mut() {
+                if let Ok(batch) = protocol_engine.ingest_app_keys_snapshot_with_raw_event_json(
+                    owner,
+                    app_keys,
+                    created_at,
+                    raw_event_json,
+                ) {
+                    self.process_protocol_engine_retry_batch("publish_local_app_keys", batch);
+                }
+            }
+        }
     }
 
     pub(super) fn republish_local_identity_artifacts(&mut self) {
         self.sync_local_app_keys_if_needed();
         self.publish_local_identity_artifacts();
+    }
+
+    pub(super) fn sign_and_cache_local_app_keys_event(&mut self) -> anyhow::Result<Event> {
+        let (owner_pubkey, owner_keys, known) = self
+            .logged_in
+            .as_ref()
+            .and_then(|logged_in| {
+                Some((
+                    logged_in.owner_pubkey,
+                    logged_in.owner_keys.clone()?,
+                    self.app_keys.get(&logged_in.owner_pubkey.to_hex())?.clone(),
+                ))
+            })
+            .ok_or_else(|| anyhow::anyhow!("Local AppKeys are not ready."))?;
+        let event = Self::sign_known_app_keys_event(&owner_keys, &known)?;
+        self.remember_signed_app_keys_event(owner_pubkey, &event)?;
+        Ok(event)
+    }
+
+    fn sign_known_app_keys_event(owner_keys: &Keys, known: &KnownAppKeys) -> anyhow::Result<Event> {
+        let app_keys = known_app_keys_to_ndr(known)
+            .ok_or_else(|| anyhow::anyhow!("Local AppKeys are invalid."))?;
+        let unsigned = app_keys.get_encrypted_event_at(owner_keys, known.created_at_secs)?;
+        Ok(unsigned.sign_with_keys(owner_keys)?)
+    }
+
+    fn remember_signed_app_keys_event(
+        &mut self,
+        owner_pubkey: PublicKey,
+        event: &Event,
+    ) -> anyhow::Result<String> {
+        let raw_event_json = serde_json::to_string(event)?;
+        if let Some(known) = self.app_keys.get_mut(&owner_pubkey.to_hex()) {
+            known.raw_event_json = Some(raw_event_json.clone());
+        }
+        Ok(raw_event_json)
     }
 }

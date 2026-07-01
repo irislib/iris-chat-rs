@@ -15,10 +15,7 @@ impl AppCore {
         if !group.admins.contains(&local_owner) {
             return false;
         }
-        let unsigned = match nostr_double_ratchet::group_roster_unsigned_event(
-            logged_in.owner_pubkey,
-            group,
-        ) {
+        let unsigned = match group_roster_unsigned_event(logged_in.owner_pubkey, group) {
             Ok(unsigned) => unsigned,
             Err(error) => {
                 self.push_debug_log("group.roster_fact.publish", error.to_string());

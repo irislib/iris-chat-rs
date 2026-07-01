@@ -6,9 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use iris_chat_protocol::{
     invite_unsigned_event, invite_url, is_app_keys_event, parse_invite_event,
     parse_invite_response_event, parse_invite_url, parse_message_event, AppKeys, DeviceEntry,
-    FileStorageAdapter, InMemoryStorage, NdrUnixSeconds, ProtocolDecryptedMessage, ProtocolEffect,
-    ProtocolEngine, ProtocolRetryBatch, StorageAdapter, UnixSeconds, APP_KEYS_EVENT_KIND,
-    INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
+    FileStorageAdapter, InMemoryStorage, ProtocolDecryptedMessage, ProtocolEffect, ProtocolEngine,
+    ProtocolRetryBatch, StorageAdapter, UnixSeconds, APP_KEYS_EVENT_KIND, INVITE_EVENT_KIND,
+    INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
 };
 use nostr::{Event, Filter, Keys, Kind, PublicKey, SecretKey};
 
@@ -209,15 +209,9 @@ impl SessionManagerHandle {
     }
 
     pub fn setup_user(&self, user_pubkey_hex: String) -> Result<(), NdrError> {
-        let user_pubkey = parse_pubkey(&user_pubkey_hex)?;
+        parse_pubkey(&user_pubkey_hex)?;
         let mut inner = self.lock_inner()?;
-        let engine = inner.engine_mut()?;
-        let effects = engine.protocol_discovery_effects_for_owners(
-            [user_pubkey],
-            UnixSeconds(now_secs()),
-            "ffi_setup_user",
-        );
-        inner.enqueue_effects(effects)?;
+        inner.engine_mut()?;
         inner.sync_message_subscription()?;
         Ok(())
     }
@@ -511,11 +505,6 @@ impl SessionManagerInner {
                     event_id: publish.inner_event_id,
                 });
             }
-            ProtocolEffect::FetchProtocolState { filters, reason } => {
-                for filter in filters {
-                    self.enqueue_subscribe_filter(reason, filter)?;
-                }
-            }
         }
         Ok(())
     }
@@ -619,7 +608,12 @@ fn publish_startup_state(
             content: None,
             event_id: None,
         });
-        let retry = engine.ingest_app_keys_snapshot(inner.owner_pubkey, app_keys, now)?;
+        let retry = engine.ingest_app_keys_snapshot_with_raw_event_json(
+            inner.owner_pubkey,
+            app_keys,
+            now,
+            Some(serde_json::to_string(&signed)?),
+        )?;
         inner.enqueue_retry_batch(retry)?;
     }
 
@@ -652,8 +646,12 @@ fn process_event_inner(inner: &mut SessionManagerInner, event: Event) -> Result<
     let engine = inner.engine_mut()?;
     if kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event) {
         let app_keys = AppKeys::from_event(&event).map_err(invalid_event_error)?;
-        let retry =
-            engine.ingest_app_keys_snapshot(event.pubkey, app_keys, event.created_at.as_secs())?;
+        let retry = engine.ingest_app_keys_snapshot_with_raw_event_json(
+            event.pubkey,
+            app_keys,
+            event.created_at.as_secs(),
+            serde_json::to_string(&event).ok(),
+        )?;
         inner.enqueue_retry_batch(retry)?;
         return Ok(());
     }
@@ -668,16 +666,10 @@ fn process_event_inner(inner: &mut SessionManagerInner, event: Event) -> Result<
         return Ok(());
     }
     if kind == MESSAGE_EVENT_KIND && parse_message_event(&event).is_ok() {
-        let (message, retry) = {
-            let message = engine.process_direct_message_event(&event)?;
-            let retry =
-                engine.retry_pending_protocol(NdrUnixSeconds(event.created_at.as_secs()))?;
-            (message, retry)
-        };
+        let message = engine.process_direct_message_event(&event)?;
         if let Some(message) = message {
             inner.enqueue_decrypted_message(message);
         }
-        inner.enqueue_retry_batch(retry)?;
     }
     Ok(())
 }
@@ -772,6 +764,18 @@ mod tests {
             .collect()
     }
 
+    fn app_keys_events(events: Vec<PubSubEvent>) -> Vec<String> {
+        events
+            .into_iter()
+            .filter_map(|event| event.event_json)
+            .filter(|event_json| {
+                serde_json::from_str::<Event>(event_json)
+                    .map(|event| event.kind.as_u16() as u32 == APP_KEYS_EVENT_KIND)
+                    .unwrap_or(false)
+            })
+            .collect()
+    }
+
     #[test]
     fn oob_invite_handshake_and_direct_message_round_trip() {
         let alice_keys = Keys::generate();
@@ -836,35 +840,96 @@ mod tests {
         assert!(decrypted.content.expect("content").contains("hello"));
     }
 
-    #[test]
-    fn processing_app_keys_snapshot_tracks_peer_owner() {
+    fn processing_app_keys_after_bootstrap_does_not_retry_blocked_direct_send() {
         let alice_keys = Keys::generate();
-        let bob_owner_keys = Keys::generate();
-        let bob_device_keys = Keys::generate();
+        let bob_keys = Keys::generate();
         let alice = manager(&alice_keys);
+        let bob = manager(&bob_keys);
 
         alice.init().expect("alice init");
-        let _ = alice.drain_events().expect("alice startup drain");
-        let roster_created_at = now_secs().saturating_add(1);
-        let bob_app_keys = AppKeys::new(vec![DeviceEntry::new(
-            bob_device_keys.public_key(),
-            roster_created_at,
-        )]);
-        let bob_app_keys_event = bob_app_keys
-            .get_event_at(bob_owner_keys.public_key(), roster_created_at)
-            .sign_with_keys(&bob_owner_keys)
-            .expect("signed app keys event");
+        bob.init().expect("bob init");
+
+        let alice_invite = invite_events(alice.drain_events().expect("alice startup drain"))
+            .first()
+            .expect("alice invite")
+            .clone();
+        let bob_startup_events = bob.drain_events().expect("bob startup drain");
+        let bob_app_keys = app_keys_events(bob_startup_events)
+            .first()
+            .expect("bob app keys")
+            .clone();
+
+        bob.accept_invite_from_event_json(alice_invite, None)
+            .expect("bob accepts alice invite");
+        let bob_accept_events = bob.drain_events().expect("bob accept drain");
+        let bob_response = publish_events(bob_accept_events.clone(), INVITE_RESPONSE_KIND)
+            .first()
+            .expect("bob invite response")
+            .clone();
+        let bob_bootstrap = publish_events(bob_accept_events, MESSAGE_EVENT_KIND)
+            .first()
+            .expect("bob bootstrap")
+            .clone();
+        let bob_bootstrap_id = serde_json::from_str::<Event>(&bob_bootstrap)
+            .expect("bootstrap event")
+            .id
+            .to_string();
 
         alice
-            .process_event(serde_json::to_string(&bob_app_keys_event).expect("app keys json"))
-            .expect("alice processes bob AppKeys");
-        let after_roster = alice.drain_events().expect("alice roster drain");
-        assert!(publish_events(after_roster, MESSAGE_EVENT_KIND).is_empty());
+            .process_event(bob_response)
+            .expect("alice processes invite response");
+        assert!(alice
+            .get_active_session_state(bob_keys.public_key().to_hex())
+            .expect("alice state")
+            .is_some());
+
+        alice
+            .send_text(
+                bob_keys.public_key().to_hex(),
+                "queued before bootstrap".to_string(),
+                None,
+            )
+            .expect("queued send");
+        let queued_send_events = alice.drain_events().expect("alice queued send drain");
+        assert!(publish_events(queued_send_events, MESSAGE_EVENT_KIND).is_empty());
+
+        alice
+            .process_event(bob_bootstrap)
+            .expect("alice processes bob bootstrap");
+        let after_bootstrap = alice.drain_events().expect("alice bootstrap drain");
         assert!(
-            alice
-                .known_peer_owner_pubkeys()
-                .contains(&bob_owner_keys.public_key().to_hex()),
-            "shared AppKeys snapshots should surface the peer owner"
+            publish_events(after_bootstrap.clone(), MESSAGE_EVENT_KIND).is_empty(),
+            "queued direct send should wait for the recipient AppKeys roster"
+        );
+        let bootstrap_delivery_count = after_bootstrap
+            .iter()
+            .filter(|event| {
+                event.kind == "decrypted_message"
+                    && event.event_id.as_deref() == Some(bob_bootstrap_id.as_str())
+            })
+            .count();
+        assert_eq!(bootstrap_delivery_count, 1);
+
+        alice
+            .process_event(bob_app_keys)
+            .expect("alice processes bob app keys");
+        let after_app_keys = alice.drain_events().expect("alice app keys drain");
+        assert!(
+            publish_events(after_app_keys, MESSAGE_EVENT_KIND).is_empty(),
+            "AppKeys processing must not replay hidden queued direct sends"
+        );
+
+        alice
+            .send_text(
+                bob_keys.public_key().to_hex(),
+                "fresh send after readiness".to_string(),
+                None,
+            )
+            .expect("ready send");
+        let ready_send_events = alice.drain_events().expect("alice ready send drain");
+        assert!(
+            !publish_events(ready_send_events, MESSAGE_EVENT_KIND).is_empty(),
+            "fresh direct send should publish after bootstrap and AppKeys processing"
         );
     }
 

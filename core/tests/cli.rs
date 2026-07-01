@@ -194,7 +194,7 @@ fn account_create_persists_and_restores_for_next_process() {
 }
 
 #[test]
-fn direct_chat_send_read_search_and_tail_work_offline() {
+fn direct_chat_send_to_unknown_peer_is_not_ready_offline() {
     let alice = TempDir::new().unwrap();
     let bob = TempDir::new().unwrap();
 
@@ -203,46 +203,30 @@ fn direct_chat_send_read_search_and_tail_work_offline() {
     let bob_npub = bob_account["data"]["npub"].as_str().unwrap();
 
     run_iris(alice.path(), &["relay", "set"]);
-    let sent = run_iris(alice.path(), &["send", bob_npub, "queued offline"]);
-    assert_eq!(sent["data"]["body"], "queued offline");
-    assert_eq!(sent["data"]["delivery"], "queued");
-    let chat_id = sent["data"]["chat_id"].as_str().unwrap();
-    let message_id = sent["data"]["id"].as_str().unwrap();
-
-    let reacted = run_iris(alice.path(), &["react", chat_id, message_id, "+1"]);
-    assert_eq!(reacted["data"]["reactions"][0]["emoji"], "+1");
-    assert_eq!(reacted["data"]["reactions"][0]["reacted_by_me"], true);
-
-    let expiring = run_iris(
-        alice.path(),
-        &["send", chat_id, "short lived", "--ttl", "60"],
+    let chat = run_iris(alice.path(), &["chat", "create", bob_npub]);
+    assert_eq!(
+        chat["data"]["chat"]["protocol_readiness"]["reason"],
+        "peer_app_keys_missing"
     );
-    assert_eq!(expiring["data"]["body"], "short lived");
-    assert!(expiring["data"]["expires_at_secs"].as_u64().unwrap() > 0);
+    assert_eq!(
+        chat["data"]["chat"]["protocol_readiness"]["can_send"],
+        false
+    );
 
-    let typing = run_iris(alice.path(), &["typing", chat_id]);
-    assert_eq!(typing["data"]["typing"], true);
-
-    let read = run_iris(alice.path(), &["read", chat_id]);
-    let read_bodies = read["data"]["messages"]
-        .as_array()
+    let error = run_iris_error(alice.path(), &["send", bob_npub, "blocked offline"]);
+    assert_eq!(error["status"], "error");
+    assert!(error["error"]
+        .as_str()
         .unwrap()
-        .iter()
-        .filter_map(|message| message["body"].as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(read_bodies.len(), 2);
-    assert!(read_bodies.contains(&"queued offline"));
-    assert!(read_bodies.contains(&"short lived"));
-
-    let found = run_iris(alice.path(), &["search", "offline"]);
-    assert_eq!(found["data"]["messages"][0]["body"], "queued offline");
-
-    let tail = run_iris(alice.path(), &["tail", "--limit", "1"]);
-    assert_eq!(tail["data"]["messages"][0]["body"], "short lived");
+        .contains("recipient's app keys"));
 
     let list = run_iris(alice.path(), &["chat", "list"]);
     assert_eq!(list["data"]["chats"].as_array().unwrap().len(), 1);
-    assert_eq!(list["data"]["chats"][0]["last_message"], "short lived");
+    assert_eq!(list["data"]["chats"][0]["last_message"], Value::Null);
+    assert_eq!(
+        list["data"]["chats"][0]["protocol_readiness"]["reason"],
+        "peer_app_keys_missing"
+    );
 
     assert_ne!(
         alice_account["data"]["user_id"],
@@ -262,7 +246,7 @@ fn invite_create_group_create_relays_and_logout_are_scriptable() {
     let invite = run_iris(dir.path(), &["invite", "create"]);
     assert!(invite["data"]["url"].as_str().unwrap().contains("iris"));
 
-    let group = run_iris(dir.path(), &["group", "create", "Notes", bob_user_id]);
+    let group = run_iris(dir.path(), &["group", "create", "Notes"]);
     let chat_id = group["data"]["current_chat"]["chat_id"].as_str().unwrap();
     assert!(chat_id.starts_with("group:"));
 
@@ -283,6 +267,27 @@ fn invite_create_group_create_relays_and_logout_are_scriptable() {
 
     let renamed = run_iris(dir.path(), &["group", "rename", group_id, "Renamed"]);
     assert_eq!(renamed["data"]["name"], "Renamed");
+
+    let added = run_iris(dir.path(), &["group", "add", group_id, bob_user_id]);
+    assert!(added["data"]["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|member| member["user_id"] == bob_user_id));
+    assert_eq!(
+        added["data"]["protocol_readiness"]["reason"],
+        "group_member_app_keys_missing"
+    );
+
+    let blocked = run_iris_error(
+        dir.path(),
+        &["group", "send", group_id, "blocked member note"],
+    );
+    assert_eq!(blocked["status"], "error");
+    assert!(blocked["error"]
+        .as_str()
+        .unwrap()
+        .contains("member app keys"));
 
     let admin = run_iris(dir.path(), &["group", "add-admin", group_id, bob_user_id]);
     assert!(admin["data"]["members"]
@@ -332,13 +337,10 @@ fn invite_create_group_create_relays_and_logout_are_scriptable() {
 #[test]
 fn tail_follow_streams_new_sqlite_messages_for_agents() {
     let dir = TempDir::new().unwrap();
-    let bob = TempDir::new().unwrap();
     run_iris(dir.path(), &["account", "create", "--name", "Alice"]);
     run_iris(dir.path(), &["relay", "set"]);
-    let bob_account = run_iris(bob.path(), &["account", "create", "--name", "Bob"]);
-    let bob_user_id = bob_account["data"]["user_id"].as_str().unwrap();
-    let chat = run_iris(dir.path(), &["chat", "create", bob_user_id]);
-    let chat_id = chat["data"]["chat"]["chat_id"].as_str().unwrap();
+    let group = run_iris(dir.path(), &["group", "create", "Tail"]);
+    let group_id = group["data"]["current_chat"]["group_id"].as_str().unwrap();
 
     let mut child = start_iris(dir.path(), &["tail", "--follow", "--interval-ms", "100"]);
     let stdout = child.stdout.take().expect("stdout");
@@ -348,7 +350,10 @@ fn tail_follow_streams_new_sqlite_messages_for_agents() {
     assert_eq!(ready["data"]["ready"], true);
     assert_eq!(ready["data"]["network"], false);
 
-    run_iris(dir.path(), &["send", chat_id, "from another process"]);
+    run_iris(
+        dir.path(),
+        &["group", "send", group_id, "from another process"],
+    );
     let message = read_json_line(&mut reader);
     assert_eq!(message["command"], "message");
     assert_eq!(message["data"]["body"], "from another process");

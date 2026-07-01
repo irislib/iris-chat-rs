@@ -65,9 +65,6 @@ pub(crate) enum InternalEvent {
         event: Event,
         transport: String,
     },
-    FetchTrackedPeerCatchUp {
-        token: u64,
-    },
     ProtocolSubscriptionLivenessCheck {
         token: u64,
     },
@@ -77,7 +74,6 @@ pub(crate) enum InternalEvent {
     PruneExpiredMessages {
         token: u64,
     },
-    FetchCatchUpEvents(Vec<Event>),
     ProfileMetadataFetchFinished {
         owner_pubkey_hex: String,
         events: Vec<Event>,
@@ -146,10 +142,6 @@ pub(crate) enum InternalEvent {
     GroupPictureUploadFinished {
         group_id: String,
         result: Result<String, String>,
-    },
-    SyncComplete,
-    ProtocolAuthorBackfillComplete {
-        reason: String,
     },
     // Heavy tail of `open_chat` — DB page load, identity republish,
     // persist, protocol refresh. Runs on the same event loop as a

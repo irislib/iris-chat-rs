@@ -337,11 +337,14 @@ fn install_two_way_local_sibling_state_for_test(
         .local_invite()
         .expect("linked invite");
     let (primary_session, response) = linked_invite
-        .accept_with_owner(
+        .accept_with_roster_proof(
             primary_device.public_key(),
             primary_device.secret_key().to_secret_bytes(),
-            Some(primary_device.public_key().to_hex()),
-            Some(owner.public_key()),
+            signed_app_keys_event_json(
+                owner,
+                &[primary_device.public_key(), linked_device.public_key()],
+                1,
+            ),
         )
         .expect("primary accepts linked invite");
     primary
@@ -356,9 +359,9 @@ fn install_two_way_local_sibling_state_for_test(
         )
         .expect("primary imports linked session");
 
-    let linked_response = nostr_double_ratchet::process_invite_response_event(
+    let linked_response = process_invite_response_event(
         &linked_invite,
-        &nostr_double_ratchet::invite_response_event(&response).expect("invite response event"),
+        &invite_response_event(&response).expect("invite response event"),
         linked_device.secret_key().to_secret_bytes(),
     )
     .expect("linked processes invite response")
@@ -383,7 +386,7 @@ fn install_two_way_local_sibling_state_for_test(
         .expect("primary invite");
     primary_invite.owner_public_key = Some(owner.public_key());
     primary_invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
-    let primary_invite_event = nostr_double_ratchet::invite_unsigned_event(&primary_invite)
+    let primary_invite_event = invite_unsigned_event(&primary_invite)
         .expect("primary invite unsigned")
         .sign_with_keys(primary_device)
         .expect("primary invite event");
@@ -408,13 +411,25 @@ fn sorted_pending_events_for_test(core: &AppCore) -> Vec<Event> {
         .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
         .collect::<Vec<_>>();
     events.sort_by_key(|event| {
+        let kind = event.kind.as_u16() as u32;
         (
-            pending_event_delivery_priority(event.kind.as_u16() as u32),
+            pending_event_delivery_priority(kind),
+            pending_message_delivery_priority_for_test(event),
             event.created_at.as_secs(),
             event.id.to_string(),
         )
     });
     events
+}
+
+fn pending_message_delivery_priority_for_test(event: &Event) -> u8 {
+    if event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND {
+        return 0;
+    }
+    if parse_group_sender_key_message_event_unchecked(event).is_ok() {
+        return 1;
+    }
+    0
 }
 
 fn pending_event_delivery_priority(kind: u32) -> u8 {

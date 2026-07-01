@@ -917,7 +917,7 @@ final class AppManager: ObservableObject {
     private var persistedRestoreInFlight = false
     private var nearbySettingsWasOpened = false
     // UI-test escape hatch: when IRIS_UI_TEST_SEED_PEER + IRIS_UI_TEST_SEED_COUNT
-    // are set, AppManager auto-creates a chat with that peer once the account
+    // are set, AppManager auto-creates a ready self-owned group once the account
     // is ready, then dispatches `count` outgoing messages back-to-back. Lets
     // tests build a long-chat scenario in milliseconds instead of paying the
     // ~15s/message tax of XCUITest's typeText loop.
@@ -2745,14 +2745,9 @@ final class AppManager: ObservableObject {
         }
         let seedChatId = state.currentChat?.chatId ?? state.chatList.first?.chatId
         if seedChatId == nil {
-            let normalized = normalizePeerInput(input: seed.peer)
-            guard !normalized.isEmpty, isValidPeerInput(input: normalized) else {
-                pendingTestSeed = nil
-                return
-            }
             if pendingTestSeedCreateAttempts < 5 {
                 pendingTestSeedCreateAttempts += 1
-                dispatchToRust(.createChat(peerInput: normalized))
+                dispatchToRust(.createGroup(name: "UI seed chat", memberInputs: []))
             }
             schedulePendingTestSeedRetry()
             return

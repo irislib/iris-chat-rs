@@ -169,9 +169,9 @@ fn debug_snapshot_rebuilds_stay_under_budget_during_message_burst() {
     });
     inbox.wait_until(Duration::from_secs(5), |state| state.account.is_some());
 
-    let bob_npub = ensure_account(&TempDir::new().unwrap(), "Bob");
-    app.dispatch(AppAction::CreateChat {
-        peer_input: bob_npub,
+    app.dispatch(AppAction::CreateGroup {
+        name: "Debug Burst".to_string(),
+        member_inputs: Vec::new(),
     });
     inbox.wait_until(Duration::from_secs(5), |state| state.current_chat.is_some());
     let chat_id = inbox.snapshot().current_chat.unwrap().chat_id;
@@ -218,9 +218,9 @@ fn receiving_messages_does_not_call_ffi() {
     });
     inbox.wait_until(Duration::from_secs(5), |state| state.account.is_some());
 
-    let bob_npub = ensure_account(&TempDir::new().unwrap(), "Bob");
-    app.dispatch(AppAction::CreateChat {
-        peer_input: bob_npub.clone(),
+    app.dispatch(AppAction::CreateGroup {
+        name: "Receive Budget".to_string(),
+        member_inputs: Vec::new(),
     });
     inbox.wait_until(Duration::from_secs(5), |state| state.current_chat.is_some());
     let chat_id = inbox.snapshot().current_chat.unwrap().chat_id;

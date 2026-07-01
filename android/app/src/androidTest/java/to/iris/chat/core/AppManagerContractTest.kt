@@ -834,7 +834,7 @@ class AppManagerContractTest {
             messages = messages,
             typingIndicators = emptyList(),
             draft = "",
-            isRequest = false,
+            isRequest = false, protocolReadiness = readyProtocolReadiness(),
         )
 
     private fun makeMessage(
@@ -883,7 +883,7 @@ class AppManagerContractTest {
                     devicePublicKeyHex = "device-hex",
                     deviceNpub = "npub1device",
                     hasOwnerSigningAuthority = true,
-                    authorizationState = DeviceAuthorizationState.AUTHORIZED,
+                    authorizationState = DeviceAuthorizationState.AUTHORIZED, protocolReadiness = readyProtocolReadiness(),
                 ),
         )
 
@@ -981,7 +981,7 @@ private class MockRustAppClient(
             messages = emptyList(),
             typingIndicators = emptyList(),
             draft = thread?.draft.orEmpty(),
-            isRequest = thread?.isRequest ?: false,
+            isRequest = thread?.isRequest ?: false, protocolReadiness = thread?.protocolReadiness ?: readyProtocolReadiness(),
         )
     }
 

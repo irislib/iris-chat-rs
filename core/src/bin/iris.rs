@@ -13,7 +13,7 @@ use iris_chat_core::{
     AppAction, AppReconciler, AppState, AppUpdate, ChatKind, ChatMessageSnapshot,
     ChatThreadSnapshot, CurrentChatSnapshot, DeliveryState, DesktopNearbyObserver,
     DesktopNearbySnapshot, DeviceAuthorizationState, FfiApp, FfiDesktopNearby,
-    GroupDetailsSnapshot,
+    GroupDetailsSnapshot, ProtocolReadinessReason, ProtocolReadinessSnapshot,
 };
 use rusqlite::Connection;
 use serde::Serialize;
@@ -1645,6 +1645,7 @@ fn account_json(account: &iris_chat_core::AccountSnapshot) -> Value {
         "device_npub": account.device_npub,
         "has_secret_key": account.has_owner_signing_authority,
         "device_state": authorization_state(&account.authorization_state),
+        "protocol_readiness": protocol_readiness_json(&account.protocol_readiness),
     })
 }
 
@@ -1685,6 +1686,7 @@ fn thread_json(thread: &ChatThreadSnapshot) -> Value {
         "unread_count": thread.unread_count,
         "muted": thread.is_muted,
         "pinned": thread.is_pinned,
+        "protocol_readiness": protocol_readiness_json(&thread.protocol_readiness),
     })
 }
 
@@ -1698,6 +1700,7 @@ fn chat_summary_json(chat: &CurrentChatSnapshot) -> Value {
         "message_count": chat.messages.len(),
         "message_ttl_seconds": chat.message_ttl_seconds,
         "muted": chat.is_muted,
+        "protocol_readiness": protocol_readiness_json(&chat.protocol_readiness),
     })
 }
 
@@ -1759,6 +1762,7 @@ fn group_json(group: &GroupDetailsSnapshot) -> Value {
         "can_manage": group.can_manage,
         "muted": group.is_muted,
         "revision": group.revision,
+        "protocol_readiness": protocol_readiness_json(&group.protocol_readiness),
         "members": group.members.iter().map(|member| {
             json!({
                 "user_id": member.owner_pubkey_hex,
@@ -1881,6 +1885,31 @@ fn delivery(delivery: &DeliveryState) -> &'static str {
         DeliveryState::Received => "received",
         DeliveryState::Seen => "seen",
         DeliveryState::Failed => "failed",
+    }
+}
+
+fn protocol_readiness_json(readiness: &ProtocolReadinessSnapshot) -> Value {
+    json!({
+        "can_send": readiness.can_send,
+        "reason": protocol_readiness_reason(&readiness.reason),
+        "message": readiness.message,
+    })
+}
+
+fn protocol_readiness_reason(reason: &ProtocolReadinessReason) -> &'static str {
+    match reason {
+        ProtocolReadinessReason::Ready => "ready",
+        ProtocolReadinessReason::AccountMissing => "account_missing",
+        ProtocolReadinessReason::DeviceAwaitingApproval => "device_awaiting_approval",
+        ProtocolReadinessReason::DeviceRevoked => "device_revoked",
+        ProtocolReadinessReason::ProtocolEngineUnavailable => "protocol_engine_unavailable",
+        ProtocolReadinessReason::BlockedPeer => "blocked_peer",
+        ProtocolReadinessReason::PeerAppKeysMissing => "peer_app_keys_missing",
+        ProtocolReadinessReason::PeerSessionMissing => "peer_session_missing",
+        ProtocolReadinessReason::GroupMetadataMissing => "group_metadata_missing",
+        ProtocolReadinessReason::GroupNotJoined => "group_not_joined",
+        ProtocolReadinessReason::GroupMemberAppKeysMissing => "group_member_app_keys_missing",
+        ProtocolReadinessReason::GroupMemberSessionMissing => "group_member_session_missing",
     }
 }
 

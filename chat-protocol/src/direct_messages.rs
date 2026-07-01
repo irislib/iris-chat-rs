@@ -342,10 +342,11 @@ impl DirectMessageService {
 
         let processed = match kind {
             APP_KEYS_EVENT_KIND if is_app_keys_event(&event) => match AppKeys::from_event(&event) {
-                Ok(app_keys) => match engine.ingest_app_keys_snapshot(
+                Ok(app_keys) => match engine.ingest_app_keys_snapshot_with_raw_event_json(
                     event.pubkey,
                     app_keys,
                     event.created_at.as_secs(),
+                    serde_json::to_string(&event).ok(),
                 ) {
                     Ok(batch) => {
                         retry_batch = batch;
@@ -491,19 +492,6 @@ impl DirectMessageService {
             match effect {
                 ProtocolEffect::Publish(publish) => {
                     commands.push(DirectMessageCommand::Publish(publish.event));
-                }
-                ProtocolEffect::FetchProtocolState { filters, reason } => {
-                    self.fetch_subscription_counter =
-                        self.fetch_subscription_counter.saturating_add(1);
-                    let subscription_id = format!(
-                        "iris-native-private-chat-fetch-{reason}-{}",
-                        self.fetch_subscription_counter
-                    );
-                    commands.push(DirectMessageCommand::Subscribe {
-                        subscription_id,
-                        filters,
-                        durable: false,
-                    });
                 }
             }
         }
@@ -787,7 +775,7 @@ fn unix_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{invite_url, parse_invite_event};
+    use crate::{invite_url, parse_invite_event, DeviceEntry};
     use nostr::Kind;
 
     fn publish_events(commands: Vec<DirectMessageCommand>) -> Vec<Event> {
@@ -838,6 +826,13 @@ mod tests {
             .expect("local invite event");
         let invite = parse_invite_event(&invite_event).expect("invite event");
         let invite_url = route_wrapped_invite_url(&invite);
+        let accepter_app_keys_event =
+            AppKeys::new(vec![DeviceEntry::new(accepter_keys.public_key(), 1)])
+                .get_encrypted_event_at(&accepter_keys, 1)
+                .expect("accepter app keys")
+                .sign_with_keys(&accepter_keys)
+                .expect("signed accepter app keys");
+        accepter.process_event(accepter_app_keys_event, &accepter_keys);
 
         let (thread, accept_commands) = accepter
             .accept_invite(&invite_url, &accepter_keys)

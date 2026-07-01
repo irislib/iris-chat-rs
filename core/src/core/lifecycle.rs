@@ -1,8 +1,6 @@
 use super::persistence::apply_persisted_preferences;
 use super::*;
 
-pub(super) const CATCH_UP_EVENT_PROCESS_CHUNK_SIZE: usize = 64;
-
 impl AppCore {
     #[cfg(test)]
     pub fn new(
@@ -149,11 +147,9 @@ impl AppCore {
             CoreMsg::Internal(event) => match event.as_ref() {
                 InternalEvent::RelayEvent(_) => "RelayEvent",
                 InternalEvent::NearbyEvent { .. } => "NearbyEvent",
-                InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
                 InternalEvent::ProfileMetadataFetchFinished { .. } => {
                     "ProfileMetadataFetchFinished"
                 }
-                InternalEvent::FetchTrackedPeerCatchUp { .. } => "FetchTrackedPeerCatchUp",
                 InternalEvent::ProtocolSubscriptionLivenessCheck { .. } => {
                     "ProtocolSubscriptionLivenessCheck"
                 }
@@ -182,10 +178,6 @@ impl AppCore {
                     "ProfilePictureUploadFinished"
                 }
                 InternalEvent::GroupPictureUploadFinished { .. } => "GroupPictureUploadFinished",
-                InternalEvent::SyncComplete => "SyncComplete",
-                InternalEvent::ProtocolAuthorBackfillComplete { .. } => {
-                    "ProtocolAuthorBackfillComplete"
-                }
                 InternalEvent::OpenChatFinalize { .. } => "OpenChatFinalize",
             },
             CoreMsg::BuildNearbyPresenceEvent { .. } => "BuildNearbyPresenceEvent",
@@ -568,34 +560,6 @@ impl AppCore {
                 };
                 self.handle_relay_event_with_channel(event, channel);
             }
-            InternalEvent::FetchTrackedPeerCatchUp { token } => {
-                if token
-                    != self
-                        .protocol_subscription_runtime
-                        .tracked_peer_catch_up_token
-                {
-                    return;
-                }
-                self.protocol_subscription_runtime
-                    .tracked_peer_catch_up_due_at = None;
-                let should_fetch_tracked_peer_messages =
-                    self.protocol_subscription_runtime.desired_plan
-                        != self.protocol_subscription_runtime.applied_plan
-                        || self.protocol_subscription_runtime.refresh_dirty
-                        || self.message_recipient_bootstrap_needed();
-                self.push_debug_log(
-                    "protocol.catch_up.schedule",
-                    format!("fetch tracked peers messages={should_fetch_tracked_peer_messages}"),
-                );
-                self.fetch_recent_protocol_metadata_state();
-                if should_fetch_tracked_peer_messages {
-                    self.fetch_recent_messages_for_tracked_peers();
-                }
-                self.retry_protocol_engine_pending_outbound("tracked_peer_catch_up");
-                if self.is_device_roster_open() {
-                    self.fetch_pending_device_invites_for_local_owner();
-                }
-            }
             InternalEvent::ProtocolSubscriptionLivenessCheck { token } => {
                 self.handle_protocol_subscription_liveness_check(token);
             }
@@ -611,30 +575,6 @@ impl AppCore {
             }
             InternalEvent::PruneExpiredMessages { token } => {
                 self.handle_prune_expired_messages(token);
-            }
-            InternalEvent::FetchCatchUpEvents(mut events) => {
-                // Coalesce: a catch-up burst of N events used to cause N
-                // rebuild_state + emit_state cycles, each pushing a fresh
-                // FullState to the UI. On Android debug builds that meant
-                // 16-19 recompositions in a row whenever the relay flushed
-                // a backlog and the screen could be unresponsive for
-                // seconds. Process bounded chunks inside batches so the UI
-                // still gets coalesced updates without starving user actions.
-                let remainder = if events.len() > CATCH_UP_EVENT_PROCESS_CHUNK_SIZE {
-                    Some(events.split_off(CATCH_UP_EVENT_PROCESS_CHUNK_SIZE))
-                } else {
-                    None
-                };
-                self.enter_batch();
-                for event in events {
-                    self.handle_relay_event(event);
-                }
-                self.exit_batch();
-                if let Some(remainder) = remainder {
-                    let _ = self.core_sender.send(CoreMsg::Internal(Box::new(
-                        InternalEvent::FetchCatchUpEvents(remainder),
-                    )));
-                }
             }
             InternalEvent::ProfileMetadataFetchFinished {
                 owner_pubkey_hex,
@@ -755,30 +695,6 @@ impl AppCore {
             }
             InternalEvent::GroupPictureUploadFinished { group_id, result } => {
                 self.handle_group_picture_upload_finished(group_id, result);
-            }
-            InternalEvent::SyncComplete => {
-                self.protocol_subscription_runtime.protocol_fetch_in_flight = false;
-                self.refresh_protocol_sync_busy();
-                self.rebuild_state();
-                self.emit_state();
-            }
-            InternalEvent::ProtocolAuthorBackfillComplete { reason } => {
-                self.protocol_subscription_runtime
-                    .protocol_author_backfill_in_flight = self
-                    .protocol_subscription_runtime
-                    .protocol_author_backfill_in_flight
-                    .saturating_sub(1);
-                self.push_debug_log(
-                    "protocol.author_backfill.complete",
-                    format!(
-                        "reason={reason} remaining={}",
-                        self.protocol_subscription_runtime
-                            .protocol_author_backfill_in_flight
-                    ),
-                );
-                self.refresh_protocol_sync_busy();
-                self.rebuild_state();
-                self.emit_state();
             }
             InternalEvent::OpenChatFinalize { chat_id } => {
                 self.open_chat_finalize(&chat_id);

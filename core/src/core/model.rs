@@ -14,14 +14,6 @@ pub(super) struct PendingLinkedDeviceState {
     pub(super) pairing_client: Client,
     pub(super) pairing_invite: Invite,
     pub(super) pairing_url: String,
-    pub(super) authorized_owner_pubkey: Option<PublicKey>,
-    pub(super) authorized_app_keys_event: Option<Event>,
-    pub(super) pending_response: Option<PendingLinkInviteResponse>,
-}
-
-pub(super) struct PendingLinkInviteResponse {
-    pub(super) peer_device_id: String,
-    pub(super) session_state: SessionState,
 }
 
 #[derive(Clone)]
@@ -55,6 +47,8 @@ pub(super) struct KnownAppKeys {
     pub(super) owner_pubkey_hex: String,
     pub(super) created_at_secs: u64,
     pub(super) devices: Vec<KnownAppKeyDevice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) raw_event_json: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -163,11 +157,6 @@ pub(super) struct ProtocolSubscriptionRuntime {
     pub(super) refresh_dirty: bool,
     pub(super) force_reconnect_dirty: bool,
     pub(super) liveness_due_at: Option<Instant>,
-    pub(super) tracked_peer_catch_up_due_at: Option<Instant>,
-    pub(super) tracked_peer_catch_up_token: u64,
-    pub(super) protocol_fetch_in_flight: bool,
-    pub(super) protocol_author_backfill_in_flight: u64,
-    pub(super) protocol_fetch_last_started_at: Option<Instant>,
 }
 
 #[derive(Clone, Debug, Default)]

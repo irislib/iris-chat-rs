@@ -7,29 +7,30 @@ use crate::state::{
     MessageDeliveryTraceSnapshot, MessageReactionSnapshot, MessageReactor,
     MessageRecipientDeliverySnapshot, MobilePushNotificationResolution,
     MobilePushSubscriptionRequest, MobilePushSyncSnapshot, NetworkStatusSnapshot,
-    OutgoingAttachment, PeerProfileDebugSnapshot, PreferencesSnapshot, PublicInviteSnapshot,
-    RelayConnectionSnapshot, Router, Screen, TypingIndicatorSnapshot,
+    OutgoingAttachment, PeerProfileDebugSnapshot, PreferencesSnapshot, ProtocolReadinessReason,
+    ProtocolReadinessSnapshot, PublicInviteSnapshot, RelayConnectionSnapshot, Router, Screen,
+    TypingIndicatorSnapshot,
 };
 use crate::updates::{AppUpdate, CoreMsg, InternalEvent, RelayPublishDrainResult};
+use crate::{
+    build_app_keys_device_authorization_filter, deterministic_link_invite_for_device,
+    deterministic_link_invite_for_device_link_request, encode_compact_device_link_request,
+    parse_compact_device_link_request, DeviceLinkRequest,
+};
 use flume::Sender;
 use iris_chat_protocol::*;
 use nostr::{Alphabet, EventBuilder, SingleLetterTag, UnsignedEvent};
-use nostr_double_ratchet::{
-    apply_app_keys_snapshot_with_required_device, build_app_keys_device_authorization_filter,
-    build_protocol_discovery_filters, deterministic_link_invite_for_device,
-    deterministic_link_invite_for_device_link_request, encode_compact_device_link_request,
-    is_app_keys_event, is_group_roster_fact_event, parse_compact_device_link_request,
-    resolve_app_keys_owner_for_device, AppKeys, DeviceEntry, DeviceLinkRequest,
-    APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_ROSTER_FACT_KIND,
-    GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_LIST_LABEL, INVITE_RESPONSE_KIND,
-    MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
-};
-use nostr_double_ratchet::{
-    parse_group_sender_key_message_event, parse_group_sender_key_message_event_unchecked,
-};
+#[cfg(test)]
+use nostr_double_ratchet::UnixSeconds as NdrUnixSeconds;
 use nostr_double_ratchet::{
     GroupIncomingEvent, GroupSnapshot, Invite, SessionManagerSnapshot, SessionState,
-    UnixSeconds as NdrUnixSeconds,
+};
+use nostr_double_ratchet_nostr::{
+    apply_app_keys_snapshot_with_required_device, is_app_keys_event,
+    parse_group_sender_key_message_event, parse_group_sender_key_message_event_unchecked, AppKeys,
+    DeviceEntry, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND,
+    GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
+    REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use nostr_sdk::prelude::{
@@ -46,14 +47,10 @@ use tokio::time::{sleep, sleep_until, Duration, Instant};
 
 #[cfg(test)]
 use nostr_double_ratchet::{
-    invite_response_event, message_event, parse_invite_event, parse_message_event,
-    GroupEventManager,
+    GroupManagerSnapshot, OwnerPubkey as NdrOwnerPubkey, ProtocolContext, SessionManager,
 };
 #[cfg(test)]
-use nostr_double_ratchet::{
-    AuthorizedDevice, DevicePubkey as NdrDevicePubkey, DeviceRoster, GroupManagerSnapshot,
-    OwnerPubkey as NdrOwnerPubkey, ProtocolContext, SessionManager,
-};
+use nostr_double_ratchet_nostr::{invite_response_event, parse_message_event, NostrGroupManager};
 #[cfg(test)]
 use rand::rngs::OsRng;
 
@@ -83,6 +80,7 @@ mod profile_helpers;
 mod projection;
 mod protocol;
 mod protocol_filters;
+mod protocol_readiness;
 mod publish_helpers;
 mod publishing;
 mod publishing_fact_events;
@@ -264,6 +262,9 @@ fn build_chat_snapshot_with_messages(
             .map(|thread| thread.draft.clone())
             .unwrap_or_default(),
         is_request: thread.map(|thread| thread.is_request).unwrap_or(false),
+        protocol_readiness: thread
+            .map(|thread| thread.protocol_readiness.clone())
+            .unwrap_or_else(ProtocolReadinessSnapshot::ready),
     })
 }
 

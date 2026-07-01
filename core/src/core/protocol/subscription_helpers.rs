@@ -1,11 +1,5 @@
 use super::*;
 
-pub(super) fn normalize_protocol_queued_targets(targets: &mut Vec<String>) {
-    targets.retain(|target| !target.is_empty());
-    targets.sort();
-    targets.dedup();
-}
-
 pub(super) struct ProtocolSubscriptionApplyOutput {
     pub(super) connected_before: u64,
     pub(super) connected_after: u64,
@@ -147,50 +141,6 @@ pub(super) async fn subscribe_protocol_filters_with_id(
         Err("no connected relays".to_string())
     } else {
         Err(last_error.unwrap_or_else(|| "no relay accepted subscription".to_string()))
-    }
-}
-
-pub(super) async fn fetch_events_for_filters(
-    client: &Client,
-    filters: Vec<Filter>,
-    timeout: Duration,
-) -> Result<Vec<Event>, String> {
-    use tokio::task::JoinSet;
-
-    let mut tasks = JoinSet::new();
-    for filter in filters {
-        let client = client.clone();
-        tasks.spawn(async move { client.fetch_events(filter, timeout).await });
-    }
-
-    let mut any_success = false;
-    let mut last_error = None;
-    let mut seen_event_ids = HashSet::new();
-    let mut collected = Vec::new();
-
-    while let Some(result) = tasks.join_next().await {
-        match result {
-            Ok(Ok(events)) => {
-                any_success = true;
-                for event in events.iter() {
-                    if seen_event_ids.insert(event.id) {
-                        collected.push(event.clone());
-                    }
-                }
-            }
-            Ok(Err(error)) => {
-                last_error = Some(error.to_string());
-            }
-            Err(error) => {
-                last_error = Some(error.to_string());
-            }
-        }
-    }
-
-    if any_success {
-        Ok(collected)
-    } else {
-        Err(last_error.unwrap_or_else(|| "no protocol filters fetched".to_string()))
     }
 }
 
