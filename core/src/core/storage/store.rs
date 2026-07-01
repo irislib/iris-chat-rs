@@ -134,6 +134,34 @@ impl AppStore {
         }))
     }
 
+    pub(crate) fn has_app_key_device(
+        &self,
+        owner_pubkey_hex: &str,
+        device_pubkey_hex: &str,
+    ) -> anyhow::Result<bool> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        let devices_json: Option<String> = conn
+            .query_row(
+                "SELECT devices_json FROM app_keys WHERE owner_pubkey_hex = ?1",
+                [owner_pubkey_hex],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let Some(devices_json) = devices_json else {
+            return Ok(false);
+        };
+        let devices: Vec<KnownAppKeyDevice> =
+            serde_json::from_str(&devices_json).unwrap_or_default();
+        Ok(devices.iter().any(|device| {
+            device
+                .identity_pubkey_hex
+                .eq_ignore_ascii_case(device_pubkey_hex)
+        }))
+    }
+
     /// Persist any slice of `snapshot` whose hash differs from the
     /// previous save. The whole batch lands in a single transaction so
     /// either everything or nothing is written.
@@ -1239,10 +1267,9 @@ fn write_groups(
     Ok(())
 }
 
-/// Single-pass message load: one SELECT for thread metadata, one for
-/// one preview message per inactive thread plus the newest page for the
-/// active thread, then group in Rust. This keeps restart bounded while
-/// still giving every chat row its latest preview.
+/// Load one preview message per inactive thread plus the newest page
+/// for the active thread. Use the per-chat recent-message index so
+/// restart cost follows chat count instead of total stored messages.
 fn load_threads(
     conn: &rusqlite::Connection,
     active_chat_id: Option<&str>,
@@ -1275,41 +1302,17 @@ fn load_threads(
         );
     }
 
-    let mut messages_stmt = conn.prepare(
-	        "WITH ranked AS (
-		             SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs, expires_at_secs,
-		                    delivery, attachments_json, reactions_json, reactors_json, source_event_id,
-		                    recipient_deliveries_json, delivery_trace_json,
-		                    rowid AS storage_order,
-	                    ROW_NUMBER() OVER (
-	                        PARTITION BY chat_id
-	                        ORDER BY created_at_secs DESC,
-	                                 rowid DESC
-	                    ) AS row_number
-	             FROM messages
-	         )
-		         SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs, expires_at_secs,
-		                delivery, attachments_json, reactions_json, reactors_json, source_event_id,
-		                recipient_deliveries_json, delivery_trace_json
-	         FROM ranked
-	         WHERE row_number <= CASE WHEN chat_id = ?1 THEN ?2 ELSE 1 END
-	         ORDER BY chat_id ASC, created_at_secs ASC, storage_order ASC",
-	    )?;
-    let rows = messages_stmt.query_map(
-        params![
-            active_chat_id.unwrap_or_default(),
-            RESTORED_MESSAGES_PER_THREAD as i64
-        ],
-        |row| {
-            let message = persisted_message_from_row(row)?;
-            Ok((message.chat_id.clone(), message))
-        },
-    )?;
+    drop(threads_stmt);
 
-    for row in rows {
-        let (chat_id, message) = row?;
-        if let Some(thread) = by_chat.get_mut(&chat_id) {
-            thread.messages.push(message);
+    for chat_id in &order {
+        let limit = if active_chat_id == Some(chat_id.as_str()) {
+            RESTORED_MESSAGES_PER_THREAD
+        } else {
+            1
+        };
+        let messages = load_recent_messages(conn, chat_id, limit)?;
+        if let Some(thread) = by_chat.get_mut(chat_id) {
+            thread.messages = messages;
         }
     }
 

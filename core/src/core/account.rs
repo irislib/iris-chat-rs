@@ -173,15 +173,8 @@ impl AppCore {
 
         let owner_hex = owner_pubkey.to_hex();
         let device_hex = device_pubkey.to_hex();
-        match self.app_store.load_state() {
-            Ok(Some(persisted)) => persisted.app_keys.iter().any(|app_keys| {
-                app_keys.owner_pubkey_hex.eq_ignore_ascii_case(&owner_hex)
-                    && app_keys
-                        .devices
-                        .iter()
-                        .any(|device| device.identity_pubkey_hex.eq_ignore_ascii_case(&device_hex))
-            }),
-            Ok(None) => false,
+        match self.app_store.has_app_key_device(&owner_hex, &device_hex) {
+            Ok(found) => found,
             Err(error) => {
                 self.push_debug_log(
                     "session.restore_bundle",
