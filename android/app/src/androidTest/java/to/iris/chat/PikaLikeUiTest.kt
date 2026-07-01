@@ -2,6 +2,7 @@ package to.iris.chat
 
 import android.Manifest
 import android.os.Build
+import android.util.Base64
 import android.view.KeyEvent as AndroidKeyEvent
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.ui.input.key.KeyEvent
@@ -571,7 +572,13 @@ class PikaLikeUiTest {
 
         private fun compactDeviceApprovalCode(): String {
             val requestSecretKeyHex = "1".repeat(64)
-            return "$SECONDARY_DEVICE_HEX.$requestSecretKeyHex"
+            val metadata =
+                Base64.encodeToString(
+                    """{"v":1,"requestedAt":41,"deviceLabel":"Pixel test device","clientLabel":"Iris Chat Android"}"""
+                        .toByteArray(Charsets.UTF_8),
+                    Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP,
+                )
+            return "$SECONDARY_DEVICE_HEX.$requestSecretKeyHex.$metadata"
         }
     }
 
