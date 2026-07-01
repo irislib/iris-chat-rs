@@ -202,10 +202,6 @@ struct RestoreAccountScreen: View {
         !requiresTermsAcceptance || termsAccepted
     }
 
-    private var canRestoreAccount: Bool {
-        canUseRestoreActions && !manager.state.busy.restoringSession
-    }
-
     var body: some View {
         IrisScrollScreen {
             IrisSectionCard {
@@ -233,19 +229,6 @@ struct RestoreAccountScreen: View {
                     OnboardingTermsAgreement(accepted: $termsAccepted)
                 }
 
-                Button(manager.state.busy.restoringSession ? "Restoring…" : "Restore profile") {
-                    submitRestore(restoreSecret.text, force: true)
-                }
-                .buttonStyle(IrisPrimaryButtonStyle())
-                .disabled(!canRestoreAccount)
-                .accessibilityIdentifier("importKeyButton")
-
-                Text("or")
-                    .font(.system(.caption, design: .rounded, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 2)
-
                 Button {
                     manager.dispatch(.pushScreen(screen: .addDevice))
                 } label: {
@@ -257,20 +240,23 @@ struct RestoreAccountScreen: View {
                 .accessibilityIdentifier("restoreLinkDeviceAction")
             }
         }
+        .irisOnChange(of: termsAccepted) { _ in
+            submitRestoreIfReady(restoreSecret.text)
+        }
     }
 
     private func updateSecret(_ value: String) {
-        let previous = restoreSecret.text.trimmingCharacters(in: .whitespacesAndNewlines)
         restoreSecret.text = value
+        submitRestoreIfReady(value)
+    }
+
+    private func submitRestoreIfReady(_ value: String) {
         let current = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard shouldAutoSubmitSecret(previous: previous, current: current) else {
-            return
-        }
-        guard canUseRestoreActions else { return }
+        guard shouldAutoSubmitSecret(current: current) else { return }
         submitRestore(current)
     }
 
-    private func submitRestore(_ value: String, force: Bool = false) {
+    private func submitRestore(_ value: String) {
         guard canUseRestoreActions else { return }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -278,7 +264,7 @@ struct RestoreAccountScreen: View {
             return
         }
         guard !manager.state.busy.restoringSession else { return }
-        guard force || lastSubmittedSecret != trimmed else {
+        guard lastSubmittedSecret != trimmed else {
             return
         }
         lastSubmittedSecret = trimmed

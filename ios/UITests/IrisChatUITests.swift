@@ -3,6 +3,7 @@ import XCTest
 final class IrisChatUITests: XCTestCase {
     private let validPeerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
     private let validOwnerNsec = "nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw"
+    private let invalidCompleteOwnerNsec = "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
 
     /// Regression: constructing CBCentralManager / CBPeripheralManager
     /// in the root view's onAppear was triggering the iOS Bluetooth
@@ -769,17 +770,11 @@ final class IrisChatUITests: XCTestCase {
 
         XCTAssertTrue(element(app, "restoreAccountScreen").waitForExistence(timeout: 10))
 #if os(iOS)
-        let restoreButton = element(app, "importKeyButton")
-        XCTAssertTrue(restoreButton.waitForExistence(timeout: 10))
-        XCTAssertFalse(restoreButton.isEnabled)
         acceptOnboardingTermsIfNeeded(app)
-        XCTAssertTrue(waitUntil(timeout: 5) { restoreButton.isEnabled })
 #endif
+        XCTAssertFalse(element(app, "importKeyButton").exists)
         XCTAssertTrue(element(app, "importKeyField").waitForExistence(timeout: 10))
         typeText(validOwnerNsec, into: editableElement(app, "importKeyField"), app: app)
-        if !waitForChatList(app, timeout: 2) {
-            element(app, "importKeyButton").tap()
-        }
 
         XCTAssertTrue(waitForChatList(app, timeout: 20))
     }
@@ -794,8 +789,8 @@ final class IrisChatUITests: XCTestCase {
         acceptOnboardingTermsIfNeeded(app)
 #endif
         XCTAssertTrue(element(app, "importKeyField").waitForExistence(timeout: 10))
-        typeText("not a secret key", into: editableElement(app, "importKeyField"), app: app)
-        element(app, "importKeyButton").tap()
+        XCTAssertFalse(element(app, "importKeyButton").exists)
+        typeText(invalidCompleteOwnerNsec, into: editableElement(app, "importKeyField"), app: app)
 
         XCTAssertTrue(app.staticTexts["Invalid key."].waitForExistence(timeout: 10))
     }

@@ -53,7 +53,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import to.iris.chat.BuildConfig
 import to.iris.chat.R
@@ -290,27 +289,6 @@ fun RestoreAccountScreen(
         subtitle = "Paste your secret key.",
         onBack = { appManager.dispatch(AppAction.UpdateScreenStack(emptyList())) },
         bottomContent = {
-            IrisPrimaryButton(
-                text = if (appState.busy.restoringSession) "Restoring…" else "Restore profile",
-                onClick = {
-                    lastSubmittedSecret = restoreInput.trim()
-                    appManager.restoreSession(restoreInput)
-                },
-                enabled =
-                    restoreInput.trim().isNotEmpty() &&
-                        !appState.busy.restoringSession,
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .testTag("importKeyButton"),
-            )
-            Text(
-                text = "or",
-                modifier = Modifier.fillMaxWidth(),
-                color = IrisTheme.palette.muted,
-                style = MaterialTheme.typography.labelMedium,
-                textAlign = TextAlign.Center,
-            )
             IrisSecondaryButton(
                 text = "Link this device",
                 onClick = { appManager.pushScreen(Screen.AddDevice) },
@@ -335,13 +313,12 @@ fun RestoreAccountScreen(
             TextField(
                 value = restoreInput,
                 onValueChange = { value ->
-                    val previous = restoreInput.trim()
                     restoreInput = value
                     val current = value.trim()
                     if (
                         !appState.busy.restoringSession &&
                         current != lastSubmittedSecret &&
-                        shouldAutoSubmitSecret(previous = previous, current = current)
+                        shouldAutoSubmitSecret(current)
                     ) {
                         lastSubmittedSecret = current
                         appManager.restoreSession(current)
@@ -375,15 +352,11 @@ fun RestoreAccountScreen(
     }
 }
 
-private fun shouldAutoSubmitSecret(
-    previous: String,
-    current: String,
-): Boolean {
+private fun shouldAutoSubmitSecret(current: String): Boolean {
     if (current.isBlank()) return false
-    val pasted = current.length > previous.length + 4
     val lower = current.lowercase()
     if (lower.startsWith("nsec1")) {
-        return pasted || current.length >= 63
+        return current.length >= 63
     }
     return current.length == 64 && current.all { it.isAsciiHexDigit() }
 }

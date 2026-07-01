@@ -1,10 +1,10 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use adw::prelude::*;
 use iris_chat_core::{AppAction, AppState};
 
 use crate::app_manager::AppManager;
-use crate::screens::{entry, primary_button, screen_container};
+use crate::screens::{entry, screen_container};
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let container = screen_container();
@@ -20,9 +20,11 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     hint.set_wrap(true);
     container.append(&hint);
 
+    let busy = state.busy.restoring_session;
     let nsec = entry("Secret key");
     nsec.set_visibility(false);
     nsec.set_input_purpose(gtk::InputPurpose::Password);
+    nsec.set_sensitive(!busy);
     container.append(&nsec);
 
     let secret_key_info = gtk::Label::new(Some("Secret key = nostr nsec"));
@@ -30,37 +32,36 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     secret_key_info.set_halign(gtk::Align::Start);
     container.append(&secret_key_info);
 
-    let busy = state.busy.restoring_session;
-    let submit = primary_button(if busy {
-        "Restoring…"
-    } else {
-        "Restore profile"
-    });
-    submit.set_sensitive(!busy);
-
-    let manager_for_submit = manager.clone();
-    let nsec_for_submit = nsec.clone();
-    submit.connect_clicked(move |btn| {
-        let value = nsec_for_submit.text().trim().to_string();
-        if value.is_empty() {
+    let last_submitted_secret: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    let manager_for_change = manager.clone();
+    nsec.connect_changed(move |entry| {
+        if busy {
             return;
         }
-        btn.set_sensitive(false);
-        manager_for_submit.dispatch(AppAction::RestoreSession { owner_nsec: value });
-    });
-
-    let manager_for_enter = manager.clone();
-    let submit_for_enter = submit.clone();
-    nsec.connect_activate(move |entry| {
-        let value = entry.text().trim().to_string();
-        if value.is_empty() || !submit_for_enter.is_sensitive() {
+        let current = entry.text().trim().to_string();
+        if !should_auto_submit_secret(&current) {
             return;
         }
-        submit_for_enter.set_sensitive(false);
-        manager_for_enter.dispatch(AppAction::RestoreSession { owner_nsec: value });
+        if last_submitted_secret.borrow().as_deref() == Some(current.as_str()) {
+            return;
+        }
+        *last_submitted_secret.borrow_mut() = Some(current.clone());
+        entry.set_sensitive(false);
+        manager_for_change.dispatch(AppAction::RestoreSession {
+            owner_nsec: current,
+        });
     });
-
-    container.append(&submit);
 
     container.upcast()
+}
+
+fn should_auto_submit_secret(current: &str) -> bool {
+    if current.is_empty() {
+        return false;
+    }
+    let lower = current.to_ascii_lowercase();
+    if lower.starts_with("nsec1") {
+        return current.len() >= 63;
+    }
+    current.len() == 64 && current.chars().all(|ch| ch.is_ascii_hexdigit())
 }

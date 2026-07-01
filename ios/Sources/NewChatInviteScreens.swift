@@ -258,14 +258,13 @@ struct NewChatInviteCopyButton: View {
     }
 }
 
-func shouldAutoSubmitSecret(previous: String, current: String) -> Bool {
+func shouldAutoSubmitSecret(current: String) -> Bool {
     guard !current.isEmpty else {
         return false
     }
-    let pasted = current.count > previous.count + 4
     let lower = current.lowercased()
     if lower.hasPrefix("nsec1") {
-        return pasted || current.count >= 63
+        return current.count >= 63
     }
     let hexDigits = CharacterSet(charactersIn: "0123456789abcdefABCDEF")
     if current.count == 64, current.unicodeScalars.allSatisfy({ hexDigits.contains($0) }) {

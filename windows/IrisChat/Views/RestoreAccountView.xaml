@@ -12,17 +12,11 @@
                        Margin="0,0,0,16" />
 
             <TextBlock Text="Secret key" Margin="0,0,0,4" />
-            <PasswordBox x:Name="NsecInput" />
+            <PasswordBox x:Name="NsecInput"
+                         PasswordChanged="OnSecretChanged" />
             <TextBlock Style="{StaticResource MutedText}"
                        Text="Secret key = nostr nsec"
                        Margin="0,6,0,0" />
-
-            <Button x:Name="RestoreButton"
-                    Style="{StaticResource PrimaryButton}"
-                    Click="OnRestore"
-                    Margin="0,16,0,0">
-                <TextBlock Text="Restore profile" />
-            </Button>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

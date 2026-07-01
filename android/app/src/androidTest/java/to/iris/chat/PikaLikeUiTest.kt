@@ -390,11 +390,10 @@ class PikaLikeUiTest {
             .performClick()
 
         composeRule.waitForTag("restoreAccountScreen")
+        composeRule.onAllNodesWithTag("importKeyButton", useUnmergedTree = true)
+            .assertCountEquals(0)
         composeRule.onNodeWithTag("importKeyField", useUnmergedTree = true)
             .performTextInput(VALID_OWNER_NSEC)
-        if (!composeRule.hasTag("chatListNewChatButton", timeoutMillis = 5_000)) {
-            composeRule.onNodeWithTag("importKeyButton", useUnmergedTree = true).performClick()
-        }
 
         composeRule.waitForTag("chatListNewChatButton")
     }
@@ -407,8 +406,7 @@ class PikaLikeUiTest {
 
         composeRule.waitForTag("restoreAccountScreen")
         composeRule.onNodeWithTag("importKeyField", useUnmergedTree = true)
-            .performTextInput("not a secret key")
-        composeRule.onNodeWithTag("importKeyButton", useUnmergedTree = true).performClick()
+            .performTextInput(INVALID_COMPLETE_OWNER_NSEC)
 
         composeRule.waitForText("Invalid key.")
     }
@@ -562,6 +560,8 @@ class PikaLikeUiTest {
             "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
         private const val VALID_OWNER_NSEC =
             "nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw"
+        private const val INVALID_COMPLETE_OWNER_NSEC =
+            "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
         private const val SECONDARY_DEVICE_NPUB =
             "npub1p34efzmkewwdsksmpp2r0tk7quke9jcfdz2zl7ezk8wnsj43uz2s8x5sp4"
         private const val SECONDARY_DEVICE_HEX =
