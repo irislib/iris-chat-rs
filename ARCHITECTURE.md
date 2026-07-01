@@ -3,8 +3,7 @@
 This document is the canonical source of truth for the Iris Chat architecture.
 When the ownership boundary changes, update this document in the same branch.
 
-The repo follows a Rust-first mobile architecture inspired by the Pika app in
-the sibling `iris/pika` workspace.
+The repo follows a Rust-first mobile architecture.
 
 ## Goal
 
@@ -259,7 +258,7 @@ The architecture now has explicit boundary tests:
 - iOS shell contract and unit suite:
   - `ios/Tests/IrisChatTests.swift`
 - Android local UI smoke:
-  - `android/app/src/androidTest/java/to/iris/chat/PikaLikeUiTest.kt`
+  - `android/app/src/androidTest/java/to/iris/chat/IrisChatUiSmokeTest.kt`
 - iOS local UI smoke:
   - `ios/UITests/IrisChatUITests.swift`
 

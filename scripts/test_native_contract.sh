@@ -8,7 +8,7 @@ ANDROID_TEST_AVD="${IRIS_ANDROID_QA_AVD:-Medium_Phone_API_36.1}"
 PACKAGE_NAME="to.iris.chat.debug"
 TEST_PACKAGE_NAME="${ANDROID_TEST_PACKAGE_NAME:-to.iris.chat.test}"
 CONTRACT_CLASSES="to.iris.chat.core.AppManagerContractTest"
-SMOKE_CLASSES="to.iris.chat.PikaLikeUiTest,to.iris.chat.account.AndroidKeystoreSecretStoreTest"
+SMOKE_CLASSES="to.iris.chat.IrisChatUiSmokeTest,to.iris.chat.account.AndroidKeystoreSecretStoreTest"
 
 resolve_serial() {
   if [[ -n "${IRIS_ANDROID_SERIAL:-}" ]]; then

@@ -38,7 +38,7 @@ import org.junit.runner.RunWith
 import to.iris.chat.ui.screens.QrScannerTestOverrides
 
 @RunWith(AndroidJUnit4::class)
-class PikaLikeUiTest {
+class IrisChatUiSmokeTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
