@@ -621,7 +621,7 @@ impl AppCore {
         self.recent_protocol_filters_inner(now, true)
     }
 
-    fn recent_protocol_metadata_filters(&self, now: UnixSeconds) -> Vec<Filter> {
+    pub(super) fn recent_protocol_metadata_filters(&self, now: UnixSeconds) -> Vec<Filter> {
         self.recent_protocol_filters_inner(now, false)
     }
 
@@ -908,8 +908,8 @@ impl AppCore {
         true
     }
 
-    pub(super) fn fetch_pending_device_invites_for_local_owner(&mut self) {
-        self.fetch_recent_protocol_state();
+    pub(super) fn fetch_pending_device_invites_for_local_owner(&mut self) -> bool {
+        self.fetch_recent_protocol_metadata_state()
     }
 
     pub(super) fn start_notifications_loop(&self, client: Client) {
