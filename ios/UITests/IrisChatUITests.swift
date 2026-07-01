@@ -84,6 +84,33 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(waitForChatList(app, timeout: 20))
     }
 
+    func testRelaunchExistingAccountShowsChatListQuickly() {
+        let runId = UUID().uuidString
+        let setupApp = launchCleanApp(runId: runId)
+        createAccount(setupApp)
+        setupApp.terminate()
+
+        let budget = TimeInterval(
+            Double(ProcessInfo.processInfo.environment["IRIS_UI_TEST_REOPEN_BUDGET_SECONDS"] ?? "") ?? 10
+        )
+        let app = launchApp(runId: runId)
+        let startedAt = Date()
+        XCTAssertTrue(
+            waitForChatList(app, timeout: budget),
+            "existing account did not reopen to the chat list within \(budget)s"
+        )
+        let elapsed = Date().timeIntervalSince(startedAt)
+        XCTAssertLessThanOrEqual(
+            elapsed,
+            budget,
+            "existing account reopen took \(String(format: "%.2f", elapsed))s; budget \(budget)s"
+        )
+        XCTAssertFalse(
+            element(app, "welcomeChooserCard").exists,
+            "existing account relaunch must not show the logged-out welcome screen"
+        )
+    }
+
     func testChatListSearchCloseButtonDismissesKeyboard() {
 #if os(macOS)
         return

@@ -48,6 +48,11 @@ final class InteropHarnessTests: XCTestCase {
             ? AppPaths.dataDir(fileManager: .default, environment: [:])
             : isolatedHarnessDataDir(runID: runID, env: env)
         let reset = env["IRIS_IOS_HARNESS_RESET"] == "1"
+        let restoreBudget = TimeInterval(Double(env["IRIS_IOS_HARNESS_MAX_REOPEN_SECONDS"] ?? "") ?? 10)
+        let bootstrapTimeout = TimeInterval(
+            Double(env["IRIS_IOS_HARNESS_BOOTSTRAP_TIMEOUT_SECS"] ?? "")
+                ?? (action == "measure_restore_bootstrap" ? restoreBudget : 30)
+        )
 
         let secretStore: AccountSecretStore
         if useAppStorage || env["IRIS_IOS_HARNESS_USE_KEYCHAIN"] == "1" {
@@ -65,19 +70,22 @@ final class InteropHarnessTests: XCTestCase {
         try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
 
         let managerEnvironment = harnessManagerEnvironment(runID: runID)
+        let bootstrapStartedAt = Date()
         let manager = AppManager(
             secretStore: secretStore,
             dataDir: dataDir,
             environment: managerEnvironment
         )
 
-        _ = try await waitFor(label: "bootstrap completion", timeout: 30) {
+        _ = try await waitFor(label: "bootstrap completion", timeout: bootstrapTimeout) {
             manager.bootstrapInFlight ? nil : true
         }
+        let bootstrapElapsed = Date().timeIntervalSince(bootstrapStartedAt)
 
         status("action", action)
         status("run_id", runID)
         status("data_dir", dataDir.path)
+        status("bootstrap_elapsed_ms", String(Int(bootstrapElapsed * 1000)))
 
         switch action {
         case "create_account_and_report_identity":
@@ -88,6 +96,17 @@ final class InteropHarnessTests: XCTestCase {
             let snapshot = try await ensureLoggedIn(manager: manager, env: env)
             try await waitForRelayDrainIfRequested(manager: manager, dataDir: dataDir, env: env)
             reportIdentity(snapshot)
+        case "measure_restore_bootstrap":
+            guard let account = manager.state.account else {
+                throw HarnessError.unexpected("restore bootstrap completed without an account")
+            }
+            reportIdentity(account)
+            status("restore_budget_ms", String(Int(restoreBudget * 1000)))
+            if bootstrapElapsed > restoreBudget {
+                throw HarnessError.unexpected(
+                    "restore bootstrap took \(String(format: "%.2f", bootstrapElapsed))s; budget \(String(format: "%.2f", restoreBudget))s"
+                )
+            }
         case "report_device_roster_snapshot":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let roster: DeviceRosterSnapshot = try await waitFor(label: "device roster snapshot", timeout: 90) {

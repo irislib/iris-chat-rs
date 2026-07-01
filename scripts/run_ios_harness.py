@@ -397,6 +397,8 @@ def ensure_build(udid: str, rebuild: bool, timeout_secs: int) -> Path:
         str(DERIVED_DATA),
         "build-for-testing",
     ]
+    if not prefer_simulator:
+        command.insert(-1, "-allowProvisioningUpdates")
     completed = run_xcodebuild(command, timeout_secs=timeout_secs, phase="build-for-testing")
     if completed.returncode != 0:
         raise SystemExit(completed.returncode)

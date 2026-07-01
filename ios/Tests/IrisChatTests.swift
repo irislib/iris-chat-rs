@@ -1240,7 +1240,7 @@ final class IrisChatTests: XCTestCase {
             manager.state.preferences.debugLoggingEnabled
         }
         XCTAssertTrue(updated)
-        XCTAssertTrue(manager.supportBundleJson().contains("\"ok\":true"))
+        XCTAssertEqual((try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(manager.supportBundleJson().data(using: .utf8))) as? [String: Any]))["ok"] as? Bool, true)
     }
 
     @MainActor
