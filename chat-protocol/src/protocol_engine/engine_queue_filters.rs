@@ -225,38 +225,16 @@ impl ProtocolEngine {
         &self,
         mut owner_authors: Vec<PublicKey>,
         mut invite_authors: Vec<PublicKey>,
-        now: NdrUnixSeconds,
+        _now: NdrUnixSeconds,
     ) -> Vec<Filter> {
         sort_dedup_protocol_pubkeys(&mut owner_authors);
         sort_dedup_protocol_pubkeys(&mut invite_authors);
 
-        let mut filters = Vec::new();
-        if !owner_authors.is_empty() {
-            filters.push(
-                Filter::new()
-                    .kind(Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16))
-                    .authors(owner_authors)
-                    .since(Timestamp::from(
-                        now.get()
-                            .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
-                    ))
-                    .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
-            );
-        }
-        if !invite_authors.is_empty() {
-            filters.push(
-                Filter::new()
-                    .kind(Kind::from(INVITE_EVENT_KIND as u16))
-                    .authors(invite_authors)
-                    .custom_tag(SingleLetterTag::lowercase(Alphabet::L), NDR_INVITES_L_TAG)
-                    .since(Timestamp::from(
-                        now.get()
-                            .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
-                    ))
-                    .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
-            );
-        }
-        filters
+        build_protocol_discovery_filters(
+            owner_authors,
+            invite_authors,
+            DEVICE_INVITE_DISCOVERY_LIMIT,
+        )
     }
 
     fn pending_target_hexes(&self, pending: &ProtocolPendingOutbound) -> Vec<String> {
@@ -354,7 +332,6 @@ impl ProtocolEngine {
             delivered_group_sender_key_acks: self.delivered_group_sender_key_acks.clone(),
             answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
             pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
-            nostr_identity_roster_histories: self.nostr_identity_roster_histories.clone(),
             group_roster_fact_histories: self.group_roster_fact_histories.clone(),
             subscription_generation: self.subscription_generation,
             last_backfill_attempt_secs: self.last_backfill_attempt_secs,

@@ -4,12 +4,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use iris_chat_protocol::{
-    invite_unsigned_event, invite_url, is_app_keys_event, is_nostr_identity_roster_op_event,
-    parse_invite_event, parse_invite_response_event, parse_invite_url, parse_message_event,
-    AppKeys, DeviceEntry, FileStorageAdapter, InMemoryStorage, NdrUnixSeconds,
-    ProtocolDecryptedMessage, ProtocolEffect, ProtocolEngine, ProtocolRetryBatch, StorageAdapter,
-    UnixSeconds, APP_KEYS_EVENT_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
-    NOSTR_IDENTITY_ROSTER_OP_KIND,
+    invite_unsigned_event, invite_url, is_app_keys_event, parse_invite_event,
+    parse_invite_response_event, parse_invite_url, parse_message_event, AppKeys, DeviceEntry,
+    FileStorageAdapter, InMemoryStorage, NdrUnixSeconds, ProtocolDecryptedMessage,
+    ProtocolEffect, ProtocolEngine, ProtocolRetryBatch, StorageAdapter, UnixSeconds,
+    APP_KEYS_EVENT_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
 };
 use nostr::{Event, Filter, Keys, Kind, PublicKey, SecretKey};
 
@@ -658,12 +657,6 @@ fn process_event_inner(inner: &mut SessionManagerInner, event: Event) -> Result<
         inner.enqueue_retry_batch(retry)?;
         return Ok(());
     }
-    if kind == NOSTR_IDENTITY_ROSTER_OP_KIND && is_nostr_identity_roster_op_event(&event) {
-        if let Some(result) = engine.ingest_nostr_identity_roster_op_event(&event)? {
-            inner.enqueue_retry_batch(result.retry_batch)?;
-        }
-        return Ok(());
-    }
     if kind == INVITE_EVENT_KIND {
         let retry = engine.observe_invite_event(&event)?;
         inner.enqueue_retry_batch(retry)?;
@@ -844,7 +837,7 @@ mod tests {
     }
 
     #[test]
-    fn processing_nostr_identity_roster_facts_tracks_peer_owner() {
+    fn processing_app_keys_snapshot_tracks_peer_owner() {
         let alice_keys = Keys::generate();
         let bob_owner_keys = Keys::generate();
         let bob_device_keys = Keys::generate();
@@ -853,68 +846,26 @@ mod tests {
         alice.init().expect("alice init");
         let _ = alice.drain_events().expect("alice startup drain");
         let roster_created_at = now_secs().saturating_add(1);
-        let bob_roster_bootstrap = nostr_identity_roster_event_for_test(
-            &bob_owner_keys,
-            bob_owner_keys.public_key(),
-            roster_created_at,
-            true,
-            Vec::new(),
-        );
-        let bob_roster_device = nostr_identity_roster_event_for_test(
-            &bob_owner_keys,
+        let bob_app_keys = AppKeys::new(vec![DeviceEntry::new(
             bob_device_keys.public_key(),
-            roster_created_at.saturating_add(1),
-            false,
-            vec![bob_roster_bootstrap.id.to_hex()],
-        );
+            roster_created_at,
+        )]);
+        let bob_app_keys_event = bob_app_keys
+            .get_event_at(bob_owner_keys.public_key(), roster_created_at)
+            .sign_with_keys(&bob_owner_keys)
+            .expect("signed app keys event");
 
-        for event in [bob_roster_bootstrap, bob_roster_device] {
-            alice
-                .process_event(serde_json::to_string(&event).expect("roster fact json"))
-                .expect("alice processes bob device roster");
-        }
+        alice
+            .process_event(serde_json::to_string(&bob_app_keys_event).expect("app keys json"))
+            .expect("alice processes bob AppKeys");
         let after_roster = alice.drain_events().expect("alice roster drain");
         assert!(publish_events(after_roster, MESSAGE_EVENT_KIND).is_empty());
         assert!(
             alice
                 .known_peer_owner_pubkeys()
                 .contains(&bob_owner_keys.public_key().to_hex()),
-            "shared NostrIdentity roster ops should surface the peer owner"
+            "shared AppKeys snapshots should surface the peer owner"
         );
-    }
-
-    fn nostr_identity_roster_event_for_test(
-        signer: &Keys,
-        device_pubkey: PublicKey,
-        created_at: u64,
-        can_admin: bool,
-        parents: Vec<String>,
-    ) -> Event {
-        const PROFILE_ID: &str = "123e4567-e89b-42d3-a456-426614174000";
-        let created_at = i64::try_from(created_at).expect("created_at fits i64");
-        let profile_id = PROFILE_ID
-            .parse::<nostr_identity::NostrIdentityId>()
-            .expect("test profile id");
-        let capabilities = if can_admin {
-            nostr_identity::NostrIdentityCapabilities::app_admin()
-        } else {
-            nostr_identity::NostrIdentityCapabilities::app_writer()
-        };
-        let facet = nostr_identity::NostrIdentityFacet::app_key(
-            device_pubkey.to_hex(),
-            created_at,
-            None,
-            capabilities,
-        );
-        nostr_identity::build_nostr_identity_roster_op_event(
-            signer,
-            profile_id,
-            parents,
-            None,
-            nostr_identity::NostrIdentityRosterOp::AddFacet { facet },
-            created_at,
-        )
-        .expect("signed roster event")
     }
 
     #[test]

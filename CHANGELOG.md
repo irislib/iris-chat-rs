@@ -7,9 +7,15 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 ## Unreleased
 
+## 2026.6.30
+
+- Group membership now syncs through shared roster fact snapshots across web and native apps.
+- Linked-device authorization now comes from owner-signed kind 37368 AppKeys snapshots.
+- Web and native interop checks now cover direct chats, linked devices, and groups before release.
+
 ## 2026.6.29
 
-- Linked-device approval now writes the shared identity device roster directly, avoiding old device-list snapshots for new manual adds.
+- Linked-device approval writes the shared AppKeys device roster directly for new manual adds.
 - Message requests now show Accept, Block, and Block and report actions directly, with Delete chat and Unblock available from the safety flow.
 
 ## 2026.6.9

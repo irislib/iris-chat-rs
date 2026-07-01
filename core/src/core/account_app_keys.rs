@@ -136,30 +136,3 @@ pub(super) fn known_app_keys_from_ndr(
         devices,
     }
 }
-
-pub(super) fn preserve_known_app_key_labels(
-    known: &mut KnownAppKeys,
-    current: Option<&KnownAppKeys>,
-) {
-    let Some(current) = current else {
-        return;
-    };
-    for device in &mut known.devices {
-        let Some(current_device) = current
-            .devices
-            .iter()
-            .find(|candidate| candidate.identity_pubkey_hex == device.identity_pubkey_hex)
-        else {
-            continue;
-        };
-        if device.device_label.is_none() {
-            device.device_label = current_device.device_label.clone();
-        }
-        if device.client_label.is_none() {
-            device.client_label = current_device.client_label.clone();
-        }
-        if device.label_updated_at_secs == 0 {
-            device.label_updated_at_secs = current_device.label_updated_at_secs;
-        }
-    }
-}

@@ -1,119 +1,4 @@
 #[test]
-fn app_keys_device_projection_is_deterministic() {
-    let owner = Keys::generate().public_key();
-    let device_a = Keys::generate().public_key();
-    let device_b = Keys::generate().public_key();
-    let app_keys = AppKeys::new(vec![
-        DeviceEntry::new(device_b, 20),
-        DeviceEntry::new(device_a, 10),
-    ]);
-
-    let known = known_app_keys_from_ndr(owner, &app_keys, 30);
-
-    assert_eq!(known.owner_pubkey_hex, owner.to_hex());
-    assert_eq!(known.created_at_secs, 30);
-    let mut expected_devices = vec![device_a.to_hex(), device_b.to_hex()];
-    expected_devices.sort();
-    assert_eq!(
-        known
-            .devices
-            .iter()
-            .map(|device| device.identity_pubkey_hex.clone())
-            .collect::<Vec<_>>(),
-        expected_devices
-    );
-    assert_eq!(
-        known_app_keys_to_ndr(&known)
-            .expect("convert back")
-            .get_all_devices()
-            .len(),
-        2
-    );
-}
-
-#[test]
-fn app_keys_device_labels_roundtrip_through_known_snapshot() {
-    let owner = Keys::generate().public_key();
-    let device = Keys::generate().public_key();
-    let mut app_keys = AppKeys::new(vec![DeviceEntry::new(device, 10)]);
-    app_keys.set_device_labels(
-        device,
-        Some("virus.exe - iPhone 16 Pro - iOS 18.5".to_string()),
-        Some("Iris Chat iOS".to_string()),
-        Some(20),
-    );
-
-    let known = known_app_keys_from_ndr(owner, &app_keys, 30);
-    let known_device = known.devices.first().expect("known device");
-    assert_eq!(
-        known_device.device_label.as_deref(),
-        Some("virus.exe - iPhone 16 Pro - iOS 18.5")
-    );
-    assert_eq!(known_device.client_label.as_deref(), Some("Iris Chat iOS"));
-    assert_eq!(known_device.label_updated_at_secs, 20);
-
-    let roundtrip = known_app_keys_to_ndr(&known).expect("convert back");
-    let labels = roundtrip.get_device_labels(&device).expect("device labels");
-    assert_eq!(
-        labels.device_label.as_deref(),
-        Some("virus.exe - iPhone 16 Pro - iOS 18.5")
-    );
-    assert_eq!(labels.client_label.as_deref(), Some("Iris Chat iOS"));
-    assert_eq!(labels.updated_at, 20);
-}
-
-#[test]
-fn current_device_labels_update_app_keys_and_roster_snapshot() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let mut core = logged_in_test_core("device-labels", &owner, &device);
-
-    core.handle_action(AppAction::SetCurrentDeviceLabels {
-        device_label: "virus.exe - iPhone 16 Pro - iOS 18.5".to_string(),
-        client_label: "Iris Chat iOS".to_string(),
-    });
-
-    let owner_hex = owner.public_key().to_hex();
-    let device_hex = device.public_key().to_hex();
-    let app_keys = core.app_keys.get(&owner_hex).expect("local AppKeys");
-    let known_device = app_keys
-        .devices
-        .iter()
-        .find(|candidate| candidate.identity_pubkey_hex == device_hex)
-        .expect("current device");
-    assert_eq!(
-        known_device.device_label.as_deref(),
-        Some("virus.exe - iPhone 16 Pro - iOS 18.5")
-    );
-    assert_eq!(known_device.client_label.as_deref(), Some("Iris Chat iOS"));
-
-    let ndr_app_keys = known_app_keys_to_ndr(app_keys).expect("NDR AppKeys");
-    let labels = ndr_app_keys
-        .get_device_labels(&device.public_key())
-        .expect("NDR labels");
-    assert_eq!(
-        labels.device_label.as_deref(),
-        Some("virus.exe - iPhone 16 Pro - iOS 18.5")
-    );
-    assert_eq!(labels.client_label.as_deref(), Some("Iris Chat iOS"));
-
-    let roster_device = core
-        .state
-        .device_roster
-        .as_ref()
-        .expect("device roster")
-        .devices
-        .iter()
-        .find(|candidate| candidate.device_pubkey_hex == device_hex)
-        .expect("roster device");
-    assert_eq!(
-        roster_device.device_label.as_deref(),
-        Some("virus.exe - iPhone 16 Pro - iOS 18.5")
-    );
-    assert_eq!(roster_device.client_label.as_deref(), Some("Iris Chat iOS"));
-}
-
-#[test]
 fn peer_profile_debug_reports_known_user_context() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -653,7 +538,7 @@ fn app_keys_runtime_storage_failure_does_not_mark_seen_or_mutate_app_cache() {
 
 #[test]
 fn invite_runtime_storage_failure_does_not_mark_seen() {
-    use nostr_double_ratchet_nostr::InviteNostrExt;
+    use nostr_double_ratchet::InviteNostrExt;
 
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -692,39 +577,6 @@ fn invite_runtime_storage_failure_does_not_mark_seen() {
     core.handle_relay_event(invite_event);
 
     assert!(core.seen_event_ids.contains(&event_id));
-}
-
-#[test]
-fn restored_owner_session_does_not_publish_single_device_app_keys_before_backfill() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let (update_tx, update_rx) = flume::unbounded();
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let mut core = AppCore::new(
-        update_tx,
-        flume::unbounded().0,
-        temp_dir.path().to_string_lossy().to_string(),
-        Arc::new(RwLock::new(AppState::empty())),
-    );
-
-    core.start_primary_session(owner, device, true, false)
-        .expect("restored session");
-
-    let app_keys_events = update_rx
-        .try_iter()
-        .filter(|update| {
-            if let AppUpdate::NearbyPublishedEvent { event_json, .. } = update {
-                return serde_json::from_str::<Event>(event_json)
-                    .map(|event| is_app_keys_event(&event))
-                    .unwrap_or(false);
-            }
-            false
-        })
-        .count();
-    assert_eq!(
-        app_keys_events, 0,
-        "restored nsec login must not overwrite relay AppKeys before fetching them"
-    );
 }
 
 #[test]
@@ -957,7 +809,7 @@ fn start_linked_device_creates_compact_device_approval_code() {
         .link_device
         .as_ref()
         .expect("link-device snapshot");
-    let request = crate::qr::parse_compact_nostr_identity_device_approval_request(&snapshot.url)
+    let request = parse_compact_device_link_request(&snapshot.url)
         .expect("parse compact approval request");
     assert!(!snapshot.url.contains("://"));
     assert!(!snapshot.url.contains("chat.iris.to"));
@@ -970,36 +822,23 @@ fn start_linked_device_creates_compact_device_approval_code() {
             .expect("pending link")
             .device_keys
             .public_key()
-            .to_hex()
     );
     assert_eq!(
-        PublicKey::parse(&request.device_app_key_pubkey)
-            .ok()
-            .and_then(|pubkey| pubkey.to_bech32().ok())
-            .as_deref(),
+        request.device_app_key_pubkey.to_bech32().ok().as_deref(),
         Some(snapshot.device_input.as_str())
     );
     assert!(matches!(core.screen_stack.as_slice(), [Screen::AddDevice]));
 }
 
-#[test]
-fn compact_link_invite_derivation_is_time_independent() {
-    let device = Keys::generate().public_key();
-    let request_secret = Keys::generate().secret_key().to_secret_hex();
-    let first = account::deterministic_link_invite_for_device(device, &request_secret)
-        .expect("first invite");
-
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-    let second = account::deterministic_link_invite_for_device(device, &request_secret)
-        .expect("second invite");
-
-    assert_eq!(first.created_at.get(), 0);
-    assert_eq!(second.created_at.get(), 0);
-    assert_eq!(
-        first.inviter_ephemeral_public_key,
-        second.inviter_ephemeral_public_key
-    );
-    assert_eq!(first.shared_secret, second.shared_secret);
+fn signed_app_keys_authorization_event(
+    owner: &Keys,
+    device_pubkey: PublicKey,
+    created_at: u64,
+) -> Event {
+    AppKeys::new(vec![DeviceEntry::new(device_pubkey, created_at)])
+        .get_event_at(owner.public_key(), created_at)
+        .sign_with_keys(owner)
+        .expect("signed app keys authorization")
 }
 
 #[test]
@@ -1036,6 +875,13 @@ fn compact_link_request_finishes_pairing_and_authorizes_linked_device() {
         .expect("compact link code")
         .url
         .clone();
+    let linked_device_hex = linked
+        .pending_linked_device
+        .as_ref()
+        .expect("pending linked device")
+        .device_keys
+        .public_key()
+        .to_hex();
 
     primary.handle_action(AppAction::AddAuthorizedDevice {
         device_input: compact_code,
@@ -1046,31 +892,24 @@ fn compact_link_request_finishes_pairing_and_authorizes_linked_device() {
         .into_iter()
         .next()
         .expect("compact approval publishes deterministic invite response");
+    let app_keys_event = pending_events_with_kind(&primary, APP_KEYS_EVENT_KIND)
+        .into_iter()
+        .find(|event| event_has_tag_value(event, "device", &linked_device_hex))
+        .expect("compact approval publishes AppKeys authorization");
+
     linked.handle_relay_event(response_event);
+    assert!(
+        linked.pending_linked_device.is_some(),
+        "invite response alone must wait for owner-signed AppKeys authorization"
+    );
+
+    linked.handle_relay_event(app_keys_event);
     let linked_device = linked
         .logged_in
         .as_ref()
         .expect("linked session")
         .device_keys
         .public_key();
-
-    let mut roster_events = pending_events_with_kind(&primary, NOSTR_IDENTITY_ROSTER_OP_KIND)
-        .into_iter()
-        .filter(is_nostr_identity_roster_op_event)
-        .collect::<Vec<_>>();
-    roster_events.sort_by(|left, right| {
-        left.created_at
-            .as_secs()
-            .cmp(&right.created_at.as_secs())
-            .then_with(|| left.id.to_hex().cmp(&right.id.to_hex()))
-    });
-    assert!(
-        !roster_events.is_empty(),
-        "compact approval must publish a public roster op for the linked device"
-    );
-    for event in roster_events {
-        linked.handle_relay_event(event);
-    }
 
     linked.refresh_local_authorization_state();
     linked.rebuild_state();
@@ -1153,6 +992,12 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
         owner_input: String::new(),
     });
 
+    let linked_device_pubkey = core
+        .pending_linked_device
+        .as_ref()
+        .expect("pending link invite")
+        .device_keys
+        .public_key();
     let pending = core
         .pending_linked_device
         .as_ref()
@@ -1166,16 +1011,27 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
             Some(owner.public_key()),
         )
         .expect("owner accepts");
-    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response_envelope)
+    let response_event = nostr_double_ratchet::invite_response_event(&response_envelope)
         .expect("invite response event");
 
     core.handle_relay_event(response_event);
+    assert!(
+        core.pending_linked_device.is_some(),
+        "invite response waits for owner-signed AppKeys authorization"
+    );
+    assert!(core.logged_in.is_none());
+
+    core.handle_relay_event(signed_app_keys_authorization_event(
+        &owner,
+        linked_device_pubkey,
+        42,
+    ));
 
     let logged_in = core.logged_in.as_ref().expect("linked session");
     assert_eq!(logged_in.owner_pubkey, owner.public_key());
     assert_eq!(
         logged_in.authorization_state,
-        LocalAuthorizationState::AwaitingApproval
+        LocalAuthorizationState::Authorized
     );
     assert!(core.pending_linked_device.is_none());
     assert!(core
@@ -1204,6 +1060,7 @@ fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
         .as_ref()
         .expect("pending link invite");
     let pairing_invite = pending.pairing_invite.clone();
+    let linked_device_pubkey = pending.device_keys.public_key();
     assert_eq!(pairing_invite.purpose.as_deref(), Some("link"));
     assert!(pairing_invite.owner_public_key.is_none());
 
@@ -1215,9 +1072,14 @@ fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
             Some(owner.public_key()),
         )
         .expect("owner accepts");
-    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response_envelope)
+    let response_event = nostr_double_ratchet::invite_response_event(&response_envelope)
         .expect("invite response event");
 
+    core.handle_relay_event(signed_app_keys_authorization_event(
+        &owner,
+        linked_device_pubkey,
+        42,
+    ));
     core.handle_relay_event(response_event);
 
     let stable_invite = core
@@ -1296,6 +1158,13 @@ fn local_relay_pairing_e2e_uses_stable_protocol_invite_after_login() {
         .expect("pending linked device")
         .pairing_invite
         .clone();
+    let linked_device_hex = linked
+        .pending_linked_device
+        .as_ref()
+        .expect("pending linked device")
+        .device_keys
+        .public_key()
+        .to_hex();
     let pairing_response_pubkey = pairing_invite
         .inviter_ephemeral_public_key
         .to_nostr()
@@ -1311,12 +1180,17 @@ fn local_relay_pairing_e2e_uses_stable_protocol_invite_after_login() {
     primary.handle_action(AppAction::AddAuthorizedDevice {
         device_input: pairing_url,
     });
+    let app_keys_event = pending_events_with_kind(&primary, APP_KEYS_EVENT_KIND)
+        .into_iter()
+        .find(|event| event_has_tag_value(event, "device", &linked_device_hex))
+        .expect("owner publishes AppKeys authorization for linked device");
     let response_event = wait_for_relay_event_with_kind(
         &mut primary,
         &primary_core_rx,
         &relay,
         INVITE_RESPONSE_KIND,
     );
+    linked.handle_relay_event(app_keys_event);
     linked.handle_relay_event(response_event);
 
     let stable_invite = linked
@@ -1475,7 +1349,7 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
     let filters = build_protocol_subscription_filters(&plan);
 
     assert!(
-        has_filter_with_kind_author(&filters, NOSTR_IDENTITY_ROSTER_OP_KIND, owner.public_key()),
+        has_filter_with_kind_author(&filters, APP_KEYS_EVENT_KIND, owner.public_key()),
         "device roster fact filters must be derived from roster authors"
     );
     assert!(
@@ -1488,7 +1362,7 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
             INVITE_EVENT_KIND,
             invite_author.public_key(),
             "#l",
-            NDR_INVITES_L_TAG
+            INVITE_LIST_LABEL
         ),
         "invite filters must not fetch unrelated parameterized app data"
     );
@@ -1954,7 +1828,7 @@ fn established_peer_session_state_for_test(
     peer_keys: &Keys,
     local_keys: &Keys,
 ) -> nostr_double_ratchet::SessionState {
-    use nostr_double_ratchet_nostr::SessionNostrExt;
+    use nostr_double_ratchet::SessionNostrExt;
 
     let mut invite = Invite::create_new(
         peer_keys.public_key(),
@@ -1973,7 +1847,7 @@ fn established_peer_session_state_for_test(
         )
         .expect("local accepts peer invite");
     let response_event = invite_response_event(&response).expect("invite response event");
-    let mut peer_session = nostr_double_ratchet_nostr::process_invite_response_event(
+    let mut peer_session = nostr_double_ratchet::process_invite_response_event(
         &invite,
         &response_event,
         peer_keys.secret_key().to_secret_bytes(),
@@ -1984,7 +1858,7 @@ fn established_peer_session_state_for_test(
 
     let local_bootstrap = local_session
         .send_event(
-            nostr_double_ratchet_nostr::build_text_rumor(
+            nostr_double_ratchet::build_text_rumor(
                 local_keys.public_key(),
                 "bootstrap",
                 vec![],
@@ -1998,7 +1872,7 @@ fn established_peer_session_state_for_test(
 
     let peer_reply = peer_session
         .send_event(
-            nostr_double_ratchet_nostr::build_text_rumor(
+            nostr_double_ratchet::build_text_rumor(
                 peer_keys.public_key(),
                 "reply",
                 vec![],
@@ -2014,7 +1888,7 @@ fn established_peer_session_state_for_test(
 }
 
 fn unrelated_direct_message_event_for_test(sender: &Keys, receiver: &Keys) -> Event {
-    use nostr_double_ratchet_nostr::SessionNostrExt;
+    use nostr_double_ratchet::SessionNostrExt;
 
     let mut invite = Invite::create_new(
         sender.public_key(),
@@ -2033,7 +1907,7 @@ fn unrelated_direct_message_event_for_test(sender: &Keys, receiver: &Keys) -> Ev
         .expect("receiver accepts unrelated invite");
     receiver_session
         .send_event(
-            nostr_double_ratchet_nostr::build_text_rumor(
+            nostr_double_ratchet::build_text_rumor(
                 receiver.public_key(),
                 "queued until unrelated protocol state arrives",
                 vec![],
@@ -2073,9 +1947,9 @@ fn install_local_sibling_session_for_test(
             Some(owner.public_key()),
         )
         .expect("primary accepts linked invite");
-    let linked_response = nostr_double_ratchet_nostr::process_invite_response_event(
+    let linked_response = nostr_double_ratchet::process_invite_response_event(
         &linked_invite,
-        &nostr_double_ratchet_nostr::invite_response_event(&response)
+        &nostr_double_ratchet::invite_response_event(&response)
             .expect("invite response event"),
         linked_device.secret_key().to_secret_bytes(),
     )

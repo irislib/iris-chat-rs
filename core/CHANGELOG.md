@@ -1,9 +1,15 @@
 # Changelog
 
+## 0.1.33
+
+- Publish group roster fact sync and AppKeys-only linked-device authorization with `iris-chat-protocol` 0.1.5.
+- Keep native group membership aligned with the web app's shared roster fact snapshots.
+- Stop fetching or publishing old roster-op events; owner-signed kind 37368 AppKeys snapshots are authoritative.
+
 ## 0.1.32
 
-- Publish the NostrIdentity roster fact migration with `iris-chat-protocol` 0.1.4 so packaged builds use the shared fact-event roster projection and parent tracking.
-- Keep linked-device labels through NostrIdentity roster updates and republish local identity artifacts after relay/account changes.
+- Publish the AppKeys roster fact migration with `iris-chat-protocol` 0.1.4 so packaged builds use shared fact-event roster projection and parent tracking.
+- Keep linked-device labels through AppKeys updates and republish local identity artifacts after relay/account changes.
 
 ## 0.1.31
 

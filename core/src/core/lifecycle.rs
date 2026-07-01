@@ -1,3 +1,4 @@
+use super::persistence::apply_persisted_preferences;
 use super::*;
 
 pub(super) const CATCH_UP_EVENT_PROCESS_CHUNK_SIZE: usize = 64;
@@ -41,15 +42,18 @@ impl AppCore {
             .max_blocking_threads(8)
             .build()?;
 
-        let state = AppState::empty();
+        let data_dir = PathBuf::from(data_dir);
+        let data_dir_lock = DataDirLock::acquire(&data_dir)?;
+        let mut app_store = AppStore::new(open_database(&data_dir)?);
+
+        let mut state = AppState::empty();
+        if let Some(persisted_preferences) = app_store.load_preferences_snapshot()? {
+            apply_persisted_preferences(&mut state.preferences, &persisted_preferences);
+        }
         match shared_state.write() {
             Ok(mut slot) => *slot = state.clone(),
             Err(poison) => *poison.into_inner() = state.clone(),
         }
-
-        let data_dir = PathBuf::from(data_dir);
-        let data_dir_lock = DataDirLock::acquire(&data_dir)?;
-        let app_store = AppStore::new(open_database(&data_dir)?);
 
         Ok(Self {
             update_tx,

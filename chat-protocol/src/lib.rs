@@ -3,8 +3,14 @@ mod nearby;
 mod protocol_engine;
 mod storage;
 
-use nostr::{Alphabet, SingleLetterTag, UnsignedEvent};
+use nostr::UnsignedEvent;
 use nostr::{Event, Filter, Keys, Kind, PublicKey, Timestamp};
+use nostr_double_ratchet::{
+    group_sender_key_message_event, invite_response_event, is_group_roster_fact_event,
+    parse_group_roster_fact_event, parse_group_sender_key_message_event,
+    parse_group_sender_key_message_event_unchecked, project_group_roster_fact_events,
+    GroupEventManager, JsonGroupPayloadCodecV1,
+};
 use nostr_double_ratchet::{
     AuthorizedDevice, Delivery, DevicePubkey as NdrDevicePubkey, DeviceRoster, DomainError,
     Error as NdrError, GroupIncomingEvent, GroupManagerSnapshot, GroupPairwiseCommand,
@@ -12,12 +18,6 @@ use nostr_double_ratchet::{
     GroupSenderKeyHandleResult, GroupSenderKeyMessage, GroupSnapshot, MessageEnvelope,
     OwnerPubkey as NdrOwnerPubkey, PreparedSend, ProtocolContext, RelayGap, SenderKeyRepairRequest,
     SessionManager,
-};
-use nostr_double_ratchet_nostr::{
-    group_sender_key_message_event, invite_response_event, is_group_roster_fact_event,
-    parse_group_roster_fact_event, parse_group_sender_key_message_event,
-    parse_group_sender_key_message_event_unchecked, project_group_roster_fact_events,
-    JsonGroupPayloadCodecV1, NostrGroupManager,
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use rand::rngs::OsRng;
@@ -38,16 +38,16 @@ pub use nearby::{
     NEARBY_MAX_FRAME_BODY_BYTES,
 };
 pub use nostr_double_ratchet::{
-    Invite, SessionManagerSnapshot, SessionState, UnixSeconds as NdrUnixSeconds,
-};
-pub use nostr_double_ratchet_nostr::{
-    build_group_roster_fact_filter, group_roster_unsigned_event, invite_unsigned_event, invite_url,
-    is_app_keys_event, is_nostr_identity_roster_op_event, parse_invite_event,
+    build_group_roster_fact_filter, build_protocol_discovery_filters, group_roster_unsigned_event,
+    invite_unsigned_event, invite_url, is_app_keys_event, parse_invite_event,
     parse_invite_response_event, parse_invite_url, parse_message_event, AppKeys, DeviceEntry,
-    GroupRosterFact, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_FACT_KIND,
+    GroupRosterFact, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND,
     GROUP_ROSTER_FACT_KIND, GROUP_ROSTER_FACT_SCHEMA, GROUP_ROSTER_FACT_TYPE,
-    GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
-    NOSTR_IDENTITY_ROSTER_OP_KIND, REACTION_KIND, RECEIPT_KIND,
+    GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_LIST_LABEL, INVITE_RESPONSE_KIND,
+    MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND,
+};
+pub use nostr_double_ratchet::{
+    Invite, SessionManagerSnapshot, SessionState, UnixSeconds as NdrUnixSeconds,
 };
 pub use protocol_engine::*;
 pub use storage::{
@@ -55,10 +55,7 @@ pub use storage::{
     StorageAdapter, StorageError, StorageResult,
 };
 
-const DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS: u64 = 30 * 24 * 60 * 60;
 const DEVICE_INVITE_DISCOVERY_LIMIT: usize = 256;
-const NDR_INVITES_L_TAG: &str = "double-ratchet/invites";
-const NOSTR_IDENTITY_ROSTER_EVENT_HISTORY_LIMIT: usize = 512;
 const GROUP_ROSTER_FACT_EVENT_HISTORY_LIMIT: usize = 256;
 pub const PROTOCOL_SENDER_KEY_REPAIR_RETRY_DELAYS_SECS: [u64; 5] = [10, 30, 60, 60, 60];
 

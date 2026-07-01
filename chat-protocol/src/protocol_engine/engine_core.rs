@@ -20,7 +20,7 @@ impl ProtocolEngine {
             local_device,
             storage,
             session_manager: SessionManager::new(local_owner, device_secret),
-            group_manager: NostrGroupManager::new(local_owner),
+            group_manager: GroupEventManager::new(local_owner),
             pending_outbound: Vec::new(),
             pending_inbound: Vec::new(),
             pending_group_fanouts: Vec::new(),
@@ -30,7 +30,6 @@ impl ProtocolEngine {
             delivered_group_sender_key_acks: Vec::new(),
             answered_group_sender_key_repairs: Vec::new(),
             pending_decrypted_deliveries: Vec::new(),
-            nostr_identity_roster_histories: BTreeMap::new(),
             group_roster_fact_histories: BTreeMap::new(),
             known_message_author_cache: std::cell::RefCell::new(None),
             known_message_author_cache_build_count: std::cell::Cell::new(0),
@@ -78,7 +77,7 @@ impl ProtocolEngine {
         }
 
         let session_manager = SessionManager::from_snapshot(state.session_manager, device_secret)?;
-        let group_manager = NostrGroupManager::from_snapshot(state.group_manager)?;
+        let group_manager = GroupEventManager::from_snapshot(state.group_manager)?;
         let mut delivered_group_sender_key_acks = state.delivered_group_sender_key_acks;
         let excess = delivered_group_sender_key_acks
             .len()
@@ -110,7 +109,6 @@ impl ProtocolEngine {
             delivered_group_sender_key_acks,
             answered_group_sender_key_repairs,
             pending_decrypted_deliveries: state.pending_decrypted_deliveries,
-            nostr_identity_roster_histories: state.nostr_identity_roster_histories,
             group_roster_fact_histories: state.group_roster_fact_histories,
             known_message_author_cache: std::cell::RefCell::new(None),
             known_message_author_cache_build_count: std::cell::Cell::new(0),
@@ -501,6 +499,49 @@ impl ProtocolEngine {
             .is_some()
     }
 
+    pub fn is_potential_group_sender_key_event(&self, event: &Event) -> bool {
+        parse_group_sender_key_message_event_unchecked(event).is_ok_and(|parsed| {
+            self.group_manager
+                .group_id_for_sender_event_pubkey(parsed.sender_event_pubkey)
+                .is_some()
+        })
+    }
+
+    pub fn is_group_sender_key_candidate_with_local_group_context(&self, event: &Event) -> bool {
+        if !protocol_event_has_tag(event, "header") || self.group_manager.snapshot().groups.is_empty()
+        {
+            return false;
+        }
+        parse_group_sender_key_message_event_unchecked(event).is_ok()
+    }
+
+    pub fn header_message_sender_has_verified_owner(&self, event: &Event) -> bool {
+        if !protocol_event_has_tag(event, "header") {
+            return false;
+        }
+        let Ok(envelope) = parse_message_event(event) else {
+            return false;
+        };
+        let Ok(sender) = public_device(envelope.sender) else {
+            return false;
+        };
+        self.owner_hint_for_device(sender)
+            .is_some_and(|hint| hint.verified)
+    }
+
+    pub fn header_message_sender_has_tracked_session(&self, event: &Event) -> bool {
+        if !protocol_event_has_tag(event, "header") {
+            return false;
+        }
+        let Ok(envelope) = parse_message_event(event) else {
+            return false;
+        };
+        !matches!(
+            self.resolve_message_sender_owner(&envelope),
+            ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { .. }
+        )
+    }
+
     pub fn known_device_identity_pubkeys_for_owner(
         &self,
         owner_pubkey: PublicKey,
@@ -696,7 +737,6 @@ impl ProtocolEngine {
             delivered_group_sender_key_acks: self.delivered_group_sender_key_acks.clone(),
             answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
             pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
-            nostr_identity_roster_histories: self.nostr_identity_roster_histories.clone(),
             group_roster_fact_histories: self.group_roster_fact_histories.clone(),
             subscription_generation: self.subscription_generation,
             last_backfill_attempt_secs: self.last_backfill_attempt_secs,
@@ -715,7 +755,6 @@ impl ProtocolEngine {
         self.delivered_group_sender_key_acks = checkpoint.delivered_group_sender_key_acks;
         self.answered_group_sender_key_repairs = checkpoint.answered_group_sender_key_repairs;
         self.pending_decrypted_deliveries = checkpoint.pending_decrypted_deliveries;
-        self.nostr_identity_roster_histories = checkpoint.nostr_identity_roster_histories;
         self.group_roster_fact_histories = checkpoint.group_roster_fact_histories;
         self.subscription_generation = checkpoint.subscription_generation;
         self.last_backfill_attempt_secs = checkpoint.last_backfill_attempt_secs;

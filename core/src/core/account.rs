@@ -3,9 +3,8 @@ use super::account_app_keys::{
     normalize_device_label,
 };
 use super::invites::load_private_chat_invites;
+use super::persistence::apply_persisted_preferences;
 use super::*;
-use nostr_double_ratchet::{DevicePubkey as NdrDevicePubkey, ProtocolContext};
-use rand::{rngs::StdRng, SeedableRng};
 
 impl AppCore {
     pub(super) fn create_account(&mut self, name: &str) {
@@ -214,10 +213,10 @@ impl AppCore {
 
         let device_keys = Keys::generate();
         let device_pubkey = device_keys.public_key();
-        let approval_request_keys = Keys::generate();
-        let request_secret = approval_request_keys.secret_key().to_secret_hex();
+        let request_keys = Keys::generate();
+        let request_secret = request_keys.secret_key().to_secret_hex();
         let invite = deterministic_link_invite_for_device(device_pubkey, &request_secret)?;
-        let url = compact_device_approval_url(device_pubkey, &request_secret);
+        let url = encode_compact_device_link_request(device_pubkey, &request_secret)?;
 
         let client = Client::new(device_keys.clone());
         let relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
@@ -226,9 +225,8 @@ impl AppCore {
         let invite_response_filter = Filter::new()
             .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
             .pubkeys(vec![invite.inviter_ephemeral_public_key.to_nostr()?]);
-        let approval_receipt_filter = Filter::new()
-            .kind(Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16))
-            .pubkeys(vec![approval_request_keys.public_key()]);
+        let app_keys_authorization_filter =
+            build_app_keys_device_authorization_filter(device_pubkey);
         let client_for_subscription = client.clone();
         let relay_urls_for_subscription = relay_urls.clone();
         self.runtime.spawn(async move {
@@ -252,7 +250,7 @@ impl AppCore {
             let _ = client_for_subscription
                 .subscribe_with_id(
                     SubscriptionId::new("link-device-approval"),
-                    approval_receipt_filter,
+                    app_keys_authorization_filter,
                     None,
                 )
                 .await;
@@ -263,6 +261,9 @@ impl AppCore {
             pairing_client: client,
             pairing_invite: invite,
             pairing_url: url,
+            authorized_owner_pubkey: None,
+            authorized_app_keys_event: None,
+            pending_response: None,
         });
         Ok(())
     }
@@ -369,9 +370,7 @@ impl AppCore {
             return;
         }
 
-        if let Some(request) =
-            crate::qr::parse_compact_nostr_identity_device_approval_request(device_input.trim())
-        {
+        if let Some(request) = parse_compact_device_link_request(device_input.trim()).ok() {
             self.state.busy.updating_roster = true;
             self.emit_state();
 
@@ -393,8 +392,11 @@ impl AppCore {
             return;
         };
 
-        if let Err(error) = self.publish_nostr_identity_add_app_key_op(device_pubkey) {
-            self.state.toast = Some(error.to_string());
+        let owner_pubkey = logged_in.owner_pubkey;
+        let changed =
+            self.upsert_local_app_key_device_with_labels(owner_pubkey, device_pubkey, None, true);
+        if changed {
+            self.publish_local_app_keys();
         }
         self.rebuild_state();
         self.persist_best_effort();
@@ -403,10 +405,23 @@ impl AppCore {
 
     fn accept_compact_link_device_approval_request(
         &mut self,
-        request: nostr_identity::NostrIdentityDeviceApprovalRequest,
+        request: DeviceLinkRequest,
     ) -> anyhow::Result<()> {
-        let invite = deterministic_link_invite_for_approval_request(&request)?;
-        self.publish_nostr_identity_device_approval_request(request)?;
+        let invite = deterministic_link_invite_for_device_link_request(&request)?;
+        let logged_in = self
+            .logged_in
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?;
+        let owner_pubkey = logged_in.owner_pubkey;
+        let changed = self.upsert_local_app_key_device_with_labels(
+            owner_pubkey,
+            request.device_app_key_pubkey,
+            None,
+            true,
+        );
+        if changed {
+            self.publish_local_app_keys();
+        }
         self.accept_link_device_invite_session(invite)
     }
 
@@ -438,7 +453,7 @@ impl AppCore {
                 session.state,
                 unix_now(),
             )?;
-        let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)?;
+        let response_event = nostr_double_ratchet::invite_response_event(&response)?;
         self.publish_runtime_event(response_event, "appcore-protocol", None);
         self.publish_local_protocol_invite();
         self.mark_mobile_push_dirty();
@@ -595,49 +610,7 @@ impl AppCore {
             self.next_message_id = persisted.next_message_id.max(1);
             self.owner_profiles = persisted.owner_profiles.clone();
             self.chat_message_ttl_seconds = persisted.chat_message_ttl_seconds.clone();
-            self.preferences.send_typing_indicators = persisted.preferences.send_typing_indicators;
-            self.preferences.send_read_receipts = persisted.preferences.send_read_receipts;
-            self.preferences.desktop_notifications_enabled =
-                persisted.preferences.desktop_notifications_enabled;
-            self.preferences.invite_acceptance_notifications_enabled = persisted
-                .preferences
-                .invite_acceptance_notifications_enabled;
-            self.preferences.startup_at_login_enabled =
-                persisted.preferences.startup_at_login_enabled;
-            self.preferences.nearby_enabled = persisted.preferences.nearby_enabled;
-            self.preferences.nearby_bluetooth_enabled =
-                persisted.preferences.nearby_bluetooth_enabled;
-            self.preferences.nearby_lan_enabled = persisted.preferences.nearby_lan_enabled;
-            self.preferences.nearby_show_in_chat_list =
-                persisted.preferences.nearby_show_in_chat_list;
-            self.preferences.nearby_mailbag_enabled = persisted.preferences.nearby_mailbag_enabled;
-            self.preferences.nostr_relay_urls =
-                normalize_nostr_relay_urls(&persisted.preferences.nostr_relay_urls);
-            self.preferences.image_proxy_enabled = persisted.preferences.image_proxy_enabled;
-            self.preferences.image_proxy_url = persisted.preferences.image_proxy_url.clone();
-            self.preferences.image_proxy_key_hex =
-                persisted.preferences.image_proxy_key_hex.clone();
-            self.preferences.image_proxy_salt_hex =
-                persisted.preferences.image_proxy_salt_hex.clone();
-            self.preferences.mobile_push_server_url =
-                persisted.preferences.mobile_push_server_url.clone();
-            self.preferences.debug_logging_enabled = persisted.preferences.debug_logging_enabled;
-            self.preferences.accept_unknown_direct_messages =
-                persisted.preferences.accept_unknown_direct_messages;
-            self.preferences.muted_chat_ids = persisted.preferences.muted_chat_ids.clone();
-            self.preferences.muted_chat_ids.sort();
-            self.preferences.muted_chat_ids.dedup();
-            self.preferences.pinned_chat_ids = persisted.preferences.pinned_chat_ids.clone();
-            self.preferences.pinned_chat_ids.sort();
-            self.preferences.pinned_chat_ids.dedup();
-            self.preferences.blocked_owner_pubkeys =
-                persisted.preferences.blocked_owner_pubkeys.clone();
-            self.preferences.blocked_owner_pubkeys.sort();
-            self.preferences.blocked_owner_pubkeys.dedup();
-            self.preferences.accepted_owner_pubkeys =
-                persisted.preferences.accepted_owner_pubkeys.clone();
-            self.preferences.accepted_owner_pubkeys.sort();
-            self.preferences.accepted_owner_pubkeys.dedup();
+            apply_persisted_preferences(&mut self.preferences, &persisted.preferences);
             self.seen_event_order = persisted
                 .seen_event_ids
                 .iter()
@@ -868,7 +841,7 @@ impl AppCore {
         self.upsert_local_app_key_device_with_labels(owner, device, None, true)
     }
 
-    fn upsert_local_app_key_device_with_labels(
+    pub(super) fn upsert_local_app_key_device_with_labels(
         &mut self,
         owner: PublicKey,
         device: PublicKey,
@@ -1099,36 +1072,4 @@ impl AppCore {
             _ => LocalAuthorizationState::AwaitingApproval,
         }
     }
-}
-
-fn compact_device_approval_url(device_pubkey: PublicKey, request_secret: &str) -> String {
-    format!("{}.{}", device_pubkey.to_hex(), request_secret)
-}
-
-fn deterministic_link_invite_for_approval_request(
-    request: &nostr_identity::NostrIdentityDeviceApprovalRequest,
-) -> anyhow::Result<Invite> {
-    let device_pubkey = PublicKey::parse(&request.device_app_key_pubkey)
-        .map_err(|error| anyhow::anyhow!("Invalid device key: {error}"))?;
-    deterministic_link_invite_for_device(device_pubkey, &request.request_secret)
-}
-
-pub(super) fn deterministic_link_invite_for_device(
-    device_pubkey: PublicKey,
-    request_secret: &str,
-) -> anyhow::Result<Invite> {
-    let request_keys = Keys::parse(request_secret)
-        .map_err(|error| anyhow::anyhow!("Invalid link secret: {error}"))?;
-    let seed = request_keys.secret_key().to_secret_bytes();
-    let mut rng = StdRng::from_seed(seed);
-    let mut ctx = ProtocolContext::new(NdrUnixSeconds(0), &mut rng);
-    let mut invite = Invite::create_new_with_context(
-        &mut ctx,
-        NdrDevicePubkey::from_bytes(device_pubkey.to_bytes()),
-        None,
-        Some(1),
-    )?;
-    invite.purpose = Some("link".to_string());
-    invite.device_id = Some(device_pubkey.to_hex());
-    Ok(invite)
 }

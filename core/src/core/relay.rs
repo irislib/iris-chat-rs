@@ -20,8 +20,6 @@ impl AppCore {
         let event_id = event.id.to_string();
         let kind = event.kind.as_u16() as u32;
         let is_app_keys_protocol_event = kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event);
-        let is_nostr_identity_roster_protocol_event =
-            kind == NOSTR_IDENTITY_ROSTER_OP_KIND && is_nostr_identity_roster_op_event(&event);
         let is_group_roster_protocol_event =
             kind == GROUP_ROSTER_FACT_KIND && is_group_roster_fact_event(&event);
         let is_invite_protocol_event = is_protocol_invite_event(&event);
@@ -61,7 +59,6 @@ impl AppCore {
 
         self.push_debug_log("relay.event", format!("kind_raw={} id={event_id}", kind));
         let protocol_inputs_changed = is_app_keys_protocol_event
-            || is_nostr_identity_roster_protocol_event
             || is_group_roster_protocol_event
             || is_invite_protocol_event
             || is_invite_response_protocol_event;
@@ -91,27 +88,6 @@ impl AppCore {
                     }
                     Err(error) => {
                         self.push_debug_log("appcore.protocol.app_keys.error", error.to_string());
-                        self.rebuild_state();
-                        self.emit_state();
-                    }
-                }
-                return;
-            }
-            NOSTR_IDENTITY_ROSTER_OP_KIND if is_nostr_identity_roster_protocol_event => {
-                self.debug_event_counters.app_keys_events += 1;
-                match self.apply_nostr_identity_roster_op_event(&event) {
-                    Ok(_) => {
-                        self.remember_event(event_id);
-                        self.request_protocol_subscription_refresh();
-                        self.persist_best_effort();
-                        self.rebuild_state();
-                        self.emit_state();
-                    }
-                    Err(error) => {
-                        self.push_debug_log(
-                            "appcore.protocol.device_roster.error",
-                            error.to_string(),
-                        );
                         self.rebuild_state();
                         self.emit_state();
                     }
@@ -280,18 +256,37 @@ impl AppCore {
                 if unknown_message_author {
                     let targets_local_recipient =
                         message_has_header && self.message_targets_local_protocol_recipient(&event);
-                    if !message_has_header
-                        || (self.private_chat_invites.is_empty() && !targets_local_recipient)
-                    {
+                    let is_potential_group_sender_key_event = message_has_header
+                        && self.protocol_engine.as_ref().is_some_and(|engine| {
+                            engine.is_potential_group_sender_key_event(&event)
+                        });
+                    let is_group_sender_key_candidate_with_group_context = message_has_header
+                        && self.protocol_engine.as_ref().is_some_and(|engine| {
+                            engine.is_group_sender_key_candidate_with_local_group_context(&event)
+                        });
+                    let has_tracked_sender_session = message_has_header
+                        && self.protocol_engine.as_ref().is_some_and(|engine| {
+                            engine.header_message_sender_has_tracked_session(&event)
+                        });
+                    let should_keep_unknown_header = is_potential_group_sender_key_event
+                        || is_group_sender_key_candidate_with_group_context
+                        || has_tracked_sender_session
+                        || !self.private_chat_invites.is_empty()
+                        || targets_local_recipient;
+                    if !message_has_header || !should_keep_unknown_header {
                         self.push_debug_log(
                             "appcore.protocol.message.ignored",
-                            "unknown message author",
+                            format!(
+                                "unknown message author header={message_has_header} targets_local_recipient={targets_local_recipient} group_candidate={is_potential_group_sender_key_event} group_context_candidate={is_group_sender_key_candidate_with_group_context} tracked_sender_session={has_tracked_sender_session}"
+                            ),
                         );
                         return;
                     }
                     self.push_debug_log(
                         "appcore.protocol.message.pending_header",
-                        "unknown message author",
+                        format!(
+                            "unknown message author targets_local_recipient={targets_local_recipient} group_candidate={is_potential_group_sender_key_event} group_context_candidate={is_group_sender_key_candidate_with_group_context} tracked_sender_session={has_tracked_sender_session}"
+                        ),
                     );
                 }
                 self.debug_event_counters.message_events += 1;
@@ -409,19 +404,83 @@ impl AppCore {
     }
 
     fn handle_pending_link_device_response(&mut self, event: Event) -> bool {
-        if event.kind.as_u16() as u32 != INVITE_RESPONSE_KIND {
+        let kind = event.kind.as_u16() as u32;
+        if kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event) {
+            let event_id = event.id.to_string();
+            let Some((owner_pubkey, pending_response, device_keys)) = ({
+                let Some(pending) = self.pending_linked_device.as_mut() else {
+                    return false;
+                };
+                let owner = match resolve_app_keys_owner_for_device(
+                    &event,
+                    pending.device_keys.public_key(),
+                ) {
+                    Ok(Some(owner)) => owner,
+                    _ => return false,
+                };
+                pending.authorized_owner_pubkey = Some(owner);
+                pending.authorized_app_keys_event = Some(event.clone());
+                Some((
+                    owner,
+                    pending.pending_response.take(),
+                    pending.device_keys.clone(),
+                ))
+            }) else {
+                return false;
+            };
+
+            if let Ok(app_keys) = AppKeys::from_event(&event) {
+                self.app_keys.insert(
+                    owner_pubkey.to_hex(),
+                    known_app_keys_from_ndr(owner_pubkey, &app_keys, event.created_at.as_secs()),
+                );
+            }
+
+            self.push_debug_log(
+                "session.link_authorized",
+                format!("event_id={event_id} owner={}", owner_pubkey.to_hex()),
+            );
+
+            if let Some(response) = pending_response {
+                match self.complete_pending_linked_device(
+                    owner_pubkey,
+                    response.peer_device_id,
+                    response.session_state,
+                    device_keys,
+                ) {
+                    Ok(()) => {
+                        let _ = self.apply_app_keys_event(&event);
+                    }
+                    Err(error) => {
+                        self.state.toast = Some(error.to_string());
+                        self.rebuild_state();
+                        self.emit_state();
+                    }
+                }
+            }
+            return true;
+        }
+
+        if kind != INVITE_RESPONSE_KIND {
             return false;
         }
-        let Some(pending) = self.pending_linked_device.as_ref() else {
+        let Some((pairing_invite, device_secret)) =
+            self.pending_linked_device.as_ref().map(|pending| {
+                (
+                    pending.pairing_invite.clone(),
+                    pending.device_keys.secret_key().to_secret_bytes(),
+                )
+            })
+        else {
             return false;
         };
 
         self.debug_event_counters.invite_response_events += 1;
         let event_id = event.id.to_string();
-        let response = match nostr_double_ratchet_nostr::process_invite_response_event(
-            &pending.pairing_invite,
+        let response = match nostr_double_ratchet::process_invite_response_event(
+            &pairing_invite,
             &event,
-            pending.device_keys.secret_key().to_secret_bytes(),
+            device_secret,
         ) {
             Ok(Some(response)) => response,
             Ok(None) => return false,
@@ -434,15 +493,44 @@ impl AppCore {
             }
         };
 
-        let owner_pubkey = response
-            .owner_public_key
-            .unwrap_or(response.invitee_identity);
-        let peer_device_id = response
-            .device_id
-            .clone()
-            .unwrap_or_else(|| response.invitee_identity.to_hex());
-        let session_state = response.session.state;
-        let device_keys = pending.device_keys.clone();
+        let mut pending_response = Some(PendingLinkInviteResponse {
+            peer_device_id: response
+                .device_id
+                .clone()
+                .unwrap_or_else(|| response.invitee_identity.to_hex()),
+            session_state: response.session.state,
+        });
+        let owner_and_device = {
+            let Some(pending) = self.pending_linked_device.as_mut() else {
+                return false;
+            };
+            pending
+                .authorized_owner_pubkey
+                .map(|owner_pubkey| {
+                    (
+                        owner_pubkey,
+                        pending.device_keys.clone(),
+                        pending.authorized_app_keys_event.clone(),
+                    )
+                })
+                .or_else(|| {
+                    pending.pending_response = pending_response.take();
+                    None
+                })
+        };
+        let Some((owner_pubkey, device_keys, app_keys_event)) = owner_and_device else {
+            self.push_debug_log(
+                "session.link_response",
+                format!("event_id={event_id} waiting_for_app_keys_authorization"),
+            );
+            return true;
+        };
+        let Some(response) = pending_response else {
+            return false;
+        };
+        let peer_device_id = response.peer_device_id;
+        let session_state = response.session_state;
+
         self.push_debug_log(
             "session.link_response",
             format!(
@@ -451,15 +539,22 @@ impl AppCore {
             ),
         );
 
-        if let Err(error) = self.complete_pending_linked_device(
+        match self.complete_pending_linked_device(
             owner_pubkey,
             peer_device_id,
             session_state,
             device_keys,
         ) {
-            self.state.toast = Some(error.to_string());
-            self.rebuild_state();
-            self.emit_state();
+            Ok(()) => {
+                if let Some(app_keys_event) = app_keys_event {
+                    let _ = self.apply_app_keys_event(&app_keys_event);
+                }
+            }
+            Err(error) => {
+                self.state.toast = Some(error.to_string());
+                self.rebuild_state();
+                self.emit_state();
+            }
         }
         true
     }
@@ -487,7 +582,7 @@ impl AppCore {
         self.pending_decrypted_delivery_acks.clear();
     }
 
-    /// Process an app-keys event (kind 30078) — adds/removes devices
+    /// Process an app-keys event (kind 37368) — adds/removes devices
     /// for an owner. The mobile-push snapshot indexes by tracked owner
     /// + device, so any change there invalidates the cache.
     pub(super) fn apply_app_keys_event(&mut self, event: &Event) -> anyhow::Result<bool> {
@@ -595,46 +690,6 @@ impl AppCore {
         if should_publish_backfilled_owner_app_keys {
             self.publish_local_app_keys();
         }
-        Ok(true)
-    }
-
-    pub(super) fn apply_nostr_identity_roster_op_event(
-        &mut self,
-        event: &Event,
-    ) -> anyhow::Result<bool> {
-        let Some(result) = self
-            .protocol_engine
-            .as_mut()
-            .map(|engine| engine.ingest_nostr_identity_roster_op_event(event))
-            .transpose()?
-            .flatten()
-        else {
-            return Ok(false);
-        };
-
-        let owner_hex = result.owner_pubkey.to_hex();
-        let current = self.app_keys.get(&owner_hex).cloned();
-        let mut known =
-            known_app_keys_from_ndr(result.owner_pubkey, &result.app_keys, result.created_at);
-        preserve_known_app_key_labels(&mut known, current.as_ref());
-        if let Some(device_pubkey) = self
-            .logged_in
-            .as_ref()
-            .filter(|logged_in| logged_in.owner_pubkey == result.owner_pubkey)
-            .map(|logged_in| logged_in.device_keys.public_key())
-        {
-            self.apply_current_device_labels_to_known_app_keys(&mut known, device_pubkey);
-        }
-        if current.as_ref() != Some(&known) {
-            self.app_keys.insert(owner_hex, known);
-        }
-        self.migrate_verified_device_owner_threads(result.owner_pubkey, &result.app_keys);
-        self.mark_mobile_push_dirty();
-        let _authorization_changed = self.refresh_local_authorization_state();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
-        self.process_protocol_engine_retry_batch("device_roster", result.retry_batch);
         Ok(true)
     }
 }

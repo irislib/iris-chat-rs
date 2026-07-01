@@ -29,7 +29,7 @@ struct ProtocolEnginePersistedState {
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     #[serde(default)]
     pending_group_sender_key_messages:
-        Vec<nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent>,
+        Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
     #[serde(default)]
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     #[serde(default)]
@@ -38,8 +38,6 @@ struct ProtocolEnginePersistedState {
     answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     #[serde(default)]
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
-    #[serde(default)]
-    nostr_identity_roster_histories: BTreeMap<String, NostrIdentityRosterHistory>,
     #[serde(default)]
     group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
     #[serde(default)]
@@ -195,12 +193,6 @@ struct ProtocolPendingDecryptedDelivery {
     content: String,
     event_id: Option<String>,
     created_at_secs: u64,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-struct NostrIdentityRosterHistory {
-    owner_pubkey: Option<PublicKey>,
-    events: Vec<Event>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -413,18 +405,17 @@ pub struct ProtocolEngine {
     local_device: NdrDevicePubkey,
     storage: Arc<dyn StorageAdapter>,
     session_manager: SessionManager,
-    group_manager: NostrGroupManager,
+    group_manager: GroupEventManager,
     pending_outbound: Vec<ProtocolPendingOutbound>,
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     pending_group_sender_key_messages:
-        Vec<nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent>,
+        Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     delivered_group_sender_key_acks: Vec<ProtocolDeliveredGroupSenderKeyAck>,
     answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
-    nostr_identity_roster_histories: BTreeMap<String, NostrIdentityRosterHistory>,
     group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
     known_message_author_cache: std::cell::RefCell<Option<KnownMessageAuthorCache>>,
     known_message_author_cache_build_count: std::cell::Cell<u64>,
@@ -445,18 +436,17 @@ pub struct ProtocolEngine {
 #[derive(Clone)]
 struct ProtocolEngineCheckpoint {
     session_manager: SessionManager,
-    group_manager: NostrGroupManager,
+    group_manager: GroupEventManager,
     pending_outbound: Vec<ProtocolPendingOutbound>,
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     pending_group_sender_key_messages:
-        Vec<nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent>,
+        Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     delivered_group_sender_key_acks: Vec<ProtocolDeliveredGroupSenderKeyAck>,
     answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
-    nostr_identity_roster_histories: BTreeMap<String, NostrIdentityRosterHistory>,
     group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
     subscription_generation: u64,
     last_backfill_attempt_secs: u64,

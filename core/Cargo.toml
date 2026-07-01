@@ -1,6 +1,6 @@
 [package]
 name = "iris-chat"
-version = "0.1.32"
+version = "0.1.33"
 edition = "2021"
 description = "Iris Chat command line client and shared encrypted chat core"
 license = "MIT"
@@ -41,14 +41,12 @@ hashtree-core = "0.2.55"
 hashtree-resolver = { version = "0.2.56", features = ["nostr"] }
 hashtree-updater = "0.2.56"
 hmac = "0.12"
-iris-chat-protocol = { version = "0.1.4", path = "../chat-protocol" }
+iris-chat-protocol = { version = "0.1.5", path = "../chat-protocol" }
 nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
 nostr35 = { package = "nostr", version = "0.35.0", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
-nostr-identity = "0.1.2"
-nostr-double-ratchet = "0.0.152"
-nostr-double-ratchet-nostr = "0.0.152"
-nostr-double-ratchet-pairwise-codec = "0.0.152"
+nostr-double-ratchet = "0.0.160"
+nostr-double-ratchet-pairwise-codec = "0.0.160"
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 rusqlite = { version = "0.31", features = ["bundled"] }

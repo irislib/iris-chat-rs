@@ -33,7 +33,7 @@ pub(in crate::core) fn build_protocol_subscription_filters(
     if !roster_authors.is_empty() {
         filters.push(
             Filter::new()
-                .kind(Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16))
+                .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
                 .authors(roster_authors),
         );
     }
@@ -42,7 +42,7 @@ pub(in crate::core) fn build_protocol_subscription_filters(
             Filter::new()
                 .kind(Kind::from(INVITE_EVENT_KIND as u16))
                 .authors(invite_authors.clone())
-                .custom_tag(SingleLetterTag::lowercase(Alphabet::L), NDR_INVITES_L_TAG),
+                .custom_tag(SingleLetterTag::lowercase(Alphabet::L), INVITE_LIST_LABEL),
         );
         filters.push(
             Filter::new()

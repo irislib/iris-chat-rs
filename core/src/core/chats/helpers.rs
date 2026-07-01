@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn is_supported_group_pairwise_payload(payload: &[u8]) -> bool {
-    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
     let Ok(Some(command)) =
         nostr_double_ratchet::GroupPayloadCodec::decode_pairwise_command(&codec, payload)
     else {

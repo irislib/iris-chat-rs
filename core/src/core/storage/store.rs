@@ -14,6 +14,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
+#[path = "store_preferences.rs"]
+mod store_preferences;
+
 const META_ACTIVE_CHAT_ID: &str = "active_chat_id";
 const META_NEXT_MESSAGE_ID: &str = "next_message_id";
 const META_AUTHORIZATION_STATE: &str = "authorization_state";

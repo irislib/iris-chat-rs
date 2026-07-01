@@ -644,32 +644,12 @@ impl AppCore {
         } else {
             vec![Filter::new().kind(Kind::Metadata).authors(owners.clone())]
         };
-        if !owners.is_empty() {
-            filters.push(
-                Filter::new()
-                    .kind(Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16))
-                    .authors(owners.clone())
-                    .since(Timestamp::from(
-                        now.get()
-                            .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
-                    ))
-                    .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
-            );
-        }
         let invite_authors = pubkeys_from_hexes(&plan.invite_authors);
-        if !invite_authors.is_empty() {
-            filters.push(
-                Filter::new()
-                    .kind(Kind::from(INVITE_EVENT_KIND as u16))
-                    .authors(invite_authors.clone())
-                    .custom_tag(SingleLetterTag::lowercase(Alphabet::L), NDR_INVITES_L_TAG)
-                    .since(Timestamp::from(
-                        now.get()
-                            .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
-                    ))
-                    .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
-            );
-        }
+        filters.extend(build_protocol_discovery_filters(
+            owners.clone(),
+            invite_authors.clone(),
+            DEVICE_INVITE_DISCOVERY_LIMIT,
+        ));
         if include_message_history {
             let message_authors = pubkeys_from_hexes(&plan.message_authors);
             if !message_authors.is_empty() {
@@ -691,15 +671,11 @@ impl AppCore {
         }
 
         if !plan.group_roster_group_ids.is_empty() {
-            let mut filter = build_group_roster_fact_filter(
+            let filter = build_group_roster_fact_filter(
                 plan.group_roster_group_ids.iter(),
                 pubkeys_from_hexes(&plan.group_roster_authors),
             );
-            filter = filter.since(Timestamp::from(
-                now.get()
-                    .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
-            ));
-            filters.push(filter.limit(DEVICE_INVITE_DISCOVERY_LIMIT));
+            filters.push(filter);
         }
 
         let private_invite_response_pubkeys = plan

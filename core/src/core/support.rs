@@ -187,6 +187,7 @@ impl AppCore {
                 trusted_test_build: trusted_test_build(),
             },
             relay_urls: self.preferences.nostr_relay_urls.clone(),
+            local_owner_pubkey_hex: runtime.local_owner_pubkey_hex,
             authorization_state: runtime.authorization_state,
             active_chat_id: runtime.active_chat_id,
             current_screen: format!("{current_screen:?}"),

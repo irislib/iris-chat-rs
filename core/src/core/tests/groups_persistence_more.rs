@@ -543,7 +543,7 @@ fn test_protocol_engine_with_storage(
     let mut session_manager =
         SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();
     session_manager.local_invite = Some(local_invite);
-    let group_manager = NostrGroupManager::new(local_owner).snapshot();
+    let group_manager = GroupEventManager::new(local_owner).snapshot();
     seed_protocol_storage_if_missing_for_test(storage.as_ref(), session_manager, group_manager)
         .expect("seed protocol state");
     ProtocolEngine::load_or_create_for_local_device(
@@ -591,7 +591,7 @@ fn observe_peer_device_invite_for_test(
         None,
     )
     .expect("peer invite");
-    let event = nostr_double_ratchet_nostr::invite_unsigned_event(&invite)
+    let event = nostr_double_ratchet::invite_unsigned_event(&invite)
         .expect("invite event")
         .sign_with_keys(device)
         .expect("signed invite");
@@ -662,7 +662,7 @@ fn install_test_protocol_engine(
         seed_session_manager.local_invite = Some(local_invite);
     }
     let seed_group_manager = seed_group_manager.unwrap_or_else(|| {
-        NostrGroupManager::new(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes())).snapshot()
+        GroupEventManager::new(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes())).snapshot()
     });
     seed_protocol_storage_if_missing_for_test(
         storage.as_ref(),

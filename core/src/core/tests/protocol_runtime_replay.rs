@@ -44,7 +44,7 @@ fn seen_invite_event_replays_into_protocol_engine_for_queued_send() {
         None,
     )
     .expect("peer invite");
-    let invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&invite)
+    let invite_event = nostr_double_ratchet::invite_unsigned_event(&invite)
         .expect("invite event")
         .sign_with_keys(&peer_device)
         .expect("signed invite");
@@ -122,7 +122,7 @@ fn appcore_direct_send_keeps_local_sibling_probe_until_local_appkeys_and_invite_
         None,
     )
     .expect("old device invite");
-    let old_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&old_invite)
+    let old_invite_event = nostr_double_ratchet::invite_unsigned_event(&old_invite)
         .expect("invite event")
         .sign_with_keys(&old_device)
         .expect("signed invite");
@@ -185,7 +185,7 @@ fn self_direct_send_retries_to_restored_sibling_after_invite_arrives() {
         None,
     )
     .expect("desktop invite");
-    let desktop_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&desktop_invite)
+    let desktop_invite_event = nostr_double_ratchet::invite_unsigned_event(&desktop_invite)
         .expect("invite event")
         .sign_with_keys(&desktop_device)
         .expect("signed invite");
@@ -290,7 +290,7 @@ fn invite_response_observation_installs_session_author_state() {
             Some(peer_owner.public_key()),
         )
         .expect("peer accepts invite");
-    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+    let response_event = nostr_double_ratchet::invite_response_event(&response)
         .expect("invite response event");
 
     engine
@@ -329,7 +329,7 @@ fn invite_response_replay_after_consumed_invite_is_idempotent() {
             Some(peer_owner.public_key()),
         )
         .expect("peer accepts invite");
-    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+    let response_event = nostr_double_ratchet::invite_response_event(&response)
         .expect("invite response event");
 
     engine
@@ -362,7 +362,7 @@ fn appcore_direct_message_from_unverified_claimed_owner_retries_after_appkeys() 
             Some(peer_owner.public_key()),
         )
         .expect("peer accepts invite");
-    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+    let response_event = nostr_double_ratchet::invite_response_event(&response)
         .expect("invite response event");
     engine
         .observe_invite_response_event(&response_event)
@@ -373,7 +373,7 @@ fn appcore_direct_message_from_unverified_claimed_owner_retries_after_appkeys() 
         .expect("peer plans message");
     let sent = peer_session.apply_send(plan);
     let message_event =
-        nostr_double_ratchet_nostr::message_event(&sent.envelope).expect("message event");
+        nostr_double_ratchet::message_event(&sent.envelope).expect("message event");
 
     let decrypted = engine
         .process_direct_message_event(&message_event)
@@ -443,7 +443,7 @@ fn appcore_pending_group_payload_from_claimed_device_uses_owner_after_appkeys() 
             Some(peer_owner.public_key()),
         )
         .expect("peer accepts invite");
-    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+    let response_event = nostr_double_ratchet::invite_response_event(&response)
         .expect("invite response event");
     engine
         .observe_invite_response_event(&response_event)
@@ -458,7 +458,7 @@ fn appcore_pending_group_payload_from_claimed_device_uses_owner_after_appkeys() 
         vec![peer_owner.public_key()],
         1,
     );
-    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
     let payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
         nostr_double_ratchet::GroupPayloadEncodeContext {

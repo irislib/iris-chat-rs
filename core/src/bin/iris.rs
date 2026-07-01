@@ -21,8 +21,13 @@ use serde_json::{json, Value};
 
 mod iris_message_rows;
 mod iris_updater;
+mod iris_wait_helpers;
 use iris_message_rows::{latest_message_keys, latest_outgoing_message_row, new_message_rows};
 use iris_updater::{run_iris_update, UpdateCommands};
+use iris_wait_helpers::{
+    has_delivery_blocking_protocol_work, has_pending_relay_transport_publishes,
+    has_pending_runtime_publishes,
+};
 use nostr::PublicKey;
 
 const TOP_LEVEL_HELP: &str = "\
@@ -558,19 +563,30 @@ impl CliApp {
         if is_busy(state) {
             return false;
         }
-        if state.preferences.nostr_relay_urls.is_empty() {
-            return true;
-        }
-        if require_protocol_idle && has_pending_runtime_publishes(state) {
-            return false;
-        }
-        if state.busy.syncing_network {
+        if require_protocol_idle && state.busy.syncing_network {
             return false;
         }
         let Ok(bundle) = serde_json::from_str::<Value>(&self.app.export_support_bundle_json())
         else {
             return false;
         };
+        let bundle_relay_count = bundle
+            .get("relay_urls")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or_else(|| state.preferences.nostr_relay_urls.len());
+        if state.preferences.nostr_relay_urls.is_empty() && bundle_relay_count == 0 {
+            return true;
+        }
+        if require_protocol_idle && has_pending_runtime_publishes(state) {
+            return false;
+        }
+        if require_protocol_idle && has_pending_relay_transport_publishes(&bundle) {
+            return false;
+        }
+        if state.preferences.nostr_relay_urls.is_empty() {
+            return true;
+        }
         let relay_connected = bundle
             .pointer("/relay_transport/connected_relay_count")
             .and_then(Value::as_u64)
@@ -625,15 +641,10 @@ impl CliApp {
         }
         if require_protocol_idle {
             // CLI commands should wait for work they caused to drain, but
-            // inbound repair queues can legitimately outlive the command while
-            // waiting on future metadata/backfill.
-            let pending_protocol = [
-                "/protocol_engine/pending_outbound_count",
-                "/protocol_engine/pending_group_fanout_count",
-            ]
-            .into_iter()
-            .any(|path| bundle.pointer(path).and_then(Value::as_u64).unwrap_or(0) > 0);
-            if pending_protocol {
+            // inbound repair queues and local-sibling roster probes can
+            // legitimately outlive the command while waiting on future
+            // metadata/backfill.
+            if has_delivery_blocking_protocol_work(&bundle) {
                 return false;
             }
         }
@@ -709,7 +720,7 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
         Commands::Groups(GroupTopCommands::Group(command)) => handle_group_command(cli, command),
         Commands::InvitesAndDevices(command) => handle_invite_device_command(cli, command),
         Commands::MessageServers(MessageServerTopCommands::Relay(command)) => {
-            handle_relay_command(cli, command)
+            handle_relay_command(cli, data_dir, command)
         }
         Commands::Privacy(command) => handle_privacy_command(cli, command),
         Commands::Maintenance(command) => handle_maintenance_command(cli, command),
@@ -1009,7 +1020,7 @@ fn handle_group_command(cli: &CliApp, command: GroupCommands) -> Result<Value> {
     }
 }
 
-fn handle_relay_command(cli: &CliApp, command: RelayCommands) -> Result<Value> {
+fn handle_relay_command(cli: &CliApp, data_dir: &Path, command: RelayCommands) -> Result<Value> {
     match command {
         RelayCommands::List => {
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
@@ -1019,7 +1030,7 @@ fn handle_relay_command(cli: &CliApp, command: RelayCommands) -> Result<Value> {
                 AppAction::AddNostrRelay { relay_url: url },
                 Duration::from_secs(2),
             )?;
-            wait_after_relay_change(cli)?;
+            wait_after_relay_change(cli, data_dir)?;
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
         }
         RelayCommands::Remove { url } => {
@@ -1027,12 +1038,12 @@ fn handle_relay_command(cli: &CliApp, command: RelayCommands) -> Result<Value> {
                 AppAction::RemoveNostrRelay { relay_url: url },
                 Duration::from_secs(2),
             )?;
-            wait_after_relay_change(cli)?;
+            wait_after_relay_change(cli, data_dir)?;
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
         }
         RelayCommands::Reset => {
             cli.dispatch_and_wait(AppAction::ResetNostrRelays, Duration::from_secs(2))?;
-            wait_after_relay_change(cli)?;
+            wait_after_relay_change(cli, data_dir)?;
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
         }
         RelayCommands::Set { urls } => {
@@ -1040,16 +1051,19 @@ fn handle_relay_command(cli: &CliApp, command: RelayCommands) -> Result<Value> {
                 AppAction::SetNostrRelays { relay_urls: urls },
                 Duration::from_secs(3),
             )?;
-            wait_after_relay_change(cli)?;
+            wait_after_relay_change(cli, data_dir)?;
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
         }
     }
 }
 
-fn wait_after_relay_change(cli: &CliApp) -> Result<()> {
-    let state = cli.app.state();
+fn wait_after_relay_change(cli: &CliApp, data_dir: &Path) -> Result<()> {
+    let mut state = cli.app.state();
+    if state.account.is_none() && read_account_bundle(data_dir)?.is_some() {
+        state = cli.wait_for_restored_account(Duration::from_secs(5))?;
+    }
     if state.account.is_some() && !state.preferences.nostr_relay_urls.is_empty() {
-        let _ = cli.wait_for_network_runtime_ready(Duration::from_secs(4), true);
+        let _ = cli.wait_for_network_runtime_ready(Duration::from_secs(12), true);
     }
     Ok(())
 }
@@ -1192,7 +1206,7 @@ fn send_message(
 
 fn wait_after_send_network_idle(cli: &CliApp) -> Result<()> {
     if !cli.app.state().preferences.nostr_relay_urls.is_empty() {
-        let _ = cli.wait_for_network_runtime_ready(Duration::from_secs(8), true)?;
+        let _ = cli.wait_for_network_runtime_ready(Duration::from_secs(8), false)?;
     }
     Ok(())
 }
@@ -1850,13 +1864,6 @@ fn is_busy(state: &AppState) -> bool {
 
 fn is_busy_or_syncing(state: &AppState) -> bool {
     is_busy(state) || state.busy.syncing_network || has_pending_runtime_publishes(state)
-}
-
-fn has_pending_runtime_publishes(state: &AppState) -> bool {
-    state
-        .network_status
-        .as_ref()
-        .is_some_and(|status| status.pending_outbound_count > 0)
 }
 
 fn chat_kind(kind: &ChatKind) -> &'static str {

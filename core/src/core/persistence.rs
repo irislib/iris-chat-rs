@@ -28,6 +28,10 @@ impl AppCore {
 
     pub(super) fn persist_best_effort_inner(&mut self) {
         if self.logged_in.is_none() {
+            if let Err(error) = self.app_store.save_preferences(&self.preferences) {
+                self.push_debug_log("storage.save_preferences_failed", error.to_string());
+            }
+            self.persist_debug_snapshot_best_effort();
             return;
         }
 
@@ -152,4 +156,41 @@ impl AppCore {
             self.persist_debug_snapshot_best_effort();
         }
     }
+}
+
+pub(super) fn apply_persisted_preferences(
+    preferences: &mut PreferencesSnapshot,
+    persisted: &PersistedPreferences,
+) {
+    preferences.send_typing_indicators = persisted.send_typing_indicators;
+    preferences.send_read_receipts = persisted.send_read_receipts;
+    preferences.desktop_notifications_enabled = persisted.desktop_notifications_enabled;
+    preferences.invite_acceptance_notifications_enabled =
+        persisted.invite_acceptance_notifications_enabled;
+    preferences.startup_at_login_enabled = persisted.startup_at_login_enabled;
+    preferences.nearby_enabled = persisted.nearby_enabled;
+    preferences.nearby_bluetooth_enabled = persisted.nearby_bluetooth_enabled;
+    preferences.nearby_lan_enabled = persisted.nearby_lan_enabled;
+    preferences.nearby_show_in_chat_list = persisted.nearby_show_in_chat_list;
+    preferences.nearby_mailbag_enabled = persisted.nearby_mailbag_enabled;
+    preferences.nostr_relay_urls = normalize_nostr_relay_urls(&persisted.nostr_relay_urls);
+    preferences.image_proxy_enabled = persisted.image_proxy_enabled;
+    preferences.image_proxy_url = persisted.image_proxy_url.clone();
+    preferences.image_proxy_key_hex = persisted.image_proxy_key_hex.clone();
+    preferences.image_proxy_salt_hex = persisted.image_proxy_salt_hex.clone();
+    preferences.mobile_push_server_url = persisted.mobile_push_server_url.clone();
+    preferences.debug_logging_enabled = persisted.debug_logging_enabled;
+    preferences.accept_unknown_direct_messages = persisted.accept_unknown_direct_messages;
+    preferences.muted_chat_ids = persisted.muted_chat_ids.clone();
+    preferences.muted_chat_ids.sort();
+    preferences.muted_chat_ids.dedup();
+    preferences.pinned_chat_ids = persisted.pinned_chat_ids.clone();
+    preferences.pinned_chat_ids.sort();
+    preferences.pinned_chat_ids.dedup();
+    preferences.blocked_owner_pubkeys = persisted.blocked_owner_pubkeys.clone();
+    preferences.blocked_owner_pubkeys.sort();
+    preferences.blocked_owner_pubkeys.dedup();
+    preferences.accepted_owner_pubkeys = persisted.accepted_owner_pubkeys.clone();
+    preferences.accepted_owner_pubkeys.sort();
+    preferences.accepted_owner_pubkeys.dedup();
 }

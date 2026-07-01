@@ -7,11 +7,11 @@ use std::{io::BufRead, io::BufReader};
 use iris_chat_core::local_relay::TestRelay;
 use iris_chat_core::{AppAction, AppState, DeviceAuthorizationState, FfiApp};
 use nostr::{Event, Keys};
-use nostr_double_ratchet::{Invite, ProtocolContext, Session, UnixSeconds};
-use nostr_double_ratchet_nostr::{
-    invite_url, parse_message_event, process_invite_response_event, INVITE_RESPONSE_KIND,
-    MESSAGE_EVENT_KIND, NOSTR_IDENTITY_ROSTER_OP_KIND,
+use nostr_double_ratchet::{
+    invite_url, parse_message_event, process_invite_response_event, APP_KEYS_EVENT_KIND,
+    INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
 };
+use nostr_double_ratchet::{Invite, ProtocolContext, Session, UnixSeconds};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -127,10 +127,21 @@ fn debug_snapshot(data_dir: &Path) -> String {
         .unwrap_or_else(|error| format!("debug snapshot unavailable: {error}"))
 }
 
+fn relay_events(relay: &TestRelay) -> Vec<Value> {
+    relay
+        .events()
+        .into_iter()
+        .filter_map(|event| {
+            serde_json::to_string(&event)
+                .ok()
+                .and_then(|json| serde_json::from_str(&json).ok())
+        })
+        .collect()
+}
+
 fn relay_event_summary(relay: &TestRelay) -> Value {
     Value::Array(
-        relay
-            .events()
+        relay_events(relay)
             .into_iter()
             .filter(|event| {
                 matches!(
@@ -265,7 +276,7 @@ fn wait_for_relay_event(relay: &TestRelay, kind: u64) -> Event {
     let started = Instant::now();
     let mut last_events = Vec::new();
     while started.elapsed() < Duration::from_secs(10) {
-        last_events = relay.events();
+        last_events = relay_events(relay);
         for event in &last_events {
             if event.get("kind").and_then(Value::as_u64) == Some(kind) {
                 return serde_json::from_value(event.clone()).expect("relay event json");
@@ -284,8 +295,7 @@ fn wait_for_relay_events(relay: &TestRelay, kind: u64, count: usize) -> Vec<Even
     let started = Instant::now();
     let mut matched = Vec::new();
     while started.elapsed() < Duration::from_secs(10) {
-        matched = relay
-            .events()
+        matched = relay_events(relay)
             .into_iter()
             .filter(|event| event.get("kind").and_then(Value::as_u64) == Some(kind))
             .filter_map(|event| serde_json::from_value(event).ok())
@@ -362,7 +372,7 @@ fn sync_until_message(
 fn wait_for_decrypted_message(relay: &TestRelay, session: &mut Session, expected: &str) -> Value {
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(10) {
-        for event in relay.events() {
+        for event in relay_events(relay) {
             if event.get("kind").and_then(Value::as_u64) != Some(MESSAGE_EVENT_KIND as u64) {
                 continue;
             }
@@ -473,16 +483,26 @@ fn device_linking_e2e_installs_local_sibling_session() {
 }
 
 #[test]
-fn cli_account_create_publishes_nostr_identity_roster_ops() {
+fn cli_account_create_publishes_app_keys_snapshot() {
     let relay = TestRelay::start();
     let data_dir = TempDir::new().unwrap();
 
     run_iris(data_dir.path(), &["relay", "set", relay.url()]);
-    run_iris(data_dir.path(), &["account", "create", "--name", "Alice"]);
+    let account = run_iris(data_dir.path(), &["account", "create", "--name", "Alice"]);
+    let owner_id = account
+        .pointer("/data/user_id")
+        .and_then(Value::as_str)
+        .expect("account create user_id");
     run_iris(data_dir.path(), &["relay", "set", relay.url()]);
 
-    let roster_ops = wait_for_relay_events(&relay, NOSTR_IDENTITY_ROSTER_OP_KIND as u64, 2);
-    assert_eq!(roster_ops.len(), 2);
+    let app_keys_events = wait_for_relay_events(&relay, APP_KEYS_EVENT_KIND as u64, 1);
+    assert!(
+        app_keys_events
+            .iter()
+            .any(|event| event.pubkey.to_hex() == owner_id),
+        "missing owner-signed app-keys snapshot for {owner_id}; saw {}",
+        relay_event_summary(&relay)
+    );
 }
 
 #[test]
@@ -572,8 +592,7 @@ fn iris_listen_receives_from_another_iris_client() {
             let _ = child.wait();
             let sync = run_iris(bob.path(), &["sync", "--wait-ms", "5000"]);
             let read = run_iris(bob.path(), &["read", alice_user_id]);
-            let relay_kinds = relay
-                .events()
+            let relay_kinds = relay_events(&relay)
                 .into_iter()
                 .filter_map(|event| event.get("kind").and_then(Value::as_u64))
                 .collect::<Vec<_>>();
@@ -737,8 +756,7 @@ fn restored_same_nsec_cli_send_reaches_peer_and_self_syncs_to_existing_session()
     let bob_message = match read_stream_message(&relay, &bob_receiver, body) {
         Some(message) => message,
         None => {
-            let relay_kinds = relay
-                .events()
+            let relay_kinds = relay_events(&relay)
                 .into_iter()
                 .filter_map(|event| event.get("kind").and_then(Value::as_u64))
                 .collect::<Vec<_>>();
@@ -763,8 +781,7 @@ fn restored_same_nsec_cli_send_reaches_peer_and_self_syncs_to_existing_session()
     let old_alice_message = match read_stream_message(&relay, &alice_receiver, body) {
         Some(message) => message,
         None => {
-            let relay_kinds = relay
-                .events()
+            let relay_kinds = relay_events(&relay)
                 .into_iter()
                 .filter_map(|event| event.get("kind").and_then(Value::as_u64))
                 .collect::<Vec<_>>();

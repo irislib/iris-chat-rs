@@ -1,7 +1,7 @@
 impl ProtocolEngine {
     fn queue_pending_group_sender_key_message(
         &mut self,
-        parsed: nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent,
+        parsed: nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
     ) -> anyhow::Result<()> {
         if self.unmapped_group_sender_key_candidate_is_known_message_author(&parsed) {
             return Ok(());
@@ -55,7 +55,7 @@ impl ProtocolEngine {
 
     fn clear_pending_group_sender_key_candidate(
         &mut self,
-        parsed: &nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent,
+        parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
     ) -> bool {
         let original_len = self.pending_group_sender_key_messages.len();
         self.pending_group_sender_key_messages
@@ -86,7 +86,7 @@ impl ProtocolEngine {
 
     fn delivered_group_sender_key_ack_match(
         &self,
-        parsed: &nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent,
+        parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
     ) -> Option<String> {
         let group_id = self
             .group_manager
@@ -152,7 +152,7 @@ impl ProtocolEngine {
 
     fn unmapped_group_sender_key_candidate_is_known_message_author(
         &self,
-        parsed: &nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent,
+        parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
     ) -> bool {
         if self
             .group_manager
@@ -168,7 +168,7 @@ impl ProtocolEngine {
 
     fn pending_group_sender_key_candidate_predates_known_distribution(
         &self,
-        parsed: &nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent,
+        parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
     ) -> bool {
         self.group_manager
             .snapshot()
@@ -183,7 +183,7 @@ impl ProtocolEngine {
 
     fn inactive_local_group_id_for_sender_key_candidate(
         &self,
-        parsed: &nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent,
+        parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
     ) -> Option<String> {
         let group_id = self
             .group_manager
@@ -297,7 +297,7 @@ impl ProtocolEngine {
 
     fn group_sender_key_message_from_parsed(
         &self,
-        parsed: &nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent,
+        parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
     ) -> Option<GroupSenderKeyMessage> {
         let group_id = self
             .group_manager

@@ -280,9 +280,9 @@ fn create_group_allows_self_only_group() {
         core.pending_relay_publishes.values().any(|pending| {
             serde_json::from_str::<Event>(&pending.event_json)
                 .ok()
-                .filter(nostr_double_ratchet_nostr::is_group_roster_fact_event)
+                .filter(nostr_double_ratchet::is_group_roster_fact_event)
                 .and_then(|event| {
-                    nostr_double_ratchet_nostr::parse_group_roster_fact_event(&event).ok()
+                    nostr_double_ratchet::parse_group_roster_fact_event(&event).ok()
                 })
                 .is_some_and(|fact| fact.group_id == group_id && fact.snapshot.name == "Notes")
         }),

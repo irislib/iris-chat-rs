@@ -1,7 +1,13 @@
+# Iris Chat 2026.6.30
+
+- Group membership now syncs through shared roster fact snapshots across web and native apps.
+- Linked-device authorization now comes from owner-signed kind 37368 AppKeys snapshots.
+- Release checks cover direct chats, linked devices, and groups across web and native apps.
+
 # Iris Chat 2026.6.29
 
 - Linking a device is more reliable across app restarts and fresh installs.
-- Device approvals now use the shared identity roster, keeping new linked devices in sync without the old device-list snapshot path.
+- Device approvals now use the shared AppKeys roster, keeping new linked devices in sync.
 - Internal roster handling was split into smaller pieces so release checks catch regressions cleanly.
 
 # Iris Chat 2026.6.9

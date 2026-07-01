@@ -1,14 +1,11 @@
 use super::*;
 use crate::core::protocol::PROTOCOL_RECONNECT_CHECK_SECS;
-use nostr::JsonUtil;
 
 const PENDING_RELAY_DRAIN_CONCURRENCY: usize = 4;
 const PENDING_RELAY_DRAIN_BATCH_SIZE: usize = 16;
 const PENDING_RELAY_DRAIN_STALE_AFTER: Duration = RELAY_PUBLISH_ATTEMPT_TIMEOUT;
 const PENDING_RELAY_PUBLISH_IN_PROGRESS: &str = "publish attempt in progress";
 const LOCAL_INVITE_PUBLISH_LABEL: &str = "invite";
-const GROUP_ROSTER_PUBLISH_LABEL: &str = "group-roster";
-const NOSTR_IDENTITY_ROSTER_PUBLISH_LABEL: &str = "nostr-identity-roster";
 
 fn send_nearby_published_event(update_tx: &Sender<AppUpdate>, event: &Event) {
     let Ok(event_json) = serde_json::to_string(event) else {
@@ -48,276 +45,13 @@ impl AppCore {
         )
     }
 
-    pub(super) fn publish_group_roster_fact(&mut self, group: &GroupSnapshot) -> bool {
-        let Some(logged_in) = self.logged_in.as_ref() else {
-            return false;
-        };
-        let Some(owner_keys) = logged_in.owner_keys.as_ref() else {
-            return false;
-        };
-        let local_owner =
-            nostr_double_ratchet::OwnerPubkey::from_bytes(logged_in.owner_pubkey.to_bytes());
-        if !group.admins.contains(&local_owner) {
-            return false;
-        }
-        let unsigned = match nostr_double_ratchet_nostr::group_roster_unsigned_event(
-            logged_in.owner_pubkey,
-            group,
-        ) {
-            Ok(unsigned) => unsigned,
-            Err(error) => {
-                self.push_debug_log("group.roster_fact.publish", error.to_string());
-                return false;
-            }
-        };
-        let event = match unsigned.sign_with_keys(owner_keys) {
-            Ok(event) => event,
-            Err(error) => {
-                self.push_debug_log("group.roster_fact.publish", error.to_string());
-                return false;
-            }
-        };
-        self.publish_runtime_event(event, GROUP_ROSTER_PUBLISH_LABEL, None)
+    pub(super) fn sync_local_app_keys_if_needed(&mut self) {
+        self.sync_local_app_keys_to_protocol_engine("sync_local_app_keys_if_needed");
     }
 
-    pub(super) fn publish_nostr_identity_add_app_key_op(
-        &mut self,
-        device_pubkey: PublicKey,
-    ) -> anyhow::Result<()> {
-        self.publish_nostr_identity_add_app_key_op_inner(device_pubkey, false)
-    }
-
-    fn publish_nostr_identity_add_app_key_op_inner(
-        &mut self,
-        device_pubkey: PublicKey,
-        force_bootstrap: bool,
-    ) -> anyhow::Result<()> {
-        let Some(logged_in) = self.logged_in.as_ref() else {
-            return Ok(());
-        };
-        let Some(owner_keys) = logged_in.owner_keys.as_ref() else {
-            return Ok(());
-        };
-        let owner_keys = owner_keys.clone();
-        let owner_pubkey = logged_in.owner_pubkey;
-        let local_device_pubkey = logged_in.device_keys.public_key();
-        let events = self.build_nostr_identity_add_app_key_events(
-            &owner_keys,
-            owner_pubkey,
-            local_device_pubkey,
-            device_pubkey,
-            force_bootstrap,
-        )?;
-        self.publish_nostr_identity_roster_events(&events)?;
-        Ok(())
-    }
-
-    pub(super) fn publish_nostr_identity_device_approval_request(
-        &mut self,
-        request: nostr_identity::NostrIdentityDeviceApprovalRequest,
-    ) -> anyhow::Result<()> {
-        let Some(logged_in) = self.logged_in.as_ref() else {
-            return Ok(());
-        };
-        let Some(owner_keys) = logged_in.owner_keys.as_ref() else {
-            return Ok(());
-        };
-        let owner_keys = owner_keys.clone();
-        let owner_pubkey = logged_in.owner_pubkey;
-        let owner_pubkey_hex = owner_pubkey.to_hex();
-        let profile_id = nostr_identity_profile_id_for_owner(owner_pubkey);
-        if request
-            .profile_id
-            .is_some_and(|request_profile_id| request_profile_id != profile_id)
-        {
-            anyhow::bail!("This code is for a different profile.");
-        }
-        if request
-            .admin_app_key_pubkey
-            .as_ref()
-            .is_some_and(|admin| admin != &owner_pubkey_hex)
-        {
-            anyhow::bail!("This code is for a different profile.");
-        }
-
-        let device_pubkey = PublicKey::parse(&request.device_app_key_pubkey)
-            .map_err(|error| anyhow::anyhow!("Invalid device key: {error}"))?;
-        let local_device_pubkey = logged_in.device_keys.public_key();
-        let events = self.build_nostr_identity_add_app_key_events(
-            &owner_keys,
-            owner_pubkey,
-            local_device_pubkey,
-            device_pubkey,
-            true,
-        )?;
-        let approval_event = events
-            .last()
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("No device approval event was created."))?;
-        let approval_op = nostr_identity::parse_nostr_identity_roster_op_event(&approval_event)
-            .map_err(|error| anyhow::anyhow!(error))?;
-
-        self.publish_nostr_identity_roster_events(&events)?;
-
-        let receipt = nostr_identity::NostrIdentityDeviceApprovalReceipt {
-            schema: nostr_identity::NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
-            profile_id,
-            request_pubkey: request.request_pubkey,
-            device_app_key_pubkey: request.device_app_key_pubkey,
-            approved_by_pubkey: owner_pubkey_hex.clone(),
-            approved_at: approval_op.content.created_at,
-            request_secret: request.request_secret,
-            subject_pubkey: Some(owner_pubkey_hex),
-            roster_op_id: Some(approval_op.op_id),
-            signed_roster_event: Some(approval_event.as_json()),
-        };
-        let receipt_event = nostr_identity::build_nostr_identity_device_approval_receipt_event(
-            &owner_keys,
-            receipt,
-        )
-        .map_err(|error| anyhow::anyhow!(error))?;
-        self.publish_runtime_event(receipt_event, "nostr-identity-approval-receipt", None);
-        Ok(())
-    }
-
-    fn build_nostr_identity_add_app_key_events(
-        &self,
-        owner_keys: &Keys,
-        owner_pubkey: PublicKey,
-        local_device_pubkey: PublicKey,
-        device_pubkey: PublicKey,
-        force_bootstrap: bool,
-    ) -> anyhow::Result<Vec<Event>> {
-        let Some(protocol_engine) = self.protocol_engine.as_ref() else {
-            anyhow::bail!("Protocol engine is not ready.");
-        };
-        let has_nostr_identity_history =
-            protocol_engine.has_nostr_identity_roster_history_for_owner(owner_pubkey);
-        let latest_nostr_identity_created_at =
-            protocol_engine.latest_nostr_identity_roster_created_at_for_owner(owner_pubkey);
-        let mut parent_ids = if force_bootstrap {
-            Vec::new()
-        } else {
-            protocol_engine.nostr_identity_roster_parent_ids_for_owner(owner_pubkey)
-        };
-
-        let event_created_at = latest_nostr_identity_created_at
-            .map(|latest| unix_now().get().max(latest.saturating_add(1)))
-            .unwrap_or_else(|| unix_now().get());
-        let mut next_event_created_at = event_created_at;
-        let mut event_devices = HashSet::new();
-        let mut events = Vec::new();
-        if force_bootstrap || !has_nostr_identity_history {
-            events.push(build_nostr_identity_owner_admin_event(
-                owner_keys,
-                owner_pubkey,
-                parent_ids.clone(),
-                event_created_at,
-                next_event_created_at,
-            )?);
-            remember_nostr_identity_roster_parent_id(&mut parent_ids, events.last());
-            next_event_created_at = next_event_created_at.saturating_add(1);
-
-            let mut compatibility_devices = Vec::new();
-            if let Some(local_app_keys) = self.app_keys.get(&owner_pubkey.to_hex()) {
-                for device in &local_app_keys.devices {
-                    let existing_device_pubkey = PublicKey::parse(&device.identity_pubkey_hex)?;
-                    compatibility_devices.push((existing_device_pubkey, device.created_at_secs));
-                }
-            }
-            let local_device_added_at = compatibility_devices
-                .iter()
-                .find(|(device, _)| *device == local_device_pubkey)
-                .map(|(_, created_at)| *created_at)
-                .unwrap_or(event_created_at);
-            if event_devices.insert(local_device_pubkey.to_hex()) {
-                events.push(build_nostr_identity_add_app_key_event(
-                    owner_keys,
-                    owner_pubkey,
-                    local_device_pubkey,
-                    parent_ids.clone(),
-                    local_device_added_at,
-                    next_event_created_at,
-                    local_device_pubkey == owner_pubkey,
-                )?);
-                remember_nostr_identity_roster_parent_id(&mut parent_ids, events.last());
-                next_event_created_at = next_event_created_at.saturating_add(1);
-            }
-            for (existing_device_pubkey, device_created_at) in compatibility_devices {
-                if event_devices.insert(existing_device_pubkey.to_hex()) {
-                    events.push(build_nostr_identity_add_app_key_event(
-                        owner_keys,
-                        owner_pubkey,
-                        existing_device_pubkey,
-                        parent_ids.clone(),
-                        device_created_at,
-                        next_event_created_at,
-                        existing_device_pubkey == owner_pubkey,
-                    )?);
-                    remember_nostr_identity_roster_parent_id(&mut parent_ids, events.last());
-                    next_event_created_at = next_event_created_at.saturating_add(1);
-                }
-            }
-        }
-        if event_devices.insert(device_pubkey.to_hex()) {
-            events.push(build_nostr_identity_add_app_key_event(
-                owner_keys,
-                owner_pubkey,
-                device_pubkey,
-                parent_ids,
-                next_event_created_at,
-                next_event_created_at,
-                device_pubkey == local_device_pubkey,
-            )?);
-        }
-        Ok(events)
-    }
-
-    fn publish_nostr_identity_roster_events(&mut self, events: &[Event]) -> anyhow::Result<()> {
-        for event in events {
-            self.publish_runtime_event(event.clone(), NOSTR_IDENTITY_ROSTER_PUBLISH_LABEL, None);
-            self.apply_nostr_identity_roster_op_event(&event)?;
-        }
-        Ok(())
-    }
-
-    pub(super) fn publish_local_nostr_identity_roster_if_needed(&mut self) {
-        let Some(logged_in) = self.logged_in.as_ref() else {
-            return;
-        };
-        if logged_in.owner_keys.is_none() {
-            return;
-        }
-        let owner_pubkey = logged_in.owner_pubkey;
-        let local_device_pubkey = logged_in.device_keys.public_key();
-        let Some(protocol_engine) = self.protocol_engine.as_ref() else {
-            return;
-        };
-        let needs_publish = !protocol_engine
-            .has_nostr_identity_roster_history_for_owner(owner_pubkey)
-            || !protocol_engine
-                .has_device_roster_entry_for_owner(owner_pubkey, local_device_pubkey);
-        if !needs_publish {
-            return;
-        }
-        if let Err(error) = self.publish_nostr_identity_add_app_key_op(local_device_pubkey) {
-            self.push_debug_log("nostr_identity.roster.publish", error.to_string());
-        }
-    }
-
-    pub(super) fn publish_local_nostr_identity_roster_snapshot(&mut self) {
-        let Some(logged_in) = self.logged_in.as_ref() else {
-            return;
-        };
-        if logged_in.owner_keys.is_none() {
-            return;
-        }
-        let local_device_pubkey = logged_in.device_keys.public_key();
-        if let Err(error) =
-            self.publish_nostr_identity_add_app_key_op_inner(local_device_pubkey, true)
-        {
-            self.push_debug_log("nostr_identity.roster.publish", error.to_string());
-        }
+    pub(super) fn publish_local_app_keys_snapshot(&mut self) {
+        self.publish_local_identity_artifacts();
+        self.sync_local_app_keys_to_protocol_engine("publish_local_app_keys_snapshot");
     }
 
     pub(super) fn sync_local_app_keys_to_protocol_engine(&mut self, label: &'static str) {
@@ -924,15 +658,6 @@ impl AppCore {
             return true;
         }
 
-        let Some(d_tag) = event.tags.iter().find_map(|tag| {
-            if tag.kind() == nostr_sdk::TagKind::d() {
-                tag.content().map(|value| value.to_string())
-            } else {
-                None
-            }
-        }) else {
-            return true;
-        };
         let created_at_secs = event.created_at.as_secs();
         let superseded_ids = self
             .pending_relay_publishes
@@ -945,14 +670,7 @@ impl AppCore {
                 if !is_app_keys_event(&pending_event) {
                     return None;
                 }
-                let pending_d_tag = pending_event.tags.iter().find_map(|tag| {
-                    if tag.kind() == nostr_sdk::TagKind::d() {
-                        tag.content().map(|value| value.to_string())
-                    } else {
-                        None
-                    }
-                })?;
-                if pending_d_tag != d_tag {
+                if pending_event.pubkey != event.pubkey {
                     return None;
                 }
                 if pending.created_at_secs > created_at_secs {
@@ -1024,7 +742,7 @@ impl AppCore {
         }
 
         if let Some(local_invite) = local_invite {
-            if let Ok(unsigned) = nostr_double_ratchet_nostr::invite_unsigned_event(&local_invite) {
+            if let Ok(unsigned) = nostr_double_ratchet::invite_unsigned_event(&local_invite) {
                 if let Ok(event) = unsigned.sign_with_keys(&device_keys) {
                     durable_events.push((LOCAL_INVITE_PUBLISH_LABEL, event));
                 }
@@ -1063,7 +781,7 @@ impl AppCore {
         }) else {
             return false;
         };
-        let event = match nostr_double_ratchet_nostr::invite_unsigned_event(&local_invite)
+        let event = match nostr_double_ratchet::invite_unsigned_event(&local_invite)
             .and_then(|unsigned| unsigned.sign_with_keys(&device_keys).map_err(Into::into))
         {
             Ok(event) => event,
@@ -1081,22 +799,7 @@ impl AppCore {
     }
 
     pub(super) fn republish_local_identity_artifacts(&mut self) {
-        self.publish_local_nostr_identity_roster_if_needed();
+        self.sync_local_app_keys_if_needed();
         self.publish_local_identity_artifacts();
-    }
-}
-
-fn remember_nostr_identity_roster_parent_id(parent_ids: &mut Vec<String>, event: Option<&Event>) {
-    let Some(event) = event else {
-        return;
-    };
-    let Ok(signed) = nostr_identity::parse_nostr_identity_roster_op_event(event) else {
-        return;
-    };
-    if !parent_ids
-        .iter()
-        .any(|parent_id| parent_id == &signed.op_id)
-    {
-        parent_ids.push(signed.op_id);
     }
 }

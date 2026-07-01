@@ -44,7 +44,7 @@ fn retry_batch_coalesces_duplicate_queued_protocol_fetches() {
     let target = format!("owner:{}", peer.public_key().to_hex());
     let filters = vec![Filter::new()
         .author(peer.public_key())
-        .kind(Kind::Custom(NOSTR_IDENTITY_ROSTER_OP_KIND as u16))];
+        .kind(Kind::Custom(APP_KEYS_EVENT_KIND as u16))];
     let result = ProtocolRetryResult {
         message_id: "message-1".to_string(),
         chat_id: peer.public_key().to_hex(),
@@ -124,7 +124,7 @@ fn queued_protocol_filters_are_narrow_for_missing_owner_roster() {
     assert_eq!(filters.len(), 1);
     assert!(has_filter_with_kind_author(
         &filters,
-        NOSTR_IDENTITY_ROSTER_OP_KIND,
+        APP_KEYS_EVENT_KIND,
         peer.public_key()
     ));
     assert!(
@@ -171,7 +171,7 @@ fn queued_self_send_fetches_owner_appkeys_for_concrete_sibling_target() {
 
     assert!(has_filter_with_kind_author(
         &filters,
-        NOSTR_IDENTITY_ROSTER_OP_KIND,
+        APP_KEYS_EVENT_KIND,
         owner.public_key()
     ));
     assert!(has_filter_with_kind_author_tag(
@@ -179,7 +179,7 @@ fn queued_self_send_fetches_owner_appkeys_for_concrete_sibling_target() {
         INVITE_EVENT_KIND,
         desktop_device.public_key(),
         "#l",
-        NDR_INVITES_L_TAG,
+        INVITE_LIST_LABEL,
     ));
 }
 
@@ -304,7 +304,7 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
         None,
     )
     .expect("phone invite");
-    let phone_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&phone_invite)
+    let phone_invite_event = nostr_double_ratchet::invite_unsigned_event(&phone_invite)
         .expect("invite event")
         .sign_with_keys(&peer_phone)
         .expect("signed invite");
@@ -382,7 +382,7 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
         None,
     )
     .expect("laptop invite");
-    let laptop_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&laptop_invite)
+    let laptop_invite_event = nostr_double_ratchet::invite_unsigned_event(&laptop_invite)
         .expect("invite event")
         .sign_with_keys(&peer_laptop)
         .expect("signed invite");
@@ -435,7 +435,7 @@ fn appcore_ownerless_invite_uses_known_roster_owner_for_first_contact() {
         None,
     )
     .expect("ownerless invite");
-    let invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&ownerless_invite)
+    let invite_event = nostr_double_ratchet::invite_unsigned_event(&ownerless_invite)
         .expect("invite event")
         .sign_with_keys(&peer_device)
         .expect("signed invite");
@@ -539,7 +539,7 @@ fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys
     seed_protocol_storage_for_test(
         storage.as_ref(),
         seed_session_manager,
-        NostrGroupManager::new(local_owner).snapshot(),
+        GroupEventManager::new(local_owner).snapshot(),
     )
     .expect("seed protocol state");
     let engine = ProtocolEngine::load_or_create_for_local_device(
@@ -601,7 +601,7 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
         .expect("linked local appkeys");
 
     let linked_invite = linked.local_invite().expect("linked invite");
-    let linked_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&linked_invite)
+    let linked_invite_event = nostr_double_ratchet::invite_unsigned_event(&linked_invite)
         .expect("linked invite event")
         .sign_with_keys(&linked_device)
         .expect("signed linked invite");
@@ -625,9 +625,9 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
             UnixSeconds(2),
         )
         .expect("primary imports linked session");
-    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+    let response_event = nostr_double_ratchet::invite_response_event(&response)
         .expect("invite response event");
-    let linked_response = nostr_double_ratchet_nostr::process_invite_response_event(
+    let linked_response = nostr_double_ratchet::process_invite_response_event(
         &linked_invite,
         &response_event,
         linked_device.secret_key().to_secret_bytes(),
@@ -725,9 +725,9 @@ fn remote_group_metadata_syncs_to_local_sibling() {
             UnixSeconds(2),
         )
         .expect("primary imports linked session");
-    let linked_response = nostr_double_ratchet_nostr::process_invite_response_event(
+    let linked_response = nostr_double_ratchet::process_invite_response_event(
         &linked_invite,
-        &nostr_double_ratchet_nostr::invite_response_event(&response)
+        &nostr_double_ratchet::invite_response_event(&response)
             .expect("invite response event"),
         linked_device.secret_key().to_secret_bytes(),
     )
@@ -746,7 +746,7 @@ fn remote_group_metadata_syncs_to_local_sibling() {
         .expect("primary invite for linked sibling");
     primary_invite.owner_public_key = Some(owner.public_key());
     primary_invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
-    let primary_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&primary_invite)
+    let primary_invite_event = nostr_double_ratchet::invite_unsigned_event(&primary_invite)
         .expect("primary invite unsigned")
         .sign_with_keys(&primary_device)
         .expect("primary invite event");
@@ -768,7 +768,7 @@ fn remote_group_metadata_syncs_to_local_sibling() {
         vec![admin_owner.public_key()],
         1,
     );
-    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
     let metadata_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
         nostr_double_ratchet::GroupPayloadEncodeContext {
@@ -872,9 +872,9 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
             UnixSeconds(2),
         )
         .expect("primary imports linked session");
-    let linked_response = nostr_double_ratchet_nostr::process_invite_response_event(
+    let linked_response = nostr_double_ratchet::process_invite_response_event(
         &linked_invite,
-        &nostr_double_ratchet_nostr::invite_response_event(&response)
+        &nostr_double_ratchet::invite_response_event(&response)
             .expect("invite response event"),
         linked_device.secret_key().to_secret_bytes(),
     )
@@ -893,7 +893,7 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
         .expect("primary invite for linked sibling");
     primary_invite.owner_public_key = Some(owner.public_key());
     primary_invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
-    let primary_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&primary_invite)
+    let primary_invite_event = nostr_double_ratchet::invite_unsigned_event(&primary_invite)
         .expect("primary invite unsigned")
         .sign_with_keys(&primary_device)
         .expect("primary invite event");
@@ -918,7 +918,7 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
         vec![admin_owner.public_key()],
         1,
     );
-    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
     let metadata_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
         nostr_double_ratchet::GroupPayloadEncodeContext {
@@ -2335,7 +2335,7 @@ fn mobile_push_decrypt_renders_matching_pending_invite_response_with_chat_id() {
             Some(peer.public_key()),
         )
         .expect("accept invite");
-    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+    let response_event = nostr_double_ratchet::invite_response_event(&response)
         .expect("invite response event");
     let payload = serde_json::json!({
         "event": serde_json::to_string(&response_event).expect("event json"),
@@ -2390,7 +2390,7 @@ fn mobile_push_decrypt_suppresses_unmatched_invite_response() {
             Some(peer.public_key()),
         )
         .expect("accept invite");
-    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+    let response_event = nostr_double_ratchet::invite_response_event(&response)
         .expect("invite response event");
     let payload = serde_json::json!({
         "event": serde_json::to_string(&response_event).expect("event json"),
@@ -2666,7 +2666,7 @@ fn core_with_divergent_login_and_protocol_invites_with_updates(
     let mut seed_session_manager =
         SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();
     seed_session_manager.local_invite = Some(protocol_invite.clone());
-    let seed_group_manager = NostrGroupManager::new(local_owner).snapshot();
+    let seed_group_manager = GroupEventManager::new(local_owner).snapshot();
     seed_protocol_storage_for_test(
         storage.as_ref(),
         seed_session_manager,

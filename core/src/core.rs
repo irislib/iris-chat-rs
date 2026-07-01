@@ -15,18 +15,21 @@ use flume::Sender;
 use iris_chat_protocol::*;
 use nostr::{Alphabet, EventBuilder, SingleLetterTag, UnsignedEvent};
 use nostr_double_ratchet::{
+    apply_app_keys_snapshot_with_required_device, build_app_keys_device_authorization_filter,
+    build_protocol_discovery_filters, deterministic_link_invite_for_device,
+    deterministic_link_invite_for_device_link_request, encode_compact_device_link_request,
+    is_app_keys_event, is_group_roster_fact_event, parse_compact_device_link_request,
+    resolve_app_keys_owner_for_device, AppKeys, DeviceEntry, DeviceLinkRequest,
+    APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_ROSTER_FACT_KIND,
+    GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_LIST_LABEL, INVITE_RESPONSE_KIND,
+    MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
+};
+use nostr_double_ratchet::{
+    parse_group_sender_key_message_event, parse_group_sender_key_message_event_unchecked,
+};
+use nostr_double_ratchet::{
     GroupIncomingEvent, GroupSnapshot, Invite, SessionManagerSnapshot, SessionState,
     UnixSeconds as NdrUnixSeconds,
-};
-use nostr_double_ratchet_nostr::{
-    apply_app_keys_snapshot_with_required_device, is_app_keys_event, is_group_roster_fact_event,
-    is_nostr_identity_roster_op_event, AppKeys, DeviceEntry, APP_KEYS_EVENT_KIND,
-    CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_ROSTER_FACT_KIND, GROUP_SENDER_KEY_MESSAGE_KIND,
-    INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND, NOSTR_IDENTITY_ROSTER_OP_KIND,
-    REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
-};
-use nostr_double_ratchet_nostr::{
-    parse_group_sender_key_message_event, parse_group_sender_key_message_event_unchecked,
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use nostr_sdk::prelude::{
@@ -43,13 +46,13 @@ use tokio::time::{sleep, sleep_until, Duration, Instant};
 
 #[cfg(test)]
 use nostr_double_ratchet::{
-    AuthorizedDevice, DevicePubkey as NdrDevicePubkey, DeviceRoster, GroupManagerSnapshot,
-    OwnerPubkey as NdrOwnerPubkey, ProtocolContext, SessionManager,
+    invite_response_event, message_event, parse_invite_event, parse_message_event,
+    GroupEventManager,
 };
 #[cfg(test)]
-use nostr_double_ratchet_nostr::{
-    invite_response_event, message_event, parse_invite_event, parse_message_event,
-    NostrGroupManager,
+use nostr_double_ratchet::{
+    AuthorizedDevice, DevicePubkey as NdrDevicePubkey, DeviceRoster, GroupManagerSnapshot,
+    OwnerPubkey as NdrOwnerPubkey, ProtocolContext, SessionManager,
 };
 #[cfg(test)]
 use rand::rngs::OsRng;
@@ -72,7 +75,6 @@ mod message_expiry;
 mod mobile_push;
 mod model;
 mod nearby;
-mod nostr_identity_adapter;
 pub(crate) mod notifications;
 mod payloads;
 mod persistence;
@@ -83,6 +85,7 @@ mod protocol;
 mod protocol_filters;
 mod publish_helpers;
 mod publishing;
+mod publishing_fact_events;
 mod relay;
 mod routing;
 mod storage;
@@ -99,7 +102,6 @@ type DevicePubkey = PublicKey;
 use account_app_keys::known_app_keys_from_ndr;
 use account_app_keys::known_app_keys_to_ndr;
 use account_app_keys::next_app_keys_created_at;
-use account_app_keys::preserve_known_app_key_labels;
 use attachment_upload::upload_profile_picture_to_hashtree;
 use attachments::*;
 use config::*;
@@ -116,10 +118,6 @@ pub(crate) use mobile_push::{
 };
 pub(crate) use model::ProtocolSubscriptionPlan;
 use model::*;
-use nostr_identity_adapter::{
-    build_nostr_identity_add_app_key_event, build_nostr_identity_owner_admin_event,
-    nostr_identity_profile_id_for_owner,
-};
 use payloads::*;
 use profile_helpers::*;
 use protocol_filters::*;

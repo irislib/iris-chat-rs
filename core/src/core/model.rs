@@ -14,6 +14,14 @@ pub(super) struct PendingLinkedDeviceState {
     pub(super) pairing_client: Client,
     pub(super) pairing_invite: Invite,
     pub(super) pairing_url: String,
+    pub(super) authorized_owner_pubkey: Option<PublicKey>,
+    pub(super) authorized_app_keys_event: Option<Event>,
+    pub(super) pending_response: Option<PendingLinkInviteResponse>,
+}
+
+pub(super) struct PendingLinkInviteResponse {
+    pub(super) peer_device_id: String,
+    pub(super) session_state: SessionState,
 }
 
 #[derive(Clone)]
@@ -246,6 +254,7 @@ pub(super) struct SupportBundle {
     pub(super) generated_at_secs: u64,
     pub(super) build: SupportBuildMetadata,
     pub(super) relay_urls: Vec<String>,
+    pub(super) local_owner_pubkey_hex: Option<String>,
     pub(super) authorization_state: Option<String>,
     pub(super) active_chat_id: Option<String>,
     pub(super) current_screen: String,

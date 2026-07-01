@@ -181,7 +181,7 @@ fn appcore_sender_key_missing_metadata_revision_repairs_and_applies_pending_oute
 
     let distribution =
         latest_sender_key_distribution_for_test(&devices[alice].engine, &group_id, NdrUnixSeconds(321));
-    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
     let distribution_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
         nostr_double_ratchet::GroupPayloadEncodeContext {
@@ -285,7 +285,7 @@ fn appcore_sender_key_distribution_before_metadata_wakes_and_applies_pending_out
     assert!(pending_outer.consumed);
     assert_eq!(bob.debug_snapshot().pending_group_sender_key_message_count, 1);
 
-    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
     let distribution_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
         nostr_double_ratchet::GroupPayloadEncodeContext {

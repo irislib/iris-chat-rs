@@ -1,4 +1,3 @@
-use nostr_sdk::{Keys, PublicKey};
 use qrcode::{EcLevel, QrCode};
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
@@ -49,47 +48,12 @@ pub fn encode_device_approval_qr(_owner_input: String, _device_input: String) ->
 
 #[uniffi::export]
 pub fn decode_device_approval_qr(raw: String) -> Option<DeviceApprovalQrPayload> {
-    parse_compact_nostr_identity_device_approval_request(&raw).map(|request| {
-        DeviceApprovalQrPayload {
+    nostr_double_ratchet::parse_compact_device_link_request(&raw)
+        .ok()
+        .map(|request| DeviceApprovalQrPayload {
             owner_input: String::new(),
-            device_input: request.device_app_key_pubkey,
-        }
-    })
-}
-
-pub(crate) fn parse_compact_nostr_identity_device_approval_request(
-    raw: &str,
-) -> Option<nostr_identity::NostrIdentityDeviceApprovalRequest> {
-    let payload = raw.trim();
-    let mut parts = payload.split('.');
-    let device_app_key_pubkey = parts.next()?.trim().to_ascii_lowercase();
-    let request_secret = parts.next()?.trim().to_ascii_lowercase();
-    if parts.next().is_some() {
-        return None;
-    }
-    if !is_hex_32_bytes(&device_app_key_pubkey) || !is_hex_32_bytes(&request_secret) {
-        return None;
-    }
-    PublicKey::parse(&device_app_key_pubkey).ok()?;
-    let request_keys = Keys::parse(&request_secret).ok()?;
-
-    Some(nostr_identity::NostrIdentityDeviceApprovalRequest {
-        request_pubkey: request_keys.public_key().to_hex(),
-        device_app_key_pubkey,
-        request_secret,
-        device_app_key_proof: String::new(),
-        requested_at: 0,
-        request_type: None,
-        resources: Vec::new(),
-        expires_at: None,
-        profile_id: None,
-        admin_app_key_pubkey: None,
-        label: None,
-    })
-}
-
-fn is_hex_32_bytes(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+            device_input: request.device_app_key_pubkey.to_hex(),
+        })
 }
 
 #[cfg(test)]
@@ -108,17 +72,15 @@ mod tests {
         assert!(decode_device_approval_qr("".into()).is_none());
         assert!(decode_device_approval_qr("npub1plainvalue".into()).is_none());
         assert!(decode_device_approval_qr("https://example.com".into()).is_none());
-        assert!(decode_device_approval_qr("nostr-identity://device-approval/abc".into()).is_none());
-        assert!(decode_device_approval_qr(format!(
-            "nostr-identity://device-approval/{}.{}",
-            "1".repeat(64),
-            "1".repeat(64)
-        ))
-        .is_none());
+        assert!(decode_device_approval_qr("not-a-compact-link-code".into()).is_none());
+        assert!(
+            decode_device_approval_qr(format!("{}.{}.extra", "1".repeat(64), "1".repeat(64)))
+                .is_none()
+        );
     }
 
     #[test]
-    fn compact_nostr_identity_device_approval_qr_decodes_to_device() {
+    fn compact_device_link_qr_decodes_to_device() {
         let device = Keys::generate();
         let request = Keys::generate();
         let encoded = format!(
@@ -136,7 +98,7 @@ mod tests {
             }
         );
 
-        let prefixed = format!("nostr-identity://device-approval/{encoded}");
+        let prefixed = format!("prefix:{encoded}");
         assert!(decode_device_approval_qr(prefixed).is_none());
     }
 }

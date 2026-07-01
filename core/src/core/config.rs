@@ -19,7 +19,6 @@ pub(super) const DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS: u64 = 30 * 24 * 60 * 60;
 pub(super) const DEVICE_INVITE_DISCOVERY_LIMIT: usize = 256;
 pub(super) const DEVICE_INVITE_DISCOVERY_POLL_SECS: u64 = 5;
 pub(super) const NDR_INVITES_D_TAG_PREFIX: &str = "double-ratchet/invites/";
-pub(super) const NDR_INVITES_L_TAG: &str = "double-ratchet/invites";
 pub(super) const RELAY_CONNECT_TIMEOUT_SECS: u64 = 5;
 pub(super) const RELAY_SYNC_TIMEOUT_SECS: u64 = 5;
 pub(super) const RESUBSCRIBE_CATCH_UP_DELAY_SECS: u64 = 5;

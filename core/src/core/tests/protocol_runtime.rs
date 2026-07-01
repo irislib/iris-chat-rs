@@ -326,7 +326,7 @@ fn protocol_engine_load_or_create_prefers_persisted_protocol_invite() {
     seed_protocol_storage_for_test(
         storage.as_ref(),
         seed_session_manager,
-        NostrGroupManager::new(local_owner).snapshot(),
+        GroupEventManager::new(local_owner).snapshot(),
     )
     .expect("seed protocol state");
 
@@ -1503,7 +1503,7 @@ fn targeted_protocol_fetch_is_single_flight() {
 
     let filters = vec![Filter::new()
         .author(peer.public_key())
-        .kind(Kind::Custom(NOSTR_IDENTITY_ROSTER_OP_KIND as u16))];
+        .kind(Kind::Custom(APP_KEYS_EVENT_KIND as u16))];
     assert!(
         !core.fetch_protocol_state_for_filters(filters, "test"),
         "existing protocol fetch should block duplicate targeted engine fetch"
@@ -2524,7 +2524,7 @@ fn appcore_direct_send_storage_failure_rolls_back_protocol_state() {
         None,
     )
     .expect("peer invite");
-    let invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&invite)
+    let invite_event = nostr_double_ratchet::invite_unsigned_event(&invite)
         .expect("invite event")
         .sign_with_keys(&peer_device)
         .expect("signed invite");
@@ -2657,7 +2657,7 @@ fn appcore_invite_event_wakes_device_queued_direct_send_before_retry_delay() {
         None,
     )
     .expect("peer invite");
-    let invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&invite)
+    let invite_event = nostr_double_ratchet::invite_unsigned_event(&invite)
         .expect("invite event")
         .sign_with_keys(&peer_device)
         .expect("signed invite");

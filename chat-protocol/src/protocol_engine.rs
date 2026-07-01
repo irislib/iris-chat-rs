@@ -2,6 +2,7 @@ use super::*;
 
 include!("protocol_engine/types.rs");
 include!("protocol_engine/engine_core.rs");
+include!("protocol_engine/engine_fact_ingest.rs");
 include!("protocol_engine/engine_sends.rs");
 include!("protocol_engine/roster_helpers.rs");
 include!("protocol_engine/engine_incoming_retry.rs");
@@ -135,7 +136,7 @@ mod tests {
         assert_eq!(filters.len(), 2);
         assert!(has_filter_with_kind_author(
             &filters,
-            NOSTR_IDENTITY_ROSTER_OP_KIND,
+            APP_KEYS_EVENT_KIND,
             peer.public_key()
         ));
         assert!(has_filter_with_kind_author(
@@ -143,100 +144,13 @@ mod tests {
             INVITE_EVENT_KIND,
             peer.public_key()
         ));
-    }
-
-    #[test]
-    fn nostr_identity_roster_op_events_update_device_roster() {
-        let owner = Keys::generate();
-        let device = Keys::generate();
-        let peer_owner = Keys::generate();
-        let peer_device = Keys::generate();
-        let mut engine = test_engine(&owner, &device);
-
-        let bootstrap = nostr_identity_roster_event(
-            &peer_owner,
-            vec![
-                tag_values(["op", "add_key"]),
-                tag_values(["key_pubkey", peer_owner.public_key().to_hex().as_str()]),
-                tag_values(["key_purpose", "app"]),
-                tag_values(["key_capability", "admin"]),
-                tag_values(["key_capability", "write"]),
-                tag_values(["key_added_at", "10"]),
-            ],
-            10,
-        );
-        let add_device = nostr_identity_roster_event(
-            &peer_owner,
-            vec![
-                tag_values(["op", "add_key"]),
-                tag_values(["key_pubkey", peer_device.public_key().to_hex().as_str()]),
-                tag_values(["key_purpose", "app"]),
-                tag_values(["key_capability", "write"]),
-                tag_values(["key_added_at", "11"]),
-            ],
-            11,
-        );
-
-        engine
-            .ingest_nostr_identity_roster_op_event(&bootstrap)
-            .expect("bootstrap fact");
-        engine
-            .ingest_nostr_identity_roster_op_event(&add_device)
-            .expect("add device fact");
-
-        let devices = engine.known_device_identity_pubkeys_for_owner(peer_owner.public_key());
-        assert_eq!(devices.len(), 1);
-        assert!(devices.contains(&peer_device.public_key()));
-    }
-
-    #[test]
-    fn nostr_identity_roster_op_history_applies_tombstones() {
-        let owner = Keys::generate();
-        let device = Keys::generate();
-        let peer_owner = Keys::generate();
-        let peer_device = Keys::generate();
-        let mut engine = test_engine(&owner, &device);
-
-        for event in [
-            nostr_identity_roster_event(
-                &peer_owner,
-                vec![
-                    tag_values(["op", "add_key"]),
-                    tag_values(["key_pubkey", peer_owner.public_key().to_hex().as_str()]),
-                    tag_values(["key_purpose", "app"]),
-                    tag_values(["key_capability", "admin"]),
-                    tag_values(["key_capability", "write"]),
-                    tag_values(["key_added_at", "10"]),
-                ],
-                10,
-            ),
-            nostr_identity_roster_event(
-                &peer_owner,
-                vec![
-                    tag_values(["op", "add_key"]),
-                    tag_values(["key_pubkey", peer_device.public_key().to_hex().as_str()]),
-                    tag_values(["key_purpose", "app"]),
-                    tag_values(["key_capability", "write"]),
-                    tag_values(["key_added_at", "11"]),
-                ],
-                11,
-            ),
-            nostr_identity_roster_event(
-                &peer_owner,
-                vec![
-                    tag_values(["op", "tombstone_key"]),
-                    tag_values(["target_pubkey", peer_device.public_key().to_hex().as_str()]),
-                ],
-                12,
-            ),
-        ] {
-            engine
-                .ingest_nostr_identity_roster_op_event(&event)
-                .expect("roster fact");
+        for filter in &filters {
+            let value = serde_json::to_value(filter).expect("filter json");
+            assert!(
+                value.get("since").is_none(),
+                "protocol discovery snapshots must not be time bounded"
+            );
         }
-
-        let devices = engine.known_device_identity_pubkeys_for_owner(peer_owner.public_key());
-        assert!(devices.is_empty());
     }
 
     #[test]
@@ -374,38 +288,6 @@ mod tests {
                     });
                 has_kind && has_author
             })
-    }
-
-    fn nostr_identity_roster_event(
-        signer: &Keys,
-        facts: Vec<Vec<String>>,
-        created_at: u64,
-    ) -> Event {
-        const PROFILE_ID: &str = "123e4567-e89b-42d3-a456-426614174000";
-        let created_at_string = created_at.to_string();
-        let signer_hex = signer.public_key().to_hex();
-        let nonce = format!("nonce-{created_at}");
-        let mut tags = vec![
-            nostr::Tag::parse(["i", PROFILE_ID, "subject"]).expect("profile tag"),
-            nostr::Tag::parse(["type", "nostr_identity_roster_op"]).expect("type tag"),
-            nostr::Tag::parse(["schema", "1"]).expect("schema tag"),
-            nostr::Tag::parse(["actor_pubkey", signer_hex.as_str()]).expect("actor tag"),
-            nostr::Tag::parse(["client_nonce", nonce.as_str()]).expect("nonce tag"),
-            nostr::Tag::parse(["created_at", created_at_string.as_str()]).expect("created_at tag"),
-        ];
-        for fact in facts {
-            let values = fact.iter().map(String::as_str).collect::<Vec<_>>();
-            tags.push(nostr::Tag::parse(values).expect("fact tag"));
-        }
-        nostr::EventBuilder::new(Kind::from(NOSTR_IDENTITY_ROSTER_OP_KIND as u16), "")
-            .tags(tags)
-            .custom_created_at(Timestamp::from(created_at))
-            .sign_with_keys(signer)
-            .expect("signed roster event")
-    }
-
-    fn tag_values<const N: usize>(values: [&str; N]) -> Vec<String> {
-        values.into_iter().map(ToString::to_string).collect()
     }
 
     fn group_snapshot_for_test(

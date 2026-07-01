@@ -65,7 +65,7 @@ fn observe_local_invite_for_test(
         .expect("peer appkeys");
     let mut invite = invite.clone();
     invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
-    let event = nostr_double_ratchet_nostr::invite_unsigned_event(&invite)
+    let event = nostr_double_ratchet::invite_unsigned_event(&invite)
         .expect("invite event")
         .sign_with_keys(device)
         .expect("signed invite");
@@ -453,7 +453,7 @@ fn appcore_sender_key_outer_before_distribution_retries_after_control_state() {
         1
     );
 
-    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
     let metadata_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
         nostr_double_ratchet::GroupPayloadEncodeContext {
@@ -835,7 +835,7 @@ fn appcore_sender_key_removed_member_repair_denied() {
         required_revision: None,
         created_at: NdrUnixSeconds(381),
     };
-    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
     let repair_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
         nostr_double_ratchet::GroupPayloadEncodeContext {
@@ -1085,7 +1085,7 @@ fn appcore_legacy_pairwise_group_metadata_is_ignored() {
         1,
     );
     snapshot.protocol = nostr_double_ratchet::GroupProtocol::pairwise_fanout_v1();
-    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
     let metadata_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
         nostr_double_ratchet::GroupPayloadEncodeContext {
@@ -1622,7 +1622,7 @@ fn appcore_sender_key_late_member_repair_denies_pre_join_outer() {
         required_revision: None,
         created_at: NdrUnixSeconds(151),
     };
-    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
     let repair_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
         nostr_double_ratchet::GroupPayloadEncodeContext {
@@ -1754,7 +1754,7 @@ fn appcore_sender_key_late_member_repair_allows_post_join_missed_distribution() 
         required_revision: None,
         created_at: NdrUnixSeconds(171),
     };
-    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
     let repair_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
         nostr_double_ratchet::GroupPayloadEncodeContext {
