@@ -1,3 +1,4 @@
+#if os(iOS)
 import XCTest
 @testable import IrisChat
 
@@ -34,3 +35,4 @@ final class IrisChatNearbyQueueTests: XCTestCase {
         XCTAssertTrue(queue.isEmpty)
     }
 }
+#endif

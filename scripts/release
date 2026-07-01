@@ -582,36 +582,6 @@ publish_homebrew_tap() {
   "$ROOT/packaging/homebrew/publish_tap.sh" "${args[@]}"
 }
 
-publish_zapstore_release() {
-  local config_path="${ZAPSTORE_CONFIG:-$ROOT/zapstore.yaml}"
-  local extra_flags="${ZSP_EXTRA_FLAGS:-}"
-  local release_only="${IRIS_ZAPSTORE_RELEASE_ONLY:-true}"
-  local release_pubkey="${IRIS_ZAPSTORE_RELEASE_PUBKEY:-$RELEASE_OWNER_NPUB}"
-  local tmp_config=""
-  local rc
-
-  if bool_is_true "$release_only"; then
-    tmp_config="$(mktemp "$ROOT/.zapstore-release.XXXXXX.yaml")"
-    sed "s#^pubkey: .*#pubkey: $release_pubkey#" "$config_path" > "$tmp_config"
-    config_path="$tmp_config"
-    case " $extra_flags " in
-      *" --skip-app-event "*) ;;
-      *) extra_flags="${extra_flags:+$extra_flags }--skip-app-event" ;;
-    esac
-    echo "Zapstore release-only publish: skipping app metadata event; signer $release_pubkey"
-  fi
-
-  set +e
-  ZAPSTORE_CONFIG="$config_path" \
-    ZSP_EXTRA_FLAGS="$extra_flags" \
-    "$ROOT/scripts/publish-zapstore-android.sh" publish
-  rc=$?
-  set -e
-
-  [[ -n "$tmp_config" ]] && rm -f "$tmp_config"
-  return "$rc"
-}
-
 USED_NOTE_ASSETS=()
 
 asset_link() {
@@ -1313,13 +1283,10 @@ if [[ "$PUBLISH_ZAPSTORE" -eq 1 ]]; then
   echo
   echo "Publishing Android APK to Zapstore..."
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    if bool_is_true "${IRIS_ZAPSTORE_RELEASE_ONLY:-true}"; then
-      echo "[dry-run] would run Zapstore release-only publish with --skip-app-event"
-    else
-      echo "[dry-run] would run: $ROOT/scripts/publish-zapstore-android.sh publish"
-    fi
+    echo "[dry-run] would run: $ROOT/scripts/publish-zapstore-release-only.sh publish"
   else
-    publish_zapstore_release
+    IRIS_ZAPSTORE_RELEASE_PUBKEY="${IRIS_ZAPSTORE_RELEASE_PUBKEY:-$RELEASE_OWNER_NPUB}" \
+      "$ROOT/scripts/publish-zapstore-release-only.sh" publish
   fi
 fi
 
