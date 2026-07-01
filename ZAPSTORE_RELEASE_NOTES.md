@@ -1,3 +1,9 @@
+# Iris Chat 2026.7.1
+
+- Newly created groups now exchange messages reliably between web and native linked devices.
+- Device linking now keeps browser, OS, and app labels visible across web, iOS, and desktop.
+- Restored profiles open faster while message recovery continues in the background.
+
 # Iris Chat 2026.6.30
 
 - Group membership now syncs through shared roster fact snapshots across web and native apps.
