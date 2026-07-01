@@ -1378,7 +1378,8 @@ final class IrisChatTests: XCTestCase {
         let ownerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
         let deviceHex = "0c6b948b76cb9cd85a1b085437aede072d92cb0968942ffb22b1dd384ab1e095"
         let requestSecret = String(repeating: "1", count: 64)
-        let code = "\(deviceHex).\(requestSecret)"
+        let metadata = "eyJ2IjoxfQ"
+        let code = "\(deviceHex).\(requestSecret).\(metadata)"
 
         let resolved = resolveDeviceAuthorizationInput(
             rawInput: code,
@@ -2405,7 +2406,8 @@ final class IrisChatTests: XCTestCase {
         let ownerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
         let deviceHex = "0c6b948b76cb9cd85a1b085437aede072d92cb0968942ffb22b1dd384ab1e095"
         let ownerHex = normalizePeerInput(input: ownerNpub)
-        let compactCode = "\(deviceHex).\(String(repeating: "1", count: 64))"
+        let metadata = "eyJ2IjoxfQ"
+        let compactCode = "\(deviceHex).\(String(repeating: "1", count: 64)).\(metadata)"
         var state = makeAppState()
         state.deviceRoster = DeviceRosterSnapshot(
             ownerPublicKeyHex: ownerHex,
