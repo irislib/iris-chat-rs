@@ -462,18 +462,14 @@ struct OfflineStatusBanner: View {
     }
 
     private func bannerText(at date: Date) -> String? {
-        guard appSceneIsActive,
-              let status = networkStatus,
-              !status.relayUrls.isEmpty,
-              status.connectedRelayCount == 0,
-              let offlineSince = status.allRelaysOfflineSinceSecs,
-              date.timeIntervalSince1970 - TimeInterval(offlineSince) >= offlineBannerGraceInterval,
-              date.timeIntervalSince(foregroundedAt) >= offlineBannerGraceInterval else {
-            return nil
-        }
-        let bluetoothStatus = nearbyService.isBluetoothOn ? "on" : "off"
-        let wifiStatus = mobileWifiEnabled(nearbyService) ? "on" : "off"
-        return "Offline, Bluetooth \(bluetoothStatus), Wi-Fi \(wifiStatus)"
+        offlineStatusBannerText(
+            networkStatus: networkStatus,
+            bluetoothOn: nearbyService.isBluetoothOn,
+            wifiOn: mobileWifiEnabled(nearbyService),
+            appSceneIsActive: appSceneIsActive,
+            foregroundedAt: foregroundedAt,
+            now: date
+        )
     }
 
     private var refreshToken: String {
@@ -481,6 +477,7 @@ struct OfflineStatusBanner: View {
             appSceneIsActive ? "active" : "inactive",
             String(networkStatus?.connectedRelayCount ?? 0),
             String(networkStatus?.allRelaysOfflineSinceSecs ?? 0),
+            networkStatus?.relayConnections.map { "\($0.url)=\($0.status)" }.joined(separator: ",") ?? "",
             String(foregroundedAt.timeIntervalSince1970),
             nearbyService.isBluetoothOn ? "bt-on" : "bt-off",
             mobileWifiEnabled(nearbyService) ? "wifi-on" : "wifi-off",
@@ -490,8 +487,7 @@ struct OfflineStatusBanner: View {
     private func nextRefreshDate(at date: Date) -> Date? {
         guard appSceneIsActive,
               let status = networkStatus,
-              !status.relayUrls.isEmpty,
-              status.connectedRelayCount == 0,
+              offlineStatusBannerShouldConsiderOffline(status),
               let offlineSince = status.allRelaysOfflineSinceSecs else {
             return nil
         }
@@ -520,6 +516,38 @@ struct OfflineStatusBanner: View {
             now = Date()
         }
     }
+}
+
+func offlineStatusBannerText(
+    networkStatus: NetworkStatusSnapshot?,
+    bluetoothOn: Bool,
+    wifiOn: Bool,
+    appSceneIsActive: Bool,
+    foregroundedAt: Date,
+    now date: Date
+) -> String? {
+    guard appSceneIsActive,
+          let status = networkStatus,
+          offlineStatusBannerShouldConsiderOffline(status),
+          let offlineSince = status.allRelaysOfflineSinceSecs,
+          date.timeIntervalSince1970 - TimeInterval(offlineSince) >= offlineBannerGraceInterval,
+          date.timeIntervalSince(foregroundedAt) >= offlineBannerGraceInterval else {
+        return nil
+    }
+    return "Offline, Bluetooth \(bluetoothOn ? "on" : "off"), Wi-Fi \(wifiOn ? "on" : "off")"
+}
+
+private func offlineStatusBannerShouldConsiderOffline(_ status: NetworkStatusSnapshot) -> Bool {
+    guard !status.relayUrls.isEmpty, status.connectedRelayCount == 0 else {
+        return false
+    }
+    let relayStatuses = status.relayConnections
+        .filter { status.relayUrls.contains($0.url) }
+        .map(\.status)
+    guard relayStatuses.count == status.relayUrls.count else {
+        return false
+    }
+    return relayStatuses.allSatisfy { $0 == "offline" || $0 == "blocked" }
 }
 
 #endif

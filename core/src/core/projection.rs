@@ -687,7 +687,7 @@ impl AppCore {
                 status: relay_statuses
                     .get(url)
                     .cloned()
-                    .unwrap_or_else(|| "offline".to_string()),
+                    .unwrap_or_else(|| "connecting".to_string()),
             })
             .collect()
     }

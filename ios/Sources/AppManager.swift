@@ -1101,24 +1101,24 @@ final class AppManager: ObservableObject {
             }
         }
         Task {
-            // Safety net: the loading overlay must never be permanently
-            // stuck. The earlier version of this guard bailed when
-            // `persistedRestoreInFlight` was true, which meant a Rust
-            // restore that never published a follow-up FullState (panic in
-            // start_session, listener thread not yet attached, etc.) left
-            // the app frozen on the splash forever. Always clear after the
-            // timeout — if Rust later catches up, the next FullState lands
-            // normally; persistedRestoreInFlight is reset here so
-            // settleBootstrapIfNeeded won't re-flip the overlay.
+            // Safety net for true fresh launches. Persisted restores can take
+            // longer while Rust replays local state; never show Welcome while
+            // stored credentials are still being restored.
             try? await Task.sleep(nanoseconds: 8_000_000_000)
             guard bootstrapInFlight else {
+                return
+            }
+            guard !persistedRestoreInFlight else {
+                appendClientDebugLog(
+                    category: "bootstrap.timeout.restore_pending",
+                    detail: "keeping_loading_overlay=true"
+                )
                 return
             }
             appendClientDebugLog(
                 category: "bootstrap.timeout",
                 detail: "persistedRestoreInFlight=\(persistedRestoreInFlight)"
             )
-            persistedRestoreInFlight = false
             bootstrapInFlight = false
         }
 
@@ -2894,11 +2894,16 @@ final class AppManager: ObservableObject {
         guard let bundle = secretStore.load() else {
             storedAccountBundle = nil
             bootstrapInFlight = false
+            appendClientDebugLog(category: "session.restore", detail: "stored_bundle_loaded=false")
 #if os(iOS)
             applyIosFreshInstallNotificationDefaultsIfNeeded()
 #endif
             return
         }
+        appendClientDebugLog(
+            category: "session.restore",
+            detail: "stored_bundle_loaded=true has_owner_nsec=\(bundle.ownerNsec?.isEmpty == false)"
+        )
         secretStore.save(bundle)
         storedAccountBundle = bundle
         persistedRestoreInFlight = true
@@ -2910,8 +2915,11 @@ final class AppManager: ObservableObject {
             )
         )
         if !dispatched {
+            appendClientDebugLog(category: "session.restore", detail: "dispatch=false")
             persistedRestoreInFlight = false
             bootstrapInFlight = false
+        } else {
+            appendClientDebugLog(category: "session.restore", detail: "dispatch=true")
         }
     }
 

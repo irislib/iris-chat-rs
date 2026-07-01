@@ -573,7 +573,7 @@ impl AppCore {
                 .iter()
                 .map(|url| RelayConnectionSnapshot {
                     url: url.clone(),
-                    status: "offline".to_string(),
+                    status: "connecting".to_string(),
                 })
                 .collect();
             network_status.connected_relay_count = 0;

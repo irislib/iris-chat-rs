@@ -947,11 +947,7 @@ fn network_status_includes_configured_relay_connection_status() {
     assert_eq!(status.relay_urls, vec!["wss://relay.invalid".to_string()]);
     assert_eq!(status.relay_connections.len(), 1);
     assert_eq!(status.relay_connections[0].url, "wss://relay.invalid");
-    assert!(
-        ["connecting", "offline"].contains(&status.relay_connections[0].status.as_str()),
-        "unexpected relay status: {}",
-        status.relay_connections[0].status
-    );
+    assert_eq!(status.relay_connections[0].status, "connecting");
     assert_eq!(status.connected_relay_count, 0);
     assert!(status.all_relays_offline_since_secs.is_some());
 }
