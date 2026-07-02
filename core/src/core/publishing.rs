@@ -165,6 +165,9 @@ impl AppCore {
             self.push_debug_log("publish.runtime.queue", format!("store_failed={error}"));
             return false;
         }
+        if !self.prune_stored_superseded_protocol_control_publish(&pending, event) {
+            return false;
+        }
         if let (Some(message_id), Some(chat_id)) = (
             pending.inner_event_id.as_deref(),
             pending.chat_id.as_deref(),
@@ -864,6 +867,68 @@ impl AppCore {
             }
             self.forget_pending_relay_publish(&event_id);
         }
+        true
+    }
+
+    fn prune_stored_superseded_protocol_control_publish(
+        &mut self,
+        current: &PendingRelayPublish,
+        event: &Event,
+    ) -> bool {
+        if current.label != APPCORE_PROTOCOL_LABEL
+            || current.inner_event_id.is_some()
+            || current.chat_id.is_none()
+            || event.kind.as_u16() as u32 != INVITE_RESPONSE_KIND
+        {
+            return true;
+        }
+
+        let current_event_id = event.id.to_string();
+        let Some(current_chat_id) = current.chat_id.as_deref() else {
+            return true;
+        };
+        let event_pubkey_hex = event.pubkey.to_hex();
+        let pruned_ids = match self
+            .app_store
+            .prune_superseded_protocol_control_publishes_for(
+                &current.owner_pubkey_hex,
+                current_chat_id,
+                event.kind.as_u16() as u32,
+                &event_pubkey_hex,
+            ) {
+            Ok(ids) => ids,
+            Err(error) => {
+                self.push_debug_log(
+                    "publish.runtime.queue",
+                    format!("protocol_control_prune_failed={error}"),
+                );
+                return true;
+            }
+        };
+        if pruned_ids.is_empty() {
+            return true;
+        }
+        let mut removed_other_count = 0usize;
+        for event_id in pruned_ids {
+            if event_id == current_event_id {
+                self.push_debug_log(
+                    "publish.runtime.queue",
+                    format!(
+                        "label={APPCORE_PROTOCOL_LABEL} skipped=superseded_protocol_control pending_event_id={event_id}"
+                    ),
+                );
+                return false;
+            }
+            self.pending_relay_publishes.remove(&event_id);
+            self.pending_relay_publish_inflight.remove(&event_id);
+            removed_other_count = removed_other_count.saturating_add(1);
+        }
+        self.push_debug_log(
+            "publish.runtime.queue",
+            format!(
+                "pruned_superseded_protocol_control={removed_other_count} chat_id={current_chat_id}"
+            ),
+        );
         true
     }
 

@@ -1099,6 +1099,118 @@ fn storage_prunes_superseded_protocol_invite_response_rows_before_load() {
 }
 
 #[test]
+fn protocol_control_publish_prunes_superseded_rows_already_in_storage() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("protocol-control-storage-prune", &owner, &device);
+    let owner_pubkey_hex = owner.public_key().to_hex();
+    let chat_id = "group:storage-protocol-control".to_string();
+
+    let older = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "older control")
+        .custom_created_at(Timestamp::from_secs(10))
+        .sign_with_keys(&device)
+        .expect("older control");
+    let middle = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "middle control")
+        .custom_created_at(Timestamp::from_secs(20))
+        .sign_with_keys(&device)
+        .expect("middle control");
+    let newest = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "newest control")
+        .custom_created_at(Timestamp::from_secs(30))
+        .sign_with_keys(&device)
+        .expect("newest control");
+    let newest_id = newest.id.to_string();
+
+    for event in [&older, &middle] {
+        core.app_store
+            .upsert_pending_relay_publish(&PendingRelayPublish {
+                owner_pubkey_hex: owner_pubkey_hex.clone(),
+                event_id: event.id.to_string(),
+                label: APPCORE_PROTOCOL_LABEL.to_string(),
+                event_json: serde_json::to_string(event).expect("event json"),
+                inner_event_id: None,
+                chat_id: Some(chat_id.clone()),
+                created_at_secs: event.created_at.as_secs(),
+                attempt_count: 0,
+                last_error: None,
+            })
+            .expect("store pending publish");
+    }
+
+    assert!(core.publish_protocol_event(ProtocolPublish {
+        event: newest,
+        chat_id: chat_id.clone(),
+        inner_event_id: None,
+    }));
+
+    let pending = core
+        .app_store
+        .load_pending_relay_publishes(&owner_pubkey_hex)
+        .expect("load pending publishes");
+    let matching = pending
+        .iter()
+        .filter(|pending| {
+            pending.label == APPCORE_PROTOCOL_LABEL
+                && pending.inner_event_id.is_none()
+                && pending.chat_id.as_deref() == Some(chat_id.as_str())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1);
+    assert_eq!(matching[0].event_id, newest_id);
+    assert!(core.pending_relay_publishes.contains_key(&newest_id));
+}
+
+#[test]
+fn older_protocol_control_publish_is_skipped_when_newer_row_is_already_stored() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("protocol-control-storage-skip", &owner, &device);
+    let owner_pubkey_hex = owner.public_key().to_hex();
+    let chat_id = "group:storage-protocol-control-skip".to_string();
+
+    let older = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "older control")
+        .custom_created_at(Timestamp::from_secs(10))
+        .sign_with_keys(&device)
+        .expect("older control");
+    let older_id = older.id.to_string();
+    let newer = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "newer control")
+        .custom_created_at(Timestamp::from_secs(20))
+        .sign_with_keys(&device)
+        .expect("newer control");
+    let newer_id = newer.id.to_string();
+
+    core.app_store
+        .upsert_pending_relay_publish(&PendingRelayPublish {
+            owner_pubkey_hex: owner_pubkey_hex.clone(),
+            event_id: newer.id.to_string(),
+            label: APPCORE_PROTOCOL_LABEL.to_string(),
+            event_json: serde_json::to_string(&newer).expect("event json"),
+            inner_event_id: None,
+            chat_id: Some(chat_id.clone()),
+            created_at_secs: newer.created_at.as_secs(),
+            attempt_count: 0,
+            last_error: None,
+        })
+        .expect("store pending publish");
+
+    assert!(!core.publish_protocol_event(ProtocolPublish {
+        event: older,
+        chat_id: chat_id.clone(),
+        inner_event_id: None,
+    }));
+
+    let pending_ids = core
+        .app_store
+        .load_pending_relay_publishes(&owner_pubkey_hex)
+        .expect("load pending publishes")
+        .into_iter()
+        .map(|pending| pending.event_id)
+        .collect::<Vec<_>>();
+    assert!(pending_ids.contains(&newer_id));
+    assert!(!pending_ids.contains(&older_id));
+    assert!(!core.pending_relay_publishes.contains_key(&older_id));
+}
+
+#[test]
 fn storage_caps_control_pending_publishes_without_pruning_messages() {
     let owner = Keys::generate();
     let device = Keys::generate();

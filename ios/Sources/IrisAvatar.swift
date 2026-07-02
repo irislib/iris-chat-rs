@@ -36,6 +36,28 @@ func irisCanOpenProfilePicture(_ rawURL: String?) -> Bool {
         || trimmed.hasPrefix("https://")
 }
 
+private enum IrisAvatarProxyURLCache {
+    private static let cache: NSCache<NSString, NSString> = {
+        let cache = NSCache<NSString, NSString>()
+        cache.countLimit = 1_000
+        return cache
+    }()
+
+    static func key(originalSrc: String, preferences: PreferencesSnapshot, pixelSize: UInt32) -> NSString {
+        var hasher = Hasher()
+        hasher.combine(preferences)
+        return "\(pixelSize)|\(hasher.finalize())|\(originalSrc)" as NSString
+    }
+
+    static func value(for key: NSString) -> String? {
+        cache.object(forKey: key).map(String.init)
+    }
+
+    static func store(_ value: String, for key: NSString) {
+        cache.setObject(value as NSString, forKey: key)
+    }
+}
+
 func irisHttpAvatarURL(
     _ rawURL: String?,
     preferences: PreferencesSnapshot,
@@ -47,13 +69,23 @@ func irisHttpAvatarURL(
         return nil
     }
     let dim = UInt32(max(1, pixelSize.rounded()))
-    return proxiedImageUrl(
+    let cacheKey = IrisAvatarProxyURLCache.key(
+        originalSrc: trimmed,
+        preferences: preferences,
+        pixelSize: dim
+    )
+    if let cached = IrisAvatarProxyURLCache.value(for: cacheKey) {
+        return cached
+    }
+    let proxied = proxiedImageUrl(
         originalSrc: trimmed,
         preferences: preferences,
         width: dim,
         height: dim,
         square: true
     )
+    IrisAvatarProxyURLCache.store(proxied, for: cacheKey)
+    return proxied
 }
 
 enum IrisAvatarImageSource: Equatable {

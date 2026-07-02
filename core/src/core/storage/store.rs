@@ -444,6 +444,64 @@ impl AppStore {
         Ok(deleted)
     }
 
+    pub(crate) fn prune_superseded_protocol_control_publishes_for(
+        &self,
+        owner_pubkey_hex: &str,
+        chat_id: &str,
+        event_kind: u32,
+        event_pubkey_hex: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        let tx = conn.transaction()?;
+        let superseded_ids = {
+            let mut stmt = tx.prepare(
+                "WITH ranked AS (
+                    SELECT event_id,
+                           ROW_NUMBER() OVER (
+                               ORDER BY created_at_secs DESC, event_id DESC
+                           ) AS rn
+                    FROM pending_relay_publishes
+                    WHERE owner_pubkey_hex = ?1
+                      AND label = ?2
+                      AND inner_event_id IS NULL
+                      AND chat_id = ?3
+                      AND CAST(json_extract(event_json, '$.kind') AS INTEGER) = ?4
+                      AND json_extract(event_json, '$.pubkey') = ?5
+                 )
+                 SELECT event_id FROM ranked WHERE rn > 1",
+            )?;
+            let rows = stmt.query_map(
+                params![
+                    owner_pubkey_hex,
+                    super::super::APPCORE_PROTOCOL_LABEL,
+                    chat_id,
+                    event_kind as i64,
+                    event_pubkey_hex,
+                ],
+                |row| row.get::<_, String>(0),
+            )?;
+            let mut ids = Vec::new();
+            for row in rows {
+                ids.push(row?);
+            }
+            ids
+        };
+        if !superseded_ids.is_empty() {
+            {
+                let mut delete_stmt =
+                    tx.prepare("DELETE FROM pending_relay_publishes WHERE event_id = ?1")?;
+                for event_id in &superseded_ids {
+                    delete_stmt.execute([event_id])?;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(superseded_ids)
+    }
+
     pub(crate) fn prune_pending_relay_control_publishes_to_limit(
         &self,
         owner_pubkey_hex: &str,

@@ -305,6 +305,8 @@ struct DesktopChatSidebar: View {
 
             ScrollView {
                 LazyVStack(spacing: 2) {
+                    let preferences = manager.state.preferences
+
                     DesktopSidebarActionRow(
                         title: "New chat",
                         subtitle: nil,
@@ -330,8 +332,10 @@ struct DesktopChatSidebar: View {
                             manager: manager,
                             chat: chat,
                             timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow),
-                            selected: selectedChatId == chat.chatId
+                            selected: selectedChatId == chat.chatId,
+                            preferences: preferences
                         )
+                        .equatable()
                         .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
                     }
                 }
@@ -494,13 +498,21 @@ struct DesktopNearbyIrisRow: View {
 }
 #endif
 
-struct DesktopSidebarChatRow: View {
+struct DesktopSidebarChatRow: View, Equatable {
     @Environment(\.irisPalette) private var palette
-    @ObservedObject var manager: AppManager
+    let manager: AppManager
     let chat: ChatThreadSnapshot
     let timeLabel: String?
     let selected: Bool
+    let preferences: PreferencesSnapshot
     @State private var confirmingDelete = false
+
+    static func == (lhs: DesktopSidebarChatRow, rhs: DesktopSidebarChatRow) -> Bool {
+        lhs.chat == rhs.chat
+            && lhs.timeLabel == rhs.timeLabel
+            && lhs.selected == rhs.selected
+            && lhs.preferences == rhs.preferences
+    }
 
     private var preview: String {
         if chat.isTyping {
@@ -519,7 +531,7 @@ struct DesktopSidebarChatRow: View {
                     size: 44,
                     emphasize: chat.unreadCount > 0,
                     pictureUrl: chat.pictureUrl,
-                    preferences: manager.state.preferences,
+                    preferences: preferences,
                     manager: manager
                 )
 
