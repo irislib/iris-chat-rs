@@ -145,7 +145,6 @@ device messages off a remote server when the devices are close enough.
 - [Release guide](RELEASE.md)
 - [Zapstore release](docs/release-zapstore.md)
 - [Android beta release](BETA_RELEASE.md)
-- [Parity matrix](PARITY_MATRIX.md)
 - [Architecture](ARCHITECTURE.md)
 - [UI/UX flows](UI_UX_FLOWS.md)
 - [Windows notes](windows/README.md)
