@@ -881,6 +881,28 @@ impl AppCore {
         }
         match self
             .app_store
+            .prune_pending_relay_control_publishes_to_limit(
+                &owner_pubkey_hex,
+                PENDING_RELAY_CONTROL_PUBLISH_MAX_ROWS,
+            ) {
+            Ok(pruned) if pruned > 0 => {
+                self.push_debug_log(
+                    "publish.runtime.queue",
+                    format!(
+                        "pruned_control_backlog={pruned} max={PENDING_RELAY_CONTROL_PUBLISH_MAX_ROWS}"
+                    ),
+                );
+            }
+            Err(error) => {
+                self.push_debug_log(
+                    "publish.runtime.queue",
+                    format!("control_backlog_prune_failed={error}"),
+                );
+            }
+            _ => {}
+        }
+        match self
+            .app_store
             .load_pending_relay_publishes(&owner_pubkey_hex)
         {
             Ok(pending) => {

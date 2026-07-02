@@ -834,6 +834,49 @@ fn pending_relay_publish_batch_selection_is_bounded_and_ordered() {
 }
 
 #[test]
+fn pending_relay_control_publish_cap_keeps_message_linked_publishes() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("pending-relay-control-cap", &owner, &device);
+    let owner_pubkey_hex = owner.public_key().to_hex();
+
+    let insert_pending = |core: &mut AppCore,
+                          event_id: &str,
+                          label: &str,
+                          created_at_secs: u64,
+                          is_message: bool| {
+        core.pending_relay_publishes.insert(
+            event_id.to_string(),
+            PendingRelayPublish {
+                owner_pubkey_hex: owner_pubkey_hex.clone(),
+                event_id: event_id.to_string(),
+                label: label.to_string(),
+                event_json: format!("cap test {event_id}"),
+                inner_event_id: is_message.then(|| format!("inner-{event_id}")),
+                chat_id: Some("chat-id".to_string()),
+                created_at_secs,
+                attempt_count: 0,
+                last_error: None,
+            },
+        );
+    };
+
+    insert_pending(&mut core, "message-old", APPCORE_PROTOCOL_LABEL, 1, true);
+    insert_pending(&mut core, "app-keys-old", "app-keys", 1, false);
+    insert_pending(&mut core, "protocol-old", APPCORE_PROTOCOL_LABEL, 10, false);
+    insert_pending(&mut core, "protocol-mid", APPCORE_PROTOCOL_LABEL, 20, false);
+    insert_pending(&mut core, "protocol-new", APPCORE_PROTOCOL_LABEL, 30, false);
+
+    core.prune_pending_relay_control_publish_backlog_to_limit(2, "test");
+
+    assert!(core.pending_relay_publishes.contains_key("message-old"));
+    assert!(core.pending_relay_publishes.contains_key("app-keys-old"));
+    assert!(core.pending_relay_publishes.contains_key("protocol-new"));
+    assert!(!core.pending_relay_publishes.contains_key("protocol-mid"));
+    assert!(!core.pending_relay_publishes.contains_key("protocol-old"));
+}
+
+#[test]
 fn app_keys_publish_uses_durable_pending_publish_queue() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -1053,6 +1096,56 @@ fn storage_prunes_superseded_protocol_invite_response_rows_before_load() {
     assert!(!pending_ids.contains(&older_id));
     assert!(pending_ids.contains(&newer_id));
     assert!(pending_ids.contains(&other_id));
+}
+
+#[test]
+fn storage_caps_control_pending_publishes_without_pruning_messages() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let core = logged_in_test_core("storage-control-cap", &owner, &device);
+    let owner_pubkey_hex = owner.public_key().to_hex();
+
+    let pending = [
+        ("message-old", APPCORE_PROTOCOL_LABEL, 1, Some("message-id")),
+        ("app-keys-old", "app-keys", 1, None),
+        ("protocol-old", APPCORE_PROTOCOL_LABEL, 10, None),
+        ("protocol-mid", APPCORE_PROTOCOL_LABEL, 20, None),
+        ("protocol-new", APPCORE_PROTOCOL_LABEL, 30, None),
+    ];
+    for (event_id, label, created_at_secs, inner_event_id) in pending {
+        core.app_store
+            .upsert_pending_relay_publish(&PendingRelayPublish {
+                owner_pubkey_hex: owner_pubkey_hex.clone(),
+                event_id: event_id.to_string(),
+                label: label.to_string(),
+                event_json: format!("storage cap test {event_id}"),
+                inner_event_id: inner_event_id.map(str::to_string),
+                chat_id: Some("chat-id".to_string()),
+                created_at_secs,
+                attempt_count: 0,
+                last_error: None,
+            })
+            .expect("store pending publish");
+    }
+
+    let pruned = core
+        .app_store
+        .prune_pending_relay_control_publishes_to_limit(&owner_pubkey_hex, 2)
+        .expect("cap control pending publishes");
+    let pending_ids = core
+        .app_store
+        .load_pending_relay_publishes(&owner_pubkey_hex)
+        .expect("load pending publishes")
+        .into_iter()
+        .map(|pending| pending.event_id)
+        .collect::<Vec<_>>();
+
+    assert_eq!(pruned, 2);
+    assert!(pending_ids.contains(&"message-old".to_string()));
+    assert!(pending_ids.contains(&"app-keys-old".to_string()));
+    assert!(pending_ids.contains(&"protocol-new".to_string()));
+    assert!(!pending_ids.contains(&"protocol-mid".to_string()));
+    assert!(!pending_ids.contains(&"protocol-old".to_string()));
 }
 
 #[test]

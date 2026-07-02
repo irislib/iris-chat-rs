@@ -180,6 +180,10 @@ impl AppCore {
                 self.sync_message_delivery_trace(&chat_id, &message_id);
             }
         }
+        self.prune_pending_relay_control_publish_backlog_to_limit(
+            PENDING_RELAY_CONTROL_PUBLISH_MAX_ROWS,
+            "enqueue",
+        );
         true
     }
 
@@ -458,6 +462,58 @@ impl AppCore {
             .then_with(|| left.created_at_secs.cmp(&right.created_at_secs))
             .then_with(|| left.label.cmp(&right.label))
             .then_with(|| left.event_id.cmp(&right.event_id))
+    }
+
+    pub(super) fn prune_pending_relay_control_publish_backlog_to_limit(
+        &mut self,
+        max_rows: usize,
+        reason: &str,
+    ) {
+        let control_count = self
+            .pending_relay_publishes
+            .values()
+            .filter(|pending| !Self::pending_relay_publish_is_message_linked(pending))
+            .count();
+        if control_count <= max_rows {
+            return;
+        }
+
+        let mut control_publishes = self
+            .pending_relay_publishes
+            .values()
+            .filter(|pending| !Self::pending_relay_publish_is_message_linked(pending))
+            .collect::<Vec<_>>();
+        control_publishes
+            .sort_by(|left, right| Self::compare_pending_relay_control_retention(left, right));
+        let pruned_event_ids = control_publishes
+            .into_iter()
+            .skip(max_rows)
+            .map(|pending| pending.event_id.clone())
+            .collect::<Vec<_>>();
+        let pruned = pruned_event_ids.len();
+        for event_id in pruned_event_ids {
+            self.forget_pending_relay_publish(&event_id);
+        }
+        self.push_debug_log(
+            "publish.runtime.queue",
+            format!("reason={reason} pruned_control_backlog={pruned} max={max_rows}"),
+        );
+    }
+
+    fn pending_relay_publish_is_message_linked(pending: &PendingRelayPublish) -> bool {
+        pending.inner_event_id.is_some() && pending.chat_id.is_some()
+    }
+
+    fn compare_pending_relay_control_retention(
+        left: &PendingRelayPublish,
+        right: &PendingRelayPublish,
+    ) -> std::cmp::Ordering {
+        let left_is_protocol = left.label == APPCORE_PROTOCOL_LABEL;
+        let right_is_protocol = right.label == APPCORE_PROTOCOL_LABEL;
+        left_is_protocol
+            .cmp(&right_is_protocol)
+            .then_with(|| right.created_at_secs.cmp(&left.created_at_secs))
+            .then_with(|| right.event_id.cmp(&left.event_id))
     }
 
     fn mark_pending_relay_publish_attempt_started(&mut self, event_id: &str) {
