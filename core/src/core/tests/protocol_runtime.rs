@@ -780,6 +780,60 @@ fn failed_publish_drain_batches_results_and_schedules_one_retry() {
 }
 
 #[test]
+fn pending_relay_publish_batch_selection_is_bounded_and_ordered() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("pending-relay-batch-selection", &owner, &device);
+    let owner_pubkey_hex = owner.public_key().to_hex();
+
+    let insert_pending = |core: &mut AppCore,
+                          event_id: &str,
+                          label: &str,
+                          created_at_secs: u64,
+                          is_message: bool| {
+        core.pending_relay_publishes.insert(
+            event_id.to_string(),
+            PendingRelayPublish {
+                owner_pubkey_hex: owner_pubkey_hex.clone(),
+                event_id: event_id.to_string(),
+                label: label.to_string(),
+                event_json: format!("not parsed by batch selector {event_id}"),
+                inner_event_id: is_message.then(|| format!("inner-{event_id}")),
+                chat_id: is_message.then(|| "chat-id".to_string()),
+                created_at_secs,
+                attempt_count: 0,
+                last_error: None,
+            },
+        );
+    };
+
+    insert_pending(&mut core, "event-00", "relay", 1, false);
+    insert_pending(&mut core, "event-01", "relay", 2, false);
+    insert_pending(&mut core, "event-02", "relay", 3, false);
+    insert_pending(&mut core, "event-03", "relay", 4, false);
+    insert_pending(&mut core, "event-04", "relay", 0, false);
+    insert_pending(&mut core, "event-10", "message", 20, true);
+    insert_pending(&mut core, "event-11", "message", 10, true);
+    insert_pending(&mut core, "event-12", "message", 30, true);
+    core.pending_relay_publish_inflight
+        .insert("event-00".to_string());
+
+    let (event_ids, truncated) = core.pending_relay_publish_batch_event_ids(4);
+
+    assert!(truncated, "eligible backlog should be larger than the batch");
+    assert_eq!(
+        event_ids,
+        vec![
+            "event-11".to_string(),
+            "event-10".to_string(),
+            "event-12".to_string(),
+            "event-04".to_string(),
+        ],
+        "message publishes stay ahead of oldest non-message publishes, and inflight items are skipped"
+    );
+}
+
+#[test]
 fn app_keys_publish_uses_durable_pending_publish_queue() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -888,6 +942,117 @@ fn app_keys_publish_prunes_superseded_pending_publish() {
         serde_json::from_str(&app_key_publishes[0].event_json).expect("current AppKeys event");
     assert_eq!(current_event.pubkey, owner.public_key());
     assert!(current_event.created_at.as_secs() > first_event.created_at.as_secs());
+}
+
+#[test]
+fn protocol_invite_response_publish_prunes_superseded_pending_bootstrap() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("protocol-bootstrap-prune", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+
+    let older = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "older bootstrap")
+        .custom_created_at(Timestamp::from_secs(10))
+        .sign_with_keys(&device)
+        .expect("older bootstrap");
+    let older_id = older.id.to_string();
+    let newer = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "newer bootstrap")
+        .custom_created_at(Timestamp::from_secs(20))
+        .sign_with_keys(&device)
+        .expect("newer bootstrap");
+    let newer_id = newer.id.to_string();
+
+    assert!(core.publish_protocol_event(ProtocolPublish {
+        event: older,
+        chat_id: chat_id.clone(),
+        inner_event_id: None,
+    }));
+    assert!(core.pending_relay_publishes.contains_key(&older_id));
+
+    assert!(core.publish_protocol_event(ProtocolPublish {
+        event: newer,
+        chat_id,
+        inner_event_id: None,
+    }));
+
+    assert!(
+        !core.pending_relay_publishes.contains_key(&older_id),
+        "newer bootstrap should replace the older pending bootstrap for the same chat/pubkey"
+    );
+    assert!(core.pending_relay_publishes.contains_key(&newer_id));
+    assert_eq!(
+        core.pending_relay_publishes
+            .values()
+            .filter(|pending| pending.label == APPCORE_PROTOCOL_LABEL
+                && pending.inner_event_id.is_none())
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn storage_prunes_superseded_protocol_invite_response_rows_before_load() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let other_device = Keys::generate();
+    let peer = Keys::generate();
+    let core = logged_in_test_core("storage-bootstrap-prune", &owner, &device);
+    let owner_pubkey_hex = owner.public_key().to_hex();
+    let chat_id = peer.public_key().to_hex();
+
+    let older = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "older bootstrap")
+        .custom_created_at(Timestamp::from_secs(10))
+        .sign_with_keys(&device)
+        .expect("older bootstrap");
+    let older_id = older.id.to_string();
+    let newer = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "newer bootstrap")
+        .custom_created_at(Timestamp::from_secs(20))
+        .sign_with_keys(&device)
+        .expect("newer bootstrap");
+    let newer_id = newer.id.to_string();
+    let other_pubkey = EventBuilder::new(
+        Kind::from(INVITE_RESPONSE_KIND as u16),
+        "other response pubkey",
+    )
+    .custom_created_at(Timestamp::from_secs(5))
+    .sign_with_keys(&other_device)
+    .expect("other bootstrap");
+    let other_id = other_pubkey.id.to_string();
+
+    for event in [&older, &newer, &other_pubkey] {
+        core.app_store
+            .upsert_pending_relay_publish(&PendingRelayPublish {
+                owner_pubkey_hex: owner_pubkey_hex.clone(),
+                event_id: event.id.to_string(),
+                label: APPCORE_PROTOCOL_LABEL.to_string(),
+                event_json: serde_json::to_string(event).expect("event json"),
+                inner_event_id: None,
+                chat_id: Some(chat_id.clone()),
+                created_at_secs: event.created_at.as_secs(),
+                attempt_count: 0,
+                last_error: None,
+            })
+            .expect("store pending publish");
+    }
+
+    let pruned = core
+        .app_store
+        .prune_superseded_protocol_invite_response_publishes(&owner_pubkey_hex)
+        .expect("prune protocol bootstraps");
+    let pending = core
+        .app_store
+        .load_pending_relay_publishes(&owner_pubkey_hex)
+        .expect("load pending publishes");
+    let pending_ids = pending
+        .into_iter()
+        .map(|pending| pending.event_id)
+        .collect::<Vec<_>>();
+
+    assert_eq!(pruned, 1);
+    assert!(!pending_ids.contains(&older_id));
+    assert!(pending_ids.contains(&newer_id));
+    assert!(pending_ids.contains(&other_id));
 }
 
 #[test]
@@ -1753,6 +1918,18 @@ fn runtime_publish_uses_single_flight_transport_drain() {
         "pending relay publishes must coalesce through one drain worker"
     );
     assert!(
+        body.contains("pending_relay_publish_batch_event_ids"),
+        "pending relay retry must choose a bounded batch before cloning event JSON"
+    );
+    let compact_body = body
+        .chars()
+        .filter(|char| !char.is_whitespace())
+        .collect::<String>();
+    assert!(
+        !compact_body.contains(".values().cloned().collect::<Vec<_>>()"),
+        "pending relay retry must not clone the full pending backlog on every drain"
+    );
+    assert!(
         body.contains("request_relay_connection"),
         "offline pending publish retry must request the shared relay transport connection"
     );
@@ -2275,6 +2452,10 @@ fn protocol_retry_before_next_due_does_not_rewrite_persisted_state() {
     );
 
     let before = storage.put_count();
+    assert!(
+        !engine.has_due_pending_retry_work(NdrUnixSeconds(4)),
+        "future-due pending outbound work must not wake the protocol retry loop"
+    );
     let batch = engine
         .retry_pending_protocol(NdrUnixSeconds(4))
         .expect("retry before next due");
@@ -2292,6 +2473,10 @@ fn protocol_retry_before_next_due_does_not_rewrite_persisted_state() {
     );
 
     let due_before = storage.put_count();
+    assert!(
+        engine.has_due_pending_retry_work(NdrUnixSeconds(10_000)),
+        "due pending outbound work should wake the protocol retry loop"
+    );
     let batch = engine
         .retry_pending_protocol(NdrUnixSeconds(10_000))
         .expect("retry when pending protocol state is still missing");
@@ -2414,6 +2599,10 @@ fn group_fanout_retry_missing_roster_does_not_rewrite_persisted_state() {
     let due_retry_at = retry_now.saturating_add(180);
 
     let quiet_before = storage.put_count();
+    assert!(
+        !engine.has_due_pending_retry_work(NdrUnixSeconds(retry_now)),
+        "future-due group fanouts must not wake the protocol retry loop"
+    );
     let quiet_batch = engine
         .retry_pending_protocol(NdrUnixSeconds(retry_now))
         .expect("retry before group fanout is due");
@@ -2429,6 +2618,10 @@ fn group_fanout_retry_missing_roster_does_not_rewrite_persisted_state() {
 
     let generation_before_due = engine.debug_snapshot().subscription_generation;
     let before = storage.put_count();
+    assert!(
+        engine.has_due_pending_retry_work(NdrUnixSeconds(due_retry_at)),
+        "due group fanouts should wake the protocol retry loop"
+    );
     let batch = engine
         .retry_pending_protocol(NdrUnixSeconds(due_retry_at))
         .expect("retry missing group roster");

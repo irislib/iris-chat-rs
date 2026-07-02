@@ -155,6 +155,9 @@ impl AppCore {
         if !self.prune_or_skip_superseded_app_keys_publish(event) {
             return false;
         }
+        if !self.prune_or_skip_superseded_protocol_invite_response_publish(&pending, event) {
+            return false;
+        }
         if !self.prune_or_skip_superseded_local_invite_publish(&pending, event) {
             return false;
         }
@@ -248,31 +251,13 @@ impl AppCore {
             self.schedule_relay_transport_retry(format!("publish_drain_offline:{reason}"));
         }
 
-        let mut pending = self
-            .pending_relay_publishes
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        pending.retain(|pending| {
-            !self
-                .pending_relay_publish_inflight
-                .contains(&pending.event_id)
-        });
-        pending.sort_by(|left, right| {
-            let left_is_message = left.inner_event_id.is_some() && left.chat_id.is_some();
-            let right_is_message = right.inner_event_id.is_some() && right.chat_id.is_some();
-            (!left_is_message)
-                .cmp(&(!right_is_message))
-                .then_with(|| left.created_at_secs.cmp(&right.created_at_secs))
-                .then_with(|| left.label.cmp(&right.label))
-                .then_with(|| left.event_id.cmp(&right.event_id))
-        });
-        let truncated_to_batch = pending.len() > PENDING_RELAY_DRAIN_BATCH_SIZE;
-        if truncated_to_batch {
-            pending.truncate(PENDING_RELAY_DRAIN_BATCH_SIZE);
-        }
+        let (pending_event_ids, truncated_to_batch) =
+            self.pending_relay_publish_batch_event_ids(PENDING_RELAY_DRAIN_BATCH_SIZE);
         let mut candidates = Vec::new();
-        for pending in pending {
+        for event_id in pending_event_ids {
+            let Some(pending) = self.pending_relay_publishes.get(&event_id).cloned() else {
+                continue;
+            };
             let event = match serde_json::from_str::<Event>(&pending.event_json) {
                 Ok(event) => event,
                 Err(error) => {
@@ -406,6 +391,73 @@ impl AppCore {
                 },
             )));
         });
+    }
+
+    pub(super) fn pending_relay_publish_batch_event_ids(
+        &self,
+        batch_size: usize,
+    ) -> (Vec<String>, bool) {
+        if batch_size == 0 {
+            return (Vec::new(), !self.pending_relay_publishes.is_empty());
+        }
+
+        let mut selected = Vec::with_capacity(batch_size);
+        let mut eligible_count = 0usize;
+        for pending in self.pending_relay_publishes.values() {
+            if self
+                .pending_relay_publish_inflight
+                .contains(&pending.event_id)
+            {
+                continue;
+            }
+            eligible_count = eligible_count.saturating_add(1);
+            if selected.len() < batch_size {
+                selected.push(pending);
+                if selected.len() == batch_size {
+                    selected.sort_by(|left, right| {
+                        Self::compare_pending_relay_publish_order(left, right)
+                    });
+                }
+                continue;
+            }
+
+            let Some(worst_selected) = selected.last() else {
+                continue;
+            };
+            if Self::compare_pending_relay_publish_order(pending, worst_selected).is_lt() {
+                selected.pop();
+                let insert_at = selected
+                    .binary_search_by(|existing| {
+                        Self::compare_pending_relay_publish_order(existing, pending)
+                    })
+                    .unwrap_or_else(|index| index);
+                selected.insert(insert_at, pending);
+            }
+        }
+        if selected.len() < batch_size {
+            selected.sort_by(|left, right| Self::compare_pending_relay_publish_order(left, right));
+        }
+        let truncated = eligible_count > selected.len();
+        (
+            selected
+                .into_iter()
+                .map(|pending| pending.event_id.clone())
+                .collect(),
+            truncated,
+        )
+    }
+
+    fn compare_pending_relay_publish_order(
+        left: &PendingRelayPublish,
+        right: &PendingRelayPublish,
+    ) -> std::cmp::Ordering {
+        let left_is_message = left.inner_event_id.is_some() && left.chat_id.is_some();
+        let right_is_message = right.inner_event_id.is_some() && right.chat_id.is_some();
+        (!left_is_message)
+            .cmp(&(!right_is_message))
+            .then_with(|| left.created_at_secs.cmp(&right.created_at_secs))
+            .then_with(|| left.label.cmp(&right.label))
+            .then_with(|| left.event_id.cmp(&right.event_id))
     }
 
     fn mark_pending_relay_publish_attempt_started(&mut self, event_id: &str) {
@@ -695,6 +747,70 @@ impl AppCore {
         }
         true
     }
+
+    fn prune_or_skip_superseded_protocol_invite_response_publish(
+        &mut self,
+        current: &PendingRelayPublish,
+        event: &Event,
+    ) -> bool {
+        if current.label != APPCORE_PROTOCOL_LABEL
+            || current.inner_event_id.is_some()
+            || current.chat_id.is_none()
+            || event.kind.as_u16() as u32 != INVITE_RESPONSE_KIND
+        {
+            return true;
+        }
+
+        let current_event_id = event.id.to_string();
+        let current_created_at = event.created_at.as_secs();
+        let Some(current_chat_id) = current.chat_id.as_deref() else {
+            return true;
+        };
+        let superseded_ids = self
+            .pending_relay_publishes
+            .values()
+            .filter_map(|pending| {
+                if pending.event_id == current_event_id
+                    || pending.label != APPCORE_PROTOCOL_LABEL
+                    || pending.owner_pubkey_hex != current.owner_pubkey_hex
+                    || pending.inner_event_id.is_some()
+                    || pending.chat_id.as_deref() != Some(current_chat_id)
+                {
+                    return None;
+                }
+                let pending_event = serde_json::from_str::<Event>(&pending.event_json).ok()?;
+                if pending_event.kind.as_u16() as u32 != INVITE_RESPONSE_KIND
+                    || pending_event.pubkey != event.pubkey
+                {
+                    return None;
+                }
+                if pending.created_at_secs > current_created_at {
+                    return Some((pending.event_id.clone(), true));
+                }
+                if pending.created_at_secs < current_created_at {
+                    return Some((pending.event_id.clone(), false));
+                }
+                Some((
+                    pending.event_id.clone(),
+                    pending.event_id > current_event_id,
+                ))
+            })
+            .collect::<Vec<_>>();
+        for (event_id, newer) in superseded_ids {
+            if newer {
+                self.push_debug_log(
+                    "publish.runtime.queue",
+                    format!(
+                        "label={APPCORE_PROTOCOL_LABEL} skipped=superseded_bootstrap pending_event_id={event_id}"
+                    ),
+                );
+                return false;
+            }
+            self.forget_pending_relay_publish(&event_id);
+        }
+        true
+    }
+
     pub(super) fn publish_local_identity_artifacts(&mut self) {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return;

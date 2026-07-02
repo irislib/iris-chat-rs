@@ -8,7 +8,7 @@ use crate::state::{
     ChatMessageKind, ChatMessageSnapshot, DeliveryState, MessageDeliveryTraceSnapshot,
     MessageRecipientDeliverySnapshot, PreferencesSnapshot,
 };
-use nostr_double_ratchet::GroupSnapshot;
+use nostr_double_ratchet::{GroupSnapshot, INVITE_RESPONSE_KIND};
 use rusqlite::{params, OptionalExtension, Row, Transaction};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -408,6 +408,40 @@ impl AppStore {
             pending.push(row?);
         }
         Ok(pending)
+    }
+
+    pub(crate) fn prune_superseded_protocol_invite_response_publishes(
+        &self,
+        owner_pubkey_hex: &str,
+    ) -> anyhow::Result<usize> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        let deleted = conn.execute(
+            "WITH ranked AS (
+                SELECT event_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY owner_pubkey_hex, label, chat_id,
+                                        json_extract(event_json, '$.pubkey')
+                           ORDER BY created_at_secs DESC, event_id DESC
+                       ) AS rn
+                FROM pending_relay_publishes
+                WHERE owner_pubkey_hex = ?1
+                  AND label = ?2
+                  AND inner_event_id IS NULL
+                  AND chat_id IS NOT NULL
+                  AND CAST(json_extract(event_json, '$.kind') AS INTEGER) = ?3
+             )
+             DELETE FROM pending_relay_publishes
+             WHERE event_id IN (SELECT event_id FROM ranked WHERE rn > 1)",
+            params![
+                owner_pubkey_hex,
+                super::super::APPCORE_PROTOCOL_LABEL,
+                INVITE_RESPONSE_KIND as i64,
+            ],
+        )?;
+        Ok(deleted)
     }
 
     pub(crate) fn upsert_pending_relay_publish(

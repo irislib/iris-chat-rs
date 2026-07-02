@@ -860,9 +860,28 @@ impl AppCore {
     }
 
     fn load_pending_relay_publish_queue(&mut self, owner_pubkey: PublicKey) {
+        let owner_pubkey_hex = owner_pubkey.to_hex();
         match self
             .app_store
-            .load_pending_relay_publishes(&owner_pubkey.to_hex())
+            .prune_superseded_protocol_invite_response_publishes(&owner_pubkey_hex)
+        {
+            Ok(pruned) if pruned > 0 => {
+                self.push_debug_log(
+                    "publish.runtime.queue",
+                    format!("pruned_superseded_protocol_bootstrap={pruned}"),
+                );
+            }
+            Err(error) => {
+                self.push_debug_log(
+                    "publish.runtime.queue",
+                    format!("bootstrap_prune_failed={error}"),
+                );
+            }
+            _ => {}
+        }
+        match self
+            .app_store
+            .load_pending_relay_publishes(&owner_pubkey_hex)
         {
             Ok(pending) => {
                 self.pending_relay_publishes = pending

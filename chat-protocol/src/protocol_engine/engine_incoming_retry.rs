@@ -1,13 +1,25 @@
 impl ProtocolEngine {
     pub fn has_due_pending_retry_work(&self, now: NdrUnixSeconds) -> bool {
-        !self.pending_outbound.is_empty()
-            || !self.pending_inbound.is_empty()
-            || !self.pending_group_fanouts.is_empty()
-            || !self.pending_group_pairwise_payloads.is_empty()
+        let now_secs = now.get();
+        self.pending_outbound
+            .iter()
+            .any(|pending| pending.next_retry_at_secs <= now_secs)
+            || self
+                .pending_inbound
+                .iter()
+                .any(|pending| pending.next_retry_at_secs <= now_secs)
+            || self
+                .pending_group_fanouts
+                .iter()
+                .any(|pending| pending.next_retry_at_secs <= now_secs)
+            || self
+                .pending_group_pairwise_payloads
+                .iter()
+                .any(|pending| pending.next_retry_at_secs <= now_secs)
             || self
                 .pending_group_sender_key_repairs
                 .iter()
-                .any(|pending| pending.next_retry_at_secs <= now.get())
+                .any(|pending| Self::pending_group_sender_key_repair_due_at_secs(pending) <= now_secs)
             || !self.pending_decrypted_deliveries.is_empty()
     }
 
