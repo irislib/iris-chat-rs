@@ -98,6 +98,7 @@ jobs:
           {
             echo "IRIS_APP_VERSION_NAME=$IRIS_APP_VERSION_NAME"
             echo "IRIS_APP_VERSION_CODE=$IRIS_APP_VERSION_CODE"
+            echo "IRIS_APP_VERSION_CODE_MANUAL=true"
             echo "IRIS_BUILD_GIT_SHA=$IRIS_BUILD_GIT_SHA"
             echo "IRIS_BUILD_TIMESTAMP_UTC=$IRIS_BUILD_TIMESTAMP_UTC"
           } >> "$GITHUB_ENV"
