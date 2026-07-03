@@ -1,0 +1,250 @@
+name: iOS TestFlight Upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: "Optional app versionName, without leading v. Empty means next UTC calendar version from tags."
+        required: false
+        type: string
+      version_code:
+        description: "Optional iOS build number override. Empty derives it from version_name."
+        required: false
+        type: string
+      artifact_retention_days:
+        description: "How long GitHub should keep the iOS release artifacts."
+        required: true
+        default: "30"
+        type: choice
+        options:
+          - "7"
+          - "30"
+          - "90"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-testflight-upload-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_DIR: iris-chat-rs
+  CARGO_TERM_COLOR: always
+  CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+  IRIS_RELEASE_RELAY_SET_ID: ${{ vars.IRIS_RELEASE_RELAY_SET_ID || 'public-release' }}
+  IRIS_RELEASE_RELAYS: ${{ vars.IRIS_RELEASE_RELAYS || 'wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social,wss://temp.iris.to' }}
+  IRIS_RELAY_SET_ID: ${{ vars.IRIS_RELEASE_RELAY_SET_ID || 'public-release' }}
+  IRIS_DEFAULT_RELAYS: ${{ vars.IRIS_RELEASE_RELAYS || 'wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social,wss://temp.iris.to' }}
+  IRIS_MOBILE_PUSH_SERVER_URL: ${{ vars.IRIS_MOBILE_PUSH_SERVER_URL }}
+  IRIS_UPDATE_MANIFEST_URL: ${{ vars.IRIS_UPDATE_MANIFEST_URL }}
+  IRIS_UPDATE_POLL_SECONDS: ${{ vars.IRIS_UPDATE_POLL_SECONDS }}
+
+jobs:
+  upload:
+    name: Build and upload iOS IPA
+    runs-on: macos-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}
+
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+        with:
+          path: ${{ env.APP_DIR }}
+          fetch-depth: 0
+
+      - name: Print Xcode version
+        run: xcodebuild -version
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: ios-testflight-upload-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
+          restore-keys: |
+            ios-testflight-upload-${{ runner.os }}-
+
+      - name: Resolve release version
+        id: version
+        env:
+          INPUT_VERSION_NAME: ${{ inputs.version_name }}
+          INPUT_VERSION_CODE: ${{ inputs.version_code }}
+        run: |
+          set -Eeuo pipefail
+          source scripts/release_common.sh
+
+          version_name="$INPUT_VERSION_NAME"
+          version_name="${version_name#"v"}"
+          if [[ -z "$version_name" ]]; then
+            today="$(date -u +'%Y.%-m.%-d')"
+            highest_suffix=-1
+
+            if git rev-parse -q --verify "refs/tags/v${today}" >/dev/null; then
+              highest_suffix=0
+            fi
+
+            tag_prefix="v${today}."
+            while IFS= read -r tag; do
+              suffix="${tag#"$tag_prefix"}"
+              if [[ "$suffix" =~ ^[0-9]+$ && "$suffix" -gt "$highest_suffix" ]]; then
+                highest_suffix="$suffix"
+              fi
+            done < <(git tag -l "v${today}.*")
+
+            if [[ "$highest_suffix" -lt 0 ]]; then
+              version_name="$today"
+            else
+              version_name="${today}.$((highest_suffix + 1))"
+            fi
+          fi
+
+          export IRIS_APP_VERSION_NAME="$version_name"
+          if [[ -n "$INPUT_VERSION_CODE" ]]; then
+            if [[ ! "$INPUT_VERSION_CODE" =~ ^[0-9]+$ ]]; then
+              echo "::error::version_code must be numeric."
+              exit 1
+            fi
+            export IRIS_APP_VERSION_CODE="$INPUT_VERSION_CODE"
+            export IRIS_APP_VERSION_CODE_MANUAL=true
+          fi
+
+          resolve_shared_build_metadata "$PWD"
+
+          {
+            echo "IRIS_APP_VERSION_NAME=$IRIS_APP_VERSION_NAME"
+            echo "IRIS_APP_VERSION_CODE=$IRIS_APP_VERSION_CODE"
+            echo "IRIS_BUILD_GIT_SHA=$IRIS_BUILD_GIT_SHA"
+            echo "IRIS_BUILD_TIMESTAMP_UTC=$IRIS_BUILD_TIMESTAMP_UTC"
+          } >> "$GITHUB_ENV"
+
+          {
+            echo "version_name=$IRIS_APP_VERSION_NAME"
+            echo "version_code=$IRIS_APP_VERSION_CODE"
+            echo "git_sha=$IRIS_BUILD_GIT_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Configure App Store Connect auth
+        env:
+          ASC_PRIVATE_KEY_P8: ${{ secrets.ASC_PRIVATE_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          IRIS_IOS_BUNDLE_ID_VALUE: ${{ vars.IRIS_IOS_BUNDLE_ID }}
+          IRIS_IOS_DEVELOPMENT_TEAM_VALUE: ${{ vars.IRIS_IOS_DEVELOPMENT_TEAM }}
+        run: |
+          set -Eeuo pipefail
+          for name in \
+            ASC_PRIVATE_KEY_P8 \
+            ASC_KEY_ID \
+            ASC_ISSUER_ID \
+            IRIS_IOS_BUNDLE_ID_VALUE \
+            IRIS_IOS_DEVELOPMENT_TEAM_VALUE; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required iOS upload setting: $name"
+              exit 1
+            fi
+          done
+
+          python3 <<'PY'
+          import os
+          from pathlib import Path
+
+          raw_key = os.environ["ASC_PRIVATE_KEY_P8"]
+          if "\\n" in raw_key and "\n" not in raw_key:
+              raw_key = raw_key.replace("\\n", "\n")
+          if not raw_key.endswith("\n"):
+              raw_key += "\n"
+
+          key_path = Path(os.environ["RUNNER_TEMP"]) / f"AuthKey_{os.environ['ASC_KEY_ID']}.p8"
+          key_path.write_text(raw_key, encoding="utf-8")
+          key_path.chmod(0o600)
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"IRIS_ASC_AUTH_KEY_PATH={key_path}\n")
+          PY
+
+          {
+            echo "IRIS_ASC_AUTH_KEY_ID=$ASC_KEY_ID"
+            echo "IRIS_ASC_AUTH_KEY_ISSUER_ID=$ASC_ISSUER_ID"
+            echo "IRIS_IOS_BUNDLE_ID=$IRIS_IOS_BUNDLE_ID_VALUE"
+            echo "IRIS_IOS_DEVELOPMENT_TEAM=$IRIS_IOS_DEVELOPMENT_TEAM_VALUE"
+            echo "IRIS_IOS_SIGNING_STYLE=automatic"
+            echo "IRIS_IOS_EXPORT_METHOD=app-store-connect"
+            echo "IRIS_IOS_ALLOW_PROVISIONING_UPDATES=true"
+            echo "IRIS_IOS_INTERNAL_ONLY=false"
+            echo "IRIS_IOS_ATTACH_INTERNAL_AFTER_UPLOAD=false"
+          } >> "$GITHUB_ENV"
+
+      - name: Print iOS release config
+        run: ./scripts/ios-release print-config
+
+      - name: Archive iOS app
+        run: ./scripts/ios-release archive
+
+      - name: Upload IPA to App Store Connect
+        run: ./scripts/ios-release upload
+
+      - name: Collect artifact metadata
+        id: artifacts
+        run: |
+          set -Eeuo pipefail
+          archive_path="$(find dist/ios -maxdepth 1 -type d -name '*.xcarchive' | sort | tail -n 1)"
+          ipa_path="$(find dist/ios -type f -name '*.ipa' | sort | tail -n 1)"
+          upload_log_path="$(find dist/ios -type f -path '*-upload/*' | sort | tail -n 1)"
+
+          if [[ -z "${archive_path:-}" ]]; then
+            echo "::error::No iOS archive found under dist/ios."
+            exit 1
+          fi
+          if [[ -z "${ipa_path:-}" ]]; then
+            echo "::error::No IPA found under dist/ios."
+            exit 1
+          fi
+
+          {
+            echo "archive_path=$archive_path"
+            echo "ipa_path=$ipa_path"
+            echo "ipa_name=$(basename "$ipa_path")"
+            echo "upload_log_path=${upload_log_path:-<none>}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload iOS release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: iris-chat-ios-upload-${{ steps.version.outputs.version_name }}-${{ steps.version.outputs.git_sha }}
+          path: iris-chat-rs/dist/ios/**
+          if-no-files-found: error
+          retention-days: ${{ inputs.artifact_retention_days }}
+
+      - name: Job summary
+        run: |
+          set -Eeuo pipefail
+          {
+            echo "## iOS App Store Connect upload"
+            echo
+            echo "- bundle ID: \`${IRIS_IOS_BUNDLE_ID}\`"
+            echo "- team ID: \`${IRIS_IOS_DEVELOPMENT_TEAM}\`"
+            echo "- versionName: \`${IRIS_APP_VERSION_NAME}\`"
+            echo "- build number: \`${IRIS_APP_VERSION_CODE}\`"
+            echo "- git SHA: \`${IRIS_BUILD_GIT_SHA}\`"
+            echo "- archive: \`${{ steps.artifacts.outputs.archive_path }}\`"
+            echo "- IPA: \`${{ steps.artifacts.outputs.ipa_name }}\`"
+            echo "- upload log: \`${{ steps.artifacts.outputs.upload_log_path }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
