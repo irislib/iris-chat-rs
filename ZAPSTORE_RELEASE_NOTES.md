@@ -1,3 +1,9 @@
+# Iris Chat 2026.7.6
+
+- One-to-one messages now queue cleanly while secure chat setup finishes, then send once the conversation is ready.
+- Updated the encrypted messaging library to the latest release.
+- Release checks now cover the current Android APK and internal iOS TestFlight upload flow.
+
 # Iris Chat 2026.7.1
 
 - Newly created groups now exchange messages reliably between web and native linked devices.
