@@ -247,7 +247,7 @@ fn appcore_pending_group_payload_from_claimed_device_uses_owner_after_appkeys() 
 }
 
 #[test]
-fn queued_direct_send_schedules_fast_protocol_retry_tick() {
+fn queued_direct_send_schedules_subscription_liveness_tick() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
@@ -269,6 +269,6 @@ fn queued_direct_send_schedules_fast_protocol_retry_tick() {
         .expect("queued protocol work should schedule liveness");
     assert!(
         due_at <= Instant::now() + Duration::from_secs(5),
-        "queued direct work should schedule a fast retry tick, not wait for the normal liveness interval"
+        "queued direct work should schedule a fast subscription liveness tick, not wait for the normal liveness interval"
     );
 }

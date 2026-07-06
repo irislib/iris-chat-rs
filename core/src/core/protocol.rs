@@ -112,7 +112,7 @@ impl AppCore {
         batch: ProtocolRetryBatch,
     ) {
         if batch.is_empty() {
-            if self.drain_initializing_direct_messages(reason) {
+            if self.drain_queued_direct_text_messages(reason) {
                 self.persist_best_effort();
                 self.rebuild_state();
                 self.emit_state();
@@ -160,7 +160,7 @@ impl AppCore {
         } else {
             self.handle_queued_protocol_targets(reason, &queued_targets);
         }
-        self.drain_initializing_direct_messages(reason);
+        self.drain_queued_direct_text_messages(reason);
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
