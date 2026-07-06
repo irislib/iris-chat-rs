@@ -512,6 +512,30 @@ impl AppCore {
             return;
         };
 
+        let Some(protocol_engine) = self.protocol_engine.as_ref() else {
+            self.state.toast = Some("Protocol engine is not ready.".to_string());
+            return;
+        };
+        let readiness = protocol_engine.direct_send_readiness(peer_pubkey);
+        if !readiness.is_ready() {
+            let message_id = self.allocate_message_id();
+            self.push_debug_log(
+                "message.direct.queue_init",
+                format!(
+                    "chat_id={normalized_chat_id} message_id={message_id} readiness={readiness:?}"
+                ),
+            );
+            self.push_outgoing_message_with_id(
+                message_id,
+                &normalized_chat_id,
+                text.to_string(),
+                now.get(),
+                expires_at_secs,
+                DeliveryState::Queued,
+            );
+            self.request_protocol_subscription_refresh();
+            return;
+        }
         let Some(protocol_engine) = self.protocol_engine.as_mut() else {
             self.state.toast = Some("Protocol engine is not ready.".to_string());
             return;
@@ -533,10 +557,9 @@ impl AppCore {
                 self.push_debug_log(
                     "message.direct.send.appcore",
                     format!(
-                        "chat_id={normalized_chat_id} message_id={} event_ids={} queued_targets={}",
+                        "chat_id={normalized_chat_id} message_id={} event_ids={}",
                         result.message_id,
-                        result.event_ids.len(),
-                        result.queued_targets.len()
+                        result.event_ids.len()
                     ),
                 );
                 self.push_outgoing_message_with_id(
@@ -550,9 +573,6 @@ impl AppCore {
                 self.process_protocol_engine_effects(result.effects);
                 self.sync_message_delivery_trace(&normalized_chat_id, &result.message_id);
                 self.reconcile_outgoing_message_delivery(&normalized_chat_id, &result.message_id);
-                if !result.queued_targets.is_empty() {
-                    self.handle_queued_protocol_targets("message.direct", &result.queued_targets);
-                }
             }
             Err(error) => {
                 self.state.toast = Some(error.to_string());
@@ -795,17 +815,6 @@ impl AppCore {
             })
             .filter_map(|pending| pending.last_error.clone())
             .last();
-        let mut queued_protocol_targets = Vec::new();
-        if let Some(protocol_engine) = self.protocol_engine.as_ref() {
-            queued_protocol_targets.extend(
-                protocol_engine
-                    .queued_message_diagnostics(Some(message_id))
-                    .into_iter(),
-            );
-            queued_protocol_targets.sort();
-            queued_protocol_targets.dedup();
-        }
-
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;
         };
@@ -817,8 +826,126 @@ impl AppCore {
             return;
         };
         message.delivery_trace.pending_relay_event_ids = pending_relay_event_ids;
-        message.delivery_trace.queued_protocol_targets = queued_protocol_targets;
+        message.delivery_trace.queued_protocol_targets = Vec::new();
         message.delivery_trace.last_transport_error = last_transport_error;
+    }
+
+    pub(super) fn drain_initializing_direct_messages(&mut self, reason: &'static str) -> bool {
+        let candidates = self
+            .threads
+            .iter()
+            .flat_map(|(chat_id, thread)| {
+                thread.messages.iter().filter_map(|message| {
+                    if is_initializing_direct_message(chat_id, message) {
+                        Some((chat_id.clone(), message.clone()))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut changed = false;
+        for (chat_id, message) in candidates {
+            let Ok((normalized_chat_id, peer_pubkey)) = parse_peer_input(&chat_id) else {
+                continue;
+            };
+            let readiness = self
+                .protocol_engine
+                .as_ref()
+                .map(|engine| engine.direct_send_readiness(peer_pubkey))
+                .unwrap_or(DirectSendReadiness::MissingLocalAppKeys);
+            if !readiness.is_ready() {
+                continue;
+            }
+            let Some(protocol_engine) = self.protocol_engine.as_mut() else {
+                continue;
+            };
+            let result = protocol_engine.send_direct_text(
+                peer_pubkey,
+                &normalized_chat_id,
+                &message.body,
+                message.expires_at_secs,
+                unix_now(),
+            );
+            match result {
+                Ok(result) if !result.event_ids.is_empty() => {
+                    self.replace_initializing_direct_message(
+                        &normalized_chat_id,
+                        &message,
+                        result.message_id.clone(),
+                    );
+                    self.push_debug_log(
+                        "message.direct.init_drain",
+                        format!(
+                            "reason={reason} chat_id={normalized_chat_id} old_message_id={} new_message_id={} event_ids={}",
+                            message.id,
+                            result.message_id,
+                            result.event_ids.len()
+                        ),
+                    );
+                    self.process_protocol_engine_effects(result.effects);
+                    self.sync_message_delivery_trace(&normalized_chat_id, &result.message_id);
+                    self.reconcile_outgoing_message_delivery(
+                        &normalized_chat_id,
+                        &result.message_id,
+                    );
+                    self.request_protocol_subscription_refresh();
+                    changed = true;
+                }
+                Ok(result) => {
+                    self.push_debug_log(
+                        "message.direct.init_drain.invariant",
+                        format!(
+                            "reason={reason} chat_id={normalized_chat_id} old_message_id={} new_message_id={} event_ids=0",
+                            message.id, result.message_id
+                        ),
+                    );
+                }
+                Err(error) => {
+                    self.push_debug_log(
+                        "message.direct.init_drain.error",
+                        format!(
+                            "reason={reason} chat_id={normalized_chat_id} message_id={} error={error}",
+                            message.id
+                        ),
+                    );
+                }
+            }
+        }
+        changed
+    }
+
+    fn replace_initializing_direct_message(
+        &mut self,
+        chat_id: &str,
+        queued_message: &ChatMessageSnapshot,
+        final_message_id: String,
+    ) {
+        if let Some(thread) = self.threads.get_mut(chat_id) {
+            thread
+                .messages
+                .retain(|message| message.id != queued_message.id);
+        }
+        if final_message_id != queued_message.id {
+            if let Err(error) = self.app_store.delete_message(chat_id, &queued_message.id) {
+                self.push_debug_log(
+                    "storage.message.delete.error",
+                    format!(
+                        "chat_id={chat_id} message_id={} error={error}",
+                        queued_message.id
+                    ),
+                );
+            }
+        }
+        self.push_outgoing_message_with_id(
+            final_message_id,
+            chat_id,
+            queued_message.body.clone(),
+            queued_message.created_at_secs,
+            queued_message.expires_at_secs,
+            DeliveryState::Pending,
+        );
     }
 
     pub(super) fn reconcile_outgoing_message_delivery(&mut self, chat_id: &str, message_id: &str) {
@@ -843,6 +970,9 @@ impl AppCore {
             return;
         };
         if !message.is_outgoing || matches!(message.delivery, DeliveryState::Failed) {
+            return;
+        }
+        if is_initializing_direct_message(chat_id, message) {
             return;
         }
         if pending_relay || queued_protocol {
@@ -1863,4 +1993,12 @@ pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMes
 
 pub(super) fn message_order(message: &ChatMessageSnapshot) -> u64 {
     message.created_at_secs
+}
+
+fn is_initializing_direct_message(chat_id: &str, message: &ChatMessageSnapshot) -> bool {
+    !is_group_chat_id(chat_id)
+        && message.is_outgoing
+        && matches!(message.delivery, DeliveryState::Queued)
+        && message.delivery_trace.outer_event_ids.is_empty()
+        && message.delivery_trace.pending_relay_event_ids.is_empty()
 }

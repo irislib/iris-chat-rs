@@ -27,17 +27,11 @@ fn retry_batch_publish_registration_blocks_delivery_until_relay_success() {
     core.process_protocol_engine_retry_batch(
         "test_retry_publish_ordering",
         ProtocolRetryBatch {
-            direct_results: vec![ProtocolRetryResult {
-                message_id: message_id.clone(),
+            effects: vec![ProtocolEffect::Publish(ProtocolPublish {
+                event,
                 chat_id: chat_id.clone(),
-                event_ids: vec![event_id.clone()],
-                effects: vec![ProtocolEffect::Publish(ProtocolPublish {
-                    event,
-                    chat_id: chat_id.clone(),
-                    inner_event_id: Some(message_id.clone()),
-                })],
-                queued_targets: Vec::new(),
-            }],
+                inner_event_id: Some(message_id.clone()),
+            })],
             ..ProtocolRetryBatch::default()
         },
     );

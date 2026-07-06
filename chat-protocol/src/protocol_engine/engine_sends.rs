@@ -55,7 +55,6 @@ impl ProtocolEngine {
 
     pub fn observe_invite_event(&mut self, event: &Event) -> anyhow::Result<ProtocolRetryBatch> {
         let session_checkpoint = self.session_manager.clone();
-        let pending_outbound_checkpoint = self.pending_outbound.clone();
         let pending_inbound_checkpoint = self.pending_inbound.clone();
         let pending_group_fanouts_checkpoint = self.pending_group_fanouts.clone();
         let pending_group_pairwise_checkpoint = self.pending_group_pairwise_payloads.clone();
@@ -75,7 +74,6 @@ impl ProtocolEngine {
         }
         if let Err(error) = self.persist() {
             self.session_manager = session_checkpoint;
-            self.pending_outbound = pending_outbound_checkpoint;
             self.pending_inbound = pending_inbound_checkpoint;
             self.pending_group_fanouts = pending_group_fanouts_checkpoint;
             self.pending_group_pairwise_payloads = pending_group_pairwise_checkpoint;
@@ -103,7 +101,6 @@ impl ProtocolEngine {
             return Ok(ProtocolRetryBatch::default());
         }
         let session_checkpoint = self.session_manager.clone();
-        let pending_outbound_checkpoint = self.pending_outbound.clone();
         let pending_inbound_checkpoint = self.pending_inbound.clone();
         let pending_group_fanouts_checkpoint = self.pending_group_fanouts.clone();
         let pending_group_pairwise_checkpoint = self.pending_group_pairwise_payloads.clone();
@@ -129,7 +126,6 @@ impl ProtocolEngine {
         }
         if let Err(error) = self.persist() {
             self.session_manager = session_checkpoint;
-            self.pending_outbound = pending_outbound_checkpoint;
             self.pending_inbound = pending_inbound_checkpoint;
             self.pending_group_fanouts = pending_group_fanouts_checkpoint;
             self.pending_group_pairwise_payloads = pending_group_pairwise_checkpoint;
@@ -606,56 +602,24 @@ impl ProtocolEngine {
         )?;
 
         let mut event_ids = Vec::new();
-        let mut effects = protocol_effects_from_prepared(
+        let effects = protocol_effects_from_prepared(
             &remote,
             inner_event_id.clone(),
             chat_id.to_string(),
             &mut event_ids,
         )?;
 
-        let remote_delivered = delivered_device_hexes(&remote);
-        let gaps = remote.relay_gaps.clone();
-        let probe_remote_roster = remote.deliveries.is_empty()
-            && remote.relay_gaps.is_empty()
-            && !self.has_roster_for_owner(recipient_owner);
-        let mut queued_targets = Vec::new();
-        let mut queued_effects = Vec::new();
-        if !gaps.is_empty() || probe_remote_roster {
-            let reason = if probe_remote_roster {
-                ProtocolPendingReason::MissingRoster
-            } else {
-                pending_reason_from_gaps(&gaps)
-            };
-            let pending = ProtocolPendingOutbound {
-                message_id: message_id.clone(),
-                chat_id: chat_id.to_string(),
-                recipient_owner_hex: peer_pubkey.to_hex(),
-                send_remote: true,
-                remote_payload,
-                local_sibling_payload: None,
-                inner_event_id,
-                delivered_remote_device_hexes: remote_delivered,
-                delivered_local_device_hexes: Vec::new(),
-                probe_local_sibling_roster: false,
-                created_at_secs: now.get(),
-                next_retry_at_secs: now.get().saturating_add(PENDING_RETRY_DELAY_SECS),
-                reason,
-            };
-            queued_targets = self.pending_target_hexes(&pending);
-            queued_effects = self.protocol_backfill_effects_for_pending_outbound(
-                &pending,
-                NdrUnixSeconds(now.get()),
-                "direct_send",
-            );
-            self.upsert_pending_outbound(pending);
+        if !remote.relay_gaps.is_empty() {
+            anyhow::bail!("direct send readiness invariant failed: remote relay gaps remain");
+        }
+        if remote.deliveries.is_empty() && remote.invite_responses.is_empty() {
+            anyhow::bail!("direct send readiness invariant failed: no remote target prepared");
         }
         self.persist()?;
-        effects.extend(queued_effects);
         Ok(ProtocolDirectSendResult {
             message_id,
             event_ids,
             effects,
-            queued_targets,
         })
     }
 
@@ -674,52 +638,21 @@ impl ProtocolEngine {
             .prepare_local_sibling_send_reusing_sessions(&mut ctx, local_sibling_payload.clone())?;
 
         let mut event_ids = Vec::new();
-        let mut effects = protocol_effects_from_prepared(
+        let effects = protocol_effects_from_prepared(
             &local,
             inner_event_id.clone(),
             chat_id.to_string(),
             &mut event_ids,
         )?;
 
-        let local_delivered = delivered_device_hexes(&local);
-        let probe_local_sibling_roster = self.needs_local_sibling_roster_probe(&local);
-        let has_undelivered_local_siblings = !self
-            .remaining_local_sibling_targets(&local_delivered)
-            .is_empty();
-        let gaps = local.relay_gaps.clone();
-        let mut queued_targets = Vec::new();
-        let mut queued_effects = Vec::new();
-        if !gaps.is_empty() || probe_local_sibling_roster || has_undelivered_local_siblings {
-            let pending = ProtocolPendingOutbound {
-                message_id: message_id.clone(),
-                chat_id: chat_id.to_string(),
-                recipient_owner_hex: public_owner(self.local_owner)?.to_hex(),
-                send_remote: false,
-                remote_payload: Vec::new(),
-                local_sibling_payload: Some(local_sibling_payload),
-                inner_event_id,
-                delivered_remote_device_hexes: Vec::new(),
-                delivered_local_device_hexes: local_delivered,
-                probe_local_sibling_roster,
-                created_at_secs: now.get(),
-                next_retry_at_secs: now.get().saturating_add(PENDING_RETRY_DELAY_SECS),
-                reason: pending_reason_from_gaps(&gaps),
-            };
-            queued_targets = self.pending_target_hexes(&pending);
-            queued_effects = self.protocol_backfill_effects_for_pending_outbound(
-                &pending,
-                NdrUnixSeconds(now.get()),
-                "local_sibling_send",
-            );
-            self.upsert_pending_outbound(pending);
+        if !local.relay_gaps.is_empty() {
+            anyhow::bail!("direct send readiness invariant failed: local sibling relay gaps remain");
         }
         self.persist()?;
-        effects.extend(queued_effects);
         Ok(ProtocolDirectSendResult {
             message_id,
             event_ids,
             effects,
-            queued_targets,
         })
     }
 
@@ -760,51 +693,23 @@ impl ProtocolEngine {
             &mut event_ids,
         )?);
 
-        let remote_delivered = delivered_device_hexes(&remote);
-        let local_delivered = delivered_device_hexes(&local);
-        let probe_local_sibling_roster = self.needs_local_sibling_roster_probe(&local);
-        let has_undelivered_local_siblings = !self
-            .remaining_local_sibling_targets(&local_delivered)
-            .is_empty();
         let gaps = remote
             .relay_gaps
             .iter()
             .chain(local.relay_gaps.iter())
             .cloned()
             .collect::<Vec<_>>();
-        let mut queued_targets = Vec::new();
-        let mut queued_effects = Vec::new();
-        if !gaps.is_empty() || probe_local_sibling_roster || has_undelivered_local_siblings {
-            let pending = ProtocolPendingOutbound {
-                message_id: message_id.clone(),
-                chat_id: chat_id.to_string(),
-                recipient_owner_hex: peer_pubkey.to_hex(),
-                send_remote: true,
-                remote_payload,
-                local_sibling_payload: Some(local_sibling_payload),
-                inner_event_id,
-                delivered_remote_device_hexes: remote_delivered,
-                delivered_local_device_hexes: local_delivered,
-                probe_local_sibling_roster,
-                created_at_secs: now.get(),
-                next_retry_at_secs: now.get().saturating_add(PENDING_RETRY_DELAY_SECS),
-                reason: pending_reason_from_gaps(&gaps),
-            };
-            queued_targets = self.pending_target_hexes(&pending);
-            queued_effects = self.protocol_backfill_effects_for_pending_outbound(
-                &pending,
-                NdrUnixSeconds(now.get()),
-                "direct_send",
-            );
-            self.upsert_pending_outbound(pending);
+        if !gaps.is_empty() {
+            anyhow::bail!("direct send readiness invariant failed: relay gaps remain");
+        }
+        if remote.deliveries.is_empty() && remote.invite_responses.is_empty() {
+            anyhow::bail!("direct send readiness invariant failed: no remote target prepared");
         }
         self.persist()?;
-        effects.extend(queued_effects);
         Ok(ProtocolDirectSendResult {
             message_id,
             event_ids,
             effects,
-            queued_targets,
         })
     }
 }

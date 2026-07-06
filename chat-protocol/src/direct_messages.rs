@@ -512,12 +512,6 @@ impl DirectMessageService {
 
     fn effects_from_retry_batch(&mut self, batch: ProtocolRetryBatch) -> Vec<ProtocolEffect> {
         let mut effects = batch.effects;
-        for result in batch.direct_results {
-            if !result.event_ids.is_empty() {
-                self.mark_message_sent(&result.chat_id, &result.message_id);
-            }
-            effects.extend(result.effects);
-        }
         effects.extend(batch.group_result.effects);
         for message in batch.direct_messages {
             self.apply_decrypted_protocol_message(message);
@@ -679,19 +673,6 @@ impl DirectMessageService {
         }
     }
 
-    fn mark_message_sent(&self, chat_id: &str, id: &str) {
-        if id.is_empty() {
-            return;
-        }
-        if let Ok(conn) = self.conn.lock() {
-            let _ = conn.execute(
-                "UPDATE private_chat_messages
-                 SET delivery = ?3
-                 WHERE chat_id = ?1 AND id = ?2",
-                params![chat_id, id, DirectMessageDelivery::Sent.as_str()],
-            );
-        }
-    }
 }
 
 struct RuntimeRumor {

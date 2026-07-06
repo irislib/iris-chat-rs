@@ -38,17 +38,6 @@ impl AppCore {
             || self.protocol_engine.as_ref().is_some_and(|engine| {
                 tracked_peer_owners.iter().any(|owner_hex| {
                     PublicKey::parse(owner_hex).is_ok_and(|owner_pubkey| {
-                        let owner_prefix = owner_pubkey.to_hex();
-                        engine
-                            .queued_message_diagnostics(None)
-                            .iter()
-                            .any(|target| target == &owner_prefix)
-                    })
-                })
-            })
-            || self.protocol_engine.as_ref().is_some_and(|engine| {
-                tracked_peer_owners.iter().any(|owner_hex| {
-                    PublicKey::parse(owner_hex).is_ok_and(|owner_pubkey| {
                         engine
                             .message_author_pubkeys_for_owner(owner_pubkey)
                             .is_empty()
@@ -60,7 +49,6 @@ impl AppCore {
     pub(in crate::core) fn current_queued_protocol_targets(&self) -> Vec<String> {
         let mut targets = Vec::new();
         if let Some(protocol_engine) = self.protocol_engine.as_ref() {
-            targets.extend(protocol_engine.queued_message_diagnostics(None));
             targets.extend(protocol_engine.queued_owner_claim_targets());
             targets.extend(protocol_engine.queued_group_target_hexes());
         }

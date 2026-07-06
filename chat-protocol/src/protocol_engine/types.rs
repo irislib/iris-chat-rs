@@ -2,13 +2,8 @@ const PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
 const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
-const LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS: u64 = 120;
 const DELIVERED_GROUP_SENDER_KEY_ACK_LIMIT: usize = 512;
 const ANSWERED_GROUP_SENDER_KEY_REPAIR_LIMIT: usize = 512;
-
-fn default_true() -> bool {
-    true
-}
 
 fn group_chat_id(group_id: &str) -> String {
     format!("group:{group_id}")
@@ -19,8 +14,6 @@ struct ProtocolEnginePersistedState {
     version: u32,
     session_manager: SessionManagerSnapshot,
     group_manager: GroupManagerSnapshot,
-    #[serde(default)]
-    pending_outbound: Vec<ProtocolPendingOutbound>,
     #[serde(default)]
     pending_inbound: Vec<ProtocolPendingInbound>,
     #[serde(default)]
@@ -60,43 +53,6 @@ pub enum ProtocolEffect {
         filters: Vec<Filter>,
         reason: &'static str,
     },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ProtocolPendingOutbound {
-    pub message_id: String,
-    pub chat_id: String,
-    recipient_owner_hex: String,
-    #[serde(default = "default_true")]
-    send_remote: bool,
-    remote_payload: Vec<u8>,
-    local_sibling_payload: Option<Vec<u8>>,
-    inner_event_id: Option<String>,
-    #[serde(default)]
-    delivered_remote_device_hexes: Vec<String>,
-    #[serde(default)]
-    delivered_local_device_hexes: Vec<String>,
-    #[serde(default)]
-    probe_local_sibling_roster: bool,
-    created_at_secs: u64,
-    next_retry_at_secs: u64,
-    reason: ProtocolPendingReason,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ProtocolPendingReason {
-    MissingRoster,
-    MissingDeviceInvite,
-    PublishRetry,
-}
-
-impl ProtocolPendingOutbound {
-    fn waits_for_remote_protocol_state(&self) -> bool {
-        matches!(
-            self.reason,
-            ProtocolPendingReason::MissingRoster | ProtocolPendingReason::MissingDeviceInvite
-        )
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -212,16 +168,6 @@ pub struct ProtocolDirectSendResult {
     pub message_id: String,
     pub event_ids: Vec<String>,
     pub effects: Vec<ProtocolEffect>,
-    pub queued_targets: Vec<String>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ProtocolRetryResult {
-    pub message_id: String,
-    pub chat_id: String,
-    pub event_ids: Vec<String>,
-    pub effects: Vec<ProtocolEffect>,
-    pub queued_targets: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -244,7 +190,6 @@ pub struct ProtocolGroupIncomingResult {
 
 #[derive(Clone, Debug, Default)]
 pub struct ProtocolRetryBatch {
-    pub direct_results: Vec<ProtocolRetryResult>,
     pub group_result: ProtocolGroupIncomingResult,
     pub direct_messages: Vec<ProtocolDecryptedMessage>,
     pub effects: Vec<ProtocolEffect>,
@@ -252,12 +197,26 @@ pub struct ProtocolRetryBatch {
 
 impl ProtocolRetryBatch {
     pub fn is_empty(&self) -> bool {
-        self.direct_results.is_empty()
-            && self.group_result.events.is_empty()
+        self.group_result.events.is_empty()
             && self.group_result.effects.is_empty()
             && self.group_result.queued_targets.is_empty()
             && self.direct_messages.is_empty()
             && self.effects.is_empty()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirectSendReadiness {
+    Ready,
+    MissingLocalAppKeys,
+    MissingPeerAppKeys,
+    MissingPeerInviteOrSession,
+    MissingLocalSiblingInviteOrSession,
+}
+
+impl DirectSendReadiness {
+    pub fn is_ready(self) -> bool {
+        matches!(self, Self::Ready)
     }
 }
 
@@ -352,7 +311,6 @@ pub struct ProtocolEngineDebugSnapshot {
     pub known_group_sender_key_author_count: usize,
     #[serde(default)]
     pub known_group_sender_key_author_pubkeys: Vec<String>,
-    pub pending_outbound_count: usize,
     pub pending_inbound_count: usize,
     pub pending_group_fanout_count: usize,
     pub pending_group_pairwise_payload_count: usize,
@@ -367,28 +325,10 @@ pub struct ProtocolEngineDebugSnapshot {
     pub pending_group_sender_key_repair_next_retry_at_secs: u64,
     #[serde(default)]
     pub pending_group_sender_key_repair_max_request_count: u32,
-    pub pending_outbound_targets: Vec<String>,
-    #[serde(default)]
-    pub pending_outbound_details: Vec<ProtocolPendingOutboundDebug>,
     #[serde(default)]
     pub pending_group_fanout_targets: Vec<String>,
     pub subscription_generation: u64,
     pub last_backfill_attempt_secs: u64,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct ProtocolPendingOutboundDebug {
-    pub message_id: String,
-    pub chat_id: String,
-    pub recipient_owner_hex: String,
-    pub reason: String,
-    pub probe_local_sibling_roster: bool,
-    pub delivered_remote_device_hexes: Vec<String>,
-    pub delivered_local_device_hexes: Vec<String>,
-    pub remaining_remote_targets: Vec<String>,
-    pub remaining_local_sibling_targets: Vec<String>,
-    pub queued_targets: Vec<String>,
-    pub next_retry_at_secs: u64,
 }
 
 #[allow(dead_code)]
@@ -406,7 +346,6 @@ pub struct ProtocolEngine {
     storage: Arc<dyn StorageAdapter>,
     session_manager: SessionManager,
     group_manager: GroupEventManager,
-    pending_outbound: Vec<ProtocolPendingOutbound>,
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
@@ -437,7 +376,6 @@ pub struct ProtocolEngine {
 struct ProtocolEngineCheckpoint {
     session_manager: SessionManager,
     group_manager: GroupEventManager,
-    pending_outbound: Vec<ProtocolPendingOutbound>,
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,

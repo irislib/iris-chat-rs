@@ -144,30 +144,6 @@ fn group_publish_from_prepared_send(
     }
 }
 
-fn delivered_device_hexes(prepared: &PreparedSend) -> Vec<String> {
-    let mut devices = prepared
-        .deliveries
-        .iter()
-        .map(|delivery| delivery.device_pubkey.to_hex())
-        .collect::<Vec<_>>();
-    devices.sort();
-    devices.dedup();
-    devices
-}
-
-fn pending_reason_from_gaps(gaps: &[RelayGap]) -> ProtocolPendingReason {
-    if gaps
-        .iter()
-        .any(|gap| matches!(gap, RelayGap::MissingRoster { .. }))
-    {
-        ProtocolPendingReason::MissingRoster
-    } else if gaps.is_empty() {
-        ProtocolPendingReason::PublishRetry
-    } else {
-        ProtocolPendingReason::MissingDeviceInvite
-    }
-}
-
 fn collect_expected_sender_pubkeys(session: &SessionState, out: &mut HashSet<PublicKey>) {
     if let Some(current) = session.their_current_nostr_public_key {
         if let Ok(pubkey) = public_device(current) {
@@ -324,14 +300,6 @@ fn protocol_event_has_tag(event: &Event, name: &str) -> bool {
         .tags
         .iter()
         .any(|tag| tag.as_slice().first().map(|value| value.as_str()) == Some(name))
-}
-
-fn delivered_device_set(device_hexes: &[String]) -> HashSet<NdrDevicePubkey> {
-    device_hexes
-        .iter()
-        .filter_map(|hex| PublicKey::parse(hex).ok())
-        .map(ndr_device)
-        .collect()
 }
 
 fn public_owner(pubkey: NdrOwnerPubkey) -> anyhow::Result<PublicKey> {

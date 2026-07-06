@@ -1,5 +1,5 @@
 #[test]
-fn first_contact_receiver_bootstrap_fetches_preexisting_payload() {
+fn first_contact_send_queues_text_until_peer_protocol_state_is_ready() {
     let alice_owner = Keys::generate();
     let alice_device = Keys::generate();
     let bob_owner = Keys::generate();
@@ -32,7 +32,7 @@ fn first_contact_receiver_bootstrap_fetches_preexisting_payload() {
         text: "payload before bootstrap".to_string(),
     });
 
-    let response_event = pending_events_with_kind(&bob, INVITE_RESPONSE_KIND)
+    let _response_event = pending_events_with_kind(&bob, INVITE_RESPONSE_KIND)
         .into_iter()
         .next()
         .expect("invite response event");
@@ -45,68 +45,20 @@ fn first_contact_receiver_bootstrap_fetches_preexisting_payload() {
                 && pending.inner_event_id.is_some()
                 && pending.chat_id.is_some())
             .then_some(event)
-        })
-        .expect("payload event");
-    let payload_event_id = payload_event.id.to_string();
-    let payload_author = payload_event.pubkey;
-
-    alice.handle_relay_event(payload_event.clone());
+        });
     assert!(
-        !alice.has_seen_event(&payload_event_id),
-        "unknown first-contact payload must stay retryable until bootstrap installs the author"
+        payload_event.is_none(),
+        "first-contact text must not publish before Alice's AppKeys make the chat send-ready"
     );
-    assert!(
-        !alice.threads.contains_key(&bob_owner.public_key().to_hex()),
-        "payload must not create a chat before the invite response is processed"
-    );
-    let pending_inbound = alice
-        .protocol_engine
-        .as_ref()
-        .map(|engine| engine.pending_inbound_for_test())
-        .unwrap_or_default();
-    assert_eq!(
-        pending_inbound.len(),
-        1,
-        "unknown header payload should stay as scoped retryable work"
-    );
-    let pending = pending_inbound.first().expect("pending inbound");
-    assert_eq!(pending.event_id, payload_event_id);
-    assert_eq!(
-        pending.sender_message_pubkey_hex.as_deref(),
-        Some(payload_author.to_hex().as_str())
-    );
-    assert!(
-        pending.has_envelope && pending.metadata_verified,
-        "pending inbound work must keep verified payload metadata"
-    );
-
-    alice.handle_relay_event(response_event);
-    assert!(
-        alice
-            .protocol_engine
-            .as_ref()
-            .is_some_and(|engine| engine.is_known_message_author(payload_author)),
-        "invite response must install the sender message author"
-    );
-    assert!(
-        has_filter_with_kind_author(
-            &alice.recent_protocol_filters(UnixSeconds(1_777_159_500)),
-            MESSAGE_EVENT_KIND,
-            payload_author,
-        ),
-        "receiver must ask relays for messages from the newly discovered author"
-    );
-
-    let decrypted = alice
-        .protocol_engine
-        .as_mut()
-        .expect("protocol engine")
-        .process_direct_message_event(&payload_event)
-        .expect("process fetched payload")
-        .expect("payload decrypts after bootstrap");
-    assert_eq!(decrypted.sender, bob_owner.public_key());
-    let runtime_rumor = parse_runtime_rumor(&decrypted.content).expect("runtime rumor");
-    assert_eq!(runtime_rumor.content, "payload before bootstrap");
+    let chat_id = alice_owner.public_key().to_hex();
+    let message = bob
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| thread.messages.first())
+        .expect("queued message");
+    assert_eq!(message.body, "payload before bootstrap");
+    assert_eq!(message.delivery, DeliveryState::Queued);
+    assert!(message.delivery_trace.outer_event_ids.is_empty());
 }
 
 #[test]

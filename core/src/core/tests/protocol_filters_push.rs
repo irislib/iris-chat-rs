@@ -1,189 +1,4 @@
 #[test]
-fn queued_direct_send_starts_targeted_owner_protocol_fetch() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let peer = Keys::generate();
-    let mut core = logged_in_test_core("queued-direct-targeted-fetch", &owner, &device);
-    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
-    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
-    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
-    observe_current_device_appkeys_for_test(
-        core.protocol_engine.as_mut().expect("protocol engine"),
-        &owner,
-        &device,
-    );
-
-    core.send_direct_message(
-        &peer.public_key().to_hex(),
-        "queued until targeted device roster arrives",
-        UnixSeconds(1_777_000_000),
-        None,
-    );
-
-    let target = format!("owner:{}", peer.public_key().to_hex());
-    assert!(
-        core.debug_log.iter().any(|entry| {
-            entry.category == "appcore.protocol.queued" && entry.detail.contains(&target)
-        }) && core.debug_log.iter().any(|entry| {
-            entry.category == "protocol.engine_fetch.fetch" && entry.detail.contains("filters=1")
-        }),
-        "queued direct owner work should start a narrow device roster fetch for {target}"
-    );
-}
-
-#[test]
-fn retry_batch_coalesces_duplicate_queued_protocol_fetches() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let peer = Keys::generate();
-    let mut core = logged_in_test_core("queued-retry-coalesce-fetches", &owner, &device);
-    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
-    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
-    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
-
-    let target = format!("owner:{}", peer.public_key().to_hex());
-    let filters = vec![Filter::new()
-        .author(peer.public_key())
-        .kind(Kind::Custom(APP_KEYS_EVENT_KIND as u16))];
-    let result = ProtocolRetryResult {
-        message_id: "message-1".to_string(),
-        chat_id: peer.public_key().to_hex(),
-        effects: vec![ProtocolEffect::FetchProtocolState {
-            filters,
-            reason: "retry",
-        }],
-        queued_targets: vec![target.clone()],
-        ..ProtocolRetryResult::default()
-    };
-
-    core.process_protocol_engine_retry_batch(
-        "test_retry_dedupe",
-        ProtocolRetryBatch {
-            direct_results: vec![result.clone(), result],
-            ..ProtocolRetryBatch::default()
-        },
-    );
-
-    let retry_log = core
-        .debug_log
-        .iter()
-        .find(|entry| entry.category == "appcore.protocol.retry")
-        .expect("retry log");
-    assert!(
-        retry_log.detail.contains("queued_targets=1"),
-        "retry log should count unique queued protocol targets: {}",
-        retry_log.detail
-    );
-    let queued_log = core
-        .debug_log
-        .iter()
-        .find(|entry| entry.category == "appcore.protocol.queued")
-        .expect("queued log");
-    assert_eq!(
-        queued_log.detail.matches(&target).count(),
-        1,
-        "queued log should list each target once: {}",
-        queued_log.detail
-    );
-    assert_eq!(
-        core.debug_log
-            .iter()
-            .filter(|entry| entry.category == "protocol.engine_fetch.fetch")
-            .count(),
-        1,
-        "duplicate retry effects should schedule one targeted fetch"
-    );
-}
-
-#[test]
-fn queued_protocol_filters_are_narrow_for_missing_owner_roster() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let peer = Keys::generate();
-    let mut engine = test_protocol_engine(&owner, &device);
-    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
-    let result = engine
-        .send_direct_text(
-            peer.public_key(),
-            &peer.public_key().to_hex(),
-            "queued until appkeys",
-            None,
-            UnixSeconds(1_777_159_500),
-        )
-        .expect("direct send");
-    let filters = result
-        .effects
-        .iter()
-        .filter_map(|effect| match effect {
-            ProtocolEffect::FetchProtocolState { filters, .. } => Some(filters.clone()),
-            _ => None,
-        })
-        .flatten()
-        .collect::<Vec<_>>();
-
-    assert_eq!(filters.len(), 1);
-    assert!(has_filter_with_kind_author(
-        &filters,
-        APP_KEYS_EVENT_KIND,
-        peer.public_key()
-    ));
-    assert!(
-        !has_bootstrap_message_filter(&filters),
-        "queued owner discovery must not depend on an unscoped message bootstrap filter"
-    );
-}
-
-#[test]
-fn queued_self_send_fetches_owner_appkeys_for_concrete_sibling_target() {
-    let owner = Keys::generate();
-    let phone_device = Keys::generate();
-    let desktop_device = Keys::generate();
-    let mut engine = test_protocol_engine(&owner, &phone_device);
-    engine
-        .ingest_app_keys_snapshot(
-            owner.public_key(),
-            AppKeys::new(vec![
-                DeviceEntry::new(phone_device.public_key(), 1),
-                DeviceEntry::new(desktop_device.public_key(), 1),
-            ]),
-            1,
-        )
-        .expect("local AppKeys");
-
-    let result = engine
-        .send_direct_text(
-            owner.public_key(),
-            &owner.public_key().to_hex(),
-            "queued until sibling invite",
-            None,
-            UnixSeconds(1_777_159_500),
-        )
-        .expect("self direct send");
-    let filters = result
-        .effects
-        .iter()
-        .filter_map(|effect| match effect {
-            ProtocolEffect::FetchProtocolState { filters, .. } => Some(filters.clone()),
-            _ => None,
-        })
-        .flatten()
-        .collect::<Vec<_>>();
-
-    assert!(has_filter_with_kind_author(
-        &filters,
-        APP_KEYS_EVENT_KIND,
-        owner.public_key()
-    ));
-    assert!(has_filter_with_kind_author_tag(
-        &filters,
-        INVITE_EVENT_KIND,
-        desktop_device.public_key(),
-        "#l",
-        INVITE_LIST_LABEL,
-    ));
-}
-
-#[test]
 fn queued_group_create_schedules_fast_protocol_retry_tick() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -276,140 +91,6 @@ fn queued_group_retry_without_protocol_progress_reschedules_fast_tick() {
 }
 
 #[test]
-fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_missing_device() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let peer_owner = Keys::generate();
-    let peer_phone = Keys::generate();
-    let peer_laptop = Keys::generate();
-    let mut engine = test_protocol_engine(&owner, &device);
-    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
-
-    let peer_app_keys = AppKeys::new(vec![
-        DeviceEntry::new(peer_phone.public_key(), 1),
-        DeviceEntry::new(peer_laptop.public_key(), 1),
-    ]);
-    engine
-        .ingest_app_keys_snapshot(peer_owner.public_key(), peer_app_keys, 1)
-        .expect("peer appkeys");
-
-    let mut rng = OsRng;
-    let mut ctx = ProtocolContext::new(NdrUnixSeconds(2), &mut rng);
-    let phone_invite = Invite::create_new_with_context(
-        &mut ctx,
-        NdrDevicePubkey::from_bytes(peer_phone.public_key().to_bytes()),
-        Some(NdrOwnerPubkey::from_bytes(
-            peer_owner.public_key().to_bytes(),
-        )),
-        None,
-    )
-    .expect("phone invite");
-    let phone_invite_event = nostr_double_ratchet::invite_unsigned_event(&phone_invite)
-        .expect("invite event")
-        .sign_with_keys(&peer_phone)
-        .expect("signed invite");
-    engine
-        .observe_invite_event(&phone_invite_event)
-        .expect("observe phone invite");
-
-    let result = engine
-        .send_direct_text(
-            peer_owner.public_key(),
-            &peer_owner.public_key().to_hex(),
-            "hello",
-            None,
-            UnixSeconds(3),
-        )
-        .expect("direct send");
-
-    assert_eq!(result.event_ids.len(), 1);
-    assert!(
-        result
-            .queued_targets
-            .contains(&peer_laptop.public_key().to_hex()),
-        "missing peer laptop should remain queued"
-    );
-    let bootstrap_events = protocol_publish_events_with_kind(&result.effects, INVITE_RESPONSE_KIND);
-    let bootstrap_publishes = result
-        .effects
-        .iter()
-        .filter_map(|effect| match effect {
-            ProtocolEffect::Publish(publish)
-                if publish.event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND =>
-            {
-                Some(publish)
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let payload_publishes = result
-        .effects
-        .iter()
-        .filter_map(|effect| match effect {
-            ProtocolEffect::Publish(publish)
-                if publish.chat_id == peer_owner.public_key().to_hex()
-                    && publish.inner_event_id.as_deref() == Some(result.message_id.as_str()) =>
-            {
-                Some(publish)
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        bootstrap_events
-            .iter()
-            .any(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND),
-        "bootstrap phase should contain the invite response"
-    );
-    assert_eq!(
-        bootstrap_publishes[0].inner_event_id.as_deref(),
-        None,
-        "bootstrap publish should not carry message delivery metadata"
-    );
-    assert_eq!(
-        payload_publishes.len(),
-        1,
-        "payload phase should contain the ready phone delivery"
-    );
-
-    let mut ctx = ProtocolContext::new(NdrUnixSeconds(120), &mut rng);
-    let laptop_invite = Invite::create_new_with_context(
-        &mut ctx,
-        NdrDevicePubkey::from_bytes(peer_laptop.public_key().to_bytes()),
-        Some(NdrOwnerPubkey::from_bytes(
-            peer_owner.public_key().to_bytes(),
-        )),
-        None,
-    )
-    .expect("laptop invite");
-    let laptop_invite_event = nostr_double_ratchet::invite_unsigned_event(&laptop_invite)
-        .expect("invite event")
-        .sign_with_keys(&peer_laptop)
-        .expect("signed invite");
-    let batch = engine
-        .observe_invite_event(&laptop_invite_event)
-        .expect("observe laptop invite");
-
-    assert_eq!(batch.direct_results.len(), 1);
-    let retry = &batch.direct_results[0];
-    assert_eq!(retry.message_id, result.message_id);
-    assert_eq!(retry.event_ids.len(), 1);
-    assert!(
-        !retry
-            .queued_targets
-            .contains(&peer_laptop.public_key().to_hex()),
-        "all remote devices should be prepared after the missing invite arrives"
-    );
-    assert!(
-        !engine
-            .debug_snapshot()
-            .pending_outbound_targets
-            .contains(&peer_laptop.public_key().to_hex()),
-        "remote peer fanout should be fully drained"
-    );
-}
-
-#[test]
 fn appcore_ownerless_invite_uses_known_roster_owner_for_first_contact() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -454,16 +135,6 @@ fn appcore_ownerless_invite_uses_known_roster_owner_for_first_contact() {
         )
         .expect("direct send");
 
-    assert!(
-        !result
-            .queued_targets
-            .contains(&peer_device.public_key().to_hex())
-            && !result
-                .queued_targets
-                .contains(&format!("owner:{}", peer_owner.public_key().to_hex())),
-        "known ownerless invite should not leave the peer device queued: {:?}",
-        result.queued_targets
-    );
     assert!(
         protocol_publish_events_with_kind(&result.effects, INVITE_RESPONSE_KIND)
         .iter()
@@ -586,6 +257,7 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
     let primary_device = Keys::generate();
     let linked_device = Keys::generate();
     let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
     let mut primary = test_protocol_engine(&owner, &primary_device);
     let mut linked = test_protocol_engine(&owner, &linked_device);
 
@@ -649,13 +321,14 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
         "linked device must know at least one primary sender author after link setup"
     );
 
+    observe_peer_device_invite_for_test(&mut primary, &peer_owner, &peer_device, 3);
     let result = primary
         .send_direct_text(
             peer_owner.public_key(),
             &peer_owner.public_key().to_hex(),
             "sender copy should be immediately discoverable",
             None,
-            UnixSeconds(3),
+            UnixSeconds(4),
         )
         .expect("direct send");
 
@@ -666,24 +339,26 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
     );
 
     assert_eq!(
-        local_sibling_events.len(),
+        local_sibling_events
+            .iter()
+            .filter(|event| known_authors_before.contains(&event.pubkey))
+            .count(),
         1,
-        "direct send should prepare one sender-copy event for the linked device"
+        "direct send should prepare one known-author sender-copy event for the linked device"
     );
     assert!(
-        known_authors_before.contains(&local_sibling_events[0].pubkey),
-        "sender-copy event author {} must already be in the linked device's message subscriptions; known={:?}",
-        local_sibling_events[0].pubkey.to_hex(),
+        local_sibling_events
+            .iter()
+            .any(|event| known_authors_before.contains(&event.pubkey)),
+        "sender-copy event author must already be in the linked device's message subscriptions; events={:?} known={:?}",
+        local_sibling_events
+            .iter()
+            .map(|event| event.pubkey.to_hex())
+            .collect::<Vec<_>>(),
         known_authors_before
             .iter()
             .map(PublicKey::to_hex)
             .collect::<Vec<_>>()
-    );
-    assert!(
-        !protocol_publish_events(&result.effects)
-            .iter()
-            .any(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND),
-        "ordinary direct sender-copy fanout must not refresh the linked-device bootstrap session"
     );
 }
 

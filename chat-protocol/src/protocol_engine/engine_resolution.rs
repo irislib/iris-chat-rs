@@ -126,15 +126,6 @@ impl ProtocolEngine {
     }
 
     fn wake_pending_protocol_for_owner(&mut self, owner: NdrOwnerPubkey) {
-        let owner_hex = owner.to_hex();
-        for pending in &mut self.pending_outbound {
-            if pending.recipient_owner_hex == owner_hex
-                || (pending.probe_local_sibling_roster && owner == self.local_owner)
-                || (owner == self.local_owner && pending.local_sibling_payload.is_some())
-            {
-                pending.next_retry_at_secs = 0;
-            }
-        }
         for pending in &mut self.pending_group_fanouts {
             if matches!(
                 &pending.fanout,

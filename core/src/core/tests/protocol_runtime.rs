@@ -2536,7 +2536,7 @@ fn group_sender_key_ignored_results_are_consumed_without_retry_queue() {
         .expect("handle sender key function");
     let handle_body = &protocol_source[handle_start
         ..protocol_source[handle_start..]
-            .find("fn upsert_pending_outbound")
+            .find("fn sender_key_repair_request_effects")
             .map(|offset| handle_start + offset)
             .unwrap_or(protocol_source.len())];
     assert!(
@@ -2547,229 +2547,130 @@ fn group_sender_key_ignored_results_are_consumed_without_retry_queue() {
 }
 
 #[test]
-fn appcore_protocol_engine_missing_remote_owner_send_keeps_owner_pending() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let peer_owner = Keys::generate();
-    let mut engine = test_protocol_engine(&owner, &device);
-    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
-
-    let result = engine
-        .send_direct_text(
-            peer_owner.public_key(),
-            &peer_owner.public_key().to_hex(),
-            "first",
-            None,
-            UnixSeconds(3),
-        )
-        .expect("direct send");
-
-    let message_publish_count = result
-        .effects
-        .iter()
-        .filter(|effect| {
-            matches!(
-                effect,
-                ProtocolEffect::Publish(publish)
-                    if publish.inner_event_id.as_deref() == Some(result.message_id.as_str())
-            )
-        })
-        .count();
-    assert_eq!(
-        message_publish_count, 0,
-        "peer owner must not be considered published before peer protocol state exists"
-    );
-    let owner_marker = format!("owner:{}", peer_owner.public_key().to_hex());
-    assert!(result.queued_targets.contains(&owner_marker));
-    let snapshot = engine.debug_snapshot();
-    assert_eq!(snapshot.pending_outbound_count, 1);
-    assert!(snapshot.pending_outbound_targets.contains(&owner_marker));
-    assert!(
-        !snapshot
-            .pending_outbound_targets
-            .iter()
-            .any(|target| target == &format!("owner:{}", owner.public_key().to_hex())),
-        "known local roster with only the current device must not leave a self-sync probe queued"
-    );
-}
-
-#[test]
-fn appcore_protocol_engine_retry_before_peer_discovery_keeps_missing_roster_pending() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let peer_owner = Keys::generate();
-    let mut engine = test_protocol_engine(&owner, &device);
-    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
-
-    let result = engine
-        .send_direct_text(
-            peer_owner.public_key(),
-            &peer_owner.public_key().to_hex(),
-            "first",
-            None,
-            UnixSeconds(3),
-        )
-        .expect("direct send");
-    let owner_marker = format!("owner:{}", peer_owner.public_key().to_hex());
-    assert!(result.queued_targets.contains(&owner_marker));
-
-    let retries = engine
-        .retry_pending_outbound(NdrUnixSeconds(10_000))
-        .expect("retry pending outbound");
-    assert_eq!(retries.len(), 1);
-    assert_eq!(retries[0].message_id, result.message_id);
-    assert!(retries[0].event_ids.is_empty());
-    assert!(
-        retries[0]
-            .effects
-            .iter()
-            .any(|effect| matches!(effect, ProtocolEffect::FetchProtocolState { .. })),
-        "retrying missing roster work should re-emit protocol backfill from the engine"
-    );
-    assert!(retries[0].queued_targets.contains(&owner_marker));
-    let snapshot = engine.debug_snapshot();
-    assert_eq!(snapshot.pending_outbound_count, 1);
-    assert!(snapshot.pending_outbound_targets.contains(&owner_marker));
-}
-
-#[test]
-fn protocol_retry_before_next_due_does_not_rewrite_persisted_state() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let peer_owner = Keys::generate();
-    let storage = Arc::new(CountingStorage::new());
-    let mut engine =
-        test_protocol_engine_with_storage(&owner, &device, storage.clone() as Arc<dyn StorageAdapter>);
-    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
-
-    let send = engine
-        .send_direct_text(
-            peer_owner.public_key(),
-            &peer_owner.public_key().to_hex(),
-            "queued",
-            None,
-            UnixSeconds(3),
-        )
-        .expect("direct send");
-    assert!(
-        !send.queued_targets.is_empty(),
-        "test needs a pending send that waits for peer protocol state"
-    );
-
-    let before = storage.put_count();
-    assert!(
-        !engine.has_due_pending_retry_work(NdrUnixSeconds(4)),
-        "future-due pending outbound work must not wake the protocol retry loop"
-    );
-    let batch = engine
-        .retry_pending_protocol(NdrUnixSeconds(4))
-        .expect("retry before next due");
-
-    assert!(batch.direct_results.is_empty());
-    assert!(batch.group_result.events.is_empty());
-    assert!(batch.group_result.effects.is_empty());
-    assert!(batch.group_result.queued_targets.is_empty());
-    assert!(batch.direct_messages.is_empty());
-    assert!(batch.effects.is_empty());
-    assert_eq!(
-        storage.put_count(),
-        before,
-        "future-due retry checks must not serialize the full protocol snapshot"
-    );
-
-    let due_before = storage.put_count();
-    assert!(
-        engine.has_due_pending_retry_work(NdrUnixSeconds(10_000)),
-        "due pending outbound work should wake the protocol retry loop"
-    );
-    let batch = engine
-        .retry_pending_protocol(NdrUnixSeconds(10_000))
-        .expect("retry when pending protocol state is still missing");
-
-    assert_eq!(batch.direct_results.len(), 1);
-    assert!(
-        batch.direct_results[0]
-            .effects
-            .iter()
-            .any(|effect| matches!(effect, ProtocolEffect::FetchProtocolState { .. })),
-        "due missing-state retries should still ask relays for protocol state"
-    );
-    assert_eq!(
-        storage.put_count(),
-        due_before,
-        "timer-only requeues must not serialize the full protocol snapshot"
-    );
-
-    let generation_after_due = engine.debug_snapshot().subscription_generation;
-    let backoff_before = storage.put_count();
-    let backoff_batch = engine
-        .retry_pending_protocol(NdrUnixSeconds(10_030))
-        .expect("retry before stale pending outbound backoff expires");
-    assert!(
-        backoff_batch.is_empty(),
-        "stale missing-state retries must back off instead of polling every two seconds"
-    );
-    assert_eq!(
-        engine.debug_snapshot().subscription_generation,
-        generation_after_due,
-        "stale missing-state backoff must not churn subscription generations"
-    );
-    assert_eq!(
-        storage.put_count(),
-        backoff_before,
-        "stale missing-state backoff must not serialize unchanged ratchet state"
-    );
-}
-
-#[test]
-fn protocol_retry_missing_target_state_does_not_rewrite_persisted_state() {
+fn direct_send_readiness_advances_from_appkeys_and_invite_state() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer_owner = Keys::generate();
     let peer_device = Keys::generate();
-    let storage = Arc::new(CountingStorage::new());
-    let mut engine =
-        test_protocol_engine_with_storage(&owner, &device, storage.clone() as Arc<dyn StorageAdapter>);
+    let mut engine = test_protocol_engine(&owner, &device);
+
+    assert_eq!(
+        engine.direct_send_readiness(peer_owner.public_key()),
+        DirectSendReadiness::MissingLocalAppKeys
+    );
+
     observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+    assert_eq!(
+        engine.direct_send_readiness(peer_owner.public_key()),
+        DirectSendReadiness::MissingPeerAppKeys
+    );
+
     engine
         .ingest_app_keys_snapshot(
             peer_owner.public_key(),
             AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
             1,
         )
-        .expect("peer appkeys without invite");
-
-    let send = engine
-        .send_direct_text(
-            peer_owner.public_key(),
-            &peer_owner.public_key().to_hex(),
-            "queued",
-            None,
-            UnixSeconds(3),
-        )
-        .expect("direct send");
-    assert!(
-        send.queued_targets
-            .contains(&peer_device.public_key().to_hex()),
-        "test needs a pending device target with no invite/session"
-    );
-
-    let before = storage.put_count();
-    let batch = engine
-        .retry_pending_protocol(NdrUnixSeconds(10_000))
-        .expect("retry missing device invite");
-
-    assert_eq!(batch.direct_results.len(), 1);
-    assert!(
-        batch.direct_results[0]
-            .queued_targets
-            .contains(&peer_device.public_key().to_hex())
-    );
+        .expect("peer appkeys");
     assert_eq!(
-        storage.put_count(),
-        before,
-        "missing-invite retries must not serialize unchanged ratchet state"
+        engine.direct_send_readiness(peer_owner.public_key()),
+        DirectSendReadiness::MissingPeerInviteOrSession
     );
+
+    observe_peer_device_invite_for_test(&mut engine, &peer_owner, &peer_device, 2);
+    assert_eq!(
+        engine.direct_send_readiness(peer_owner.public_key()),
+        DirectSendReadiness::Ready
+    );
+}
+
+#[test]
+fn appcore_direct_text_queues_until_subscription_state_makes_peer_ready() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("direct-init-queue-drain", &owner, &device);
+
+    {
+        let engine = core.protocol_engine.as_mut().expect("protocol engine");
+        observe_current_device_appkeys_for_test(engine, &owner, &device);
+    }
+
+    let chat_id = peer_owner.public_key().to_hex();
+    core.send_direct_message(&chat_id, "queued hello", UnixSeconds(10), None);
+
+    let queued_message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| thread.messages.first())
+        .expect("queued message")
+        .clone();
+    assert_eq!(queued_message.delivery, DeliveryState::Queued);
+    assert!(queued_message.delivery_trace.outer_event_ids.is_empty());
+    assert!(core.pending_relay_publishes.is_empty());
+
+    let plan = core
+        .compute_protocol_subscription_plan()
+        .expect("protocol subscription plan");
+    assert!(
+        plan.roster_authors.contains(&chat_id),
+        "queued direct message should keep peer AppKeys in subscription interest"
+    );
+
+    let app_keys_batch = core
+        .protocol_engine
+        .as_mut()
+        .expect("protocol engine")
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 11)]),
+            11,
+        )
+        .expect("peer appkeys");
+    core.process_protocol_engine_retry_batch("test_peer_appkeys", app_keys_batch);
+    let still_queued = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| thread.messages.first())
+        .expect("still queued message");
+    assert_eq!(still_queued.delivery, DeliveryState::Queued);
+    assert!(core.pending_relay_publishes.is_empty());
+
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(12), &mut rng);
+    let invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(peer_device.public_key().to_bytes()),
+        Some(NdrOwnerPubkey::from_bytes(
+            peer_owner.public_key().to_bytes(),
+        )),
+        None,
+    )
+    .expect("peer invite");
+    let invite_event = nostr_double_ratchet::invite_unsigned_event(&invite)
+        .expect("invite event")
+        .sign_with_keys(&peer_device)
+        .expect("signed invite");
+    let invite_batch = core
+        .protocol_engine
+        .as_mut()
+        .expect("protocol engine")
+        .observe_invite_event(&invite_event)
+        .expect("observe invite");
+    core.process_protocol_engine_retry_batch("test_peer_invite", invite_batch);
+
+    let thread = core.threads.get(&chat_id).expect("thread after drain");
+    assert_eq!(thread.messages.len(), 1);
+    let drained = &thread.messages[0];
+    assert_ne!(
+        drained.id, queued_message.id,
+        "drain should replace the temporary local id with the final rumor id"
+    );
+    assert_eq!(drained.body, "queued hello");
+    assert_eq!(drained.created_at_secs, queued_message.created_at_secs);
+    assert!(!drained.delivery_trace.outer_event_ids.is_empty());
+    assert!(!core.pending_relay_publishes.is_empty());
 }
 
 #[test]
@@ -2942,11 +2843,6 @@ fn appcore_direct_send_storage_failure_rolls_back_protocol_state() {
         before,
         "failed persistence must roll back in-memory ratchet state"
     );
-    assert_eq!(
-        engine.debug_snapshot().pending_outbound_count,
-        0,
-        "failed persistence must not leave pending outbound state in memory"
-    );
 }
 
 #[test]
@@ -2986,88 +2882,5 @@ fn appcore_group_create_storage_failure_rolls_back_protocol_state() {
         engine.debug_snapshot().pending_group_fanout_count,
         0,
         "failed group persistence must not leave pending group fanouts in memory"
-    );
-}
-
-#[test]
-fn appcore_invite_event_wakes_device_queued_direct_send_before_retry_delay() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let peer_owner = Keys::generate();
-    let peer_device = Keys::generate();
-    let mut engine = test_protocol_engine(&owner, &device);
-    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
-
-    let send = engine
-        .send_direct_text(
-            peer_owner.public_key(),
-            &peer_owner.public_key().to_hex(),
-            "queued until invite",
-            None,
-            UnixSeconds(3),
-        )
-        .expect("direct send");
-    assert!(
-        send.queued_targets
-            .contains(&format!("owner:{}", peer_owner.public_key().to_hex())),
-        "missing peer roster should be queued"
-    );
-    assert!(
-        !send
-            .queued_targets
-            .contains(&format!("owner:{}", owner.public_key().to_hex())),
-        "known local roster with no siblings should not keep a self-sync probe queued"
-    );
-
-    let app_keys_batch = engine
-        .ingest_app_keys_snapshot(
-            peer_owner.public_key(),
-            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 4)]),
-            4,
-        )
-        .expect("peer appkeys");
-    assert_eq!(app_keys_batch.direct_results.len(), 1);
-    assert!(
-        app_keys_batch.direct_results[0]
-            .queued_targets
-            .contains(&peer_device.public_key().to_hex()),
-        "after peer roster discovery, the peer device invite should remain missing"
-    );
-    assert!(
-        !app_keys_batch.direct_results[0]
-            .queued_targets
-            .contains(&format!("owner:{}", peer_owner.public_key().to_hex())),
-        "peer owner discovery should be drained after AppKeys arrive"
-    );
-
-    let mut rng = OsRng;
-    let mut ctx = ProtocolContext::new(NdrUnixSeconds(5), &mut rng);
-    let invite = Invite::create_new_with_context(
-        &mut ctx,
-        NdrDevicePubkey::from_bytes(peer_device.public_key().to_bytes()),
-        Some(NdrOwnerPubkey::from_bytes(
-            peer_owner.public_key().to_bytes(),
-        )),
-        None,
-    )
-    .expect("peer invite");
-    let invite_event = nostr_double_ratchet::invite_unsigned_event(&invite)
-        .expect("invite event")
-        .sign_with_keys(&peer_device)
-        .expect("signed invite");
-
-    let invite_batch = engine
-        .observe_invite_event(&invite_event)
-        .expect("observe invite");
-
-    assert_eq!(invite_batch.direct_results.len(), 1);
-    assert_eq!(invite_batch.direct_results[0].message_id, send.message_id);
-    assert_eq!(invite_batch.direct_results[0].event_ids.len(), 1);
-    assert!(
-        !engine
-            .debug_snapshot()
-            .pending_outbound_targets
-            .contains(&peer_device.public_key().to_hex()),
-        "remote peer fanout should be fully drained"
     );
 }
