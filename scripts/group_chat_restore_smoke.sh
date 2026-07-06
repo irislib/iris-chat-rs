@@ -17,6 +17,7 @@ if [[ -z "${SDK_DIR}" ]]; then
 fi
 
 ADB="${SDK_DIR}/platform-tools/adb"
+EMULATOR="${SDK_DIR}/emulator/emulator"
 HARNESS="${ROOT_DIR}/scripts/run_harness.py"
 if [[ ! -x "${ADB}" ]]; then
   echo "adb not found at ${ADB}" >&2
@@ -34,7 +35,26 @@ PACKAGE_NAME="$(android_debug_app_package)"
 TEST_PACKAGE_NAME="$(android_debug_test_package)"
 RELAY_LOG="${RELAY_LOG:-/tmp/ndr-group-restore-relay.log}"
 RELAY_PID=""
-DEFAULT_AVDS=("Medium_Phone_API_36.1" "Pixel_Fold")
+if [[ -n "${IRIS_ANDROID_RELAY_AVDS:-}" ]]; then
+  read -r -a DEFAULT_AVDS <<<"${IRIS_ANDROID_RELAY_AVDS}"
+else
+  DEFAULT_AVDS=()
+  while IFS= read -r avd_name; do
+    DEFAULT_AVDS+=("${avd_name}")
+  done < <(
+    android_select_installed_avds "${EMULATOR}" 3 \
+      Medium_Phone_API_36.1 \
+      Pixel_Fold \
+      Pixel_9a \
+      GroupHardening_API_36_C \
+      GroupHardening_API_36_D \
+      SenderKey_API_36 \
+      SenderKey_API_36_B || true
+  )
+  if [[ "${#DEFAULT_AVDS[@]}" -lt 3 ]]; then
+    DEFAULT_AVDS=("Medium_Phone_API_36.1" "Pixel_Fold" "Pixel_9a")
+  fi
+fi
 
 PRIMARY_SERIAL="${PRIMARY_SERIAL:-}"
 LINKED_SERIAL="${LINKED_SERIAL:-}"

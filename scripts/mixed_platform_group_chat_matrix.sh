@@ -17,6 +17,7 @@ if [[ -z "${SDK_DIR}" ]]; then
 fi
 
 ADB="${SDK_DIR}/platform-tools/adb"
+EMULATOR="${SDK_DIR}/emulator/emulator"
 ANDROID_HARNESS="${ROOT_DIR}/scripts/run_harness.py"
 IOS_HARNESS="${ROOT_DIR}/scripts/run_ios_harness.py"
 ANDROID_RUNNER="${ANDROID_RUNNER:-$(android_debug_test_runner)}"
@@ -24,8 +25,23 @@ ANDROID_CLASS="to.iris.chat.RealRelayHarnessTest"
 ANDROID_APP_PACKAGE="$(android_debug_app_package)"
 ANDROID_TEST_PACKAGE="$(android_debug_test_package)"
 
-ANDROID_ADMIN_AVD="${ANDROID_ADMIN_AVD:-Medium_Phone_API_36.1}"
-ANDROID_MEMBER_AVD="${ANDROID_MEMBER_AVD:-Pixel_Fold}"
+IRIS_MIXED_DEFAULT_AVDS=()
+if [[ -z "${ANDROID_ADMIN_AVD:-}" || -z "${ANDROID_MEMBER_AVD:-}" ]]; then
+  while IFS= read -r avd_name; do
+    IRIS_MIXED_DEFAULT_AVDS+=("${avd_name}")
+  done < <(
+    android_select_installed_avds "${EMULATOR}" 2 \
+      Medium_Phone_API_36.1 \
+      Pixel_Fold \
+      Pixel_9a \
+      GroupHardening_API_36_C \
+      GroupHardening_API_36_D \
+      SenderKey_API_36 \
+      SenderKey_API_36_B || true
+  )
+fi
+ANDROID_ADMIN_AVD="${ANDROID_ADMIN_AVD:-${IRIS_MIXED_DEFAULT_AVDS[0]:-Medium_Phone_API_36.1}}"
+ANDROID_MEMBER_AVD="${ANDROID_MEMBER_AVD:-${IRIS_MIXED_DEFAULT_AVDS[1]:-Pixel_Fold}}"
 IOS_PRIMARY_SIM="${IOS_PRIMARY_SIM:-Iris Chat iPhone}"
 IOS_MEMBER_SIM="${IOS_MEMBER_SIM:-Iris Chat iPhone 2}"
 ANDROID_ADMIN_SERIAL="${ANDROID_ADMIN_SERIAL:-}"

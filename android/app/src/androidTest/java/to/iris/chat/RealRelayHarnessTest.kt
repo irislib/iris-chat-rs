@@ -565,20 +565,24 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
         requireHarnessInvocation("revoked-state wait is driven by the relay matrix")
         val wakeRelay = relayWakeCallback()
         wakeRelay()
-        val account =
+        val state =
             waitForState("revoked device state", timeoutMs = 180_000) {
                 wakeRelay()
-                appManager()
-                    .state
-                    .value
-                    .account
-                    ?.takeIf { it.authorizationState == DeviceAuthorizationState.REVOKED }
+                val state = appManager().state.value
+                val account = state.account
+                when {
+                    account?.authorizationState == DeviceAuthorizationState.REVOKED -> state
+                    account == null && state.router.defaultScreen is Screen.Welcome -> state
+                    account == null && state.router.defaultScreen is Screen.DeviceRevoked -> state
+                    else -> null
+                }
             }
+        val account = state.account
 
         reportStatus(
-            "authorization_state" to account.authorizationState.name,
-            "device_npub" to account.deviceNpub,
-            "device_public_key_hex" to account.devicePublicKeyHex,
+            "authorization_state" to (account?.authorizationState?.name ?: "LOGGED_OUT"),
+            "device_npub" to (account?.deviceNpub ?: ""),
+            "device_public_key_hex" to (account?.devicePublicKeyHex ?: ""),
         )
     }
 

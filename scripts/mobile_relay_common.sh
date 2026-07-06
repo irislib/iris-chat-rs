@@ -32,6 +32,44 @@ android_debug_test_runner() {
   printf '%s/androidx.test.runner.AndroidJUnitRunner' "$(android_debug_test_package)"
 }
 
+android_avd_exists() {
+  local emulator="$1"
+  local avd_name="$2"
+  local available name
+
+  available="$("${emulator}" -list-avds 2>/dev/null || true)"
+  while IFS= read -r name; do
+    if [[ "${name}" == "${avd_name}" ]]; then
+      return 0
+    fi
+  done <<<"${available}"
+  return 1
+}
+
+android_select_installed_avds() {
+  local emulator="$1"
+  local requested_count="$2"
+  shift 2
+
+  local selected=()
+  local candidate existing
+  for candidate in "$@"; do
+    for existing in "${selected[@]:-}"; do
+      [[ "${existing}" == "${candidate}" ]] && continue 2
+    done
+    if android_avd_exists "${emulator}" "${candidate}"; then
+      selected+=("${candidate}")
+      if [[ "${#selected[@]}" -ge "${requested_count}" ]]; then
+        printf '%s\n' "${selected[@]}"
+        return 0
+      fi
+    fi
+  done
+
+  printf '%s\n' "${selected[@]}"
+  return 1
+}
+
 local_ios_relay_url() {
   printf 'ws://127.0.0.1:%s' "$(local_relay_port)"
 }

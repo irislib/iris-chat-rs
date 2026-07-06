@@ -654,9 +654,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet"
-version = "0.0.162"
+version = "0.0.163"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5717468491a29400128b965d59e8126f7f9464e52ea3b115f8af3dbba341e55b"
+checksum = "0379d9bd04e5573bccc6fe6cfec3359e6ec91ec99c7b3bf915b8ed178636e597"
 dependencies = [
  "base64",
  "hex",
@@ -673,9 +673,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet-pairwise-codec"
-version = "0.0.162"
+version = "0.0.163"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd1f1273845e14e1369daff518a2e89001a31dd01cae5c0465d5cf50920fba0c"
+checksum = "18a31b44d820666b5f6b89471a9e8708d5c180b1d99e8e510d6b59a0f463f0d0"
 dependencies = [
  "nostr",
  "serde",

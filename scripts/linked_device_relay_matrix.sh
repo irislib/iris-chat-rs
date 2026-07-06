@@ -22,7 +22,26 @@ HARNESS="${ROOT_DIR}/scripts/run_harness.py"
 RUNNER="${ANDROID_RUNNER:-$(android_debug_test_runner)}"
 PACKAGE_NAME="$(android_debug_app_package)"
 TEST_PACKAGE_NAME="$(android_debug_test_package)"
-DEFAULT_AVDS=("Medium_Phone_API_36.1" "Pixel_Fold")
+if [[ -n "${IRIS_ANDROID_RELAY_AVDS:-}" ]]; then
+  read -r -a DEFAULT_AVDS <<<"${IRIS_ANDROID_RELAY_AVDS}"
+else
+  DEFAULT_AVDS=()
+  while IFS= read -r avd_name; do
+    DEFAULT_AVDS+=("${avd_name}")
+  done < <(
+    android_select_installed_avds "${EMULATOR}" 3 \
+      Medium_Phone_API_36.1 \
+      Pixel_Fold \
+      Pixel_9a \
+      GroupHardening_API_36_C \
+      GroupHardening_API_36_D \
+      SenderKey_API_36 \
+      SenderKey_API_36_B || true
+  )
+  if [[ "${#DEFAULT_AVDS[@]}" -lt 3 ]]; then
+    DEFAULT_AVDS=("Medium_Phone_API_36.1" "Pixel_Fold" "Pixel_9a")
+  fi
+fi
 RELAY_LOG="${RELAY_LOG:-/tmp/ndr-linked-device-relay.log}"
 RELAY_PID=""
 SERIAL_A="${SERIAL_A:-}"
