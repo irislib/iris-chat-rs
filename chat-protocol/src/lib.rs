@@ -12,7 +12,7 @@ use nostr_double_ratchet::{
     GroupEventManager, JsonGroupPayloadCodecV1,
 };
 use nostr_double_ratchet::{
-    AuthorizedDevice, Delivery, DeviceRecordSnapshot, DevicePubkey as NdrDevicePubkey,
+    AuthorizedDevice, Delivery, DevicePubkey as NdrDevicePubkey, DeviceRecordSnapshot,
     DeviceRoster, DomainError, Error as NdrError, GroupIncomingEvent, GroupManagerSnapshot,
     GroupPairwiseCommand, GroupPayloadCodec, GroupPendingFanout, GroupPreparedPublish,
     GroupPreparedSend, GroupProtocol, GroupSenderKeyHandleResult, GroupSenderKeyMessage,

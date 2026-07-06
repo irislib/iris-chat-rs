@@ -672,7 +672,6 @@ impl DirectMessageService {
             );
         }
     }
-
 }
 
 struct RuntimeRumor {
