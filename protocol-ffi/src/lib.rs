@@ -487,9 +487,6 @@ impl SessionManagerInner {
     }
 
     fn enqueue_retry_batch(&mut self, batch: ProtocolRetryBatch) -> Result<(), NdrError> {
-        for result in batch.direct_results {
-            self.enqueue_effects(result.effects)?;
-        }
         self.enqueue_effects(batch.group_result.effects)?;
         self.enqueue_effects(batch.effects)?;
         for message in batch.direct_messages {
