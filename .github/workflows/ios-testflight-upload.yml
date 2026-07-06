@@ -3,6 +3,11 @@ name: iOS TestFlight Upload
 on:
   workflow_dispatch:
     inputs:
+      attach_internal_testflight:
+        description: "Attach the uploaded build to internal TestFlight groups. Does not submit Beta App Review or App Store release."
+        required: true
+        default: true
+        type: boolean
       artifact_retention_days:
         description: "How long GitHub should keep the iOS release artifacts."
         required: true
@@ -169,6 +174,12 @@ jobs:
       - name: Upload IPA to App Store Connect
         run: ./scripts/ios-release upload
 
+      - name: Attach build to internal TestFlight
+        if: ${{ inputs.attach_internal_testflight }}
+        env:
+          IRIS_TESTFLIGHT_GROUPS: ${{ vars.IRIS_TESTFLIGHT_GROUPS }}
+        run: ./scripts/ios-release internal
+
       - name: Collect artifact metadata
         id: artifacts
         run: |
@@ -215,4 +226,6 @@ jobs:
             echo "- archive: \`${{ steps.artifacts.outputs.archive_path }}\`"
             echo "- IPA: \`${{ steps.artifacts.outputs.ipa_name }}\`"
             echo "- upload log: \`${{ steps.artifacts.outputs.upload_log_path }}\`"
+            echo "- internal TestFlight: \`${{ inputs.attach_internal_testflight }}\`"
+            echo "- App Store submission: \`not performed\`"
           } >> "$GITHUB_STEP_SUMMARY"
