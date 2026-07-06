@@ -1,84 +1,4 @@
 impl ProtocolEngine {
-    fn upsert_pending_outbound(&mut self, pending: ProtocolPendingOutbound) {
-        if let Some(existing) = self
-            .pending_outbound
-            .iter_mut()
-            .find(|existing| existing.message_id == pending.message_id)
-        {
-            existing
-                .delivered_remote_device_hexes
-                .extend(pending.delivered_remote_device_hexes);
-            existing.delivered_remote_device_hexes.sort();
-            existing.delivered_remote_device_hexes.dedup();
-            existing
-                .delivered_local_device_hexes
-                .extend(pending.delivered_local_device_hexes);
-            existing.delivered_local_device_hexes.sort();
-            existing.delivered_local_device_hexes.dedup();
-            existing.probe_local_sibling_roster |= pending.probe_local_sibling_roster;
-            existing.reason = pending.reason;
-            existing.next_retry_at_secs = pending.next_retry_at_secs;
-        } else {
-            self.pending_outbound.push(pending);
-        }
-    }
-
-    fn remaining_remote_targets(
-        &self,
-        owner: NdrOwnerPubkey,
-        delivered_device_hexes: &[String],
-    ) -> Vec<NdrDevicePubkey> {
-        let snapshot = self.session_manager.snapshot();
-        self.remaining_remote_targets_with_snapshot(&snapshot, owner, delivered_device_hexes)
-    }
-
-    fn remaining_remote_targets_with_snapshot(
-        &self,
-        snapshot: &SessionManagerSnapshot,
-        owner: NdrOwnerPubkey,
-        delivered_device_hexes: &[String],
-    ) -> Vec<NdrDevicePubkey> {
-        let delivered = delivered_device_hexes
-            .iter()
-            .filter_map(|hex| PublicKey::parse(hex).ok())
-            .map(ndr_device)
-            .collect::<HashSet<_>>();
-        snapshot
-            .users
-            .iter()
-            .find(|user| user.owner_pubkey == owner)
-            .and_then(|user| user.roster.as_ref())
-            .map(|roster| {
-                roster
-                    .devices()
-                    .iter()
-                    .map(|device| device.device_pubkey)
-                    .filter(|device| !delivered.contains(device))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    fn remaining_local_sibling_targets(
-        &self,
-        delivered_device_hexes: &[String],
-    ) -> Vec<NdrDevicePubkey> {
-        self.remaining_remote_targets(self.local_owner, delivered_device_hexes)
-            .into_iter()
-            .filter(|device| *device != self.local_device)
-            .collect()
-    }
-
-    fn has_roster_for_owner(&self, owner: NdrOwnerPubkey) -> bool {
-        self.session_manager
-            .snapshot()
-            .users
-            .into_iter()
-            .find(|user| user.owner_pubkey == owner)
-            .and_then(|user| user.roster)
-            .is_some_and(|roster| !roster.devices().is_empty())
-    }
-
     fn has_authoritative_local_roster(&self) -> bool {
         if self.local_app_keys_observed {
             return true;
@@ -94,12 +14,6 @@ impl ProtocolEngine {
                 !devices.is_empty()
                     && (devices.len() > 1 || devices[0].device_pubkey != self.local_device)
             })
-    }
-
-    fn needs_local_sibling_roster_probe(&self, prepared: &PreparedSend) -> bool {
-        prepared.deliveries.is_empty()
-            && prepared.relay_gaps.is_empty()
-            && !self.has_authoritative_local_roster()
     }
 
     fn append_queued_protocol_backfill(
@@ -124,63 +38,6 @@ impl ProtocolEngine {
         } else {
             vec![ProtocolEffect::FetchProtocolState { filters, reason }]
         }
-    }
-
-    fn protocol_backfill_effects_for_pending_outbound(
-        &self,
-        pending: &ProtocolPendingOutbound,
-        now: NdrUnixSeconds,
-        reason: &'static str,
-    ) -> Vec<ProtocolEffect> {
-        let filters = self.pending_outbound_protocol_filters(pending, now);
-        if filters.is_empty() {
-            Vec::new()
-        } else {
-            vec![ProtocolEffect::FetchProtocolState { filters, reason }]
-        }
-    }
-
-    fn pending_outbound_protocol_filters(
-        &self,
-        pending: &ProtocolPendingOutbound,
-        now: NdrUnixSeconds,
-    ) -> Vec<Filter> {
-        let mut owner_authors = Vec::new();
-        let mut invite_authors = Vec::new();
-
-        if pending.send_remote {
-            if let Ok(owner) = PublicKey::parse(&pending.recipient_owner_hex) {
-                let ndr_owner = ndr_owner(owner);
-                let remote_targets = self
-                    .remaining_remote_targets(ndr_owner, &pending.delivered_remote_device_hexes);
-                if !remote_targets.is_empty()
-                    || (matches!(pending.reason, ProtocolPendingReason::MissingRoster)
-                        && !self.has_roster_for_owner(ndr_owner))
-                {
-                    owner_authors.push(owner);
-                }
-                invite_authors.extend(
-                    remote_targets
-                        .into_iter()
-                        .filter_map(|target| public_device(target).ok()),
-                );
-            }
-        }
-
-        let local_targets =
-            self.remaining_local_sibling_targets(&pending.delivered_local_device_hexes);
-        if !local_targets.is_empty() || pending.probe_local_sibling_roster {
-            if let Ok(owner) = public_owner(self.local_owner) {
-                owner_authors.push(owner);
-            }
-        }
-        invite_authors.extend(
-            local_targets
-                .into_iter()
-                .filter_map(|target| public_device(target).ok()),
-        );
-
-        self.protocol_backfill_filters(owner_authors, invite_authors, now)
     }
 
     fn queued_protocol_filters(
@@ -237,79 +94,6 @@ impl ProtocolEngine {
         )
     }
 
-    fn pending_target_hexes(&self, pending: &ProtocolPendingOutbound) -> Vec<String> {
-        let mut targets = self.pending_remote_target_hexes(pending);
-        for target in self.remaining_local_sibling_targets(&pending.delivered_local_device_hexes) {
-            targets.push(target.to_hex());
-        }
-        if pending.probe_local_sibling_roster
-            && self
-                .remaining_local_sibling_targets(&pending.delivered_local_device_hexes)
-                .is_empty()
-        {
-            targets.push(format!("owner:{}", self.local_owner.to_hex()));
-        }
-        targets.sort();
-        targets.dedup();
-        targets
-    }
-
-    fn pending_remote_target_hexes(&self, pending: &ProtocolPendingOutbound) -> Vec<String> {
-        let mut targets = Vec::new();
-        if pending.send_remote {
-            if let Ok(owner) = PublicKey::parse(&pending.recipient_owner_hex) {
-                let ndr_owner = ndr_owner(owner);
-                let remote_targets = self
-                    .remaining_remote_targets(ndr_owner, &pending.delivered_remote_device_hexes);
-                for target in remote_targets {
-                    targets.push(target.to_hex());
-                }
-                if targets.is_empty()
-                    && matches!(pending.reason, ProtocolPendingReason::MissingRoster)
-                    && !self.has_roster_for_owner(ndr_owner)
-                {
-                    targets.push(format!("owner:{}", owner.to_hex()));
-                }
-            }
-        }
-        targets.sort();
-        targets.dedup();
-        targets
-    }
-
-    fn pending_outbound_targets_device_with_snapshot(
-        &self,
-        pending: &ProtocolPendingOutbound,
-        target: NdrDevicePubkey,
-        snapshot: &SessionManagerSnapshot,
-    ) -> bool {
-        let delivered_remote = delivered_device_set(&pending.delivered_remote_device_hexes);
-        if pending.send_remote
-            && !delivered_remote.contains(&target)
-            && PublicKey::parse(&pending.recipient_owner_hex).is_ok_and(|owner| {
-                self.remaining_remote_targets_with_snapshot(
-                    snapshot,
-                    ndr_owner(owner),
-                    &pending.delivered_remote_device_hexes,
-                )
-                .contains(&target)
-            })
-        {
-            return true;
-        }
-
-        let delivered_local = delivered_device_set(&pending.delivered_local_device_hexes);
-        !delivered_local.contains(&target)
-            && self
-                .remaining_remote_targets_with_snapshot(
-                    snapshot,
-                    self.local_owner,
-                    &pending.delivered_local_device_hexes,
-                )
-                .into_iter()
-                .any(|device| device != self.local_device && device == target)
-    }
-
     fn persist(&self) -> anyhow::Result<()> {
         if self.batch_depth.get() > 0 {
             self.batch_persist_dirty.set(true);
@@ -323,7 +107,6 @@ impl ProtocolEngine {
             version: PROTOCOL_ENGINE_STATE_VERSION,
             session_manager: self.session_manager.snapshot(),
             group_manager: self.group_manager.snapshot(),
-            pending_outbound: self.pending_outbound.clone(),
             pending_inbound: self.pending_inbound.clone(),
             pending_group_fanouts: self.pending_group_fanouts.clone(),
             pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),

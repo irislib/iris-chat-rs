@@ -1,11 +1,7 @@
 impl ProtocolEngine {
     pub fn has_due_pending_retry_work(&self, now: NdrUnixSeconds) -> bool {
         let now_secs = now.get();
-        self.pending_outbound
-            .iter()
-            .any(|pending| pending.next_retry_at_secs <= now_secs)
-            || self
-                .pending_inbound
+        self.pending_inbound
                 .iter()
                 .any(|pending| pending.next_retry_at_secs <= now_secs)
             || self
@@ -284,172 +280,10 @@ impl ProtocolEngine {
         }
     }
 
-    pub fn retry_pending_outbound(
-        &mut self,
-        now: NdrUnixSeconds,
-    ) -> anyhow::Result<Vec<ProtocolRetryResult>> {
-        if self.pending_outbound.is_empty() {
-            return Ok(Vec::new());
-        }
-        let pending = std::mem::take(&mut self.pending_outbound);
-        let mut still_pending = Vec::new();
-        let mut results = Vec::new();
-        let mut persist_needed = false;
-        let mut session_changed = false;
-
-        for mut pending in pending {
-            if pending.next_retry_at_secs > now.get() {
-                still_pending.push(pending);
-                continue;
-            }
-
-            let recipient_owner = match PublicKey::parse(&pending.recipient_owner_hex) {
-                Ok(pubkey) => ndr_owner(pubkey),
-                Err(_) => {
-                    persist_needed = true;
-                    continue;
-                }
-            };
-            let local_targets =
-                self.remaining_local_sibling_targets(&pending.delivered_local_device_hexes);
-            if pending.probe_local_sibling_roster
-                && local_targets.is_empty()
-                && (self.has_authoritative_local_roster()
-                    || now.get().saturating_sub(pending.created_at_secs)
-                        > LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS)
-            {
-                pending.probe_local_sibling_roster = false;
-            }
-            let remote_targets = if pending.send_remote {
-                self.remaining_remote_targets(
-                    recipient_owner,
-                    &pending.delivered_remote_device_hexes,
-                )
-            } else {
-                Vec::new()
-            };
-
-            if remote_targets.is_empty() && local_targets.is_empty() {
-                let queued_targets = self.pending_target_hexes(&pending);
-                let mut requeued = false;
-                if (pending.waits_for_remote_protocol_state() || pending.probe_local_sibling_roster)
-                    && !queued_targets.is_empty()
-                {
-                    pending.next_retry_at_secs =
-                        next_pending_retry_at_secs(pending.created_at_secs, now);
-                    still_pending.push(pending.clone());
-                    requeued = true;
-                    let effects =
-                        self.protocol_backfill_effects_for_pending_outbound(&pending, now, "retry");
-                    results.push(ProtocolRetryResult {
-                        message_id: pending.message_id.clone(),
-                        chat_id: pending.chat_id.clone(),
-                        event_ids: Vec::new(),
-                        effects,
-                        queued_targets,
-                    });
-                }
-                if !requeued {
-                    persist_needed = true;
-                }
-                continue;
-            }
-
-            let mut rng = OsRng;
-            let mut ctx = ProtocolContext::new(now, &mut rng);
-            let mut event_ids = Vec::new();
-            let mut effects = Vec::new();
-            let mut gaps = Vec::new();
-
-            if !remote_targets.is_empty() {
-                let remote = self.session_manager.prepare_remote_send_to_devices(
-                    &mut ctx,
-                    recipient_owner,
-                    remote_targets,
-                    pending.remote_payload.clone(),
-                )?;
-                if !remote.deliveries.is_empty() || !remote.invite_responses.is_empty() {
-                    session_changed = true;
-                }
-                pending
-                    .delivered_remote_device_hexes
-                    .extend(delivered_device_hexes(&remote));
-                gaps.extend(remote.relay_gaps.clone());
-                effects.extend(protocol_effects_from_prepared(
-                    &remote,
-                    pending.inner_event_id.clone(),
-                    pending.chat_id.clone(),
-                    &mut event_ids,
-                )?);
-            }
-
-            if let Some(local_payload) = pending.local_sibling_payload.clone() {
-                if !local_targets.is_empty() {
-                    let local = self.session_manager.prepare_local_sibling_send_to_devices(
-                        &mut ctx,
-                        local_targets,
-                        local_payload,
-                    )?;
-                    if !local.deliveries.is_empty() || !local.invite_responses.is_empty() {
-                        session_changed = true;
-                    }
-                    pending
-                        .delivered_local_device_hexes
-                        .extend(delivered_device_hexes(&local));
-                    gaps.extend(local.relay_gaps.clone());
-                    effects.extend(protocol_effects_from_prepared(
-                        &local,
-                        pending.inner_event_id.clone(),
-                        pending.chat_id.clone(),
-                        &mut event_ids,
-                    )?);
-                }
-            }
-
-            pending.delivered_remote_device_hexes.sort();
-            pending.delivered_remote_device_hexes.dedup();
-            pending.delivered_local_device_hexes.sort();
-            pending.delivered_local_device_hexes.dedup();
-
-            let queued_targets = self.pending_target_hexes(&pending);
-            if !queued_targets.is_empty() || !gaps.is_empty() {
-                if !gaps.is_empty() {
-                    pending.reason = pending_reason_from_gaps(&gaps);
-                }
-                pending.next_retry_at_secs =
-                    next_pending_retry_at_secs(pending.created_at_secs, now);
-                still_pending.push(pending.clone());
-            }
-            if !event_ids.is_empty() || !effects.is_empty() || !queued_targets.is_empty() {
-                effects.extend(
-                    self.protocol_backfill_effects_for_pending_outbound(&pending, now, "retry"),
-                );
-                results.push(ProtocolRetryResult {
-                    message_id: pending.message_id.clone(),
-                    chat_id: pending.chat_id.clone(),
-                    event_ids,
-                    effects,
-                    queued_targets,
-                });
-            }
-        }
-
-        self.pending_outbound = still_pending;
-        if session_changed {
-            persist_needed = true;
-            self.invalidate_known_message_author_cache();
-        }
-        if persist_needed {
-            self.persist()?;
-        }
-        Ok(results)
-    }
-
     pub fn retry_pending_protocol(
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<ProtocolRetryBatch> {
-        let direct_results = self.retry_pending_outbound(now)?;
         let group_result = self.retry_pending_group_inputs(now)?;
         let group_fanout_result = self.retry_pending_group_fanouts(now)?;
         let mut group_result = group_result;
@@ -473,7 +307,6 @@ impl ProtocolEngine {
             .collect::<Vec<_>>();
         direct_messages.extend(self.retry_pending_inbound_direct_events(now)?);
         let batch = ProtocolRetryBatch {
-            direct_results,
             group_result,
             direct_messages,
             effects: Vec::new(),

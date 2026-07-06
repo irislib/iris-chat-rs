@@ -1,7 +1,9 @@
 use super::*;
 
+mod direct_queue;
 mod helpers;
 
+use self::direct_queue::is_queued_direct_text_message;
 use self::helpers::{
     delivery_trace_for_source_event, is_supported_group_pairwise_payload, push_unique,
     summarize_group_send_effect_targets,
@@ -507,57 +509,27 @@ impl AppCore {
         now: UnixSeconds,
         expires_at_secs: Option<u64>,
     ) {
-        let Ok((normalized_chat_id, peer_pubkey)) = parse_peer_input(chat_id) else {
+        let Ok((normalized_chat_id, _peer_pubkey)) = parse_peer_input(chat_id) else {
             self.state.toast = Some("Invalid peer key.".to_string());
             return;
         };
 
-        let Some(protocol_engine) = self.protocol_engine.as_mut() else {
-            self.state.toast = Some("Protocol engine is not ready.".to_string());
-            return;
-        };
-        let result = protocol_engine.send_direct_text(
-            peer_pubkey,
-            &normalized_chat_id,
-            text,
-            expires_at_secs,
-            now,
+        let message_id = self.allocate_message_id();
+        self.push_debug_log(
+            "message.direct.queue",
+            format!(
+                "reason=message.direct.send chat_id={normalized_chat_id} message_id={message_id}"
+            ),
         );
-        match result {
-            Ok(result) => {
-                let delivery = if result.event_ids.is_empty() {
-                    DeliveryState::Queued
-                } else {
-                    DeliveryState::Pending
-                };
-                self.push_debug_log(
-                    "message.direct.send.appcore",
-                    format!(
-                        "chat_id={normalized_chat_id} message_id={} event_ids={} queued_targets={}",
-                        result.message_id,
-                        result.event_ids.len(),
-                        result.queued_targets.len()
-                    ),
-                );
-                self.push_outgoing_message_with_id(
-                    result.message_id.clone(),
-                    &normalized_chat_id,
-                    text.to_string(),
-                    now.get(),
-                    expires_at_secs,
-                    delivery,
-                );
-                self.process_protocol_engine_effects(result.effects);
-                self.sync_message_delivery_trace(&normalized_chat_id, &result.message_id);
-                self.reconcile_outgoing_message_delivery(&normalized_chat_id, &result.message_id);
-                if !result.queued_targets.is_empty() {
-                    self.handle_queued_protocol_targets("message.direct", &result.queued_targets);
-                }
-            }
-            Err(error) => {
-                self.state.toast = Some(error.to_string());
-            }
-        }
+        self.push_outgoing_message_with_id(
+            message_id,
+            &normalized_chat_id,
+            text.to_string(),
+            now.get(),
+            expires_at_secs,
+            DeliveryState::Queued,
+        );
+        self.drain_queued_direct_text_messages("message.direct.send");
     }
 
     pub(super) fn send_group_message(
@@ -795,17 +767,6 @@ impl AppCore {
             })
             .filter_map(|pending| pending.last_error.clone())
             .last();
-        let mut queued_protocol_targets = Vec::new();
-        if let Some(protocol_engine) = self.protocol_engine.as_ref() {
-            queued_protocol_targets.extend(
-                protocol_engine
-                    .queued_message_diagnostics(Some(message_id))
-                    .into_iter(),
-            );
-            queued_protocol_targets.sort();
-            queued_protocol_targets.dedup();
-        }
-
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;
         };
@@ -817,7 +778,7 @@ impl AppCore {
             return;
         };
         message.delivery_trace.pending_relay_event_ids = pending_relay_event_ids;
-        message.delivery_trace.queued_protocol_targets = queued_protocol_targets;
+        message.delivery_trace.queued_protocol_targets = Vec::new();
         message.delivery_trace.last_transport_error = last_transport_error;
     }
 
@@ -843,6 +804,9 @@ impl AppCore {
             return;
         };
         if !message.is_outgoing || matches!(message.delivery, DeliveryState::Failed) {
+            return;
+        }
+        if is_queued_direct_text_message(chat_id, message) {
             return;
         }
         if pending_relay || queued_protocol {

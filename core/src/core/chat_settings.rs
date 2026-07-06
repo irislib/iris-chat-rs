@@ -544,7 +544,7 @@ impl AppCore {
                 self.schedule_session_connect();
                 self.request_protocol_subscription_refresh_forced();
                 self.fetch_recent_protocol_state();
-                self.retry_protocol_engine_pending_outbound("relays_refreshed");
+                self.retry_protocol_engine_pending_work("relays_refreshed");
                 self.retry_pending_relay_publishes("relays_refreshed");
             }
             return;
@@ -596,7 +596,7 @@ impl AppCore {
             self.request_protocol_subscription_refresh_forced();
             self.publish_local_app_keys_snapshot();
             self.fetch_recent_protocol_state();
-            self.retry_protocol_engine_pending_outbound("relays_changed");
+            self.retry_protocol_engine_pending_work("relays_changed");
             self.retry_pending_relay_publishes("relays_changed");
         }
     }

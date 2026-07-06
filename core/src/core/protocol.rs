@@ -89,15 +89,11 @@ impl AppCore {
                 self.push_debug_log(
                     "appcore.protocol.send",
                     format!(
-                        "reason={reason} chat_id={chat_id} event_ids={} queued_targets={}",
-                        result.event_ids.len(),
-                        result.queued_targets.len()
+                        "reason={reason} chat_id={chat_id} event_ids={}",
+                        result.event_ids.len()
                     ),
                 );
                 self.process_protocol_engine_effects(result.effects);
-                if !result.queued_targets.is_empty() {
-                    self.handle_queued_protocol_targets(reason, &result.queued_targets);
-                }
                 true
             }
             Err(error) => {
@@ -116,25 +112,23 @@ impl AppCore {
         batch: ProtocolRetryBatch,
     ) {
         if batch.is_empty() {
+            if self.drain_queued_direct_text_messages(reason) {
+                self.persist_best_effort();
+                self.rebuild_state();
+                self.emit_state();
+            }
             return;
         }
-        let mut published = 0usize;
         let mut queued_targets = Vec::new();
-        let mut direct_effects = Vec::new();
-        let mut direct_message_refs = Vec::new();
-        for result in batch.direct_results {
-            published = published.saturating_add(result.event_ids.len());
-            queued_targets.extend(result.queued_targets.clone());
-            direct_effects.extend(result.effects);
-            direct_message_refs.push((result.chat_id, result.message_id));
-        }
         queued_targets.extend(batch.group_result.queued_targets.clone());
         normalize_protocol_queued_targets(&mut queued_targets);
-        self.process_protocol_engine_effects(direct_effects);
-        for (chat_id, message_id) in direct_message_refs {
-            self.sync_message_delivery_trace(&chat_id, &message_id);
-            self.reconcile_outgoing_message_delivery(&chat_id, &message_id);
-        }
+        let published = batch
+            .group_result
+            .effects
+            .iter()
+            .chain(batch.effects.iter())
+            .filter(|effect| matches!(effect, ProtocolEffect::Publish(_)))
+            .count();
         for group_event in batch.group_result.events {
             self.apply_group_decrypted_event(group_event);
         }
@@ -166,6 +160,7 @@ impl AppCore {
         } else {
             self.handle_queued_protocol_targets(reason, &queued_targets);
         }
+        self.drain_queued_direct_text_messages(reason);
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
@@ -194,7 +189,7 @@ impl AppCore {
         ));
     }
 
-    pub(super) fn retry_protocol_engine_pending_outbound(&mut self, reason: &'static str) {
+    pub(super) fn retry_protocol_engine_pending_work(&mut self, reason: &'static str) {
         let Some(protocol_engine) = self.protocol_engine.as_mut() else {
             return;
         };
@@ -220,7 +215,6 @@ impl AppCore {
         target: &mut ProtocolRetryBatch,
         mut source: ProtocolRetryBatch,
     ) {
-        target.direct_results.append(&mut source.direct_results);
         target
             .group_result
             .events
@@ -1124,7 +1118,7 @@ impl AppCore {
             self.relay_transport_runtime.next_retry_due_at = None;
             self.relay_transport_runtime.next_retry_reason = None;
             self.reconcile_protocol_subscriptions("relay_transport_connected", false);
-            self.retry_protocol_engine_pending_outbound("relay_transport_connected");
+            self.retry_protocol_engine_pending_work("relay_transport_connected");
             self.retry_pending_relay_publishes("relay_transport_connected");
         } else {
             self.schedule_relay_transport_retry("connect_failed");
@@ -1411,7 +1405,7 @@ impl AppCore {
                 self.reconcile_protocol_subscriptions("relay_connected", false);
                 self.fetch_recent_protocol_state();
                 self.fetch_recent_messages_for_tracked_peers();
-                self.retry_protocol_engine_pending_outbound("relay_connected");
+                self.retry_protocol_engine_pending_work("relay_connected");
                 self.retry_pending_relay_publishes("relay_connected");
                 self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
                     PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS,
@@ -1565,7 +1559,7 @@ impl AppCore {
             {
                 self.fetch_recent_messages_for_tracked_peers();
             }
-            self.retry_protocol_engine_pending_outbound("liveness_check");
+            self.retry_protocol_engine_pending_work("liveness_check");
         }
         if has_pending_relay_publishes {
             self.retry_pending_relay_publishes("liveness_check");
@@ -1741,7 +1735,7 @@ impl AppCore {
             ),
         );
         if connected_after > 0 {
-            self.retry_protocol_engine_pending_outbound("subscription_reconciled");
+            self.retry_protocol_engine_pending_work("subscription_reconciled");
             self.retry_pending_relay_publishes("subscription_reconciled");
         } else {
             self.schedule_protocol_subscription_liveness_check(Duration::from_secs(

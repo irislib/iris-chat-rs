@@ -7,6 +7,7 @@
 mod connection;
 mod schema;
 mod store;
+mod store_pending_relay;
 
 pub(crate) use connection::{open_database, DataDirLock, CORE_DB_FILENAME};
 pub(crate) use iris_chat_protocol::{SharedConnection, SqliteStorageAdapter};

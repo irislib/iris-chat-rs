@@ -331,7 +331,7 @@ impl AppCore {
                         }
                         self.mark_mobile_push_dirty();
                         self.request_protocol_subscription_refresh();
-                        self.retry_protocol_engine_pending_outbound("direct_message");
+                        self.retry_protocol_engine_pending_work("direct_message");
                         self.persist_best_effort();
                         self.rebuild_state();
                         self.emit_state();
@@ -697,14 +697,10 @@ impl AppCore {
 impl AppCore {
     fn should_replay_seen_protocol_event(
         &self,
-        event: &Event,
-        is_invite_protocol_event: bool,
+        _event: &Event,
+        _is_invite_protocol_event: bool,
     ) -> bool {
-        is_invite_protocol_event
-            && self
-                .protocol_engine
-                .as_ref()
-                .is_some_and(|engine| engine.has_queued_invite_author(event.pubkey))
+        false
     }
 }
 

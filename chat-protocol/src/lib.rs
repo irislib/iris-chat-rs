@@ -12,12 +12,12 @@ use nostr_double_ratchet::{
     GroupEventManager, JsonGroupPayloadCodecV1,
 };
 use nostr_double_ratchet::{
-    AuthorizedDevice, Delivery, DevicePubkey as NdrDevicePubkey, DeviceRoster, DomainError,
-    Error as NdrError, GroupIncomingEvent, GroupManagerSnapshot, GroupPairwiseCommand,
-    GroupPayloadCodec, GroupPendingFanout, GroupPreparedPublish, GroupPreparedSend, GroupProtocol,
-    GroupSenderKeyHandleResult, GroupSenderKeyMessage, GroupSnapshot, MessageEnvelope,
-    OwnerPubkey as NdrOwnerPubkey, PreparedSend, ProtocolContext, RelayGap, SenderKeyRepairRequest,
-    SessionManager,
+    AuthorizedDevice, Delivery, DevicePubkey as NdrDevicePubkey, DeviceRecordSnapshot,
+    DeviceRoster, DomainError, Error as NdrError, GroupIncomingEvent, GroupManagerSnapshot,
+    GroupPairwiseCommand, GroupPayloadCodec, GroupPendingFanout, GroupPreparedPublish,
+    GroupPreparedSend, GroupProtocol, GroupSenderKeyHandleResult, GroupSenderKeyMessage,
+    GroupSnapshot, MessageEnvelope, OwnerPubkey as NdrOwnerPubkey, PreparedSend, ProtocolContext,
+    SenderKeyRepairRequest, SessionManager, UserRecordSnapshot,
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use rand::rngs::OsRng;

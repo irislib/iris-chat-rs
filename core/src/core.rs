@@ -86,6 +86,7 @@ mod protocol_filters;
 mod publish_helpers;
 mod publishing;
 mod publishing_fact_events;
+mod publishing_identity;
 mod relay;
 mod routing;
 mod storage;
@@ -95,6 +96,7 @@ mod tests;
 
 pub(crate) const NEARBY_PRESENCE_KIND: u16 = 22242;
 pub(super) const APPCORE_PROTOCOL_LABEL: &str = "appcore-protocol";
+pub(super) const LOCAL_INVITE_PUBLISH_LABEL: &str = "invite";
 pub(super) const PENDING_RELAY_CONTROL_PUBLISH_MAX_ROWS: usize = 2_048;
 
 type OwnerPubkey = PublicKey;

@@ -642,8 +642,8 @@ fn delivered_receipt_waits_for_debounce_before_sending() {
     assert!(core.pending_delivered_receipts.is_empty());
     assert_eq!(
         protocol_send_log_count(&core, "receipt"),
-        1,
-        "delivered should send once the debounce expires"
+        0,
+        "delivered receipt should be dropped when peer protocol state is not send-ready"
     );
 }
 
@@ -675,15 +675,15 @@ fn seen_cancels_pending_delivered_receipt_before_debounce_flush() {
     assert!(core.pending_delivered_receipts.is_empty());
     assert_eq!(
         protocol_send_log_count(&core, "receipt"),
-        1,
-        "seen should still send immediately"
+        0,
+        "seen receipt should be dropped when peer protocol state is not send-ready"
     );
 
     core.flush_all_pending_delivered_receipts_for_test();
 
     assert_eq!(
         protocol_send_log_count(&core, "receipt"),
-        1,
+        0,
         "cancelled delivered should not send after the debounce flush"
     );
 }
@@ -717,8 +717,8 @@ fn mark_seen_syncs_to_local_siblings_when_sender_receipts_are_disabled() {
     assert_eq!(core.threads.get(&chat_id).unwrap().unread_count, 0);
     assert_eq!(
         protocol_send_log_count(&core, "receipt.self_sync"),
-        1,
-        "local sibling should still learn that the chat was seen"
+        0,
+        "best-effort local sibling seen sync should not queue retry work"
     );
     assert_eq!(
         protocol_send_log_count(&core, "receipt"),
@@ -759,8 +759,8 @@ fn mark_seen_syncs_message_requests_to_local_siblings_without_peer_receipt() {
     assert_eq!(core.threads.get(&chat_id).unwrap().unread_count, 0);
     assert_eq!(
         protocol_send_log_count(&core, "receipt.self_sync"),
-        1,
-        "local sibling should clear its unread count for the request"
+        0,
+        "best-effort local sibling seen sync should not queue retry work"
     );
     assert_eq!(
         protocol_send_log_count(&core, "receipt"),

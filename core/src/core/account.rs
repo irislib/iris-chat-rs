@@ -51,7 +51,7 @@ impl AppCore {
         self.request_protocol_subscription_refresh_forced_reconnect_if_offline();
         let _fetching_recent_protocol_state = self.fetch_recent_protocol_state();
         self.fetch_recent_messages_for_tracked_peers();
-        self.retry_protocol_engine_pending_outbound("app_foreground");
+        self.retry_protocol_engine_pending_work("app_foreground");
         self.retry_pending_relay_publishes("app_foreground");
         self.refresh_protocol_sync_busy();
         self.rebuild_state();
@@ -825,7 +825,7 @@ impl AppCore {
         self.schedule_session_connect();
         self.republish_local_identity_artifacts();
         self.drain_pending_mobile_push_events();
-        self.retry_protocol_engine_pending_outbound("session_start");
+        self.retry_protocol_engine_pending_work("session_start");
         self.retry_pending_relay_publishes("session_start");
         self.schedule_next_message_expiry();
         self.request_protocol_subscription_refresh();
