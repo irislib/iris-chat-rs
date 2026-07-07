@@ -205,14 +205,11 @@ fn appcore_pending_group_payload_from_claimed_device_uses_owner_after_appkeys() 
             &payload,
             peer_device.public_key(),
             Some(peer_device.public_key()),
-        )
-        .expect("process group payload");
+    )
+    .expect("process group payload");
     assert!(outcome.consumed);
     assert!(outcome.events.is_empty());
-    assert_eq!(
-        outcome.queued_targets,
-        vec![format!("owner:{}", peer_owner.public_key().to_hex())]
-    );
+    assert!(outcome.effects.is_empty());
     assert_eq!(
         engine.debug_snapshot().pending_group_pairwise_payload_count,
         1

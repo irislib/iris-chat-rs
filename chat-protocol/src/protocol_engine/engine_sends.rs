@@ -181,9 +181,8 @@ impl ProtocolEngine {
         let mut bootstrap =
             self.send_direct_unsigned_event(invite_owner, &invite_owner.to_hex(), typing, now)?;
         for effect in &mut bootstrap.effects {
-            if let ProtocolEffect::Publish(publish) = effect {
-                publish.inner_event_id = None;
-            }
+            let ProtocolEffect::Publish(publish) = effect;
+            publish.inner_event_id = None;
         }
         Ok(ProtocolAcceptInviteResult {
             owner_pubkey: invite_owner,

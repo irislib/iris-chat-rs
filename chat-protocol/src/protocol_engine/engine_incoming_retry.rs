@@ -127,9 +127,6 @@ impl ProtocolEngine {
             let retry = self.retry_pending_group_inputs(NdrUnixSeconds(unix_now().get()))?;
             result.events.extend(retry.events);
             result.effects.extend(retry.effects);
-            result.queued_targets.extend(retry.queued_targets);
-            result.queued_targets.sort();
-            result.queued_targets.dedup();
         }
         Ok(ProtocolGroupIncomingResult {
             consumed: true,
@@ -159,16 +156,10 @@ impl ProtocolEngine {
                 | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => owner,
                 ProtocolSenderOwnerResolution::PendingOwnerClaim {
                     storage_owner,
-                    claimed_owner,
+                    claimed_owner: _,
                     sender_device,
                 } => {
                     if is_supported_group_payload {
-                        let queued_targets = vec![format!("owner:{}", claimed_owner.to_hex())];
-                        let effects = self.protocol_backfill_effects_for_targets(
-                            &queued_targets,
-                            NdrUnixSeconds(unix_now().get()),
-                            "group_pairwise_owner_claim",
-                        );
                         self.queue_pending_group_pairwise_payload(
                             storage_owner,
                             Some(sender_device),
@@ -176,8 +167,6 @@ impl ProtocolEngine {
                             unix_now().get(),
                         )?;
                         return Ok(ProtocolGroupIncomingResult {
-                            effects,
-                            queued_targets,
                             consumed: true,
                             ..Default::default()
                         });
@@ -197,48 +186,38 @@ impl ProtocolEngine {
         match result {
             Ok(Some(event)) => {
                 if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
-                    let (effects, queued_targets) =
-                        self.sender_key_repair_response_effects(
-                            repair.requester_owner,
-                            &repair.request,
-                            NdrUnixSeconds(unix_now().get()),
-                        )?;
+                    let effects = self.sender_key_repair_response_effects(
+                        repair.requester_owner,
+                        &repair.request,
+                        NdrUnixSeconds(unix_now().get()),
+                    )?;
                     self.persist()?;
                     return Ok(ProtocolGroupIncomingResult {
                         effects,
-                        queued_targets,
                         consumed: true,
                         ..Default::default()
                     });
                 }
                 let mut effects = Vec::new();
-                let mut queued_targets = Vec::new();
                 if sender_owner != self.local_owner {
                     if let GroupIncomingEvent::MetadataUpdated(group) = &event {
                         for pending in &mut self.pending_group_pairwise_payloads {
                             pending.next_retry_at_secs = 0;
                         }
-                        let (sync_effects, sync_targets) = self.sync_group_to_local_siblings(group)?;
+                        let sync_effects = self.sync_group_to_local_siblings(group)?;
                         effects.extend(sync_effects);
-                        queued_targets.extend(sync_targets);
                     }
                 }
                 let mut events = vec![event];
                 let retry = self.retry_pending_group_inputs(now)?;
                 events.extend(retry.events);
                 effects.extend(retry.effects);
-                queued_targets.extend(retry.queued_targets);
                 let fanout_retry = self.retry_pending_group_fanouts(now)?;
                 effects.extend(fanout_retry.effects);
-                queued_targets.extend(fanout_retry.queued_targets);
-                queued_targets.extend(self.queued_group_targets());
-                queued_targets.sort();
-                queued_targets.dedup();
                 self.persist()?;
                 Ok(ProtocolGroupIncomingResult {
                     events,
                     effects,
-                    queued_targets,
                     consumed: true,
                     ..Default::default()
                 })
@@ -248,7 +227,6 @@ impl ProtocolEngine {
                 Ok(ProtocolGroupIncomingResult {
                     events: retry.events,
                     effects: retry.effects,
-                    queued_targets: retry.queued_targets,
                     consumed: is_group_payload || retry.consumed,
                     ..Default::default()
                 })
@@ -261,15 +239,7 @@ impl ProtocolEngine {
                         payload.to_vec(),
                         unix_now().get(),
                     )?;
-                    let queued_targets = self.queued_group_targets();
-                    let effects = self.protocol_backfill_effects_for_targets(
-                        &queued_targets,
-                        NdrUnixSeconds(unix_now().get()),
-                        "group_pairwise_retry",
-                    );
                     Ok(ProtocolGroupIncomingResult {
-                        effects,
-                        queued_targets,
                         consumed: true,
                         ..Default::default()
                     })
@@ -288,17 +258,6 @@ impl ProtocolEngine {
         let group_fanout_result = self.retry_pending_group_fanouts(now)?;
         let mut group_result = group_result;
         group_result.effects.extend(group_fanout_result.effects);
-        group_result
-            .queued_targets
-            .extend(group_fanout_result.queued_targets);
-        group_result.queued_targets.sort();
-        group_result.queued_targets.dedup();
-        self.append_queued_protocol_backfill(
-            &mut group_result.effects,
-            &group_result.queued_targets,
-            now,
-            "group_retry",
-        );
         let mut direct_messages = self
             .pending_decrypted_deliveries
             .iter()
@@ -312,7 +271,6 @@ impl ProtocolEngine {
             effects: Vec::new(),
         };
         if !batch.is_empty() {
-            self.last_backfill_attempt_secs = now.get();
             self.subscription_generation = self.subscription_generation.wrapping_add(1);
         }
         Ok(batch)
@@ -439,12 +397,9 @@ impl ProtocolEngine {
             let sender_owner = match sender_resolution {
                 ProtocolSenderOwnerResolution::Verified { owner }
                 | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => owner,
-                ProtocolSenderOwnerResolution::PendingOwnerClaim { claimed_owner, .. } => {
+                ProtocolSenderOwnerResolution::PendingOwnerClaim { .. } => {
                     pending.next_retry_at_secs =
                         next_pending_retry_at_secs(pending.created_at_secs, now);
-                    result
-                        .queued_targets
-                        .push(format!("owner:{}", claimed_owner.to_hex()));
                     still_pairwise.push(pending);
                     continue;
                 }
@@ -462,14 +417,12 @@ impl ProtocolEngine {
             match outcome {
                 Ok(Some(event)) => {
                     if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
-                        let (effects, queued_targets) =
-                            self.sender_key_repair_response_effects(
-                                repair.requester_owner,
-                                &repair.request,
-                                now,
-                            )?;
+                        let effects = self.sender_key_repair_response_effects(
+                            repair.requester_owner,
+                            &repair.request,
+                            now,
+                        )?;
                         result.effects.extend(effects);
-                        result.queued_targets.extend(queued_targets);
                     } else {
                         result.events.push(event);
                     }
@@ -486,8 +439,6 @@ impl ProtocolEngine {
             }
         }
         self.pending_group_pairwise_payloads = still_pairwise;
-        result.queued_targets.sort();
-        result.queued_targets.dedup();
 
         let sender_keys = std::mem::take(&mut self.pending_group_sender_key_messages);
         let mut still_sender_keys = Vec::new();
@@ -560,7 +511,6 @@ impl ProtocolEngine {
         let pending = std::mem::take(&mut self.pending_group_fanouts);
         let mut still_pending = Vec::new();
         let mut effects = Vec::new();
-        let mut queued_targets = Vec::new();
         let mut persist_needed = false;
         let mut session_changed = false;
         for mut pending in pending {
@@ -568,12 +518,6 @@ impl ProtocolEngine {
                 still_pending.push(pending);
                 continue;
             }
-            let queued_target = match &pending.fanout {
-                GroupPendingFanout::Remote {
-                    recipient_owner, ..
-                } => recipient_owner.to_hex(),
-                GroupPendingFanout::LocalSiblings { .. } => self.local_owner.to_hex(),
-            };
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(now, &mut rng);
             let prepared = match &pending.fanout {
@@ -607,7 +551,6 @@ impl ProtocolEngine {
                 Err(_) => {
                     pending.next_retry_at_secs =
                         next_pending_retry_at_secs(pending.created_at_secs, now);
-                    queued_targets.push(queued_target);
                     still_pending.push(pending);
                     continue;
                 }
@@ -624,13 +567,10 @@ impl ProtocolEngine {
             if still_has_gap {
                 pending.next_retry_at_secs =
                     next_pending_retry_at_secs(pending.created_at_secs, now);
-                queued_targets.push(queued_target);
                 still_pending.push(pending);
             }
         }
         self.pending_group_fanouts = still_pending;
-        queued_targets.sort();
-        queued_targets.dedup();
         if session_changed {
             self.invalidate_known_message_author_cache();
         }
@@ -639,7 +579,6 @@ impl ProtocolEngine {
         }
         Ok(ProtocolGroupIncomingResult {
             effects,
-            queued_targets,
             ..Default::default()
         })
     }

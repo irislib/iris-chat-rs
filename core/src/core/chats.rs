@@ -610,12 +610,11 @@ impl AppCore {
                 self.push_debug_log(
                     "message.group.send.appcore",
                     format!(
-                        "chat_id={chat_id} message_id={message_id} event_ids={} effects={} signed={} delivery_publish={} queued_targets={} targets={}",
+                        "chat_id={chat_id} message_id={message_id} event_ids={} effects={} signed={} delivery_publish={} targets={}",
                         result.event_ids.len(),
                         result.effects.len(),
                         publish_effects,
                         delivery_publish_effects,
-                        result.queued_targets.len(),
                         summarize_group_send_effect_targets(&result.effects)
                     ),
                 );
@@ -630,9 +629,7 @@ impl AppCore {
                 self.process_protocol_engine_effects(result.effects);
                 self.sync_message_delivery_trace(chat_id, &message_id);
                 self.reconcile_outgoing_message_delivery(chat_id, &message_id);
-                if !result.queued_targets.is_empty() {
-                    self.handle_queued_protocol_targets("message.group", &result.queued_targets);
-                }
+                self.request_protocol_subscription_refresh();
             }
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
             None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
@@ -1254,12 +1251,7 @@ impl AppCore {
         match result {
             Some(Ok(result)) => {
                 self.process_protocol_engine_effects(result.effects);
-                if !result.queued_targets.is_empty() {
-                    self.request_protocol_subscription_refresh();
-                    if self.fetch_recent_protocol_state() {
-                        self.state.busy.syncing_network = true;
-                    }
-                }
+                self.request_protocol_subscription_refresh();
             }
             Some(Err(error)) => self.push_debug_log("group.control.send", error.to_string()),
             None => {}
@@ -1488,12 +1480,8 @@ impl AppCore {
         if !group_outcome.consumed
             && group_outcome.events.is_empty()
             && group_outcome.effects.is_empty()
-            && group_outcome.queued_targets.is_empty()
         {
             return false;
-        }
-        if !group_outcome.queued_targets.is_empty() {
-            self.handle_queued_protocol_targets("group.pairwise", &group_outcome.queued_targets);
         }
         for group_event in group_outcome.events {
             self.apply_group_decrypted_event(group_event);

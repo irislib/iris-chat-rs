@@ -34,7 +34,6 @@ impl ProtocolEngine {
             known_message_author_cache_build_count: std::cell::Cell::new(0),
             local_app_keys_observed: false,
             subscription_generation: 0,
-            last_backfill_attempt_secs: 0,
             batch_depth: std::cell::Cell::new(0),
             batch_persist_dirty: std::cell::Cell::new(false),
         });
@@ -112,7 +111,6 @@ impl ProtocolEngine {
             known_message_author_cache_build_count: std::cell::Cell::new(0),
             local_app_keys_observed: false,
             subscription_generation: state.subscription_generation,
-            last_backfill_attempt_secs: state.last_backfill_attempt_secs,
             batch_depth: std::cell::Cell::new(0),
             batch_persist_dirty: std::cell::Cell::new(false),
         }))
@@ -206,7 +204,6 @@ impl ProtocolEngine {
                 .unwrap_or_default(),
             pending_group_fanout_targets: self.queued_group_targets(),
             subscription_generation: self.subscription_generation,
-            last_backfill_attempt_secs: self.last_backfill_attempt_secs,
         }
     }
 
@@ -333,19 +330,6 @@ impl ProtocolEngine {
         targets.sort();
         targets.dedup();
         targets
-    }
-
-    pub fn queued_protocol_backfill_effects(
-        &self,
-        now: NdrUnixSeconds,
-        reason: &'static str,
-    ) -> (Vec<String>, Vec<ProtocolEffect>) {
-        let mut targets = self.queued_owner_claim_targets();
-        targets.extend(self.queued_group_targets());
-        targets.sort();
-        targets.dedup();
-        let effects = self.protocol_backfill_effects_for_targets(&targets, now, reason);
-        (targets, effects)
     }
 
     pub fn queued_group_target_hexes(&self) -> Vec<String> {
@@ -686,7 +670,6 @@ impl ProtocolEngine {
             pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
             group_roster_fact_histories: self.group_roster_fact_histories.clone(),
             subscription_generation: self.subscription_generation,
-            last_backfill_attempt_secs: self.last_backfill_attempt_secs,
         }
     }
 
@@ -703,7 +686,6 @@ impl ProtocolEngine {
         self.pending_decrypted_deliveries = checkpoint.pending_decrypted_deliveries;
         self.group_roster_fact_histories = checkpoint.group_roster_fact_histories;
         self.subscription_generation = checkpoint.subscription_generation;
-        self.last_backfill_attempt_secs = checkpoint.last_backfill_attempt_secs;
         self.invalidate_known_message_author_cache();
     }
 

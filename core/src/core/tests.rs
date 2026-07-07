@@ -23,7 +23,6 @@ fn seed_protocol_storage_for_test(
         "pending_group_sender_key_repairs": [],
         "pending_decrypted_deliveries": [],
         "subscription_generation": 0,
-        "last_backfill_attempt_secs": 0,
     });
     storage.put(TEST_PROTOCOL_ENGINE_STATE_KEY, state.to_string())?;
     Ok(())
@@ -43,9 +42,8 @@ fn seed_protocol_storage_if_missing_for_test(
 fn protocol_publish_events(effects: &[ProtocolEffect]) -> Vec<&Event> {
     effects
         .iter()
-        .filter_map(|effect| match effect {
-            ProtocolEffect::Publish(publish) => Some(&publish.event),
-            _ => None,
+        .map(|effect| match effect {
+            ProtocolEffect::Publish(publish) => &publish.event,
         })
         .collect()
 }

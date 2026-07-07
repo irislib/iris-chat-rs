@@ -12,9 +12,9 @@ use self::backfill::{
 };
 pub(super) use self::subscription_helpers::build_protocol_subscription_filters;
 use self::subscription_helpers::{
-    current_client_relay_statuses, fetch_events_for_filters, normalize_protocol_queued_targets,
-    pubkeys_from_comma_separated_hexes, pubkeys_from_hexes, subscribe_protocol_filters_with_id,
-    wait_for_connected_relays, ProtocolSubscriptionApplyOutput,
+    current_client_relay_statuses, fetch_events_for_filters, pubkeys_from_comma_separated_hexes,
+    pubkeys_from_hexes, subscribe_protocol_filters_with_id, wait_for_connected_relays,
+    ProtocolSubscriptionApplyOutput,
 };
 
 const PROTOCOL_SUBSCRIPTION_ID: &str = "ndr-protocol";
@@ -117,11 +117,9 @@ impl AppCore {
                 self.rebuild_state();
                 self.emit_state();
             }
+            self.schedule_fast_protocol_retry_if_pending();
             return;
         }
-        let mut queued_targets = Vec::new();
-        queued_targets.extend(batch.group_result.queued_targets.clone());
-        normalize_protocol_queued_targets(&mut queued_targets);
         let published = batch
             .group_result
             .effects
@@ -149,44 +147,14 @@ impl AppCore {
         }
         self.push_debug_log(
             "appcore.protocol.retry",
-            format!(
-                "reason={reason} published={published} queued_targets={}",
-                queued_targets.len()
-            ),
+            format!("reason={reason} published={published}"),
         );
-        if queued_targets.is_empty() {
-            self.request_protocol_subscription_refresh();
-            self.schedule_fast_protocol_retry_if_pending();
-        } else {
-            self.handle_queued_protocol_targets(reason, &queued_targets);
-        }
+        self.request_protocol_subscription_refresh();
+        self.schedule_fast_protocol_retry_if_pending();
         self.drain_queued_direct_text_messages(reason);
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
-    }
-
-    pub(super) fn handle_queued_protocol_targets(
-        &mut self,
-        reason: &'static str,
-        queued_targets: &[String],
-    ) {
-        if queued_targets.is_empty() {
-            return;
-        }
-        let mut queued_targets = queued_targets.to_vec();
-        normalize_protocol_queued_targets(&mut queued_targets);
-        if queued_targets.is_empty() {
-            return;
-        }
-        self.push_debug_log(
-            "appcore.protocol.queued",
-            format!("reason={reason} targets={}", queued_targets.join(",")),
-        );
-        self.request_protocol_subscription_refresh();
-        self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
-            PROTOCOL_RECONNECT_CHECK_SECS,
-        ));
     }
 
     pub(super) fn retry_protocol_engine_pending_work(&mut self, reason: &'static str) {
@@ -223,10 +191,6 @@ impl AppCore {
             .group_result
             .effects
             .append(&mut source.group_result.effects);
-        target
-            .group_result
-            .queued_targets
-            .append(&mut source.group_result.queued_targets);
         target.direct_messages.append(&mut source.direct_messages);
         target.effects.append(&mut source.effects);
     }
@@ -832,67 +796,6 @@ impl AppCore {
                 Err(error) => {
                     let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
                         category: "protocol.catch_up.error".to_string(),
-                        detail: error.to_string(),
-                    })));
-                }
-            }
-            let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::SyncComplete)));
-        });
-        true
-    }
-
-    pub(super) fn fetch_protocol_state_for_filters(
-        &mut self,
-        filters: Vec<Filter>,
-        reason: &'static str,
-    ) -> bool {
-        if self.protocol_subscription_runtime.protocol_fetch_in_flight {
-            self.push_debug_log(
-                "protocol.engine_fetch.skip",
-                format!("reason={reason} fetch already in flight"),
-            );
-            self.schedule_tracked_peer_catch_up(Duration::from_secs(PROTOCOL_RECONNECT_CHECK_SECS));
-            return false;
-        }
-        let Some((client, relay_urls)) = self
-            .logged_in
-            .as_ref()
-            .filter(|logged_in| !logged_in.relay_urls.is_empty())
-            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
-        else {
-            return false;
-        };
-        if filters.is_empty() {
-            return false;
-        }
-        self.push_debug_log(
-            "protocol.engine_fetch.fetch",
-            format!("reason={reason} filters={}", filters.len()),
-        );
-        self.state.busy.syncing_network = true;
-        self.protocol_subscription_runtime.protocol_fetch_in_flight = true;
-        self.protocol_subscription_runtime
-            .protocol_fetch_last_started_at = Some(Instant::now());
-
-        let tx = self.core_sender.clone();
-        self.runtime.spawn(async move {
-            ensure_session_relays_configured(&client, &relay_urls).await;
-            connect_client_with_timeout(&client, Duration::from_secs(5)).await;
-            match fetch_events_for_filters(&client, filters, Duration::from_secs(5)).await {
-                Ok(collected) => {
-                    let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                        category: "protocol.engine_fetch.result".to_string(),
-                        detail: format!("events={}", collected.len()),
-                    })));
-                    if !collected.is_empty() {
-                        let _ = tx.send(CoreMsg::Internal(Box::new(
-                            InternalEvent::FetchCatchUpEvents(collected),
-                        )));
-                    }
-                }
-                Err(error) => {
-                    let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                        category: "protocol.engine_fetch.error".to_string(),
                         detail: error.to_string(),
                     })));
                 }
@@ -1523,41 +1426,17 @@ impl AppCore {
         }
         self.refresh_relay_connection_status_from_cached_statuses();
         let connected_relays = self.relay_connected_count as usize;
-        let desired_unapplied = self.protocol_subscription_runtime.desired_plan
-            != self.protocol_subscription_runtime.applied_plan;
-        let tracked_peer_backfill_needed = self.tracked_peer_protocol_backfill_needed();
-        let should_retry_backfill = self.protocol_subscription_runtime.desired_plan.is_some()
-            && (connected_relays == 0
-                || tracked_peer_backfill_needed
-                || self.protocol_subscription_runtime.refresh_in_flight
-                || self.protocol_subscription_runtime.refresh_dirty
-                || desired_unapplied);
-        let should_retry_protocol = should_retry_backfill || pending_protocol_retry_needed;
-        let should_fetch_tracked_peer_messages = desired_unapplied
-            || self.protocol_subscription_runtime.refresh_dirty
-            || self.message_recipient_bootstrap_needed();
         self.push_debug_log(
             "protocol.liveness",
             format!(
-                "connected={connected_relays} retry_protocol={should_retry_protocol} tracked_messages={should_fetch_tracked_peer_messages} pending_protocol={pending_protocol_retry_needed} pending_publishes={}",
+                "connected={connected_relays} pending_protocol={pending_protocol_retry_needed} pending_publishes={}",
                 self.pending_relay_publishes.len()
             ),
         );
         if has_subscription_work {
             self.reconcile_protocol_subscriptions("liveness_check", true);
         }
-        if should_retry_protocol {
-            let queued_targets = self.current_queued_protocol_targets();
-            if self.protocol_subscription_runtime.desired_plan.is_some()
-                && queued_targets.is_empty()
-            {
-                self.fetch_recent_protocol_metadata_state();
-            }
-            if self.protocol_subscription_runtime.desired_plan.is_some()
-                && should_fetch_tracked_peer_messages
-            {
-                self.fetch_recent_messages_for_tracked_peers();
-            }
+        if pending_protocol_retry_needed {
             self.retry_protocol_engine_pending_work("liveness_check");
         }
         if has_pending_relay_publishes {

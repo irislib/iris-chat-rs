@@ -492,19 +492,6 @@ impl DirectMessageService {
                 ProtocolEffect::Publish(publish) => {
                     commands.push(DirectMessageCommand::Publish(publish.event));
                 }
-                ProtocolEffect::FetchProtocolState { filters, reason } => {
-                    self.fetch_subscription_counter =
-                        self.fetch_subscription_counter.saturating_add(1);
-                    let subscription_id = format!(
-                        "iris-native-private-chat-fetch-{reason}-{}",
-                        self.fetch_subscription_counter
-                    );
-                    commands.push(DirectMessageCommand::Subscribe {
-                        subscription_id,
-                        filters,
-                        durable: false,
-                    });
-                }
             }
         }
         commands

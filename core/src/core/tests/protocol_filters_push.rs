@@ -30,22 +30,6 @@ fn queued_group_create_schedules_fast_protocol_retry_tick() {
 }
 
 #[test]
-fn current_queued_protocol_targets_includes_group_fanout_targets() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let peer = Keys::generate();
-    let mut core = logged_in_test_core("queued-group-targets", &owner, &device);
-
-    core.create_group("Queued group", &[peer.public_key().to_hex()]);
-
-    let targets = core.current_queued_protocol_targets();
-    assert!(
-        targets.contains(&peer.public_key().to_hex()),
-        "queued protocol targets should include lightweight group fanout targets"
-    );
-}
-
-#[test]
 fn queued_group_retry_without_protocol_progress_reschedules_fast_tick() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -74,8 +58,8 @@ fn queued_group_retry_without_protocol_progress_reschedules_fast_tick() {
         "missing member protocol state should not produce group publishes yet"
     );
     assert!(
-        !batch.group_result.queued_targets.is_empty(),
-        "the retry batch must report the still-queued group target"
+        batch.is_empty(),
+        "missing member protocol state should not produce fetch/backfill retry effects"
     );
 
     core.process_protocol_engine_retry_batch("test_group_retry", batch);
@@ -665,8 +649,7 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
 
     assert!(
         !candidate_message_events.is_empty(),
-        "group send should prepare a local sibling copy for the primary device; queued={:?} pending_group_fanouts={} pending_targets={:?}",
-        result.queued_targets,
+        "group send should prepare a local sibling copy for the primary device; pending_group_fanouts={} pending_targets={:?}",
         linked.debug_snapshot().pending_group_fanout_count,
         linked.debug_snapshot().pending_group_fanout_targets
     );

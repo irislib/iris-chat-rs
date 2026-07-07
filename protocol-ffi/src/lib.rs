@@ -4,11 +4,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use iris_chat_protocol::{
-    invite_unsigned_event, invite_url, is_app_keys_event, parse_invite_event,
-    parse_invite_response_event, parse_invite_url, parse_message_event, AppKeys, DeviceEntry,
-    FileStorageAdapter, InMemoryStorage, NdrUnixSeconds, ProtocolDecryptedMessage, ProtocolEffect,
-    ProtocolEngine, ProtocolRetryBatch, StorageAdapter, UnixSeconds, APP_KEYS_EVENT_KIND,
-    INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
+    build_protocol_discovery_filters, invite_unsigned_event, invite_url, is_app_keys_event,
+    parse_invite_event, parse_invite_response_event, parse_invite_url, parse_message_event,
+    AppKeys, DeviceEntry, FileStorageAdapter, InMemoryStorage, NdrUnixSeconds,
+    ProtocolDecryptedMessage, ProtocolEffect, ProtocolEngine, ProtocolRetryBatch, StorageAdapter,
+    UnixSeconds, APP_KEYS_EVENT_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
 };
 use nostr::{Event, Filter, Keys, Kind, PublicKey, SecretKey};
 
@@ -211,13 +211,10 @@ impl SessionManagerHandle {
     pub fn setup_user(&self, user_pubkey_hex: String) -> Result<(), NdrError> {
         let user_pubkey = parse_pubkey(&user_pubkey_hex)?;
         let mut inner = self.lock_inner()?;
-        let engine = inner.engine_mut()?;
-        let effects = engine.protocol_discovery_effects_for_owners(
-            [user_pubkey],
-            UnixSeconds(now_secs()),
-            "ffi_setup_user",
-        );
-        inner.enqueue_effects(effects)?;
+        let _ = inner.engine_mut()?;
+        for filter in build_protocol_discovery_filters([user_pubkey], [user_pubkey], 256) {
+            inner.enqueue_subscribe_filter("ffi_setup_user", filter)?;
+        }
         inner.sync_message_subscription()?;
         Ok(())
     }
@@ -507,11 +504,6 @@ impl SessionManagerInner {
                     content: None,
                     event_id: publish.inner_event_id,
                 });
-            }
-            ProtocolEffect::FetchProtocolState { filters, reason } => {
-                for filter in filters {
-                    self.enqueue_subscribe_filter(reason, filter)?;
-                }
             }
         }
         Ok(())
