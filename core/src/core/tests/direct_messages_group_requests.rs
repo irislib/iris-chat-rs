@@ -182,10 +182,10 @@ fn group_created_on_linked_device_syncs_to_primary_as_self_chat() {
 }
 
 #[test]
-fn compact_linked_device_group_messages_sync_to_primary_without_request() {
+fn fully_approved_linked_device_group_messages_sync_to_primary_without_request() {
     let owner = Keys::generate();
     let primary_device = Keys::generate();
-    let mut primary = logged_in_test_core("compact-linked-group-primary", &owner, &primary_device);
+    let mut primary = logged_in_test_core("full-linked-group-primary", &owner, &primary_device);
     primary.pending_relay_publishes.clear();
 
     let linked_temp_dir = tempfile::TempDir::new().expect("linked temp dir");
@@ -199,11 +199,11 @@ fn compact_linked_device_group_messages_sync_to_primary_without_request() {
     linked.handle_action(AppAction::StartLinkedDevice {
         owner_input: String::new(),
     });
-    let compact_code = linked
+    let approval_request = linked
         .state
         .link_device
         .as_ref()
-        .expect("compact link code")
+        .expect("device approval request")
         .url
         .clone();
     let linked_device_hex = linked
@@ -215,7 +215,7 @@ fn compact_linked_device_group_messages_sync_to_primary_without_request() {
         .to_hex();
 
     primary.handle_action(AppAction::AddAuthorizedDevice {
-        device_input: compact_code,
+        device_input: approval_request,
     });
     assert_eq!(primary.state.toast.as_deref(), Some("Device added"));
 
@@ -230,6 +230,15 @@ fn compact_linked_device_group_messages_sync_to_primary_without_request() {
         .filter(|event| {
             event.kind.as_u16() as u32 == APP_KEYS_EVENT_KIND
                 && event_has_tag_value(event, "device", &linked_device_hex)
+        })
+    {
+        linked.handle_relay_event(event);
+    }
+    for event in sorted_pending_events_for_test(&primary)
+        .into_iter()
+        .filter(|event| {
+            event.kind.as_u16() as u32 == u32::from(FACT_OP_KIND)
+                && event_has_tag_value(event, "type", "nostr_identity_device_approval_receipt")
         })
     {
         linked.handle_relay_event(event);
@@ -259,7 +268,7 @@ fn compact_linked_device_group_messages_sync_to_primary_without_request() {
     let chat_id = linked
         .active_chat_id
         .clone()
-        .expect("linked opens compact-created group");
+        .expect("linked opens group");
     deliver_pending_relay_events_for_test(&linked, &mut primary);
     primary.rebuild_state();
     let created = primary
@@ -273,20 +282,20 @@ fn compact_linked_device_group_messages_sync_to_primary_without_request() {
                 .map(|event| event.kind.as_u16() as u32)
                 .collect::<Vec<_>>();
             panic!(
-                "primary did not learn compact-linked group {chat_id}; linked_pending_kinds={linked_pending_kinds:?} primary_app_keys={:?} linked_app_keys={:?} primary_debug={:?} linked_debug={:?}",
+                "primary did not learn linked-device group {chat_id}; linked_pending_kinds={linked_pending_kinds:?} primary_app_keys={:?} linked_app_keys={:?} primary_debug={:?} linked_debug={:?}",
                 primary.app_keys, linked.app_keys, primary.debug_log, linked.debug_log
             )
         });
     assert!(
         !created.is_request,
-        "group created by a compact-linked same-account device must not ask for approval"
+        "group created by a linked same-account device must not ask for approval"
     );
 
     primary.pending_relay_publishes.clear();
     linked.pending_relay_publishes.clear();
     linked.handle_action(AppAction::SendMessage {
         chat_id: chat_id.clone(),
-        text: "hello from compact linked".to_string(),
+        text: "hello from linked device".to_string(),
     });
     deliver_pending_relay_events_for_test(&linked, &mut primary);
     primary.rebuild_state();
@@ -297,16 +306,16 @@ fn compact_linked_device_group_messages_sync_to_primary_without_request() {
     let message = thread
         .messages
         .iter()
-        .find(|message| message.body == "hello from compact linked")
+        .find(|message| message.body == "hello from linked device")
         .unwrap_or_else(|| {
             panic!(
-                "primary did not render compact-linked group message; messages={:?} debug={:?}",
+                "primary did not render linked-device group message; messages={:?} debug={:?}",
                 thread.messages, primary.debug_log
             )
         });
     assert!(
         message.is_outgoing,
-        "compact-linked same-account group messages must render as outgoing"
+        "linked same-account group messages must render as outgoing"
     );
 }
 

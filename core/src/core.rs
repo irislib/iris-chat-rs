@@ -16,13 +16,19 @@ use iris_chat_protocol::*;
 use nostr::{Alphabet, EventBuilder, SingleLetterTag, UnsignedEvent};
 use nostr_double_ratchet::{
     apply_app_keys_snapshot_with_required_device, build_app_keys_device_authorization_filter,
-    build_protocol_discovery_filters, deterministic_link_invite_for_device,
-    deterministic_link_invite_for_device_link_request, encode_compact_device_link_request,
-    is_app_keys_event, is_group_roster_fact_event, parse_compact_device_link_request,
-    resolve_app_keys_owner_for_device, AppKeys, DeviceEntry, DeviceLinkRequest,
+    build_protocol_discovery_filters, deterministic_link_invite_for_device, is_app_keys_event,
+    is_group_roster_fact_event, resolve_app_keys_owner_for_device, AppKeys, DeviceEntry,
     APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_ROSTER_FACT_KIND,
     GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_LIST_LABEL, INVITE_RESPONSE_KIND,
     MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
+};
+use nostr_identity::{
+    build_nostr_identity_device_approval_receipt_event,
+    create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_request,
+    parse_nostr_identity_device_approval_receipt_event,
+    parse_nostr_identity_device_approval_request, CreateNostrIdentityDeviceApprovalRequestOptions,
+    NostrIdentityDeviceApprovalReceipt, NostrIdentityDeviceApprovalRequest,
+    NostrIdentityId, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA, FACT_OP_KIND,
 };
 use nostr_double_ratchet::{
     parse_group_sender_key_message_event, parse_group_sender_key_message_event_unchecked,

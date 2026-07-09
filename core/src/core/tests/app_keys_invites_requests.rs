@@ -900,7 +900,7 @@ fn device_roster_lists_current_device_then_newest_linked_devices() {
 }
 
 #[test]
-fn start_linked_device_creates_compact_device_approval_code() {
+fn start_linked_device_creates_full_device_approval_request() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let mut core = AppCore::new(
         flume::unbounded().0,
@@ -923,11 +923,12 @@ fn start_linked_device_creates_compact_device_approval_code() {
         .link_device
         .as_ref()
         .expect("link-device snapshot");
-    let request = parse_compact_device_link_request(&snapshot.url)
-        .expect("parse compact approval request");
-    assert!(!snapshot.url.contains("://"));
-    assert!(!snapshot.url.contains("chat.iris.to"));
-    assert_eq!(snapshot.url.split('.').count(), 3);
+    let request = parse_nostr_identity_device_approval_request(&snapshot.url, &[])
+        .expect("parse approval request")
+        .expect("device approval request");
+    assert!(snapshot.url.starts_with("nostr-identity://device-approval/"));
+    assert!(!request.device_app_key_proof.is_empty());
+    assert_eq!(request.request_type.as_deref(), Some("device_link"));
     assert_eq!(
         request.device_app_key_pubkey,
         core.pending_linked_device
@@ -935,11 +936,25 @@ fn start_linked_device_creates_compact_device_approval_code() {
             .expect("pending link")
             .device_keys
             .public_key()
+            .to_hex()
     );
-    assert_eq!(request.device_label.as_deref(), Some("Safari on macOS"));
-    assert_eq!(request.client_label.as_deref(), Some("Iris Chat Web"));
     assert_eq!(
-        request.device_app_key_pubkey.to_bech32().ok().as_deref(),
+        request.request_pubkey,
+        core.pending_linked_device
+            .as_ref()
+            .expect("pending link")
+            .request_keys
+            .public_key()
+            .to_hex()
+    );
+    assert_eq!(request.request_secret.len(), 64);
+    assert_eq!(request.label.as_deref(), Some("Safari on macOS"));
+    assert_eq!(
+        PublicKey::from_hex(&request.device_app_key_pubkey)
+            .expect("request device pubkey")
+            .to_bech32()
+            .ok()
+            .as_deref(),
         Some(snapshot.device_input.as_str())
     );
     assert!(matches!(core.screen_stack.as_slice(), [Screen::AddDevice]));
@@ -956,8 +971,33 @@ fn signed_app_keys_authorization_event(
         .expect("signed app keys authorization")
 }
 
+fn signed_device_approval_receipt_event(
+    owner_device: &Keys,
+    request_keys: &Keys,
+    linked_device_pubkey: PublicKey,
+    owner_pubkey: PublicKey,
+    created_at: u64,
+) -> Event {
+    build_nostr_identity_device_approval_receipt_event(
+        owner_device,
+        NostrIdentityDeviceApprovalReceipt {
+            schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
+            profile_id: account::nostr_identity_profile_id_for_owner(owner_pubkey),
+            request_pubkey: request_keys.public_key().to_hex(),
+            device_app_key_pubkey: linked_device_pubkey.to_hex(),
+            approved_by_pubkey: owner_device.public_key().to_hex(),
+            approved_at: i64::try_from(created_at).expect("created_at fits i64"),
+            request_secret: request_keys.secret_key().to_secret_hex(),
+            subject_pubkey: Some(owner_pubkey.to_hex()),
+            roster_op_id: None,
+            signed_roster_event: None,
+        },
+    )
+    .expect("signed device approval receipt")
+}
+
 #[test]
-fn compact_link_request_finishes_pairing_and_authorizes_linked_device() {
+fn full_link_request_finishes_pairing_and_authorizes_linked_device() {
     let owner = Keys::generate();
     let temp_dir_primary = tempfile::TempDir::new().expect("primary temp dir");
     let temp_dir_linked = tempfile::TempDir::new().expect("linked temp dir");
@@ -987,11 +1027,11 @@ fn compact_link_request_finishes_pairing_and_authorizes_linked_device() {
     linked.handle_action(AppAction::StartLinkedDevice {
         owner_input: String::new(),
     });
-    let compact_code = linked
+    let approval_request = linked
         .state
         .link_device
         .as_ref()
-        .expect("compact link code")
+        .expect("device approval request")
         .url
         .clone();
     let linked_device_hex = linked
@@ -1003,26 +1043,40 @@ fn compact_link_request_finishes_pairing_and_authorizes_linked_device() {
         .to_hex();
 
     primary.handle_action(AppAction::AddAuthorizedDevice {
-        device_input: compact_code,
+        device_input: approval_request,
     });
 
     assert_eq!(primary.state.toast.as_deref(), Some("Device added"));
     let response_event = pending_events_with_kind(&primary, INVITE_RESPONSE_KIND)
         .into_iter()
         .next()
-        .expect("compact approval publishes deterministic invite response");
+        .expect("approval publishes deterministic invite response");
     let app_keys_event = pending_events_with_kind(&primary, APP_KEYS_EVENT_KIND)
         .into_iter()
         .find(|event| event_has_tag_value(event, "device", &linked_device_hex))
-        .expect("compact approval publishes AppKeys authorization");
+        .expect("approval publishes AppKeys authorization");
+    let receipt_event = pending_events_with_kind(&primary, u32::from(FACT_OP_KIND))
+        .into_iter()
+        .find(|event| event_has_tag_value(
+            event,
+            "type",
+            "nostr_identity_device_approval_receipt"
+        ))
+        .expect("approval publishes encrypted receipt");
 
     linked.handle_relay_event(response_event);
     assert!(
         linked.pending_linked_device.is_some(),
-        "invite response alone must wait for owner-signed AppKeys authorization"
+        "invite response alone must wait for device approval"
     );
 
     linked.handle_relay_event(app_keys_event);
+    assert!(
+        linked.pending_linked_device.is_some(),
+        "AppKeys without the encrypted receipt must not finish device linking"
+    );
+
+    linked.handle_relay_event(receipt_event);
     let linked_device = linked
         .logged_in
         .as_ref()
@@ -1071,10 +1125,6 @@ fn compact_link_request_finishes_pairing_and_authorizes_linked_device() {
     assert_eq!(
         linked_roster_device.device_label.as_deref(),
         Some("Safari on macOS")
-    );
-    assert_eq!(
-        linked_roster_device.client_label.as_deref(),
-        Some("Iris Chat Web")
     );
 }
 
@@ -1135,6 +1185,12 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
         .expect("pending link invite")
         .device_keys
         .public_key();
+    let request_keys = core
+        .pending_linked_device
+        .as_ref()
+        .expect("pending link invite")
+        .request_keys
+        .clone();
     let pending = core
         .pending_linked_device
         .as_ref()
@@ -1154,13 +1210,25 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
     core.handle_relay_event(response_event);
     assert!(
         core.pending_linked_device.is_some(),
-        "invite response waits for owner-signed AppKeys authorization"
+        "invite response waits for owner-signed AppKeys authorization and approval receipt"
     );
     assert!(core.logged_in.is_none());
 
     core.handle_relay_event(signed_app_keys_authorization_event(
         &owner,
         linked_device_pubkey,
+        42,
+    ));
+    assert!(
+        core.pending_linked_device.is_some(),
+        "AppKeys authorization without the encrypted approval receipt must not finish"
+    );
+
+    core.handle_relay_event(signed_device_approval_receipt_event(
+        &owner,
+        &request_keys,
+        linked_device_pubkey,
+        owner.public_key(),
         42,
     ));
 
@@ -1198,6 +1266,7 @@ fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
         .expect("pending link invite");
     let pairing_invite = pending.pairing_invite.clone();
     let linked_device_pubkey = pending.device_keys.public_key();
+    let request_keys = pending.request_keys.clone();
     assert_eq!(pairing_invite.purpose.as_deref(), Some("link"));
     assert!(pairing_invite.owner_public_key.is_none());
 
@@ -1215,6 +1284,13 @@ fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
     core.handle_relay_event(signed_app_keys_authorization_event(
         &owner,
         linked_device_pubkey,
+        42,
+    ));
+    core.handle_relay_event(signed_device_approval_receipt_event(
+        &owner,
+        &request_keys,
+        linked_device_pubkey,
+        owner.public_key(),
         42,
     ));
     core.handle_relay_event(response_event);
@@ -1321,6 +1397,14 @@ fn local_relay_pairing_e2e_uses_stable_protocol_invite_after_login() {
         .into_iter()
         .find(|event| event_has_tag_value(event, "device", &linked_device_hex))
         .expect("owner publishes AppKeys authorization for linked device");
+    let receipt_event = pending_events_with_kind(&primary, u32::from(FACT_OP_KIND))
+        .into_iter()
+        .find(|event| event_has_tag_value(
+            event,
+            "type",
+            "nostr_identity_device_approval_receipt"
+        ))
+        .expect("owner publishes encrypted device approval receipt");
     let response_event = wait_for_relay_event_with_kind(
         &mut primary,
         &primary_core_rx,
@@ -1328,6 +1412,7 @@ fn local_relay_pairing_e2e_uses_stable_protocol_invite_after_login() {
         INVITE_RESPONSE_KIND,
     );
     linked.handle_relay_event(app_keys_event);
+    linked.handle_relay_event(receipt_event);
     linked.handle_relay_event(response_event);
 
     let stable_invite = linked

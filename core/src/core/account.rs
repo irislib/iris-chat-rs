@@ -186,7 +186,7 @@ impl AppCore {
     }
 
     pub(super) fn start_linked_device(&mut self, _owner_input: &str) {
-        self.push_debug_log("session.start_linked", "create compact link request");
+        self.push_debug_log("session.start_linked", "create device approval request");
         self.state.busy.linking_device = true;
         self.emit_state();
 
@@ -210,17 +210,23 @@ impl AppCore {
         let request_secret = request_keys.secret_key().to_secret_hex();
         let invite = deterministic_link_invite_for_device(device_pubkey, &request_secret)?;
         let current_device_labels = self.current_device_labels.clone();
-        let url = encode_compact_device_link_request(
-            device_pubkey,
-            &request_secret,
-            current_device_labels
-                .as_ref()
-                .and_then(|labels| labels.device_label.as_deref()),
-            current_device_labels
-                .as_ref()
-                .and_then(|labels| labels.client_label.as_deref()),
-            Some(unix_now().get()),
+        let local_request = create_nostr_identity_device_approval_request(
+            &device_keys,
+            CreateNostrIdentityDeviceApprovalRequestOptions {
+                request_keys: Some(request_keys.clone()),
+                request_secret: Some(request_secret.clone()),
+                requested_at: i64::try_from(unix_now().get()).unwrap_or(i64::MAX),
+                request_type: Some("device_link".to_string()),
+                resources: Vec::new(),
+                expires_at: None,
+                profile_id: None,
+                admin_app_key_pubkey: None,
+                label: current_device_labels
+                    .as_ref()
+                    .and_then(|labels| labels.device_label.clone()),
+            },
         )?;
+        let url = encode_nostr_identity_device_approval_request(&local_request.request, None)?;
 
         let client = Client::new(device_keys.clone());
         let relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
@@ -231,6 +237,9 @@ impl AppCore {
             .pubkeys(vec![invite.inviter_ephemeral_public_key.to_nostr()?]);
         let app_keys_authorization_filter =
             build_app_keys_device_authorization_filter(device_pubkey);
+        let approval_receipt_filter = Filter::new()
+            .kind(Kind::from(FACT_OP_KIND))
+            .pubkey(request_keys.public_key());
         let client_for_subscription = client.clone();
         let relay_urls_for_subscription = relay_urls.clone();
         self.runtime.spawn(async move {
@@ -258,14 +267,23 @@ impl AppCore {
                     None,
                 )
                 .await;
+            let _ = client_for_subscription
+                .subscribe_with_id(
+                    SubscriptionId::new("link-device-approval-receipt"),
+                    approval_receipt_filter,
+                    None,
+                )
+                .await;
         });
 
         self.pending_linked_device = Some(PendingLinkedDeviceState {
             device_keys,
+            request_keys,
             pairing_client: client,
             pairing_invite: invite,
             pairing_url: url,
             authorized_owner_pubkey: None,
+            approval_receipt_event: None,
             authorized_app_keys_event: None,
             pending_response: None,
         });
@@ -374,11 +392,13 @@ impl AppCore {
             return;
         }
 
-        if let Some(request) = parse_compact_device_link_request(device_input.trim()).ok() {
+        if let Ok(Some(request)) =
+            parse_nostr_identity_device_approval_request(device_input.trim(), &[])
+        {
             self.state.busy.updating_roster = true;
             self.emit_state();
 
-            let result = self.accept_compact_link_device_approval_request(request);
+            let result = self.accept_link_device_approval_request(request);
             if let Err(error) = result {
                 self.state.toast = Some(error.to_string());
             } else {
@@ -410,41 +430,54 @@ impl AppCore {
         self.emit_state();
     }
 
-    fn accept_compact_link_device_approval_request(
+    fn accept_link_device_approval_request(
         &mut self,
-        request: DeviceLinkRequest,
+        request: NostrIdentityDeviceApprovalRequest,
     ) -> anyhow::Result<()> {
-        let invite = deterministic_link_invite_for_device_link_request(&request)?;
         let logged_in = self
             .logged_in
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?;
+        let approver_keys = logged_in.device_keys.clone();
         let owner_pubkey = logged_in.owner_pubkey;
+        let device_app_key_pubkey = PublicKey::from_hex(&request.device_app_key_pubkey)
+            .map_err(|error| anyhow::anyhow!("Invalid device key: {error}"))?;
+        let invite =
+            deterministic_link_invite_for_device(device_app_key_pubkey, &request.request_secret)?;
         let request_labels = CurrentDeviceLabels {
-            device_label: request
-                .device_label
-                .as_deref()
-                .and_then(normalize_device_label),
-            client_label: request
-                .client_label
-                .as_deref()
-                .and_then(normalize_device_label),
+            device_label: request.label.as_deref().and_then(normalize_device_label),
+            client_label: None,
         };
         let request_labels =
             if request_labels.device_label.is_some() || request_labels.client_label.is_some() {
                 Some(request_labels)
             } else {
                 None
-            };
+        };
         let changed = self.upsert_local_app_key_device_with_labels(
             owner_pubkey,
-            request.device_app_key_pubkey,
+            device_app_key_pubkey,
             request_labels.as_ref(),
             true,
         );
         if changed {
             self.publish_local_app_keys();
         }
+        let receipt = NostrIdentityDeviceApprovalReceipt {
+            schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
+            profile_id: nostr_identity_profile_id_for_owner(owner_pubkey),
+            request_pubkey: request.request_pubkey.clone(),
+            device_app_key_pubkey: request.device_app_key_pubkey.clone(),
+            approved_by_pubkey: approver_keys.public_key().to_hex(),
+            approved_at: i64::try_from(unix_now().get()).unwrap_or(i64::MAX),
+            request_secret: request.request_secret.clone(),
+            subject_pubkey: Some(owner_pubkey.to_hex()),
+            roster_op_id: None,
+            signed_roster_event: None,
+        };
+        let receipt_event =
+            build_nostr_identity_device_approval_receipt_event(&approver_keys, receipt)?;
+        self.publish_runtime_event(receipt_event, "appcore-protocol", None);
         self.accept_link_device_invite_session(invite)
     }
 
@@ -1170,4 +1203,16 @@ impl AppCore {
             _ => LocalAuthorizationState::AwaitingApproval,
         }
     }
+}
+
+pub(super) fn nostr_identity_profile_id_for_owner(owner_pubkey: PublicKey) -> NostrIdentityId {
+    use sha2::{Digest, Sha256};
+
+    let mut digest = Sha256::new();
+    digest.update(b"iris-chat-rs:nostr-identity-profile-id:v1\n");
+    digest.update(owner_pubkey.to_hex().as_bytes());
+    let hash = digest.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&hash[..16]);
+    NostrIdentityId::from_uuid(uuid::Uuid::from_bytes(bytes))
 }

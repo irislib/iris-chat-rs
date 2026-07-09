@@ -47,22 +47,34 @@ fn owner_device_publishes_app_keys_snapshot_for_manual_device_npub() {
 }
 
 #[test]
-fn owner_device_accepts_compact_link_request_and_publishes_app_keys_snapshot() {
+fn owner_device_accepts_full_link_request_and_publishes_app_keys_snapshot() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let linked_device = Keys::generate();
     let request_keys = Keys::generate();
     let linked_device_hex = linked_device.public_key().to_hex();
-    let request_url = encode_compact_device_link_request(
-        linked_device.public_key(),
-        &request_keys.secret_key().to_secret_hex(),
-        Some("Safari on macOS"),
-        Some("Iris Chat Web"),
-        Some(41),
+    let request = create_nostr_identity_device_approval_request(
+        &linked_device,
+        CreateNostrIdentityDeviceApprovalRequestOptions {
+            request_keys: Some(request_keys),
+            request_secret: Some(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string(),
+            ),
+            requested_at: 41,
+            request_type: Some("device_link".to_string()),
+            resources: Vec::new(),
+            expires_at: None,
+            profile_id: None,
+            admin_app_key_pubkey: None,
+            label: Some("Safari on macOS".to_string()),
+        },
     )
-    .expect("compact request");
+    .expect("approval request");
+    let request_url = encode_nostr_identity_device_approval_request(&request.request, None)
+        .expect("encode approval request");
 
-    let mut core = logged_in_test_core("owner-compact-appkeys-approval", &owner, &device);
+    let mut core = logged_in_test_core("owner-full-appkeys-approval", &owner, &device);
     core.upsert_local_app_key_device(owner.public_key(), device.public_key());
     core.sync_local_app_keys_to_protocol_engine("test_seed_appkeys");
     core.pending_relay_publishes.clear();
@@ -76,7 +88,7 @@ fn owner_device_accepts_compact_link_request_and_publishes_app_keys_snapshot() {
     assert_eq!(
         app_keys_events.len(),
         1,
-        "compact approval publishes an owner-signed AppKeys snapshot"
+        "approval publishes an owner-signed AppKeys snapshot"
     );
     let app_keys_event = &app_keys_events[0];
     assert!(is_app_keys_event(app_keys_event));
@@ -85,7 +97,19 @@ fn owner_device_accepts_compact_link_request_and_publishes_app_keys_snapshot() {
     assert_eq!(
         pending_events_with_kind(&core, INVITE_RESPONSE_KIND).len(),
         1,
-        "compact approval still responds to the deterministic NDR link invite"
+        "approval still responds to the deterministic NDR link invite"
+    );
+    assert_eq!(
+        pending_events_with_kind(&core, u32::from(FACT_OP_KIND))
+            .into_iter()
+            .filter(|event| event_has_tag_value(
+                event,
+                "type",
+                "nostr_identity_device_approval_receipt"
+            ))
+            .count(),
+        1,
+        "approval publishes an encrypted receipt for the request"
     );
 
     let known = core
@@ -102,7 +126,7 @@ fn owner_device_accepts_compact_link_request_and_publishes_app_keys_snapshot() {
         .find(|device| device.identity_pubkey_hex == linked_device_hex)
         .expect("linked device");
     assert_eq!(linked.device_label.as_deref(), Some("Safari on macOS"));
-    assert_eq!(linked.client_label.as_deref(), Some("Iris Chat Web"));
+    assert_eq!(linked.client_label.as_deref(), None);
 }
 
 #[test]
