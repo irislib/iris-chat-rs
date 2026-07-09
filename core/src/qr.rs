@@ -65,7 +65,8 @@ pub fn decode_device_approval_qr(raw: String) -> Option<DeviceApprovalQrPayload>
 mod tests {
     use super::{decode_device_approval_qr, encode_device_approval_qr, DeviceApprovalQrPayload};
     use nostr_identity::{
-        create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_request,
+        create_nostr_identity_device_approval_request,
+        encode_nostr_identity_device_approval_request,
         CreateNostrIdentityDeviceApprovalRequestOptions,
     };
     use nostr_sdk::Keys;
@@ -99,8 +100,7 @@ mod tests {
             CreateNostrIdentityDeviceApprovalRequestOptions {
                 request_keys: Some(request),
                 request_secret: Some(
-                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-                        .to_string(),
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
                 ),
                 requested_at: 41,
                 request_type: Some("device_link".to_string()),

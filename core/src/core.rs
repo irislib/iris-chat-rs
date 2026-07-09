@@ -22,14 +22,6 @@ use nostr_double_ratchet::{
     GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_LIST_LABEL, INVITE_RESPONSE_KIND,
     MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
 };
-use nostr_identity::{
-    build_nostr_identity_device_approval_receipt_event,
-    create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_request,
-    parse_nostr_identity_device_approval_receipt_event,
-    parse_nostr_identity_device_approval_request, CreateNostrIdentityDeviceApprovalRequestOptions,
-    NostrIdentityDeviceApprovalReceipt, NostrIdentityDeviceApprovalRequest,
-    NostrIdentityId, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA, FACT_OP_KIND,
-};
 use nostr_double_ratchet::{
     parse_group_sender_key_message_event, parse_group_sender_key_message_event_unchecked,
 };
@@ -38,6 +30,14 @@ use nostr_double_ratchet::{
     UnixSeconds as NdrUnixSeconds,
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
+use nostr_identity::{
+    build_nostr_identity_device_approval_receipt_event,
+    create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_request,
+    parse_nostr_identity_device_approval_receipt_event_for_request,
+    parse_nostr_identity_device_approval_request, CreateNostrIdentityDeviceApprovalRequestOptions,
+    NostrIdentityDeviceApprovalReceipt, NostrIdentityDeviceApprovalRequest, NostrIdentityId,
+    FACT_OP_KIND, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
+};
 use nostr_sdk::prelude::{
     Client, Event, Filter, Keys, Kind, PublicKey, RelayNotification, RelayPoolNotification,
     RelayStatus, RelayUrl, SubscribeOptions, SubscriptionId, Timestamp, ToBech32,

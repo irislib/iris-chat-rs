@@ -206,15 +206,12 @@ impl AppCore {
 
         let device_keys = Keys::generate();
         let device_pubkey = device_keys.public_key();
-        let request_keys = Keys::generate();
-        let request_secret = request_keys.secret_key().to_secret_hex();
-        let invite = deterministic_link_invite_for_device(device_pubkey, &request_secret)?;
         let current_device_labels = self.current_device_labels.clone();
         let local_request = create_nostr_identity_device_approval_request(
             &device_keys,
             CreateNostrIdentityDeviceApprovalRequestOptions {
-                request_keys: Some(request_keys.clone()),
-                request_secret: Some(request_secret.clone()),
+                request_keys: None,
+                request_secret: None,
                 requested_at: i64::try_from(unix_now().get()).unwrap_or(i64::MAX),
                 request_type: Some("device_link".to_string()),
                 resources: Vec::new(),
@@ -225,6 +222,11 @@ impl AppCore {
                     .as_ref()
                     .and_then(|labels| labels.device_label.clone()),
             },
+        )?;
+        let request_keys = local_request.request_keys.clone();
+        let invite = deterministic_link_invite_for_device(
+            device_pubkey,
+            &local_request.request.request_secret,
         )?;
         let url = encode_nostr_identity_device_approval_request(&local_request.request, None)?;
 
@@ -279,6 +281,7 @@ impl AppCore {
         self.pending_linked_device = Some(PendingLinkedDeviceState {
             device_keys,
             request_keys,
+            approval_request: local_request.request,
             pairing_client: client,
             pairing_invite: invite,
             pairing_url: url,
@@ -392,39 +395,25 @@ impl AppCore {
             return;
         }
 
-        if let Ok(Some(request)) =
-            parse_nostr_identity_device_approval_request(device_input.trim(), &[])
-        {
-            self.state.busy.updating_roster = true;
-            self.emit_state();
-
-            let result = self.accept_link_device_approval_request(request);
-            if let Err(error) = result {
-                self.state.toast = Some(error.to_string());
-            } else {
-                self.state.toast = Some("Device added".to_string());
+        let request = match parse_nostr_identity_device_approval_request(device_input.trim(), &[]) {
+            Ok(Some(request)) => request,
+            _ => {
+                self.state.toast = Some("Invalid device request.".to_string());
+                self.emit_state();
+                return;
             }
-
-            self.state.busy.updating_roster = false;
-            self.rebuild_state();
-            self.persist_best_effort();
-            self.emit_state();
-            return;
-        }
-
-        let Ok(device_pubkey) = parse_device_input(device_input) else {
-            self.state.toast = Some("Invalid device key.".to_string());
-            self.emit_state();
-            return;
         };
+        self.state.busy.updating_roster = true;
+        self.emit_state();
 
-        let owner_pubkey = logged_in.owner_pubkey;
-        let changed =
-            self.upsert_local_app_key_device_with_labels(owner_pubkey, device_pubkey, None, true);
-        if changed {
-            self.publish_local_app_keys();
+        let result = self.accept_link_device_approval_request(request);
+        if let Err(error) = result {
+            self.state.toast = Some(error.to_string());
+        } else {
             self.state.toast = Some("Device added".to_string());
         }
+
+        self.state.busy.updating_roster = false;
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
@@ -453,7 +442,7 @@ impl AppCore {
                 Some(request_labels)
             } else {
                 None
-        };
+            };
         let changed = self.upsert_local_app_key_device_with_labels(
             owner_pubkey,
             device_app_key_pubkey,

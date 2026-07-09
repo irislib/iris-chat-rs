@@ -478,27 +478,14 @@ impl AppCore {
                 let Some(pending) = self.pending_linked_device.as_mut() else {
                     return false;
                 };
-                let receipt = match parse_nostr_identity_device_approval_receipt_event(
+                let receipt = match parse_nostr_identity_device_approval_receipt_event_for_request(
                     &event,
                     &pending.request_keys,
+                    &pending.approval_request,
                 ) {
                     Ok(receipt) => receipt,
                     Err(_) => return false,
                 };
-                if receipt.device_app_key_pubkey != pending.device_keys.public_key().to_hex() {
-                    self.push_debug_log(
-                        "session.link_receipt.error",
-                        format!("event_id={event_id} error=device_mismatch"),
-                    );
-                    return true;
-                }
-                if receipt.request_secret != pending.request_keys.secret_key().to_secret_hex() {
-                    self.push_debug_log(
-                        "session.link_receipt.error",
-                        format!("event_id={event_id} error=request_secret_mismatch"),
-                    );
-                    return true;
-                }
                 let Some(owner_hex) = receipt.subject_pubkey.as_deref() else {
                     self.push_debug_log(
                         "session.link_receipt.error",

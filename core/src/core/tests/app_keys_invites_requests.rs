@@ -477,9 +477,26 @@ fn remove_authorized_device_action_updates_roster_immediately() {
         &owner,
         &current_device,
     );
+    let request = create_nostr_identity_device_approval_request(
+        &linked_device,
+        CreateNostrIdentityDeviceApprovalRequestOptions {
+            request_keys: None,
+            request_secret: None,
+            requested_at: 41,
+            request_type: Some("device_link".to_string()),
+            resources: Vec::new(),
+            expires_at: None,
+            profile_id: None,
+            admin_app_key_pubkey: None,
+            label: None,
+        },
+    )
+    .expect("approval request");
+    let request_url = encode_nostr_identity_device_approval_request(&request.request, None)
+        .expect("encode approval request");
 
     core.handle_action(AppAction::AddAuthorizedDevice {
-        device_input: linked_device.public_key().to_hex(),
+        device_input: request_url,
     });
     assert!(core
         .state
@@ -947,7 +964,32 @@ fn start_linked_device_creates_full_device_approval_request() {
             .public_key()
             .to_hex()
     );
-    assert_eq!(request.request_secret.len(), 64);
+    assert_eq!(
+        request.request_secret.len(),
+        43,
+        "nostr-identity encodes 32 random request-secret bytes as unpadded base64url"
+    );
+    assert!(request
+        .request_secret
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')));
+    assert_ne!(
+        request.request_secret,
+        core.pending_linked_device
+            .as_ref()
+            .expect("pending link")
+            .request_keys
+            .secret_key()
+            .to_secret_hex(),
+        "the anti-spam request secret must be independent of the receipt decryption key"
+    );
+    assert_eq!(
+        request,
+        core.pending_linked_device
+            .as_ref()
+            .expect("pending link")
+            .approval_request,
+    );
     assert_eq!(request.label.as_deref(), Some("Safari on macOS"));
     assert_eq!(
         PublicKey::from_hex(&request.device_app_key_pubkey)
@@ -973,8 +1015,7 @@ fn signed_app_keys_authorization_event(
 
 fn signed_device_approval_receipt_event(
     owner_device: &Keys,
-    request_keys: &Keys,
-    linked_device_pubkey: PublicKey,
+    request: &NostrIdentityDeviceApprovalRequest,
     owner_pubkey: PublicKey,
     created_at: u64,
 ) -> Event {
@@ -983,11 +1024,11 @@ fn signed_device_approval_receipt_event(
         NostrIdentityDeviceApprovalReceipt {
             schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
             profile_id: account::nostr_identity_profile_id_for_owner(owner_pubkey),
-            request_pubkey: request_keys.public_key().to_hex(),
-            device_app_key_pubkey: linked_device_pubkey.to_hex(),
+            request_pubkey: request.request_pubkey.clone(),
+            device_app_key_pubkey: request.device_app_key_pubkey.clone(),
             approved_by_pubkey: owner_device.public_key().to_hex(),
             approved_at: i64::try_from(created_at).expect("created_at fits i64"),
-            request_secret: request_keys.secret_key().to_secret_hex(),
+            request_secret: request.request_secret.clone(),
             subject_pubkey: Some(owner_pubkey.to_hex()),
             roster_op_id: None,
             signed_roster_event: None,
@@ -1161,7 +1202,10 @@ fn owner_device_rejects_legacy_link_invite_for_device_approval() {
         .into_iter()
         .flat_map(|known| known.devices.iter())
         .any(|device| device.identity_pubkey_hex == new_device.public_key().to_hex()));
-    assert_eq!(core.state.toast.as_deref(), Some("Invalid device key."));
+    assert_eq!(
+        core.state.toast.as_deref(),
+        Some("Invalid device request.")
+    );
 }
 
 #[test]
@@ -1185,11 +1229,11 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
         .expect("pending link invite")
         .device_keys
         .public_key();
-    let request_keys = core
+    let approval_request = core
         .pending_linked_device
         .as_ref()
         .expect("pending link invite")
-        .request_keys
+        .approval_request
         .clone();
     let pending = core
         .pending_linked_device
@@ -1224,10 +1268,22 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
         "AppKeys authorization without the encrypted approval receipt must not finish"
     );
 
+    let mut wrong_request = approval_request.clone();
+    wrong_request.request_secret = "wrong_request_secret_abcdefghijklmnopqrstuvwxyz".to_string();
     core.handle_relay_event(signed_device_approval_receipt_event(
         &owner,
-        &request_keys,
-        linked_device_pubkey,
+        &wrong_request,
+        owner.public_key(),
+        42,
+    ));
+    assert!(
+        core.pending_linked_device.is_some(),
+        "a validly signed receipt bound to another request secret must be rejected"
+    );
+
+    core.handle_relay_event(signed_device_approval_receipt_event(
+        &owner,
+        &approval_request,
         owner.public_key(),
         42,
     ));
@@ -1266,7 +1322,7 @@ fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
         .expect("pending link invite");
     let pairing_invite = pending.pairing_invite.clone();
     let linked_device_pubkey = pending.device_keys.public_key();
-    let request_keys = pending.request_keys.clone();
+    let approval_request = pending.approval_request.clone();
     assert_eq!(pairing_invite.purpose.as_deref(), Some("link"));
     assert!(pairing_invite.owner_public_key.is_none());
 
@@ -1288,8 +1344,7 @@ fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
     ));
     core.handle_relay_event(signed_device_approval_receipt_event(
         &owner,
-        &request_keys,
-        linked_device_pubkey,
+        &approval_request,
         owner.public_key(),
         42,
     ));

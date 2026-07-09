@@ -1,5 +1,5 @@
 #[test]
-fn owner_device_publishes_app_keys_snapshot_for_manual_device_npub() {
+fn owner_device_rejects_manual_device_npub_without_signed_request() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let new_device = Keys::generate();
@@ -15,32 +15,15 @@ fn owner_device_publishes_app_keys_snapshot_for_manual_device_npub() {
             .expect("device npub"),
     });
 
-    assert_eq!(core.state.toast.as_deref(), Some("Device added"));
+    assert_eq!(core.state.toast.as_deref(), Some("Invalid device request."));
     let app_keys_events = pending_events_with_kind(&core, APP_KEYS_EVENT_KIND);
-    assert_eq!(
-        app_keys_events.len(),
-        1,
-        "manual device approval publishes the current owner AppKeys snapshot"
-    );
-    let app_keys_event = &app_keys_events[0];
-    assert!(is_app_keys_event(app_keys_event));
-    assert_eq!(app_keys_event.pubkey, owner.public_key());
-    assert!(event_has_tag_value(
-        app_keys_event,
-        "owner_pubkey",
-        &owner.public_key().to_hex()
-    ));
-    assert!(event_has_tag_value(
-        app_keys_event,
-        "device",
-        &new_device.public_key().to_hex()
-    ));
+    assert!(app_keys_events.is_empty());
 
     let known = core
         .app_keys
         .get(&owner.public_key().to_hex())
         .expect("AppKeys projection");
-    assert!(known
+    assert!(!known
         .devices
         .iter()
         .any(|device| device.identity_pubkey_hex == new_device.public_key().to_hex()));
