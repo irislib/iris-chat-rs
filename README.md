@@ -60,17 +60,20 @@ the app output path.
 ## Check
 
 ```bash
-just test
-just release-gate
-just qa
-just test-all-platforms
+just verify-fast
+just verify-health
+just verify-full
 just qa-native-contract
 just qa-interop
 just qa-lan
 ```
 
-Use `just test` for the normal release gate. Add `--full` or `--on-device` to
-`./scripts/test-release-gate` before release candidates.
+`verify-fast` is the per-change Rust/core/contract tier and does not allocate
+simulators, phones, VMs, or GUI sessions. `verify-full` reserves the native lab,
+runs the five-platform plus physical-device matrices, and is intended for
+nightly or release boundaries. Machine-readable results distinguish
+`infrastructure_unavailable` (exit 75) from product failures. See
+`docs/verification-tiers.md` for resource configuration and safe reset rules.
 
 ## Build
 

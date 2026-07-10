@@ -393,16 +393,16 @@ fn decrypted_mobile_push_resolution(
     inner_content: String,
     inner_json: String,
 ) -> MobilePushNotificationResolution {
-    let sender_name = lookup_sender_display_name(&data_dir, &sender_owner)
-        .or_else(|| lookup_direct_thread_sender_name(&data_dir, &sender_owner));
+    let sender_name = lookup_sender_display_name(data_dir, &sender_owner)
+        .or_else(|| lookup_direct_thread_sender_name(data_dir, &sender_owner));
     let group_title = group_id
         .as_ref()
-        .and_then(|id| lookup_group_name(&data_dir, id));
+        .and_then(|id| lookup_group_name(data_dir, id));
     let resolved_chat_id = group_id
         .as_ref()
         .map(|id| group_chat_id(id))
         .unwrap_or_else(|| sender_owner.to_hex());
-    if is_chat_muted_in_data_dir(&data_dir, &resolved_chat_id) {
+    if is_chat_muted_in_data_dir(data_dir, &resolved_chat_id) {
         return suppressed_resolution();
     }
 

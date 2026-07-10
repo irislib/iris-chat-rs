@@ -652,7 +652,7 @@ fn version_is_newer(candidate: &str, current: &str) -> bool {
 fn is_dev_placeholder_version(value: &str) -> bool {
     version_parts(value)
         .first()
-        .map_or(true, |major| *major < 2000)
+        .is_none_or(|major| *major < 2000)
 }
 
 fn version_parts(value: &str) -> Vec<u32> {

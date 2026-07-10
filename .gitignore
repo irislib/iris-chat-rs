@@ -21,6 +21,7 @@ windows/IrisChat/obj/
 windows/IrisChat/Bindings/
 windows/IrisChat/Frameworks/
 dist/
+artifacts/
 release.env
 .env.zapstore.local
 .claude/

@@ -228,8 +228,8 @@ impl DesktopNearbyService {
 
     /// Wipe every event currently in the mailbag (our outbound queue
     /// + items we're forwarding for others). Independent of the
-    /// on/off toggle so the user can clear without disabling future
-    /// sync; the toggle controls whether the bag accepts new items.
+    ///   on/off toggle so the user can clear without disabling future
+    ///   sync; the toggle controls whether the bag accepts new items.
     pub fn empty_mailbag(&self) {
         {
             let mut inner = lock_desktop_nearby_inner(&self.inner);
@@ -1485,31 +1485,25 @@ impl MdnsPacket {
                 return None;
             }
             match typ {
-                12 => {
-                    if normalize_dns_name(&name) == SERVICE_TYPE {
-                        if let Some((target, _)) = read_dns_name(bytes, offset) {
-                            packet.ptr_instances.push(target);
-                        }
+                12 if normalize_dns_name(&name) == SERVICE_TYPE => {
+                    if let Some((target, _)) = read_dns_name(bytes, offset) {
+                        packet.ptr_instances.push(target);
                     }
                 }
-                33 => {
-                    if rdlen >= 7 {
-                        let port = read_u16(bytes, offset + 4)?;
-                        if let Some((target, _)) = read_dns_name(bytes, offset + 6) {
-                            packet.srv_records.push((name, target, port));
-                        }
+                33 if rdlen >= 7 => {
+                    let port = read_u16(bytes, offset + 4)?;
+                    if let Some((target, _)) = read_dns_name(bytes, offset + 6) {
+                        packet.srv_records.push((name, target, port));
                     }
                 }
-                1 => {
-                    if rdlen == 4 {
-                        let Some(addr_bytes) = bytes.get(offset..offset + 4) else {
-                            continue;
-                        };
-                        let Ok(addr_bytes) = <[u8; 4]>::try_from(addr_bytes) else {
-                            continue;
-                        };
-                        packet.a_records.push((name, Ipv4Addr::from(addr_bytes)));
-                    }
+                1 if rdlen == 4 => {
+                    let Some(addr_bytes) = bytes.get(offset..offset + 4) else {
+                        continue;
+                    };
+                    let Ok(addr_bytes) = <[u8; 4]>::try_from(addr_bytes) else {
+                        continue;
+                    };
+                    packet.a_records.push((name, Ipv4Addr::from(addr_bytes)));
                 }
                 _ => {}
             }

@@ -576,7 +576,7 @@ mod tests {
         let mut file = tempfile::NamedTempFile::new().expect("temp drop file");
         writeln!(file, "\n# comment\nabc\n  def  # inline comment\n").expect("write drop file");
 
-        let ids = drop_event_ids(&file.path().to_path_buf());
+        let ids = drop_event_ids(file.path());
 
         assert!(ids.contains("abc"));
         assert!(ids.contains("def"));

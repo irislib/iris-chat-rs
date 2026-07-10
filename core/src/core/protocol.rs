@@ -1383,13 +1383,12 @@ impl AppCore {
             return;
         }
         let previous_visible_status = previous_status
-            .clone()
             .map(relay_connection_status)
             .unwrap_or("offline");
-        let next_visible_status = relay_connection_status(status.clone());
+        let next_visible_status = relay_connection_status(status);
         let was_connected = self.relay_connected_count > 0;
         self.relay_status_by_url
-            .insert(normalized_relay_url.clone(), status.clone());
+            .insert(normalized_relay_url.clone(), status);
         self.refresh_relay_connection_status_from_cached_statuses();
         let is_connected = self.relay_connected_count > 0;
         let visible_status_changed = previous_visible_status != next_visible_status;
@@ -1698,6 +1697,9 @@ impl AppCore {
         });
     }
 
+    // This mirrors the fields of InternalEvent::ProtocolSubscriptionReconcileCompleted;
+    // keeping the boundary flat makes event dispatch and protocol diagnostics explicit.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_protocol_subscription_reconcile_completed(
         &mut self,
         generation: u64,

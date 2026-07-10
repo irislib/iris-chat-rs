@@ -182,7 +182,7 @@ fn fixture_thread(kind: ChatKind, index: u32) -> ChatThreadSnapshot {
             index + 1
         )),
         last_message_at_secs: Some(BASE_TIME_SECS.saturating_sub(u64::from(index) * 60)),
-        last_message_is_outgoing: Some(index % 3 == 0),
+        last_message_is_outgoing: Some(index.is_multiple_of(3)),
         last_message_delivery: Some(match index % 5 {
             0 => DeliveryState::Seen,
             1 => DeliveryState::Sent,
@@ -191,10 +191,10 @@ fn fixture_thread(kind: ChatKind, index: u32) -> ChatThreadSnapshot {
             _ => DeliveryState::Failed,
         }),
         unread_count: u64::from(index % 4),
-        is_typing: index % 17 == 0,
-        is_muted: index % 19 == 0,
+        is_typing: index.is_multiple_of(17),
+        is_muted: index.is_multiple_of(19),
         is_pinned: index < 3,
-        draft: if index % 23 == 0 {
+        draft: if index.is_multiple_of(23) {
             format!("draft {}", index + 1)
         } else {
             String::new()
@@ -204,11 +204,11 @@ fn fixture_thread(kind: ChatKind, index: u32) -> ChatThreadSnapshot {
 }
 
 fn fixture_message(chat_id: &str, index: u32) -> ChatMessageSnapshot {
-    let outgoing = index % 2 == 0;
+    let outgoing = index.is_multiple_of(2);
     ChatMessageSnapshot {
         id: format!("{chat_id}-message-{:05}", index + 1),
         chat_id: chat_id.to_string(),
-        kind: if index % 29 == 0 {
+        kind: if index.is_multiple_of(29) {
             ChatMessageKind::System
         } else {
             ChatMessageKind::User
@@ -229,7 +229,7 @@ fn fixture_message(chat_id: &str, index: u32) -> ChatMessageSnapshot {
         reactors: fixture_reactors(index),
         is_outgoing: outgoing,
         created_at_secs: BASE_TIME_SECS + u64::from(index),
-        expires_at_secs: if index % 31 == 0 {
+        expires_at_secs: if index.is_multiple_of(31) {
             Some(BASE_TIME_SECS + u64::from(index) + 86_400)
         } else {
             None
@@ -246,14 +246,14 @@ fn fixture_message(chat_id: &str, index: u32) -> ChatMessageSnapshot {
 }
 
 fn fixture_reactions(index: u32) -> Vec<MessageReactionSnapshot> {
-    if index % 4 != 0 {
+    if !index.is_multiple_of(4) {
         return Vec::new();
     }
     vec![
         MessageReactionSnapshot {
             emoji: "\u{1f44d}".to_string(),
             count: 1 + u64::from(index % 5),
-            reacted_by_me: index % 8 == 0,
+            reacted_by_me: index.is_multiple_of(8),
         },
         MessageReactionSnapshot {
             emoji: "\u{2764}\u{fe0f}".to_string(),
@@ -264,7 +264,7 @@ fn fixture_reactions(index: u32) -> Vec<MessageReactionSnapshot> {
 }
 
 fn fixture_reactors(index: u32) -> Vec<MessageReactor> {
-    if index % 4 != 0 {
+    if !index.is_multiple_of(4) {
         return Vec::new();
     }
     vec![MessageReactor {
@@ -276,7 +276,7 @@ fn fixture_reactors(index: u32) -> Vec<MessageReactor> {
 }
 
 fn fixture_search_hit(query: &str, index: u32) -> MessageSearchHit {
-    let kind = if index % 5 == 0 {
+    let kind = if index.is_multiple_of(5) {
         ChatKind::Group
     } else {
         ChatKind::Direct
@@ -296,13 +296,13 @@ fn fixture_search_hit(query: &str, index: u32) -> MessageSearchHit {
         chat_kind: kind,
         author_pubkey: fixture_hex(30_000 + index),
         body: format!("{query} search fixture message body {:05}", index + 1),
-        is_outgoing: index % 2 == 0,
+        is_outgoing: index.is_multiple_of(2),
         created_at_secs: BASE_TIME_SECS.saturating_sub(u64::from(index) * 30),
     }
 }
 
 fn fixture_group_details(group_count: u32) -> GroupDetailsSnapshot {
-    let member_count = group_count.min(32).max(3);
+    let member_count = group_count.clamp(3, 32);
     GroupDetailsSnapshot {
         group_id: "group-0001".to_string(),
         name: "Project Group 0001".to_string(),

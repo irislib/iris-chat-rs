@@ -83,7 +83,7 @@ detect_vm_name() {
 
   candidates="$(windows_ssh_host_candidates_text)"
   err "No reachable Windows SSH host (tried: ${candidates:-<none>}). Set IRIS_WINDOWS_SSH_HOST."
-  exit 1
+  exit 75
 }
 
 # Returns the working-tree path inside the Windows host. This is no longer a "shared

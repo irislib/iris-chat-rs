@@ -55,6 +55,9 @@ info:
     @echo "Checks"
     @echo "  just doctor-ios"
     @echo "  just qa"
+    @echo "  just verify-fast"
+    @echo "  just verify-full"
+    @echo "  just verify-health"
     @echo "  just test"
     @echo "  just release-gate"
     @echo "  just test-homebrew-tap"
@@ -196,6 +199,15 @@ doctor-ios:
 
 qa:
     ./scripts/test_fast.sh
+
+verify-fast:
+    ./scripts/verify.sh fast
+
+verify-full:
+    ./scripts/verify.sh full
+
+verify-health:
+    ./scripts/verify.sh health
 
 test:
     ./scripts/test

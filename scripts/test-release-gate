@@ -17,6 +17,7 @@ RUN_NOTIFICATIONS="${IRIS_TEST_GATE_NOTIFICATIONS:-0}"
 RUN_LAN_AVAILABLE="${IRIS_TEST_GATE_LAN_AVAILABLE:-0}"
 RUN_RELIABILITY_LAB="${IRIS_TEST_GATE_RELIABILITY_LAB:-0}"
 RUN_MACOS_VM_E2E="${IRIS_TEST_GATE_MACOS_VM_E2E:-0}"
+RUN_FAST="${IRIS_TEST_GATE_RUN_FAST:-1}"
 
 usage() {
   cat <<'EOF'
@@ -37,6 +38,7 @@ Options:
   --no-core-lan        Skip same-host core LAN visibility smoke.
   --notifications      Include Android notification decrypt / FCM checks.
   --no-native-contract Skip Android native contract UI lane.
+  --skip-fast          Reuse a fast tier that already passed in this invocation.
   -h, --help           Show this help
 
 Environment:
@@ -103,6 +105,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-native-contract)
       RUN_NATIVE_CONTRACT=0
+      shift
+      ;;
+    --skip-fast)
+      RUN_FAST=0
       shift
       ;;
     -h|--help|help)
@@ -188,7 +194,11 @@ parallel_step_start "Homebrew tap packaging" "${ROOT_DIR}/scripts/test_homebrew_
 
 fast_status=0
 prereq_status=0
-run_step "fast local tests" "${ROOT_DIR}/scripts/test_fast.sh" || fast_status=$?
+if [[ "$RUN_FAST" == "1" ]]; then
+  run_step "fast local tests" "${ROOT_DIR}/scripts/test_fast.sh" || fast_status=$?
+else
+  echo "Skipping fast local tests; caller supplied an already-passed fast tier."
+fi
 parallel_step_wait || prereq_status=$?
 if [[ "$fast_status" -ne 0 || "$prereq_status" -ne 0 ]]; then
   exit 1

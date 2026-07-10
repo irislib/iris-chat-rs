@@ -884,7 +884,7 @@ fn handle_invite_device_command(cli: &CliApp, command: InviteDeviceTopCommands) 
             fail_on_toast(&state)?;
             Ok(json!({
                 "chats": chat_list_json(&state),
-                "current_chat": state.current_chat.as_ref().map(|chat| chat_summary_json(chat)),
+                "current_chat": state.current_chat.as_ref().map(chat_summary_json),
             }))
         }
         InviteDeviceTopCommands::Link(LinkCommands::Create) => {
@@ -947,7 +947,7 @@ fn handle_group_command(cli: &CliApp, command: GroupCommands) -> Result<Value> {
             fail_on_toast(&state)?;
             Ok(json!({
                 "groups": group_list_json(&state),
-                "current_chat": state.current_chat.as_ref().map(|chat| chat_summary_json(chat)),
+                "current_chat": state.current_chat.as_ref().map(chat_summary_json),
             }))
         }
         GroupCommands::List => Ok(json!({ "groups": group_list_json(&cli.app.state()) })),
@@ -1584,7 +1584,6 @@ exit 0
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn();
-        return;
     }
 
     #[cfg(not(unix))]

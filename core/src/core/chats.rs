@@ -356,7 +356,7 @@ impl AppCore {
                 page.push(message);
             }
         }
-        page.sort_by(|left, right| message_order(left).cmp(&message_order(right)));
+        page.sort_by_key(message_order);
         thread.messages = page;
     }
 
@@ -729,19 +729,18 @@ impl AppCore {
                     .outer_event_ids
                     .iter()
                     .any(|outer_event_id| outer_event_id == event_id);
-                if matches_source || matches_outer {
-                    if !message
+                if (matches_source || matches_outer)
+                    && !message
                         .delivery_trace
                         .transport_channels
                         .iter()
                         .any(|existing| existing == channel)
-                    {
-                        message
-                            .delivery_trace
-                            .transport_channels
-                            .push(channel.to_string());
-                        changed = true;
-                    }
+                {
+                    message
+                        .delivery_trace
+                        .transport_channels
+                        .push(channel.to_string());
+                    changed = true;
                 }
             }
         }
@@ -766,7 +765,7 @@ impl AppCore {
                     && pending.inner_event_id.as_deref() == Some(message_id)
             })
             .filter_map(|pending| pending.last_error.clone())
-            .last();
+            .next_back();
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;
         };
@@ -1442,15 +1441,13 @@ impl AppCore {
                     Some(&sender_owner.to_hex()),
                 );
             }
-            TYPING_KIND => {
-                if !is_outgoing {
-                    self.apply_typing_event(
-                        chat_id,
-                        effective_sender_owner.to_hex(),
-                        created_at_secs,
-                        expires_at_secs,
-                    );
-                }
+            TYPING_KIND if !is_outgoing => {
+                self.apply_typing_event(
+                    chat_id,
+                    effective_sender_owner.to_hex(),
+                    created_at_secs,
+                    expires_at_secs,
+                );
             }
             CHAT_SETTINGS_KIND => {
                 let actor = self.owner_display_label(&effective_sender_owner.to_hex());

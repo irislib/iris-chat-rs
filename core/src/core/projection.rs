@@ -671,12 +671,7 @@ impl AppCore {
         let relay_statuses = self
             .relay_status_by_url
             .iter()
-            .map(|(url, status)| {
-                (
-                    url.clone(),
-                    relay_connection_status(status.clone()).to_string(),
-                )
-            })
+            .map(|(url, status)| (url.clone(), relay_connection_status(*status).to_string()))
             .collect::<BTreeMap<_, _>>();
 
         self.preferences

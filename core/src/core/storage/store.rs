@@ -1572,10 +1572,8 @@ fn apply_seen_events_diff(tx: &Transaction, plan: &SeenEventsPlan) -> anyhow::Re
              VALUES (?1, ?2)
              ON CONFLICT(event_id) DO NOTHING",
         )?;
-        let mut seq = plan.first_insert_seq;
-        for event_id in &plan.to_insert {
+        for (seq, event_id) in (plan.first_insert_seq..).zip(plan.to_insert.iter()) {
             ins_stmt.execute(params![event_id, seq])?;
-            seq += 1;
         }
     }
     Ok(())

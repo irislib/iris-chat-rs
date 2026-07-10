@@ -111,7 +111,8 @@ pub(super) async fn publish_event_to_any_relay_raw(
     let (tx, mut rx) =
         tokio::sync::mpsc::channel::<Result<Vec<String>, String>>(relay_urls.len().max(1));
 
-    for relay_url in relay_urls.iter().cloned() {
+    for relay_url in relay_urls {
+        let relay_url = relay_url.clone();
         let event = event.clone();
         let relay_label = relay_url.to_string();
         let tx = tx.clone();

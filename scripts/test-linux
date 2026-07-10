@@ -18,7 +18,7 @@ fi
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker is required to test the Linux app from $(uname -s)." >&2
-  exit 1
+  exit 75
 fi
 
 docker_prepare_clean_config

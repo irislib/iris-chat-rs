@@ -913,7 +913,7 @@ fn open_chat_populates_current_chat_for_preview_only_thread() {
     core.app_store
         .upsert_notification_preview_message(&chat_id, 1, 1_777_159_500, &preview)
         .expect("preview upsert");
-    assert!(core.threads.get(&chat_id).is_none(), "preconditions");
+    assert!(!core.threads.contains_key(&chat_id), "preconditions");
 
     core.open_chat(&chat_id);
 
@@ -974,7 +974,7 @@ fn duplicate_persisted_incoming_message_surfaces_missing_chat_row() {
         .upsert_notification_preview_message(&chat_id, 1, created_at_secs, &preview)
         .expect("preview upsert");
     assert!(
-        core.threads.get(&chat_id).is_none(),
+        !core.threads.contains_key(&chat_id),
         "precondition: live core has no chat row yet"
     );
 

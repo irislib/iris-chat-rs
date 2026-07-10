@@ -432,12 +432,10 @@ impl AppCore {
                 if join_set.is_empty() {
                     break;
                 }
-                if let Some(joined) = join_set.join_next().await {
-                    if let Ok(result) = joined {
-                        let _ = tx.send(CoreMsg::Internal(Box::new(
-                            InternalEvent::RelayPublishDrainProgress { token, result },
-                        )));
-                    }
+                if let Some(Ok(result)) = join_set.join_next().await {
+                    let _ = tx.send(CoreMsg::Internal(Box::new(
+                        InternalEvent::RelayPublishDrainProgress { token, result },
+                    )));
                 }
             }
             let _ = tx.send(CoreMsg::Internal(Box::new(

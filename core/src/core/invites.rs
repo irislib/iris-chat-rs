@@ -319,7 +319,7 @@ impl AppCore {
 
         let mut roster_events = events
             .into_iter()
-            .filter(|event| is_app_keys_event(event))
+            .filter(is_app_keys_event)
             .collect::<Vec<_>>();
         if roster_events.is_empty() {
             self.push_debug_log(

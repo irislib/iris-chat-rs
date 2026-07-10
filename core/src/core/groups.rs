@@ -603,15 +603,13 @@ impl AppCore {
                     Some(&sender_owner.to_hex()),
                 );
             }
-            TYPING_KIND => {
-                if !is_outgoing {
-                    self.apply_typing_event(
-                        chat_id.to_string(),
-                        sender_owner.to_hex(),
-                        created_at_secs,
-                        expires_at_secs,
-                    );
-                }
+            TYPING_KIND if !is_outgoing => {
+                self.apply_typing_event(
+                    chat_id.to_string(),
+                    sender_owner.to_hex(),
+                    created_at_secs,
+                    expires_at_secs,
+                );
             }
             CHAT_SETTINGS_KIND => {
                 let actor = self.owner_display_label(&sender_owner.to_hex());

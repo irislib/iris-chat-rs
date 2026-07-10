@@ -138,9 +138,10 @@ mod tests {
     }
 
     fn prefs(enabled: bool) -> PreferencesSnapshot {
-        let mut p = PreferencesSnapshot::default();
-        p.desktop_notifications_enabled = enabled;
-        p
+        PreferencesSnapshot {
+            desktop_notifications_enabled: enabled,
+            ..PreferencesSnapshot::default()
+        }
     }
 
     #[test]
