@@ -44,6 +44,56 @@ impl AppCore {
         )
     }
 
+    pub(super) fn publish_device_approval_to_request_relay(
+        &mut self,
+        request_relay_urls: &[RelayUrl],
+        receipt_event: Event,
+        invite_response_event: Event,
+    ) -> anyhow::Result<()> {
+        if request_relay_urls.len() != 1 {
+            anyhow::bail!("Device approval requires exactly one request relay.");
+        }
+        let logged_in = self
+            .logged_in
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?;
+        let owner_keys = logged_in
+            .owner_keys
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Only the primary device can manage devices."))?;
+        let local_app_keys = self
+            .app_keys
+            .get(&logged_in.owner_pubkey.to_hex())
+            .and_then(known_app_keys_to_ndr)
+            .ok_or_else(|| anyhow::anyhow!("Device roster is not ready."))?;
+        let created_at = self
+            .app_keys
+            .get(&logged_in.owner_pubkey.to_hex())
+            .map(|known| known.created_at_secs)
+            .unwrap_or_else(|| unix_now().get());
+        let app_keys_event = local_app_keys
+            .get_encrypted_event_at(owner_keys, created_at)?
+            .sign_with_keys(owner_keys)?;
+        let events = [
+            ("device-approval-app-keys", app_keys_event),
+            ("device-approval-receipt", receipt_event),
+            ("device-approval-invite-response", invite_response_event),
+        ];
+
+        self.runtime.block_on(async {
+            for (label, event) in &events {
+                publish_event_to_any_relay_raw(request_relay_urls, event, label).await?;
+            }
+            Ok::<(), anyhow::Error>(())
+        })?;
+
+        for (_, event) in &events {
+            self.remember_event(event.id.to_string());
+            self.emit_nearby_published_event(event);
+        }
+        Ok(())
+    }
+
     pub(super) fn sync_local_app_keys_if_needed(&mut self) {
         self.sync_local_app_keys_to_protocol_engine("sync_local_app_keys_if_needed");
     }

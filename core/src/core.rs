@@ -33,6 +33,7 @@ use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use nostr_identity::{
     build_nostr_identity_device_approval_receipt_event,
     create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_request,
+    nostr_identity_device_approval_relay_resource, nostr_identity_device_approval_request_relays,
     parse_nostr_identity_device_approval_receipt_event_for_request,
     parse_nostr_identity_device_approval_request, CreateNostrIdentityDeviceApprovalRequestOptions,
     NostrIdentityDeviceApprovalReceipt, NostrIdentityDeviceApprovalRequest, NostrIdentityId,

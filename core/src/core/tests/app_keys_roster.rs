@@ -35,6 +35,7 @@ fn owner_device_accepts_full_link_request_and_publishes_app_keys_snapshot() {
     let device = Keys::generate();
     let linked_device = Keys::generate();
     let request_keys = Keys::generate();
+    let request_relay = crate::local_relay::TestRelay::start();
     let linked_device_hex = linked_device.public_key().to_hex();
     let request = create_nostr_identity_device_approval_request(
         &linked_device,
@@ -46,7 +47,8 @@ fn owner_device_accepts_full_link_request_and_publishes_app_keys_snapshot() {
             ),
             requested_at: 41,
             request_type: Some("device_link".to_string()),
-            resources: Vec::new(),
+            resources: vec![nostr_identity_device_approval_relay_resource(request_relay.url())
+                .expect("request relay resource")],
             expires_at: None,
             profile_id: None,
             admin_app_key_pubkey: None,
@@ -67,24 +69,31 @@ fn owner_device_accepts_full_link_request_and_publishes_app_keys_snapshot() {
     });
 
     assert_eq!(core.state.toast.as_deref(), Some("Device added"));
-    let app_keys_events = pending_events_with_kind(&core, APP_KEYS_EVENT_KIND);
+    let approval_events = relay_events(&request_relay);
+    let app_keys_events = approval_events
+        .iter()
+        .filter(|event| event.kind.as_u16() as u32 == APP_KEYS_EVENT_KIND)
+        .collect::<Vec<_>>();
     assert_eq!(
         app_keys_events.len(),
         1,
         "approval publishes an owner-signed AppKeys snapshot"
     );
-    let app_keys_event = &app_keys_events[0];
+    let app_keys_event = app_keys_events[0];
     assert!(is_app_keys_event(app_keys_event));
     assert_eq!(app_keys_event.pubkey, owner.public_key());
     assert!(event_has_tag_value(app_keys_event, "device", &linked_device_hex));
     assert_eq!(
-        pending_events_with_kind(&core, INVITE_RESPONSE_KIND).len(),
+        approval_events
+            .iter()
+            .filter(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND)
+            .count(),
         1,
         "approval still responds to the deterministic NDR link invite"
     );
     assert_eq!(
-        pending_events_with_kind(&core, u32::from(FACT_OP_KIND))
-            .into_iter()
+        approval_events
+            .iter()
             .filter(|event| event_has_tag_value(
                 event,
                 "type",

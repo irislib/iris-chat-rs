@@ -6,6 +6,8 @@ use super::invites::load_private_chat_invites;
 use super::persistence::apply_persisted_preferences;
 use super::*;
 
+const DEVICE_APPROVAL_RELAY_URL: &str = "wss://temp.iris.to";
+
 impl AppCore {
     pub(super) fn create_account(&mut self, name: &str) {
         self.state.busy.creating_account = true;
@@ -206,15 +208,18 @@ impl AppCore {
 
         let device_keys = Keys::generate();
         let device_pubkey = device_keys.public_key();
+        let request_secret = Keys::generate().secret_key().to_secret_hex();
         let current_device_labels = self.current_device_labels.clone();
         let local_request = create_nostr_identity_device_approval_request(
             &device_keys,
             CreateNostrIdentityDeviceApprovalRequestOptions {
                 request_keys: None,
-                request_secret: None,
+                request_secret: Some(request_secret),
                 requested_at: i64::try_from(unix_now().get()).unwrap_or(i64::MAX),
                 request_type: Some("device_link".to_string()),
-                resources: Vec::new(),
+                resources: vec![nostr_identity_device_approval_relay_resource(
+                    DEVICE_APPROVAL_RELAY_URL,
+                )?],
                 expires_at: None,
                 profile_id: None,
                 admin_app_key_pubkey: None,
@@ -224,6 +229,7 @@ impl AppCore {
             },
         )?;
         let request_keys = local_request.request_keys.clone();
+        let request_relay_urls = device_approval_request_relay_urls(&local_request.request)?;
         let invite = deterministic_link_invite_for_device(
             device_pubkey,
             &local_request.request.request_secret,
@@ -231,7 +237,6 @@ impl AppCore {
         let url = encode_nostr_identity_device_approval_request(&local_request.request, None)?;
 
         let client = Client::new(device_keys.clone());
-        let relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
         self.start_notifications_loop(client.clone());
 
         let invite_response_filter = Filter::new()
@@ -243,7 +248,7 @@ impl AppCore {
             .kind(Kind::from(FACT_OP_KIND))
             .pubkey(request_keys.public_key());
         let client_for_subscription = client.clone();
-        let relay_urls_for_subscription = relay_urls.clone();
+        let relay_urls_for_subscription = request_relay_urls.clone();
         self.runtime.spawn(async move {
             ensure_session_relays_configured(
                 &client_for_subscription,
@@ -423,6 +428,7 @@ impl AppCore {
         &mut self,
         request: NostrIdentityDeviceApprovalRequest,
     ) -> anyhow::Result<()> {
+        let request_relay_urls = device_approval_request_relay_urls(&request)?;
         let logged_in = self
             .logged_in
             .as_ref()
@@ -443,34 +449,47 @@ impl AppCore {
             } else {
                 None
             };
-        let changed = self.upsert_local_app_key_device_with_labels(
+        let owner_hex = owner_pubkey.to_hex();
+        let previous_app_keys = self.app_keys.get(&owner_hex).cloned();
+        self.upsert_local_app_key_device_with_labels(
             owner_pubkey,
             device_app_key_pubkey,
             request_labels.as_ref(),
             true,
         );
-        if changed {
-            self.publish_local_app_keys();
+        let result = (|| {
+            let receipt = NostrIdentityDeviceApprovalReceipt {
+                schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
+                profile_id: nostr_identity_profile_id_for_owner(owner_pubkey),
+                request_pubkey: request.request_pubkey.clone(),
+                device_app_key_pubkey: request.device_app_key_pubkey.clone(),
+                approved_by_pubkey: approver_keys.public_key().to_hex(),
+                approved_at: i64::try_from(unix_now().get()).unwrap_or(i64::MAX),
+                request_secret: request.request_secret.clone(),
+                subject_pubkey: Some(owner_hex.clone()),
+                roster_op_id: None,
+                signed_roster_event: None,
+            };
+            let receipt_event =
+                build_nostr_identity_device_approval_receipt_event(&approver_keys, receipt)?;
+            self.accept_link_device_invite_session(invite, request_relay_urls, receipt_event)
+        })();
+        if result.is_err() {
+            if let Some(previous_app_keys) = previous_app_keys {
+                self.app_keys.insert(owner_hex, previous_app_keys);
+            } else {
+                self.app_keys.remove(&owner_hex);
+            }
         }
-        let receipt = NostrIdentityDeviceApprovalReceipt {
-            schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
-            profile_id: nostr_identity_profile_id_for_owner(owner_pubkey),
-            request_pubkey: request.request_pubkey.clone(),
-            device_app_key_pubkey: request.device_app_key_pubkey.clone(),
-            approved_by_pubkey: approver_keys.public_key().to_hex(),
-            approved_at: i64::try_from(unix_now().get()).unwrap_or(i64::MAX),
-            request_secret: request.request_secret.clone(),
-            subject_pubkey: Some(owner_pubkey.to_hex()),
-            roster_op_id: None,
-            signed_roster_event: None,
-        };
-        let receipt_event =
-            build_nostr_identity_device_approval_receipt_event(&approver_keys, receipt)?;
-        self.publish_runtime_event(receipt_event, "appcore-protocol", None);
-        self.accept_link_device_invite_session(invite)
+        result
     }
 
-    fn accept_link_device_invite_session(&mut self, invite: Invite) -> anyhow::Result<()> {
+    fn accept_link_device_invite_session(
+        &mut self,
+        invite: Invite,
+        request_relay_urls: Vec<RelayUrl>,
+        receipt_event: Event,
+    ) -> anyhow::Result<()> {
         let logged_in = self
             .logged_in
             .as_ref()
@@ -488,6 +507,12 @@ impl AppCore {
             Some(device_pubkey.to_hex()),
             Some(owner_pubkey),
         )?;
+        let response_event = nostr_double_ratchet::invite_response_event(&response)?;
+        self.publish_device_approval_to_request_relay(
+            &request_relay_urls,
+            receipt_event,
+            response_event,
+        )?;
         let retry_batch = self
             .protocol_engine
             .as_mut()
@@ -498,8 +523,7 @@ impl AppCore {
                 session.state,
                 unix_now(),
             )?;
-        let response_event = nostr_double_ratchet::invite_response_event(&response)?;
-        self.publish_runtime_event(response_event, "appcore-protocol", None);
+        self.sync_local_app_keys_to_protocol_engine("device_approval");
         self.publish_local_protocol_invite();
         self.mark_mobile_push_dirty();
         self.process_protocol_engine_retry_batch("link_invite_import", retry_batch);
@@ -1192,6 +1216,17 @@ impl AppCore {
             _ => LocalAuthorizationState::AwaitingApproval,
         }
     }
+}
+
+fn device_approval_request_relay_urls(
+    request: &NostrIdentityDeviceApprovalRequest,
+) -> anyhow::Result<Vec<RelayUrl>> {
+    let request_relay_urls = nostr_identity_device_approval_request_relays(request)?;
+    let relay_urls = relay_urls_from_strings(&request_relay_urls);
+    if relay_urls.len() != 1 {
+        anyhow::bail!("Device approval request must contain exactly one request relay.");
+    }
+    Ok(relay_urls)
 }
 
 pub(super) fn nostr_identity_profile_id_for_owner(owner_pubkey: PublicKey) -> NostrIdentityId {
