@@ -5,6 +5,16 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# The retired machine-wide target made unrelated worktrees serialize on Cargo's
+# artifact lock. Keep an explicitly configured target, but do not inherit that
+# legacy shared path from a long-lived shell or app process.
+if [[ "${CARGO_TARGET_DIR:-}" == "$HOME/.cache/cargo-target" ]]; then
+  unset CARGO_TARGET_DIR
+fi
+if command -v sccache >/dev/null 2>&1; then
+  export SCCACHE_BASEDIRS="${SCCACHE_BASEDIRS:-$ROOT}"
+fi
+
 usage() {
   cat <<'EOF'
 usage: scripts/verify.sh fast|full|health
