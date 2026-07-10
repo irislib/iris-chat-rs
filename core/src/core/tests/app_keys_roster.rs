@@ -1,5 +1,5 @@
 #[test]
-fn owner_device_rejects_manual_device_npub_without_signed_request() {
+fn owner_device_rejects_app_key_only_approval_input() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let new_device = Keys::generate();
@@ -30,45 +30,28 @@ fn owner_device_rejects_manual_device_npub_without_signed_request() {
 }
 
 #[test]
-fn owner_device_fetches_signed_link_request_and_publishes_app_keys_snapshot() {
+fn owner_device_approves_bootstrap_and_publishes_app_keys_snapshot() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let linked_device = Keys::generate();
     let request_keys = Keys::generate();
-    let request_relay = crate::local_relay::TestRelay::start();
+    let approval_relay = crate::local_relay::TestRelay::start();
     let linked_device_hex = linked_device.public_key().to_hex();
-    let request = create_nostr_identity_device_approval_request(
+    let bootstrap = device_approval_bootstrap_for_test(
         &linked_device,
-        CreateNostrIdentityDeviceApprovalRequestOptions {
-            request_keys: Some(request_keys.clone()),
-            request_secret: Some(TEST_DEVICE_APPROVAL_REQUEST_SECRET.to_string()),
-            requested_at: 41,
-            request_type: Some("device_link".to_string()),
-            resources: vec![nostr_identity_device_approval_relay_resource(request_relay.url())
-                .expect("request relay resource")],
-            expires_at: None,
-            profile_id: None,
-            admin_app_key_pubkey: None,
-            label: Some("Safari on macOS".to_string()),
-        },
-    )
-    .expect("approval request");
+        &request_keys,
+        TEST_DEVICE_APPROVAL_REQUEST_SECRET,
+        Some("Safari on macOS"),
+    );
 
     let mut core = logged_in_test_core("owner-full-appkeys-approval", &owner, &device);
     core.upsert_local_app_key_device(owner.public_key(), device.public_key());
     core.sync_local_app_keys_to_protocol_engine("test_seed_appkeys");
     core.pending_relay_publishes.clear();
-    let bootstrap = publish_device_approval_request_for_test(
-        &mut core,
-        request_relay.url(),
-        &request_keys,
-        &request.request,
-    );
-
-    dispatch_device_approval_for_test(&mut core, request_relay.url(), bootstrap);
+    dispatch_device_approval_for_test(&mut core, approval_relay.url(), bootstrap);
 
     assert_eq!(core.state.toast.as_deref(), Some("Device added"));
-    let approval_events = relay_events(&request_relay);
+    let approval_events = relay_events(&approval_relay);
     let app_keys_events = approval_events
         .iter()
         .filter(|event| event.kind.as_u16() as u32 == APP_KEYS_EVENT_KIND)

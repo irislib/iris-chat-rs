@@ -478,10 +478,10 @@ impl AppCore {
                 let Some(pending) = self.pending_linked_device.as_mut() else {
                     return false;
                 };
-                let receipt = match parse_nostr_identity_device_approval_receipt_event_for_request(
+                let receipt = match parse_nostr_identity_device_approval_receipt_event_for_bootstrap(
                     &event,
                     &pending.request_keys,
-                    &pending.approval_request,
+                    &pending.approval_bootstrap,
                 ) {
                     Ok(receipt) => receipt,
                     Err(_) => return false,

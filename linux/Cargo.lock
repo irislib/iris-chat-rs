@@ -2275,7 +2275,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-identity"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "nostr-sdk 0.44.1",

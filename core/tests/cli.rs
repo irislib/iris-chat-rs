@@ -409,17 +409,31 @@ fn second_core_process_fails_while_data_dir_is_locked() {
 }
 
 #[test]
-fn link_create_outputs_device_invite() {
+fn link_create_outputs_compact_device_approval_bootstrap() {
     let dir = TempDir::new().unwrap();
     run_iris(dir.path(), &["relay", "set"]);
 
     let link = run_iris(dir.path(), &["link", "create"]);
     let url = link["data"]["url"].as_str().unwrap();
-    assert!(!url.contains("://"));
-    assert!(!url.contains("chat.iris.to"));
-    assert_eq!(url.split('.').count(), 3);
-    assert!(link["data"]["device_input"]
-        .as_str()
-        .unwrap()
-        .starts_with("npub"));
+    let bootstrap = nostr_identity::parse_nostr_identity_device_approval_bootstrap(url, &[])
+        .expect("parse approval bootstrap")
+        .expect("approval bootstrap");
+    assert!(url.starts_with("nostr-identity://device-approval/"));
+    assert_eq!(
+        serde_json::to_value(&bootstrap)
+            .expect("bootstrap JSON")
+            .as_object()
+            .expect("bootstrap object")
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>(),
+        ["deviceAppKeyNpub", "requestNpub", "requestSecret"]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    );
+    assert_eq!(
+        link["data"]["device_input"].as_str(),
+        Some(bootstrap.device_app_key_npub.as_str())
+    );
 }

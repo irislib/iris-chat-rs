@@ -185,7 +185,7 @@ fn group_created_on_linked_device_syncs_to_primary_as_self_chat() {
 fn fully_approved_linked_device_group_messages_sync_to_primary_without_request() {
     let owner = Keys::generate();
     let primary_device = Keys::generate();
-    let request_relay = crate::local_relay::TestRelay::start();
+    let approval_relay = crate::local_relay::TestRelay::start();
     let mut primary = logged_in_test_core("full-linked-group-primary", &owner, &primary_device);
     primary.pending_relay_publishes.clear();
 
@@ -198,11 +198,11 @@ fn fully_approved_linked_device_group_messages_sync_to_primary_without_request()
     );
     linked.preferences.nostr_relay_urls.clear();
     linked.device_approval_relay_urls =
-        relay_urls_from_strings(&[request_relay.url().to_string()]);
+        relay_urls_from_strings(&[approval_relay.url().to_string()]);
     linked.handle_action(AppAction::StartLinkedDevice {
         owner_input: String::new(),
     });
-    let approval_request = linked
+    let approval_bootstrap = linked
         .state
         .link_device
         .as_ref()
@@ -217,16 +217,16 @@ fn fully_approved_linked_device_group_messages_sync_to_primary_without_request()
         .public_key()
         .to_hex();
 
-    dispatch_device_approval_for_test(&mut primary, request_relay.url(), approval_request);
+    dispatch_device_approval_for_test(&mut primary, approval_relay.url(), approval_bootstrap);
     assert_eq!(primary.state.toast.as_deref(), Some("Device added"));
 
-    for event in relay_events(&request_relay)
+    for event in relay_events(&approval_relay)
         .into_iter()
         .filter(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND)
     {
         linked.handle_relay_event(event);
     }
-    for event in relay_events(&request_relay)
+    for event in relay_events(&approval_relay)
         .into_iter()
         .filter(|event| {
             event.kind.as_u16() as u32 == APP_KEYS_EVENT_KIND
@@ -235,7 +235,7 @@ fn fully_approved_linked_device_group_messages_sync_to_primary_without_request()
     {
         linked.handle_relay_event(event);
     }
-    for event in relay_events(&request_relay)
+    for event in relay_events(&approval_relay)
         .into_iter()
         .filter(|event| {
             event.kind.as_u16() as u32 == u32::from(FACT_OP_KIND)

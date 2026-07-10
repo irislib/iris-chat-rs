@@ -44,14 +44,14 @@ impl AppCore {
         )
     }
 
-    pub(super) fn publish_device_approval_to_request_relay(
+    pub(super) fn publish_device_approval_result(
         &mut self,
-        request_relay_urls: &[RelayUrl],
+        approval_relay_urls: &[RelayUrl],
         receipt_event: Event,
         invite_response_event: Event,
     ) -> anyhow::Result<()> {
-        if request_relay_urls.len() != 1 {
-            anyhow::bail!("Device approval requires exactly one request relay.");
+        if approval_relay_urls.len() != 1 {
+            anyhow::bail!("Device approval requires exactly one approval relay.");
         }
         let logged_in = self
             .logged_in
@@ -82,7 +82,7 @@ impl AppCore {
 
         self.runtime.block_on(async {
             for (label, event) in &events {
-                publish_event_to_any_relay_raw(request_relay_urls, event, label).await?;
+                publish_event_to_any_relay_raw(approval_relay_urls, event, label).await?;
             }
             Ok::<(), anyhow::Error>(())
         })?;

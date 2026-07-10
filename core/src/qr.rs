@@ -101,18 +101,19 @@ mod tests {
         assert!(is_device_approval_bootstrap(encoded.clone()));
         assert!(!is_device_approval_bootstrap(legacy_full_request));
         assert_eq!(
-            serde_json::to_value(bootstrap)
+            serde_json::to_value(&bootstrap)
                 .expect("bootstrap JSON")
                 .as_object()
                 .expect("bootstrap object")
                 .keys()
                 .cloned()
                 .collect::<std::collections::BTreeSet<_>>(),
-            ["deviceAppKeyNpub", "requestNpub", "requestSecret"]
+            ["deviceAppKeyNpub", "label", "requestNpub", "requestSecret"]
                 .into_iter()
                 .map(str::to_string)
                 .collect()
         );
+        assert_eq!(bootstrap.label.as_deref(), Some("Safari on macOS"));
 
         let prefixed = format!("prefix:{encoded}");
         assert!(!is_device_approval_bootstrap(prefixed));

@@ -12,7 +12,7 @@ pub(super) struct LoggedInState {
 pub(super) struct PendingLinkedDeviceState {
     pub(super) device_keys: Keys,
     pub(super) request_keys: Keys,
-    pub(super) approval_request: NostrIdentityDeviceApprovalRequest,
+    pub(super) approval_bootstrap: NostrIdentityDeviceApprovalBootstrap,
     pub(super) pairing_client: Client,
     pub(super) pairing_invite: Invite,
     pub(super) pairing_url: String,

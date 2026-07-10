@@ -31,16 +31,16 @@ use nostr_double_ratchet::{
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use nostr_identity::{
+    approve_nostr_identity_device_approval_bootstrap,
     build_nostr_identity_device_approval_receipt_event,
-    build_nostr_identity_device_approval_request_event,
+    build_nostr_identity_roster_op_event_with_client_nonce,
     create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_bootstrap,
-    nostr_identity_device_approval_bootstrap, nostr_identity_device_approval_relay_resource,
-    nostr_identity_device_approval_request_relays, parse_nostr_identity_device_approval_bootstrap,
-    parse_nostr_identity_device_approval_receipt_event_for_request,
-    parse_nostr_identity_device_approval_request_event,
+    nostr_identity_device_approval_bootstrap, parse_nostr_identity_device_approval_bootstrap,
+    parse_nostr_identity_device_approval_receipt_event_for_bootstrap,
+    ApproveNostrIdentityDeviceApprovalBootstrapOptions,
     CreateNostrIdentityDeviceApprovalRequestOptions, NostrIdentityDeviceApprovalBootstrap,
-    NostrIdentityDeviceApprovalReceipt, NostrIdentityDeviceApprovalRequest, NostrIdentityId,
-    FACT_OP_KIND, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
+    NostrIdentityDeviceApprovalReceipt, NostrIdentityId, NostrIdentityRosterOp, FACT_OP_KIND,
+    NOSTR_IDENTITY_DEVICE_APPROVAL_LABEL_MAX_BYTES, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
 };
 use nostr_sdk::prelude::{
     Client, Event, Filter, Keys, Kind, PublicKey, RelayNotification, RelayPoolNotification,
@@ -77,6 +77,7 @@ mod chat_settings;
 mod chat_typing;
 mod chats;
 mod config;
+mod device_approval;
 mod groups;
 mod identity;
 mod invites;
@@ -467,7 +468,6 @@ pub struct AppCore {
     protocol_engine: Option<ProtocolEngine>,
     pending_linked_device: Option<PendingLinkedDeviceState>,
     device_approval_relay_urls: Vec<RelayUrl>,
-    device_approval_fetch_token: u64,
     private_chat_invites: BTreeMap<String, Invite>,
     threads: BTreeMap<String, ThreadRecord>,
     active_chat_id: Option<String>,

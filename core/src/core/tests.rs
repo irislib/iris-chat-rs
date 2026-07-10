@@ -114,6 +114,7 @@ include!("tests/protocol_startup_guards.rs");
 include!("tests/protocol_runtime_replay.rs");
 include!("tests/retry_publish_ordering.rs");
 include!("tests/protocol_filters_push.rs");
+include!("tests/device_approval.rs");
 include!("tests/app_keys_roster.rs");
 include!("tests/app_keys_device_labels.rs");
 include!("tests/app_keys_invites_requests.rs");

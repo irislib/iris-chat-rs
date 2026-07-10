@@ -70,7 +70,6 @@ impl AppCore {
             device_approval_relay_urls: relay_urls_from_strings(&[
                 DEVICE_APPROVAL_RELAY_URL.to_string()
             ]),
-            device_approval_fetch_token: 0,
             private_chat_invites: BTreeMap::new(),
             threads: BTreeMap::new(),
             active_chat_id: None,
@@ -157,12 +156,6 @@ impl AppCore {
                 InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
                 InternalEvent::ProfileMetadataFetchFinished { .. } => {
                     "ProfileMetadataFetchFinished"
-                }
-                InternalEvent::DeviceApprovalRequestFetchFinished { .. } => {
-                    "DeviceApprovalRequestFetchFinished"
-                }
-                InternalEvent::DeviceApprovalRequestPublishFinished { .. } => {
-                    "DeviceApprovalRequestPublishFinished"
                 }
                 InternalEvent::FetchTrackedPeerCatchUp { .. } => "FetchTrackedPeerCatchUp",
                 InternalEvent::ProtocolSubscriptionLivenessCheck { .. } => {
@@ -579,19 +572,6 @@ impl AppCore {
                     &transport
                 };
                 self.handle_relay_event_with_channel(event, channel);
-            }
-            InternalEvent::DeviceApprovalRequestFetchFinished {
-                token,
-                bootstrap,
-                result,
-            } => {
-                self.handle_device_approval_request_fetch_finished(token, bootstrap, result);
-            }
-            InternalEvent::DeviceApprovalRequestPublishFinished {
-                request_pubkey,
-                error,
-            } => {
-                self.handle_device_approval_request_publish_finished(&request_pubkey, error);
             }
             InternalEvent::FetchTrackedPeerCatchUp { token } => {
                 if token

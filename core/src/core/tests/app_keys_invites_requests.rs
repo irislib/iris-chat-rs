@@ -473,35 +473,19 @@ fn remove_authorized_device_action_updates_roster_immediately() {
     let current_device = Keys::generate();
     let linked_device = Keys::generate();
     let request_keys = Keys::generate();
-    let request_relay = crate::local_relay::TestRelay::start();
+    let approval_relay = crate::local_relay::TestRelay::start();
     let mut core = logged_in_test_core(
         "device-roster-remove-immediate",
         &owner,
         &current_device,
     );
-    let request = create_nostr_identity_device_approval_request(
+    let bootstrap = device_approval_bootstrap_for_test(
         &linked_device,
-        CreateNostrIdentityDeviceApprovalRequestOptions {
-            request_keys: Some(request_keys.clone()),
-            request_secret: Some(TEST_DEVICE_APPROVAL_REQUEST_SECRET.to_string()),
-            requested_at: 41,
-            request_type: Some("device_link".to_string()),
-            resources: vec![nostr_identity_device_approval_relay_resource(request_relay.url())
-                .expect("request relay resource")],
-            expires_at: None,
-            profile_id: None,
-            admin_app_key_pubkey: None,
-            label: None,
-        },
-    )
-    .expect("approval request");
-    let bootstrap = publish_device_approval_request_for_test(
-        &mut core,
-        request_relay.url(),
         &request_keys,
-        &request.request,
+        TEST_DEVICE_APPROVAL_REQUEST_SECRET,
+        None,
     );
-    dispatch_device_approval_for_test(&mut core, request_relay.url(), bootstrap);
+    dispatch_device_approval_for_test(&mut core, approval_relay.url(), bootstrap);
     assert!(core
         .state
         .device_roster
@@ -921,453 +905,7 @@ fn device_roster_lists_current_device_then_newest_linked_devices() {
 }
 
 #[test]
-fn start_linked_device_publishes_request_event_and_shows_strict_bootstrap() {
-    let request_relay = crate::local_relay::TestRelay::start();
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let mut core = AppCore::new(
-        flume::unbounded().0,
-        flume::unbounded().0,
-        temp_dir.path().to_string_lossy().to_string(),
-        Arc::new(RwLock::new(AppState::empty())),
-    );
-    core.preferences.nostr_relay_urls = vec!["wss://ordinary.example".to_string()];
-    core.device_approval_relay_urls =
-        relay_urls_from_strings(&[request_relay.url().to_string()]);
-
-    core.handle_action(AppAction::SetCurrentDeviceLabels {
-        device_label: "Safari on macOS".to_string(),
-        client_label: "Iris Chat Web".to_string(),
-    });
-    core.handle_action(AppAction::StartLinkedDevice {
-        owner_input: String::new(),
-    });
-
-    let snapshot = core
-        .state
-        .link_device
-        .as_ref()
-        .unwrap_or_else(|| panic!("link-device snapshot; toast={:?}", core.state.toast))
-        .clone();
-    let bootstrap = parse_nostr_identity_device_approval_bootstrap(&snapshot.url, &[])
-        .expect("parse bootstrap")
-        .expect("device approval bootstrap");
-    assert!(snapshot.url.starts_with("nostr-identity://device-approval/"));
-    assert_eq!(
-        serde_json::to_value(&bootstrap)
-            .expect("bootstrap JSON")
-            .as_object()
-            .expect("bootstrap object")
-            .keys()
-            .cloned()
-            .collect::<std::collections::BTreeSet<_>>(),
-        ["deviceAppKeyNpub", "requestNpub", "requestSecret"]
-            .into_iter()
-            .map(str::to_string)
-            .collect()
-    );
-    let request_event = wait_for_relay_event(&request_relay, |event| {
-        parse_nostr_identity_device_approval_request_event(event, &bootstrap).is_ok()
-    });
-    let request =
-        parse_nostr_identity_device_approval_request_event(&request_event, &bootstrap)
-            .expect("signed request event");
-    assert!(!serde_json::to_string(&request_event)
-        .expect("request event JSON")
-        .contains(&request.request_secret));
-    assert!(!request.device_app_key_proof.is_empty());
-    assert_eq!(request.request_type.as_deref(), Some("device_link"));
-    assert_eq!(
-        request.device_app_key_pubkey,
-        core.pending_linked_device
-            .as_ref()
-            .expect("pending link")
-            .device_keys
-            .public_key()
-            .to_hex()
-    );
-    assert_eq!(
-        request.request_pubkey,
-        core.pending_linked_device
-            .as_ref()
-            .expect("pending link")
-            .request_keys
-            .public_key()
-            .to_hex()
-    );
-    assert_eq!(
-        request.request_secret.len(),
-        43,
-        "nostr-identity encodes 32 request-secret bytes as unpadded base64url"
-    );
-    assert!(request
-        .request_secret
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')));
-    assert_ne!(
-        request.request_secret,
-        core.pending_linked_device
-            .as_ref()
-            .expect("pending link")
-            .request_keys
-            .secret_key()
-            .to_secret_hex(),
-        "the anti-spam request secret must be independent of the receipt decryption key"
-    );
-    assert_eq!(
-        request,
-        core.pending_linked_device
-            .as_ref()
-            .expect("pending link")
-            .approval_request,
-    );
-    assert_eq!(request.label.as_deref(), Some("Safari on macOS"));
-    assert_eq!(
-        nostr_identity_device_approval_request_relays(&request).expect("request relay"),
-        vec![request_relay.url().to_string()]
-    );
-    let pairing_client = core
-        .pending_linked_device
-        .as_ref()
-        .expect("pending link")
-        .pairing_client
-        .clone();
-    let pending_request_relays = core.runtime.block_on(async {
-        for _ in 0..50 {
-            let relays = pairing_client
-                .relays()
-                .await
-                .keys()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>();
-            if !relays.is_empty() {
-                return relays;
-            }
-            sleep(Duration::from_millis(10)).await;
-        }
-        Vec::new()
-    });
-    assert_eq!(pending_request_relays, vec![request_relay.url()]);
-    assert!(!pending_request_relays
-        .iter()
-        .any(|relay| relay.contains("ordinary.example")));
-    assert_eq!(
-        PublicKey::from_hex(&request.device_app_key_pubkey)
-            .expect("request device pubkey")
-            .to_bech32()
-            .ok()
-            .as_deref(),
-        Some(snapshot.device_input.as_str())
-    );
-    assert!(matches!(core.screen_stack.as_slice(), [Screen::AddDevice]));
-}
-
-fn signed_app_keys_authorization_event(
-    owner: &Keys,
-    device_pubkey: PublicKey,
-    created_at: u64,
-) -> Event {
-    AppKeys::new(vec![DeviceEntry::new(device_pubkey, created_at)])
-        .get_event_at(owner.public_key(), created_at)
-        .sign_with_keys(owner)
-        .expect("signed app keys authorization")
-}
-
-fn signed_device_approval_receipt_event(
-    owner_device: &Keys,
-    request: &NostrIdentityDeviceApprovalRequest,
-    owner_pubkey: PublicKey,
-    created_at: u64,
-) -> Event {
-    build_nostr_identity_device_approval_receipt_event(
-        owner_device,
-        NostrIdentityDeviceApprovalReceipt {
-            schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
-            profile_id: account::nostr_identity_profile_id_for_owner(owner_pubkey),
-            request_pubkey: request.request_pubkey.clone(),
-            device_app_key_pubkey: request.device_app_key_pubkey.clone(),
-            approved_by_pubkey: owner_device.public_key().to_hex(),
-            approved_at: i64::try_from(created_at).expect("created_at fits i64"),
-            request_secret: request.request_secret.clone(),
-            subject_pubkey: Some(owner_pubkey.to_hex()),
-            roster_op_id: None,
-            signed_roster_event: None,
-        },
-    )
-    .expect("signed device approval receipt")
-}
-
-fn replace_pending_device_approval_request_relay(
-    core: &mut AppCore,
-    response_relay_url: &str,
-    transport_relay_url: &str,
-) -> String {
-    let pending = core
-        .pending_linked_device
-        .as_ref()
-        .unwrap_or_else(|| panic!("pending linked device; toast={:?}", core.state.toast));
-    let previous = pending.approval_request.clone();
-    let device_keys = pending.device_keys.clone();
-    let request_keys = Keys::generate();
-    let local_request = create_nostr_identity_device_approval_request(
-        &device_keys,
-        CreateNostrIdentityDeviceApprovalRequestOptions {
-            request_keys: Some(request_keys.clone()),
-            request_secret: Some(previous.request_secret),
-            requested_at: previous.requested_at,
-            request_type: previous.request_type,
-            resources: vec![nostr_identity_device_approval_relay_resource(response_relay_url)
-                .expect("request relay resource")],
-            expires_at: previous.expires_at,
-            profile_id: previous.profile_id,
-            admin_app_key_pubkey: previous.admin_app_key_pubkey,
-            label: previous.label,
-        },
-    )
-    .expect("request with replacement relay");
-    let url = publish_device_approval_request_for_test(
-        core,
-        transport_relay_url,
-        &request_keys,
-        &local_request.request,
-    );
-    let pending = core
-        .pending_linked_device
-        .as_mut()
-        .expect("pending linked device");
-    pending.request_keys = request_keys;
-    pending.approval_request = local_request.request;
-    pending.pairing_url = url.clone();
-    if let Some(snapshot) = core.state.link_device.as_mut() {
-        snapshot.url = url.clone();
-    }
-    url
-}
-
-fn publish_device_approval_request_for_test(
-    core: &mut AppCore,
-    relay_url: &str,
-    request_keys: &Keys,
-    request: &NostrIdentityDeviceApprovalRequest,
-) -> String {
-    let relay_urls = relay_urls_from_strings(&[relay_url.to_string()]);
-    core.device_approval_relay_urls = relay_urls.clone();
-    let bootstrap = nostr_identity_device_approval_bootstrap(request).expect("approval bootstrap");
-    let encoded = encode_nostr_identity_device_approval_bootstrap(&bootstrap, None)
-        .expect("encode approval bootstrap");
-    let event = build_nostr_identity_device_approval_request_event(request_keys, request)
-        .expect("signed approval request event");
-    core.runtime
-        .block_on(publish_event_to_any_relay_raw(
-            &relay_urls,
-            &event,
-            "test-device-approval-request",
-        ))
-        .expect("publish approval request event");
-    encoded
-}
-
-fn dispatch_device_approval_for_test(
-    core: &mut AppCore,
-    relay_url: &str,
-    bootstrap: String,
-) {
-    core.device_approval_relay_urls = relay_urls_from_strings(&[relay_url.to_string()]);
-    let (tx, rx) = flume::unbounded();
-    core.core_sender = tx;
-    core.handle_action(AppAction::AddAuthorizedDevice {
-        device_input: bootstrap,
-    });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while std::time::Instant::now() < deadline {
-        if let Ok(message) = rx.recv_timeout(std::time::Duration::from_millis(50)) {
-            core.handle_message(message);
-        }
-        if !core.state.busy.updating_roster {
-            return;
-        }
-    }
-    panic!("device approval fetch did not finish; toast={:?}", core.state.toast);
-}
-
-fn relay_events(relay: &crate::local_relay::TestRelay) -> Vec<Event> {
-    relay
-        .events()
-        .into_iter()
-        .filter_map(|event| serde_json::from_value::<Event>(event).ok())
-        .collect()
-}
-
-fn wait_for_relay_event(
-    relay: &crate::local_relay::TestRelay,
-    predicate: impl Fn(&Event) -> bool,
-) -> Event {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while std::time::Instant::now() < deadline {
-        if let Some(event) = relay_events(relay)
-            .into_iter()
-            .find(|event| predicate(event))
-        {
-            return event;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    panic!("matching relay event was not published");
-}
-
-#[test]
-fn full_link_request_finishes_pairing_and_authorizes_linked_device() {
-    let owner = Keys::generate();
-    let ordinary_relay = crate::local_relay::TestRelay::start();
-    let request_relay = crate::local_relay::TestRelay::start();
-    let temp_dir_primary = tempfile::TempDir::new().expect("primary temp dir");
-    let temp_dir_linked = tempfile::TempDir::new().expect("linked temp dir");
-    let mut primary = AppCore::new(
-        flume::unbounded().0,
-        flume::unbounded().0,
-        temp_dir_primary.path().to_string_lossy().to_string(),
-        Arc::new(RwLock::new(AppState::empty())),
-    );
-    primary.preferences.nostr_relay_urls = vec![ordinary_relay.url().to_string()];
-    primary
-        .start_primary_session(owner.clone(), owner.clone(), false, false)
-        .expect("primary session");
-    primary.pending_relay_publishes.clear();
-
-    let mut linked = AppCore::new(
-        flume::unbounded().0,
-        flume::unbounded().0,
-        temp_dir_linked.path().to_string_lossy().to_string(),
-        Arc::new(RwLock::new(AppState::empty())),
-    );
-    linked.preferences.nostr_relay_urls.clear();
-    linked.device_approval_relay_urls =
-        relay_urls_from_strings(&[request_relay.url().to_string()]);
-    linked.handle_action(AppAction::SetCurrentDeviceLabels {
-        device_label: "Safari on macOS".to_string(),
-        client_label: "Iris Chat Web".to_string(),
-    });
-    linked.handle_action(AppAction::StartLinkedDevice {
-        owner_input: String::new(),
-    });
-    let approval_request = linked
-        .state
-        .link_device
-        .as_ref()
-        .expect("approval bootstrap")
-        .url
-        .clone();
-    let linked_device_hex = linked
-        .pending_linked_device
-        .as_ref()
-        .unwrap_or_else(|| panic!("pending linked device; toast={:?}", linked.state.toast))
-        .device_keys
-        .public_key()
-        .to_hex();
-
-    dispatch_device_approval_for_test(&mut primary, request_relay.url(), approval_request);
-
-    assert_eq!(primary.state.toast.as_deref(), Some("Device added"));
-    let request_events = relay_events(&request_relay);
-    let response_event = request_events
-        .into_iter()
-        .find(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND)
-        .expect("approval publishes deterministic invite response");
-    let request_events = relay_events(&request_relay);
-    let app_keys_event = request_events
-        .into_iter()
-        .find(|event| {
-            event.kind.as_u16() as u32 == APP_KEYS_EVENT_KIND
-                && event_has_tag_value(event, "device", &linked_device_hex)
-        })
-        .expect("approval publishes AppKeys authorization");
-    let request_events = relay_events(&request_relay);
-    let receipt_event = request_events
-        .into_iter()
-        .find(|event| event_has_tag_value(
-            event,
-            "type",
-            "nostr_identity_device_approval_receipt"
-        ))
-        .expect("approval publishes encrypted receipt");
-    let approval_event_ids = [
-        response_event.id.to_string(),
-        app_keys_event.id.to_string(),
-        receipt_event.id.to_string(),
-    ];
-    let ordinary_event_ids = relay_events(&ordinary_relay)
-        .into_iter()
-        .map(|event| event.id.to_string())
-        .collect::<HashSet<_>>();
-    assert!(approval_event_ids
-        .iter()
-        .all(|event_id| !ordinary_event_ids.contains(event_id)));
-
-    linked.handle_relay_event(response_event);
-    assert!(
-        linked.pending_linked_device.is_some(),
-        "invite response alone must wait for device approval"
-    );
-
-    linked.handle_relay_event(app_keys_event);
-    assert!(
-        linked.pending_linked_device.is_some(),
-        "AppKeys without the encrypted receipt must not finish device linking"
-    );
-
-    linked.handle_relay_event(receipt_event);
-    let linked_device = linked
-        .logged_in
-        .as_ref()
-        .expect("linked session")
-        .device_keys
-        .public_key();
-
-    linked.refresh_local_authorization_state();
-    linked.rebuild_state();
-    let logged_in = linked.logged_in.as_ref().expect("linked logged in");
-    let active_session_count = linked
-        .protocol_engine
-        .as_ref()
-        .map(|engine| engine.active_session_count_for_owner(owner.public_key()))
-        .unwrap_or_default();
-    assert_eq!(logged_in.owner_pubkey, owner.public_key());
-    assert_eq!(
-        logged_in.authorization_state,
-        LocalAuthorizationState::Authorized,
-        "linked_device={} active_sessions={} app_keys={:?} debug={:?}",
-        linked_device.to_hex(),
-        active_session_count,
-        linked.app_keys,
-        linked.debug_log
-    );
-    assert!(linked.pending_linked_device.is_none());
-    assert!(active_session_count > 0);
-    let roster = linked
-        .app_keys
-        .get(&owner.public_key().to_hex())
-        .expect("linked learned owner roster");
-    assert!(roster
-        .devices
-        .iter()
-        .any(|device| device.identity_pubkey_hex == linked_device.to_hex()));
-    let linked_roster_device = primary
-        .app_keys
-        .get(&owner.public_key().to_hex())
-        .and_then(|roster| {
-            roster
-                .devices
-                .iter()
-                .find(|device| device.identity_pubkey_hex == linked_device.to_hex())
-        })
-        .expect("primary signed linked device labels");
-    assert_eq!(
-        linked_roster_device.device_label.as_deref(),
-        Some("Safari on macOS")
-    );
-}
-
-#[test]
-fn device_approval_requires_acceptance_from_the_request_relay() {
+fn device_approval_uses_the_approvers_active_relay_policy() {
     let owner = Keys::generate();
     let ordinary_relay = crate::local_relay::TestRelay::start();
     let transport_relay = crate::local_relay::TestRelay::start();
@@ -1406,13 +944,15 @@ fn device_approval_requires_acceptance_from_the_request_relay() {
         .device_keys
         .public_key()
         .to_hex();
-    let approval_request = replace_pending_device_approval_request_relay(
-        &mut linked,
-        &unavailable_relay_url,
-        transport_relay.url(),
-    );
+    let bootstrap = linked
+        .state
+        .link_device
+        .as_ref()
+        .expect("approval bootstrap")
+        .url
+        .clone();
 
-    dispatch_device_approval_for_test(&mut primary, transport_relay.url(), approval_request);
+    dispatch_device_approval_for_test(&mut primary, &unavailable_relay_url, bootstrap);
 
     let error = primary.state.toast.as_deref().expect("publish error");
     assert_ne!(error, "Device added");
@@ -1423,6 +963,10 @@ fn device_approval_requires_acceptance_from_the_request_relay() {
         .into_iter()
         .flat_map(|app_keys| app_keys.devices.iter())
         .any(|device| device.identity_pubkey_hex == linked_device_hex));
+    assert!(
+        relay_events(&transport_relay).is_empty(),
+        "bootstrap input must not select a transport relay"
+    );
 }
 
 #[test]
@@ -1465,6 +1009,65 @@ fn owner_device_rejects_legacy_link_invite_for_device_approval() {
 }
 
 #[test]
+fn owner_device_rejects_full_request_and_request_event_inputs() {
+    use base64::Engine;
+
+    let owner = Keys::generate();
+    let owner_device = Keys::generate();
+    let linked_device = Keys::generate();
+    let request_keys = Keys::generate();
+    let local_request = create_nostr_identity_device_approval_request(
+        &linked_device,
+        CreateNostrIdentityDeviceApprovalRequestOptions {
+            request_keys: Some(request_keys.clone()),
+            request_secret: Some(TEST_DEVICE_APPROVAL_REQUEST_SECRET.to_string()),
+            requested_at: 41,
+            request_type: Some("device_link".to_string()),
+            resources: Vec::new(),
+            expires_at: None,
+            profile_id: None,
+            admin_app_key_pubkey: None,
+            label: Some("Phone".to_string()),
+        },
+    )
+    .expect("legacy full request fixture");
+    let request_event = nostr_identity::build_nostr_identity_device_approval_request_event(
+        &request_keys,
+        &local_request.request,
+    )
+    .expect("legacy request event fixture");
+    let request_event_json = serde_json::to_string(&request_event).expect("request event JSON");
+    let full_request_uri = format!(
+        "nostr-identity://device-approval/{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&local_request.request).expect("full request JSON")
+        )
+    );
+    let full_event_uri = format!(
+        "nostr-identity://device-approval/{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(request_event_json.as_bytes())
+    );
+    let mut core = logged_in_test_core("reject-legacy-approval-inputs", &owner, &owner_device);
+
+    for legacy_input in [full_request_uri, request_event_json, full_event_uri] {
+        core.handle_action(AppAction::AddAuthorizedDevice {
+            device_input: legacy_input,
+        });
+        assert_eq!(
+            core.state.toast.as_deref(),
+            Some("Invalid device request.")
+        );
+    }
+
+    assert!(!core
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .into_iter()
+        .flat_map(|app_keys| app_keys.devices.iter())
+        .any(|device| device.identity_pubkey_hex == linked_device.public_key().to_hex()));
+}
+
+#[test]
 fn pending_linked_device_finishes_when_owner_accepts_invite() {
     let owner = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -1485,11 +1088,11 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
         .expect("pending link invite")
         .device_keys
         .public_key();
-    let approval_request = core
+    let approval_bootstrap = core
         .pending_linked_device
         .as_ref()
         .expect("pending link invite")
-        .approval_request
+        .approval_bootstrap
         .clone();
     let pending = core
         .pending_linked_device
@@ -1524,11 +1127,11 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
         "AppKeys authorization without the encrypted approval receipt must not finish"
     );
 
-    let mut wrong_request = approval_request.clone();
-    wrong_request.request_secret = OTHER_TEST_DEVICE_APPROVAL_REQUEST_SECRET.to_string();
+    let mut wrong_bootstrap = approval_bootstrap.clone();
+    wrong_bootstrap.request_secret = OTHER_TEST_DEVICE_APPROVAL_REQUEST_SECRET.to_string();
     core.handle_relay_event(signed_device_approval_receipt_event(
         &owner,
-        &wrong_request,
+        &wrong_bootstrap,
         owner.public_key(),
         42,
     ));
@@ -1539,7 +1142,7 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
 
     core.handle_relay_event(signed_device_approval_receipt_event(
         &owner,
-        &approval_request,
+        &approval_bootstrap,
         owner.public_key(),
         42,
     ));
@@ -1578,7 +1181,7 @@ fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
         .expect("pending link invite");
     let pairing_invite = pending.pairing_invite.clone();
     let linked_device_pubkey = pending.device_keys.public_key();
-    let approval_request = pending.approval_request.clone();
+    let approval_bootstrap = pending.approval_bootstrap.clone();
     assert_eq!(pairing_invite.purpose.as_deref(), Some("link"));
     assert!(pairing_invite.owner_public_key.is_none());
 
@@ -1600,7 +1203,7 @@ fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
     ));
     core.handle_relay_event(signed_device_approval_receipt_event(
         &owner,
-        &approval_request,
+        &approval_bootstrap,
         owner.public_key(),
         42,
     ));
@@ -1721,7 +1324,7 @@ fn local_relay_pairing_e2e_uses_stable_protocol_invite_after_login() {
     let response_event = relay_events(&relay)
         .into_iter()
         .find(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND)
-        .expect("owner publishes invite response to request relay");
+        .expect("owner publishes invite response to approval relay");
     linked.handle_relay_event(app_keys_event);
     linked.handle_relay_event(receipt_event);
     linked.handle_relay_event(response_event);

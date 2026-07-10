@@ -2390,10 +2390,8 @@ final class IrisChatTests: XCTestCase {
     @MainActor
     func testDeviceAuthorizationScanRequiresConfirmationBeforeDispatch() async {
         let ownerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
-        let deviceHex = "0c6b948b76cb9cd85a1b085437aede072d92cb0968942ffb22b1dd384ab1e095"
         let ownerHex = normalizePeerInput(input: ownerNpub)
-        let metadata = "eyJ2IjoxfQ"
-        let compactCode = "\(deviceHex).\(String(repeating: "1", count: 64)).\(metadata)"
+        let compactCode = "nostr-identity://device-approval/eyJkZXZpY2VBcHBLZXlOcHViIjoibnB1YjFwMzRlZnpta2V3d2Rza3NtcHAycjB0azdxdWtlOWpjZmR6MnpsN2V6azh3bnNqNDN1ejJzOHg1c3A0IiwicmVxdWVzdE5wdWIiOiJucHViMTh3MzVnNmduNDdxd21yeXVseHp2ZnVjbXVqdnJxcWxqanBhcHlsOHgwcnFhbGpoNmYydXNtbDc3ZGoiLCJyZXF1ZXN0U2VjcmV0IjoiQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRSJ9"
         var state = makeAppState()
         state.deviceRoster = DeviceRosterSnapshot(
             ownerPublicKeyHex: ownerHex,

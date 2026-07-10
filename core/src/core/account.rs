@@ -208,9 +208,9 @@ impl AppCore {
         self.stop_pending_linked_device();
 
         if self.device_approval_relay_urls.len() != 1 {
-            anyhow::bail!("Device approval requires exactly one request relay.");
+            anyhow::bail!("Device approval requires exactly one approval relay.");
         }
-        let request_relay_url = self.device_approval_relay_urls[0].to_string();
+        let approval_relay_urls = self.device_approval_relay_urls.clone();
         let device_keys = Keys::generate();
         let device_pubkey = device_keys.public_key();
         let current_device_labels = self.current_device_labels.clone();
@@ -221,27 +221,21 @@ impl AppCore {
                 request_secret: None,
                 requested_at: i64::try_from(unix_now().get()).unwrap_or(i64::MAX),
                 request_type: Some("device_link".to_string()),
-                resources: vec![nostr_identity_device_approval_relay_resource(
-                    &request_relay_url,
-                )?],
+                resources: Vec::new(),
                 expires_at: None,
                 profile_id: None,
                 admin_app_key_pubkey: None,
                 label: current_device_labels
                     .as_ref()
-                    .and_then(|labels| labels.device_label.clone()),
+                    .and_then(|labels| labels.device_label.as_deref())
+                    .and_then(device_approval_bootstrap_label),
             },
         )?;
         let request_keys = local_request.request_keys.clone();
-        let request_relay_urls = device_approval_request_relay_urls(&local_request.request)?;
         let invite =
             device_approval_pairing_invite(device_pubkey, &local_request.request.request_secret)?;
         let bootstrap = nostr_identity_device_approval_bootstrap(&local_request.request)?;
         let url = encode_nostr_identity_device_approval_bootstrap(&bootstrap, None)?;
-        let request_event = build_nostr_identity_device_approval_request_event(
-            &local_request.request_keys,
-            &local_request.request,
-        )?;
 
         let client = Client::new(device_keys.clone());
         self.start_notifications_loop(client.clone());
@@ -255,25 +249,8 @@ impl AppCore {
             .kind(Kind::from(FACT_OP_KIND))
             .pubkey(request_keys.public_key());
         let client_for_subscription = client.clone();
-        let relay_urls_for_subscription = request_relay_urls.clone();
-        let request_pubkey = local_request.request.request_pubkey.clone();
-        let tx = self.core_sender.clone();
+        let relay_urls_for_subscription = approval_relay_urls;
         self.runtime.spawn(async move {
-            let publish_error = publish_event_to_any_connected_relay(
-                &client_for_subscription,
-                &relay_urls_for_subscription,
-                &request_event,
-                "device-approval-request",
-            )
-            .await
-            .err()
-            .map(|error| error.to_string());
-            let _ = tx.send(CoreMsg::Internal(Box::new(
-                InternalEvent::DeviceApprovalRequestPublishFinished {
-                    request_pubkey,
-                    error: publish_error,
-                },
-            )));
             ensure_session_relays_configured(
                 &client_for_subscription,
                 &relay_urls_for_subscription,
@@ -310,7 +287,7 @@ impl AppCore {
         self.pending_linked_device = Some(PendingLinkedDeviceState {
             device_keys,
             request_keys,
-            approval_request: local_request.request,
+            approval_bootstrap: bootstrap,
             pairing_client: client,
             pairing_invite: invite,
             pairing_url: url,
@@ -365,7 +342,6 @@ impl AppCore {
     pub(super) fn logout(&mut self) {
         self.push_debug_log("session.logout", "clearing runtime state");
         let previous_rev = self.state.rev;
-        self.device_approval_fetch_token = self.device_approval_fetch_token.wrapping_add(1);
         self.stop_pending_linked_device();
         self.private_chat_invites.clear();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
@@ -411,227 +387,6 @@ impl AppCore {
         self.state.rev = previous_rev;
         self.clear_persistence_best_effort();
         self.emit_state();
-    }
-
-    pub(super) fn add_authorized_device(&mut self, device_input: &str) {
-        self.device_approval_fetch_token = self.device_approval_fetch_token.wrapping_add(1);
-        let token = self.device_approval_fetch_token;
-        let Some(logged_in) = self.logged_in.as_ref() else {
-            self.state.toast = Some("Create or restore a profile first.".to_string());
-            self.emit_state();
-            return;
-        };
-        if logged_in.owner_keys.is_none() {
-            self.state.toast = Some("Only the primary device can manage devices.".to_string());
-            self.emit_state();
-            return;
-        }
-
-        let bootstrap =
-            match parse_nostr_identity_device_approval_bootstrap(device_input.trim(), &[]) {
-                Ok(Some(bootstrap)) => bootstrap,
-                _ => {
-                    self.state.toast = Some("Invalid device request.".to_string());
-                    self.emit_state();
-                    return;
-                }
-            };
-        if self.device_approval_relay_urls.len() != 1 {
-            self.state.toast = Some("Could not load device request.".to_string());
-            self.emit_state();
-            return;
-        }
-        self.state.busy.updating_roster = true;
-        self.state.toast = None;
-        self.emit_state();
-
-        let relay_urls = self.device_approval_relay_urls.clone();
-        let tx = self.core_sender.clone();
-        self.runtime.spawn(async move {
-            let result = fetch_device_approval_request_events(&bootstrap, &relay_urls)
-                .await
-                .map_err(|error| error.to_string());
-            let _ = tx.send(CoreMsg::Internal(Box::new(
-                InternalEvent::DeviceApprovalRequestFetchFinished {
-                    token,
-                    bootstrap,
-                    result,
-                },
-            )));
-        });
-    }
-
-    pub(super) fn handle_device_approval_request_fetch_finished(
-        &mut self,
-        token: u64,
-        bootstrap: NostrIdentityDeviceApprovalBootstrap,
-        result: Result<Vec<Event>, String>,
-    ) {
-        if token != self.device_approval_fetch_token {
-            return;
-        }
-        self.state.busy.updating_roster = false;
-        let request = match result {
-            Ok(events) => match device_approval_request_from_events(&bootstrap, &events) {
-                Ok(request) => request,
-                Err(error) => {
-                    self.push_debug_log(
-                        "device_approval.request.invalid",
-                        format!("events={} error={error}", events.len()),
-                    );
-                    self.state.toast = Some("Invalid device request.".to_string());
-                    self.rebuild_state();
-                    self.emit_state();
-                    return;
-                }
-            },
-            Err(error) => {
-                self.push_debug_log("device_approval.request.fetch", error);
-                self.state.toast = Some("Could not load device request.".to_string());
-                self.rebuild_state();
-                self.emit_state();
-                return;
-            }
-        };
-
-        if let Err(error) = self.accept_link_device_approval_request(request) {
-            self.state.toast = Some(error.to_string());
-        } else {
-            self.state.toast = Some("Device added".to_string());
-        }
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
-    }
-
-    pub(super) fn handle_device_approval_request_publish_finished(
-        &mut self,
-        request_pubkey: &str,
-        error: Option<String>,
-    ) {
-        if !self
-            .pending_linked_device
-            .as_ref()
-            .is_some_and(|pending| pending.approval_request.request_pubkey == request_pubkey)
-        {
-            return;
-        }
-        if let Some(error) = error {
-            self.push_debug_log("device_approval.request.publish", error);
-            self.state.toast = Some("Could not share device request.".to_string());
-            self.emit_state();
-        } else {
-            self.push_debug_log(
-                "device_approval.request.publish",
-                format!("request={request_pubkey}"),
-            );
-        }
-    }
-
-    fn accept_link_device_approval_request(
-        &mut self,
-        request: NostrIdentityDeviceApprovalRequest,
-    ) -> anyhow::Result<()> {
-        let request_relay_urls = device_approval_request_relay_urls(&request)?;
-        let logged_in = self
-            .logged_in
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?;
-        let approver_keys = logged_in.device_keys.clone();
-        let owner_pubkey = logged_in.owner_pubkey;
-        let device_app_key_pubkey = PublicKey::from_hex(&request.device_app_key_pubkey)
-            .map_err(|error| anyhow::anyhow!("Invalid device key: {error}"))?;
-        let invite =
-            device_approval_pairing_invite(device_app_key_pubkey, &request.request_secret)?;
-        let request_labels = CurrentDeviceLabels {
-            device_label: request.label.as_deref().and_then(normalize_device_label),
-            client_label: None,
-        };
-        let request_labels =
-            if request_labels.device_label.is_some() || request_labels.client_label.is_some() {
-                Some(request_labels)
-            } else {
-                None
-            };
-        let owner_hex = owner_pubkey.to_hex();
-        let previous_app_keys = self.app_keys.get(&owner_hex).cloned();
-        self.upsert_local_app_key_device_with_labels(
-            owner_pubkey,
-            device_app_key_pubkey,
-            request_labels.as_ref(),
-            true,
-        );
-        let result = (|| {
-            let receipt = NostrIdentityDeviceApprovalReceipt {
-                schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
-                profile_id: nostr_identity_profile_id_for_owner(owner_pubkey),
-                request_pubkey: request.request_pubkey.clone(),
-                device_app_key_pubkey: request.device_app_key_pubkey.clone(),
-                approved_by_pubkey: approver_keys.public_key().to_hex(),
-                approved_at: i64::try_from(unix_now().get()).unwrap_or(i64::MAX),
-                request_secret: request.request_secret.clone(),
-                subject_pubkey: Some(owner_hex.clone()),
-                roster_op_id: None,
-                signed_roster_event: None,
-            };
-            let receipt_event =
-                build_nostr_identity_device_approval_receipt_event(&approver_keys, receipt)?;
-            self.accept_link_device_invite_session(invite, request_relay_urls, receipt_event)
-        })();
-        if result.is_err() {
-            if let Some(previous_app_keys) = previous_app_keys {
-                self.app_keys.insert(owner_hex, previous_app_keys);
-            } else {
-                self.app_keys.remove(&owner_hex);
-            }
-        }
-        result
-    }
-
-    fn accept_link_device_invite_session(
-        &mut self,
-        invite: Invite,
-        request_relay_urls: Vec<RelayUrl>,
-        receipt_event: Event,
-    ) -> anyhow::Result<()> {
-        let logged_in = self
-            .logged_in
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?;
-        if logged_in.owner_keys.is_none() {
-            return Err(anyhow::anyhow!(
-                "Only the primary device can manage devices."
-            ));
-        }
-        let owner_pubkey = logged_in.owner_pubkey;
-        let device_pubkey = logged_in.device_keys.public_key();
-        let (session, response) = invite.accept_with_owner(
-            device_pubkey,
-            logged_in.device_keys.secret_key().to_secret_bytes(),
-            Some(device_pubkey.to_hex()),
-            Some(owner_pubkey),
-        )?;
-        let response_event = nostr_double_ratchet::invite_response_event(&response)?;
-        self.publish_device_approval_to_request_relay(
-            &request_relay_urls,
-            receipt_event,
-            response_event,
-        )?;
-        let retry_batch = self
-            .protocol_engine
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("Protocol engine is not ready."))?
-            .import_session_state(
-                owner_pubkey,
-                Some(invite.inviter_device_pubkey.to_hex()),
-                session.state,
-                unix_now(),
-            )?;
-        self.sync_local_app_keys_to_protocol_engine("device_approval");
-        self.publish_local_protocol_invite();
-        self.mark_mobile_push_dirty();
-        self.process_protocol_engine_retry_batch("link_invite_import", retry_batch);
-        Ok(())
     }
 
     pub(super) fn remove_authorized_device(&mut self, device_pubkey_hex: &str) {
@@ -1322,62 +1077,19 @@ impl AppCore {
     }
 }
 
-fn device_approval_request_relay_urls(
-    request: &NostrIdentityDeviceApprovalRequest,
-) -> anyhow::Result<Vec<RelayUrl>> {
-    let request_relay_urls = nostr_identity_device_approval_request_relays(request)?;
-    let relay_urls = relay_urls_from_strings(&request_relay_urls);
-    if relay_urls.len() != 1 {
-        anyhow::bail!("Device approval request must contain exactly one request relay.");
+fn device_approval_bootstrap_label(label: &str) -> Option<String> {
+    let label = normalize_device_label(label)?;
+    let mut end = label
+        .len()
+        .min(NOSTR_IDENTITY_DEVICE_APPROVAL_LABEL_MAX_BYTES);
+    while !label.is_char_boundary(end) {
+        end = end.saturating_sub(1);
     }
-    Ok(relay_urls)
+    let bounded = label[..end].trim_end();
+    (!bounded.is_empty()).then(|| bounded.to_string())
 }
 
-async fn fetch_device_approval_request_events(
-    bootstrap: &NostrIdentityDeviceApprovalBootstrap,
-    relay_urls: &[RelayUrl],
-) -> anyhow::Result<Vec<Event>> {
-    if relay_urls.len() != 1 {
-        anyhow::bail!("device approval requires exactly one request relay");
-    }
-    let request_pubkey = PublicKey::parse(&bootstrap.request_npub)
-        .map_err(|error| anyhow::anyhow!("invalid request key: {error}"))?;
-    let client = Client::new(Keys::generate());
-    ensure_session_relays_configured(&client, relay_urls).await;
-    connect_client_with_timeout(&client, Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS)).await;
-    let result = client
-        .fetch_events(
-            Filter::new()
-                .kind(Kind::from(FACT_OP_KIND))
-                .author(request_pubkey)
-                .limit(10),
-            Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS),
-        )
-        .await
-        .map(|events| events.iter().cloned().collect::<Vec<_>>())
-        .map_err(|error| anyhow::anyhow!("request event fetch failed: {error}"));
-    client.unsubscribe_all().await;
-    let _ = client.shutdown().await;
-    result
-}
-
-fn device_approval_request_from_events(
-    bootstrap: &NostrIdentityDeviceApprovalBootstrap,
-    events: &[Event],
-) -> anyhow::Result<NostrIdentityDeviceApprovalRequest> {
-    let mut requests = events.iter().filter_map(|event| {
-        parse_nostr_identity_device_approval_request_event(event, bootstrap).ok()
-    });
-    let request = requests
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("matching signed request event not found"))?;
-    if requests.next().is_some() {
-        anyhow::bail!("multiple matching signed request events found");
-    }
-    Ok(request)
-}
-
-fn device_approval_pairing_invite(
+pub(super) fn device_approval_pairing_invite(
     device_app_key_pubkey: PublicKey,
     request_secret: &str,
 ) -> anyhow::Result<Invite> {
@@ -1403,6 +1115,8 @@ pub(super) fn nostr_identity_profile_id_for_owner(owner_pubkey: PublicKey) -> No
     digest.update(owner_pubkey.to_hex().as_bytes());
     let hash = digest.finalize();
     let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&hash[..16]);
+    for (target, source) in bytes.iter_mut().zip(hash.iter()) {
+        *target = *source;
+    }
     NostrIdentityId::from_uuid(uuid::Uuid::from_bytes(bytes))
 }
