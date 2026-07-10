@@ -1,6 +1,7 @@
 use crate::actions::AppAction;
 use crate::state::{AppState, MutualGroupsSnapshot, PeerProfileDebugSnapshot};
 use flume::Sender;
+use nostr_identity::NostrIdentityDeviceApprovalBootstrap;
 use nostr_sdk::prelude::{Event, RelayStatus};
 
 #[derive(uniffi::Enum, Clone, Debug)]
@@ -64,6 +65,15 @@ pub(crate) enum InternalEvent {
     NearbyEvent {
         event: Event,
         transport: String,
+    },
+    DeviceApprovalRequestFetchFinished {
+        token: u64,
+        bootstrap: NostrIdentityDeviceApprovalBootstrap,
+        result: Result<Vec<Event>, String>,
+    },
+    DeviceApprovalRequestPublishFinished {
+        request_pubkey: String,
+        error: Option<String>,
     },
     FetchTrackedPeerCatchUp {
         token: u64,

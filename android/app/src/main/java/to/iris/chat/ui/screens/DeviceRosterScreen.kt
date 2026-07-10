@@ -30,8 +30,6 @@ import to.iris.chat.core.AppManager
 import to.iris.chat.qr.DeviceApprovalQr
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.DeviceEntrySnapshot
-import to.iris.chat.rust.isValidPeerInput
-import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.IrisListSection
@@ -86,11 +84,7 @@ fun DeviceRosterContent(
     }
     val resolvedInput =
         roster?.let {
-            resolveDeviceAuthorizationInput(
-                deviceInput,
-                it.ownerNpub,
-                it.ownerPublicKeyHex,
-            )
+            resolveDeviceAuthorizationInput(deviceInput)
         }
     val normalizedInput = resolvedInput?.deviceInput.orEmpty()
     val isCurrentDeviceRegistered =
@@ -253,7 +247,6 @@ fun DeviceRosterContent(
                         device = device,
                         canManageDevices = roster.canManageDevices,
                         isUpdatingRoster = appState.busy.updatingRoster,
-                        onApprove = { appManager.addAuthorizedDevice(device.devicePubkeyHex) },
                         onRemove = { appManager.removeAuthorizedDevice(device.devicePubkeyHex) },
                     )
                 }
@@ -266,11 +259,7 @@ fun DeviceRosterContent(
             onDismiss = { showScanner = false },
             onScanned = { scanned ->
                 val resolved =
-                    resolveDeviceAuthorizationInput(
-                        scanned,
-                        roster.ownerNpub,
-                        roster.ownerPublicKeyHex,
-                    )
+                    resolveDeviceAuthorizationInput(scanned)
                 if (resolved.errorMessage != null) {
                     resolved.errorMessage
                 } else if (resolved.requiresConfirmation) {
@@ -291,8 +280,8 @@ fun DeviceRosterContent(
     pendingDeviceConfirmation?.let { pending ->
         AlertDialog(
             onDismissRequest = { pendingDeviceConfirmation = null },
-            title = { Text(linkDeviceConfirmationTitle(pending)) },
-            text = { Text(linkDeviceConfirmationMessage(pending)) },
+            title = { Text("Link this device?") },
+            text = { Text("This device will be able to use your profile.") },
             dismissButton = {
                 IrisTextButton(onClick = { pendingDeviceConfirmation = null }) {
                     Text("Cancel")
@@ -333,7 +322,6 @@ private fun DeviceRosterRows(
                 device = device,
                 canManageDevices = canManageDevices,
                 isUpdatingRoster = appState.busy.updatingRoster,
-                onApprove = { appManager.addAuthorizedDevice(device.devicePubkeyHex) },
                 onRemove = { appManager.removeAuthorizedDevice(device.devicePubkeyHex) },
             )
         }
@@ -367,7 +355,6 @@ private fun DeviceRosterRow(
     device: DeviceEntrySnapshot,
     canManageDevices: Boolean,
     isUpdatingRoster: Boolean,
-    onApprove: () -> Unit,
     onRemove: () -> Unit,
 ) {
     val displayTitle = deviceDisplayTitle(device)
@@ -421,18 +408,6 @@ private fun DeviceRosterRow(
                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                if (!device.isAuthorized) {
-                    IrisPrimaryButton(
-                        text = if (isUpdatingRoster) "Linking…" else "Link",
-                        onClick = onApprove,
-                        enabled = !isUpdatingRoster,
-                        modifier =
-                            Modifier.testTag(
-                                "deviceRosterApprove-${device.devicePubkeyHex.take(12)}",
-                            ),
-                    )
-                }
-
                 IrisSecondaryButton(
                     text = "Remove device",
                     onClick = { confirmRemoval = true },
@@ -525,65 +500,19 @@ private data class ResolvedDeviceAuthorizationInput(
     val deviceInput: String,
     val errorMessage: String?,
     val requiresConfirmation: Boolean = false,
-    val deviceLabel: String? = null,
-    val clientLabel: String? = null,
 )
 
-private fun resolveDeviceAuthorizationInput(
-    rawInput: String,
-    ownerNpub: String,
-    ownerPublicKeyHex: String,
-): ResolvedDeviceAuthorizationInput {
+private fun resolveDeviceAuthorizationInput(rawInput: String): ResolvedDeviceAuthorizationInput {
     val trimmed = rawInput.trim()
     if (trimmed.isEmpty()) {
         return ResolvedDeviceAuthorizationInput(deviceInput = "", errorMessage = null)
     }
 
-    val approvalPayload = DeviceApprovalQr.decode(trimmed)
-    if (approvalPayload != null) {
-        val normalizedOwner = normalizePeerInput(approvalPayload.ownerInput)
-        val acceptedOwnerInputs =
-            setOf(
-                normalizePeerInput(ownerNpub),
-                normalizePeerInput(ownerPublicKeyHex),
-            )
-        if (normalizedOwner.isNotBlank() && normalizedOwner !in acceptedOwnerInputs) {
-            return ResolvedDeviceAuthorizationInput(
-                deviceInput = "",
-                errorMessage = "This code is for a different profile.",
-            )
-        }
-
-        val normalizedDevice = normalizePeerInput(approvalPayload.deviceInput)
-        if (!isValidPeerInput(normalizedDevice)) {
-            return ResolvedDeviceAuthorizationInput(
-                deviceInput = "",
-                errorMessage = "That code is not valid.",
-            )
-        }
-        if (normalizedOwner.isBlank()) {
-            return ResolvedDeviceAuthorizationInput(
-                deviceInput = trimmed,
-                errorMessage = null,
-                requiresConfirmation = true,
-                deviceLabel = approvalPayload.deviceLabel,
-                clientLabel = approvalPayload.clientLabel,
-            )
-        }
+    if (DeviceApprovalQr.isValid(trimmed)) {
         return ResolvedDeviceAuthorizationInput(
-            deviceInput = normalizedDevice,
+            deviceInput = trimmed,
             errorMessage = null,
             requiresConfirmation = true,
-            deviceLabel = approvalPayload.deviceLabel,
-            clientLabel = approvalPayload.clientLabel,
-        )
-    }
-
-    val normalizedManualDevice = normalizePeerInput(trimmed)
-    if (isValidPeerInput(normalizedManualDevice)) {
-        return ResolvedDeviceAuthorizationInput(
-            deviceInput = normalizedManualDevice,
-            errorMessage = null,
         )
     }
 
@@ -592,26 +521,3 @@ private fun resolveDeviceAuthorizationInput(
         errorMessage = "Not a valid link code.",
     )
 }
-
-private fun linkDeviceConfirmationTitle(input: ResolvedDeviceAuthorizationInput): String {
-    val name = linkDeviceConfirmationName(input)
-    return if (name == "this device") {
-        "Link this device?"
-    } else {
-        "Link $name?"
-    }
-}
-
-private fun linkDeviceConfirmationMessage(input: ResolvedDeviceAuthorizationInput): String {
-    val client = input.clientLabel?.trim()?.takeIf { it.isNotEmpty() }
-    return if (client != null) {
-        "$client will be able to use your profile."
-    } else {
-        "This device will be able to use your profile."
-    }
-}
-
-private fun linkDeviceConfirmationName(input: ResolvedDeviceAuthorizationInput): String =
-    input.deviceLabel?.trim()?.takeIf { it.isNotEmpty() }
-        ?: input.clientLabel?.trim()?.takeIf { it.isNotEmpty() }
-        ?: "this device"

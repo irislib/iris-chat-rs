@@ -45,7 +45,7 @@ iris-chat-protocol = { version = "0.1.5", path = "../chat-protocol" }
 nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
 nostr35 = { package = "nostr", version = "0.35.0", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
-nostr-identity = "0.1.5"
+nostr-identity = { version = "0.2.0", path = "/Users/sirius/src/nostr-social-graph/rust/crates/nostr-identity" }
 nostr-double-ratchet = "0.0.163"
 nostr-double-ratchet-pairwise-codec = "0.0.163"
 qrcode = { version = "0.14", default-features = false }

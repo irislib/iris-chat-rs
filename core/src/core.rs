@@ -32,10 +32,13 @@ use nostr_double_ratchet::{
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use nostr_identity::{
     build_nostr_identity_device_approval_receipt_event,
-    create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_request,
-    nostr_identity_device_approval_relay_resource, nostr_identity_device_approval_request_relays,
+    build_nostr_identity_device_approval_request_event,
+    create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_bootstrap,
+    nostr_identity_device_approval_bootstrap, nostr_identity_device_approval_relay_resource,
+    nostr_identity_device_approval_request_relays, parse_nostr_identity_device_approval_bootstrap,
     parse_nostr_identity_device_approval_receipt_event_for_request,
-    parse_nostr_identity_device_approval_request, CreateNostrIdentityDeviceApprovalRequestOptions,
+    parse_nostr_identity_device_approval_request_event,
+    CreateNostrIdentityDeviceApprovalRequestOptions, NostrIdentityDeviceApprovalBootstrap,
     NostrIdentityDeviceApprovalReceipt, NostrIdentityDeviceApprovalRequest, NostrIdentityId,
     FACT_OP_KIND, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
 };
@@ -463,6 +466,8 @@ pub struct AppCore {
     logged_in: Option<LoggedInState>,
     protocol_engine: Option<ProtocolEngine>,
     pending_linked_device: Option<PendingLinkedDeviceState>,
+    device_approval_relay_urls: Vec<RelayUrl>,
+    device_approval_fetch_token: u64,
     private_chat_invites: BTreeMap<String, Invite>,
     threads: BTreeMap<String, ThreadRecord>,
     active_chat_id: Option<String>,

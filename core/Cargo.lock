@@ -1698,14 +1698,13 @@ dependencies = [
 
 [[package]]
 name = "nostr-identity"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "848aac810edafec01cd47650e31bfe920129a9d1422df0385cca286625caeed4"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "nostr-sdk 0.44.1",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "uuid",
 ]

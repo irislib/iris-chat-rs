@@ -30,7 +30,7 @@ fn owner_device_rejects_manual_device_npub_without_signed_request() {
 }
 
 #[test]
-fn owner_device_accepts_full_link_request_and_publishes_app_keys_snapshot() {
+fn owner_device_fetches_signed_link_request_and_publishes_app_keys_snapshot() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let linked_device = Keys::generate();
@@ -40,11 +40,8 @@ fn owner_device_accepts_full_link_request_and_publishes_app_keys_snapshot() {
     let request = create_nostr_identity_device_approval_request(
         &linked_device,
         CreateNostrIdentityDeviceApprovalRequestOptions {
-            request_keys: Some(request_keys),
-            request_secret: Some(
-                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-                    .to_string(),
-            ),
+            request_keys: Some(request_keys.clone()),
+            request_secret: Some(TEST_DEVICE_APPROVAL_REQUEST_SECRET.to_string()),
             requested_at: 41,
             request_type: Some("device_link".to_string()),
             resources: vec![nostr_identity_device_approval_relay_resource(request_relay.url())
@@ -56,17 +53,19 @@ fn owner_device_accepts_full_link_request_and_publishes_app_keys_snapshot() {
         },
     )
     .expect("approval request");
-    let request_url = encode_nostr_identity_device_approval_request(&request.request, None)
-        .expect("encode approval request");
 
     let mut core = logged_in_test_core("owner-full-appkeys-approval", &owner, &device);
     core.upsert_local_app_key_device(owner.public_key(), device.public_key());
     core.sync_local_app_keys_to_protocol_engine("test_seed_appkeys");
     core.pending_relay_publishes.clear();
+    let bootstrap = publish_device_approval_request_for_test(
+        &mut core,
+        request_relay.url(),
+        &request_keys,
+        &request.request,
+    );
 
-    core.handle_action(AppAction::AddAuthorizedDevice {
-        device_input: request_url,
-    });
+    dispatch_device_approval_for_test(&mut core, request_relay.url(), bootstrap);
 
     assert_eq!(core.state.toast.as_deref(), Some("Device added"));
     let approval_events = relay_events(&request_relay);

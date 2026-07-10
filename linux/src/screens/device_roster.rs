@@ -2,8 +2,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use iris_chat_core::{
-    decode_device_approval_qr, is_valid_peer_input, normalize_peer_input, AppAction, AppState,
-    DeviceEntrySnapshot, DeviceRosterSnapshot,
+    is_device_approval_bootstrap, AppAction, AppState, DeviceEntrySnapshot, DeviceRosterSnapshot,
 };
 
 use crate::app_manager::AppManager;
@@ -36,7 +35,7 @@ pub(crate) fn content(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget
 
     inner.append(&owner_card(roster));
     if roster.can_manage_devices {
-        inner.append(&authorize_card(state, roster, manager));
+        inner.append(&authorize_card(state, manager));
     }
     inner.append(&devices_card(state, roster, manager));
 
@@ -57,7 +56,6 @@ fn owner_card(_roster: &DeviceRosterSnapshot) -> gtk::Widget {
 
 fn authorize_card(
     state: &AppState,
-    roster: &DeviceRosterSnapshot,
     manager: &Rc<AppManager>,
 ) -> gtk::Widget {
     let group = adw::PreferencesGroup::builder()
@@ -68,7 +66,6 @@ fn authorize_card(
     let entry = adw::EntryRow::builder().title("Link code").build();
     let busy = state.busy.updating_roster;
 
-    let roster_for_changed = roster.clone();
     let manager_for_changed = manager.clone();
     entry.connect_changed(move |row| {
         let parent = row
@@ -77,7 +74,6 @@ fn authorize_card(
         if !busy
             && dispatch_authorized_device_input(
                 row.text().as_str(),
-                &roster_for_changed,
                 &manager_for_changed,
                 parent.as_ref(),
             )
@@ -86,23 +82,20 @@ fn authorize_card(
         }
     });
 
-    let roster_for_scan = roster.clone();
     let manager_for_scan = manager.clone();
     let scan = scan_qr_button("Scan code", move |text| {
-        dispatch_authorized_device_input(&text, &roster_for_scan, &manager_for_scan, None);
+        dispatch_authorized_device_input(&text, &manager_for_scan, None);
     });
     scan.add_css_class("suggested-action");
     scan.set_sensitive(!busy);
 
     let manager_for_apply = manager.clone();
-    let roster_for_apply = roster.clone();
     entry.connect_apply(move |row| {
         let parent = row
             .root()
             .and_then(|root| root.downcast::<gtk::Window>().ok());
         if dispatch_authorized_device_input(
             row.text().as_str(),
-            &roster_for_apply,
             &manager_for_apply,
             parent.as_ref(),
         ) {
@@ -117,11 +110,10 @@ fn authorize_card(
 
 fn dispatch_authorized_device_input(
     raw_input: &str,
-    roster: &DeviceRosterSnapshot,
     manager: &Rc<AppManager>,
     parent: Option<&gtk::Window>,
 ) -> bool {
-    let Some(resolved) = resolve_device_authorization_input(raw_input, roster) else {
+    let Some(resolved) = resolve_device_authorization_input(raw_input) else {
         return false;
     };
     if resolved.requires_confirmation {
@@ -138,56 +130,21 @@ fn dispatch_authorized_device_input(
 struct ResolvedDeviceAuthorizationInput {
     device_input: String,
     requires_confirmation: bool,
-    device_label: Option<String>,
-    client_label: Option<String>,
 }
 
-fn resolve_device_authorization_input(
-    raw_input: &str,
-    roster: &DeviceRosterSnapshot,
-) -> Option<ResolvedDeviceAuthorizationInput> {
+fn resolve_device_authorization_input(raw_input: &str) -> Option<ResolvedDeviceAuthorizationInput> {
     let trimmed = raw_input.trim();
     if trimmed.is_empty() {
         return None;
     }
 
-    if let Some(payload) = decode_device_approval_qr(trimmed.to_string()) {
-        let normalized_owner = normalize_peer_input(payload.owner_input);
-        let owner_inputs = [
-            normalize_peer_input(roster.owner_npub.clone()),
-            normalize_peer_input(roster.owner_public_key_hex.clone()),
-        ];
-        if !normalized_owner.is_empty() && !owner_inputs.contains(&normalized_owner) {
-            return None;
-        }
-
-        let normalized_device = normalize_peer_input(payload.device_input);
-        if !is_valid_peer_input(normalized_device.clone()) {
-            return None;
-        }
-        if normalized_owner.is_empty() {
-            return Some(ResolvedDeviceAuthorizationInput {
-                device_input: trimmed.to_string(),
-                requires_confirmation: true,
-                device_label: payload.device_label.clone(),
-                client_label: payload.client_label.clone(),
-            });
-        }
+    if is_device_approval_bootstrap(trimmed.to_string()) {
         return Some(ResolvedDeviceAuthorizationInput {
-            device_input: normalized_device,
+            device_input: trimmed.to_string(),
             requires_confirmation: true,
-            device_label: payload.device_label.clone(),
-            client_label: payload.client_label.clone(),
         });
     }
-
-    let normalized_device = normalize_peer_input(trimmed.to_string());
-    is_valid_peer_input(normalized_device.clone()).then_some(ResolvedDeviceAuthorizationInput {
-        device_input: normalized_device,
-        requires_confirmation: false,
-        device_label: None,
-        client_label: None,
-    })
+    None
 }
 
 fn present_link_device_confirmation(
@@ -250,28 +207,12 @@ fn present_link_device_confirmation(
     dialog.present(parent);
 }
 
-fn link_device_confirmation_title(input: &ResolvedDeviceAuthorizationInput) -> String {
-    let name = link_device_confirmation_name(input);
-    if name == "this device" {
-        "Link this device?".to_string()
-    } else {
-        format!("Link {name}?")
-    }
+fn link_device_confirmation_title(_input: &ResolvedDeviceAuthorizationInput) -> String {
+    "Link this device?".to_string()
 }
 
-fn link_device_confirmation_message(input: &ResolvedDeviceAuthorizationInput) -> String {
-    if let Some(client) = non_empty(input.client_label.as_deref()) {
-        format!("{client} will be able to use your profile.")
-    } else {
-        "This device will be able to use your profile.".to_string()
-    }
-}
-
-fn link_device_confirmation_name(input: &ResolvedDeviceAuthorizationInput) -> String {
-    non_empty(input.device_label.as_deref())
-        .or_else(|| non_empty(input.client_label.as_deref()))
-        .unwrap_or("this device")
-        .to_string()
+fn link_device_confirmation_message(_input: &ResolvedDeviceAuthorizationInput) -> String {
+    "This device will be able to use your profile.".to_string()
 }
 
 fn devices_card(
@@ -347,21 +288,6 @@ fn device_row(
     row.add_suffix(&status);
 
     if roster.can_manage_devices && !device.is_current_device {
-        if !device.is_authorized {
-            let approve = gtk::Button::with_label("Link");
-            approve.add_css_class("suggested-action");
-            approve.set_valign(gtk::Align::Center);
-            approve.set_sensitive(!state.busy.updating_roster);
-            let manager_for_btn = manager.clone();
-            let device_pubkey_hex = device.device_pubkey_hex.clone();
-            approve.connect_clicked(move |_| {
-                manager_for_btn.dispatch(AppAction::AddAuthorizedDevice {
-                    device_input: device_pubkey_hex.clone(),
-                });
-            });
-            row.add_suffix(&approve);
-        }
-
         let remove = gtk::Button::from_icon_name("user-trash-symbolic");
         remove.add_css_class("flat");
         remove.set_tooltip_text(Some("Remove device"));

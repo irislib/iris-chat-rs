@@ -49,16 +49,10 @@ func submitDeviceAuthorizationScan(
         return ResolvedDeviceAuthorizationInput(
             deviceInput: "",
             errorMessage: nil,
-            requiresConfirmation: false,
-            deviceLabel: nil,
-            clientLabel: nil
+            requiresConfirmation: false
         )
     }
-    let resolved = resolveDeviceAuthorizationInput(
-        rawInput: rawInput,
-        ownerNpub: roster.ownerNpub,
-        ownerPublicKeyHex: roster.ownerPublicKeyHex
-    )
+    let resolved = resolveDeviceAuthorizationInput(rawInput: rawInput)
     guard resolved.errorMessage == nil,
           !resolved.deviceInput.isEmpty else {
         return resolved
@@ -77,11 +71,7 @@ struct DeviceRosterContent: View {
         guard let roster = manager.state.deviceRoster else {
             return nil
         }
-        return resolveDeviceAuthorizationInput(
-            rawInput: deviceInput,
-            ownerNpub: roster.ownerNpub,
-            ownerPublicKeyHex: roster.ownerPublicKeyHex
-        )
+        return resolveDeviceAuthorizationInput(rawInput: deviceInput)
     }
 
     private var isCurrentDeviceRegistered: Bool {
@@ -227,29 +217,12 @@ struct DeviceRosterContent: View {
     }
 }
 
-private func linkDeviceConfirmationTitle(_ input: ResolvedDeviceAuthorizationInput?) -> String {
-    let name = linkDeviceConfirmationName(input)
-    return name == "this device" ? "Link this device?" : "Link \(name)?"
+private func linkDeviceConfirmationTitle(_: ResolvedDeviceAuthorizationInput?) -> String {
+    "Link this device?"
 }
 
-private func linkDeviceConfirmationMessage(_ input: ResolvedDeviceAuthorizationInput?) -> String {
-    if let client = input?.clientLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
-       !client.isEmpty {
-        return "\(client) will be able to use your profile."
-    }
-    return "This device will be able to use your profile."
-}
-
-private func linkDeviceConfirmationName(_ input: ResolvedDeviceAuthorizationInput?) -> String {
-    if let device = input?.deviceLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
-       !device.isEmpty {
-        return device
-    }
-    if let client = input?.clientLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
-       !client.isEmpty {
-        return client
-    }
-    return "this device"
+private func linkDeviceConfirmationMessage(_: ResolvedDeviceAuthorizationInput?) -> String {
+    "This device will be able to use your profile."
 }
 
 struct DeviceRosterRow: View {
@@ -306,32 +279,10 @@ struct DeviceRosterRow: View {
             }
 
             if canManageDevices && !device.isCurrentDevice {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        if !device.isAuthorized {
-                            approveButton
-                        }
-                        removeButton
-                    }
-                    VStack(spacing: 10) {
-                        if !device.isAuthorized {
-                            approveButton
-                        }
-                        removeButton
-                    }
-                }
+                removeButton
             }
         }
         .accessibilityIdentifier("deviceRosterRow-\(String(device.devicePubkeyHex.prefix(12)))")
-    }
-
-    private var approveButton: some View {
-        Button(manager.state.busy.updatingRoster ? "Linking…" : "Link") {
-            manager.addAuthorizedDevice(deviceInput: device.devicePubkeyHex)
-        }
-        .buttonStyle(IrisPrimaryButtonStyle())
-        .disabled(manager.state.busy.updatingRoster)
-        .accessibilityIdentifier("deviceRosterApprove-\(String(device.devicePubkeyHex.prefix(12)))")
     }
 
     private var removeButton: some View {

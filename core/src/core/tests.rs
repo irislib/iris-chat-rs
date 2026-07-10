@@ -2,6 +2,9 @@ use super::protocol::build_protocol_subscription_filters;
 use super::*;
 
 const TEST_PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
+const TEST_DEVICE_APPROVAL_REQUEST_SECRET: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
+const OTHER_TEST_DEVICE_APPROVAL_REQUEST_SECRET: &str =
+    "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI";
 
 fn seed_protocol_storage_for_test(
     storage: &dyn StorageAdapter,

@@ -150,7 +150,7 @@ public partial class DeviceRosterView : UserControl
         if (_isSubmittingDeviceInput) return;
         var roster = App.CurrentManager.DeviceRoster;
         if (roster?.canManageDevices != true || App.CurrentManager.Busy.updatingRoster) return;
-        var input = ResolveDeviceAuthorizationInput(DeviceInput.Text, App.CurrentManager.DeviceRoster);
+        var input = ResolveDeviceAuthorizationInput(DeviceInput.Text);
         if (input == null) return;
 
         _isSubmittingDeviceInput = true;
@@ -180,63 +180,30 @@ public partial class DeviceRosterView : UserControl
         return result == MessageBoxResult.OK;
     }
 
-    private static ResolvedDeviceAuthorizationInput? ResolveDeviceAuthorizationInput(string? rawInput, DeviceRosterSnapshot? roster)
+    private static ResolvedDeviceAuthorizationInput? ResolveDeviceAuthorizationInput(string? rawInput)
     {
         var trimmed = rawInput?.Trim();
-        if (string.IsNullOrEmpty(trimmed) || roster == null) return null;
+        if (string.IsNullOrEmpty(trimmed)) return null;
 
-        var approvalPayload = Native.DecodeDeviceApprovalQr(trimmed);
-        if (approvalPayload is not null)
+        if (Native.IsDeviceApprovalBootstrap(trimmed))
         {
-            var normalizedOwner = Native.NormalizePeerInput(approvalPayload.ownerInput);
-            var ownerNpub = Native.NormalizePeerInput(roster.ownerNpub);
-            var ownerHex = Native.NormalizePeerInput(roster.ownerPublicKeyHex);
-            if (!string.IsNullOrWhiteSpace(normalizedOwner) &&
-                normalizedOwner != ownerNpub &&
-                normalizedOwner != ownerHex) return null;
-
-            var normalizedDevice = Native.NormalizePeerInput(approvalPayload.deviceInput);
-            if (!Native.IsValidPeerInput(normalizedDevice)) return null;
-            return new ResolvedDeviceAuthorizationInput(
-                string.IsNullOrWhiteSpace(normalizedOwner) ? trimmed : normalizedDevice,
-                true,
-                approvalPayload.deviceLabel,
-                approvalPayload.clientLabel
-            );
+            return new ResolvedDeviceAuthorizationInput(trimmed, true);
         }
-
-        var normalizedManualDevice = Native.NormalizePeerInput(trimmed);
-        return Native.IsValidPeerInput(normalizedManualDevice)
-            ? new ResolvedDeviceAuthorizationInput(normalizedManualDevice, false, null, null)
-            : null;
+        return null;
     }
 
     private static string LinkDeviceConfirmationTitle(ResolvedDeviceAuthorizationInput input)
     {
-        var name = LinkDeviceConfirmationName(input);
-        return name == "this device" ? "Link this device?" : $"Link {name}?";
+        return "Link this device?";
     }
 
     private static string LinkDeviceConfirmationMessage(ResolvedDeviceAuthorizationInput input)
     {
-        var client = input.ClientLabel?.Trim();
-        return string.IsNullOrEmpty(client)
-            ? "This device will be able to use your profile."
-            : $"{client} will be able to use your profile.";
-    }
-
-    private static string LinkDeviceConfirmationName(ResolvedDeviceAuthorizationInput input)
-    {
-        var device = input.DeviceLabel?.Trim();
-        if (!string.IsNullOrEmpty(device)) return device!;
-        var client = input.ClientLabel?.Trim();
-        return string.IsNullOrEmpty(client) ? "this device" : client!;
+        return "This device will be able to use your profile.";
     }
 
     private sealed record ResolvedDeviceAuthorizationInput(
         string DeviceInput,
-        bool RequiresConfirmation,
-        string? DeviceLabel,
-        string? ClientLabel
+        bool RequiresConfirmation
     );
 }

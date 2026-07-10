@@ -197,11 +197,18 @@ fn fully_approved_linked_device_group_messages_sync_to_primary_without_request()
         Arc::new(RwLock::new(AppState::empty())),
     );
     linked.preferences.nostr_relay_urls.clear();
+    linked.device_approval_relay_urls =
+        relay_urls_from_strings(&[request_relay.url().to_string()]);
     linked.handle_action(AppAction::StartLinkedDevice {
         owner_input: String::new(),
     });
-    let approval_request =
-        replace_pending_device_approval_request_relay(&mut linked, request_relay.url());
+    let approval_request = linked
+        .state
+        .link_device
+        .as_ref()
+        .expect("approval bootstrap")
+        .url
+        .clone();
     let linked_device_hex = linked
         .pending_linked_device
         .as_ref()
@@ -210,9 +217,7 @@ fn fully_approved_linked_device_group_messages_sync_to_primary_without_request()
         .public_key()
         .to_hex();
 
-    primary.handle_action(AppAction::AddAuthorizedDevice {
-        device_input: approval_request,
-    });
+    dispatch_device_approval_for_test(&mut primary, request_relay.url(), approval_request);
     assert_eq!(primary.state.toast.as_deref(), Some("Device added"));
 
     for event in relay_events(&request_relay)

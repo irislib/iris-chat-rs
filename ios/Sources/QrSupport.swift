@@ -5,109 +5,39 @@ import AVFoundation
 #endif
 
 enum DeviceApprovalQr {
-    static func encode(ownerInput: String, deviceInput: String) -> String {
-        normalizeDeviceApprovalQr(
-            encodeDeviceApprovalQr(
-                ownerInput: ownerInput.trimmingCharacters(in: .whitespacesAndNewlines),
-                deviceInput: deviceInput.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-        )
+    static func isValid(_ raw: String) -> Bool {
+        isDeviceApprovalBootstrap(raw: raw.trimmingCharacters(in: .whitespacesAndNewlines))
     }
-
-    static func decode(_ raw: String) -> DeviceApprovalQrPayload? {
-        decodeDeviceApprovalQr(raw: raw)
-    }
-}
-
-private func normalizeDeviceApprovalQr(_ raw: String) -> String {
-    raw.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 struct ResolvedDeviceAuthorizationInput: Equatable {
     let deviceInput: String
     let errorMessage: String?
     let requiresConfirmation: Bool
-    let deviceLabel: String?
-    let clientLabel: String?
 }
 
-func resolveDeviceAuthorizationInput(
-    rawInput: String,
-    ownerNpub: String,
-    ownerPublicKeyHex: String
-) -> ResolvedDeviceAuthorizationInput {
+func resolveDeviceAuthorizationInput(rawInput: String) -> ResolvedDeviceAuthorizationInput {
     let trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty {
         return ResolvedDeviceAuthorizationInput(
             deviceInput: "",
             errorMessage: nil,
-            requiresConfirmation: false,
-            deviceLabel: nil,
-            clientLabel: nil
+            requiresConfirmation: false
         )
     }
 
-    if let payload = DeviceApprovalQr.decode(trimmed) {
-        let normalizedOwner = normalizePeerInput(input: payload.ownerInput)
-        let acceptedOwnerInputs = Set([
-            normalizePeerInput(input: ownerNpub),
-            normalizePeerInput(input: ownerPublicKeyHex),
-        ])
-        if !normalizedOwner.isEmpty && !acceptedOwnerInputs.contains(normalizedOwner) {
-            return ResolvedDeviceAuthorizationInput(
-                deviceInput: "",
-                errorMessage: "This code is for a different profile.",
-                requiresConfirmation: false,
-                deviceLabel: nil,
-                clientLabel: nil
-            )
-        }
-
-        let normalizedDevice = normalizePeerInput(input: payload.deviceInput)
-        if !isValidPeerInput(input: normalizedDevice) {
-            return ResolvedDeviceAuthorizationInput(
-                deviceInput: "",
-                errorMessage: "That code is not valid.",
-                requiresConfirmation: false,
-                deviceLabel: nil,
-                clientLabel: nil
-            )
-        }
-        if normalizedOwner.isEmpty {
-            return ResolvedDeviceAuthorizationInput(
-                deviceInput: trimmed,
-                errorMessage: nil,
-                requiresConfirmation: true,
-                deviceLabel: payload.deviceLabel,
-                clientLabel: payload.clientLabel
-            )
-        }
+    if DeviceApprovalQr.isValid(trimmed) {
         return ResolvedDeviceAuthorizationInput(
-            deviceInput: normalizedDevice,
+            deviceInput: trimmed,
             errorMessage: nil,
-            requiresConfirmation: true,
-            deviceLabel: payload.deviceLabel,
-            clientLabel: payload.clientLabel
-        )
-    }
-
-    let normalizedManualDevice = normalizePeerInput(input: trimmed)
-    if isValidPeerInput(input: normalizedManualDevice) {
-        return ResolvedDeviceAuthorizationInput(
-            deviceInput: normalizedManualDevice,
-            errorMessage: nil,
-            requiresConfirmation: false,
-            deviceLabel: nil,
-            clientLabel: nil
+            requiresConfirmation: true
         )
     }
 
     return ResolvedDeviceAuthorizationInput(
         deviceInput: "",
         errorMessage: "Not a valid link code.",
-        requiresConfirmation: false,
-        deviceLabel: nil,
-        clientLabel: nil
+        requiresConfirmation: false
     )
 }
 
@@ -265,7 +195,8 @@ struct QrScannerSheet: View {
 
             HStack(spacing: 10) {
                 Button("Paste from clipboard") {
-                    pastedCode = normalizePeerInput(input: PlatformClipboard.string() ?? "")
+                    pastedCode = (PlatformClipboard.string() ?? "")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
                 }
 
                 Button("Use code") {

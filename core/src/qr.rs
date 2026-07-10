@@ -35,73 +35,49 @@ pub fn encode_text_qr(text: String) -> Option<QrCodeMatrix> {
     })
 }
 
-#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
-pub struct DeviceApprovalQrPayload {
-    pub owner_input: String,
-    pub device_input: String,
-    pub device_label: Option<String>,
-    pub client_label: Option<String>,
-}
-
 #[uniffi::export]
-pub fn encode_device_approval_qr(_owner_input: String, _device_input: String) -> String {
-    String::new()
-}
-
-#[uniffi::export]
-pub fn decode_device_approval_qr(raw: String) -> Option<DeviceApprovalQrPayload> {
-    nostr_identity::parse_nostr_identity_device_approval_request(&raw, &[])
+pub fn is_device_approval_bootstrap(raw: String) -> bool {
+    nostr_identity::parse_nostr_identity_device_approval_bootstrap(&raw, &[])
         .ok()
         .flatten()
-        .map(|request| DeviceApprovalQrPayload {
-            owner_input: String::new(),
-            device_input: request.device_app_key_pubkey,
-            device_label: request.label,
-            client_label: None,
-        })
+        .is_some()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_device_approval_qr, encode_device_approval_qr, DeviceApprovalQrPayload};
+    use super::is_device_approval_bootstrap;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use nostr_identity::{
         create_nostr_identity_device_approval_request,
-        encode_nostr_identity_device_approval_request,
+        encode_nostr_identity_device_approval_bootstrap, nostr_identity_device_approval_bootstrap,
         CreateNostrIdentityDeviceApprovalRequestOptions,
     };
     use nostr_sdk::Keys;
 
     #[test]
-    fn removed_device_approval_qr_encoder_returns_empty() {
-        let encoded = encode_device_approval_qr("npub-owner".into(), "npub-device".into());
-        assert_eq!(encoded, "");
-    }
-
-    #[test]
-    fn device_approval_qr_rejects_wrong_inputs() {
-        assert!(decode_device_approval_qr("".into()).is_none());
-        assert!(decode_device_approval_qr("npub1plainvalue".into()).is_none());
-        assert!(decode_device_approval_qr("https://example.com".into()).is_none());
-        assert!(decode_device_approval_qr("not-a-device-approval-request".into()).is_none());
-        assert!(decode_device_approval_qr(format!(
+    fn device_approval_bootstrap_rejects_non_bootstrap_inputs() {
+        assert!(!is_device_approval_bootstrap("".into()));
+        assert!(!is_device_approval_bootstrap("npub1plainvalue".into()));
+        assert!(!is_device_approval_bootstrap("https://example.com".into()));
+        assert!(!is_device_approval_bootstrap(
+            "nostr-identity://device-approval/?app_key=npub1legacy".into()
+        ));
+        assert!(!is_device_approval_bootstrap(format!(
             "{}.{}.not-base64!*",
             "1".repeat(64),
             "1".repeat(64)
-        ))
-        .is_none());
+        )));
     }
 
     #[test]
-    fn device_link_qr_decodes_full_approval_request_to_device() {
+    fn device_link_qr_accepts_only_shared_bootstrap() {
         let device = Keys::generate();
         let request = Keys::generate();
         let local = create_nostr_identity_device_approval_request(
             &device,
             CreateNostrIdentityDeviceApprovalRequestOptions {
                 request_keys: Some(request),
-                request_secret: Some(
-                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
-                ),
+                request_secret: Some("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE".to_string()),
                 requested_at: 41,
                 request_type: Some("device_link".to_string()),
                 resources: Vec::new(),
@@ -112,21 +88,33 @@ mod tests {
             },
         )
         .expect("approval request");
-        let encoded =
-            encode_nostr_identity_device_approval_request(&local.request, None).expect("encode");
+        let bootstrap =
+            nostr_identity_device_approval_bootstrap(&local.request).expect("bootstrap");
+        let encoded = encode_nostr_identity_device_approval_bootstrap(&bootstrap, None)
+            .expect("encode bootstrap");
+        let legacy_full_request = format!(
+            "nostr-identity://device-approval/{}",
+            URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&local.request).expect("legacy full request JSON"))
+        );
 
-        let decoded = decode_device_approval_qr(encoded.clone()).expect("decode approval request");
+        assert!(is_device_approval_bootstrap(encoded.clone()));
+        assert!(!is_device_approval_bootstrap(legacy_full_request));
         assert_eq!(
-            decoded,
-            DeviceApprovalQrPayload {
-                owner_input: String::new(),
-                device_input: device.public_key().to_hex(),
-                device_label: Some("Safari on macOS".to_string()),
-                client_label: None,
-            }
+            serde_json::to_value(bootstrap)
+                .expect("bootstrap JSON")
+                .as_object()
+                .expect("bootstrap object")
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            ["deviceAppKeyNpub", "requestNpub", "requestSecret"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
         );
 
         let prefixed = format!("prefix:{encoded}");
-        assert!(decode_device_approval_qr(prefixed).is_none());
+        assert!(!is_device_approval_bootstrap(prefixed));
     }
 }

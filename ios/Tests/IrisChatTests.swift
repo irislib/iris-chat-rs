@@ -1368,49 +1368,35 @@ final class IrisChatTests: XCTestCase {
         _ = manager
     }
 
-    func testDeviceApprovalQrLegacyEncoderIsRemoved() {
-        let encoded = DeviceApprovalQr.encode(ownerInput: "npub-owner", deviceInput: "npub-device")
-        XCTAssertEqual(encoded, "")
-        XCTAssertNil(DeviceApprovalQr.decode(encoded))
+    func testDeviceApprovalQrAcceptsOnlyStrictSharedBootstrap() {
+        let code = "nostr-identity://device-approval/eyJkZXZpY2VBcHBLZXlOcHViIjoibnB1YjFwMzRlZnpta2V3d2Rza3NtcHAycjB0azdxdWtlOWpjZmR6MnpsN2V6azh3bnNqNDN1ejJzOHg1c3A0IiwicmVxdWVzdE5wdWIiOiJucHViMTh3MzVnNmduNDdxd21yeXVseHp2ZnVjbXVqdnJxcWxqanBhcHlsOHgwcnFhbGpoNmYydXNtbDc3ZGoiLCJyZXF1ZXN0U2VjcmV0IjoiQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRSJ9"
+
+        XCTAssertTrue(DeviceApprovalQr.isValid(code))
+        XCTAssertFalse(DeviceApprovalQr.isValid("nostr-identity://device-approval/?app_key=npub1legacy"))
+        XCTAssertFalse(DeviceApprovalQr.isValid("npub1p34efzmkewwdsksmpp2r0tk7quke9jcfdz2zl7ezk8wnsj43uz2s8x5sp4"))
     }
 
-    func testResolveDeviceAuthorizationInputPreservesCompactApprovalCode() {
-        let ownerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
-        let deviceHex = "0c6b948b76cb9cd85a1b085437aede072d92cb0968942ffb22b1dd384ab1e095"
-        let requestSecret = String(repeating: "1", count: 64)
-        let metadata = "eyJ2IjoxfQ"
-        let code = "\(deviceHex).\(requestSecret).\(metadata)"
+    func testResolveDeviceAuthorizationInputPreservesSharedBootstrap() {
+        let code = "nostr-identity://device-approval/eyJkZXZpY2VBcHBLZXlOcHViIjoibnB1YjFwMzRlZnpta2V3d2Rza3NtcHAycjB0azdxdWtlOWpjZmR6MnpsN2V6azh3bnNqNDN1ejJzOHg1c3A0IiwicmVxdWVzdE5wdWIiOiJucHViMTh3MzVnNmduNDdxd21yeXVseHp2ZnVjbXVqdnJxcWxqanBhcHlsOHgwcnFhbGpoNmYydXNtbDc3ZGoiLCJyZXF1ZXN0U2VjcmV0IjoiQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRSJ9"
 
-        let resolved = resolveDeviceAuthorizationInput(
-            rawInput: code,
-            ownerNpub: ownerNpub,
-            ownerPublicKeyHex: normalizePeerInput(input: ownerNpub)
-        )
+        let resolved = resolveDeviceAuthorizationInput(rawInput: code)
 
         XCTAssertEqual(resolved.deviceInput, code)
         XCTAssertNil(resolved.errorMessage)
+        XCTAssertTrue(resolved.requiresConfirmation)
 
-        let prefixed = resolveDeviceAuthorizationInput(
-            rawInput: "prefix:\(code)",
-            ownerNpub: ownerNpub,
-            ownerPublicKeyHex: normalizePeerInput(input: ownerNpub)
-        )
+        let prefixed = resolveDeviceAuthorizationInput(rawInput: "prefix:\(code)")
         XCTAssertEqual(prefixed.deviceInput, "")
         XCTAssertEqual(prefixed.errorMessage, "Not a valid link code.")
     }
 
-    func testResolveDeviceAuthorizationInputAcceptsPlainDeviceKey() {
-        let ownerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
+    func testResolveDeviceAuthorizationInputRejectsPlainDeviceKey() {
         let device = "npub1p34efzmkewwdsksmpp2r0tk7quke9jcfdz2zl7ezk8wnsj43uz2s8x5sp4"
 
-        let resolved = resolveDeviceAuthorizationInput(
-            rawInput: device,
-            ownerNpub: ownerNpub,
-            ownerPublicKeyHex: normalizePeerInput(input: ownerNpub)
-        )
+        let resolved = resolveDeviceAuthorizationInput(rawInput: device)
 
-        XCTAssertEqual(resolved.deviceInput, normalizePeerInput(input: device))
-        XCTAssertNil(resolved.errorMessage)
+        XCTAssertEqual(resolved.deviceInput, "")
+        XCTAssertEqual(resolved.errorMessage, "Not a valid link code.")
     }
 
     func testKeychainSecretStoreRoundTrip() throws {
