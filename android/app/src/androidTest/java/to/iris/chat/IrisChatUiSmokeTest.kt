@@ -2,7 +2,6 @@ package to.iris.chat
 
 import android.Manifest
 import android.os.Build
-import android.util.Base64
 import android.view.KeyEvent as AndroidKeyEvent
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.ui.input.key.KeyEvent
@@ -157,7 +156,7 @@ class IrisChatUiSmokeTest {
     }
 
     @Test
-    fun manage_devices_plain_device_key_authorizes_on_paste() {
+    fun manage_devices_plain_device_key_is_rejected_on_paste() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
         composeRule.openSettingsPage("settingsDevicesRow")
@@ -167,16 +166,15 @@ class IrisChatUiSmokeTest {
             .performTextInput(SECONDARY_DEVICE_NPUB)
         composeRule.onAllNodesWithTag("deviceRosterAddButton", useUnmergedTree = true)
             .assertCountEquals(0)
-        composeRule.waitUntil(20_000) {
-            val roster =
-                (composeRule.activity.application as IrisChatApp)
-                    .container
-                    .appManager
-                    .state
-                    .value
-                    .deviceRoster
-            roster?.devices?.any { it.deviceNpub == SECONDARY_DEVICE_NPUB && it.isAuthorized } == true
-        }
+        composeRule.waitForDisplayedText("Not a valid link code.")
+        val roster =
+            (composeRule.activity.application as IrisChatApp)
+                .container
+                .appManager
+                .state
+                .value
+                .deviceRoster
+        assertFalse(roster?.devices?.any { it.deviceNpub == SECONDARY_DEVICE_NPUB && it.isAuthorized } == true)
     }
 
     @Test
@@ -202,7 +200,7 @@ class IrisChatUiSmokeTest {
         composeRule.waitForTag("deviceRosterOwnerNpub")
         composeRule.runOnUiThread {
             QrScannerTestOverrides.nextScannedValue =
-                compactDeviceApprovalCode()
+                DEVICE_APPROVAL_BOOTSTRAP
         }
         composeRule.onNodeWithTag("deviceRosterScanButton", useUnmergedTree = true).performClick()
         composeRule.waitForTag("deviceRosterConfirmAdd")
@@ -566,20 +564,11 @@ class IrisChatUiSmokeTest {
         private const val INVALID_COMPLETE_OWNER_NSEC =
             "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
         private const val SECONDARY_DEVICE_NPUB =
-            "npub1p34efzmkewwdsksmpp2r0tk7quke9jcfdz2zl7ezk8wnsj43uz2s8x5sp4"
-        private const val SECONDARY_DEVICE_HEX =
-            "0c6b948b76cb9cd85a1b085437aede072d92cb0968942ffb22b1dd384ab1e095"
+            "npub1nwr566tjlnwafgt0wj6qa3g5uhujz46mkeuaw486pm34w8caw0gqdl8ty4"
 
-        private fun compactDeviceApprovalCode(): String {
-            val requestSecretKeyHex = "1".repeat(64)
-            val metadata =
-                Base64.encodeToString(
-                    """{"v":1,"requestedAt":41,"deviceLabel":"Pixel test device","clientLabel":"Iris Chat Android"}"""
-                        .toByteArray(Charsets.UTF_8),
-                    Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP,
-                )
-            return "$SECONDARY_DEVICE_HEX.$requestSecretKeyHex.$metadata"
-        }
+        // Generated through nostr-identity 0.3 with a distinct request key and a 32-byte secret.
+        private const val DEVICE_APPROVAL_BOOTSTRAP =
+            "nostr-identity://device-approval/eyJkZXZpY2VBcHBLZXlOcHViIjoibnB1YjFud3I1NjZ0amxud2FmZ3Qwd2o2cWEzZzV1aHVqejQ2bWtldWF3NDg2cG0zNHc4Y2F3MGdxZGw4dHk0IiwicmVxdWVzdE5wdWIiOiJucHViMW5uNG5jcjNkdzZzcWtmcDN5YzBnZmxyNjBkcDN4YWhmajN3dDU2bGozazNxZWFyanVuNnN0ZXl6dHkiLCJyZXF1ZXN0U2VjcmV0IjoibEJycjBvWFFSNS1Ecm9sU2Q0TmxMT2h0WWFwVVBFMjBnd1lDdVRYSDVoTSIsImxhYmVsIjoiUGl4ZWwgdGVzdCJ9"
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.ensureChatList() {
