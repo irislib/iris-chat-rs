@@ -54,10 +54,7 @@ fn owner_card(_roster: &DeviceRosterSnapshot) -> gtk::Widget {
     group.upcast()
 }
 
-fn authorize_card(
-    state: &AppState,
-    manager: &Rc<AppManager>,
-) -> gtk::Widget {
+fn authorize_card(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let group = adw::PreferencesGroup::builder()
         .title("Link another device")
         .description("Scan the code from the device you want to link, or paste it.")
