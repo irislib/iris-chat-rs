@@ -107,11 +107,6 @@ fn classify_group_pairwise_payload(payload: &[u8]) -> anyhow::Result<(bool, bool
     Ok((true, supported))
 }
 
-fn sort_dedup_protocol_pubkeys(pubkeys: &mut Vec<PublicKey>) {
-    pubkeys.sort_by_key(|pubkey| pubkey.to_hex());
-    pubkeys.dedup();
-}
-
 fn pending_retry_delay_secs(created_at_secs: u64, now: NdrUnixSeconds) -> u64 {
     let age_secs = now.get().saturating_sub(created_at_secs);
     match age_secs {

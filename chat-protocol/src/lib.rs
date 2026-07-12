@@ -4,7 +4,7 @@ mod protocol_engine;
 mod storage;
 
 use nostr::UnsignedEvent;
-use nostr::{Event, Filter, Keys, Kind, PublicKey, Timestamp};
+use nostr::{Event, Keys, Kind, PublicKey, Timestamp};
 use nostr_double_ratchet::{
     group_sender_key_message_event, invite_response_event, is_group_roster_fact_event,
     parse_group_roster_fact_event, parse_group_sender_key_message_event,
@@ -55,7 +55,6 @@ pub use storage::{
     StorageAdapter, StorageError, StorageResult,
 };
 
-const DEVICE_INVITE_DISCOVERY_LIMIT: usize = 256;
 const GROUP_ROSTER_FACT_EVENT_HISTORY_LIMIT: usize = 256;
 pub const PROTOCOL_SENDER_KEY_REPAIR_RETRY_DELAYS_SECS: [u64; 5] = [10, 30, 60, 60, 60];
 

@@ -8,7 +8,7 @@ include!("protocol_engine/roster_helpers.rs");
 include!("protocol_engine/engine_incoming_retry.rs");
 include!("protocol_engine/engine_resolution.rs");
 include!("protocol_engine/engine_sender_key_repair.rs");
-include!("protocol_engine/engine_queue_filters.rs");
+include!("protocol_engine/engine_persistence.rs");
 include!("protocol_engine/free_functions.rs");
 
 #[cfg(test)]
@@ -19,47 +19,6 @@ mod tests {
         let storage = Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
         ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), device)
             .expect("protocol engine")
-    }
-
-    #[test]
-    fn protocol_discovery_effects_fetch_device_roster_facts_and_invites_for_owner() {
-        let owner = Keys::generate();
-        let device = Keys::generate();
-        let peer = Keys::generate();
-        let engine = test_engine(&owner, &device);
-
-        let effects = engine.protocol_discovery_effects_for_owners(
-            [peer.public_key()],
-            UnixSeconds(1_777_159_500),
-            "test_discovery",
-        );
-
-        let filters = effects
-            .into_iter()
-            .flat_map(|effect| match effect {
-                ProtocolEffect::FetchProtocolState { filters, .. } => filters,
-                ProtocolEffect::Publish(_) => Vec::new(),
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(filters.len(), 2);
-        assert!(has_filter_with_kind_author(
-            &filters,
-            APP_KEYS_EVENT_KIND,
-            peer.public_key()
-        ));
-        assert!(has_filter_with_kind_author(
-            &filters,
-            INVITE_EVENT_KIND,
-            peer.public_key()
-        ));
-        for filter in &filters {
-            let value = serde_json::to_value(filter).expect("filter json");
-            assert!(
-                value.get("since").is_none(),
-                "protocol discovery snapshots must not be time bounded"
-            );
-        }
     }
 
     #[test]
@@ -133,27 +92,9 @@ mod tests {
             Some("group-roster-fact-local-sibling")
         );
         assert!(
-            result
-                .retry_batch
-                .group_result
-                .queued_targets
-                .contains(&owner.public_key().to_hex()),
-            "installed public roster facts should queue local-sibling protocol sync"
+            engine.has_pending_retry_work(),
+            "installed public roster facts should leave local-sibling sync as pending state when no local-sibling session is available"
         );
-        assert!(result
-            .retry_batch
-            .group_result
-            .effects
-            .iter()
-            .any(|effect| {
-                matches!(
-                    effect,
-                    ProtocolEffect::FetchProtocolState {
-                        reason: "group_local_sibling_sync",
-                        ..
-                    }
-                )
-            }));
     }
 
     #[test]
@@ -234,30 +175,55 @@ mod tests {
         assert_eq!(installed.revision, 1);
     }
 
-    fn has_filter_with_kind_author(filters: &[Filter], kind: u32, author: PublicKey) -> bool {
-        let author_hex = author.to_hex();
-        filters
-            .iter()
-            .map(|filter| serde_json::to_value(filter).expect("filter json"))
-            .any(|filter| {
-                let has_kind = filter
-                    .get("kinds")
-                    .and_then(|kinds| kinds.as_array())
-                    .is_some_and(|kinds| {
-                        kinds
-                            .iter()
-                            .any(|value| value.as_u64() == Some(kind as u64))
-                    });
-                let has_author = filter
-                    .get("authors")
-                    .and_then(|authors| authors.as_array())
-                    .is_some_and(|authors| {
-                        authors
-                            .iter()
-                            .any(|value| value.as_str() == Some(author_hex.as_str()))
-                    });
-                has_kind && has_author
-            })
+    #[test]
+    fn deferred_sender_key_repair_response_is_throttled() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let requester = Keys::generate();
+        let mut engine = test_engine(&owner, &device);
+        let created = engine
+            .create_group(
+                "Deferred repair response".to_string(),
+                vec![requester.public_key()],
+                UnixSeconds(100),
+            )
+            .expect("create group");
+        let group = created.snapshot.expect("created group snapshot");
+        engine.pending_group_fanouts.clear();
+
+        let request = SenderKeyRepairRequest {
+            group_id: group.group_id,
+            sender_event_pubkey: ndr_device(Keys::generate().public_key()),
+            key_id: None,
+            message_number: None,
+            required_revision: Some(group.revision),
+            created_at: NdrUnixSeconds(101),
+        };
+        let requester_owner = ndr_owner(requester.public_key());
+
+        let first = engine
+            .sender_key_repair_response_effects(requester_owner, &request, NdrUnixSeconds(102))
+            .expect("prepare first repair response");
+        assert!(
+            first.is_empty(),
+            "response must wait for a pairwise session"
+        );
+        assert_eq!(engine.pending_group_fanouts.len(), 1);
+        assert_eq!(engine.answered_group_sender_key_repairs.len(), 1);
+
+        let pending_fanouts = engine.pending_group_fanouts.clone();
+        let answered_repairs = engine.answered_group_sender_key_repairs.clone();
+        let sessions = engine.session_manager.snapshot();
+        let groups = engine.group_manager.snapshot();
+
+        let duplicate = engine
+            .sender_key_repair_response_effects(requester_owner, &request, NdrUnixSeconds(103))
+            .expect("process duplicate repair request");
+        assert!(duplicate.is_empty());
+        assert_eq!(engine.pending_group_fanouts, pending_fanouts);
+        assert_eq!(engine.answered_group_sender_key_repairs, answered_repairs);
+        assert_eq!(engine.session_manager.snapshot(), sessions);
+        assert_eq!(engine.group_manager.snapshot(), groups);
     }
 
     fn group_snapshot_for_test(

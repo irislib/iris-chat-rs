@@ -35,14 +35,8 @@ impl ProtocolEngine {
         };
         if applied {
             match self.sync_group_to_local_siblings(&snapshot) {
-                Ok((effects, queued_targets)) => {
+                Ok(effects) => {
                     retry_batch.group_result.effects.extend(effects);
-                    retry_batch
-                        .group_result
-                        .queued_targets
-                        .extend(queued_targets);
-                    retry_batch.group_result.queued_targets.sort();
-                    retry_batch.group_result.queued_targets.dedup();
                 }
                 Err(error) => {
                     self.restore_checkpoint(checkpoint);

@@ -35,8 +35,6 @@ struct ProtocolEnginePersistedState {
     group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
     #[serde(default)]
     subscription_generation: u64,
-    #[serde(default)]
-    last_backfill_attempt_secs: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -49,10 +47,6 @@ pub struct ProtocolPublish {
 #[derive(Clone, Debug)]
 pub enum ProtocolEffect {
     Publish(ProtocolPublish),
-    FetchProtocolState {
-        filters: Vec<Filter>,
-        reason: &'static str,
-    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -176,14 +170,12 @@ pub struct ProtocolGroupSendResult {
     pub message_id: Option<String>,
     pub event_ids: Vec<String>,
     pub effects: Vec<ProtocolEffect>,
-    pub queued_targets: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct ProtocolGroupIncomingResult {
     pub events: Vec<GroupIncomingEvent>,
     pub effects: Vec<ProtocolEffect>,
-    pub queued_targets: Vec<String>,
     pub consumed: bool,
     pub pending: bool,
 }
@@ -199,7 +191,6 @@ impl ProtocolRetryBatch {
     pub fn is_empty(&self) -> bool {
         self.group_result.events.is_empty()
             && self.group_result.effects.is_empty()
-            && self.group_result.queued_targets.is_empty()
             && self.direct_messages.is_empty()
             && self.effects.is_empty()
     }
@@ -328,7 +319,6 @@ pub struct ProtocolEngineDebugSnapshot {
     #[serde(default)]
     pub pending_group_fanout_targets: Vec<String>,
     pub subscription_generation: u64,
-    pub last_backfill_attempt_secs: u64,
 }
 
 #[allow(dead_code)]
@@ -360,7 +350,6 @@ pub struct ProtocolEngine {
     known_message_author_cache_build_count: std::cell::Cell<u64>,
     local_app_keys_observed: bool,
     subscription_generation: u64,
-    last_backfill_attempt_secs: u64,
     /// While > 0, `persist()` only flips `batch_persist_dirty` instead of
     /// serializing+writing. AppCore wraps catch-up bursts and other
     /// multi-event entry points so an N-event burst issues one persist
@@ -387,5 +376,4 @@ struct ProtocolEngineCheckpoint {
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
     subscription_generation: u64,
-    last_backfill_attempt_secs: u64,
 }

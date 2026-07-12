@@ -1,16 +1,6 @@
 use super::protocol::PROTOCOL_RECONNECT_CHECK_SECS;
 use super::*;
 
-fn coalesce_protocol_fetch_effects(effects: &mut Vec<ProtocolEffect>) {
-    let mut seen = HashSet::new();
-    effects.retain(|effect| match effect {
-        ProtocolEffect::FetchProtocolState { filters, reason } => {
-            seen.insert(format!("{reason}:{filters:?}"))
-        }
-        _ => true,
-    });
-}
-
 impl AppCore {
     pub(super) fn handle_relay_event(&mut self, event: Event) {
         self.handle_relay_event_with_channel(event, "message servers");
@@ -218,18 +208,11 @@ impl AppCore {
                     if group_result.consumed
                         || !group_result.events.is_empty()
                         || !group_result.effects.is_empty()
-                        || !group_result.queued_targets.is_empty()
                     {
                         self.debug_event_counters.group_events += 1;
                         let should_remember_group_event = group_result.consumed
                             || !group_result.events.is_empty()
                             || !group_result.effects.is_empty();
-                        if !group_result.queued_targets.is_empty() {
-                            self.handle_queued_protocol_targets(
-                                "group.outer",
-                                &group_result.queued_targets,
-                            );
-                        }
                         for group_event in group_result.events {
                             self.apply_group_decrypted_event(group_event);
                         }
@@ -342,31 +325,7 @@ impl AppCore {
                             "appcore.protocol.message.pending",
                             format!("event_id={event_id} author={}", event.pubkey),
                         );
-                        let (queued_targets, effects) = self
-                            .protocol_engine
-                            .as_ref()
-                            .map(|engine| {
-                                engine.queued_protocol_backfill_effects(
-                                    NdrUnixSeconds(unix_now().get()),
-                                    "direct_message.pending",
-                                )
-                            })
-                            .unwrap_or_default();
-                        self.process_protocol_engine_effects(effects);
-                        if queued_targets.is_empty() {
-                            self.request_protocol_subscription_refresh();
-                            self.schedule_protocol_subscription_liveness_check(
-                                Duration::from_secs(PROTOCOL_RECONNECT_CHECK_SECS),
-                            );
-                        } else {
-                            self.handle_queued_protocol_targets(
-                                "direct_message.pending",
-                                &queued_targets,
-                            );
-                        }
-                        if queued_targets.is_empty() && self.fetch_recent_protocol_state() {
-                            self.state.busy.syncing_network = true;
-                        }
+                        self.request_protocol_subscription_refresh();
                         self.schedule_fast_protocol_retry_if_pending();
                     }
                     Err(error) => {
@@ -387,10 +346,7 @@ impl AppCore {
         self.remember_event(event_id);
         if protocol_inputs_changed {
             self.request_protocol_subscription_refresh();
-            if self.fetch_recent_protocol_state() {
-                self.state.busy.syncing_network = true;
-            }
-            self.schedule_tracked_peer_catch_up(Duration::from_secs(2));
+            self.schedule_fast_protocol_retry_if_pending();
         }
         self.persist_best_effort();
         self.rebuild_state();
@@ -647,15 +603,11 @@ impl AppCore {
         true
     }
 
-    pub(super) fn process_protocol_engine_effects(&mut self, mut effects: Vec<ProtocolEffect>) {
-        coalesce_protocol_fetch_effects(&mut effects);
+    pub(super) fn process_protocol_engine_effects(&mut self, effects: Vec<ProtocolEffect>) {
         for effect in effects {
             match effect {
                 ProtocolEffect::Publish(publish) => {
                     self.publish_protocol_event(publish);
-                }
-                ProtocolEffect::FetchProtocolState { filters, reason } => {
-                    self.fetch_protocol_state_for_filters(filters, reason);
                 }
             }
         }

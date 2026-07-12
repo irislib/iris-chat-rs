@@ -175,12 +175,7 @@ fn group_fanout_retry_missing_roster_does_not_rewrite_persisted_state() {
             UnixSeconds(3),
         )
         .expect("create group");
-    assert!(
-        create
-            .queued_targets
-            .contains(&peer_owner.public_key().to_hex()),
-        "test needs a queued fanout for a peer with no roster"
-    );
+    assert!(create.effects.is_empty());
     assert!(
         engine.debug_snapshot().pending_group_fanout_count > 0,
         "test must exercise durable pending group fanout retry"
@@ -218,10 +213,8 @@ fn group_fanout_retry_missing_roster_does_not_rewrite_persisted_state() {
         .expect("retry missing group roster");
 
     assert!(
-        batch
-            .group_result
-            .queued_targets
-            .contains(&peer_owner.public_key().to_hex())
+        batch.is_empty(),
+        "missing-roster group retries should remain pending without fetch/backfill effects"
     );
     assert_eq!(
         storage.put_count(),
@@ -230,9 +223,9 @@ fn group_fanout_retry_missing_roster_does_not_rewrite_persisted_state() {
     );
 
     let generation_after_due = engine.debug_snapshot().subscription_generation;
-    assert!(
-        generation_after_due > generation_before_due,
-        "due group fanout retries should refresh protocol subscriptions once"
+    assert_eq!(
+        generation_after_due, generation_before_due,
+        "missing-roster retries should not advance subscription generation without protocol output"
     );
     let quiet_after_due = storage.put_count();
     let quiet_batch = engine

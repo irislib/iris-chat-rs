@@ -1,11 +1,5 @@
 use super::*;
 
-pub(super) fn normalize_protocol_queued_targets(targets: &mut Vec<String>) {
-    targets.retain(|target| !target.is_empty());
-    targets.sort();
-    targets.dedup();
-}
-
 pub(super) struct ProtocolSubscriptionApplyOutput {
     pub(super) connected_before: u64,
     pub(super) connected_after: u64,

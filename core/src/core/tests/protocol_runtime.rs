@@ -1683,16 +1683,41 @@ fn stale_debug_snapshot_write_completion_is_ignored() {
 }
 
 #[test]
-fn liveness_retries_protocol_backfill_for_tracked_peer_missing_appkeys_when_connected() {
+fn liveness_replays_retained_appkeys_for_tracked_peer() {
     let owner = Keys::generate();
     let device = Keys::generate();
-    let peer = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
     let relay = crate::local_relay::TestRelay::start();
     let mut core = logged_in_test_core("tracked-peer-liveness-backfill", &owner, &device);
 
     let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
+    let peer_app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]);
+    let app_keys_event = peer_app_keys
+        .get_event_at(peer_owner.public_key(), 1)
+        .sign_with_keys(&peer_owner)
+        .expect("signed peer AppKeys");
+    let app_keys_event_id = app_keys_event.id;
+    let app_keys_event_id_hex = app_keys_event_id.to_hex();
+    let publisher = Client::new(peer_owner.clone());
+    core.runtime.block_on(async {
+        ensure_session_relays_configured(&publisher, &relay_urls).await;
+        connect_client_with_timeout(&publisher, Duration::from_secs(2)).await;
+        publisher
+            .send_event(&app_keys_event)
+            .await
+            .expect("publish retained peer AppKeys");
+    });
+    assert!(
+        relay.events().iter().any(|event| {
+            event.get("id").and_then(|value| value.as_str())
+                == Some(app_keys_event_id_hex.as_str())
+        }),
+        "peer AppKeys must be retained before the core subscribes"
+    );
+
     core.preferences.nostr_relay_urls = vec![relay.url().to_string()];
-    {
+    let mut notifications = {
         let logged_in = core.logged_in.as_mut().expect("logged in");
         logged_in.relay_urls = relay_urls.clone();
         let client = logged_in.client.clone();
@@ -1714,24 +1739,87 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_missing_appkeys_when_conn
             }
         });
         assert!(connected > 0, "test relay must be connected");
-    }
+        client.notifications()
+    };
 
-    core.active_chat_id = Some(peer.public_key().to_hex());
-    core.request_protocol_subscription_refresh_forced();
+    let mut plan = protocol_plan_for_test(Vec::new(), Vec::new());
+    plan.roster_authors = vec![peer_owner.public_key().to_hex()];
+    let filters = build_protocol_subscription_filters(&plan);
+    let app_keys_filter = filters
+        .iter()
+        .map(|filter| serde_json::to_value(filter).expect("AppKeys filter json"))
+        .find(|filter| {
+            filter
+                .get("kinds")
+                .and_then(|kinds| kinds.as_array())
+                .is_some_and(|kinds| {
+                    kinds
+                        .iter()
+                        .any(|kind| kind.as_u64() == Some(APP_KEYS_EVENT_KIND as u64))
+                })
+        })
+        .expect("AppKeys subscription filter");
     assert!(
-        core.protocol_subscription_runtime.desired_plan.is_some(),
-        "tracked peer setup should create runtime protocol subscriptions"
+        app_keys_filter.get("since").is_none(),
+        "AppKeys subscription replay must remain unbounded"
+    );
+    core.protocol_subscription_runtime.desired_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.applied_plan = Some(plan);
+    core.refresh_relay_connection_status();
+    assert!(
+        core.relay_connected_count > 0,
+        "core must observe the connected relay before liveness reconciliation"
     );
 
     core.debug_log.clear();
     let token = core.protocol_liveness_token;
     core.handle_protocol_subscription_liveness_check(token);
+    assert!(core.protocol_subscription_runtime.refresh_in_flight);
+
+    let retained = core.runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match notifications.recv().await {
+                    Ok(RelayPoolNotification::Event { event, .. })
+                        if event.id == app_keys_event_id =>
+                    {
+                        break (*event).clone();
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(error) => panic!("relay notifications closed: {error}"),
+                }
+            }
+        })
+        .await
+        .expect("retained AppKeys subscription replay")
+    });
+    core.handle_relay_event(retained);
+
+    let known = core
+        .app_keys
+        .get(&peer_owner.public_key().to_hex())
+        .expect("peer AppKeys cached after subscription replay");
+    assert!(known.devices.iter().any(|device| {
+        device.identity_pubkey_hex == peer_device.public_key().to_hex()
+    }));
+    assert!(
+        core.protocol_engine
+            .as_ref()
+            .expect("protocol engine")
+            .has_device_roster_entry_for_owner(
+                peer_owner.public_key(),
+                peer_device.public_key()
+            ),
+        "subscription replay must install the peer roster in ProtocolEngine"
+    );
 
     assert!(
-        core.debug_log
+        !core
+            .debug_log
             .iter()
             .any(|entry| entry.category == "protocol.catch_up.fetch"),
-        "connected-relay liveness must still backfill tracked peers with missing AppKeys"
+        "connected-relay liveness must not procedural-fetch tracked peers with missing AppKeys"
     );
 }
 
@@ -1854,37 +1942,6 @@ fn protocol_state_fetch_is_single_flight() {
             .iter()
             .any(|entry| entry.category == "protocol.catch_up.skip"),
         "skipped duplicate fetch should be visible in debug output"
-    );
-}
-
-#[test]
-fn targeted_protocol_fetch_is_single_flight() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let peer = Keys::generate();
-    let mut core = logged_in_test_core("targeted-protocol-fetch-single-flight", &owner, &device);
-
-    core.protocol_subscription_runtime.protocol_fetch_in_flight = true;
-    core.debug_log.clear();
-
-    let filters = vec![Filter::new()
-        .author(peer.public_key())
-        .kind(Kind::Custom(APP_KEYS_EVENT_KIND as u16))];
-    assert!(
-        !core.fetch_protocol_state_for_filters(filters, "test"),
-        "existing protocol fetch should block duplicate targeted engine fetch"
-    );
-    assert!(
-        core.debug_log
-            .iter()
-            .any(|entry| entry.category == "protocol.engine_fetch.skip"),
-        "skipped targeted fetch should be visible in debug output"
-    );
-    assert!(
-        core.protocol_subscription_runtime
-            .tracked_peer_catch_up_due_at
-            .is_some(),
-        "skipped targeted fetch should schedule a coalesced retry"
     );
 }
 
@@ -2039,10 +2096,11 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_sessio
     core.handle_protocol_subscription_liveness_check(token);
 
     assert!(
-        core.debug_log
+        !core
+            .debug_log
             .iter()
             .any(|entry| entry.category == "protocol.catch_up.fetch"),
-        "connected-relay liveness must backfill tracked peers that have AppKeys but no session authors"
+        "connected-relay liveness must not procedural-fetch tracked peers that have AppKeys but no session authors"
     );
 }
 
@@ -2218,8 +2276,8 @@ fn pending_inbound_direct_message_schedules_fast_liveness_retry() {
             .map(|offset| start + offset)
             .unwrap_or(relay_source.len())];
     assert!(
-        body.contains("schedule_protocol_subscription_liveness_check")
-            && body.contains("PROTOCOL_RECONNECT_CHECK_SECS"),
+        body.contains("request_protocol_subscription_refresh()")
+            && body.contains("schedule_fast_protocol_retry_if_pending()"),
         "pending inbound direct events must schedule a fast protocol retry instead of waiting for restart/foreground"
     );
 }
@@ -2246,7 +2304,8 @@ fn liveness_retries_pending_inbound_direct_events() {
     assert!(
         retry_helpers_source.contains("has_pending_retry_work()")
             && body.contains("pending_protocol_retry_needed")
-            && body.contains("should_retry_backfill || pending_protocol_retry_needed"),
+            && body.contains("if pending_protocol_retry_needed")
+            && body.contains("self.retry_protocol_engine_pending_work(\"liveness_check\")"),
         "protocol liveness must retry durable pending protocol work even when tracked-peer backfill appears complete"
     );
 }
@@ -2265,31 +2324,22 @@ fn pending_inbound_liveness_does_not_force_global_message_backfill() {
             .find("\n    pub(super) fn reconcile_protocol_subscriptions")
             .map(|offset| start + offset)
             .unwrap_or(protocol_source.len())];
-    let tracked_message_condition = body
-        .split("let should_fetch_tracked_peer_messages")
-        .nth(1)
-        .unwrap_or_default()
-        .split(';')
-        .next()
-        .unwrap_or_default();
-
     assert!(
         body.contains("pending_protocol_retry_needed")
-            && body.contains("|| pending_protocol_retry_needed"),
+            && body.contains("if pending_protocol_retry_needed"),
         "pending inbound direct events must still wake protocol-state retry"
     );
     assert!(
-        !tracked_message_condition.contains("pending_protocol_retry_needed"),
+        !body.contains("let should_fetch_tracked_peer_messages"),
         "pending inbound retry alone must not trigger global tracked-peer message history fetches"
     );
     assert!(
-        !tracked_message_condition.contains("tracked_peer_backfill_needed"),
+        !body.contains("tracked_peer_backfill_needed"),
         "queued protocol-state retry alone must not trigger global tracked-peer message history fetches"
     );
     assert!(
-        body.contains("&& should_fetch_tracked_peer_messages")
-            && body.contains("self.fetch_recent_messages_for_tracked_peers();"),
-        "tracked-peer message backfill should be explicitly gated"
+        !body.contains("self.fetch_recent_messages_for_tracked_peers();"),
+        "protocol liveness must not perform procedural tracked-peer message backfill"
     );
 }
 
@@ -2334,7 +2384,7 @@ fn read_protocol_engine_source() -> String {
         "chat-protocol/src/protocol_engine/engine_incoming_retry.rs",
         "chat-protocol/src/protocol_engine/engine_resolution.rs",
         "chat-protocol/src/protocol_engine/engine_sender_key_repair.rs",
-        "chat-protocol/src/protocol_engine/engine_queue_filters.rs",
+        "chat-protocol/src/protocol_engine/engine_persistence.rs",
         "chat-protocol/src/protocol_engine/free_functions.rs",
     ]
     .into_iter()

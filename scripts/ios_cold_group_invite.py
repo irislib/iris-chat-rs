@@ -14,6 +14,7 @@ from mobile_scenario import Scenario
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="iOS cold group invite E2E.")
+    parser.set_defaults(relay_mode="local", public_relays="")
     parser.add_argument("--artifact-dir", type=Path)
     parser.add_argument("--skip-build", action="store_true", help="Reuse installed iOS harness artifacts. Requires matching local relay URL.")
     parser.add_argument("--keep-devices-open", action="store_true")
