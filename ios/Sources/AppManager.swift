@@ -515,6 +515,11 @@ enum AppPaths {
     }
 
     static func dataDir(fileManager: FileManager, environment: [String: String]) -> URL {
+        if testRunId(environment: environment) != nil,
+           let explicit = environment["IRIS_UI_TEST_DATA_DIR"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !explicit.isEmpty {
+            return URL(fileURLWithPath: explicit, isDirectory: true)
+        }
         let suffix = testRunId(environment: environment) ?? "iris-chat"
         let legacyBase = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let legacy = legacyBase.appendingPathComponent(suffix, isDirectory: true)

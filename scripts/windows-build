@@ -38,6 +38,7 @@ commands:
   windows-gen-cs     Generate C# bindings on the Windows host via uniffi-bindgen-cs
   windows-dotnet     Run dotnet publish for the WPF C# app
   windows-build      Full pipeline: sync, rust, bindings, dotnet publish
+  windows-idle-cpu   Build, seed direct/group chats, and gate idle app CPU
   windows-installer  Build a Release publish + NSIS x86_64 setup .exe
   windows-zip        Zip the latest Release publish directory into dist/windows
   windows-run        Launch the freshly built .exe on the Windows host
@@ -583,6 +584,23 @@ PS
 )"
 }
 
+run_idle_cpu_gate() {
+  run_full_build
+  local vm
+  vm="$(detect_vm_name)"
+  local guest_repo
+  guest_repo="$(guest_repo_expr)"
+  ps_run "$vm" "$(cat <<PS
+\$ErrorActionPreference = 'Stop'
+$(path_setup_block)
+\$gate = Join-Path $guest_repo 'scripts\\idle-cpu-platform-gate-windows.ps1'
+if (-not (Test-Path \$gate)) { throw \"Missing \$gate\" }
+& \$gate
+if (\$LASTEXITCODE -ne 0) { throw \"Windows idle CPU gate failed (\$LASTEXITCODE)\" }
+PS
+)"
+}
+
 run_setup() {
   require_macos
   local vm
@@ -774,6 +792,7 @@ case "${1:-}" in
   windows-gen-cs) run_gen_cs ;;
   windows-dotnet) run_dotnet ;;
   windows-build) run_full_build ;;
+  windows-idle-cpu) run_idle_cpu_gate ;;
   windows-installer) run_installer ;;
   windows-zip) run_zip ;;
   windows-run) run_app ;;

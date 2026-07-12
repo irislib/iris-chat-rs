@@ -154,13 +154,18 @@ final class MacUserNotificationDelegate: NSObject, UNUserNotificationCenterDeleg
 }
 
 final class SingleInstanceCoordinator: NSObject {
-    private let notificationName = Notification.Name("to.iris.chat.macos.open")
+    private let isolatedRunID = ProcessInfo.processInfo.environment["IRIS_UI_TEST_RUN_ID"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    private lazy var notificationName = Notification.Name(
+        isolatedRunID.flatMap { $0.isEmpty ? nil : "to.iris.chat.macos.open.\(Self.lockSuffix($0))" }
+            ?? "to.iris.chat.macos.open"
+    )
     private var lockFds: [Int32] = []
     var onOpen: (([URL]) -> Void)?
 
     func claimOrNotifyCurrentLaunch() -> Bool {
         var acquiredFds: [Int32] = []
-        for lockPath in Self.lockFilePaths() {
+        for lockPath in Self.lockFilePaths(isolatedRunID: isolatedRunID) {
             let fd = open(lockPath, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
             guard fd >= 0 else {
                 continue
@@ -176,7 +181,7 @@ final class SingleInstanceCoordinator: NSObject {
             return false
         }
 
-        if acquiredFds.isEmpty {
+        if acquiredFds.isEmpty && isolatedRunID?.isEmpty != false {
             if Self.activateRunningCopy() {
                 notifyCurrentLaunch()
                 return false
@@ -214,7 +219,11 @@ final class SingleInstanceCoordinator: NSObject {
         )
     }
 
-    private static func lockFilePaths() -> [String] {
+    private static func lockFilePaths(isolatedRunID: String?) -> [String] {
+        if let isolatedRunID, !isolatedRunID.isEmpty {
+            let suffix = lockSuffix(isolatedRunID)
+            return ["/tmp/to.iris.chat.gui.\(getuid()).\(suffix).lock"]
+        }
         var paths = ["/tmp/to.iris.chat.gui.\(getuid()).lock"]
         if let dir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
@@ -224,6 +233,12 @@ final class SingleInstanceCoordinator: NSObject {
             paths.append(dir.appendingPathComponent("IrisChatMac.lock").path)
         }
         return paths
+    }
+
+    private static func lockSuffix(_ value: String) -> String {
+        String(value.unicodeScalars.map { scalar in
+            CharacterSet.alphanumerics.contains(scalar) ? Character(String(scalar)) : "-"
+        }.prefix(80))
     }
 
     private static func release(fds: [Int32]) {

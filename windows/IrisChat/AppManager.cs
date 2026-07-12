@@ -66,10 +66,10 @@ public sealed partial class AppManager : INotifyPropertyChanged
     private PendingNavigationOverride? _pendingNavigationOverride;
     private string? _lastSyncedDeviceLabelsKey;
 
-    public AppManager(string dataDir, IDesktopNotificationPoster? notifier = null)
+    public AppManager(string dataDir, IDesktopNotificationPoster? notifier = null, string? testSecretPath = null)
     {
         _dataDir = dataDir;
-        _secretStore = new WindowsCredentialStore();
+        _secretStore = new WindowsCredentialStore(filePath: testSecretPath);
         _notifier = notifier ?? new SystemDesktopNotificationPoster();
         _cache = new HashtreeAttachmentCache(dataDir);
         _ui = Application.Current.Dispatcher;

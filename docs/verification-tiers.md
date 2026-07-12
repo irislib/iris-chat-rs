@@ -19,6 +19,14 @@ by default; set `IRIS_VERIFY_FULL_RELIABILITY=0` only for a deliberately smaller
 release investigation. Set `IRIS_VERIFY_FULL_MACOS_VM=1` to add the macOS VM
 public-relay prerelease journey.
 
+The full release gate includes idle CPU checks for the macOS, iOS, Android,
+Linux, and Windows app shells when their configured runners are available. Each
+lane uses an isolated logged-in account with at least one direct chat and one
+group chat, settles for 30 seconds, samples for 60 seconds, and blocks above 5%
+of one core. Results are stored under `artifacts/idle-cpu/`. Set
+`IRIS_TEST_GATE_IDLE_CPU=0` only when intentionally excluding this release
+criterion.
+
 Configure `IRIS_WINDOWS_SSH_HOST` explicitly. Local allocations use:
 
 - `IRIS_CHAT_LAB_IOS_SIMULATOR`

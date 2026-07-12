@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -17,14 +18,29 @@ public sealed class WindowsCredentialStore
     );
 
     private readonly string _targetName;
+    private readonly string? _filePath;
 
-    public WindowsCredentialStore(string targetName = "to.iris.chat/stored-account-bundle")
+    public WindowsCredentialStore(
+        string targetName = "to.iris.chat/stored-account-bundle",
+        string? filePath = null)
     {
         _targetName = targetName;
+        _filePath = filePath;
     }
 
     public StoredAccountBundle? Load()
     {
+        if (_filePath is not null)
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<StoredAccountBundle>(File.ReadAllText(_filePath));
+            }
+            catch
+            {
+                return null;
+            }
+        }
         if (!CredRead(_targetName, CRED_TYPE_GENERIC, 0, out var credPtr))
         {
             return null;
@@ -56,6 +72,14 @@ public sealed class WindowsCredentialStore
     public void Save(StoredAccountBundle bundle)
     {
         var json = JsonSerializer.Serialize(bundle);
+        if (_filePath is not null)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
+            var temporary = _filePath + ".tmp";
+            File.WriteAllText(temporary, json);
+            File.Move(temporary, _filePath, overwrite: true);
+            return;
+        }
         var blob = Encoding.UTF8.GetBytes(json);
         var blobPtr = Marshal.AllocHGlobal(blob.Length);
         try
@@ -85,6 +109,18 @@ public sealed class WindowsCredentialStore
 
     public bool Clear()
     {
+        if (_filePath is not null)
+        {
+            try
+            {
+                File.Delete(_filePath);
+                return !File.Exists(_filePath);
+            }
+            catch
+            {
+                return false;
+            }
+        }
         var deleted = CredDelete(_targetName, CRED_TYPE_GENERIC, 0);
         var error = deleted ? 0 : Marshal.GetLastWin32Error();
         if (!deleted && error != ERROR_NOT_FOUND) return false;

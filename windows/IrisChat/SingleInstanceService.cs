@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -11,28 +12,31 @@ namespace IrisChat;
 
 public sealed class SingleInstanceService : IDisposable
 {
-    private const string MutexName = @"Local\IrisChat.Windows";
-    private const string PipeName = "IrisChat.Windows.Launch";
+    private const string BaseMutexName = @"Local\IrisChat.Windows";
+    private const string BasePipeName = "IrisChat.Windows.Launch";
 
     private readonly Mutex _mutex;
+    private readonly string _pipeName;
     private readonly CancellationTokenSource _shutdown = new();
     private Task? _listener;
 
-    private SingleInstanceService(Mutex mutex)
+    private SingleInstanceService(Mutex mutex, string pipeName)
     {
         _mutex = mutex;
+        _pipeName = pipeName;
     }
 
     public static SingleInstanceService? ClaimOrSignal(string[] args)
     {
-        var mutex = new Mutex(initiallyOwned: true, MutexName, out var ownsMutex);
+        var (mutexName, pipeName) = InstanceNames();
+        var mutex = new Mutex(initiallyOwned: true, mutexName, out var ownsMutex);
         if (ownsMutex)
         {
-            return new SingleInstanceService(mutex);
+            return new SingleInstanceService(mutex, pipeName);
         }
 
         mutex.Dispose();
-        SignalPrimary(args);
+        SignalPrimary(args, pipeName);
         return null;
     }
 
@@ -57,13 +61,22 @@ public sealed class SingleInstanceService : IDisposable
         _mutex.Dispose();
     }
 
-    private static void SignalPrimary(string[] args)
+    private static (string MutexName, string PipeName) InstanceNames()
+    {
+        var testRunId = Environment.GetEnvironmentVariable("IRIS_UI_TEST_RUN_ID")?.Trim();
+        if (string.IsNullOrEmpty(testRunId)) return (BaseMutexName, BasePipeName);
+
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(testRunId)))[..16];
+        return ($@"{BaseMutexName}.{digest}", $"{BasePipeName}.{digest}");
+    }
+
+    private static void SignalPrimary(string[] args, string pipeName)
     {
         for (var attempt = 0; attempt < 8; attempt++)
         {
             try
             {
-                using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out);
+                using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.Out);
                 client.Connect(300);
                 using var writer = new StreamWriter(client, new UTF8Encoding(false));
                 writer.Write(JsonSerializer.Serialize(args));
@@ -83,7 +96,7 @@ public sealed class SingleInstanceService : IDisposable
             try
             {
                 using var server = new NamedPipeServerStream(
-                    PipeName,
+                    _pipeName,
                     PipeDirection.In,
                     maxNumberOfServerInstances: 1,
                     PipeTransmissionMode.Byte,

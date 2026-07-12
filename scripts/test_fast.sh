@@ -39,6 +39,7 @@ parallel_step_start "palette parity" "${ROOT_DIR}/scripts/check-palettes"
 parallel_step_start "brand accent text guard" "${ROOT_DIR}/scripts/check-no-accent-text"
 parallel_step_start "source file size guard" "${ROOT_DIR}/scripts/check-source-file-sizes"
 parallel_step_start "verification tier contract" "${ROOT_DIR}/scripts/check_verification_tiers.sh"
+parallel_step_start "idle CPU gate harness" "${ROOT_DIR}/scripts/test-idle-cpu-gate-harness.sh"
 
 run_step "Rust panic/unwrap lint" "${ROOT_DIR}/scripts/check-rust-panics" || lint_status=$?
 parallel_step_wait || static_status=$?

@@ -92,6 +92,24 @@ cd /path/to/iris-chat-rs-cross-platform
 just qa-interop
 ```
 
+The full release gate also launches each available app shell with an isolated,
+logged-in account containing one direct chat and one group chat. After a
+30-second settle period, average CPU over 60 seconds must stay at or below 5%
+of one core:
+
+```bash
+./scripts/test-release-gate --full
+```
+
+Use `./scripts/test-release-gate --idle-cpu` to run just the available platform
+CPU lanes plus the normal release prerequisites. macOS and iOS run locally on
+macOS, Android uses an online emulator unless `IRIS_ANDROID_SERIAL` explicitly
+authorizes another device, Linux uses Docker on macOS, and Windows uses the
+configured Windows build host. JSON evidence is written below
+`artifacts/idle-cpu/`. Override the limit and timings with
+`IRIS_CHAT_IDLE_CPU_MAX_PERCENT`, `IRIS_CHAT_IDLE_CPU_SETTLE_SECONDS`, and
+`IRIS_CHAT_IDLE_CPU_SAMPLE_SECONDS`.
+
 These scripts do not publish anything. They only verify the build and behavior
 surface before packaging.
 

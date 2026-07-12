@@ -112,8 +112,18 @@ impl AppReconciler for Reconciler {
 
 impl AppManager {
     pub fn new() -> Self {
-        let data_dir = ensure_dir(xdg_data_home().join("iris-chat"));
-        let secrets_dir = ensure_dir(xdg_config_home().join("iris-chat"));
+        let isolated_test_dir = std::env::var_os("IRIS_UI_TEST_RUN_ID")
+            .filter(|value| !value.is_empty())
+            .and_then(|_| std::env::var_os("IRIS_UI_TEST_DATA_DIR"))
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let data_dir = ensure_dir(
+            isolated_test_dir
+                .clone()
+                .unwrap_or_else(|| xdg_data_home().join("iris-chat")),
+        );
+        let secrets_dir =
+            ensure_dir(isolated_test_dir.unwrap_or_else(|| xdg_config_home().join("iris-chat")));
         let secret_store: Arc<dyn SecretStore> = Arc::new(FileSecretStore::new(&secrets_dir));
 
         let ffi = FfiApp::new(

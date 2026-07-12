@@ -75,13 +75,24 @@ public partial class App : Application
             $"{exeDir};{Environment.GetEnvironmentVariable("PATH")}"
         );
 
-        var dataDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "iris-chat"
-        );
+        var testRunId = Environment.GetEnvironmentVariable("IRIS_UI_TEST_RUN_ID");
+        var requestedTestDataDir = Environment.GetEnvironmentVariable("IRIS_UI_TEST_DATA_DIR");
+        var usesIsolatedTestData = !string.IsNullOrWhiteSpace(testRunId)
+            && !string.IsNullOrWhiteSpace(requestedTestDataDir);
+        var dataDir = usesIsolatedTestData
+            ? Path.GetFullPath(requestedTestDataDir!)
+            : Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "iris-chat"
+            );
         Directory.CreateDirectory(dataDir);
 
-        Manager = new AppManager(dataDir);
+        Manager = new AppManager(
+            dataDir,
+            testSecretPath: usesIsolatedTestData
+                ? Path.Combine(dataDir, "account-secret.json")
+                : null
+        );
         ApplyPlatformPalette();
         var startMinimized = IsBackgroundLaunch(e.Args);
         var window = new MainWindow(startMinimized);
