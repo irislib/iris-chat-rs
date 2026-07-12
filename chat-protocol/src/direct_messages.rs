@@ -118,7 +118,6 @@ pub struct DirectMessageService {
     protocol_engine: Option<ProtocolEngine>,
     owner_public_key: Option<PublicKey>,
     relay_subscription_key: Option<String>,
-    fetch_subscription_counter: u64,
     last_error: Option<String>,
 }
 
@@ -129,7 +128,6 @@ impl DirectMessageService {
             protocol_engine: None,
             owner_public_key: None,
             relay_subscription_key: None,
-            fetch_subscription_counter: 0,
             last_error: None,
         };
         service.ensure_schema();
@@ -167,7 +165,6 @@ impl DirectMessageService {
                     protocol_engine: None,
                     owner_public_key: None,
                     relay_subscription_key: None,
-                    fetch_subscription_counter: 0,
                     last_error: Some(format!("Direct message store open failed: {error}")),
                 };
             }
@@ -177,7 +174,6 @@ impl DirectMessageService {
             protocol_engine: None,
             owner_public_key: None,
             relay_subscription_key: None,
-            fetch_subscription_counter: 0,
             last_error: None,
         };
         service.ensure_schema();
@@ -190,7 +186,6 @@ impl DirectMessageService {
             protocol_engine: None,
             owner_public_key: None,
             relay_subscription_key: self.relay_subscription_key.clone(),
-            fetch_subscription_counter: self.fetch_subscription_counter,
             last_error: self.last_error.clone(),
         }
         .with_protocol_engine(keys);

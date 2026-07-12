@@ -175,6 +175,57 @@ mod tests {
         assert_eq!(installed.revision, 1);
     }
 
+    #[test]
+    fn deferred_sender_key_repair_response_is_throttled() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let requester = Keys::generate();
+        let mut engine = test_engine(&owner, &device);
+        let created = engine
+            .create_group(
+                "Deferred repair response".to_string(),
+                vec![requester.public_key()],
+                UnixSeconds(100),
+            )
+            .expect("create group");
+        let group = created.snapshot.expect("created group snapshot");
+        engine.pending_group_fanouts.clear();
+
+        let request = SenderKeyRepairRequest {
+            group_id: group.group_id,
+            sender_event_pubkey: ndr_device(Keys::generate().public_key()),
+            key_id: None,
+            message_number: None,
+            required_revision: Some(group.revision),
+            created_at: NdrUnixSeconds(101),
+        };
+        let requester_owner = ndr_owner(requester.public_key());
+
+        let first = engine
+            .sender_key_repair_response_effects(requester_owner, &request, NdrUnixSeconds(102))
+            .expect("prepare first repair response");
+        assert!(
+            first.is_empty(),
+            "response must wait for a pairwise session"
+        );
+        assert_eq!(engine.pending_group_fanouts.len(), 1);
+        assert_eq!(engine.answered_group_sender_key_repairs.len(), 1);
+
+        let pending_fanouts = engine.pending_group_fanouts.clone();
+        let answered_repairs = engine.answered_group_sender_key_repairs.clone();
+        let sessions = engine.session_manager.snapshot();
+        let groups = engine.group_manager.snapshot();
+
+        let duplicate = engine
+            .sender_key_repair_response_effects(requester_owner, &request, NdrUnixSeconds(103))
+            .expect("process duplicate repair request");
+        assert!(duplicate.is_empty());
+        assert_eq!(engine.pending_group_fanouts, pending_fanouts);
+        assert_eq!(engine.answered_group_sender_key_repairs, answered_repairs);
+        assert_eq!(engine.session_manager.snapshot(), sessions);
+        assert_eq!(engine.group_manager.snapshot(), groups);
+    }
+
     fn group_snapshot_for_test(
         group_id: &str,
         name: &str,

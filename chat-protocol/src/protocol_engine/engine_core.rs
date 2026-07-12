@@ -332,10 +332,6 @@ impl ProtocolEngine {
         targets
     }
 
-    pub fn queued_group_target_hexes(&self) -> Vec<String> {
-        self.queued_group_targets()
-    }
-
     pub fn direct_send_readiness(&self, peer_pubkey: PublicKey) -> DirectSendReadiness {
         let snapshot = self.session_manager.snapshot();
         if !self.local_app_keys_observed && !self.has_authoritative_local_roster() {
