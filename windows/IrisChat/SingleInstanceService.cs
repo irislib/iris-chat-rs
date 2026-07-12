@@ -89,7 +89,7 @@ public sealed class SingleInstanceService : IDisposable
         }
     }
 
-    private static async Task ListenAsync(Action<IReadOnlyList<string>> onLaunchArgs, CancellationToken token)
+    private async Task ListenAsync(Action<IReadOnlyList<string>> onLaunchArgs, CancellationToken token)
     {
         while (!token.IsCancellationRequested)
         {
