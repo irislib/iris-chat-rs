@@ -1,3 +1,9 @@
+# Iris Chat 2026.7.12
+
+- Device linking now uses signed approval requests for more reliable setup across relays.
+- Direct and group chats recover secure messaging readiness more reliably after reconnecting.
+- Group key recovery avoids redundant responses while preserving delayed message delivery.
+
 # Iris Chat 2026.7.6
 
 - One-to-one messages now queue cleanly while secure chat setup finishes, then send once the conversation is ready.
