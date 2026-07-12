@@ -25,35 +25,4 @@ impl AppCore {
             || !self.pending_relay_publishes.is_empty()
             || self.has_pending_protocol_engine_retry_work()
     }
-
-    pub(in crate::core) fn tracked_peer_protocol_backfill_needed(&self) -> bool {
-        let tracked_peer_owners = self.tracked_peer_owner_hexes();
-        if tracked_peer_owners.is_empty() {
-            return false;
-        }
-
-        tracked_peer_owners
-            .iter()
-            .any(|owner_hex| !self.app_keys.contains_key(owner_hex))
-            || self.protocol_engine.as_ref().is_some_and(|engine| {
-                tracked_peer_owners.iter().any(|owner_hex| {
-                    PublicKey::parse(owner_hex).is_ok_and(|owner_pubkey| {
-                        engine
-                            .message_author_pubkeys_for_owner(owner_pubkey)
-                            .is_empty()
-                    })
-                })
-            })
-    }
-
-    pub(in crate::core) fn current_queued_protocol_targets(&self) -> Vec<String> {
-        let mut targets = Vec::new();
-        if let Some(protocol_engine) = self.protocol_engine.as_ref() {
-            targets.extend(protocol_engine.queued_owner_claim_targets());
-            targets.extend(protocol_engine.queued_group_target_hexes());
-        }
-        targets.sort();
-        targets.dedup();
-        targets
-    }
 }

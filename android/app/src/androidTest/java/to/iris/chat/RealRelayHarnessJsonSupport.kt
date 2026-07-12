@@ -33,7 +33,6 @@ fun summarizeProtocolEnginePending(protocolEngine: JSONObject): String {
                 entry.optString("reason"),
                 entry.optString("chat_id"),
                 entry.optString("recipient_owner_hex"),
-                entry.optJSONArray("queued_targets").joinValues(limit = 4),
             ).filter { it.isNotEmpty() }.joinToString(",")
         }
     return listOf(

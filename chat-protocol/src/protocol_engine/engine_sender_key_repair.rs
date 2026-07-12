@@ -515,9 +515,9 @@ impl ProtocolEngine {
         requester_owner: NdrOwnerPubkey,
         request: &SenderKeyRepairRequest,
         now: NdrUnixSeconds,
-    ) -> anyhow::Result<(Vec<ProtocolEffect>, Vec<String>)> {
+    ) -> anyhow::Result<Vec<ProtocolEffect>> {
         if self.group_sender_key_repair_response_throttled(requester_owner, request, now) {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok(Vec::new());
         }
         let mut rng = OsRng;
         let mut ctx = ProtocolContext::new(now, &mut rng);
@@ -527,12 +527,14 @@ impl ProtocolEngine {
             requester_owner,
             request,
         )?;
+        let response_deferred = !prepared.remote.pending_fanouts.is_empty()
+            || !prepared.local_sibling.pending_fanouts.is_empty();
         let output = self.protocol_group_send_from_prepared(&prepared, None)?;
-        if !output.effects.is_empty() || !output.queued_targets.is_empty() {
+        if !output.effects.is_empty() || response_deferred {
             self.remember_group_sender_key_repair_response(requester_owner, request, now);
         }
         self.invalidate_known_message_author_cache();
-        Ok((output.effects, output.queued_targets))
+        Ok(output.effects)
     }
 
     fn group_sender_key_repair_response_throttled(

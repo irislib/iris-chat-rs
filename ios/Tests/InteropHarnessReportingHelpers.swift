@@ -192,7 +192,6 @@ extension InteropHarnessTests {
                 stringValue(entry["reason"]),
                 stringValue(entry["chat_id"]),
                 stringValue(entry["recipient_owner_hex"]),
-                joinValues(arrayValue(entry["queued_targets"]), limit: 4),
             ]
             .filter { !$0.isEmpty }
             .joined(separator: ",")
