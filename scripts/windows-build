@@ -595,7 +595,7 @@ run_idle_cpu_gate() {
 $(path_setup_block)
 \$gate = Join-Path $guest_repo 'scripts\\idle-cpu-platform-gate-windows.ps1'
 if (-not (Test-Path \$gate)) { throw \"Missing \$gate\" }
-& \$gate
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File \$gate
 if (\$LASTEXITCODE -ne 0) { throw \"Windows idle CPU gate failed (\$LASTEXITCODE)\" }
 PS
 )"
