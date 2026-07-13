@@ -91,7 +91,7 @@ import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.theme.IrisTheme
 
 private const val IrisSourceUrl =
-    "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs"
+    "https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/iris-chat-rs"
 private const val IrisSourceLabel =
     "Iris Chat source code"
 private const val NotificationsServerDefault = "https://notifications.iris.to"

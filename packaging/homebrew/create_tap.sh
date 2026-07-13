@@ -35,7 +35,7 @@ ASSETS_DIR=""
 OUTPUT_DIR=""
 SEED_REPO=""
 FORMULA_NAME="iris"
-HOMEPAGE="https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs"
+HOMEPAGE="https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/iris-chat-rs"
 DESC="Iris Chat command line client"
 LICENSE_ID="MIT"
 

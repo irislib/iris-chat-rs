@@ -4,7 +4,7 @@ The Iris CLI tap is published as a plain Git repository over the hashtree
 gateway. Homebrew can tap it directly from the static HTTP URL:
 
 ```bash
-brew tap sirius/iris https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/homebrew-iris.git
+brew tap sirius/iris https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/homebrew-iris.git
 brew install iris
 ```
 
@@ -33,7 +33,7 @@ Defaults:
 
 - Tap repo: `homebrew-iris`
 - Brew tap name: `sirius/iris`
-- Publish URL: `htree://self/homebrew-iris`
+- Publish URL: `htree://irischat/homebrew-iris`
 
 To update a shared tap without deleting existing formulas, pass
 `--seed-repo <existing-tap-url-or-path>`, or set the tap repo/push URL to an

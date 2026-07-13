@@ -12,7 +12,7 @@ import UIKit
 import PhotosUI
 #endif
 
-let irisSourceURL = URL(string: "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs")!
+let irisSourceURL = URL(string: "https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/iris-chat-rs")!
 let irisSourceLabel = "Iris Chat source code"
 let irisPrivacyURL = URL(string: "https://chat.iris.to/privacy")!
 let irisTermsURL = URL(string: "https://chat.iris.to/terms")!

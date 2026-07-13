@@ -12,7 +12,7 @@ namespace IrisChat.Views;
 public partial class SettingsView : UserControl
 {
     private const string IrisSourceUrl =
-        "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs";
+        "https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/iris-chat-rs";
 
     private static string IrisChatProfileUrl(string npub) => $"https://chat.iris.to/#/{npub}";
 

@@ -475,5 +475,5 @@ private fun versionParts(value: String): List<Int> =
 
 private object AndroidSelfUpdateDefaults {
     const val manifestUrl: String =
-        "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest/release.json"
+        "https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/releases%2Firis-chat-rs/latest/release.json"
 }

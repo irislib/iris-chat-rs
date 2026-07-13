@@ -16,10 +16,10 @@ That keeps Android signing in CI while keeping Zapstore publishing local.
 
 - App name: `Iris Chat`
 - Android application ID: `to.iris.chat`
-- Repository: `https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs`
+- Repository: `https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/iris-chat-rs`
 - Zapstore channel: `main`
 - Zapstore app metadata publisher: `npub1wyvg2agqh7sq0y6pga3rayr45uhr0fg5ucz4yjg36rmv4t8yrvrsslkwpm`
-- Automated release signer: `npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm`
+- Automated release signer: `npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap`
 - Listing summary: `End-to-end encrypted chat app using Nostr Double Ratchet.`
 
 Treat the Android application ID, Android signing key, and Zapstore publisher
@@ -63,14 +63,16 @@ ZAPSTORE_CHANNEL=main
 ZAPSTORE_IDENTITY_RELAYS=wss://relay.zapstore.dev
 ```
 
-`SIGN_WITH=nsec1...` also works, but `NOSTR_KEY_PATH` is preferred so the key
-does not appear in command history or process listings. If neither value is
-set, the script falls back to `SIGN_WITH=browser`.
+`SIGN_WITH=nsec1...` also works, but a key file is preferred so the key does
+not appear in command history or process listings. Automated releases use
+`~/.keys/irischat-release.nsec` by default; override that location with
+`IRIS_RELEASE_NOSTR_KEY_PATH`. If no key is available, the script falls back to
+`SIGN_WITH=browser`.
 
 Recommended local Nostr key path:
 
 ```text
-~/.config/iris-chat/zapstore-nsec
+~/.keys/irischat-release.nsec
 ```
 
 Create it without putting the `nsec` in shell history:
@@ -127,14 +129,14 @@ Suggested fields:
 
 ```text
 Android app ID: to.iris.chat
-Primary repo: https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs
+Primary repo: https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/iris-chat-rs
 Keystore file: attach iris-chat-release.jks
 Keystore alias: iris-chat-upload
 Keystore password: <from release.env>
 Key password: <from release.env>
 Zapstore channel: main
 Zapstore app metadata publisher npub: npub1wyvg2agqh7sq0y6pga3rayr45uhr0fg5ucz4yjg36rmv4t8yrvrsslkwpm
-Automated release signer npub: npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm
+Automated release signer npub: npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap
 Automated release signer nsec: nsec1...
 Signing mode: NOSTR_KEY_PATH
 Local keystore path: .zapstore/keystore/iris-chat-release.jks
@@ -197,7 +199,7 @@ kind `32267` app metadata event.
 1. Clone the repo:
 
 ```bash
-git clone htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs
+git clone htree://irischat/iris-chat-rs
 cd iris-chat-rs
 ```
 

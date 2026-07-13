@@ -11,7 +11,7 @@ use crate::screens::{chat_input_action, confirm_delete_app_data, device_roster, 
 use crate::widgets::{image_cache, qr};
 
 const IRIS_SOURCE_URL: &str =
-    "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs";
+    "https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/iris-chat-rs";
 
 fn iris_chat_profile_url(npub: &str) -> String {
     format!("https://chat.iris.to/#/{npub}")

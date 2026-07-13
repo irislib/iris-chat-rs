@@ -188,6 +188,11 @@ ios_udid() {
   xcrun simctl list devices available | sed -n "s/.*${simulator} (\([0-9A-F-]\{36\}\)).*/\1/p" | head -n 1
 }
 
+ios_simulator_is_booted() {
+  local udid="$1"
+  xcrun simctl list devices booted | grep -Fq "($udid) (Booted)"
+}
+
 run_ios_harness() {
   local udid="$1" action="$2"
   shift 2
@@ -205,7 +210,8 @@ run_ios() {
   if [[ "${IRIS_CHAT_IDLE_CPU_IOS_EXCLUSIVE_SIMULATOR:-1}" == 1 ]]; then
     xcrun simctl shutdown all >/dev/null 2>&1 || true
   fi
-  if ! xcrun simctl boot "$udid" >/dev/null 2>&1; then
+  if ! ios_simulator_is_booted "$udid" \
+    && ! xcrun simctl boot "$udid" >/dev/null 2>&1; then
     if [[ -n "${IRIS_IOS_UDID:-}" ]]; then
       echo "Configured iOS simulator could not boot: $udid" >&2
       exit 1
@@ -226,7 +232,7 @@ for devices in data.get("devices", {}).values():
         if device.get("isAvailable", True) and "iPhone" in device.get("name", ""):
             print(device.get("udid", ""))
 ')
-    if ! xcrun simctl list devices booted | grep -q "($udid) (Booted)"; then
+    if ! ios_simulator_is_booted "$udid"; then
       echo "No bootable iOS simulator found" >&2
       exit 1
     fi

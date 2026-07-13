@@ -204,7 +204,7 @@ with explicit release values instead of rewriting plist files in place.
 The release script publishes the CLI formula from the staged release assets:
 
 ```bash
-brew tap sirius/iris https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/homebrew-iris.git
+brew tap sirius/iris https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/homebrew-iris.git
 brew install iris
 ```
 

@@ -15,7 +15,7 @@ Required:
 Optional:
   --tap-repo <name>                Published tap repo name (default: homebrew-iris)
   --tap-name <user/repo>           Brew tap name shown to users (default: sirius/iris)
-  --push-url <url>                 Publish destination (default: htree://self/<tap-repo>)
+  --push-url <url>                 Publish destination (default: htree://irischat/<tap-repo>)
   --npub <npub>                    Public npub used for the gateway install URL
   --seed-repo <url-or-path>        Existing tap repo to preserve before updating Formula/iris.rb
   --formula-name <name>            Formula name (default: iris)
@@ -31,6 +31,9 @@ EOF
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CREATE_TAP_SCRIPT="$SCRIPT_DIR/create_tap.sh"
+# shellcheck disable=SC1091
+source "$REPO_DIR/scripts/release_common.sh"
+configure_release_htree_identity
 
 VERSION=""
 RELEASE_BASE_URL=""
@@ -143,7 +146,7 @@ require_command git
 require_command "$CREATE_TAP_SCRIPT"
 
 if [[ -z "$PUSH_URL" ]]; then
-  PUSH_URL="htree://self/${TAP_REPO}"
+  PUSH_URL="htree://irischat/${TAP_REPO}"
 fi
 
 if [[ -z "$NPUB" && "$PUSH_URL" == htree://* ]] && command -v htree >/dev/null 2>&1; then
@@ -187,7 +190,7 @@ if [[ "$PUSH_URL" == htree://* ]]; then
     cd "$REPO_DIR"
     htree add "$bare_repo" --publish "$publish_name" >/dev/null
   )
-  canonical_url="htree://self/${publish_name}"
+  canonical_url="htree://irischat/${publish_name}"
 else
   git --git-dir="$bare_repo" push -q --force "$PUSH_URL" master >/dev/null
 fi

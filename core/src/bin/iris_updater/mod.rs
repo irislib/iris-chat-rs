@@ -21,9 +21,9 @@ mod io;
 use asset_selection::*;
 use io::*;
 
-const HTREE_MANIFEST_URL: &str = "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest/release.json";
+const HTREE_MANIFEST_URL: &str = "https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/releases%2Firis-chat-rs/latest/release.json";
 const HTREE_UPDATE_REF: &str =
-    "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest";
+    "htree://npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/releases%2Firis-chat-rs/latest";
 const UPDATE_CONNECT_TIMEOUT_SECS: &str = "4";
 const UPDATE_MANIFEST_TIMEOUT_SECS: &str = "8";
 const UPDATE_DOWNLOAD_TIMEOUT_SECS: &str = "180";

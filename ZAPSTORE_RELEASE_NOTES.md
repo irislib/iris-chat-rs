@@ -1,3 +1,9 @@
+# Iris Chat 2026.7.13
+
+- App updates now come from a dedicated Iris release channel.
+- Linked devices now keep receiving group messages after another member restores the app.
+- Desktop release checks now catch more idle resource-use and Windows startup problems before shipping.
+
 # Iris Chat 2026.7.12
 
 - Device linking now uses signed approval requests for more reliable setup across relays.

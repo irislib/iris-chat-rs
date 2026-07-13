@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "UniFFI compatibility layer for the Iris Chat protocol engine"
 license = "MIT"
-repository = "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs"
+repository = "https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/iris-chat-rs"
 homepage = "https://iris.to"
 publish = false
 
@@ -15,7 +15,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [dependencies]
 anyhow = "1"
 hex = "0.4"
-iris-chat-protocol = { version = "0.1.4", path = "../chat-protocol" }
+iris-chat-protocol = { version = "0.1.6", path = "../chat-protocol" }
 nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -19,12 +19,12 @@ source "$ROOT/scripts/release_common.sh"
 source "$ROOT/scripts/docker_stage_common.sh"
 
 load_release_env "$ROOT"
+configure_release_htree_identity
 resolve_shared_build_metadata "$ROOT"
 
 DIST_DIR="$ROOT/dist"
 STAGE_ROOT="$DIST_DIR/release"
 RELEASE_TREE_DEFAULT="releases/iris-chat-rs"
-RELEASE_OWNER_NPUB_DEFAULT="npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm"
 
 PUBLISH=0
 DRY_RUN=0
@@ -212,7 +212,7 @@ normalize_tag() {
 
 TAG="$(normalize_tag "${TAG_OVERRIDE:-$IRIS_APP_VERSION_NAME}")"
 RELEASE_TREE="${RELEASE_TREE:-${IRIS_RELEASE_TREE:-$RELEASE_TREE_DEFAULT}}"
-RELEASE_OWNER_NPUB="${IRIS_RELEASE_OWNER_NPUB:-$RELEASE_OWNER_NPUB_DEFAULT}"
+RELEASE_OWNER_NPUB="$IRIS_RELEASE_OWNER_NPUB"
 STAGE_DIR="$STAGE_ROOT/$TAG"
 
 ONLY_SET=""

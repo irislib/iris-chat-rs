@@ -12,7 +12,7 @@ load_release_env "$ROOT"
 
 IMAGE="${IRIS_CLI_INSTALL_TEST_IMAGE:-$(docker_cli_runtime_image)}"
 PLATFORM="${IRIS_CLI_INSTALL_TEST_PLATFORM:-$(docker_default_platform)}"
-INSTALL_URL="${IRIS_CLI_INSTALL_URL:-https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest/install.sh}"
+INSTALL_URL="${IRIS_CLI_INSTALL_URL:-https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/releases%2Firis-chat-rs/latest/install.sh}"
 
 usage() {
   cat <<EOF

@@ -3,7 +3,7 @@
 Encrypted chat app using Nostr Double Ratchet. Shared Rust core, native UIs.
 
 Primary development is on hashtree:
-https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs
+https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/iris-chat-rs
 
 ## Features
 
@@ -108,14 +108,14 @@ internal and public TestFlight unless skipped.
 Install the Iris command line app with Homebrew:
 
 ```bash
-brew tap sirius/iris https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/homebrew-iris.git
+brew tap sirius/iris https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/homebrew-iris.git
 brew install iris
 ```
 
 Or install a prebuilt macOS/Linux binary directly:
 
 ```bash
-curl -fsSL https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest/install.sh | sh
+curl -fsSL https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/releases%2Firis-chat-rs/latest/install.sh | sh
 ```
 
 Or build it from crates.io with Cargo:

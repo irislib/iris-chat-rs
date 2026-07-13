@@ -20,6 +20,15 @@ if [[ -f "$ZAPSTORE_ENV_FILE" ]]; then
   set +a
 fi
 
+configure_release_htree_identity
+if [[ -n "${IRIS_ZAPSTORE_SIGN_WITH:-}" ]]; then
+  SIGN_WITH="$IRIS_ZAPSTORE_SIGN_WITH"
+elif [[ -f "$IRIS_RELEASE_NOSTR_KEY_PATH" ]]; then
+  unset SIGN_WITH
+  NOSTR_KEY_PATH="$IRIS_RELEASE_NOSTR_KEY_PATH"
+fi
+export NOSTR_KEY_PATH
+
 IRIS_RELEASE_KEYSTORE_PATH="${IRIS_RELEASE_KEYSTORE_PATH:-${ANDROID_KEYSTORE_PATH:-}}"
 IRIS_RELEASE_KEYSTORE_PASSWORD="${IRIS_RELEASE_KEYSTORE_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD:-}}"
 IRIS_RELEASE_KEY_ALIAS="${IRIS_RELEASE_KEY_ALIAS:-${ANDROID_KEY_ALIAS:-}}"
@@ -49,6 +58,9 @@ Environment:
   ZAPSTORE_APK_PATH         Use this already-signed APK instead of building locally.
                             The APK is copied to dist/android/IrisChat-release-latest.apk
                             because zapstore.yaml references that stable path.
+  IRIS_RELEASE_NOSTR_KEY_PATH
+                            Dedicated release signer file (default:
+                            ~/.keys/irischat-release.nsec).
 EOF
 }
 

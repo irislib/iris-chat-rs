@@ -491,6 +491,56 @@ fn remote_group_metadata_syncs_to_local_sibling() {
         }),
         "linked device should learn the remote-created group from its primary sibling"
     );
+
+    let sender_event_keys = Keys::generate();
+    let distribution_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
+        &codec,
+        nostr_double_ratchet::GroupPayloadEncodeContext {
+            local_device_pubkey: ndr_device_pubkey(admin_device.public_key()),
+            created_at: NdrUnixSeconds(12),
+        },
+        &nostr_double_ratchet::GroupPairwiseCommand::SenderKeyDistribution {
+            distribution: nostr_double_ratchet::SenderKeyDistribution {
+                group_id: group_id.clone(),
+                key_id: 1,
+                sender_event_pubkey: ndr_device_pubkey(sender_event_keys.public_key()),
+                chain_key: [7; 32],
+                iteration: 0,
+                created_at: NdrUnixSeconds(12),
+            },
+        },
+    )
+    .expect("sender-key distribution payload");
+    let distribution_outcome = primary
+        .process_group_pairwise_payload(
+            &distribution_payload,
+            admin_owner.public_key(),
+            Some(admin_device.public_key()),
+        )
+        .expect("primary processes remote sender-key distribution");
+    for event in protocol_publish_events_for_target(
+        &distribution_outcome.effects,
+        &target_owner_hex,
+        &target_device_hex,
+    ) {
+        let decrypted = linked
+            .process_direct_message_event(&event)
+            .expect("linked processes sibling sender-key sync")
+            .expect("linked decrypts sibling sender-key sync");
+        linked
+            .process_group_pairwise_payload(
+                decrypted.content.as_bytes(),
+                decrypted.sender,
+                decrypted.sender_device,
+            )
+            .expect("linked applies sibling sender-key distribution");
+    }
+    assert!(
+        linked
+            .known_group_sender_event_pubkeys()
+            .contains(&sender_event_keys.public_key()),
+        "linked device should subscribe to the remote group sender after its primary receives the distribution"
+    );
 }
 
 #[test]

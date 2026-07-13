@@ -250,6 +250,46 @@ impl ProtocolEngine {
         Ok(effects)
     }
 
+    fn sync_remote_group_sender_key_distribution_to_local_siblings(
+        &mut self,
+        group_id: &str,
+        sender_owner: NdrOwnerPubkey,
+        sender_device: NdrDevicePubkey,
+        payload: &[u8],
+    ) -> anyhow::Result<Vec<ProtocolEffect>> {
+        let payload = local_sibling_payload_with_original_sender(
+            public_owner(sender_owner)?,
+            Some(public_device(sender_device)?),
+            payload,
+        )?;
+        let now = NdrUnixSeconds(unix_now().get());
+        let mut rng = OsRng;
+        let mut ctx = ProtocolContext::new(now, &mut rng);
+        let prepared = self
+            .session_manager
+            .prepare_local_sibling_send_reusing_all_sessions(&mut ctx, payload.clone())?;
+        let pending_fanouts = if prepared.relay_gaps.is_empty() {
+            Vec::new()
+        } else {
+            vec![GroupPendingFanout::LocalSiblings { payload }]
+        };
+        let prepared = GroupPreparedPublish {
+            deliveries: prepared.deliveries,
+            invite_responses: prepared.invite_responses,
+            sender_key_messages: Vec::new(),
+            relay_gaps: prepared.relay_gaps,
+            pending_fanouts,
+        };
+        self.queue_group_pending_fanouts(group_id, &prepared, None);
+        let mut event_ids = Vec::new();
+        protocol_effects_from_group_prepared_publish(
+            &prepared,
+            None,
+            group_chat_id(group_id),
+            &mut event_ids,
+        )
+    }
+
     fn queue_group_pending_fanouts(
         &mut self,
         group_id: &str,

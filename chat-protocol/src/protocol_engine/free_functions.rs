@@ -251,27 +251,40 @@ fn provisional_owner_from_sender_pubkey(sender: NdrDevicePubkey) -> NdrOwnerPubk
 }
 
 fn local_sibling_payload(conversation_owner: PublicKey, payload: &[u8]) -> anyhow::Result<Vec<u8>> {
+    local_sibling_payload_with_original_sender(conversation_owner, None, payload)
+}
+
+fn local_sibling_payload_with_original_sender(
+    conversation_owner: PublicKey,
+    original_sender_device: Option<PublicKey>,
+    payload: &[u8],
+) -> anyhow::Result<Vec<u8>> {
     use base64::Engine;
     let wrapper = LocalSiblingPayload {
         protocol: LOCAL_SIBLING_PROTOCOL.to_string(),
         version: 1,
         conversation_owner: conversation_owner.to_hex(),
+        original_sender_device: original_sender_device.map(|pubkey| pubkey.to_hex()),
         payload: base64::engine::general_purpose::STANDARD.encode(payload),
     };
     Ok(serde_json::to_vec(&wrapper)?)
 }
 
-fn decode_local_sibling_payload(payload: &[u8]) -> Option<(PublicKey, Vec<u8>)> {
+fn decode_local_sibling_payload(payload: &[u8]) -> Option<(PublicKey, Option<PublicKey>, Vec<u8>)> {
     use base64::Engine;
     let wrapper: LocalSiblingPayload = serde_json::from_slice(payload).ok()?;
     if wrapper.protocol != LOCAL_SIBLING_PROTOCOL || wrapper.version != 1 {
         return None;
     }
     let owner = PublicKey::parse(&wrapper.conversation_owner).ok()?;
+    let original_sender_device = match wrapper.original_sender_device {
+        Some(device) => Some(PublicKey::parse(&device).ok()?),
+        None => None,
+    };
     let payload = base64::engine::general_purpose::STANDARD
         .decode(wrapper.payload)
         .ok()?;
-    Some((owner, payload))
+    Some((owner, original_sender_device, payload))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -279,6 +292,8 @@ struct LocalSiblingPayload {
     protocol: String,
     version: u32,
     conversation_owner: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    original_sender_device: Option<String>,
     payload: String,
 }
 
