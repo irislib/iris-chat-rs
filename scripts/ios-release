@@ -313,9 +313,11 @@ upload_archive() {
   )
   if [[ -n "${IRIS_ASC_AUTH_KEY_PATH:-}" ]]; then
     local altool_key_dir="$HOME/.appstoreconnect/private_keys"
+    local altool_key_path
     mkdir -p "$altool_key_dir"
-    cp "$IRIS_ASC_AUTH_KEY_PATH" "$altool_key_dir/AuthKey_${IRIS_ASC_AUTH_KEY_ID}.p8"
-    chmod 600 "$altool_key_dir/AuthKey_${IRIS_ASC_AUTH_KEY_ID}.p8"
+    altool_key_path="$altool_key_dir/AuthKey_${IRIS_ASC_AUTH_KEY_ID}.p8"
+    copy_file_unless_same_file "$IRIS_ASC_AUTH_KEY_PATH" "$altool_key_path"
+    chmod 600 "$altool_key_path"
   fi
 
   ensure_dir "$IOS_UPLOAD_LOG_PATH"

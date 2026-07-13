@@ -1,4 +1,6 @@
 import pathlib
+import subprocess
+import tempfile
 import unittest
 
 
@@ -53,6 +55,7 @@ class ReleaseIdentityTests(unittest.TestCase):
             "protocol-ffi/Cargo.toml",
             "chat-protocol/Cargo.toml",
             "docs/release-zapstore.md",
+            "zapstore.yaml",
             "ios/Sources/Views.swift",
             "linux/src/screens/settings.rs",
             "windows/IrisChat/Views/SettingsView.xaml.cs",
@@ -66,6 +69,29 @@ class ReleaseIdentityTests(unittest.TestCase):
                 contents = self.read(path)
                 self.assertIn(RELEASE_NPUB, contents)
                 self.assertNotIn(OLD_RELEASE_NPUB, contents)
+
+    def test_release_copy_preserves_an_existing_same_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            source = temp / "source"
+            destination = temp / "destination"
+            source.write_text("test credential")
+            destination.symlink_to(source)
+
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1"; copy_file_unless_same_file "$2" "$3"',
+                    "bash",
+                    str(ROOT / "scripts/release_common.sh"),
+                    str(source),
+                    str(destination),
+                ],
+                check=True,
+            )
+
+            self.assertTrue(destination.is_symlink())
 
 
 if __name__ == "__main__":

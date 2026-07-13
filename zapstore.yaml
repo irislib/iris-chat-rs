@@ -1,7 +1,7 @@
 name: Iris Chat
 summary: End-to-end encrypted chat app using Nostr Double Ratchet.
 repository: https://github.com/irislib/iris-chat-rs
-pubkey: npub1wyvg2agqh7sq0y6pga3rayr45uhr0fg5ucz4yjg36rmv4t8yrvrsslkwpm
+pubkey: npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap
 release_source: ./dist/android/IrisChat-release-latest.apk
 website: https://chat.iris.to
 license: MIT

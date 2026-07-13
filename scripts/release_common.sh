@@ -150,6 +150,16 @@ ensure_dir() {
   mkdir -p "$1"
 }
 
+copy_file_unless_same_file() {
+  local source="$1"
+  local destination="$2"
+
+  if [[ -e "$destination" && "$source" -ef "$destination" ]]; then
+    return 0
+  fi
+  cp "$source" "$destination"
+}
+
 require_var() {
   local name="$1"
   if [[ -z "${!name:-}" ]]; then
