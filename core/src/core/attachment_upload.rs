@@ -155,12 +155,8 @@ impl AppCore {
             return None;
         }
 
-        self.upload_runtime.next_id = self
-            .upload_runtime
-            .next_id
-            .checked_add(1)
-            .expect("upload operation id exhausted");
-        let operation_id = self.upload_runtime.next_id;
+        let operation_id = self.upload_runtime.next_id.checked_add(1)?;
+        self.upload_runtime.next_id = operation_id;
         let sender = self.core_sender.clone();
         let task = self.runtime.spawn(async move {
             let result = std::panic::AssertUnwindSafe(upload)
@@ -187,19 +183,13 @@ impl AppCore {
         operation_id: u64,
         result: Result<String, String>,
     ) {
-        if self
+        let Some(active) = self
             .upload_runtime
             .active
-            .as_ref()
-            .is_none_or(|active| active.id != operation_id)
-        {
+            .take_if(|active| active.id == operation_id)
+        else {
             return;
-        }
-        let active = self
-            .upload_runtime
-            .active
-            .take()
-            .expect("matching upload must be active");
+        };
         self.state.busy.uploading_attachment = false;
         self.state.busy.upload_progress = None;
         match active.target {
