@@ -133,19 +133,8 @@ pub(crate) enum InternalEvent {
     RetryPendingRelayPublishes {
         reason: String,
     },
-    AttachmentUploadFinished {
-        chat_id: String,
-        result: Result<String, String>,
-    },
-    AttachmentUploadProgress {
-        bytes_uploaded: u64,
-        total_bytes: u64,
-    },
-    ProfilePictureUploadFinished {
-        result: Result<String, String>,
-    },
-    GroupPictureUploadFinished {
-        group_id: String,
+    UploadFinished {
+        operation_id: u64,
         result: Result<String, String>,
     },
     SyncComplete,

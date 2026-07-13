@@ -80,6 +80,7 @@ impl AppCore {
             app_keys: BTreeMap::new(),
             groups: BTreeMap::new(),
             group_pictures: BTreeMap::new(),
+            upload_runtime: UploadRuntime::default(),
             typing_indicators: BTreeMap::new(),
             typing_floor_secs: BTreeMap::new(),
             chat_message_ttl_seconds: BTreeMap::new(),
@@ -181,12 +182,7 @@ impl AppCore {
                 InternalEvent::RelayPublishDrainProgress { .. } => "RelayPublishDrainProgress",
                 InternalEvent::SessionStartupFollowUp => "SessionStartupFollowUp",
                 InternalEvent::RetryPendingRelayPublishes { .. } => "RetryPendingRelayPublishes",
-                InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
-                InternalEvent::AttachmentUploadProgress { .. } => "AttachmentUploadProgress",
-                InternalEvent::ProfilePictureUploadFinished { .. } => {
-                    "ProfilePictureUploadFinished"
-                }
-                InternalEvent::GroupPictureUploadFinished { .. } => "GroupPictureUploadFinished",
+                InternalEvent::UploadFinished { .. } => "UploadFinished",
                 InternalEvent::SyncComplete => "SyncComplete",
                 InternalEvent::ProtocolAuthorBackfillComplete { .. } => {
                     "ProtocolAuthorBackfillComplete"
@@ -291,6 +287,7 @@ impl AppCore {
 
     pub(super) fn shutdown(&mut self) {
         self.push_debug_log("app.shutdown", "stopping core");
+        self.cancel_upload();
         self.stop_pending_linked_device();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
@@ -318,6 +315,7 @@ impl AppCore {
         // want before iOS suspends us.
         self.suspended = true;
         self.push_debug_log("app.suspend", "pausing network and flushing storage");
+        self.cancel_upload();
         self.stop_pending_linked_device();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.message_expiry_token = self.message_expiry_token.saturating_add(1);
@@ -749,20 +747,11 @@ impl AppCore {
             InternalEvent::RetryPendingRelayPublishes { reason } => {
                 self.retry_pending_relay_publishes(&reason);
             }
-            InternalEvent::AttachmentUploadFinished { chat_id, result } => {
-                self.handle_attachment_upload_finished(chat_id, result);
-            }
-            InternalEvent::AttachmentUploadProgress {
-                bytes_uploaded,
-                total_bytes,
+            InternalEvent::UploadFinished {
+                operation_id,
+                result,
             } => {
-                self.handle_attachment_upload_progress(bytes_uploaded, total_bytes);
-            }
-            InternalEvent::ProfilePictureUploadFinished { result } => {
-                self.handle_profile_picture_upload_finished(result);
-            }
-            InternalEvent::GroupPictureUploadFinished { group_id, result } => {
-                self.handle_group_picture_upload_finished(group_id, result);
+                self.handle_upload_finished(operation_id, result);
             }
             InternalEvent::SyncComplete => {
                 self.protocol_subscription_runtime.protocol_fetch_in_flight = false;

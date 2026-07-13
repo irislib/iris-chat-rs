@@ -745,7 +745,7 @@ fn profile_picture_upload_propagates_to_account_snapshot() {
     );
 
     let picture_url = "https://cdn.iris.to/abc123".to_string();
-    core.handle_profile_picture_upload_finished(Ok(picture_url.clone()));
+    core.apply_profile_picture_upload_result(Ok(picture_url.clone()));
 
     let account = core.state.account.as_ref().expect("account after upload");
     assert_eq!(

@@ -1,5 +1,4 @@
 use super::*;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 impl AppCore {
     pub(super) fn create_group(&mut self, name: &str, member_inputs: &[String]) {
@@ -147,11 +146,6 @@ impl AppCore {
             self.emit_state();
             return;
         }
-        if self.state.busy.uploading_attachment {
-            self.state.toast = Some("Attachment upload already in progress.".to_string());
-            self.emit_state();
-            return;
-        }
         let Some(logged_in) = self.logged_in.as_ref() else {
             self.state.toast = Some("Create or restore a profile first.".to_string());
             self.emit_state();
@@ -169,81 +163,40 @@ impl AppCore {
             return;
         }
         let filename = attachment_upload::display_filename(filename, &path);
-        let data = match fs::read(&path) {
-            Ok(data) => data,
-            Err(_) => {
-                self.state.toast = Some("Group photo could not be opened.".to_string());
-                self.emit_state();
-                return;
-            }
-        };
-        if data.is_empty() || !attachment_upload::looks_like_image(&path, &data) {
-            self.state.toast = Some("Group photo must be an image.".to_string());
-            self.emit_state();
-            return;
-        }
         let upload_keys = logged_in
             .owner_keys
             .as_ref()
             .unwrap_or(&logged_in.device_keys);
         let secret_hex = upload_keys.secret_key().to_secret_hex();
-        let sender = self.core_sender.clone();
         let group_id = group_id.to_string();
-        let total_bytes = data.len() as u64;
-        self.push_debug_log(
-            "group.picture.upload.start",
-            format!("group_id={group_id} filename={filename} bytes={total_bytes}"),
-        );
-        self.state.busy.uploading_attachment = true;
-        self.state.busy.upload_progress = Some(crate::state::UploadProgress {
-            bytes_uploaded: 0,
-            total_bytes,
-        });
+        let total_bytes = path.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+        let log_detail = format!("group_id={group_id} filename={filename} bytes={total_bytes}");
+        if self
+            .start_upload(
+                UploadTarget::GroupPicture {
+                    group_id: group_id.clone(),
+                },
+                async move {
+                    attachment_upload::upload_picture_to_hashtree(&secret_hex, &path)
+                        .await
+                        .map(|nhash| format!("htree://{}", format_file_link(&nhash, &filename)))
+                        .map_err(|error| error.to_string())
+                },
+            )
+            .is_none()
+        {
+            return;
+        }
+        self.push_debug_log("group.picture.upload.start", log_detail);
         self.rebuild_state();
         self.emit_state();
-        self.runtime.spawn(async move {
-            let progress = Arc::new(AtomicU64::new(0));
-            let progress_sender = sender.clone();
-            let progress_counter = progress.clone();
-            let progress_handle = tokio::spawn(async move {
-                let mut last_reported: u64 = u64::MAX;
-                loop {
-                    tokio::time::sleep(Duration::from_millis(120)).await;
-                    let current = progress_counter.load(Ordering::Relaxed);
-                    if current == last_reported {
-                        continue;
-                    }
-                    last_reported = current;
-                    let _ = progress_sender.send(CoreMsg::Internal(Box::new(
-                        InternalEvent::AttachmentUploadProgress {
-                            bytes_uploaded: current,
-                            total_bytes,
-                        },
-                    )));
-                }
-            });
-            let result = attachment_upload::upload_file_to_hashtree(
-                &secret_hex,
-                &path,
-                Some(progress.clone()),
-            )
-            .await
-            .map(|nhash| format!("htree://{}", format_file_link(&nhash, &filename)))
-            .map_err(|error| error.to_string());
-            progress_handle.abort();
-            let _ = sender.send(CoreMsg::Internal(Box::new(
-                InternalEvent::GroupPictureUploadFinished { group_id, result },
-            )));
-        });
     }
 
-    pub(super) fn handle_group_picture_upload_finished(
+    pub(super) fn apply_group_picture_upload_result(
         &mut self,
         group_id: String,
         result: Result<String, String>,
     ) {
-        self.state.busy.uploading_attachment = false;
-        self.state.busy.upload_progress = None;
         match result {
             Ok(picture_url) => {
                 self.push_debug_log(

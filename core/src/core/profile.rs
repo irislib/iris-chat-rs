@@ -273,6 +273,7 @@ impl AppCore {
             return;
         };
 
+        self.cancel_profile_picture_upload();
         self.owner_profiles.remove(&owner_hex);
         self.persist_best_effort();
 
@@ -319,24 +320,20 @@ impl AppCore {
             return;
         }
         let secret_hex = owner_keys.secret_key().to_secret_hex();
-        let sender = self.core_sender.clone();
-        self.state.busy.uploading_attachment = true;
+        if self
+            .start_upload(UploadTarget::ProfilePicture, async move {
+                upload_profile_picture_to_hashtree(&secret_hex, &path)
+                    .await
+                    .map_err(|error| error.to_string())
+            })
+            .is_none()
+        {
+            return;
+        }
         self.emit_state();
-        self.runtime.spawn(async move {
-            let result = upload_profile_picture_to_hashtree(&secret_hex, &path)
-                .await
-                .map_err(|error| error.to_string());
-            let _ = sender.send(CoreMsg::Internal(Box::new(
-                InternalEvent::ProfilePictureUploadFinished { result },
-            )));
-        });
     }
 
-    pub(super) fn handle_profile_picture_upload_finished(
-        &mut self,
-        result: Result<String, String>,
-    ) {
-        self.state.busy.uploading_attachment = false;
+    pub(super) fn apply_profile_picture_upload_result(&mut self, result: Result<String, String>) {
         match result {
             Ok(picture_url) => {
                 self.push_debug_log("profile.picture.upload.ok", format!("url={picture_url}"));
@@ -464,42 +461,4 @@ pub(super) fn fallback_profile_name_for_identity(identity: &str) -> String {
         .copied()
         .unwrap_or("Listener");
     format!("{adjective} {noun}")
-}
-
-#[cfg(test)]
-mod upload_lifecycle_tests {
-    use super::*;
-    use crate::state::{AppState, UploadProgress};
-    use std::sync::{Arc, RwLock};
-
-    #[test]
-    fn profile_completion_does_not_clear_an_unrelated_attachment_upload() {
-        let temp_dir = tempfile::TempDir::new().expect("temp dir");
-        let mut core = AppCore::new(
-            flume::unbounded().0,
-            flume::unbounded().0,
-            temp_dir.path().to_string_lossy().to_string(),
-            Arc::new(RwLock::new(AppState::empty())),
-        );
-        let attachment_progress = UploadProgress {
-            bytes_uploaded: 64,
-            total_bytes: 128,
-        };
-
-        // A chat attachment owns the shared upload state while an overlapping
-        // profile upload reports a late completion.
-        core.state.busy.uploading_attachment = true;
-        core.state.busy.upload_progress = Some(attachment_progress.clone());
-
-        core.handle_profile_picture_upload_finished(Err("profile upload failed".to_string()));
-
-        assert_eq!(
-            (
-                core.state.busy.uploading_attachment,
-                core.state.busy.upload_progress.clone(),
-            ),
-            (true, Some(attachment_progress)),
-            "a profile completion must not clear upload state owned by a chat attachment"
-        );
-    }
 }

@@ -1177,6 +1177,7 @@ impl AppCore {
         if !removed_thread && !removed_group {
             return;
         }
+        self.cancel_upload_for_chat(&normalized);
 
         if self.active_chat_id.as_deref() == Some(normalized.as_str()) {
             self.active_chat_id = None;

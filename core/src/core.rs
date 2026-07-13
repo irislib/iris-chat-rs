@@ -456,6 +456,25 @@ fn fallback_chat_title(chat_id: &str) -> String {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum UploadTarget {
+    ChatAttachments { chat_id: String },
+    GroupPicture { group_id: String },
+    ProfilePicture,
+}
+
+struct ActiveUpload {
+    id: u64,
+    target: UploadTarget,
+    abort_handle: tokio::task::AbortHandle,
+}
+
+#[derive(Default)]
+struct UploadRuntime {
+    next_id: u64,
+    active: Option<ActiveUpload>,
+}
+
 pub struct AppCore {
     update_tx: Sender<AppUpdate>,
     core_sender: Sender<CoreMsg>,
@@ -478,6 +497,7 @@ pub struct AppCore {
     app_keys: BTreeMap<String, KnownAppKeys>,
     groups: BTreeMap<String, GroupSnapshot>,
     group_pictures: BTreeMap<String, String>,
+    upload_runtime: UploadRuntime,
     typing_indicators: BTreeMap<String, TypingIndicatorRecord>,
     /// Monotonic per-chat ceiling on `last_event_secs` we'll accept
     /// for incoming typing events. Bumped to the wire-clock

@@ -342,6 +342,7 @@ impl AppCore {
     pub(super) fn logout(&mut self) {
         self.push_debug_log("session.logout", "clearing runtime state");
         let previous_rev = self.state.rev;
+        self.cancel_upload();
         self.stop_pending_linked_device();
         self.private_chat_invites.clear();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
@@ -476,6 +477,7 @@ impl AppCore {
                 allow_protocol_restore,
             ),
         );
+        self.cancel_upload();
         self.stop_pending_linked_device();
         self.protocol_engine = None;
         if let Some(existing) = self.logged_in.take() {
