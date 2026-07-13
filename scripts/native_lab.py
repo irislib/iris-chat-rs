@@ -122,7 +122,7 @@ def check_health(spec: str) -> Dict[str, Any]:
         devices = []
         for line in output.splitlines()[2:]:
             columns = [column.strip() for column in line.split("  ") if column.strip()]
-            if len(columns) >= 4 and columns[3].startswith("available"):
+            if len(columns) >= 4 and columns[3].split()[0] in {"available", "connected"}:
                 devices.append({"name": columns[0], "identifier": columns[2], "state": columns[3]})
         matches = (
             devices

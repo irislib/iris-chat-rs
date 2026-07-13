@@ -1,3 +1,9 @@
+# Iris Chat 2026.7.14
+
+- A newly linked device now receives your chat list and group details automatically.
+- Linked devices share known device keys for direct chats and group members.
+- Recent messages after the latest device change can follow to the newly linked device.
+
 # Iris Chat 2026.7.13
 
 - App updates now come from a dedicated Iris release channel.

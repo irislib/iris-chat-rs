@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cargo \
         libgtk-4-dev \
         libadwaita-1-dev \
+        libdbus-1-dev \
         libssl-dev \
         libsecret-1-dev \
         libglib2.0-dev \

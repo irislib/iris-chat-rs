@@ -39,6 +39,9 @@ jobs:
         with:
           path: ${{ env.APP_DIR }}
 
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
@@ -115,6 +118,9 @@ jobs:
           yes | "$sdkmanager_bin" --licenses >/dev/null || true
           "$sdkmanager_bin" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
 
+      - name: Install host dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
       - name: Cache Cargo and Gradle
         uses: actions/cache@v4
         with:
@@ -160,6 +166,7 @@ jobs:
             build-essential \
             libadwaita-1-dev \
             libclang-dev \
+            libdbus-1-dev \
             libglib2.0-dev \
             libgtk-4-dev \
             libsecret-1-dev \

@@ -174,7 +174,11 @@ fn device_sync_bootstraps_missing_chats_groups_and_post_roster_messages_once() {
         })
         .collect::<Vec<_>>();
     synced_owners.sort();
-    let mut expected_owners = vec![owner_hex, peer_hex, group_member_hex];
+    let mut expected_owners = vec![
+        owner_hex.clone(),
+        peer_hex.clone(),
+        group_member_hex.clone(),
+    ];
     expected_owners.sort();
     assert_eq!(synced_owners, expected_owners);
     assert!(packets.iter().all(|packet| {
@@ -183,6 +187,22 @@ fn device_sync_bootstraps_missing_chats_groups_and_post_roster_messages_once() {
             .unwrap()
             .is_empty()
     }));
+
+    let (mut linked, _updates, _temp) =
+        logged_in_test_core_with_updates("device-sync-linked", &owner, &sibling_device);
+    linked
+        .app_keys
+        .insert(owner_hex.clone(), core.app_keys[&owner_hex].clone());
+    for packet in core.build_device_sync_packets_for_test(100, true) {
+        linked.handle_device_sync_packet(&local_device.public_key().to_hex(), 7369, &packet);
+    }
+    assert_eq!(linked.threads[&peer_hex].messages[0].id, "after-both-cutoffs");
+    assert_eq!(linked.groups["friends"].name, "Best friends");
+    assert_eq!(linked.groups["friends"].members.len(), 3);
+    assert!(linked.threads.contains_key("group:friends"));
+    assert_eq!(linked.app_keys[&peer_hex].created_at_secs, 80);
+    assert_eq!(linked.app_keys[&group_member_hex].created_at_secs, 81);
+    assert!(!linked.app_keys.contains_key(&unrelated_hex));
 }
 
 #[test]

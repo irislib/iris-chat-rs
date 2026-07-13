@@ -251,11 +251,12 @@ impl AppCore {
         });
 
         let request_endpoint = endpoint.clone();
-        let request = serde_json::to_vec(&DeviceSyncPacket::Request {
+        let Ok(request) = serde_json::to_vec(&DeviceSyncPacket::Request {
             v: DEVICE_SYNC_VERSION,
             roster_at,
-        })
-        .expect("serialize device sync request");
+        }) else {
+            return;
+        };
         let request_task = self.runtime.spawn(async move {
             let mut requested_links = BTreeMap::<String, u64>::new();
             loop {
@@ -873,7 +874,10 @@ fn encode_device_sync_chunks(snapshot: DeviceSyncSnapshot) -> Vec<Vec<u8>> {
         }
         item.pop(&mut current);
         if !current.is_empty() {
-            packets.push(serde_json::to_vec(&current.packet()).expect("serialize device sync"));
+            let Ok(packet) = serde_json::to_vec(&current.packet()) else {
+                return Vec::new();
+            };
+            packets.push(packet);
         }
         current = DeviceSyncSnapshot {
             roster_at,
@@ -887,7 +891,10 @@ fn encode_device_sync_chunks(snapshot: DeviceSyncSnapshot) -> Vec<Vec<u8>> {
         }
     }
     if !current.is_empty() || packets.is_empty() {
-        packets.push(serde_json::to_vec(&current.packet()).expect("serialize device sync"));
+        let Ok(packet) = serde_json::to_vec(&current.packet()) else {
+            return Vec::new();
+        };
+        packets.push(packet);
     }
     packets
 }
