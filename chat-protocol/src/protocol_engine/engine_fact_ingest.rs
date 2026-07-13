@@ -1,4 +1,18 @@
 impl ProtocolEngine {
+    /// Install metadata copied from an authenticated sibling device. Signed
+    /// roster facts remain authoritative and can replace this bootstrap copy.
+    pub fn install_device_sync_group(&mut self, snapshot: GroupSnapshot) -> anyhow::Result<bool> {
+        let checkpoint = self.state_checkpoint();
+        let applied = self.install_group_roster_snapshot(snapshot)?;
+        if applied {
+            if let Err(error) = self.persist() {
+                self.restore_checkpoint(checkpoint);
+                return Err(error);
+            }
+        }
+        Ok(applied)
+    }
+
     pub fn ingest_group_roster_fact_event(
         &mut self,
         event: &Event,

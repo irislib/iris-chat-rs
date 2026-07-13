@@ -443,6 +443,7 @@ impl AppCore {
         self.apply_group_metadata_notice(previous, &group);
         self.publish_group_roster_fact(&group);
         self.request_protocol_subscription_refresh();
+        self.broadcast_device_sync_snapshot();
     }
 
     pub(super) fn apply_group_roster_snapshot(

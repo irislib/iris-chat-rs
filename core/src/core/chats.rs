@@ -33,6 +33,7 @@ impl AppCore {
                     "chat.create",
                     format!("peer_input={} chat_id={chat_id}", peer_input.trim()),
                 );
+                self.broadcast_device_sync_snapshot();
             }
             Err(_) => self.state.toast = Some("Invalid peer key.".to_string()),
         }
@@ -918,6 +919,15 @@ impl AppCore {
         // push subscription includes them too (the projection's
         // `is_request` flag already flips off on any outgoing, but the
         // wire layer only sees this set, not message history).
+        self.accept_direct_peer(chat_id);
+        self.bump_typing_floor(chat_id, created_at_secs);
+        if expires_at_secs.is_some() {
+            self.schedule_next_message_expiry();
+        }
+        message
+    }
+
+    pub(super) fn accept_direct_peer(&mut self, chat_id: &str) {
         if !is_group_chat_id(chat_id)
             && !self
                 .preferences
@@ -932,11 +942,6 @@ impl AppCore {
             self.preferences.accepted_owner_pubkeys.dedup();
             self.mark_mobile_push_dirty();
         }
-        self.bump_typing_floor(chat_id, created_at_secs);
-        if expires_at_secs.is_some() {
-            self.schedule_next_message_expiry();
-        }
-        message
     }
 
     #[allow(clippy::too_many_arguments)]

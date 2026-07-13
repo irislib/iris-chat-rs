@@ -35,6 +35,7 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 flume = "0.11"
+fips-core = { version = "0.3.96", features = ["webrtc-transport"] }
 hashtree-blossom = { version = "0.2.55", default-features = false, features = ["store"] }
 hashtree-config = "0.2.55"
 hashtree-core = "0.2.55"

@@ -26,8 +26,8 @@ use nostr_double_ratchet::{
     parse_group_sender_key_message_event, parse_group_sender_key_message_event_unchecked,
 };
 use nostr_double_ratchet::{
-    GroupIncomingEvent, GroupSnapshot, Invite, SessionManagerSnapshot, SessionState,
-    UnixSeconds as NdrUnixSeconds,
+    GroupIncomingEvent, GroupSnapshot, Invite, OwnerPubkey as NdrOwnerPubkey,
+    SessionManagerSnapshot, SessionState, UnixSeconds as NdrUnixSeconds,
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use nostr_identity::{
@@ -62,7 +62,7 @@ use nostr_double_ratchet::{
 #[cfg(test)]
 use nostr_double_ratchet::{
     AuthorizedDevice, DevicePubkey as NdrDevicePubkey, DeviceRoster, GroupManagerSnapshot,
-    OwnerPubkey as NdrOwnerPubkey, ProtocolContext, SessionManager,
+    ProtocolContext, SessionManager,
 };
 #[cfg(test)]
 use rand::rngs::OsRng;
@@ -78,6 +78,7 @@ mod chat_typing;
 mod chats;
 mod config;
 mod device_approval;
+mod device_sync;
 mod groups;
 mod identity;
 mod invites;
@@ -113,15 +114,18 @@ pub(super) const PENDING_RELAY_CONTROL_PUBLISH_MAX_ROWS: usize = 2_048;
 type OwnerPubkey = PublicKey;
 type DevicePubkey = PublicKey;
 
-use account_app_keys::known_app_keys_from_ndr;
-use account_app_keys::known_app_keys_to_ndr;
 use account_app_keys::next_app_keys_created_at;
+use account_app_keys::{
+    canonical_known_app_keys_snapshot, known_app_keys_from_ndr, known_app_keys_to_ndr,
+    preserve_known_app_key_labels,
+};
 use attachment_upload::upload_profile_picture_to_hashtree;
 use attachments::*;
 use config::*;
 pub(crate) use config::{
     app_version_string, build_summary, configured_relays, relay_set_id, trusted_test_build_flag,
 };
+use device_sync::*;
 use identity::*;
 pub(crate) use identity::{normalize_peer_input_for_display, parse_peer_input};
 pub(crate) use mobile_push::{
@@ -507,6 +511,7 @@ pub struct AppCore {
     relay_status_by_url: BTreeMap<String, RelayStatus>,
     relay_connected_count: u64,
     all_relays_offline_since_secs: Option<u64>,
+    device_sync: Option<DeviceSyncRuntime>,
     pending_relay_publishes: BTreeMap<String, PendingRelayPublish>,
     pending_relay_publish_inflight: HashSet<String>,
     pending_decrypted_delivery_acks: HashSet<String>,

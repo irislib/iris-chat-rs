@@ -159,6 +159,11 @@ pub(crate) enum InternalEvent {
     OpenChatFinalize {
         chat_id: String,
     },
+    DeviceSyncPacket {
+        source_pubkey_hex: String,
+        source_port: u16,
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Debug)]

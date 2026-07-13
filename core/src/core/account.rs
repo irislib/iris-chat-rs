@@ -50,6 +50,7 @@ impl AppCore {
             self.push_debug_log("messages.expired", format!("removed={expired}"));
         }
         self.push_debug_log("app.foreground", "refresh relay session");
+        self.reconcile_device_sync();
         self.schedule_session_connect();
         self.request_protocol_subscription_refresh_forced_reconnect_if_offline();
         let _fetching_recent_protocol_state = self.fetch_recent_protocol_state();
@@ -343,6 +344,7 @@ impl AppCore {
         self.push_debug_log("session.logout", "clearing runtime state");
         let previous_rev = self.state.rev;
         self.stop_pending_linked_device();
+        self.stop_device_sync();
         self.private_chat_invites.clear();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.message_expiry_token = self.message_expiry_token.wrapping_add(1);
@@ -477,6 +479,7 @@ impl AppCore {
             ),
         );
         self.stop_pending_linked_device();
+        self.stop_device_sync();
         self.protocol_engine = None;
         if let Some(existing) = self.logged_in.take() {
             let client = existing.client;
@@ -687,6 +690,7 @@ impl AppCore {
             authorization_state,
         });
         self.refresh_local_authorization_state();
+        self.reconcile_device_sync();
         self.push_debug_log(
             "session.authorization",
             format!(

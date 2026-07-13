@@ -292,6 +292,32 @@ impl AppStore {
         load_recent_messages(&conn, chat_id, limit)
     }
 
+    pub(crate) fn load_device_sync_messages_after(
+        &self,
+        cutoff_secs: u64,
+        now_secs: u64,
+    ) -> anyhow::Result<Vec<PersistedMessage>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        let mut stmt = conn.prepare(
+            "SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing,
+                    created_at_secs, expires_at_secs, delivery, attachments_json, reactions_json,
+                    reactors_json, source_event_id, recipient_deliveries_json, delivery_trace_json
+             FROM messages
+             WHERE kind = 'user' AND created_at_secs > ?1
+               AND delivery NOT IN ('queued', 'failed')
+               AND (expires_at_secs IS NULL OR expires_at_secs > ?2)
+             ORDER BY created_at_secs, rowid",
+        )?;
+        let rows = stmt.query_map(
+            params![cutoff_secs as i64, now_secs as i64],
+            persisted_message_from_row,
+        )?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     pub(crate) fn load_thread(
         &self,
         chat_id: &str,

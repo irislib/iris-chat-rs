@@ -714,9 +714,11 @@ impl AppCore {
                 self.apply_current_device_labels_to_known_app_keys(&mut known, device_pubkey);
             }
         }
-        if current.as_ref() != Some(&known) {
+        let app_keys_changed = current.as_ref() != Some(&known);
+        if app_keys_changed {
             self.app_keys.insert(owner_hex, known);
         }
+        self.reconcile_device_sync();
         if should_publish_backfilled_owner_app_keys {
             self.defer_owner_app_keys_publish = false;
         }
@@ -727,6 +729,9 @@ impl AppCore {
         self.persist_best_effort();
         self.emit_state();
         self.process_protocol_engine_retry_batch("app_keys", protocol_retry_batch);
+        if app_keys_changed && self.device_sync_tracks_app_keys_owner(event.pubkey) {
+            self.broadcast_device_sync_snapshot();
+        }
         if should_publish_backfilled_owner_app_keys {
             self.publish_local_app_keys();
         }

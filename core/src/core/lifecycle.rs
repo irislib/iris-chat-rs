@@ -100,6 +100,7 @@ impl AppCore {
             relay_status_by_url: BTreeMap::new(),
             relay_connected_count: 0,
             all_relays_offline_since_secs: None,
+            device_sync: None,
             pending_relay_publishes: BTreeMap::new(),
             pending_relay_publish_inflight: HashSet::new(),
             pending_decrypted_delivery_acks: HashSet::new(),
@@ -192,6 +193,7 @@ impl AppCore {
                     "ProtocolAuthorBackfillComplete"
                 }
                 InternalEvent::OpenChatFinalize { .. } => "OpenChatFinalize",
+                InternalEvent::DeviceSyncPacket { .. } => "DeviceSyncPacket",
             },
             CoreMsg::BuildNearbyPresenceEvent { .. } => "BuildNearbyPresenceEvent",
             CoreMsg::ExportSupportBundle(_) => "ExportSupportBundle",
@@ -292,6 +294,7 @@ impl AppCore {
     pub(super) fn shutdown(&mut self) {
         self.push_debug_log("app.shutdown", "stopping core");
         self.stop_pending_linked_device();
+        self.stop_device_sync();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
@@ -319,6 +322,7 @@ impl AppCore {
         self.suspended = true;
         self.push_debug_log("app.suspend", "pausing network and flushing storage");
         self.stop_pending_linked_device();
+        self.stop_device_sync();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.message_expiry_token = self.message_expiry_token.saturating_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
@@ -791,6 +795,11 @@ impl AppCore {
             InternalEvent::OpenChatFinalize { chat_id } => {
                 self.open_chat_finalize(&chat_id);
             }
+            InternalEvent::DeviceSyncPacket {
+                source_pubkey_hex,
+                source_port,
+                data,
+            } => self.handle_device_sync_packet(&source_pubkey_hex, source_port, &data),
         }
     }
 }

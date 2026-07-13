@@ -10,11 +10,6 @@ impl AppCore {
     ) -> Option<(AppKeys, u64)> {
         let owner_hex = owner.to_hex();
         let current = self.app_keys.get(&owner_hex).cloned();
-        let current_app_keys = current.as_ref().and_then(known_app_keys_to_ndr);
-        let current_created_at = current
-            .as_ref()
-            .map(|known| known.created_at_secs)
-            .unwrap_or_default();
         let required_device = self
             .logged_in
             .as_ref()
@@ -26,19 +21,63 @@ impl AppCore {
             .map(|logged_in| {
                 DeviceEntry::new(logged_in.device_keys.public_key(), unix_now().get())
             });
-        let applied = apply_app_keys_snapshot_with_required_device(
-            current_app_keys.as_ref(),
-            current_created_at,
+        let (app_keys, known) = canonical_known_app_keys_snapshot(
+            current.as_ref(),
+            owner,
             incoming_app_keys,
             incoming_created_at,
             required_device,
         );
-        let known = known_app_keys_from_ndr(owner, &applied.app_keys, applied.created_at);
         if current.as_ref() == Some(&known) {
             return None;
         }
+        let created_at = known.created_at_secs;
         self.app_keys.insert(owner_hex, known);
-        Some((applied.app_keys, applied.created_at))
+        Some((app_keys, created_at))
+    }
+}
+
+pub(super) fn canonical_known_app_keys_snapshot(
+    current: Option<&KnownAppKeys>,
+    owner: PublicKey,
+    incoming: &AppKeys,
+    incoming_created_at: u64,
+    required_device: Option<DeviceEntry>,
+) -> (AppKeys, KnownAppKeys) {
+    let current_app_keys = current.and_then(known_app_keys_to_ndr);
+    let applied = apply_app_keys_snapshot_with_required_device(
+        current_app_keys.as_ref(),
+        current.map_or(0, |known| known.created_at_secs),
+        incoming,
+        incoming_created_at,
+        required_device,
+    );
+    let known = known_app_keys_from_ndr(owner, &applied.app_keys, applied.created_at);
+    (applied.app_keys, known)
+}
+
+pub(super) fn preserve_known_app_key_labels(
+    current: Option<&KnownAppKeys>,
+    incoming: &mut AppKeys,
+) {
+    let Some(current) = current else {
+        return;
+    };
+    for device in &current.devices {
+        if device.device_label.is_none() && device.client_label.is_none() {
+            continue;
+        }
+        let Ok(pubkey) = PublicKey::parse(&device.identity_pubkey_hex) else {
+            continue;
+        };
+        if incoming.get_device(&pubkey).is_some() {
+            incoming.set_device_labels(
+                pubkey,
+                device.device_label.clone(),
+                device.client_label.clone(),
+                Some(device.label_updated_at_secs),
+            );
+        }
     }
 }
 
