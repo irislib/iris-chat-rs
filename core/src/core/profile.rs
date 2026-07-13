@@ -465,3 +465,41 @@ pub(super) fn fallback_profile_name_for_identity(identity: &str) -> String {
         .unwrap_or("Listener");
     format!("{adjective} {noun}")
 }
+
+#[cfg(test)]
+mod upload_lifecycle_tests {
+    use super::*;
+    use crate::state::{AppState, UploadProgress};
+    use std::sync::{Arc, RwLock};
+
+    #[test]
+    fn profile_completion_does_not_clear_an_unrelated_attachment_upload() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let mut core = AppCore::new(
+            flume::unbounded().0,
+            flume::unbounded().0,
+            temp_dir.path().to_string_lossy().to_string(),
+            Arc::new(RwLock::new(AppState::empty())),
+        );
+        let attachment_progress = UploadProgress {
+            bytes_uploaded: 64,
+            total_bytes: 128,
+        };
+
+        // A chat attachment owns the shared upload state while an overlapping
+        // profile upload reports a late completion.
+        core.state.busy.uploading_attachment = true;
+        core.state.busy.upload_progress = Some(attachment_progress.clone());
+
+        core.handle_profile_picture_upload_finished(Err("profile upload failed".to_string()));
+
+        assert_eq!(
+            (
+                core.state.busy.uploading_attachment,
+                core.state.busy.upload_progress.clone(),
+            ),
+            (true, Some(attachment_progress)),
+            "a profile completion must not clear upload state owned by a chat attachment"
+        );
+    }
+}
