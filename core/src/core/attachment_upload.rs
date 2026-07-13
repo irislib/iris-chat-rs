@@ -11,6 +11,7 @@ use hashtree_core::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{OnceLock, RwLockReadGuard, RwLockWriteGuard};
 use tokio::sync::RwLock as AsyncRwLock;
 use tokio_util::compat::TokioAsyncReadCompatExt;
@@ -35,6 +36,14 @@ fn shared_chunk_cache_write() -> RwLockWriteGuard<'static, HashMap<String, Vec<u
     shared_chunk_cache()
         .write()
         .unwrap_or_else(|poison| poison.into_inner())
+}
+
+/// Core recovery keeps the existing queues, so IDs must outlive one `AppCore`.
+fn next_upload_operation_id() -> Option<u64> {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+    NEXT_ID
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        .ok()
 }
 
 impl AppCore {
@@ -102,7 +111,16 @@ impl AppCore {
             .unwrap_or(&logged_in.device_keys);
         let secret_hex = upload_keys.secret_key().to_secret_hex();
         let caption = caption.trim().to_string();
-        let upload_attachments = prepared.clone();
+        let log_detail = format!(
+            "chat_id={} count={} files={}",
+            normalized_chat_id,
+            prepared.len(),
+            prepared
+                .iter()
+                .map(|attachment| attachment.filename.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
 
         if self
             .start_upload(
@@ -110,7 +128,7 @@ impl AppCore {
                     chat_id: normalized_chat_id.clone(),
                 },
                 async move {
-                    upload_files_to_hashtree(&secret_hex, &upload_attachments)
+                    upload_files_to_hashtree(&secret_hex, &prepared)
                         .await
                         .map(|uploaded| format_attachment_links_message(&caption, &uploaded))
                         .map_err(|error| error.to_string())
@@ -121,19 +139,7 @@ impl AppCore {
             return;
         }
 
-        self.push_debug_log(
-            "attachment.upload.start",
-            format!(
-                "chat_id={} count={} files={}",
-                normalized_chat_id,
-                prepared.len(),
-                prepared
-                    .iter()
-                    .map(|attachment| attachment.filename.as_str())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-        );
+        self.push_debug_log("attachment.upload.start", log_detail);
         self.active_chat_id = Some(normalized_chat_id.clone());
         self.screen_stack = vec![Screen::Chat {
             chat_id: normalized_chat_id,
@@ -149,14 +155,13 @@ impl AppCore {
         if self.suspended {
             return None;
         }
-        if self.upload_runtime.active.is_some() {
+        if self.active_upload.is_some() {
             self.state.toast = Some("Attachment upload already in progress.".to_string());
             self.emit_state();
             return None;
         }
 
-        let operation_id = self.upload_runtime.next_id.checked_add(1)?;
-        self.upload_runtime.next_id = operation_id;
+        let operation_id = next_upload_operation_id()?;
         let sender = self.core_sender.clone();
         let task = self.runtime.spawn(async move {
             let result = std::panic::AssertUnwindSafe(upload)
@@ -168,7 +173,7 @@ impl AppCore {
                 result,
             })));
         });
-        self.upload_runtime.active = Some(ActiveUpload {
+        self.active_upload = Some(ActiveUpload {
             id: operation_id,
             target,
             abort_handle: task.abort_handle(),
@@ -184,8 +189,7 @@ impl AppCore {
         result: Result<String, String>,
     ) {
         let Some(active) = self
-            .upload_runtime
-            .active
+            .active_upload
             .take_if(|active| active.id == operation_id)
         else {
             return;
@@ -204,37 +208,35 @@ impl AppCore {
     }
 
     pub(super) fn cancel_upload(&mut self) {
-        if let Some(active) = self.upload_runtime.active.take() {
+        if let Some(active) = self.active_upload.take() {
             active.abort_handle.abort();
         }
         self.state.busy.uploading_attachment = false;
         self.state.busy.upload_progress = None;
     }
 
-    pub(super) fn cancel_upload_for_chat(&mut self, chat_id: &str) {
-        let deleted_group_id = group_id_from_chat_id(chat_id);
-        let matches =
-            self.upload_runtime
-                .active
-                .as_ref()
-                .is_some_and(|active| match &active.target {
-                    UploadTarget::ChatAttachments {
-                        chat_id: active_chat_id,
-                    } => active_chat_id == chat_id,
-                    UploadTarget::GroupPicture { group_id } => {
-                        deleted_group_id.as_deref() == Some(group_id.as_str())
-                    }
-                    UploadTarget::ProfilePicture => false,
-                });
+    pub(super) fn cancel_upload_for_chat(&mut self, chat_id: &str) -> bool {
+        let matches = self
+            .active_upload
+            .as_ref()
+            .is_some_and(|active| match &active.target {
+                UploadTarget::ChatAttachments {
+                    chat_id: active_chat_id,
+                } => active_chat_id == chat_id,
+                UploadTarget::GroupPicture { group_id } => {
+                    chat_id.strip_prefix(GROUP_CHAT_PREFIX) == Some(group_id.as_str())
+                }
+                UploadTarget::ProfilePicture => false,
+            });
         if matches {
             self.cancel_upload();
         }
+        matches
     }
 
     pub(super) fn cancel_profile_picture_upload(&mut self) {
         if self
-            .upload_runtime
-            .active
+            .active_upload
             .as_ref()
             .is_some_and(|active| active.target == UploadTarget::ProfilePicture)
         {
@@ -277,7 +279,6 @@ pub fn download_hashtree_attachment(nhash: String) -> AttachmentDownloadResult {
     }
 }
 
-#[derive(Clone, Debug)]
 struct PreparedOutgoingAttachment {
     file_path: PathBuf,
     filename: String,
@@ -366,19 +367,20 @@ pub(super) async fn upload_profile_picture_to_hashtree(
     secret_hex: &str,
     path: &Path,
 ) -> anyhow::Result<String> {
-    let nhash = upload_picture_to_hashtree(secret_hex, path).await?;
+    let nhash = upload_picture_to_hashtree(secret_hex, path, Some(10 * 1024 * 1024)).await?;
     Ok(format!("htree://{nhash}"))
 }
 
 pub(super) async fn upload_picture_to_hashtree(
     secret_hex: &str,
     path: &Path,
+    max_bytes: Option<usize>,
 ) -> anyhow::Result<String> {
     let data = tokio::fs::read(path).await?;
     if data.is_empty() {
         anyhow::bail!("picture is empty");
     }
-    if data.len() > 10 * 1024 * 1024 {
+    if max_bytes.is_some_and(|max_bytes| data.len() > max_bytes) {
         anyhow::bail!("picture is too large");
     }
     if !looks_like_image(path, &data) {

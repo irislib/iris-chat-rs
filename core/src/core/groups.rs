@@ -172,17 +172,12 @@ impl AppCore {
         let total_bytes = path.metadata().map(|metadata| metadata.len()).unwrap_or(0);
         let log_detail = format!("group_id={group_id} filename={filename} bytes={total_bytes}");
         if self
-            .start_upload(
-                UploadTarget::GroupPicture {
-                    group_id: group_id.clone(),
-                },
-                async move {
-                    attachment_upload::upload_picture_to_hashtree(&secret_hex, &path)
-                        .await
-                        .map(|nhash| format!("htree://{}", format_file_link(&nhash, &filename)))
-                        .map_err(|error| error.to_string())
-                },
-            )
+            .start_upload(UploadTarget::GroupPicture { group_id }, async move {
+                attachment_upload::upload_picture_to_hashtree(&secret_hex, &path, None)
+                    .await
+                    .map(|nhash| format!("htree://{}", format_file_link(&nhash, &filename)))
+                    .map_err(|error| error.to_string())
+            })
             .is_none()
         {
             return;

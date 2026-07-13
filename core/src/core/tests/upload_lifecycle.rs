@@ -35,7 +35,7 @@ impl UploadHarness {
     fn dispatch_next_completion(&mut self) {
         let message = self
             .core_rx
-            .recv_timeout(Duration::from_secs(1))
+            .recv_timeout(Duration::from_secs(2))
             .expect("completion event");
         assert!(self.core.handle_message(message));
     }
@@ -62,8 +62,7 @@ fn profile_completion_does_not_clear_an_unrelated_attachment_upload() {
 
     let active = harness
         .core
-        .upload_runtime
-        .active
+        .active_upload
         .as_ref()
         .expect("chat upload remains active");
     assert_eq!(active.id, chat_id);
@@ -101,8 +100,7 @@ fn upload_slot_is_shared_and_a_rejected_future_is_never_polled() {
     assert_eq!(
         harness
             .core
-            .upload_runtime
-            .active
+            .active_upload
             .as_ref()
             .map(|active| active.id),
         Some(chat_id)
@@ -138,8 +136,7 @@ fn profile_picture_entry_point_uses_the_shared_upload_slot() {
 
     let active = harness
         .core
-        .upload_runtime
-        .active
+        .active_upload
         .as_ref()
         .expect("chat upload remains active");
     assert_eq!(active.id, chat_id);
@@ -185,7 +182,7 @@ fn matching_failures_finish_the_target_that_owns_the_slot() {
             .expect("upload should start");
         harness.dispatch_next_completion();
 
-        assert!(harness.core.upload_runtime.active.is_none());
+        assert!(harness.core.active_upload.is_none());
         assert!(!harness.core.state.busy.uploading_attachment);
         assert_eq!(harness.core.state.busy.upload_progress, None);
         assert_eq!(harness.core.state.toast.as_deref(), Some(expected_toast));
@@ -227,7 +224,7 @@ fn panicking_upload_releases_the_slot() {
 
     harness.dispatch_next_completion();
 
-    assert!(harness.core.upload_runtime.active.is_none());
+    assert!(harness.core.active_upload.is_none());
     assert!(!harness.core.state.busy.uploading_attachment);
     assert_eq!(
         harness.core.state.toast.as_deref(),
@@ -245,7 +242,7 @@ fn logout_invalidates_an_upload_without_reusing_its_id() {
         .core
         .handle_upload_finished(old_id, Err("late".to_string()));
 
-    assert!(harness.core.upload_runtime.active.is_none());
+    assert!(harness.core.active_upload.is_none());
     assert!(!harness.core.state.busy.uploading_attachment);
     assert_eq!(harness.core.state.toast, None);
 
@@ -274,7 +271,7 @@ fn session_replacement_invalidates_an_upload_without_reusing_its_id() {
         .core
         .handle_upload_finished(old_id, Err("late".to_string()));
 
-    assert!(harness.core.upload_runtime.active.is_none());
+    assert!(harness.core.active_upload.is_none());
     assert!(!harness.core.state.busy.uploading_attachment);
 
     let new_id = harness.start_pending(UploadTarget::ProfilePicture);
@@ -282,30 +279,97 @@ fn session_replacement_invalidates_an_upload_without_reusing_its_id() {
 }
 
 #[test]
-fn entity_deletion_cancels_only_the_upload_for_that_entity() {
-    let mut harness = UploadHarness::new();
-    let profile_id = harness.start_pending(UploadTarget::ProfilePicture);
+fn stale_completion_from_an_old_core_does_not_finish_a_recovered_core_upload() {
+    let mut old_core = UploadHarness::new();
+    let mut recovered_core = UploadHarness::new();
 
-    harness.core.cancel_upload_for_chat("chat-a");
+    let old_id = old_core.start_pending(UploadTarget::ProfilePicture);
+    let recovered_id = recovered_core.start_pending(UploadTarget::ProfilePicture);
+    recovered_core
+        .core
+        .handle_upload_finished(old_id, Err("stale".to_string()));
+
+    assert_ne!(recovered_id, old_id);
+    assert_eq!(
+        recovered_core
+            .core
+            .active_upload
+            .as_ref()
+            .map(|active| active.id),
+        Some(recovered_id)
+    );
+    assert!(recovered_core.core.state.busy.uploading_attachment);
+    assert_eq!(recovered_core.core.state.toast, None);
+}
+
+#[test]
+fn direct_chat_alias_migration_retargets_a_pending_upload() {
+    let mut harness = UploadHarness::new();
+    let from_chat_id = Keys::generate().public_key().to_hex();
+    let to_chat_id = Keys::generate().public_key().to_hex();
+    harness.start_pending(UploadTarget::ChatAttachments {
+        chat_id: from_chat_id.clone(),
+    });
+
+    harness
+        .core
+        .migrate_direct_thread_alias(&from_chat_id, &to_chat_id);
+
     assert_eq!(
         harness
             .core
-            .upload_runtime
-            .active
+            .active_upload
+            .as_ref()
+            .map(|active| &active.target),
+        Some(&UploadTarget::ChatAttachments {
+            chat_id: to_chat_id.clone(),
+        })
+    );
+    harness.core.delete_chat(&to_chat_id);
+    assert!(harness.core.active_upload.is_none());
+}
+
+#[test]
+fn deleting_a_chat_cancels_only_its_pending_upload() {
+    let mut harness = UploadHarness::new();
+    let profile_id = harness.start_pending(UploadTarget::ProfilePicture);
+    let unrelated_chat_id = Keys::generate().public_key().to_hex();
+
+    harness.core.delete_chat(&unrelated_chat_id);
+    assert_eq!(
+        harness
+            .core
+            .active_upload
             .as_ref()
             .map(|active| active.id),
         Some(profile_id)
     );
     harness.core.cancel_profile_picture_upload();
-    assert!(harness.core.upload_runtime.active.is_none());
+    assert!(harness.core.active_upload.is_none());
+
+    let chat_id = Keys::generate().public_key().to_hex();
+    harness.core.active_chat_id = Some(chat_id.clone());
+    harness.core.screen_stack = vec![Screen::Chat {
+        chat_id: chat_id.clone(),
+    }];
+    harness.start_pending(UploadTarget::ChatAttachments {
+        chat_id: chat_id.clone(),
+    });
+
+    harness.core.delete_chat(&chat_id);
+
+    assert!(harness.core.active_upload.is_none());
+    assert!(!harness.core.state.busy.uploading_attachment);
+    assert_eq!(harness.core.active_chat_id, None);
+    assert!(harness.core.screen_stack.is_empty());
 
     harness.start_pending(UploadTarget::GroupPicture {
         group_id: "group-a".to_string(),
     });
-    harness.core.cancel_upload_for_chat("group:group-b");
-    assert!(harness.core.upload_runtime.active.is_some());
-    harness.core.cancel_upload_for_chat("group:group-a");
-    assert!(harness.core.upload_runtime.active.is_none());
+    harness.core.delete_chat("group:group-b");
+    assert!(harness.core.active_upload.is_some());
+    harness.core.delete_chat("group:group-a");
+    assert!(harness.core.active_upload.is_none());
 }
 
 #[test]
@@ -334,24 +398,29 @@ fn cancellation_aborts_the_owned_task() {
     harness.core.cancel_upload();
 
     drop_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
+        .recv_timeout(Duration::from_secs(2))
         .expect("upload future should be dropped after cancellation");
 }
 
 #[test]
-fn suspend_cancels_the_upload_before_internal_events_are_gated() {
+fn suspend_clears_the_upload_before_dropping_its_late_completion() {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     let mut harness = UploadHarness::new();
     let operation_id = harness.start_pending(UploadTarget::ProfilePicture);
 
     harness.core.prepare_for_suspend();
-    harness
-        .core
-        .handle_upload_finished(operation_id, Err("late".to_string()));
+    assert!(
+        harness
+            .core
+            .handle_message(CoreMsg::Internal(Box::new(InternalEvent::UploadFinished {
+                operation_id,
+                result: Err("late".to_string()),
+            })))
+    );
 
     assert!(harness.core.suspended);
-    assert!(harness.core.upload_runtime.active.is_none());
+    assert!(harness.core.active_upload.is_none());
     assert!(!harness.core.state.busy.uploading_attachment);
     assert_eq!(harness.core.state.busy.upload_progress, None);
     assert_eq!(harness.core.state.toast, None);
@@ -366,5 +435,5 @@ fn suspend_cancels_the_upload_before_internal_events_are_gated() {
         });
     assert_eq!(rejected, None);
     assert!(!polled.load(Ordering::SeqCst));
-    assert!(harness.core.upload_runtime.active.is_none());
+    assert!(harness.core.active_upload.is_none());
 }

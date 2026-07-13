@@ -80,7 +80,7 @@ impl AppCore {
             app_keys: BTreeMap::new(),
             groups: BTreeMap::new(),
             group_pictures: BTreeMap::new(),
-            upload_runtime: UploadRuntime::default(),
+            active_upload: None,
             typing_indicators: BTreeMap::new(),
             typing_floor_secs: BTreeMap::new(),
             chat_message_ttl_seconds: BTreeMap::new(),

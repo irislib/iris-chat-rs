@@ -100,8 +100,20 @@ impl AppCore {
         }
     }
 
-    fn migrate_direct_thread_alias(&mut self, from_chat_id: &str, to_chat_id: &str) {
-        if from_chat_id == to_chat_id || !self.threads.contains_key(from_chat_id) {
+    pub(super) fn migrate_direct_thread_alias(&mut self, from_chat_id: &str, to_chat_id: &str) {
+        if from_chat_id == to_chat_id {
+            return;
+        }
+        if let Some(ActiveUpload {
+            target: UploadTarget::ChatAttachments { chat_id },
+            ..
+        }) = self.active_upload.as_mut()
+        {
+            if chat_id == from_chat_id {
+                *chat_id = to_chat_id.to_string();
+            }
+        }
+        if !self.threads.contains_key(from_chat_id) {
             return;
         }
 
@@ -1174,10 +1186,10 @@ impl AppCore {
             false
         };
 
-        if !removed_thread && !removed_group {
+        let canceled_upload = self.cancel_upload_for_chat(&normalized);
+        if !removed_thread && !removed_group && !canceled_upload {
             return;
         }
-        self.cancel_upload_for_chat(&normalized);
 
         if self.active_chat_id.as_deref() == Some(normalized.as_str()) {
             self.active_chat_id = None;
