@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.35
+
+- Sync chats, group metadata, recent messages, and relevant AppKeys to newly linked devices with `iris-chat-protocol` 0.1.7.
+
 ## 0.1.33
 
 - Publish group roster fact sync and AppKeys-only linked-device authorization with `iris-chat-protocol` 0.1.5.
