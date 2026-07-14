@@ -90,7 +90,7 @@ grep -F "url \"${RELEASE_BASE_URL}/iris-aarch64-apple-darwin.tar.gz\"" "$TAP_WOR
 grep -F "url \"${RELEASE_BASE_URL}/iris-x86_64-apple-darwin.tar.gz\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
 grep -F "url \"${RELEASE_BASE_URL}/iris-x86_64-unknown-linux-gnu.tar.gz\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
 grep -F "sha256 \"$(sha256_file "$ASSETS_DIR/iris-aarch64-apple-darwin.tar.gz")\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
-grep -F 'bin.install "iris/iris" => "iris"' "$TAP_WORK/Formula/iris.rb" >/dev/null
+grep -F 'bin.install "iris" => "iris"' "$TAP_WORK/Formula/iris.rb" >/dev/null
 grep -F 'Linux ARM64 Homebrew install is not available yet' "$TAP_WORK/Formula/iris.rb" >/dev/null
 grep -F 'class Htree < Formula' "$TAP_WORK/Formula/htree.rb" >/dev/null
 if command -v ruby >/dev/null 2>&1; then

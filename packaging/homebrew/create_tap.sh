@@ -127,7 +127,7 @@ class ${class_name} < Formula
   end
 
   def install
-    bin.install "iris/iris" => "iris"
+    bin.install "iris" => "iris"
   end
 
   test do
