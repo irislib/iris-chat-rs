@@ -646,6 +646,30 @@ impl ProtocolEngine {
         )
     }
 
+    pub fn active_roster_session_count_for_owner(&self, owner_pubkey: PublicKey) -> usize {
+        let owner = ndr_owner(owner_pubkey);
+        self.session_manager
+            .snapshot()
+            .users
+            .into_iter()
+            .find(|user| user.owner_pubkey == owner)
+            .and_then(|user| {
+                let roster = user.roster?;
+                Some(
+                    user.devices
+                        .iter()
+                        .filter(|device| {
+                            device.active_session.is_some()
+                                && roster.devices().iter().any(|entry| {
+                                    entry.device_pubkey == device.device_pubkey
+                                })
+                        })
+                        .count(),
+                )
+            })
+            .unwrap_or_default()
+    }
+
     pub fn has_delivery_blocking_message_work(&self, message_id: &str) -> bool {
         self.pending_group_fanouts
             .iter()

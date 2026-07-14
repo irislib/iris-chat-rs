@@ -1299,6 +1299,7 @@ impl AppCore {
                 content.as_bytes(),
                 sender_owner,
                 sender_device,
+                conversation_owner.is_some(),
                 true,
             )
         {
@@ -1464,16 +1465,21 @@ impl AppCore {
         payload: &[u8],
         sender_owner: PublicKey,
         sender_device: Option<PublicKey>,
+        from_local_sibling: bool,
         log_errors: bool,
     ) -> bool {
         let Some(protocol_engine) = self.protocol_engine.as_mut() else {
             return false;
         };
-        let group_outcome = match protocol_engine.process_group_pairwise_payload(
-            payload,
-            sender_owner,
-            sender_device,
-        ) {
+        let group_outcome = match if from_local_sibling {
+            protocol_engine.process_local_sibling_group_pairwise_payload(
+                payload,
+                sender_owner,
+                sender_device,
+            )
+        } else {
+            protocol_engine.process_group_pairwise_payload(payload, sender_owner, sender_device)
+        } {
             Ok(group_outcome) => group_outcome,
             Err(error) => {
                 if log_errors {

@@ -140,6 +140,35 @@ impl ProtocolEngine {
         from_owner_pubkey: PublicKey,
         from_sender_device_pubkey: Option<PublicKey>,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
+        self.process_group_pairwise_payload_inner(
+            payload,
+            from_owner_pubkey,
+            from_sender_device_pubkey,
+            true,
+        )
+    }
+
+    pub fn process_local_sibling_group_pairwise_payload(
+        &mut self,
+        payload: &[u8],
+        from_owner_pubkey: PublicKey,
+        from_sender_device_pubkey: Option<PublicKey>,
+    ) -> anyhow::Result<ProtocolGroupIncomingResult> {
+        self.process_group_pairwise_payload_inner(
+            payload,
+            from_owner_pubkey,
+            from_sender_device_pubkey,
+            false,
+        )
+    }
+
+    fn process_group_pairwise_payload_inner(
+        &mut self,
+        payload: &[u8],
+        from_owner_pubkey: PublicKey,
+        from_sender_device_pubkey: Option<PublicKey>,
+        forward_to_local_siblings: bool,
+    ) -> anyhow::Result<ProtocolGroupIncomingResult> {
         let (is_group_payload, is_supported_group_payload) =
             classify_group_pairwise_payload(payload).unwrap_or((false, false));
         if is_group_payload && !is_supported_group_payload {
@@ -214,7 +243,7 @@ impl ProtocolEngine {
                     });
                 }
                 let mut effects = Vec::new();
-                if sender_owner != self.local_owner {
+                if forward_to_local_siblings && sender_owner != self.local_owner {
                     if let GroupIncomingEvent::MetadataUpdated(group) = &event {
                         for pending in &mut self.pending_group_pairwise_payloads {
                             pending.next_retry_at_secs = 0;
@@ -380,22 +409,17 @@ impl ProtocolEngine {
         };
         self.clear_pending_group_sender_key_candidate_for_direct_event(event);
         self.invalidate_known_message_author_cache();
-        let (conversation_owner, original_sender_device, payload) =
-            decode_local_sibling_payload(&received.payload)
-                .map(|(owner, device, payload)| (Some(owner), device, payload))
-                .unwrap_or((None, None, received.payload));
-        let trusted_original_sender = received.owner_pubkey == self.local_owner
-            && conversation_owner.is_some()
-            && original_sender_device.is_some();
-        let sender = if trusted_original_sender {
-            conversation_owner.expect("checked above")
-        } else {
-            public_owner(received.owner_pubkey)?
-        };
-        let sender_device = if trusted_original_sender {
-            original_sender_device
-        } else {
-            Some(public_device(received.device_pubkey)?)
+        let local_sibling = (received.owner_pubkey == self.local_owner)
+            .then(|| decode_local_sibling_payload(&received.payload))
+            .flatten();
+        let (conversation_owner, sender, sender_device, payload) = match local_sibling {
+            Some((owner, Some(device), payload)) => (Some(owner), owner, Some(device), payload),
+            _ => (
+                None,
+                public_owner(received.owner_pubkey)?,
+                Some(public_device(received.device_pubkey)?),
+                received.payload,
+            ),
         };
         let content = String::from_utf8(payload)?;
         let decrypted = ProtocolDecryptedMessage {

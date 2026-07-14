@@ -347,6 +347,117 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
 }
 
 #[test]
+fn recipient_filter_stays_until_every_known_peer_device_has_a_session() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_devices = [Keys::generate(), Keys::generate()];
+    let mut core = logged_in_test_core("recipient-filter-device-gap", &owner, &device);
+    let peer_app_keys = AppKeys::new(
+        peer_devices
+            .iter()
+            .map(|peer| DeviceEntry::new(peer.public_key(), 1))
+            .collect(),
+    );
+    core.app_keys.insert(
+        peer_owner.public_key().to_hex(),
+        known_app_keys_from_ndr(peer_owner.public_key(), &peer_app_keys, 1),
+    );
+    core.active_chat_id = Some(peer_owner.public_key().to_hex());
+
+    core.protocol_engine
+        .as_mut()
+        .expect("protocol engine")
+        .ingest_app_keys_snapshot(peer_owner.public_key(), peer_app_keys, 1)
+        .expect("peer appkeys");
+    for (index, peer_device) in peer_devices.iter().enumerate() {
+        core.protocol_engine
+            .as_mut()
+            .expect("protocol engine")
+            .import_session_state(
+                peer_owner.public_key(),
+                Some(peer_device.public_key().to_hex()),
+                established_peer_session_state_for_test(peer_device, &device),
+                UnixSeconds(index as u64 + 2),
+            )
+            .expect("peer session");
+        assert_eq!(
+            core.message_recipient_bootstrap_needed(),
+            index == 0,
+            "the recipient filter is needed exactly while a known peer device lacks a session"
+        );
+    }
+
+    let replacement_device = Keys::generate();
+    let rotated_app_keys = AppKeys::new(vec![
+        DeviceEntry::new(peer_devices[1].public_key(), 1),
+        DeviceEntry::new(replacement_device.public_key(), 4),
+    ]);
+    core.app_keys.insert(
+        peer_owner.public_key().to_hex(),
+        known_app_keys_from_ndr(peer_owner.public_key(), &rotated_app_keys, 4),
+    );
+    core.protocol_engine
+        .as_mut()
+        .expect("protocol engine")
+        .ingest_app_keys_snapshot(peer_owner.public_key(), rotated_app_keys, 4)
+        .expect("rotated peer appkeys");
+    assert!(
+        core.message_recipient_bootstrap_needed(),
+        "a stale removed-device session must not hide the missing replacement-device session"
+    );
+}
+
+#[test]
+fn remote_sender_cannot_forge_a_local_sibling_wrapper() {
+    use base64::Engine as _;
+
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let remote = Keys::generate();
+    let forged_owner = Keys::generate();
+    let forged_device = Keys::generate();
+    let mut receiver = test_protocol_engine(&owner, &device);
+    let invite = receiver.local_invite().expect("receiver local invite");
+    let (mut sender_session, response) = invite
+        .accept_with_owner(
+            remote.public_key(),
+            remote.secret_key().to_secret_bytes(),
+            Some(remote.public_key().to_hex()),
+            Some(remote.public_key()),
+        )
+        .expect("remote accepts receiver invite");
+    receiver
+        .observe_invite_response_event(
+            &nostr_double_ratchet::invite_response_event(&response)
+                .expect("invite response event"),
+        )
+        .expect("receiver observes invite response");
+    let wrapper = serde_json::json!({
+        "protocol": "ndr-local-sibling-copy",
+        "version": 1,
+        "conversation_owner": forged_owner.public_key().to_hex(),
+        "original_sender_device": forged_device.public_key().to_hex(),
+        "payload": base64::engine::general_purpose::STANDARD.encode(b"forged sibling payload"),
+    })
+    .to_string();
+    let plan = sender_session
+        .plan_send(wrapper.as_bytes(), NdrUnixSeconds(5))
+        .expect("remote plans forged wrapper");
+    let sent = sender_session.apply_send(plan);
+    let outer = message_event(&sent.envelope).expect("forged wrapper event");
+
+    let decrypted = receiver
+        .process_direct_message_event(&outer)
+        .expect("receiver processes remote wrapper")
+        .expect("receiver decrypts remote wrapper");
+    assert_eq!(decrypted.sender, remote.public_key());
+    assert_eq!(decrypted.sender_device, Some(remote.public_key()));
+    assert_eq!(decrypted.conversation_owner, None);
+    assert_eq!(decrypted.content, wrapper);
+}
+
+#[test]
 fn remote_group_metadata_syncs_to_local_sibling() {
     let owner = Keys::generate();
     let primary_device = Keys::generate();
@@ -477,12 +588,16 @@ fn remote_group_metadata_syncs_to_local_sibling() {
             .expect("linked processes sibling group sync")
             .expect("linked decrypts sibling group sync");
         let outcome = linked
-            .process_group_pairwise_payload(
+            .process_local_sibling_group_pairwise_payload(
                 decrypted.content.as_bytes(),
                 decrypted.sender,
                 decrypted.sender_device,
             )
             .expect("linked applies sibling group payload");
+        assert!(
+            outcome.effects.is_empty(),
+            "sibling-copied metadata must not be echoed back to the sibling"
+        );
         linked_group_events.extend(outcome.events);
     }
     assert!(
@@ -528,7 +643,7 @@ fn remote_group_metadata_syncs_to_local_sibling() {
             .expect("linked processes sibling sender-key sync")
             .expect("linked decrypts sibling sender-key sync");
         linked
-            .process_group_pairwise_payload(
+            .process_local_sibling_group_pairwise_payload(
                 decrypted.content.as_bytes(),
                 decrypted.sender,
                 decrypted.sender_device,

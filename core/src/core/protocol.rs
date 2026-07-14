@@ -708,12 +708,11 @@ impl AppCore {
             return false;
         };
         self.tracked_peer_owner_hexes().iter().any(|owner_hex| {
-            self.app_keys.contains_key(owner_hex)
-                && PublicKey::parse(owner_hex).is_ok_and(|owner_pubkey| {
-                    engine
-                        .message_author_pubkeys_for_owner(owner_pubkey)
-                        .is_empty()
+            self.app_keys.get(owner_hex).is_some_and(|known| {
+                PublicKey::parse(owner_hex).is_ok_and(|owner_pubkey| {
+                    engine.active_roster_session_count_for_owner(owner_pubkey) < known.devices.len()
                 })
+            })
         })
     }
 
