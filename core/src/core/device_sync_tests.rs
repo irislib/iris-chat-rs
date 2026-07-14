@@ -72,3 +72,21 @@ fn chunks_are_bounded_additive_camel_case_snapshots() {
         .sum::<usize>();
     assert_eq!(message_count, 200);
 }
+
+#[test]
+fn authorized_siblings_are_enqueued_without_requiring_a_live_fips_peer() {
+    let (sender, rx) = DeviceSyncTcpSender::test_channel(4, 1024);
+    let identity = fips_core::Identity::generate();
+    let sibling = FipsPeerIdentity::from_pubkey_full(identity.pubkey_full());
+    let packet = br#"{"type":"snapshot"}"#.to_vec();
+
+    send_device_sync_packets(
+        &sender,
+        std::slice::from_ref(&sibling),
+        std::slice::from_ref(&packet),
+    );
+
+    let queued = rx.try_recv().expect("authorized sibling should be queued");
+    assert_eq!(queued.peer, sibling);
+    assert_eq!(queued.record, packet);
+}

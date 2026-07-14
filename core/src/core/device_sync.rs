@@ -26,6 +26,7 @@ pub(super) struct DeviceSyncRuntime {
     key: String,
     endpoint: Arc<FipsEndpoint>,
     tcp: DeviceSyncTcpSender,
+    siblings: Vec<FipsPeerIdentity>,
     _update_pubsub: Option<Arc<FipsPubsubClient>>,
     tasks: Vec<JoinHandle<()>>,
 }
@@ -280,14 +281,16 @@ impl AppCore {
             tasks.push(task);
         }
 
+        let sibling_count = siblings.len();
         self.device_sync = Some(DeviceSyncRuntime {
             key,
             endpoint,
             tcp,
+            siblings,
             _update_pubsub: update_pubsub,
             tasks,
         });
-        self.push_debug_log("device_sync.start", format!("peers={}", siblings.len()));
+        self.push_debug_log("device_sync.start", format!("peers={sibling_count}"));
     }
 
     pub(super) fn stop_device_sync(&mut self) {
@@ -345,37 +348,14 @@ impl AppCore {
             return;
         };
         let packets = encode_device_sync_chunks(self.build_device_sync_snapshot(roster_at, false));
-        let Some((endpoint, tcp, authorized)) = self.device_sync.as_ref().and_then(|runtime| {
-            let logged_in = self.logged_in.as_ref()?;
-            let roster = self.app_keys.get(&logged_in.owner_pubkey.to_hex())?;
-            Some((
-                runtime.endpoint.clone(),
-                runtime.tcp.clone(),
-                roster
-                    .devices
-                    .iter()
-                    .map(|device| device.identity_pubkey_hex.clone())
-                    .collect::<HashSet<_>>(),
-            ))
-        }) else {
+        let Some((tcp, siblings)) = self
+            .device_sync
+            .as_ref()
+            .map(|runtime| (runtime.tcp.clone(), runtime.siblings.clone()))
+        else {
             return;
         };
-        self.runtime.spawn(async move {
-            let Ok(peers) = endpoint.peers().await else {
-                return;
-            };
-            for peer in peers.into_iter().filter(|peer| peer.connected) {
-                let Ok(identity) = FipsPeerIdentity::from_npub(&peer.npub) else {
-                    continue;
-                };
-                if !authorized.contains(&identity.pubkey().to_string()) {
-                    continue;
-                }
-                for packet in &packets {
-                    let _ = tcp.send(identity, packet.clone());
-                }
-            }
-        });
+        send_device_sync_packets(&tcp, &siblings, &packets);
     }
 
     pub(super) fn device_sync_tracks_app_keys_owner(&self, owner: PublicKey) -> bool {
@@ -877,6 +857,18 @@ fn encode_device_sync_chunks(snapshot: DeviceSyncSnapshot) -> Vec<Vec<u8>> {
 fn fips_peer_from_hex(pubkey_hex: &str) -> Option<FipsPeerIdentity> {
     let pubkey = PublicKey::from_hex(pubkey_hex).ok()?;
     FipsPeerIdentity::from_npub(&pubkey.to_bech32().ok()?).ok()
+}
+
+fn send_device_sync_packets(
+    tcp: &DeviceSyncTcpSender,
+    siblings: &[FipsPeerIdentity],
+    packets: &[Vec<u8>],
+) {
+    for sibling in siblings {
+        for packet in packets {
+            let _ = tcp.send(*sibling, packet.clone());
+        }
+    }
 }
 
 fn ndr_owner_from_hex(pubkey_hex: &str) -> Option<NdrOwnerPubkey> {

@@ -20,9 +20,9 @@ pub(super) struct DeviceSyncTcpSender {
     max_record_bytes: usize,
 }
 
-struct SendRecord {
-    peer: PeerIdentity,
-    record: Vec<u8>,
+pub(super) struct SendRecord {
+    pub(super) peer: PeerIdentity,
+    pub(super) record: Vec<u8>,
 }
 
 struct PendingRecord {
@@ -36,6 +36,21 @@ impl DeviceSyncTcpSender {
             return false;
         }
         self.tx.try_send(SendRecord { peer, record }).is_ok()
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_channel(
+        capacity: usize,
+        max_record_bytes: usize,
+    ) -> (Self, flume::Receiver<SendRecord>) {
+        let (tx, rx) = flume::bounded(capacity);
+        (
+            Self {
+                tx,
+                max_record_bytes,
+            },
+            rx,
+        )
     }
 }
 
@@ -600,5 +615,61 @@ mod tests {
         let peer = PeerIdentity::from_pubkey_full(identity.pubkey_full());
         assert!(!sender.send(peer, vec![0; 5]));
         assert!(rx.is_empty());
+    }
+
+    #[tokio::test]
+    async fn record_queued_while_disconnected_is_delivered_after_connect() {
+        let endpoint = Arc::new(
+            FipsEndpoint::builder()
+                .without_system_tun()
+                .bind()
+                .await
+                .expect("bind embedded endpoint"),
+        );
+        let local = PeerIdentity::from_npub(endpoint.npub()).expect("local identity");
+        let peer = local.npub();
+        let mut tcp =
+            FipsTcpEndpoint::bind(endpoint.clone(), 39_017, TcpConfig::default(), 0x1234_5678)
+                .await
+                .expect("bind TCP service");
+        let payload = b"queued before connect";
+        let mut pending = HashMap::new();
+        let mut pending_count = 0;
+        enqueue_pending(
+            &mut pending,
+            &mut pending_count,
+            peer.clone(),
+            frame(payload),
+            false,
+        );
+
+        let client = tcp.connect(local, 0).await.expect("connect after queue");
+        for _ in 0..3 {
+            tokio::time::timeout(Duration::from_secs(2), tcp.receive(0))
+                .await
+                .expect("handshake timed out")
+                .expect("receive handshake");
+        }
+        let server = tcp.accept().expect("accept loopback connection");
+        drain_writes(
+            &peer,
+            client,
+            &mut pending,
+            &mut pending_count,
+            &mut tcp,
+            10,
+        )
+        .await;
+        tcp.receive(10).await.expect("receive queued record");
+        tcp.receive(10).await.expect("receive acknowledgment");
+
+        let bytes = tcp.read(server, 1024, 10).await.expect("read stream");
+        let records = RecordReader::new(1024)
+            .push(&bytes)
+            .expect("parse framed record");
+        assert_eq!(records, vec![payload.to_vec()]);
+        assert_eq!(pending_count, 0);
+        assert!(pending.is_empty());
+        endpoint.shutdown().await.expect("shutdown endpoint");
     }
 }
