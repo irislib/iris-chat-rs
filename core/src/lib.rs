@@ -9,6 +9,8 @@ pub mod perflog;
 mod qr;
 mod state;
 mod test_fixtures;
+#[doc(hidden)]
+pub mod update_announcements;
 pub mod update_policy;
 mod updates;
 

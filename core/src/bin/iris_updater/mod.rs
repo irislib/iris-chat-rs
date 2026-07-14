@@ -1,18 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
-use hashtree_blossom::{BlossomClient, BlossomStore};
-use hashtree_core::{HashTree, HashTreeConfig};
-use hashtree_resolver::nostr::{NostrResolverConfig, NostrRootResolver};
 use hashtree_updater::{
-    DownloadOptions, HashtreeUpdater, UpdateAsset, UpdateCheckOptions, UpdateManifest, UpdateRef,
-    UpdateTarget,
+    DownloadOptions, UpdateAsset, UpdateCheckOptions, UpdateManifest, UpdateTarget,
 };
+use iris_chat_core::update_announcements::build_secure_update_updater;
 use serde::{Deserialize, Serialize};
 
 mod asset_selection;
@@ -22,26 +17,12 @@ use asset_selection::*;
 use io::*;
 
 const HTREE_MANIFEST_URL: &str = "https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/releases%2Firis-chat-rs/latest/release.json";
-const HTREE_UPDATE_REF: &str =
-    "htree://npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/releases%2Firis-chat-rs/latest";
 const UPDATE_CONNECT_TIMEOUT_SECS: &str = "4";
 const UPDATE_MANIFEST_TIMEOUT_SECS: &str = "8";
 const UPDATE_DOWNLOAD_TIMEOUT_SECS: &str = "180";
 const UPDATE_USER_AGENT: &str = "iris-chat-updater";
 const SECURE_SOURCE_NAME: &str = "hashtree-nostr-blossom";
 const MANIFEST_SOURCE_NAME: &str = "hashtree-release-json";
-const DEFAULT_UPDATE_RELAYS: &[&str] = &[
-    "wss://temp.iris.to",
-    "wss://relay.damus.io",
-    "wss://relay.snort.social",
-    "wss://relay.primal.net",
-    "wss://upload.iris.to/nostr",
-];
-const DEFAULT_BLOSSOM_READ_SERVERS: &[&str] = &[
-    "https://cdn.iris.to",
-    "https://upload.iris.to",
-    "https://blossom.primal.net",
-];
 
 #[derive(Subcommand)]
 pub(crate) enum UpdateCommands {
@@ -278,26 +259,12 @@ fn run_secure_update(request: &UpdateRequest) -> Result<()> {
 }
 
 async fn run_secure_update_async(request: &UpdateRequest) -> Result<()> {
-    let resolver = NostrRootResolver::new(NostrResolverConfig {
-        relays: update_relays(),
-        resolve_timeout: Duration::from_secs(
-            UPDATE_MANIFEST_TIMEOUT_SECS.parse::<u64>().unwrap_or(8),
-        ),
-        secret_key: None,
-    })
-    .await
-    .context("failed to connect to Nostr release relays")?;
-    let blossom = BlossomClient::new_empty(nostr35::Keys::generate())
-        .with_read_servers(blossom_read_servers())
-        .with_timeout(Duration::from_secs(
-            UPDATE_DOWNLOAD_TIMEOUT_SECS.parse::<u64>().unwrap_or(180),
-        ));
-    let store = Arc::new(BlossomStore::new(blossom));
-    let tree = HashTree::new(HashTreeConfig::new(store).public());
-    let updater = HashtreeUpdater::new(resolver, tree);
+    let (reference, updater) = build_secure_update_updater()
+        .await
+        .context("failed to prepare signed release updater")?;
     let mut check = updater
         .check(UpdateCheckOptions {
-            reference: secure_update_ref()?,
+            reference,
             current_version: current_version().to_string(),
             target: UpdateTarget::new(current_target()),
             ..UpdateCheckOptions::default()
@@ -506,43 +473,6 @@ fn manifest_selection(request: &UpdateRequest) -> Result<SelectedManifestAsset> 
         asset_url,
         update_available,
     })
-}
-
-fn secure_update_ref() -> Result<UpdateRef> {
-    let raw = std::env::var("IRIS_UPDATE_HTREE_REF")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| HTREE_UPDATE_REF.to_string());
-    UpdateRef::parse(&raw).with_context(|| format!("invalid update hashtree ref: {raw}"))
-}
-
-fn update_relays() -> Vec<String> {
-    split_env_csv("IRIS_UPDATE_RELAYS").unwrap_or_else(|| {
-        DEFAULT_UPDATE_RELAYS
-            .iter()
-            .map(|value| (*value).to_string())
-            .collect()
-    })
-}
-
-fn blossom_read_servers() -> Vec<String> {
-    split_env_csv("IRIS_UPDATE_BLOSSOM_SERVERS").unwrap_or_else(|| {
-        DEFAULT_BLOSSOM_READ_SERVERS
-            .iter()
-            .map(|value| (*value).to_string())
-            .collect()
-    })
-}
-
-fn split_env_csv(name: &str) -> Option<Vec<String>> {
-    let values = std::env::var(name)
-        .ok()?
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-    (!values.is_empty()).then_some(values)
 }
 
 fn manifest_url() -> String {

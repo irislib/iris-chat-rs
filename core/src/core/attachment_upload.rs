@@ -304,9 +304,9 @@ pub(super) async fn upload_file_to_hashtree(
     path: &Path,
     progress: Option<Arc<AtomicU64>>,
 ) -> anyhow::Result<String> {
-    let secret_key = nostr35::SecretKey::from_hex(secret_hex)
+    let secret_key = nostr::SecretKey::from_hex(secret_hex)
         .map_err(|error| anyhow::anyhow!("invalid upload key: {error}"))?;
-    let keys = nostr35::Keys::new(secret_key);
+    let keys = nostr::Keys::new(secret_key);
     let (read_servers, write_servers) = blossom_servers_from_config();
     if write_servers.is_empty() {
         anyhow::bail!("no hashtree write servers configured");
@@ -383,7 +383,7 @@ pub(super) async fn download_hashtree_attachment_base64(nhash: &str) -> anyhow::
         hash: data.hash,
         key: data.decrypt_key,
     };
-    let keys = nostr35::Keys::generate();
+    let keys = nostr::Keys::generate();
     let (read_servers, write_servers) = blossom_servers_from_config();
     let store = Arc::new(UploadingBlossomStore::new(
         keys,
@@ -459,7 +459,7 @@ struct UploadingBlossomStore {
 
 impl UploadingBlossomStore {
     fn new(
-        keys: nostr35::Keys,
+        keys: nostr::Keys,
         read_servers: Vec<String>,
         write_servers: Vec<String>,
         progress: Option<Arc<AtomicU64>>,
