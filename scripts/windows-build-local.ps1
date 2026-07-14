@@ -105,10 +105,13 @@ function Build-Rust {
     Import-VisualStudioEnvironment
     Add-ToolPaths
     Invoke-Checked { rustup target add $Target | Out-Null } "rustup target add $Target"
-    $profileFlag = if ($RustProfile -eq 'release') { @('--release') } else { @() }
     Push-Location $Core
     try {
-        Invoke-Checked { cargo build --locked --target $Target @profileFlag } 'cargo build'
+        if ($RustProfile -eq 'release') {
+            Invoke-Checked { cargo build --locked --target $Target --release } 'cargo build'
+        } else {
+            Invoke-Checked { cargo build --locked --target $Target } 'cargo build'
+        }
     } finally {
         Pop-Location
     }

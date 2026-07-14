@@ -102,6 +102,8 @@ jobs:
       - name: Install Rust and Android components
         run: |
           set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-linux-android
@@ -306,7 +308,7 @@ jobs:
           deb="dist/linux/iris-chat-v${IRIS_APP_VERSION_NAME}-linux-x64.deb"
           archive="dist/linux/iris-chat-v${IRIS_APP_VERSION_NAME}-linux-x64.tar.gz"
           dpkg-deb --info "$deb" >/dev/null
-          tar -tzf "$archive" | grep -q '/iris-chat$'
+          tar -tzf "$archive" | grep '/iris-chat$' >/dev/null
       - name: Upload Linux build
         uses: actions/upload-artifact@v4
         with:
@@ -368,8 +370,8 @@ jobs:
           target="${{ matrix.target }}"
           archive="dist/cli/iris-${target}.tar.gz"
           ./scripts/cli-release "$target"
-          tar -tzf "$archive" | grep -q '^iris/iris$'
-          tar -tzf "$archive" | grep -q '^iris/install.sh$'
+          tar -tzf "$archive" | grep '^iris/iris$' >/dev/null
+          tar -tzf "$archive" | grep '^iris/install.sh$' >/dev/null
       - name: Upload CLI build
         uses: actions/upload-artifact@v4
         with:
