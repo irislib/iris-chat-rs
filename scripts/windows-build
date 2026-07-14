@@ -2,10 +2,9 @@
 #
 # Windows build harness driven from macOS over SSH to a Windows build host.
 #
-# Mirrors the iOS/Android pattern: the host runs the script, and the actual
-# Rust + .NET toolchain runs on the Windows VM. Configure the SSH host with
-# IRIS_WINDOWS_SSH_HOST, or set IRIS_WINDOWS_SSH_HOSTS for fallbacks; we
-# tar-pipe the working tree over SSH and run base64-encoded PowerShell remotely.
+# The host syncs committed source over SSH, then invokes windows-build-local.ps1
+# on the Windows machine. GitHub Actions calls that same PowerShell entrypoint
+# directly, so both paths share the native Rust, .NET, NSIS, and ZIP logic.
 #
 # Build target: x86_64-pc-windows-msvc (production). The Windows build host is
 # x86_64, so this matches without emulation.
@@ -143,21 +142,6 @@ fetch_artifact_from_vm() {
   return 1
 }
 
-# Run a PowerShell step on the VM, then fetch its primary artifact back.
-# We rescue a non-zero ssh exit when scp can still pull the file — Powershell
-# 5.1 over OpenSSH occasionally bubbles up benign $LASTEXITCODE from upstream
-# tools (msbuild progress, Compress-Archive's CLIXML stream) even when the
-# script's own work has finished cleanly.
-run_remote_step_and_fetch() {
-  local vm="$1" remote_win="$2" local_path="$3" script="$4"
-  local rc=0
-  ps_run "$vm" "$script" || rc=$?
-  if fetch_artifact_from_vm "$vm" "$remote_win" "$local_path"; then
-    return 0
-  fi
-  return "${rc:-1}"
-}
-
 ps_quote() {
   # Single-quote a string for PowerShell, escaping embedded single quotes.
   local value="$1"
@@ -224,35 +208,31 @@ release_metadata_env_block() {
   [[ -n "${IRIS_TRUSTED_TEST_BUILD:-}" ]] && printf '$env:IRIS_TRUSTED_TEST_BUILD = %s\n' "$(ps_quote "$IRIS_TRUSTED_TEST_BUILD")"
 }
 
-cargo_target_dir_block() {
-  cat <<'PS'
-function Get-CargoTargetDir([string]$CoreDir) {
-  $configured = $env:CARGO_TARGET_DIR
-  if ([string]::IsNullOrWhiteSpace($configured)) {
-    return (Join-Path $CoreDir 'target')
-  }
-  if ([System.IO.Path]::IsPathRooted($configured)) {
-    return $configured
-  }
-  return (Join-Path $CoreDir $configured)
-}
-PS
-}
+run_native_entrypoint() {
+  local command="$1"
+  local vm guest_repo guest_repo_quoted command_quoted target_quoted profile_quoted config_quoted bindgen_quoted
+  vm="$(detect_vm_name)"
+  guest_repo="$(detect_shared_repo_path)"
+  guest_repo_quoted="$(ps_quote "$guest_repo")"
+  command_quoted="$(ps_quote "$command")"
+  target_quoted="$(ps_quote "$TARGET")"
+  profile_quoted="$(ps_quote "$PROFILE")"
+  config_quoted="$(ps_quote "$DOTNET_CONFIG")"
+  bindgen_quoted="$(ps_quote "$BINDGEN_CS_GIT_REF")"
 
-dotnet_publish_dir_block() {
-  cat <<'PS'
-function Get-IrisDotnetPublishDir([string]$RepoRoot, [string]$Config) {
-  $projectDir = Join-Path $RepoRoot 'windows\IrisChat'
-  $candidates = @(
-    (Join-Path $projectDir "bin\x64\$Config\net8.0-windows\win-x64\publish"),
-    (Join-Path $projectDir "bin\$Config\net8.0-windows\win-x64\publish")
-  )
-  foreach ($candidate in $candidates) {
-    if (Test-Path $candidate) { return $candidate }
-  }
-  return $candidates[0]
-}
+  ps_run "$vm" "$(cat <<PS
+\$ErrorActionPreference = 'Stop'
+$(release_metadata_env_block)
+\$env:IRIS_WINDOWS_TARGET = ${target_quoted}
+\$env:IRIS_WINDOWS_RUST_PROFILE = ${profile_quoted}
+\$env:IRIS_WINDOWS_DOTNET_CONFIG = ${config_quoted}
+\$env:IRIS_WINDOWS_BINDGEN_CS_GIT_REF = ${bindgen_quoted}
+\$entrypoint = Join-Path ${guest_repo_quoted} 'scripts\\windows-build-local.ps1'
+if (-not (Test-Path \$entrypoint)) { throw \"Missing native Windows entrypoint: \$entrypoint\" }
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File \$entrypoint -Command ${command_quoted}
+if (\$LASTEXITCODE -ne 0) { throw \"windows-build-local.ps1 failed (\$LASTEXITCODE)\" }
 PS
+)"
 }
 
 ensure_local_git_remote() {
@@ -437,151 +417,28 @@ run_sync() {
 
 run_rust() {
   require_macos
-  local vm
-  vm="$(detect_vm_name)"
-  local profile_flag=""
-  if [[ "$PROFILE" == "release" ]]; then
-    profile_flag="--release"
-  fi
-  local target_quoted
-  target_quoted="$(ps_quote "$TARGET")"
-  local guest_repo
-  guest_repo="$(guest_repo_expr)"
-
-  ps_run "$vm" "$(cat <<PS
-\$ErrorActionPreference = 'Continue'
-$(path_setup_block)
-$(release_metadata_env_block)
-\$repoRoot = $guest_repo
-\$coreDir = Join-Path \$repoRoot 'core'
-$(cargo_target_dir_block)
-Set-Location \$repoRoot
-Push-Location \$coreDir
-\$target = ${target_quoted}
-rustup target add \$target | Out-Null
-cargo build $profile_flag --target \$target
-if (\$LASTEXITCODE -ne 0) { throw "cargo build failed with exit code \$LASTEXITCODE" }
-\$targetDir = Get-CargoTargetDir \$coreDir
-Pop-Location
-Write-Output ("Built core for {0} ({1}) in {2}" -f \$target, "$PROFILE", \$targetDir)
-PS
-)"
+  run_native_entrypoint rust
 }
 
 run_gen_cs() {
   require_macos
-  local vm
-  vm="$(detect_vm_name)"
-  local target_quoted
-  target_quoted="$(ps_quote "$TARGET")"
-  local profile_quoted
-  profile_quoted="$(ps_quote "$PROFILE")"
-  local bindgen_ref_quoted
-  bindgen_ref_quoted="$(ps_quote "$BINDGEN_CS_GIT_REF")"
-  local guest_repo
-  guest_repo="$(guest_repo_expr)"
-
-  ps_run "$vm" "$(cat <<PS
-\$ErrorActionPreference = 'Continue'
-$(path_setup_block)
-\$repoRoot = $guest_repo
-\$coreDir = Join-Path \$repoRoot 'core'
-$(cargo_target_dir_block)
-Set-Location \$coreDir  # uniffi-bindgen-cs runs cargo metadata against cwd
-
-\$bindgen = Get-Command uniffi-bindgen-cs -ErrorAction SilentlyContinue
-\$wantRef = ${bindgen_ref_quoted}
-if (-not \$bindgen) {
-  cargo install uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs --tag \$wantRef --locked
-  if (\$LASTEXITCODE -ne 0) { throw "cargo install uniffi-bindgen-cs failed (\$LASTEXITCODE)" }
-}
-
-\$target = ${target_quoted}
-\$profile = ${profile_quoted}
-\$cargoTargetDir = Get-CargoTargetDir \$coreDir
-\$libPath = Join-Path (Join-Path (Join-Path \$cargoTargetDir \$target) \$profile) 'iris_chat_core.dll'
-if (-not (Test-Path \$libPath)) {
-  throw "Missing \$libPath; did windows-rust succeed?"
-}
-
-\$outDir = Join-Path \$repoRoot 'windows\\IrisChat\\Bindings'
-if (Test-Path \$outDir) { Remove-Item \$outDir -Recurse -Force }
-New-Item -ItemType Directory -Force -Path \$outDir | Out-Null
-
-# Note: --library is a flag (not a value-arg). The cdylib path goes as the
-# trailing positional SOURCE argument.
-uniffi-bindgen-cs --library --out-dir \$outDir --config (Join-Path \$coreDir 'uniffi.toml') \$libPath
-if (\$LASTEXITCODE -ne 0) { throw "uniffi-bindgen-cs failed (\$LASTEXITCODE)" }
-Write-Output ("Generated C# bindings in {0}" -f \$outDir)
-Get-ChildItem \$outDir | ForEach-Object { Write-Output ("  " + \$_.Name) }
-
-\$dllDest = Join-Path \$repoRoot 'windows\\IrisChat\\Frameworks'
-New-Item -ItemType Directory -Force -Path \$dllDest | Out-Null
-Copy-Item \$libPath (Join-Path \$dllDest 'iris_chat_core.dll') -Force
-Write-Output ("Copied DLL to {0}" -f \$dllDest)
-PS
-)"
+  run_native_entrypoint bindings
 }
 
 run_dotnet() {
   require_macos
-  local vm
-  vm="$(detect_vm_name)"
-  local config_quoted
-  config_quoted="$(ps_quote "$DOTNET_CONFIG")"
-  local version_quoted
-  version_quoted="$(ps_quote "${IRIS_APP_VERSION_NAME:-0.1.0}")"
-  local informational_quoted
-  informational_quoted="$(ps_quote "${IRIS_APP_VERSION_NAME:-0.1.0}+${IRIS_BUILD_GIT_SHA:-unknown}")"
-  local guest_repo
-  guest_repo="$(guest_repo_expr)"
-
-  ps_run "$vm" "$(cat <<PS
-\$ErrorActionPreference = 'Continue'
-$(path_setup_block)
-$(dotnet_publish_dir_block)
-Set-Location $guest_repo
-\$config = ${config_quoted}
-\$version = ${version_quoted}
-\$informationalVersion = ${informational_quoted}
-\$proj = Join-Path $guest_repo 'windows\\IrisChat\\IrisChat.csproj'
-dotnet publish \$proj -c \$config -r win-x64 --self-contained true -p:WindowsPackageType=None "-p:Version=\$version" "-p:AssemblyVersion=\$version" "-p:FileVersion=\$version" "-p:InformationalVersion=\$informationalVersion"
-if (\$LASTEXITCODE -ne 0) { throw "dotnet publish failed (\$LASTEXITCODE)" }
-\$publishDir = Get-IrisDotnetPublishDir $guest_repo \$config
-if (-not (Test-Path \$publishDir)) { throw "Missing \$publishDir after dotnet publish." }
-Write-Output ("Published to {0}" -f \$publishDir)
-PS
-)"
+  run_native_entrypoint dotnet
 }
 
 run_full_build() {
   ensure_dist_dir
   run_sync
-  run_rust
-  run_gen_cs
-  run_dotnet
+  run_native_entrypoint build
 }
 
 run_app() {
   require_macos
-  local vm
-  vm="$(detect_vm_name)"
-  local config_quoted
-  config_quoted="$(ps_quote "$DOTNET_CONFIG")"
-  local guest_repo
-  guest_repo="$(guest_repo_expr)"
-
-  ps_run "$vm" "$(cat <<PS
-\$ErrorActionPreference = 'Stop'
-$(dotnet_publish_dir_block)
-\$config = ${config_quoted}
-\$publishDir = Get-IrisDotnetPublishDir $guest_repo \$config
-\$exe = Join-Path \$publishDir 'IrisChat.exe'
-if (-not (Test-Path \$exe)) { throw "Missing \$exe; build first." }
-Start-Process \$exe
-Write-Output ("Launched {0}" -f \$exe)
-PS
-)"
+  run_native_entrypoint run
 }
 
 run_idle_cpu_gate() {
@@ -657,131 +514,34 @@ run_zip() {
   require_macos
   local vm
   vm="$(detect_vm_name)"
-  local config_quoted
-  config_quoted="$(ps_quote "$DOTNET_CONFIG")"
-  local guest_repo
-  guest_repo="$(guest_repo_expr)"
   local shared_repo
   shared_repo="$(detect_shared_repo_path)"
   local out_basename="${IRIS_WINDOWS_ZIP_BASENAME:-IrisChat-windows-x64}"
-  local zip_quoted
-  zip_quoted="$(ps_quote "$out_basename.zip")"
-  local shared_dist_quoted
-  shared_dist_quoted="$(ps_quote "${shared_repo}\\dist\\windows")"
+  local remote_basename="iris-chat-v${IRIS_APP_VERSION_NAME}-windows-x64.zip"
 
   ensure_dist_dir
   mkdir -p "$DIST_DIR/windows"
-
-  run_remote_step_and_fetch "$vm" \
-    "${shared_repo}\\dist\\windows\\${out_basename}.zip" \
-    "$DIST_DIR/windows/${out_basename}.zip" \
-    "$(cat <<PS
-\$ErrorActionPreference = 'Continue'
-$(dotnet_publish_dir_block)
-\$config = ${config_quoted}
-\$publishDir = Get-IrisDotnetPublishDir $guest_repo \$config
-if (-not (Test-Path \$publishDir)) { throw "Missing \$publishDir; run windows-dotnet first." }
-\$sharedDist = ${shared_dist_quoted}
-New-Item -ItemType Directory -Force -Path \$sharedDist | Out-Null
-\$zipName = ${zip_quoted}
-\$zipPath = Join-Path \$sharedDist \$zipName
-if (Test-Path \$zipPath) { Remove-Item \$zipPath -Force }
-\$ProgressPreference = 'SilentlyContinue'
-Compress-Archive -Path (Join-Path \$publishDir '*') -DestinationPath \$zipPath -CompressionLevel Optimal
-if (-not (Test-Path \$zipPath)) { throw "Compress-Archive did not produce \$zipPath" }
-Write-Output ("Built {0}" -f \$zipPath)
-exit 0
-PS
-)"
+  run_native_entrypoint zip
+  fetch_artifact_from_vm "$vm" \
+    "${shared_repo}\\dist\\windows\\${remote_basename}" \
+    "$DIST_DIR/windows/${out_basename}.zip"
 }
 
 run_installer() {
   require_macos
   local vm
   vm="$(detect_vm_name)"
-  local config_quoted
-  config_quoted="$(ps_quote "$DOTNET_CONFIG")"
-  local guest_repo
-  guest_repo="$(guest_repo_expr)"
   local shared_repo
   shared_repo="$(detect_shared_repo_path)"
-
-  local iris_version="${IRIS_APP_VERSION_NAME:-0.1.0}"
-  local iris_build_num="${IRIS_APP_VERSION_CODE:-1}"
   local installer_basename="${IRIS_WINDOWS_INSTALLER_BASENAME:-IrisChat-windows-x64-setup}"
-
-  local nsi_shared_path="${shared_repo}\\scripts\\windows-installer.nsi"
-  local shared_dist_quoted
-  shared_dist_quoted="$(ps_quote "${shared_repo}\\dist\\windows")"
-  local nsi_quoted
-  nsi_quoted="$(ps_quote "$nsi_shared_path")"
-  local version_quoted
-  version_quoted="$(ps_quote "$iris_version")"
-  local build_num_quoted
-  build_num_quoted="$(ps_quote "$iris_build_num")"
-  local out_name_quoted
-  out_name_quoted="$(ps_quote "${installer_basename}.exe")"
+  local remote_basename="iris-chat-v${IRIS_APP_VERSION_NAME}-windows-x64-setup.exe"
 
   ensure_dist_dir
   mkdir -p "$DIST_DIR/windows"
-
-  run_remote_step_and_fetch "$vm" \
-    "${shared_repo}\\dist\\windows\\${installer_basename}.exe" \
-    "$DIST_DIR/windows/${installer_basename}.exe" \
-    "$(cat <<PS
-\$ErrorActionPreference = 'Continue'
-$(path_setup_block)
-$(dotnet_publish_dir_block)
-\$config = ${config_quoted}
-\$publishDir = Get-IrisDotnetPublishDir $guest_repo \$config
-if (-not (Test-Path \$publishDir)) { throw "Missing \$publishDir; run windows-dotnet first." }
-
-\$makensis = (Get-Command makensis.exe -ErrorAction SilentlyContinue)
-if (-not \$makensis) {
-  \$candidates = @(
-    'C:\\Program Files (x86)\\NSIS\\makensis.exe',
-    'C:\\Program Files\\NSIS\\makensis.exe'
-  )
-  foreach (\$candidate in \$candidates) {
-    if (Test-Path \$candidate) { \$makensis = Get-Command \$candidate; break }
-  }
-}
-if (-not \$makensis) { throw "makensis.exe not found. Run scripts/windows-build windows-setup or install NSIS." }
-
-\$sharedDist = ${shared_dist_quoted}
-New-Item -ItemType Directory -Force -Path \$sharedDist | Out-Null
-
-\$nsiSrc = ${nsi_quoted}
-if (-not (Test-Path \$nsiSrc)) { throw "Missing NSIS template: \$nsiSrc" }
-
-\$workDir = Join-Path \$env:TEMP 'iris-chat-installer'
-if (Test-Path \$workDir) { Remove-Item \$workDir -Recurse -Force }
-New-Item -ItemType Directory -Force -Path \$workDir | Out-Null
-\$nsiCopy = Join-Path \$workDir 'windows-installer.nsi'
-Copy-Item \$nsiSrc \$nsiCopy -Force
-\$outPath = Join-Path \$sharedDist ${out_name_quoted}
-if (Test-Path \$outPath) { Remove-Item \$outPath -Force }
-
-\$iconPath = Join-Path $guest_repo 'windows\\IrisChat\\Resources\\IrisChat.ico'
-\$nsiArgs = @(
-  ('/DIRIS_VERSION=' + ${version_quoted}),
-  ('/DIRIS_BUILD_NUM=' + ${build_num_quoted}),
-  ('/DIRIS_PUBLISH_DIR=' + \$publishDir),
-  ('/DIRIS_OUTPUT=' + \$outPath),
-  '/DIRIS_EXE_NAME=IrisChat.exe'
-)
-if (Test-Path \$iconPath) { \$nsiArgs += ('/DIRIS_ICON_PATH=' + \$iconPath) }
-\$nsiArgs += \$nsiCopy
-
-& \$makensis.Path @nsiArgs
-if (\$LASTEXITCODE -ne 0) { throw ("makensis failed (exit {0})" -f \$LASTEXITCODE) }
-
-Remove-Item \$workDir -Recurse -Force
-if (-not (Test-Path \$outPath)) { throw "makensis did not produce \$outPath" }
-Write-Output ("Built {0}" -f \$outPath)
-exit 0
-PS
-)"
+  run_native_entrypoint installer
+  fetch_artifact_from_vm "$vm" \
+    "${shared_repo}\\dist\\windows\\${remote_basename}" \
+    "$DIST_DIR/windows/${installer_basename}.exe"
 }
 
 case "${1:-}" in

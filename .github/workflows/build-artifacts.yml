@@ -1,0 +1,379 @@
+name: Build artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build. It is resolved to one immutable commit before jobs start."
+        required: true
+        default: main
+        type: string
+      artifact_retention_days:
+        description: "How long GitHub should retain build artifacts."
+        required: true
+        default: "30"
+        type: choice
+        options: ["7", "30", "90"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-artifacts-${{ inputs.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_DIR: iris-chat-rs
+  CARGO_TERM_COLOR: always
+  IRIS_RELEASE_RELAY_SET_ID: ${{ vars.IRIS_RELEASE_RELAY_SET_ID || 'public-release' }}
+  IRIS_RELEASE_RELAYS: ${{ vars.IRIS_RELEASE_RELAYS || 'wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social,wss://temp.iris.to' }}
+  IRIS_RELAY_SET_ID: ${{ vars.IRIS_RELEASE_RELAY_SET_ID || 'public-release' }}
+  IRIS_DEFAULT_RELAYS: ${{ vars.IRIS_RELEASE_RELAYS || 'wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social,wss://temp.iris.to' }}
+  IRIS_MOBILE_PUSH_SERVER_URL: ${{ vars.IRIS_MOBILE_PUSH_SERVER_URL }}
+  IRIS_UPDATE_MANIFEST_URL: ${{ vars.IRIS_UPDATE_MANIFEST_URL }}
+  IRIS_UPDATE_POLL_SECONDS: ${{ vars.IRIS_UPDATE_POLL_SECONDS }}
+
+jobs:
+  metadata:
+    name: Resolve build identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      commit: ${{ steps.metadata.outputs.commit }}
+      short_sha: ${{ steps.metadata.outputs.short_sha }}
+      version_name: ${{ steps.metadata.outputs.version_name }}
+      version_code: ${{ steps.metadata.outputs.version_code }}
+      build_timestamp_utc: ${{ steps.metadata.outputs.build_timestamp_utc }}
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}
+    steps:
+      - name: Checkout requested ref
+        uses: actions/checkout@v4
+        with:
+          path: ${{ env.APP_DIR }}
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+
+      - name: Resolve build identity
+        id: metadata
+        run: |
+          set -Eeuo pipefail
+          source scripts/release_common.sh
+          commit="$(git rev-parse HEAD)"
+          version_name="$(TZ=UTC git log -1 --format=%cd --date=format:'%Y.%-m.%-d' HEAD)"
+          version_code="$(semantic_version_code "$version_name")"
+          build_timestamp_utc="$(TZ=UTC git log -1 --format=%cd --date=format:'%Y-%m-%dT%H:%M:%SZ' HEAD)"
+          {
+            echo "commit=$commit"
+            echo "short_sha=${commit:0:12}"
+            echo "version_name=$version_name"
+            echo "version_code=$version_code"
+            echo "build_timestamp_utc=$build_timestamp_utc"
+          } >> "$GITHUB_OUTPUT"
+
+  android:
+    name: Android APK and AAB
+    needs: metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: android-release
+    env: &build_metadata
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+      IRIS_APP_VERSION_NAME: ${{ needs.metadata.outputs.version_name }}
+      IRIS_APP_VERSION_CODE: ${{ needs.metadata.outputs.version_code }}
+      IRIS_BUILD_GIT_SHA: ${{ needs.metadata.outputs.short_sha }}
+      IRIS_BUILD_TIMESTAMP_UTC: ${{ needs.metadata.outputs.build_timestamp_utc }}
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}
+    steps:
+      - &checkout_build
+        name: Checkout immutable build commit
+        uses: actions/checkout@v4
+        with:
+          path: ${{ env.APP_DIR }}
+          ref: ${{ needs.metadata.outputs.commit }}
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Rust and Android components
+        run: |
+          set -Eeuo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-linux-android
+          cargo install cargo-ndk --locked
+          sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses >/dev/null || true
+          "$sdkmanager" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+      - name: Cache Cargo and Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ${{ github.workspace }}/cargo-target
+          key: all-builds-android-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/android/**/*.gradle*') }}
+          restore-keys: all-builds-android-
+      - name: Configure Android signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.IRIS_RELEASE_KEYSTORE_BASE64 }}
+          IRIS_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.IRIS_RELEASE_KEYSTORE_PASSWORD }}
+          IRIS_RELEASE_KEY_ALIAS: ${{ secrets.IRIS_RELEASE_KEY_ALIAS }}
+          IRIS_RELEASE_KEY_PASSWORD: ${{ secrets.IRIS_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -Eeuo pipefail
+          : "${KEYSTORE_BASE64:?Missing Android keystore secret}"
+          : "${IRIS_RELEASE_KEYSTORE_PASSWORD:?Missing Android keystore password}"
+          : "${IRIS_RELEASE_KEY_ALIAS:?Missing Android key alias}"
+          : "${IRIS_RELEASE_KEY_PASSWORD:?Missing Android key password}"
+          keystore="$RUNNER_TEMP/iris-release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+          {
+            echo "IRIS_RELEASE_KEYSTORE_PATH=$keystore"
+            echo "IRIS_RELEASE_KEYSTORE_PASSWORD=$IRIS_RELEASE_KEYSTORE_PASSWORD"
+            echo "IRIS_RELEASE_KEY_ALIAS=$IRIS_RELEASE_KEY_ALIAS"
+            echo "IRIS_RELEASE_KEY_PASSWORD=$IRIS_RELEASE_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+      - name: Build and verify signed artifacts
+        run: |
+          set -Eeuo pipefail
+          ./scripts/android-release release-artifacts
+          base="IrisChat-release-${IRIS_APP_VERSION_NAME}+${IRIS_APP_VERSION_CODE}-${IRIS_BUILD_GIT_SHA}"
+          apk="dist/android/${base}.apk"
+          aab="dist/android/${base}.aab"
+          build_tools="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}/build-tools/36.0.0"
+          "$build_tools/apksigner" verify --verbose --print-certs "$apk"
+          jarsigner -verify -strict "$aab"
+      - name: Upload Android build
+        uses: actions/upload-artifact@v4
+        with:
+          name: iris-android-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
+          path: |
+            ${{ env.APP_DIR }}/dist/android/*.apk
+            ${{ env.APP_DIR }}/dist/android/*.aab
+          if-no-files-found: error
+          retention-days: ${{ inputs.artifact_retention_days }}
+
+  ios:
+    name: iOS archive and IPA
+    needs: metadata
+    runs-on: macos-15
+    timeout-minutes: 120
+    environment: ios-build
+    env: *build_metadata
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}
+    steps:
+      - *checkout_build
+      - name: Install build tools
+        run: |
+          set -Eeuo pipefail
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: all-builds-ios-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/ios/project.yml') }}
+          restore-keys: all-builds-ios-${{ runner.arch }}-
+      - name: Configure Apple authentication
+        env:
+          ASC_PRIVATE_KEY_P8: ${{ secrets.ASC_PRIVATE_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          IOS_BUNDLE_ID: ${{ vars.IRIS_IOS_BUNDLE_ID }}
+          IOS_TEAM: ${{ vars.IRIS_IOS_DEVELOPMENT_TEAM }}
+        run: |
+          set -Eeuo pipefail
+          : "${ASC_PRIVATE_KEY_P8:?Missing App Store Connect key}"
+          : "${ASC_KEY_ID:?Missing App Store Connect key ID}"
+          : "${ASC_ISSUER_ID:?Missing App Store Connect issuer ID}"
+          : "${IOS_BUNDLE_ID:?Missing iOS bundle ID variable}"
+          : "${IOS_TEAM:?Missing iOS development team variable}"
+          key="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%b\n' "$ASC_PRIVATE_KEY_P8" > "$key"
+          chmod 600 "$key"
+          {
+            echo "IRIS_ASC_AUTH_KEY_PATH=$key"
+            echo "IRIS_ASC_AUTH_KEY_ID=$ASC_KEY_ID"
+            echo "IRIS_ASC_AUTH_KEY_ISSUER_ID=$ASC_ISSUER_ID"
+            echo "IRIS_IOS_BUNDLE_ID=$IOS_BUNDLE_ID"
+            echo "IRIS_IOS_DEVELOPMENT_TEAM=$IOS_TEAM"
+            echo "IRIS_IOS_SIGNING_STYLE=automatic"
+            echo "IRIS_IOS_EXPORT_METHOD=app-store-connect"
+            echo "IRIS_IOS_ALLOW_PROVISIONING_UPDATES=true"
+            echo "IRIS_IOS_ATTACH_INTERNAL_AFTER_UPLOAD=false"
+          } >> "$GITHUB_ENV"
+      - name: Build and verify iOS artifacts
+        run: |
+          set -Eeuo pipefail
+          ./scripts/ios-release archive
+          ./scripts/ios-release export
+          archive="$(find dist/ios -maxdepth 1 -type d -name '*.xcarchive' | head -n 1)"
+          ipa="$(find dist/ios -type f -name '*.ipa' | head -n 1)"
+          test -f "$ipa"
+          app="$(find "$archive/Products/Applications" -maxdepth 1 -type d -name '*.app' | head -n 1)"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          archive_zip="dist/ios/iris-chat-v${IRIS_APP_VERSION_NAME}-ios.xcarchive.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$archive" "$archive_zip"
+      - name: Upload iOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: iris-ios-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
+          path: |
+            ${{ env.APP_DIR }}/dist/ios/**/*.ipa
+            ${{ env.APP_DIR }}/dist/ios/*.xcarchive.zip
+          if-no-files-found: error
+          retention-days: ${{ inputs.artifact_retention_days }}
+
+  windows:
+    name: Windows installer and portable ZIP
+    needs: metadata
+    runs-on: windows-2025
+    timeout-minutes: 120
+    env: *build_metadata
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: ${{ env.APP_DIR }}
+    steps:
+      - *checkout_build
+      - name: Install build tools
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-pc-windows-msvc
+          choco install nsis --no-progress -y
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: all-builds-windows-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/windows/**/*.csproj') }}
+          restore-keys: all-builds-windows-
+      - name: Build and verify Windows artifacts
+        run: |
+          ./scripts/windows-build-local.ps1 artifacts
+          $installer = "dist/windows/iris-chat-v$env:IRIS_APP_VERSION_NAME-windows-x64-setup.exe"
+          $zip = "dist/windows/iris-chat-v$env:IRIS_APP_VERSION_NAME-windows-x64.zip"
+          if (-not (Test-Path $installer) -or -not (Test-Path $zip)) { throw 'Windows artifacts are missing' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $entries = [IO.Compression.ZipFile]::OpenRead((Resolve-Path $zip)).Entries.FullName
+          if ('IrisChat.exe' -notin $entries -or 'iris_chat_core.dll' -notin $entries) {
+            throw 'Portable ZIP is missing IrisChat.exe or iris_chat_core.dll'
+          }
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: iris-windows-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
+          path: |
+            ${{ env.APP_DIR }}/dist/windows/*.exe
+            ${{ env.APP_DIR }}/dist/windows/*.zip
+          if-no-files-found: error
+          retention-days: ${{ inputs.artifact_retention_days }}
+
+  linux:
+    name: Linux DEB and tarball
+    needs: metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env: *build_metadata
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}
+    steps:
+      - *checkout_build
+      - name: Build and verify Linux artifacts
+        run: |
+          set -Eeuo pipefail
+          ./scripts/linux-release
+          deb="dist/linux/iris-chat-v${IRIS_APP_VERSION_NAME}-linux-x64.deb"
+          archive="dist/linux/iris-chat-v${IRIS_APP_VERSION_NAME}-linux-x64.tar.gz"
+          dpkg-deb --info "$deb" >/dev/null
+          tar -tzf "$archive" | grep -q '/iris-chat$'
+      - name: Upload Linux build
+        uses: actions/upload-artifact@v4
+        with:
+          name: iris-linux-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
+          path: |
+            ${{ env.APP_DIR }}/dist/linux/*.deb
+            ${{ env.APP_DIR }}/dist/linux/*.tar.gz
+          if-no-files-found: error
+          retention-days: ${{ inputs.artifact_retention_days }}
+
+  cli:
+    name: CLI ${{ matrix.target }}
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            platform: cli-macos-arm64
+          - runner: macos-15
+            target: x86_64-apple-darwin
+            platform: cli-macos-x64
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            platform: cli-linux-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env: *build_metadata
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.APP_DIR }}
+    steps:
+      - *checkout_build
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - name: Install Rust target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add "${{ matrix.target }}"
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+            ${{ github.workspace }}/${{ env.APP_DIR }}/target/cli-release
+          key: all-builds-${{ matrix.platform }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
+          restore-keys: all-builds-${{ matrix.platform }}-
+      - name: Build and verify CLI archive
+        run: |
+          set -Eeuo pipefail
+          target="${{ matrix.target }}"
+          archive="dist/cli/iris-${target}.tar.gz"
+          ./scripts/cli-release "$target"
+          tar -tzf "$archive" | grep -q '^iris/iris$'
+          tar -tzf "$archive" | grep -q '^iris/install.sh$'
+      - name: Upload CLI build
+        uses: actions/upload-artifact@v4
+        with:
+          name: iris-${{ matrix.platform }}-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
+          path: ${{ env.APP_DIR }}/dist/cli/iris-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+          retention-days: ${{ inputs.artifact_retention_days }}

@@ -15,9 +15,6 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/release_common.sh"
-# shellcheck disable=SC1091
-source "$ROOT/scripts/docker_stage_common.sh"
-
 load_release_env "$ROOT"
 configure_release_htree_identity
 resolve_shared_build_metadata "$ROOT"
@@ -719,104 +716,6 @@ default_cli_targets() {
   esac
 }
 
-write_cli_unix_install_script() {
-  local path="$1"
-  cat > "$path" <<'EOF'
-#!/bin/sh
-set -eu
-
-default_install_dir() {
-  if [ "$(id -u)" -eq 0 ]; then
-    printf '%s\n' /usr/local/bin
-  elif [ -n "${XDG_BIN_HOME:-}" ]; then
-    printf '%s\n' "$XDG_BIN_HOME"
-  elif [ -n "${HOME:-}" ]; then
-    printf '%s\n' "$HOME/.local/bin"
-  else
-    printf '%s\n' /usr/local/bin
-  fi
-}
-
-path_contains() {
-  target="$1"
-  old_ifs="$IFS"
-  IFS=:
-  for entry in ${PATH:-}; do
-    if [ "$entry" = "$target" ]; then
-      IFS="$old_ifs"
-      return 0
-    fi
-  done
-  IFS="$old_ifs"
-  return 1
-}
-
-existing_parent_dir() {
-  dir="$1"
-  while [ ! -e "$dir" ]; do
-    dir="$(dirname "$dir")"
-  done
-  printf '%s\n' "$dir"
-}
-
-script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-INSTALL_DIR="${1:-$(default_install_dir)}"
-
-echo "Installing iris to $INSTALL_DIR"
-
-if [ ! -d "$INSTALL_DIR" ]; then
-  parent="$(existing_parent_dir "$INSTALL_DIR")"
-  if [ -w "$parent" ]; then
-    mkdir -p "$INSTALL_DIR"
-  else
-    echo "Need sudo to create $INSTALL_DIR"
-    sudo mkdir -p "$INSTALL_DIR"
-  fi
-fi
-
-if [ ! -w "$INSTALL_DIR" ]; then
-  echo "Need sudo to install to $INSTALL_DIR"
-  sudo install -m 755 "$script_dir/iris" "$INSTALL_DIR/"
-else
-  install -m 755 "$script_dir/iris" "$INSTALL_DIR/"
-fi
-
-echo "Installed iris"
-if ! path_contains "$INSTALL_DIR"; then
-  echo
-  echo "Add $INSTALL_DIR to your PATH, for example:"
-  echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
-fi
-echo
-echo "Try:"
-echo "  iris --help"
-EOF
-  chmod +x "$path"
-}
-
-write_cli_readme() {
-  local path="$1"
-  cat > "$path" <<'EOF'
-iris command line app
-=====================
-
-Quick install:
-  ./install.sh
-  ./install.sh /usr/local/bin
-
-The iris command can create or restore a profile, send messages, search local
-messages, and listen for new messages.
-
-Examples:
-  iris account create --name Alice
-  iris whoami
-  iris send <user-id-or-chat-id> "hello"
-  iris listen
-
-Use --json when another program is reading the output.
-EOF
-}
-
 write_cli_bootstrap_installer() {
   local path="$1"
   local base_url="$2"
@@ -901,89 +800,6 @@ EOF
   chmod +x "$path"
 }
 
-package_cli_unix_target() {
-  local target="$1"
-  local binary_path="$2"
-  local out_dir="$ROOT/dist/cli"
-  local stage_dir
-  local package_dir
-  local archive
-
-  if [[ ! -f "$binary_path" ]]; then
-    note_skipped "cli ${target}: binary missing at $binary_path"
-    return 1
-  fi
-
-  mkdir -p "$out_dir"
-  stage_dir="$(mktemp -d)"
-  package_dir="$stage_dir/iris"
-  archive="$out_dir/iris-${target}.tar.gz"
-
-  mkdir -p "$package_dir"
-  install -m 755 "$binary_path" "$package_dir/iris"
-  write_cli_unix_install_script "$package_dir/install.sh"
-  write_cli_readme "$package_dir/README.txt"
-
-  rm -f "$archive"
-  (cd "$stage_dir" && tar -czf "$archive" iris)
-  rm -rf "$stage_dir"
-
-  ASSET_PATHS+=("$archive")
-  note_built "Iris CLI ${target}: $(basename "$archive")"
-}
-
-build_cli_darwin_target() {
-  local target="$1"
-  local target_dir="$ROOT/target/cli-release"
-  rustup target add "$target" >/dev/null
-  CARGO_TARGET_DIR="$target_dir" \
-    cargo build --manifest-path "$ROOT/core/Cargo.toml" --release --bin iris --target "$target" --locked
-  package_cli_unix_target "$target" "$target_dir/$target/release/iris"
-}
-
-build_cli_linux_target() {
-  local target="$1"
-  local target_dir="$ROOT/target/cli-release/linux-x64"
-  local image="${IRIS_CLI_LINUX_BUILD_IMAGE:-$(docker_rust_build_image)}"
-  local platform="${IRIS_CLI_LINUX_DOCKER_PLATFORM:-$(docker_default_platform)}"
-  local repo_basename
-  repo_basename="$(basename "$ROOT")"
-
-  if [[ "$target" != "x86_64-unknown-linux-gnu" ]]; then
-    note_skipped "cli ${target}: only x86_64 Linux is wired for Docker builds"
-    return 0
-  fi
-  if [[ "${IRIS_CLI_LINUX_REUSE_EXISTING:-0}" == "1" ]]; then
-    local archive="$ROOT/dist/cli/iris-${target}.tar.gz"
-    if [[ ! -f "$archive" ]]; then
-      note_skipped "cli ${target}: IRIS_CLI_LINUX_REUSE_EXISTING set but no prebuilt archive found"
-      return 1
-    fi
-    ASSET_PATHS+=("$archive")
-    note_built "Iris CLI ${target}: $(basename "$archive")"
-    return 0
-  fi
-  if ! command -v docker >/dev/null 2>&1; then
-    note_skipped "cli ${target}: docker not available"
-    return 0
-  fi
-  rm -rf "$target_dir"
-  docker run \
-    --platform "$platform" \
-    --rm \
-    -v "$ROOT/..:/workspace:cached" \
-    -w "/workspace/$repo_basename/core" \
-    -e CARGO_TARGET_DIR="/workspace/$repo_basename/target/cli-release/linux-x64" \
-    -e IRIS_APP_VERSION_NAME="$IRIS_APP_VERSION_NAME" \
-    -e IRIS_APP_VERSION_CODE="$IRIS_APP_VERSION_CODE" \
-    -e IRIS_BUILD_GIT_SHA="$IRIS_BUILD_GIT_SHA" \
-    -e IRIS_BUILD_TIMESTAMP_UTC="$IRIS_BUILD_TIMESTAMP_UTC" \
-    -e PATH="/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-    --entrypoint /bin/bash \
-    "$image" -c 'set -Eeuo pipefail; cargo build --release --bin iris --locked'
-  package_cli_unix_target "$target" "$target_dir/release/iris"
-}
-
 build_cli() {
   local targets_csv="${IRIS_CLI_TARGETS:-$(default_cli_targets)}"
   local target
@@ -997,25 +813,20 @@ build_cli() {
   IFS=',' read -r -a cli_targets <<< "$targets_csv"
   for target in "${cli_targets[@]}"; do
     [[ -n "$target" ]] || continue
-    case "$target" in
-      *-apple-darwin)
-        if [[ "$(uname -s)" != "Darwin" ]]; then
-          note_skipped "cli ${target}: host is not Darwin"
-          continue
-        fi
-        if ! build_cli_darwin_target "$target"; then
-          note_skipped "cli ${target}: build failed"
-        fi
-        ;;
-      x86_64-unknown-linux-gnu)
-        if ! build_cli_linux_target "$target"; then
-          note_skipped "cli ${target}: build failed"
-        fi
-        ;;
-      *)
-        note_skipped "cli ${target}: unsupported target"
-        ;;
-    esac
+    local archive="$ROOT/dist/cli/iris-${target}.tar.gz"
+    if [[ "$target" == "x86_64-unknown-linux-gnu" && "${IRIS_CLI_LINUX_REUSE_EXISTING:-0}" == "1" ]]; then
+      if [[ -f "$archive" ]]; then
+        note_built "Iris CLI ${target}: $(basename "$archive")"
+        ASSET_PATHS+=("$archive")
+      else
+        note_skipped "cli ${target}: IRIS_CLI_LINUX_REUSE_EXISTING set but no prebuilt archive found"
+      fi
+    elif "$ROOT/scripts/cli-release" "$target"; then
+      ASSET_PATHS+=("$archive")
+      note_built "Iris CLI ${target}: $(basename "$archive")"
+    else
+      note_skipped "cli ${target}: build failed"
+    fi
   done
 
   if [[ "${#ASSET_PATHS[@]}" -eq "$built_before" ]]; then
