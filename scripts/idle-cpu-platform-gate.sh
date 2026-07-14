@@ -116,7 +116,7 @@ run_macos() {
 
 run_linux() {
   [[ "$(uname -s)" == Linux ]] || { echo "Linux idle CPU gate requires Linux" >&2; exit 1; }
-  [[ "$SKIP_BUILD" -eq 1 ]] || cargo build --manifest-path "$ROOT/linux/Cargo.toml"
+  [[ "$SKIP_BUILD" -eq 1 ]] || cargo build --locked --manifest-path "$ROOT/linux/Cargo.toml"
   "$ROOT/scripts/seed-idle-cpu-fixture.sh" --data-dir "$DATA_DIR" --secret-format linux
   cp "$DATA_DIR/fixture.json" "$FIXTURE"
   local app="${IRIS_LINUX_IDLE_CPU_APP:-$ROOT/linux/target/debug/iris-chat}"
