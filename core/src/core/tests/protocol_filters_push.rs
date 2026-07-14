@@ -344,6 +344,21 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
             .map(PublicKey::to_hex)
             .collect::<Vec<_>>()
     );
+
+    let sender_copy = local_sibling_events
+        .iter()
+        .find(|event| known_authors_before.contains(&event.pubkey))
+        .expect("sender-copy event");
+    let decrypted = linked
+        .process_direct_message_event(sender_copy)
+        .expect("linked processes sender copy")
+        .expect("linked decrypts sender copy");
+    assert_eq!(decrypted.conversation_owner, Some(peer_owner.public_key()));
+    assert_eq!(decrypted.sender, owner.public_key());
+    assert_eq!(decrypted.sender_device, Some(primary_device.public_key()));
+    assert!(decrypted
+        .content
+        .contains("sender copy should be immediately discoverable"));
 }
 
 #[test]

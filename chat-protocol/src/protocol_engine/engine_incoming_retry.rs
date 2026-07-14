@@ -413,7 +413,12 @@ impl ProtocolEngine {
             .then(|| decode_local_sibling_payload(&received.payload))
             .flatten();
         let (conversation_owner, sender, sender_device, payload) = match local_sibling {
-            Some((owner, Some(device), payload)) => (Some(owner), owner, Some(device), payload),
+            Some((owner, original_device, payload)) => (
+                Some(owner),
+                original_device.map_or(self.owner_pubkey, |_| owner),
+                original_device.or(Some(public_device(received.device_pubkey)?)),
+                payload,
+            ),
             _ => (
                 None,
                 public_owner(received.owner_pubkey)?,
