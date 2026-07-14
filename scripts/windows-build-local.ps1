@@ -147,6 +147,18 @@ function Build-Dotnet {
     $parts = Get-VersionParts
     $assemblyVersion = $parts -join '.'
     $informationalVersion = "$VersionName+$BuildSha"
+    # A killed SSH/controller session can strand the idle-gate app. Stop only
+    # IrisChat processes launched from this build checkout before replacing DLLs.
+    $appRoot = (Join-Path $Root 'windows\IrisChat') + [IO.Path]::DirectorySeparatorChar
+    Get-Process -Name IrisChat -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Path -and $_.Path.StartsWith($appRoot, [StringComparison]::OrdinalIgnoreCase)
+        } |
+        ForEach-Object {
+            Write-Output ("Stopping stale build-host IrisChat process {0}" -f $_.Id)
+            Stop-Process -Id $_.Id -Force
+            Wait-Process -Id $_.Id -ErrorAction SilentlyContinue
+        }
     Invoke-Checked {
         dotnet publish $Project -c $Configuration -r win-x64 --self-contained true `
             -p:WindowsPackageType=None "-p:Version=$VersionName" `

@@ -47,8 +47,8 @@ hmac = "0.12"
 iris-chat-protocol = { version = "0.1.7", path = "../chat-protocol" }
 nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
-nostr-pubsub = "0.1.9"
-nostr-pubsub-fips = "0.2.2"
+nostr-pubsub = "=0.1.9"
+nostr-pubsub-fips = "=0.2.3"
 nostr-identity = "0.3.0"
 nostr-double-ratchet = "0.0.163"
 nostr-double-ratchet-pairwise-codec = "0.0.163"
