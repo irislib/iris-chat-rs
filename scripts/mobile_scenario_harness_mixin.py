@@ -358,6 +358,7 @@ class MobileScenarioHarnessMixin:
         if status_file.exists():
             status_output = status_file.read_text(encoding="utf-8", errors="replace")
         self.record_identity(device_id, parse_status(output + "\n" + status_output))
+        self.configure_device_relays(device_id)
 
     def wait_for_background_status(
         self,

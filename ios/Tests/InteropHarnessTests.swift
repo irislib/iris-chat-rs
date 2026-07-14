@@ -33,7 +33,13 @@ final class InteropHarnessTests: XCTestCase {
     let debugSnapshotFilename = "iris_chat_runtime_debug.json"
 
     func testHarnessAction() async throws {
-        let env = ProcessInfo.processInfo.environment
+        var env = ProcessInfo.processInfo.environment
+        for (key, value) in env where key.hasSuffix("_B64") {
+            if let data = Data(base64Encoded: value),
+               let decoded = String(data: data, encoding: .utf8) {
+                env[String(key.dropLast(4))] = decoded
+            }
+        }
         guard env["IRIS_IOS_HARNESS_ACTION"] != nil else {
             throw XCTSkip("Interop harness runs only via scripts/run_ios_harness.py")
         }

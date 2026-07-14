@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import argparse
+import base64
 import json
 import os
 import plistlib
@@ -552,8 +553,8 @@ def build_env(args: argparse.Namespace) -> dict[str, str]:
         if "=" not in item:
             raise SystemExit(f"Invalid --arg `{item}`. Expected KEY=VALUE.")
         key, value = item.split("=", 1)
-        env_key = "IRIS_IOS_HARNESS_" + key.upper()
-        env_vars[env_key] = value
+        env_key = "IRIS_IOS_HARNESS_" + key.upper() + "_B64"
+        env_vars[env_key] = base64.b64encode(value.encode()).decode()
     return env_vars
 
 

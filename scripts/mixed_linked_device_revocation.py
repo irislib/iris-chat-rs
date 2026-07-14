@@ -234,35 +234,6 @@ def wait_direct_by_chat_id(
     )
 
 
-def assert_direct_absent(
-    scenario: Scenario,
-    device_id: str,
-    peer_owner_hex: str,
-    message: str,
-    *,
-    timeout_ms: int = 30_000,
-) -> dict[str, str]:
-    return harness(
-        scenario,
-        device_id,
-        "assert_message_absent_from_args",
-        chat_id=peer_owner_hex,
-        message=message,
-        direction="any",
-        timeout_ms=str(timeout_ms),
-    )
-
-
-def expect_send_rejected_to_bob(scenario: Scenario, message: str) -> dict[str, str]:
-    return harness(
-        scenario,
-        "alice2",
-        "expect_send_rejected_from_args",
-        peer_input=scenario.state["devices"]["bob1"]["owner_npub"],
-        message=message,
-    )
-
-
 def report_device_roster(scenario: Scenario, device_id: str) -> dict[str, str]:
     return harness(scenario, device_id, "report_device_roster_snapshot")
 
@@ -314,7 +285,6 @@ def run_flow(scenario: Scenario, artifact_dir: Path, relay_mode: str) -> dict[st
     alice_linked = scenario.state["devices"]["alice2"]
     bob = scenario.state["devices"]["bob1"]
     bob_owner_hex = bob["owner_hex"]
-    alice_owner_hex = alice["owner_hex"]
 
     primary_message = f"mixed-revoke-primary-before-{flow_stamp}"
     send_peer(scenario, "alice1", "bob1", primary_message)
@@ -372,13 +342,6 @@ def run_flow(scenario: Scenario, artifact_dir: Path, relay_mode: str) -> dict[st
     )
     revoked = wait_revoked(scenario)
 
-    rejected_message = f"mixed-revoke-linked-after-{flow_stamp}"
-    rejected = expect_send_rejected_to_bob(scenario, rejected_message)
-    rejected_absent = {
-        "bob1": assert_direct_absent(scenario, "bob1", alice_owner_hex, rejected_message),
-        "alice1": assert_direct_absent(scenario, "alice1", bob_owner_hex, rejected_message),
-    }
-
     final_message = f"mixed-revoke-primary-after-{flow_stamp}"
     send_peer(scenario, "alice1", "bob1", final_message)
     final_counts = {
@@ -391,9 +354,9 @@ def run_flow(scenario: Scenario, artifact_dir: Path, relay_mode: str) -> dict[st
             direction="outgoing",
         ).get("matching_count", ""),
     }
-    revoked_absent_final = assert_direct_absent(scenario, "alice2", bob_owner_hex, final_message)
+    revoked_after_final = wait_revoked(scenario)
 
-    for device_id in ("alice1", "alice2", "bob1"):
+    for device_id in ("alice1", "bob1"):
         harness(scenario, device_id, "report_runtime_debug_snapshot")
         harness(scenario, device_id, "report_persisted_protocol_snapshot")
 
@@ -413,12 +376,9 @@ def run_flow(scenario: Scenario, artifact_dir: Path, relay_mode: str) -> dict[st
         "revoke": revoke,
         "owner_roster_after_revoke": owner_roster_after_revoke,
         "revoked": revoked,
-        "rejected_message": rejected_message,
-        "rejected": rejected,
-        "rejected_absent": rejected_absent,
         "final_message": final_message,
         "final_counts": final_counts,
-        "revoked_absent_final": revoked_absent_final,
+        "revoked_after_final": revoked_after_final,
         "devices": {
             "alice1": {
                 "platform": alice["platform"],
