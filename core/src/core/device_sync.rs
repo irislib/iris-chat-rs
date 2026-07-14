@@ -358,6 +358,55 @@ impl AppCore {
         send_device_sync_packets(&tcp, &siblings, &packets);
     }
 
+    pub(super) fn broadcast_device_sync_message(&mut self, message: &ChatMessageSnapshot) {
+        if !matches!(&message.kind, ChatMessageKind::User)
+            || matches!(
+                &message.delivery,
+                DeliveryState::Queued | DeliveryState::Failed
+            )
+        {
+            return;
+        }
+        let Some(roster_at) = self.device_sync_roster_at() else {
+            return;
+        };
+        let Some(author) = message.author_owner_pubkey_hex.clone() else {
+            return;
+        };
+        let packet = DeviceSyncSnapshot {
+            roster_at,
+            messages: vec![DeviceSyncMessage {
+                chat_id: message.chat_id.clone(),
+                id: message.id.clone(),
+                body: message.body.clone(),
+                author,
+                created_at: message.created_at_secs,
+                expires_at: message.expires_at_secs,
+            }],
+            ..DeviceSyncSnapshot::default()
+        }
+        .packet();
+        let Ok(packet) = serde_json::to_vec(&packet) else {
+            return;
+        };
+        if packet.len() > DEVICE_SYNC_MAX_PACKET_BYTES {
+            return;
+        }
+        let Some((tcp, siblings)) = self
+            .device_sync
+            .as_ref()
+            .map(|runtime| (runtime.tcp.clone(), runtime.siblings.clone()))
+        else {
+            return;
+        };
+
+        // The stream delta must never get ahead of durable local state. Most
+        // ingress paths persist again after processing the surrounding event;
+        // this write establishes the ordering required by sibling recovery.
+        self.persist_best_effort();
+        send_device_sync_packets(&tcp, &siblings, std::slice::from_ref(&packet));
+    }
+
     pub(super) fn device_sync_tracks_app_keys_owner(&self, owner: PublicKey) -> bool {
         let owner_hex = owner.to_hex();
         self.logged_in
@@ -636,6 +685,23 @@ impl AppCore {
         include_messages: bool,
     ) -> Vec<Vec<u8>> {
         encode_device_sync_chunks(self.build_device_sync_snapshot(roster_at, include_messages))
+    }
+
+    #[cfg(test)]
+    pub(super) fn install_device_sync_sender_for_test(
+        &mut self,
+        endpoint: Arc<FipsEndpoint>,
+        tcp: DeviceSyncTcpSender,
+        siblings: Vec<FipsPeerIdentity>,
+    ) {
+        self.device_sync = Some(DeviceSyncRuntime {
+            key: "test".to_string(),
+            endpoint,
+            tcp,
+            siblings,
+            _update_pubsub: None,
+            tasks: Vec::new(),
+        });
     }
 
     fn device_sync_config(&self) -> Option<DeviceSyncConfig> {

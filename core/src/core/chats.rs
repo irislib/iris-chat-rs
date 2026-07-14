@@ -643,6 +643,7 @@ impl AppCore {
         message_id: &str,
         delivery: DeliveryState,
     ) {
+        let mut device_sync_message = None;
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;
         };
@@ -651,6 +652,8 @@ impl AppCore {
             .iter_mut()
             .find(|message| message.id == message_id)
         {
+            let became_sent = matches!(delivery, DeliveryState::Sent)
+                && !matches!(message.delivery, DeliveryState::Sent);
             message.delivery = delivery.clone();
             if matches!(delivery, DeliveryState::Sent) {
                 for recipient in &mut message.recipient_deliveries {
@@ -663,6 +666,12 @@ impl AppCore {
                     }
                 }
             }
+            if became_sent {
+                device_sync_message = Some(message.clone());
+            }
+        }
+        if let Some(message) = device_sync_message {
+            self.broadcast_device_sync_message(&message);
         }
     }
 
@@ -924,6 +933,7 @@ impl AppCore {
         if expires_at_secs.is_some() {
             self.schedule_next_message_expiry();
         }
+        self.broadcast_device_sync_message(&message);
         message
     }
 
@@ -1062,6 +1072,7 @@ impl AppCore {
         if expires_at_secs.is_some() {
             self.schedule_next_message_expiry();
         }
+        self.broadcast_device_sync_message(&message);
     }
 
     pub(super) fn push_system_notice(&mut self, chat_id: &str, body: String, created_at_secs: u64) {

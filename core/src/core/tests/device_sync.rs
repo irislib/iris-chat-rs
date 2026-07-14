@@ -205,6 +205,127 @@ fn device_sync_bootstraps_missing_chats_groups_and_post_roster_messages_once() {
     assert!(!linked.app_keys.contains_key(&unrelated_hex));
 }
 
+#[tokio::test]
+async fn newly_received_message_is_queued_for_an_authorized_sibling() {
+    let owner = Keys::generate();
+    let local_device = Keys::generate();
+    let sibling_device = Keys::generate();
+    let sender = Keys::generate();
+    let (mut core, _updates, _temp_dir) =
+        logged_in_test_core_with_updates("device-sync-live-message", &owner, &local_device);
+    let owner_hex = owner.public_key().to_hex();
+    core.app_keys.insert(
+        owner_hex.clone(),
+        KnownAppKeys {
+            owner_pubkey_hex: owner_hex,
+            created_at_secs: 100,
+            devices: vec![
+                KnownAppKeyDevice {
+                    identity_pubkey_hex: local_device.public_key().to_hex(),
+                    created_at_secs: 1,
+                    device_label: None,
+                    client_label: None,
+                    label_updated_at_secs: 0,
+                },
+                KnownAppKeyDevice {
+                    identity_pubkey_hex: sibling_device.public_key().to_hex(),
+                    created_at_secs: 100,
+                    device_label: None,
+                    client_label: None,
+                    label_updated_at_secs: 0,
+                },
+            ],
+        },
+    );
+
+    let endpoint = Arc::new(
+        fips_core::FipsEndpoint::builder()
+            .without_system_tun()
+            .bind()
+            .await
+            .expect("bind embedded endpoint"),
+    );
+    let (tcp, records) = DeviceSyncTcpSender::test_channel(4, 1024);
+    let sibling = fips_core::PeerIdentity::from_npub(
+        &sibling_device
+            .public_key()
+            .to_bech32()
+            .expect("encode sibling npub"),
+    )
+    .expect("valid sibling identity");
+    core.install_device_sync_sender_for_test(endpoint.clone(), tcp, vec![sibling]);
+
+    let chat_id = sender.public_key().to_hex();
+    core.apply_runtime_text_message(
+        sender.public_key(),
+        Some(chat_id.clone()),
+        "survives a sibling relay miss".to_string(),
+        101,
+        None,
+        Some("live-message-id".to_string()),
+        Some("live-event-id".to_string()),
+    );
+
+    let queued = records
+        .try_recv()
+        .expect("the accepted message should be queued for the sibling stream");
+    assert_eq!(queued.peer, sibling);
+    let incoming_record = queued.record;
+    let packet = serde_json::from_slice::<serde_json::Value>(&incoming_record).unwrap();
+    assert_eq!(packet["type"], "snapshot");
+    assert_eq!(packet["chats"], serde_json::json!([]));
+    assert_eq!(packet["appKeys"], serde_json::json!([]));
+    assert_eq!(packet["groups"], serde_json::json!([]));
+    let messages = packet["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["chatId"], chat_id);
+    assert_eq!(messages[0]["id"], "live-message-id");
+    assert_eq!(messages[0]["body"], "survives a sibling relay miss");
+
+    core.apply_runtime_text_message(
+        owner.public_key(),
+        Some(chat_id.clone()),
+        "linked-device reply".to_string(),
+        102,
+        None,
+        Some("live-outgoing-id".to_string()),
+        Some("live-outgoing-event-id".to_string()),
+    );
+    let queued = records
+        .try_recv()
+        .expect("the sent sibling reply should be queued for the primary stream");
+    let packet = serde_json::from_slice::<serde_json::Value>(&queued.record).unwrap();
+    let messages = packet["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["chatId"], chat_id);
+    assert_eq!(messages[0]["id"], "live-outgoing-id");
+    assert_eq!(messages[0]["author"], owner.public_key().to_hex());
+
+    let (mut linked, _linked_updates, _linked_temp_dir) =
+        logged_in_test_core_with_updates("device-sync-live-linked", &owner, &sibling_device);
+    linked.app_keys.insert(
+        owner.public_key().to_hex(),
+        core.app_keys[&owner.public_key().to_hex()].clone(),
+    );
+    let source = local_device.public_key().to_hex();
+    linked.handle_device_sync_packet(&source, DEVICE_SYNC_PORT, &incoming_record);
+    linked.handle_device_sync_packet(&source, DEVICE_SYNC_PORT, &incoming_record);
+    let linked_messages = &linked.threads[&chat_id].messages;
+    assert_eq!(linked_messages.len(), 1);
+    assert_eq!(linked_messages[0].id, "live-message-id");
+    assert_eq!(linked_messages[0].body, "survives a sibling relay miss");
+    assert!(!linked_messages[0].is_outgoing);
+
+    core.device_sync = None;
+    endpoint.shutdown().await.expect("shutdown endpoint");
+    tokio::task::spawn_blocking(move || {
+        drop(core);
+        drop(linked);
+    })
+        .await
+        .expect("drop test core outside async runtime");
+}
+
 #[test]
 fn device_sync_app_keys_use_canonical_freshness_and_preserve_retained_labels() {
     let owner = Keys::generate();
