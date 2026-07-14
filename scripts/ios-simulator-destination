@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SIMULATOR_NAME="${IRIS_IOS_SIMULATOR_NAME:-Iris Chat iPhone}"
+UDID="$("${ROOT}/scripts/run_ios_simulators.sh" --no-open --udids-only "${SIMULATOR_NAME}" | tail -n 1)"
+
+if [[ ! "${UDID}" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
+  echo "Failed to resolve a booted iOS simulator UDID for ${SIMULATOR_NAME}." >&2
+  exit 1
+fi
+
+printf 'platform=iOS Simulator,id=%s\n' "${UDID}"

@@ -205,9 +205,7 @@ run_ios_xcodeproj() {
 }
 
 default_ios_destination() {
-  local simulator_name="${IRIS_IOS_SIMULATOR_NAME:-Iris Chat iPhone}"
-  "$ROOT/scripts/run_ios_simulators.sh" --no-open "$simulator_name" >/dev/null
-  printf 'platform=iOS Simulator,name=%s\n' "$simulator_name"
+  "$ROOT/scripts/ios-simulator-destination"
 }
 
 run_ios_build_sim() {

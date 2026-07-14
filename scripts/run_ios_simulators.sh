@@ -5,6 +5,7 @@ set -Eeuo pipefail
 DEFAULT_SIMULATORS=("Iris Chat iPhone" "Iris Chat iPhone 2")
 LIST_ONLY=0
 NO_OPEN=0
+UDIDS_ONLY=0
 SIMULATORS=()
 
 usage() {
@@ -14,6 +15,7 @@ Usage: scripts/run_ios_simulators.sh [options] [simulator-name...]
 Options:
   --list     Print available simulators and runtimes, then exit
   --no-open  Do not open the Simulator app after booting
+  --udids-only  Print one booted simulator UDID per line
 
 Defaults:
   Iris Chat iPhone
@@ -29,6 +31,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-open)
       NO_OPEN=1
+      shift
+      ;;
+    --udids-only)
+      UDIDS_ONLY=1
       shift
       ;;
     -h|--help)
@@ -111,7 +117,7 @@ RUNTIME_ID="${SETUP[0]}"
 DEVICE_TYPE_ID="${SETUP[1]}"
 DEVICE_TYPE_NAME="${SETUP[2]}"
 
-find_device_udid() {
+find_device_udids() {
   local simulator_name="$1"
   xcrun simctl list -j devices | python3 -c '
 import json
@@ -121,9 +127,8 @@ runtime_id = sys.argv[1]
 name = sys.argv[2]
 data = json.load(sys.stdin)
 for device in data.get("devices", {}).get(runtime_id, []):
-    if device.get("name") == name:
+    if device.get("name") == name and device.get("isAvailable", True):
         print(device.get("udid", ""))
-        break
 ' "${RUNTIME_ID}" "${simulator_name}"
 }
 
@@ -218,11 +223,55 @@ wait_for_bootstatus() {
   return 1
 }
 
+boot_device() {
+  local udid="$1"
+  local boot_output=""
+  local boot_status=0
+
+  if boot_output="$(xcrun simctl boot "${udid}" 2>&1)"; then
+    boot_status=0
+  else
+    boot_status=$?
+  fi
+  if [[ "${boot_status}" -ne 0 ]]; then
+    if xcrun simctl list devices booted | grep -q "(${udid}) (Booted)"; then
+      return 0
+    fi
+    printf '%s\n' "${boot_output}" >&2
+    if grep -qi "deleted device" <<< "${boot_output}"; then
+      return 44
+    fi
+    return "${boot_status}"
+  fi
+  wait_for_bootstatus "${udid}"
+}
+
 TARGET_UDIDS=()
 for simulator_name in "${SIMULATORS[@]}"; do
-  udid="$(find_device_udid "${simulator_name}")"
+  udid=""
+  while IFS= read -r candidate_udid; do
+    [[ -n "${candidate_udid}" ]] || continue
+    if boot_device "${candidate_udid}"; then
+      udid="${candidate_udid}"
+      break
+    else
+      boot_status=$?
+    fi
+    if [[ "${boot_status}" -eq 44 ]]; then
+      echo "Ignoring deleted iOS simulator record ${candidate_udid}" >&2
+    else
+      echo "Skipping unbootable iOS simulator ${candidate_udid}" >&2
+    fi
+  done < <(find_device_udids "${simulator_name}")
+
   if [[ -z "${udid}" ]]; then
     udid="$(xcrun simctl create "${simulator_name}" "${DEVICE_TYPE_ID}" "${RUNTIME_ID}")"
+    echo "Created iOS simulator ${simulator_name} (${udid})" >&2
+    if ! boot_device "${udid}"; then
+      echo "Retrying first boot for new iOS simulator ${udid}" >&2
+      sleep 1
+      boot_device "${udid}"
+    fi
   fi
   TARGET_UDIDS+=("${udid}")
 done
@@ -233,9 +282,11 @@ for index in "${!SIMULATORS[@]}"; do
   simulator_name="${SIMULATORS[$index]}"
   udid="${TARGET_UDIDS[$index]}"
 
-  xcrun simctl boot "${udid}" >/dev/null 2>&1 || true
-  wait_for_bootstatus "${udid}"
-  echo "${simulator_name} ${udid} ${DEVICE_TYPE_NAME} ${RUNTIME_ID}"
+  if [[ ${UDIDS_ONLY} -eq 1 ]]; then
+    echo "${udid}"
+  else
+    echo "${simulator_name} ${udid} ${DEVICE_TYPE_NAME} ${RUNTIME_ID}"
+  fi
 done
 
 if [[ ${NO_OPEN} -eq 0 ]]; then
