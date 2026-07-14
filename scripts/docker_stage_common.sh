@@ -93,8 +93,12 @@ docker_stage_build_iris_cli() {
     "${image}" \
     sh -lc '
       set -eu
+      export DEBIAN_FRONTEND=noninteractive
       export PATH="/usr/local/cargo/bin:$PATH"
       export RUSTUP_HOME="${RUSTUP_HOME:-/usr/local/rustup}"
+      apt-get update >/dev/null
+      apt-get install -y --no-install-recommends libclang-dev libdbus-1-dev pkg-config >/dev/null
+      rm -rf /var/lib/apt/lists/*
       cargo build --manifest-path /work/iris-chat-rs/core/Cargo.toml --bin iris --locked
       cp /stage/target/debug/iris /stage/iris
     '
