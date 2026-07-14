@@ -245,6 +245,10 @@ run_macos_xcodeproj() {
   )
 }
 
+stop_running_macos_app() {
+  killall "${MACOS_APP_NAME%.app}" 2>/dev/null || true
+}
+
 run_macos_build() {
   local host_arch
   host_arch="$(uname -m)"
@@ -267,6 +271,7 @@ run_macos_test() {
   host_arch="$(uname -m)"
   run_macos_xcframework
   run_macos_xcodeproj
+  stop_running_macos_app
   xcodebuild \
     -project "$MACOS_DIR/IrisChatMac.xcodeproj" \
     -scheme IrisChatMac \
@@ -307,6 +312,7 @@ run_macos_ui_test() {
 
   run_macos_xcframework
   run_macos_xcodeproj
+  stop_running_macos_app
   local xcode_args=(
     -project "$MACOS_DIR/IrisChatMac.xcodeproj"
     -scheme IrisChatMacUI
