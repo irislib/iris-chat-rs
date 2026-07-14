@@ -58,7 +58,9 @@ fn chunks_are_bounded_additive_camel_case_snapshots() {
         .map(|packet| serde_json::from_slice::<DeviceSyncPacket>(packet).unwrap())
         .map(|packet| match packet {
             DeviceSyncPacket::Snapshot { app_keys, .. } => app_keys.len(),
-            DeviceSyncPacket::Request { .. } => 0,
+            DeviceSyncPacket::Request { .. }
+            | DeviceSyncPacket::ResyncRequired { .. }
+            | DeviceSyncPacket::PageEnd { .. } => 0,
         })
         .sum::<usize>();
     assert_eq!(app_keys_count, 1);
@@ -67,7 +69,9 @@ fn chunks_are_bounded_additive_camel_case_snapshots() {
         .map(|packet| serde_json::from_slice::<DeviceSyncPacket>(packet).unwrap())
         .map(|packet| match packet {
             DeviceSyncPacket::Snapshot { messages, .. } => messages.len(),
-            DeviceSyncPacket::Request { .. } => 0,
+            DeviceSyncPacket::Request { .. }
+            | DeviceSyncPacket::ResyncRequired { .. }
+            | DeviceSyncPacket::PageEnd { .. } => 0,
         })
         .sum::<usize>();
     assert_eq!(message_count, 200);
@@ -88,5 +92,5 @@ fn authorized_siblings_are_enqueued_without_requiring_a_live_fips_peer() {
 
     let queued = rx.try_recv().expect("authorized sibling should be queued");
     assert_eq!(queued.peer, sibling);
-    assert_eq!(queued.record, packet);
+    assert_eq!(queued.records.into_iter().collect::<Vec<_>>(), vec![packet]);
 }

@@ -7,10 +7,18 @@ use std::collections::BTreeSet;
 use tokio::task::JoinHandle;
 
 use super::update_pubsub::run_update_announcement_subscription;
+use anti_entropy::metadata_page_packets;
+use messages::collect_device_sync_messages;
+
+mod anti_entropy;
+mod body;
+mod messages;
 
 pub(super) const DEVICE_SYNC_PORT: u16 = 7369;
 const DEVICE_SYNC_VERSION: u8 = 1;
-const DEVICE_SYNC_MAX_PACKET_BYTES: usize = 48 * 1024;
+const DEVICE_SYNC_MAX_PACKET_BYTES: usize = 64 * 1024;
+const DEVICE_SYNC_PAGE_MESSAGES: usize = 32;
+const DEVICE_SYNC_PAGE_PACKETS: usize = 32;
 const DEVICE_SYNC_SCOPE_PREFIX: &str = "iris-chat-device-sync-v1:";
 
 type DeviceSyncConfig = (
@@ -41,6 +49,16 @@ enum DeviceSyncPacket {
     Request {
         v: u8,
         roster_at: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        page: Option<DeviceSyncPage>,
+    },
+    ResyncRequired {
+        v: u8,
+    },
+    PageEnd {
+        v: u8,
+        roster_at: u64,
+        next: DeviceSyncPage,
     },
     Snapshot {
         v: u8,
@@ -104,11 +122,41 @@ struct DeviceSyncGroup {
 struct DeviceSyncMessage {
     chat_id: String,
     id: String,
+    #[serde(with = "body")]
     body: String,
     author: String,
     created_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expires_at: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceSyncCursor {
+    created_at: u64,
+    chat_id: String,
+    id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum DeviceSyncPage {
+    Metadata { offset: usize },
+    Messages { after: Option<DeviceSyncCursor> },
+}
+
+impl From<&DeviceSyncMessage> for DeviceSyncCursor {
+    fn from(message: &DeviceSyncMessage) -> Self {
+        Self {
+            created_at: message.created_at,
+            chat_id: message.chat_id.clone(),
+            id: message.id.clone(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -235,6 +283,12 @@ impl AppCore {
         let Ok(request) = serde_json::to_vec(&DeviceSyncPacket::Request {
             v: DEVICE_SYNC_VERSION,
             roster_at,
+            page: None,
+        }) else {
+            return;
+        };
+        let Ok(resync_required) = serde_json::to_vec(&DeviceSyncPacket::ResyncRequired {
+            v: DEVICE_SYNC_VERSION,
         }) else {
             return;
         };
@@ -243,6 +297,7 @@ impl AppCore {
             DEVICE_SYNC_PORT,
             DEVICE_SYNC_MAX_PACKET_BYTES,
             request,
+            resync_required,
             self.core_sender.clone(),
         )) {
             Ok(value) => value,
@@ -320,8 +375,18 @@ impl AppCore {
             return;
         };
         match packet {
-            DeviceSyncPacket::Request { v, roster_at } if v == DEVICE_SYNC_VERSION => {
-                self.reply_device_sync_snapshot(source_pubkey_hex, roster_at);
+            DeviceSyncPacket::Request { v, roster_at, page } if v == DEVICE_SYNC_VERSION => {
+                self.reply_device_sync_snapshot(source_pubkey_hex, roster_at, page);
+            }
+            DeviceSyncPacket::ResyncRequired { v } if v == DEVICE_SYNC_VERSION => {
+                self.request_device_sync_snapshot(source_pubkey_hex, None);
+            }
+            DeviceSyncPacket::PageEnd {
+                v,
+                roster_at: _,
+                next,
+            } if v == DEVICE_SYNC_VERSION => {
+                self.request_device_sync_snapshot(source_pubkey_hex, Some(next));
             }
             DeviceSyncPacket::Snapshot {
                 v,
@@ -347,7 +412,7 @@ impl AppCore {
         let Some(roster_at) = self.device_sync_roster_at() else {
             return;
         };
-        let packets = encode_device_sync_chunks(self.build_device_sync_snapshot(roster_at, false));
+        let packets = metadata_page_packets(self, roster_at, 0);
         let Some((tcp, siblings)) = self
             .device_sync
             .as_ref()
@@ -362,7 +427,7 @@ impl AppCore {
         if !matches!(&message.kind, ChatMessageKind::User)
             || matches!(
                 &message.delivery,
-                DeliveryState::Queued | DeliveryState::Failed
+                DeliveryState::Queued | DeliveryState::Pending | DeliveryState::Failed
             )
         {
             return;
@@ -400,9 +465,8 @@ impl AppCore {
             return;
         };
 
-        // The stream delta must never get ahead of durable local state. Most
-        // ingress paths persist again after processing the surrounding event;
-        // this write establishes the ordering required by sibling recovery.
+        // Flush when possible before enqueueing. During a batched event this is
+        // deferred; anti-entropy also reads the in-memory message projection.
         self.persist_best_effort();
         send_device_sync_packets(&tcp, &siblings, std::slice::from_ref(&packet));
     }
@@ -419,24 +483,6 @@ impl AppCore {
                     .iter()
                     .any(|member| member.to_hex() == owner_hex)
             })
-    }
-
-    fn reply_device_sync_snapshot(&mut self, source_pubkey_hex: &str, requested_roster_at: u64) {
-        let Some(local_roster_at) = self.device_sync_roster_at() else {
-            return;
-        };
-        let cutoff = local_roster_at.max(requested_roster_at);
-        let snapshot = self.build_device_sync_snapshot(cutoff, true);
-        let packets = encode_device_sync_chunks(snapshot);
-        let Some(tcp) = self.device_sync.as_ref().map(|runtime| runtime.tcp.clone()) else {
-            return;
-        };
-        let Some(peer) = fips_peer_from_hex(source_pubkey_hex) else {
-            return;
-        };
-        for packet in packets {
-            let _ = tcp.send(peer, packet);
-        }
     }
 
     fn build_device_sync_snapshot(
@@ -511,19 +557,7 @@ impl AppCore {
             })
             .collect();
         let messages = if include_messages {
-            self.app_store
-                .load_device_sync_messages_after(roster_at, unix_now().get())
-                .unwrap_or_default()
-                .into_iter()
-                .map(|message| DeviceSyncMessage {
-                    chat_id: message.chat_id,
-                    id: message.id,
-                    body: message.body,
-                    author: message.author_owner_pubkey_hex.unwrap_or(message.author),
-                    created_at: message.created_at_secs,
-                    expires_at: message.expires_at_secs,
-                })
-                .collect()
+            collect_device_sync_messages(self, roster_at, None, DEVICE_SYNC_PAGE_MESSAGES).0
         } else {
             Vec::new()
         };
@@ -617,7 +651,7 @@ impl AppCore {
         }
         let now = unix_now().get();
         for message in snapshot.messages {
-            if message.created_at <= cutoff
+            if message.created_at < cutoff
                 || message
                     .expires_at
                     .is_some_and(|expires_at| expires_at <= now)
@@ -625,6 +659,9 @@ impl AppCore {
                 || message.id.is_empty()
                 || message.id.len() > 128
                 || PublicKey::from_hex(&message.author).is_err()
+                || self.threads.get(&message.chat_id).is_some_and(|thread| {
+                    thread.messages.iter().any(|known| known.id == message.id)
+                })
                 || self
                     .app_store
                     .message_exists(&message.chat_id, Some(&message.id), None)
@@ -702,6 +739,16 @@ impl AppCore {
             _update_pubsub: None,
             tasks: Vec::new(),
         });
+    }
+
+    #[cfg(test)]
+    pub(super) fn take_device_sync_control_for_test(
+        &self,
+        peer: FipsPeerIdentity,
+    ) -> Option<Vec<u8>> {
+        self.device_sync
+            .as_ref()
+            .and_then(|runtime| runtime.tcp.take_control_for_test(peer))
     }
 
     fn device_sync_config(&self) -> Option<DeviceSyncConfig> {
@@ -931,9 +978,7 @@ fn send_device_sync_packets(
     packets: &[Vec<u8>],
 ) {
     for sibling in siblings {
-        for packet in packets {
-            let _ = tcp.send(*sibling, packet.clone());
-        }
+        let _ = tcp.send_batch(*sibling, packets.to_vec());
     }
 }
 

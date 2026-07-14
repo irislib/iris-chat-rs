@@ -292,10 +292,14 @@ impl AppStore {
         load_recent_messages(&conn, chat_id, limit)
     }
 
-    pub(crate) fn load_device_sync_messages_after(
+    pub(crate) fn load_device_sync_messages_page(
         &self,
         cutoff_secs: u64,
         now_secs: u64,
+        after_created_at: u64,
+        after_chat_id: &str,
+        after_id: &str,
+        limit: usize,
     ) -> anyhow::Result<Vec<PersistedMessage>> {
         let conn = self
             .conn
@@ -306,13 +310,24 @@ impl AppStore {
                     created_at_secs, expires_at_secs, delivery, attachments_json, reactions_json,
                     reactors_json, source_event_id, recipient_deliveries_json, delivery_trace_json
              FROM messages
-             WHERE kind = 'user' AND created_at_secs > ?1
-               AND delivery NOT IN ('queued', 'failed')
+             WHERE kind = 'user' AND created_at_secs >= ?1
+               AND delivery NOT IN ('queued', 'pending', 'failed')
                AND (expires_at_secs IS NULL OR expires_at_secs > ?2)
-             ORDER BY created_at_secs, rowid",
+               AND (created_at_secs > ?3
+                    OR (created_at_secs = ?3 AND chat_id > ?4)
+                    OR (created_at_secs = ?3 AND chat_id = ?4 AND id > ?5))
+             ORDER BY created_at_secs, chat_id, id
+             LIMIT ?6",
         )?;
         let rows = stmt.query_map(
-            params![cutoff_secs as i64, now_secs as i64],
+            params![
+                cutoff_secs as i64,
+                now_secs as i64,
+                after_created_at as i64,
+                after_chat_id,
+                after_id,
+                limit as i64,
+            ],
             persisted_message_from_row,
         )?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)

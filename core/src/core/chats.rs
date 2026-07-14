@@ -10,6 +10,7 @@ use self::helpers::{
 };
 
 const OPEN_CHAT_MESSAGES_PER_PAGE: usize = 80;
+const MAX_CHAT_MESSAGE_BODY_BYTES: usize = 32 * 1024;
 
 impl AppCore {
     pub(super) fn create_chat(&mut self, peer_input: &str) {
@@ -444,6 +445,11 @@ impl AppCore {
     pub(super) fn send_message(&mut self, chat_id: &str, text: &str, expires_at_secs: Option<u64>) {
         let trimmed = text.trim();
         if trimmed.is_empty() {
+            return;
+        }
+        if trimmed.len() > MAX_CHAT_MESSAGE_BODY_BYTES {
+            self.state.toast = Some("Message is too large (32 KiB maximum).".to_string());
+            self.emit_state();
             return;
         }
         if self.logged_in.is_none() {
@@ -1718,6 +1724,13 @@ impl AppCore {
         message_id: Option<String>,
         source_event_id: Option<String>,
     ) {
+        if body.len() > MAX_CHAT_MESSAGE_BODY_BYTES {
+            self.push_debug_log(
+                "message.reject.oversized",
+                format!("bytes={} maximum={MAX_CHAT_MESSAGE_BODY_BYTES}", body.len()),
+            );
+            return;
+        }
         let Some(local_owner) = self
             .logged_in
             .as_ref()

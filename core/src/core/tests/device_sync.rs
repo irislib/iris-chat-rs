@@ -77,21 +77,21 @@ fn device_sync_bootstraps_missing_chats_groups_and_post_roster_messages_once() {
             {
                 "chatId": peer_hex,
                 "id": "at-cutoff",
-                "body": "old",
+                "body": "b2xk",
                 "author": owner_hex,
                 "createdAt": 100
             },
             {
                 "chatId": peer_hex,
                 "id": "after-cutoff",
-                "body": "still old",
+                "body": "c3RpbGwgb2xk",
                 "author": owner_hex,
                 "createdAt": 101
             },
             {
                 "chatId": peer_hex,
                 "id": "after-both-cutoffs",
-                "body": "new",
+                "body": "bmV3",
                 "author": owner_hex,
                 "createdAt": 103
             }
@@ -256,21 +256,23 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     core.install_device_sync_sender_for_test(endpoint.clone(), tcp, vec![sibling]);
 
     let chat_id = sender.public_key().to_hex();
+    core.batch_depth = 1;
     core.apply_runtime_text_message(
         sender.public_key(),
         Some(chat_id.clone()),
         "survives a sibling relay miss".to_string(),
-        101,
+        100,
         None,
         Some("live-message-id".to_string()),
         Some("live-event-id".to_string()),
     );
+    core.batch_depth = 0;
 
     let queued = records
         .try_recv()
         .expect("the accepted message should be queued for the sibling stream");
     assert_eq!(queued.peer, sibling);
-    let incoming_record = queued.record;
+    let incoming_record = queued.records.into_iter().next().unwrap();
     let packet = serde_json::from_slice::<serde_json::Value>(&incoming_record).unwrap();
     assert_eq!(packet["type"], "snapshot");
     assert_eq!(packet["chats"], serde_json::json!([]));
@@ -280,26 +282,39 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["chatId"], chat_id);
     assert_eq!(messages[0]["id"], "live-message-id");
-    assert_eq!(messages[0]["body"], "survives a sibling relay miss");
+    assert!(core
+        .build_device_sync_packets_for_test(100, true)
+        .iter()
+        .any(|packet| packet.windows("live-message-id".len()).any(|window| {
+            window == "live-message-id".as_bytes()
+        })));
 
-    core.apply_runtime_text_message(
-        owner.public_key(),
-        Some(chat_id.clone()),
+    core.push_outgoing_message_with_id(
+        "live-outgoing-id".to_string(),
+        &chat_id,
         "linked-device reply".to_string(),
         102,
         None,
-        Some("live-outgoing-id".to_string()),
-        Some("live-outgoing-event-id".to_string()),
+        DeliveryState::Pending,
     );
+    assert!(records.try_recv().is_err());
+    core.update_message_delivery(&chat_id, "live-outgoing-id", DeliveryState::Sent);
     let queued = records
         .try_recv()
-        .expect("the sent sibling reply should be queued for the primary stream");
-    let packet = serde_json::from_slice::<serde_json::Value>(&queued.record).unwrap();
+        .expect("the sibling reply should be queued only after it becomes sent");
+    let packet = serde_json::from_slice::<serde_json::Value>(&queued.records[0]).unwrap();
     let messages = packet["messages"].as_array().unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["chatId"], chat_id);
     assert_eq!(messages[0]["id"], "live-outgoing-id");
     assert_eq!(messages[0]["author"], owner.public_key().to_hex());
+    core.update_message_delivery(&chat_id, "live-outgoing-id", DeliveryState::Failed);
+    assert!(!core
+        .build_device_sync_packets_for_test(100, true)
+        .iter()
+        .any(|packet| packet.windows("live-outgoing-id".len()).any(|window| {
+            window == "live-outgoing-id".as_bytes()
+        })));
 
     let (mut linked, _linked_updates, _linked_temp_dir) =
         logged_in_test_core_with_updates("device-sync-live-linked", &owner, &sibling_device);
@@ -308,15 +323,95 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
         core.app_keys[&owner.public_key().to_hex()].clone(),
     );
     let source = local_device.public_key().to_hex();
+    linked.batch_depth = 1;
     linked.handle_device_sync_packet(&source, DEVICE_SYNC_PORT, &incoming_record);
     linked.handle_device_sync_packet(&source, DEVICE_SYNC_PORT, &incoming_record);
+    linked.batch_depth = 0;
     let linked_messages = &linked.threads[&chat_id].messages;
     assert_eq!(linked_messages.len(), 1);
     assert_eq!(linked_messages[0].id, "live-message-id");
     assert_eq!(linked_messages[0].body, "survives a sibling relay miss");
     assert!(!linked_messages[0].is_outgoing);
 
+    let resync = br#"{"type":"resyncRequired","v":1}"#;
+    core.handle_device_sync_packet(
+        &sibling_device.public_key().to_hex(),
+        DEVICE_SYNC_PORT,
+        resync,
+    );
+    let request_record = core
+        .take_device_sync_control_for_test(sibling)
+        .expect("overflow notice should elicit a lossless snapshot request");
+    let request = serde_json::from_slice::<serde_json::Value>(&request_record).unwrap();
+    assert_eq!(request["type"], "request");
+    assert_eq!(request["rosterAt"], 100);
+
     core.device_sync = None;
+    core.apply_runtime_text_message(
+        sender.public_key(),
+        Some(chat_id.clone()),
+        "x".repeat(32 * 1024 + 1),
+        150,
+        None,
+        Some("oversized-message".to_string()),
+        None,
+    );
+    assert!(!core.threads[&chat_id]
+        .messages
+        .iter()
+        .any(|message| message.id == "oversized-message"));
+    core.apply_runtime_text_message(
+        sender.public_key(),
+        Some(chat_id.clone()),
+        "y".repeat(32 * 1024),
+        151,
+        None,
+        Some("maximum-size-message".to_string()),
+        None,
+    );
+    assert!(core.threads[&chat_id]
+        .messages
+        .iter()
+        .any(|message| message.id == "maximum-size-message"));
+    for index in 0..140 {
+        core.push_incoming_message_from(
+            &chat_id,
+            Some(format!("page-{index:03}")),
+            format!("page body {index}"),
+            200 + index,
+            None,
+            None,
+            Some(sender.public_key().to_hex()),
+            None,
+        );
+    }
+    core.persist_best_effort_inner();
+    for index in 0..11 {
+        core.update_message_delivery(
+            &chat_id,
+            &format!("page-{index:03}"),
+            DeliveryState::Failed,
+        );
+    }
+    let mut cursor = None;
+    let mut paged_ids = Vec::new();
+    loop {
+        let (ids, next) = core.device_sync_message_page_for_test(100, cursor, 32);
+        paged_ids.extend(ids);
+        let Some(next) = next else { break };
+        cursor = Some(next);
+    }
+    assert_eq!(paged_ids.len(), 131);
+    assert_eq!(paged_ids.iter().filter(|id| *id == "live-message-id").count(), 1);
+    assert_eq!(paged_ids.iter().filter(|id| *id == "page-139").count(), 1);
+    assert_eq!(
+        paged_ids
+            .iter()
+            .filter(|id| *id == "maximum-size-message")
+            .count(),
+        1
+    );
+
     endpoint.shutdown().await.expect("shutdown endpoint");
     tokio::task::spawn_blocking(move || {
         drop(core);
