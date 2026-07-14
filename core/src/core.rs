@@ -79,6 +79,7 @@ mod chats;
 mod config;
 mod device_approval;
 mod device_sync;
+mod device_sync_tcp;
 mod groups;
 mod identity;
 mod invites;
@@ -127,6 +128,7 @@ pub(crate) use config::{
     app_version_string, build_summary, configured_relays, relay_set_id, trusted_test_build_flag,
 };
 use device_sync::*;
+use device_sync_tcp::*;
 use identity::*;
 pub(crate) use identity::{normalize_peer_input_for_display, parse_peer_input};
 pub(crate) use mobile_push::{

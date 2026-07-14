@@ -64,47 +64,6 @@ if [[ ! -f "${HARNESS}" ]]; then
   exit 1
 fi
 
-find_serial_for_avd() {
-  local avd_name="$1"
-  while read -r serial _; do
-    [[ -z "${serial}" || "${serial}" == "List" ]] && continue
-    local running_name
-    running_name="$("${ADB}" -s "${serial}" emu avd name 2>/dev/null | head -n 1 | tr -d '\r')"
-    if [[ "${running_name}" == "${avd_name}" ]]; then
-      echo "${serial}"
-      return 0
-    fi
-  done < <("${ADB}" devices | awk 'NR>1 && $2 == "device" { print $1, $2 }')
-  return 1
-}
-
-ensure_avd_running() {
-  local avd_name="$1"
-  local serial
-  serial="$(find_serial_for_avd "${avd_name}" || true)"
-  if [[ -n "${serial}" ]]; then
-    echo "${serial}"
-    return 0
-  fi
-
-  local log_file="/tmp/${avd_name//[^A-Za-z0-9_.-]/_}.log"
-  nohup "${EMULATOR}" -avd "${avd_name}" -no-window -no-audio -gpu swiftshader_indirect >"${log_file}" 2>&1 &
-
-  for _ in {1..120}; do
-    serial="$(find_serial_for_avd "${avd_name}" || true)"
-    if [[ -n "${serial}" ]]; then
-      if "${ADB}" -s "${serial}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' | grep -q '^1$'; then
-        echo "${serial}"
-        return 0
-      fi
-    fi
-    sleep 2
-  done
-
-  echo "Timed out waiting for ${avd_name} to boot." >&2
-  exit 1
-}
-
 run_instrumentation() {
   local serial="$1"
   local class_name="$2"
@@ -312,11 +271,12 @@ select_default_serials() {
   add_unique_serial "${SERIAL_C}"
 
   if [[ -z "${SERIAL_A}" || -z "${SERIAL_B}" || -z "${SERIAL_C}" ]]; then
-    local avd serial
-    for avd in "${DEFAULT_AVDS[@]}"; do
-      serial="$(ensure_avd_running "${avd}")"
+    local boot_output line serial
+    boot_output="$("${ROOT_DIR}/scripts/run_android_emulators.sh" --headless "${DEFAULT_AVDS[@]}")"
+    while IFS= read -r line; do
+      serial="$(awk '{print $2}' <<<"${line}")"
       add_unique_serial "${serial}"
-    done
+    done <<<"${boot_output}"
     while IFS= read -r serial; do
       add_unique_serial "${serial}"
     done < <(connected_serials)

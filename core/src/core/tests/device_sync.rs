@@ -380,3 +380,7 @@ fn device_sync_rejects_malformed_app_keys_rosters() {
     core.handle_device_sync_packet(&sibling_hex, 7369, &duplicates);
     assert!(!core.app_keys.contains_key(&duplicate_owner_hex));
 }
+#[test]
+fn device_sync_uses_single_original_service_port() {
+    assert_eq!(DEVICE_SYNC_PORT, 7369);
+}

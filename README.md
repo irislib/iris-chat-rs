@@ -10,6 +10,8 @@ https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz
 - Encrypted direct and group chats.
 - Device linking and QR/link invites.
 - Offline queueing, message server sync, and SQLite persistence.
+- Reliable ordered linked-device snapshots over TCP/FIPS, while Delivered and
+  Seen remain recipient application receipts.
 - `iris` command line app for scripts, agents, and local devices that need to
   send messages.
 - Attachments, profile pictures, notifications, and support bundles.

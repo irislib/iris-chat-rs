@@ -1,6 +1,6 @@
 [package]
 name = "iris-chat"
-version = "0.1.35"
+version = "0.1.36"
 edition = "2021"
 description = "Iris Chat command line client and shared encrypted chat core"
 license = "MIT"
@@ -36,6 +36,8 @@ clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 flume = "0.11"
 fips-core = { version = "0.3.98", features = ["webrtc-transport"] }
+fips-tcp = "0.1.0"
+fips-tcp-endpoint = "0.1.0"
 hashtree-blossom = { version = "0.2.81", default-features = false, features = ["store"] }
 hashtree-config = "0.2.81"
 hashtree-core = "0.2.81"

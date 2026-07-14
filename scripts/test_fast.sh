@@ -41,6 +41,7 @@ parallel_step_start "source file size guard" "${ROOT_DIR}/scripts/check-source-f
 parallel_step_start "verification tier contract" "${ROOT_DIR}/scripts/check_verification_tiers.sh"
 parallel_step_start "idle CPU gate harness" "${ROOT_DIR}/scripts/test-idle-cpu-gate-harness.sh"
 parallel_step_start "iOS simulator recovery harness" "${ROOT_DIR}/scripts/test-ios-simulator-recovery.sh"
+parallel_step_start "mobile relay AVD selection harness" "${ROOT_DIR}/scripts/test-mobile-relay-common.sh"
 
 run_step "Rust panic/unwrap lint" "${ROOT_DIR}/scripts/check-rust-panics" || lint_status=$?
 parallel_step_wait || static_status=$?

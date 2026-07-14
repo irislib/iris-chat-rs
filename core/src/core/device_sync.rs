@@ -1,17 +1,14 @@
 use super::*;
 use fips_core::config::{NostrDiscoveryPolicy, PeerConfig, TransportInstances};
-use fips_core::{
-    Config, FipsEndpoint, FipsEndpointOutboundDatagram, PeerIdentity as FipsPeerIdentity,
-    WebRtcConfig,
-};
+use fips_core::{Config, FipsEndpoint, PeerIdentity as FipsPeerIdentity, WebRtcConfig};
 use nostr_double_ratchet::{GroupProtocol, GroupStrategy};
 use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use tokio::task::JoinHandle;
 
 use super::update_pubsub::run_update_announcement_subscription;
 
-const DEVICE_SYNC_PORT: u16 = 7369;
+pub(super) const DEVICE_SYNC_PORT: u16 = 7369;
 const DEVICE_SYNC_VERSION: u8 = 1;
 const DEVICE_SYNC_MAX_PACKET_BYTES: usize = 48 * 1024;
 const DEVICE_SYNC_SCOPE_PREFIX: &str = "iris-chat-device-sync-v1:";
@@ -28,6 +25,7 @@ type DeviceSyncConfig = (
 pub(super) struct DeviceSyncRuntime {
     key: String,
     endpoint: Arc<FipsEndpoint>,
+    tcp: DeviceSyncTcpSender,
     _update_pubsub: Option<Arc<FipsPubsubClient>>,
     tasks: Vec<JoinHandle<()>>,
 }
@@ -217,7 +215,7 @@ impl AppCore {
         });
 
         let endpoint = match self.runtime.block_on(async {
-            let endpoint = Arc::new(
+            Ok::<_, fips_core::FipsEndpointError>(Arc::new(
                 FipsEndpoint::builder()
                     .config(config)
                     .identity_nsec(secret_hex)
@@ -225,9 +223,7 @@ impl AppCore {
                     .without_system_tun()
                     .bind()
                     .await?,
-            );
-            let receiver = endpoint.register_service_receiver(DEVICE_SYNC_PORT).await?;
-            Ok::<_, fips_core::FipsEndpointError>((endpoint, receiver))
+            ))
         }) {
             Ok(value) => value,
             Err(error) => {
@@ -235,7 +231,25 @@ impl AppCore {
                 return;
             }
         };
-        let (endpoint, receiver) = endpoint;
+        let Ok(request) = serde_json::to_vec(&DeviceSyncPacket::Request {
+            v: DEVICE_SYNC_VERSION,
+            roster_at,
+        }) else {
+            return;
+        };
+        let (tcp, tcp_task) = match self.runtime.block_on(start_device_sync_tcp(
+            endpoint.clone(),
+            DEVICE_SYNC_PORT,
+            DEVICE_SYNC_MAX_PACKET_BYTES,
+            request,
+            self.core_sender.clone(),
+        )) {
+            Ok(value) => value,
+            Err(error) => {
+                self.push_debug_log("device_sync.tcp.start.error", error);
+                return;
+            }
+        };
         let update_pubsub = match self.runtime.block_on(FipsPubsubClient::start(
             endpoint.clone(),
             FipsPubsubClientOptions::default(),
@@ -246,62 +260,6 @@ impl AppCore {
                 None
             }
         };
-        let receiver_endpoint = endpoint.clone();
-        let tx = self.core_sender.clone();
-        let receive_task = self.runtime.spawn(async move {
-            let mut datagrams = Vec::with_capacity(32);
-            while receiver.recv_batch_into(&mut datagrams, 32).await.is_some() {
-                for datagram in datagrams.drain(..) {
-                    let _ = tx.send(CoreMsg::Internal(Box::new(
-                        InternalEvent::DeviceSyncPacket {
-                            source_pubkey_hex: datagram.source_peer.pubkey().to_string(),
-                            source_port: datagram.source_port,
-                            data: datagram.data.into_vec(),
-                        },
-                    )));
-                }
-            }
-            let _ = receiver_endpoint.shutdown().await;
-        });
-
-        let request_endpoint = endpoint.clone();
-        let Ok(request) = serde_json::to_vec(&DeviceSyncPacket::Request {
-            v: DEVICE_SYNC_VERSION,
-            roster_at,
-        }) else {
-            return;
-        };
-        let request_task = self.runtime.spawn(async move {
-            let mut requested_links = BTreeMap::<String, u64>::new();
-            loop {
-                let peers = match request_endpoint.peers().await {
-                    Ok(peers) => peers,
-                    Err(_) => return,
-                };
-                for peer in peers.into_iter().filter(|peer| peer.connected) {
-                    if requested_links.get(&peer.npub) == Some(&peer.link_id) {
-                        continue;
-                    }
-                    let Ok(identity) = FipsPeerIdentity::from_npub(&peer.npub) else {
-                        continue;
-                    };
-                    if request_endpoint
-                        .send_datagram(
-                            identity,
-                            DEVICE_SYNC_PORT,
-                            DEVICE_SYNC_PORT,
-                            request.clone(),
-                        )
-                        .await
-                        .is_ok()
-                    {
-                        requested_links.insert(peer.npub, peer.link_id);
-                    }
-                }
-                sleep(Duration::from_secs(1)).await;
-            }
-        });
-
         let update_subscription_task = update_pubsub.as_ref().and_then(|pubsub| {
             let filter = match crate::update_announcements::update_announcement_filter() {
                 Ok(filter) => filter,
@@ -317,7 +275,7 @@ impl AppCore {
             }))
         });
 
-        let mut tasks = vec![receive_task, request_task];
+        let mut tasks = vec![tcp_task];
         if let Some(task) = update_subscription_task {
             tasks.push(task);
         }
@@ -325,6 +283,7 @@ impl AppCore {
         self.device_sync = Some(DeviceSyncRuntime {
             key,
             endpoint,
+            tcp,
             _update_pubsub: update_pubsub,
             tasks,
         });
@@ -346,7 +305,7 @@ impl AppCore {
     pub(super) fn handle_device_sync_packet(
         &mut self,
         source_pubkey_hex: &str,
-        source_port: u16,
+        _source_port: u16,
         data: &[u8],
     ) {
         if data.len() > DEVICE_SYNC_MAX_PACKET_BYTES
@@ -359,7 +318,7 @@ impl AppCore {
         };
         match packet {
             DeviceSyncPacket::Request { v, roster_at } if v == DEVICE_SYNC_VERSION => {
-                self.reply_device_sync_snapshot(source_pubkey_hex, source_port, roster_at);
+                self.reply_device_sync_snapshot(source_pubkey_hex, roster_at);
             }
             DeviceSyncPacket::Snapshot {
                 v,
@@ -386,11 +345,12 @@ impl AppCore {
             return;
         };
         let packets = encode_device_sync_chunks(self.build_device_sync_snapshot(roster_at, false));
-        let Some((endpoint, authorized)) = self.device_sync.as_ref().and_then(|runtime| {
+        let Some((endpoint, tcp, authorized)) = self.device_sync.as_ref().and_then(|runtime| {
             let logged_in = self.logged_in.as_ref()?;
             let roster = self.app_keys.get(&logged_in.owner_pubkey.to_hex())?;
             Some((
                 runtime.endpoint.clone(),
+                runtime.tcp.clone(),
                 roster
                     .devices
                     .iter()
@@ -411,16 +371,9 @@ impl AppCore {
                 if !authorized.contains(&identity.pubkey().to_string()) {
                     continue;
                 }
-                let datagrams = packets
-                    .iter()
-                    .cloned()
-                    .map(|data| {
-                        FipsEndpointOutboundDatagram::new(DEVICE_SYNC_PORT, DEVICE_SYNC_PORT, data)
-                    })
-                    .collect();
-                let _ = endpoint
-                    .send_datagram_batch_to_peer(identity, datagrams)
-                    .await;
+                for packet in &packets {
+                    let _ = tcp.send(identity, packet.clone());
+                }
             }
         });
     }
@@ -439,35 +392,22 @@ impl AppCore {
             })
     }
 
-    fn reply_device_sync_snapshot(
-        &mut self,
-        source_pubkey_hex: &str,
-        source_port: u16,
-        requested_roster_at: u64,
-    ) {
+    fn reply_device_sync_snapshot(&mut self, source_pubkey_hex: &str, requested_roster_at: u64) {
         let Some(local_roster_at) = self.device_sync_roster_at() else {
             return;
         };
         let cutoff = local_roster_at.max(requested_roster_at);
         let snapshot = self.build_device_sync_snapshot(cutoff, true);
         let packets = encode_device_sync_chunks(snapshot);
-        let Some(endpoint) = self
-            .device_sync
-            .as_ref()
-            .map(|runtime| runtime.endpoint.clone())
-        else {
+        let Some(tcp) = self.device_sync.as_ref().map(|runtime| runtime.tcp.clone()) else {
             return;
         };
         let Some(peer) = fips_peer_from_hex(source_pubkey_hex) else {
             return;
         };
-        let datagrams = packets
-            .into_iter()
-            .map(|data| FipsEndpointOutboundDatagram::new(DEVICE_SYNC_PORT, source_port, data))
-            .collect();
-        self.runtime.spawn(async move {
-            let _ = endpoint.send_datagram_batch_to_peer(peer, datagrams).await;
-        });
+        for packet in packets {
+            let _ = tcp.send(peer, packet);
+        }
     }
 
     fn build_device_sync_snapshot(

@@ -414,6 +414,7 @@ if [[ "${SKIP_BUILD}" -eq 0 ]]; then
       IRIS_RELAY_SET_ID="$(local_relay_set_id)" \
       IRIS_TRUSTED_TEST_BUILD=true \
       ./scripts/ios-build ios-xcframework
+    ./scripts/ios-build ios-xcodeproj
   )
 else
   echo "Skipping Android/iOS build; reusing installed artifacts"

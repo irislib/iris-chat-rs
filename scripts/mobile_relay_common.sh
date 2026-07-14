@@ -52,7 +52,7 @@ android_select_installed_avds() {
   shift 2
 
   local selected=()
-  local candidate existing
+  local candidate existing available
   for candidate in "$@"; do
     for existing in "${selected[@]:-}"; do
       [[ "${existing}" == "${candidate}" ]] && continue 2
@@ -66,8 +66,30 @@ android_select_installed_avds() {
     fi
   done
 
+  available="$("${emulator}" -list-avds 2>/dev/null || true)"
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    for existing in "${selected[@]:-}"; do
+      [[ "${existing}" == "${candidate}" ]] && continue 2
+    done
+    selected+=("${candidate}")
+    if [[ "${#selected[@]}" -ge "${requested_count}" ]]; then
+      printf '%s\n' "${selected[@]}"
+      return 0
+    fi
+  done <<<"${available}"
+
+  if [[ -z "${selected[*]:-}" ]]; then
+    return 1
+  fi
+
+  local unique_count="${#selected[@]}"
+  local repeat_index=0
+  while [[ "${#selected[@]}" -lt "${requested_count}" ]]; do
+    selected+=("${selected[$((repeat_index % unique_count))]}")
+    repeat_index=$((repeat_index + 1))
+  done
   printf '%s\n' "${selected[@]}"
-  return 1
 }
 
 local_ios_relay_url() {

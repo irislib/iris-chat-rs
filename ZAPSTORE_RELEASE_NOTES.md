@@ -1,3 +1,8 @@
+# Iris Chat 2026.7.14.1
+
+- Linked devices now recover chats and recent messages reliably across packet loss and reconnects.
+- Delivery and seen indicators continue to reflect what recipient apps actually received and opened.
+
 # Iris Chat 2026.7.14
 
 - A newly linked device now receives your chat list and group details automatically.

@@ -7,6 +7,9 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 ## Unreleased
 
+- Linked devices now recover ordered chat, group, key, and recent-message snapshots over TCP/FIPS.
+- Message delivery and seen indicators still reflect recipient application receipts, not transport acknowledgements.
+
 ## 2026.6.30
 
 - Group membership now syncs through shared roster fact snapshots across web and native apps.

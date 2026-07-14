@@ -36,6 +36,7 @@ LIST_ONLY=0
 AVDS=()
 LAUNCHED_EMULATOR_PID=""
 LAUNCHED_EMULATOR_LOG=""
+ASSIGNED_SERIALS=()
 
 usage() {
   cat <<'EOF'
@@ -92,17 +93,65 @@ if [[ ${#AVDS[@]} -eq 0 ]]; then
   AVDS=("${DEFAULT_AVDS[@]}")
 fi
 
+serial_is_assigned() {
+  local candidate="$1"
+  local assigned
+  for assigned in "${ASSIGNED_SERIALS[@]:-}"; do
+    [[ "${assigned}" == "${candidate}" ]] && return 0
+  done
+  return 1
+}
+
 find_serial_for_avd() {
   local avd_name="$1"
   while read -r serial _; do
     [[ -z "${serial}" || "${serial}" == "List" ]] && continue
     local running_name
     running_name="$("${ADB}" -s "${serial}" emu avd name 2>/dev/null | tr -d '\r' | head -n 1 || true)"
-    if [[ "${running_name}" == "${avd_name}" ]]; then
+    if [[ "${running_name}" == "${avd_name}" ]] && ! serial_is_assigned "${serial}"; then
       echo "${serial}"
       return 0
     fi
   done < <("${ADB}" devices | awk 'NR>1 { print $1, $2 }')
+  return 1
+}
+
+avd_is_running() {
+  local avd_name="$1"
+  while read -r serial _; do
+    [[ -z "${serial}" || "${serial}" == "List" ]] && continue
+    local running_name
+    running_name="$("${ADB}" -s "${serial}" emu avd name 2>/dev/null | tr -d '\r' | head -n 1 || true)"
+    [[ "${running_name}" == "${avd_name}" ]] && return 0
+  done < <("${ADB}" devices | awk 'NR>1 { print $1, $2 }')
+  return 1
+}
+
+avd_requires_read_only() {
+  local avd_name="$1"
+  local requested count=0
+  for requested in "${AVDS[@]}"; do
+    [[ "${requested}" == "${avd_name}" ]] && count=$((count + 1))
+  done
+  [[ "${count}" -gt 1 ]]
+}
+
+stop_running_avd_instances() {
+  local avd_name="$1"
+  local serial running_name
+  while read -r serial _; do
+    [[ -z "${serial}" || "${serial}" == "List" ]] && continue
+    running_name="$("${ADB}" -s "${serial}" emu avd name 2>/dev/null | tr -d '\r' | head -n 1 || true)"
+    if [[ "${running_name}" == "${avd_name}" ]]; then
+      "${ADB}" -s "${serial}" emu kill >/dev/null 2>&1 || true
+    fi
+  done < <("${ADB}" devices | awk 'NR>1 { print $1, $2 }')
+
+  for _ in {1..30}; do
+    avd_is_running "${avd_name}" || return 0
+    sleep 1
+  done
+  echo "Timed out stopping existing ${avd_name} instances for read-only launch." >&2
   return 1
 }
 
@@ -120,7 +169,11 @@ avd_exists() {
 
 launch_visible_avd() {
   local avd_name="$1"
+  local read_only="$2"
   local cmd="\"${EMULATOR}\" -avd \"${avd_name}\" -gpu swiftshader_indirect"
+  if [[ "${read_only}" -eq 1 ]]; then
+    cmd="${cmd} -read-only -no-snapshot"
+  fi
   if [[ -n "${DNS_SERVERS}" && "${DNS_SERVERS}" != "off" ]]; then
     cmd="${cmd} -dns-server \"${DNS_SERVERS}\""
   fi
@@ -135,8 +188,12 @@ launch_visible_avd() {
 
 launch_headless_avd() {
   local avd_name="$1"
+  local read_only="$2"
   local log_file="/tmp/${avd_name//[^A-Za-z0-9_.-]/_}.log"
   local args=("${EMULATOR}" -avd "${avd_name}" -no-window -no-audio -gpu swiftshader_indirect)
+  if [[ "${read_only}" -eq 1 ]]; then
+    args+=(-read-only -no-snapshot)
+  fi
   if [[ -n "${DNS_SERVERS}" && "${DNS_SERVERS}" != "off" ]]; then
     args+=(-dns-server "${DNS_SERVERS}")
   fi
@@ -161,12 +218,16 @@ ensure_avd_running() {
   local serial
   serial="$(find_serial_for_avd "${avd_name}" || true)"
   if [[ -z "${serial}" ]]; then
+    local read_only=0
+    if avd_requires_read_only "${avd_name}" || avd_is_running "${avd_name}"; then
+      read_only=1
+    fi
     LAUNCHED_EMULATOR_PID=""
     LAUNCHED_EMULATOR_LOG=""
     if [[ ${HEADLESS} -eq 1 ]]; then
-      launch_headless_avd "${avd_name}"
+      launch_headless_avd "${avd_name}" "${read_only}"
     else
-      launch_visible_avd "${avd_name}"
+      launch_visible_avd "${avd_name}" "${read_only}"
     fi
   fi
 
@@ -200,7 +261,22 @@ ensure_avd_running() {
   return 1
 }
 
+prepared_read_only_avds=()
+for avd_name in "${AVDS[@]}"; do
+  if avd_requires_read_only "${avd_name}"; then
+    already_prepared=0
+    for prepared in "${prepared_read_only_avds[@]:-}"; do
+      [[ "${prepared}" == "${avd_name}" ]] && already_prepared=1
+    done
+    if [[ "${already_prepared}" -eq 0 ]]; then
+      stop_running_avd_instances "${avd_name}"
+      prepared_read_only_avds+=("${avd_name}")
+    fi
+  fi
+done
+
 for avd_name in "${AVDS[@]}"; do
   serial="$(ensure_avd_running "${avd_name}")"
+  ASSIGNED_SERIALS+=("${serial}")
   echo "${avd_name} ${serial}"
 done

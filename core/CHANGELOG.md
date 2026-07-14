@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.36
+
+- Carry linked-device requests and snapshots as bounded framed records over TCP/FIPS service 7369.
+- Keep authenticated device admission and durable chat Delivered/Seen receipts above the transport.
+
 ## 0.1.35
 
 - Sync chats, group metadata, recent messages, and relevant AppKeys to newly linked devices with `iris-chat-protocol` 0.1.7.
