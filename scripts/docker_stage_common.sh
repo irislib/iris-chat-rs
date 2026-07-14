@@ -86,7 +86,7 @@ docker_stage_build_iris_cli() {
   echo "Building current checkout in ${image}"
   echo "Using staged build cache: ${stage_dir}"
   docker run --rm --platform "${platform}" \
-    -v "${src_root}:/work:ro" \
+    -v "${src_root}:/work/iris-chat-rs:ro" \
     -v "${stage_dir}:/stage" \
     -e CARGO_HOME=/stage/cargo \
     -e CARGO_TARGET_DIR=/stage/target \

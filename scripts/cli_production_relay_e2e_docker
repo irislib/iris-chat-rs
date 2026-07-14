@@ -3,7 +3,6 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SRC_ROOT="$(cd "${ROOT_DIR}/.." && pwd)"
 # shellcheck disable=SC1091
 source "${ROOT_DIR}/scripts/docker_stage_common.sh"
 
@@ -92,7 +91,7 @@ trap cleanup EXIT
 docker rm -f "${CONTAINER_A}" "${CONTAINER_B}" >/dev/null 2>&1 || true
 
 build_current_iris() {
-  docker_stage_build_iris_cli "${STAGE_DIR}" "${PLATFORM}" "${BUILD_IMAGE}" "${REBUILD}" "${SRC_ROOT}"
+  docker_stage_build_iris_cli "${STAGE_DIR}" "${PLATFORM}" "${BUILD_IMAGE}" "${REBUILD}" "${ROOT_DIR}"
   LOCAL_BIN="${DOCKER_STAGE_IRIS_CLI_BIN}"
 }
 
@@ -103,7 +102,7 @@ start_container() {
     set -eu
     export DEBIAN_FRONTEND=noninteractive
     apt-get update >/dev/null
-    apt-get install -y --no-install-recommends ca-certificates curl jq tar >/dev/null
+    apt-get install -y --no-install-recommends ca-certificates curl jq libdbus-1-3 tar >/dev/null
   '
 }
 
