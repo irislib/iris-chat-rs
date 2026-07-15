@@ -576,7 +576,7 @@ impl AppManager {
                 if base_state
                     .current_chat
                     .as_ref()
-                    .map_or(true, |chat| chat.chat_id != chat_id)
+                    .is_none_or(|chat| chat.chat_id != chat_id)
                 {
                     base_state.current_chat =
                         self.catch_ffi_logged("ffiapp.chat_snapshot", None, || {
@@ -589,7 +589,7 @@ impl AppManager {
                 if base_state
                     .current_chat
                     .as_ref()
-                    .map_or(true, |chat| chat.chat_id != chat_id)
+                    .is_none_or(|chat| chat.chat_id != chat_id)
                 {
                     base_state.current_chat =
                         self.catch_ffi_logged("ffiapp.chat_snapshot", None, || {
@@ -602,7 +602,7 @@ impl AppManager {
                 if base_state
                     .group_details
                     .as_ref()
-                    .map_or(true, |details| details.group_id != group_id)
+                    .is_none_or(|details| details.group_id != group_id)
                 {
                     base_state.group_details = None;
                 }

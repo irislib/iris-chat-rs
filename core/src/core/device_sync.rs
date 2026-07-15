@@ -245,7 +245,6 @@ impl AppCore {
         config.node.discovery.nostr.enabled = true;
         config.node.discovery.nostr.advertise = true;
         config.node.discovery.nostr.advert_relays = relay_urls.clone();
-        config.node.discovery.nostr.dm_relays = relay_urls.clone();
         config.node.discovery.nostr.app = format!("{DEVICE_SYNC_SCOPE_PREFIX}{owner_hex}");
         config.node.discovery.nostr.policy = NostrDiscoveryPolicy::ConfiguredOnly;
         config.peers = siblings
@@ -259,7 +258,6 @@ impl AppCore {
             advertise_on_nostr: Some(true),
             auto_connect: Some(false),
             accept_connections: Some(true),
-            signal_relays: Some(relay_urls),
             ..WebRtcConfig::default()
         });
 

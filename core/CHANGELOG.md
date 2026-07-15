@@ -4,6 +4,7 @@
 
 - Carry linked-device requests and snapshots as bounded framed records over TCP/FIPS service 7369.
 - Keep authenticated device admission and durable chat Delivered/Seen receipts above the transport.
+- Use FIPS 0.4, TCP/FIPS 0.2, and the shared FIPS pubsub 0.3 provider without a duplicate relay-signaling configuration path.
 
 ## 0.1.35
 

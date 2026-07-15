@@ -41,8 +41,7 @@ fn split_link_token(token: &str) -> Option<(&str, &str, &str, String)> {
         return None;
     }
 
-    let visible = candidate
-        .trim_end_matches(|ch| matches!(ch, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']'));
+    let visible = candidate.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']']);
     if visible.is_empty() {
         return None;
     }

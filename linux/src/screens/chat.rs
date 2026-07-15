@@ -993,7 +993,6 @@ fn messages_view(
                 || last_outgoing != message.is_outgoing
                 || message.created_at_secs.saturating_sub(last_secs) > 300;
 
-            let is_last = idx + 1 == chat.messages.len();
             let next_message = chat.messages.get(idx + 1);
             let cluster_ends = match next_message {
                 Some(next) => {
@@ -1011,7 +1010,6 @@ fn messages_view(
                 chat,
                 cluster_break,
                 cluster_ends,
-                is_last,
                 now,
                 prefs,
                 manager,
@@ -1066,7 +1064,6 @@ fn render_message(
     chat: &CurrentChatSnapshot,
     cluster_start: bool,
     cluster_end: bool,
-    _is_last: bool,
     now: u64,
     prefs: &PreferencesSnapshot,
     manager: &Rc<AppManager>,
@@ -2272,10 +2269,10 @@ fn image_album(
         index: usize,
         width: i32,
         height: i32,
-        overflow: Option<usize>,
     ) -> gtk::Widget {
         let widget = image_bubble_sized(attachment, prefs, manager, album, index, width, height);
-        if let Some(extra) = overflow.filter(|n| *n > 0) {
+        let overflow = (index == 3 && album.len() > 4).then(|| album.len() - 4);
+        if let Some(extra) = overflow {
             let overlay = gtk::Overlay::new();
             overlay.set_child(Some(&widget));
             let shade = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -2319,7 +2316,6 @@ fn image_album(
             0,
             220,
             220,
-            None,
         )),
         2 => {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, GAP);
@@ -2332,7 +2328,6 @@ fn image_album(
                 0,
                 cell_w,
                 150,
-                None,
             ));
             row.append(&cell(
                 &attachments[1],
@@ -2342,7 +2337,6 @@ fn image_album(
                 1,
                 cell_w,
                 150,
-                None,
             ));
             container.append(&row);
         }
@@ -2360,7 +2354,6 @@ fn image_album(
                 0,
                 left_w,
                 tall,
-                None,
             ));
             let stack = gtk::Box::new(gtk::Orientation::Vertical, GAP);
             stack.append(&cell(
@@ -2371,7 +2364,6 @@ fn image_album(
                 1,
                 right_w,
                 small,
-                None,
             ));
             stack.append(&cell(
                 &attachments[2],
@@ -2381,7 +2373,6 @@ fn image_album(
                 2,
                 right_w,
                 small,
-                None,
             ));
             row.append(&stack);
             container.append(&row);
@@ -2397,7 +2388,6 @@ fn image_album(
                 0,
                 cell_size,
                 cell_size,
-                None,
             ));
             row1.append(&cell(
                 &attachments[1],
@@ -2407,7 +2397,6 @@ fn image_album(
                 1,
                 cell_size,
                 cell_size,
-                None,
             ));
             let row2 = gtk::Box::new(gtk::Orientation::Horizontal, GAP);
             row2.append(&cell(
@@ -2418,13 +2407,7 @@ fn image_album(
                 2,
                 cell_size,
                 cell_size,
-                None,
             ));
-            let overflow = if attachments.len() > 4 {
-                Some(attachments.len() - 4)
-            } else {
-                None
-            };
             row2.append(&cell(
                 &attachments[3],
                 prefs,
@@ -2433,7 +2416,6 @@ fn image_album(
                 3,
                 cell_size,
                 cell_size,
-                overflow,
             ));
             container.append(&row1);
             container.append(&row2);
