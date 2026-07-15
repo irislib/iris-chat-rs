@@ -239,6 +239,24 @@ fn apply_protocol_event_to_engine_once(
     engine: &mut ProtocolEngine,
     event: &Event,
 ) -> (Vec<GroupIncomingEvent>, Vec<ProtocolEffect>) {
+    if event.kind.as_u16() as u32 == INVITE_EVENT_KIND {
+        let retry = engine
+            .observe_invite_event(event)
+            .expect("observe invite event");
+        let mut effects = retry.effects;
+        effects.extend(retry.group_result.effects);
+        return (retry.group_result.events, effects);
+    }
+
+    if event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND {
+        let retry = engine
+            .observe_invite_response_event(event)
+            .expect("observe invite response event");
+        let mut effects = retry.effects;
+        effects.extend(retry.group_result.effects);
+        return (retry.group_result.events, effects);
+    }
+
     if is_group_sender_key_outer_candidate_for_test(engine, event) {
         let result = engine
             .process_group_outer_event(event)
@@ -281,6 +299,33 @@ fn deliver_protocol_effects_to_engine_once(
         followup_effects.extend(effects);
     }
     (group_events, followup_effects)
+}
+
+fn deliver_protocol_effects_without_feedback(
+    engine: &mut ProtocolEngine,
+    effects: &[ProtocolEffect],
+) -> Vec<GroupIncomingEvent> {
+    let local_device = engine
+        .session_manager_snapshot()
+        .local_device_pubkey
+        .to_hex();
+    let mut group_events = Vec::new();
+    for event in ordered_protocol_events(effects) {
+        if event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND {
+            let direct_target = event.tags.iter().find_map(|tag| {
+                let values = tag.as_slice();
+                (values.first().map(|value| value.as_str()) == Some("p"))
+                    .then(|| values.get(1).map(|value| value.as_str()))
+                    .flatten()
+            });
+            if direct_target.is_some_and(|target| target != local_device) {
+                continue;
+            }
+        }
+        let (events, _) = apply_protocol_event_to_engine_once(engine, &event);
+        group_events.extend(events);
+    }
+    group_events
 }
 
 fn group_events_contain_body(
@@ -1905,7 +1950,10 @@ fn appcore_sender_key_group_membership_stress() {
         .expect("create sender-key stress group");
     let group_id = created.snapshot.expect("created group").group_id;
     for recipient_index in [1, 2] {
-        deliver_protocol_effects_to_engine(&mut devices[recipient_index].engine, &created.effects);
+        deliver_protocol_effects_without_feedback(
+            &mut devices[recipient_index].engine,
+            &created.effects,
+        );
     }
     let mut active = vec![0usize, 1, 2];
 
@@ -1917,7 +1965,7 @@ fn appcore_sender_key_group_membership_stress() {
                 .expect("add fourth stress member");
             active.push(3);
             for recipient_index in active.iter().copied() {
-                deliver_protocol_effects_to_engine(
+                deliver_protocol_effects_without_feedback(
                     &mut devices[recipient_index].engine,
                     &add.effects,
                 );
@@ -1930,7 +1978,7 @@ fn appcore_sender_key_group_membership_stress() {
                 .expect("add fifth stress member");
             active.push(4);
             for recipient_index in active.iter().copied() {
-                deliver_protocol_effects_to_engine(
+                deliver_protocol_effects_without_feedback(
                     &mut devices[recipient_index].engine,
                     &add.effects,
                 );
@@ -1943,7 +1991,7 @@ fn appcore_sender_key_group_membership_stress() {
                 .expect("remove stress member");
             active.retain(|index| *index != 1);
             for recipient_index in [1usize, 0, 2, 3, 4] {
-                deliver_protocol_effects_to_engine(
+                deliver_protocol_effects_without_feedback(
                     &mut devices[recipient_index].engine,
                     &remove.effects,
                 );
@@ -1966,26 +2014,35 @@ fn appcore_sender_key_group_membership_stress() {
         );
         let sender_owner = devices[sender_index].owner.public_key();
         let sender_device = devices[sender_index].device.public_key();
+        let mut delivered = vec![Vec::new(); devices.len()];
+        let mut delivery_targets = active.clone();
+        if !delivery_targets.contains(&1) {
+            delivery_targets.push(1);
+        }
+        for recipient_index in delivery_targets {
+            if recipient_index != sender_index {
+                delivered[recipient_index] = deliver_protocol_effects_without_feedback(
+                    &mut devices[recipient_index].engine,
+                    &sent.effects,
+                );
+            }
+        }
         for recipient_index in active.iter().copied() {
             if recipient_index == sender_index {
                 continue;
             }
-            let events = deliver_protocol_effects_to_engine(
-                &mut devices[recipient_index].engine,
-                &sent.effects,
-            );
+            let events = &delivered[recipient_index];
             assert!(
-                group_events_contain_body(&events, &group_id, sender_owner, sender_device, &body),
+                group_events_contain_body(events, &group_id, sender_owner, sender_device, &body),
                 "missing stress body at step {step}; sender_index={sender_index}; recipient_index={recipient_index}; active={active:?}; body={}; events={events:?}; recipient_debug={:?}",
                 String::from_utf8_lossy(&body),
                 devices[recipient_index].engine.debug_snapshot()
             );
         }
-        let removed_events =
-            deliver_protocol_effects_to_engine(&mut devices[1].engine, &sent.effects);
+        let removed_events = &delivered[1];
         if !active.contains(&1) && sender_index != 1 {
             assert!(!group_events_contain_body(
-                &removed_events,
+                removed_events,
                 &group_id,
                 sender_owner,
                 sender_device,
