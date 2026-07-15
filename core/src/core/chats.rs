@@ -1677,17 +1677,7 @@ impl AppCore {
             .protocol_engine
             .as_ref()
             .and_then(|protocol_engine| protocol_engine.owner_hint_for_device(device_pubkey))?;
-        if hint.verified || self.should_trust_claimed_direct_owner(hint.owner) {
-            Some(hint.owner)
-        } else {
-            None
-        }
-    }
-
-    fn should_trust_claimed_direct_owner(&self, owner: PublicKey) -> bool {
-        let owner_hex = owner.to_hex();
-        self.tracked_peer_owner_hexes().contains(&owner_hex)
-            || self.owner_profiles.contains_key(&owner_hex)
+        hint.verified.then_some(hint.owner)
     }
 
     fn is_known_local_owner_device_pubkey(&self, device_pubkey: PublicKey) -> bool {

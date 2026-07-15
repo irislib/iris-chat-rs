@@ -2,9 +2,12 @@ use super::*;
 
 impl AppCore {
     pub(in crate::core) fn has_pending_protocol_engine_retry_work(&self) -> bool {
-        self.protocol_engine
-            .as_ref()
-            .is_some_and(|engine| engine.has_pending_retry_work())
+        self.pending_outgoing_invite_acceptance.is_some()
+            || self.pending_private_invite_cleanup_retry
+            || self
+                .protocol_engine
+                .as_ref()
+                .is_some_and(|engine| engine.has_pending_retry_work())
     }
 
     pub(in crate::core) fn schedule_fast_protocol_retry_if_pending(&mut self) {

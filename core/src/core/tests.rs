@@ -116,6 +116,8 @@ include!("tests/device_approval.rs");
 include!("tests/app_keys_roster.rs");
 include!("tests/app_keys_device_labels.rs");
 include!("tests/app_keys_invites_requests.rs");
+include!("tests/private_invite_owner_verification.rs");
+include!("tests/private_invite_owner_crash.rs");
 include!("tests/first_contact_receiver.rs");
 include!("tests/direct_messages_group_requests.rs");
 include!("tests/direct_messages_typing.rs");

@@ -1,6 +1,29 @@
 use super::*;
 
 const PRIVATE_CHAT_INVITE_KEY_PREFIX: &str = "private-chat-invites/";
+pub(super) const PENDING_PRIVATE_INVITE_RESPONSE_KEY_PREFIX: &str =
+    "pending-private-invite-responses/";
+pub(super) const PENDING_PRIVATE_INVITE_RESPONSE_LIMIT: usize = 32;
+pub(super) const PENDING_PRIVATE_INVITE_RESPONSE_PER_INVITE_LIMIT: usize = 4;
+pub(super) const PENDING_PRIVATE_INVITE_RESPONSE_MAX_BYTES: usize = 128 * 1024;
+pub(super) const PENDING_PRIVATE_INVITE_RESPONSE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+const PENDING_OUTGOING_INVITE_ACCEPTANCE_TTL_SECS: u64 = 5 * 60;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(super) struct PendingPrivateInviteResponseV1 {
+    pub(super) invite_key: String,
+    pub(super) encrypted_event: Event,
+    pub(super) claimed_owner: PublicKey,
+    pub(super) authenticated_device: PublicKey,
+    pub(super) queued_at_secs: u64,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PendingOutgoingInviteAcceptance {
+    pub(super) invite: Invite,
+    pub(super) claimed_owner: PublicKey,
+    pub(super) queued_at_secs: u64,
+}
 
 pub(super) fn chat_invite_url(invite: &Invite) -> anyhow::Result<String> {
     let url = nostr_double_ratchet::invite_url(invite, CHAT_INVITE_ROOT_URL)?;
@@ -98,20 +121,31 @@ impl AppCore {
         Ok(())
     }
 
-    pub(super) fn forget_private_chat_invite_keys(&mut self, keys: &[String]) {
-        if keys.is_empty() {
-            return;
-        }
-        if let Ok(storage) = self.private_chat_invite_storage() {
-            for key in keys {
-                let _ = storage.del(key);
-            }
-        }
-        for key in keys {
-            self.private_chat_invites.remove(key);
+    fn consume_private_chat_invite_after_response(
+        &mut self,
+        invite_key: &str,
+    ) -> anyhow::Result<()> {
+        let storage = self.private_chat_invite_storage()?;
+        // The session import receipt is already durable. Make one-use invite
+        // consumption durable before removing retry state or exposing effects.
+        storage.del(invite_key)?;
+        self.private_chat_invites.remove(invite_key);
+
+        let pending_response_ids = self
+            .pending_private_invite_responses
+            .iter()
+            .filter(|(_, pending)| pending.invite_key == invite_key)
+            .map(|(event_id, _)| event_id.clone())
+            .collect::<Vec<_>>();
+        for event_id in pending_response_ids {
+            self.pending_private_invite_responses.remove(&event_id);
+            let _ = storage.del(&format!(
+                "{PENDING_PRIVATE_INVITE_RESPONSE_KEY_PREFIX}{event_id}"
+            ));
         }
         self.mark_mobile_push_dirty();
         self.request_protocol_subscription_refresh();
+        Ok(())
     }
 
     pub(super) fn private_chat_invite_response_pubkeys(&self) -> Vec<PublicKey> {
@@ -126,12 +160,15 @@ impl AppCore {
         pubkeys
     }
 
-    pub(super) fn handle_private_chat_invite_response(&mut self, event: &Event) -> bool {
+    pub(super) fn handle_private_chat_invite_response(
+        &mut self,
+        event: &Event,
+    ) -> PrivateInviteResponseDisposition {
         if event.kind.as_u16() as u32 != INVITE_RESPONSE_KIND {
-            return false;
+            return PrivateInviteResponseDisposition::NotMatched;
         }
         let Some(logged_in) = self.logged_in.as_ref() else {
-            return false;
+            return PrivateInviteResponseDisposition::NotMatched;
         };
         let device_secret = logged_in.device_keys.secret_key().to_secret_bytes();
         let event_id = event.id.to_string();
@@ -158,47 +195,167 @@ impl AppCore {
             }
         }
         let Some((invite_key, response)) = matched else {
-            return false;
+            return PrivateInviteResponseDisposition::NotMatched;
         };
 
-        let owner_pubkey = response
-            .owner_public_key
-            .unwrap_or(response.invitee_identity);
-        if !self.should_accept_direct_runtime_message(owner_pubkey, None) {
+        let (owner_pubkey, owner_claim_needs_roster) =
+            match (response.owner_public_key, response.invitee_owner_pubkey) {
+                (Some(owner), Some(owner_claim)) if owner.to_bytes() == owner_claim.to_bytes() => {
+                    // O = D is self-authenticating: the inner invite-response
+                    // event proves possession of D's key. Only a distinct
+                    // owner claim needs a signed AppKeys membership proof.
+                    let needs_roster = owner != response.invitee_identity;
+                    (owner, needs_roster)
+                }
+                (None, None) => (response.invitee_identity, false),
+                (Some(_), Some(_)) => {
+                    self.push_debug_log(
+                        "invite.private_response.owner_mismatch",
+                        format!("event_id={event_id} action=retain_invite"),
+                    );
+                    return PrivateInviteResponseDisposition::Handled;
+                }
+                _ => {
+                    self.push_debug_log(
+                        "invite.private_response.partial_owner",
+                        format!("event_id={event_id} action=retain_invite"),
+                    );
+                    return PrivateInviteResponseDisposition::Handled;
+                }
+            };
+        let owner_hex = owner_pubkey.to_hex();
+        let peer_device_id = response.invitee_identity.to_hex();
+        if owner_claim_needs_roster {
+            let pending = PendingPrivateInviteResponseV1 {
+                invite_key,
+                encrypted_event: event.clone(),
+                claimed_owner: owner_pubkey,
+                authenticated_device: response.invitee_identity,
+                queued_at_secs: unix_now().get(),
+            };
+            if let Err(error) = self.queue_pending_private_invite_response(pending) {
+                self.push_debug_log("invite.private_response.queue", error.to_string());
+                return PrivateInviteResponseDisposition::RetryableFailure;
+            }
             self.push_debug_log(
-                "invite.private_response.unknown.skip",
-                format!("event_id={event_id} owner={}", owner_pubkey.to_hex()),
+                "invite.private_response.owner_claim.staged",
+                format!(
+                    "event_id={event_id} owner={owner_hex} authenticated_device={peer_device_id} action=await_app_keys"
+                ),
+            );
+            self.retry_pending_private_invite_responses(owner_pubkey);
+            self.request_protocol_subscription_refresh();
+            return PrivateInviteResponseDisposition::Handled;
+        }
+
+        let pending = PendingPrivateInviteResponseV1 {
+            invite_key,
+            encrypted_event: event.clone(),
+            claimed_owner: owner_pubkey,
+            authenticated_device: response.invitee_identity,
+            queued_at_secs: unix_now().get(),
+        };
+        if self.finalize_private_invite_response_record(&pending) {
+            PrivateInviteResponseDisposition::Handled
+        } else {
+            PrivateInviteResponseDisposition::RetryableFailure
+        }
+    }
+
+    fn finalize_private_invite_response_record(
+        &mut self,
+        pending: &PendingPrivateInviteResponseV1,
+    ) -> bool {
+        let event_id = pending.encrypted_event.id.to_string();
+        let Some(invite) = self.private_chat_invites.get(&pending.invite_key).cloned() else {
+            self.remove_pending_private_invite_response(&event_id);
+            return false;
+        };
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return false;
+        };
+        let device_secret = logged_in.device_keys.secret_key().to_secret_bytes();
+        let Ok(Some(response)) = nostr_double_ratchet::process_invite_response_event(
+            &invite,
+            &pending.encrypted_event,
+            device_secret,
+        ) else {
+            self.remove_pending_private_invite_response(&event_id);
+            self.push_debug_log(
+                "invite.private_response.revalidate",
+                format!("event_id={event_id} result=invalid action=retain_invite"),
+            );
+            return false;
+        };
+        let revalidated_owner = match (response.owner_public_key, response.invitee_owner_pubkey) {
+            (Some(owner), Some(owner_claim)) if owner.to_bytes() == owner_claim.to_bytes() => owner,
+            (None, None) => response.invitee_identity,
+            _ => {
+                self.remove_pending_private_invite_response(&event_id);
+                self.push_debug_log(
+                    "invite.private_response.revalidate",
+                    format!("event_id={event_id} result=owner_mismatch action=retain_invite"),
+                );
+                return false;
+            }
+        };
+        if revalidated_owner != pending.claimed_owner
+            || response.invitee_identity != pending.authenticated_device
+        {
+            self.remove_pending_private_invite_response(&event_id);
+            self.push_debug_log(
+                "invite.private_response.revalidate",
+                format!("event_id={event_id} result=record_mismatch action=retain_invite"),
             );
             return false;
         }
-        let peer_device_id = response
-            .device_id
-            .clone()
-            .unwrap_or_else(|| response.invitee_identity.to_hex());
-        let session_state = response.session.state;
+
         let import_result = self.protocol_engine.as_mut().map(|engine| {
-            engine.import_session_state(
-                owner_pubkey,
-                Some(peer_device_id.clone()),
-                session_state,
+            engine.import_private_invite_session_once(
+                &event_id,
+                pending.claimed_owner,
+                pending.authenticated_device,
+                response.session.state,
                 unix_now(),
             )
         });
         let retry_batch = match import_result {
-            Some(Ok(retry_batch)) => retry_batch,
+            Some(Ok(ProtocolInviteSessionImportOutcome::Imported(retry_batch))) => {
+                Some(retry_batch)
+            }
+            Some(Ok(ProtocolInviteSessionImportOutcome::AlreadyImported)) => None,
+            Some(Ok(ProtocolInviteSessionImportOutcome::Blocked(block))) => {
+                self.push_debug_log(
+                    "invite.private_response.import_blocked",
+                    format!("event_id={event_id} block={block:?}"),
+                );
+                return false;
+            }
             Some(Err(error)) => {
                 self.push_debug_log(
                     "invite.private_response.import",
                     format!(
                         "event_id={event_id} owner={} error={error}",
-                        owner_pubkey.to_hex()
+                        pending.claimed_owner.to_hex()
                     ),
                 );
                 return false;
             }
             None => return false,
         };
-        self.process_protocol_engine_retry_batch("private_invite_response", retry_batch);
+
+        if let Err(error) = self.consume_private_chat_invite_after_response(&pending.invite_key) {
+            self.pending_private_invite_cleanup_retry = true;
+            self.push_debug_log(
+                "invite.private_response.consume",
+                format!("event_id={event_id} error={error} action=retry_cleanup"),
+            );
+            return false;
+        }
+        if let Some(retry_batch) = retry_batch {
+            self.process_protocol_engine_retry_batch("private_invite_response", retry_batch);
+        }
+
         self.request_protocol_subscription_refresh_forced_reconnect_if_offline();
         if self.fetch_recent_protocol_state() {
             self.state.busy.syncing_network = true;
@@ -206,16 +363,156 @@ impl AppCore {
         self.fetch_recent_messages_for_tracked_peers();
         self.schedule_tracked_peer_catch_up(Duration::from_secs(2));
 
-        let chat_id = owner_pubkey.to_hex();
+        let chat_id = pending.claimed_owner.to_hex();
         self.ensure_thread_record(&chat_id, unix_now().get())
             .unread_count = 0;
-        self.remember_recent_handshake_peer(chat_id, peer_device_id, unix_now().get());
-        self.forget_private_chat_invite_keys(&[invite_key]);
+        self.remember_recent_handshake_peer(
+            chat_id,
+            pending.authenticated_device.to_hex(),
+            unix_now().get(),
+        );
         self.push_debug_log(
             "invite.private_response",
-            format!("event_id={event_id} owner={}", owner_pubkey.to_hex()),
+            format!(
+                "event_id={event_id} owner={}",
+                pending.claimed_owner.to_hex()
+            ),
         );
         true
+    }
+
+    fn queue_pending_private_invite_response(
+        &mut self,
+        pending: PendingPrivateInviteResponseV1,
+    ) -> anyhow::Result<()> {
+        let event_id = pending.encrypted_event.id.to_string();
+        if self
+            .pending_private_invite_responses
+            .contains_key(&event_id)
+        {
+            return Ok(());
+        }
+        let serialized = serde_json::to_string(&pending)?;
+        if serialized.len() > PENDING_PRIVATE_INVITE_RESPONSE_MAX_BYTES {
+            anyhow::bail!("pending private invite response exceeds storage bound");
+        }
+        let storage = self.private_chat_invite_storage()?;
+        storage.put(
+            &format!("{PENDING_PRIVATE_INVITE_RESPONSE_KEY_PREFIX}{event_id}"),
+            serialized,
+        )?;
+        self.pending_private_invite_responses
+            .insert(event_id, pending);
+        self.prune_pending_private_invite_responses();
+        Ok(())
+    }
+
+    pub(super) fn prune_pending_private_invite_responses(&mut self) {
+        let now_secs = unix_now().get();
+        let expired = self
+            .pending_private_invite_responses
+            .iter()
+            .filter(|(_, pending)| {
+                now_secs.saturating_sub(pending.queued_at_secs)
+                    >= PENDING_PRIVATE_INVITE_RESPONSE_TTL_SECS
+            })
+            .map(|(event_id, _)| event_id.clone())
+            .collect::<Vec<_>>();
+        for event_id in expired {
+            self.remove_pending_private_invite_response(&event_id);
+        }
+
+        self.prune_pending_private_invite_response_dimension(
+            PENDING_PRIVATE_INVITE_RESPONSE_PER_INVITE_LIMIT,
+            |pending| pending.invite_key.clone(),
+        );
+        self.prune_pending_private_invite_response_dimension(
+            PENDING_PRIVATE_INVITE_RESPONSE_LIMIT,
+            |_| "all".to_string(),
+        );
+    }
+
+    pub(super) fn prune_orphaned_pending_private_invite_responses(&mut self) {
+        let orphaned = self
+            .pending_private_invite_responses
+            .iter()
+            .filter(|(_, pending)| !self.private_chat_invites.contains_key(&pending.invite_key))
+            .map(|(event_id, _)| event_id.clone())
+            .collect::<Vec<_>>();
+        for event_id in orphaned {
+            self.remove_pending_private_invite_response(&event_id);
+        }
+    }
+
+    fn prune_pending_private_invite_response_dimension(
+        &mut self,
+        limit: usize,
+        key: impl Fn(&PendingPrivateInviteResponseV1) -> String,
+    ) {
+        let mut groups = BTreeMap::<String, Vec<(u64, String)>>::new();
+        for (event_id, pending) in &self.pending_private_invite_responses {
+            groups
+                .entry(key(pending))
+                .or_default()
+                .push((pending.queued_at_secs, event_id.clone()));
+        }
+        let mut remove = Vec::new();
+        for pending in groups.values_mut() {
+            pending.sort();
+            let excess = pending.len().saturating_sub(limit);
+            remove.extend(
+                pending
+                    .iter()
+                    .take(excess)
+                    .map(|(_, event_id)| event_id.clone()),
+            );
+        }
+        remove.sort();
+        remove.dedup();
+        for event_id in remove {
+            self.remove_pending_private_invite_response(&event_id);
+        }
+    }
+
+    fn remove_pending_private_invite_response(&mut self, event_id: &str) {
+        self.pending_private_invite_responses.remove(event_id);
+        if let Ok(storage) = self.private_chat_invite_storage() {
+            let _ = storage.del(&format!(
+                "{PENDING_PRIVATE_INVITE_RESPONSE_KEY_PREFIX}{event_id}"
+            ));
+        }
+    }
+
+    pub(super) fn retry_pending_private_invite_responses(&mut self, owner: PublicKey) {
+        let pending = self
+            .pending_private_invite_responses
+            .values()
+            .filter(|pending| pending.claimed_owner == owner)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut retrying_invites = HashSet::new();
+        for pending in pending {
+            if retrying_invites.contains(&pending.invite_key) {
+                continue;
+            }
+            if !self.finalize_private_invite_response_record(&pending) {
+                // A failed one-use invite cleanup must finish before a sibling
+                // response can import another session from the same invite.
+                retrying_invites.insert(pending.invite_key.clone());
+            }
+        }
+    }
+
+    pub(super) fn retry_all_pending_private_invite_responses(&mut self) {
+        self.pending_private_invite_cleanup_retry = false;
+        let owners = self
+            .pending_private_invite_responses
+            .values()
+            .map(|pending| pending.claimed_owner)
+            .collect::<HashSet<_>>();
+        for owner in owners {
+            self.retry_pending_private_invite_responses(owner);
+        }
     }
 
     pub(super) fn accept_invite(&mut self, invite_input: &str) {
@@ -232,42 +529,83 @@ impl AppCore {
             return;
         }
 
+        self.pending_outgoing_invite_acceptance = None;
+
         self.state.busy.accepting_invite = true;
         self.emit_state();
 
         let result = match parse_public_invite_or_direct_chat_input(trimmed) {
             Ok(PublicInviteInput::Invite(invite)) => {
-                self.preload_invite_owner_device_roster(&invite);
-                self.accept_parsed_invite(invite)
+                resolve_invite_owner(&invite, None).and_then(|owner_pubkey| {
+                    if owner_pubkey != invite.inviter {
+                        self.pending_outgoing_invite_acceptance =
+                            Some(PendingOutgoingInviteAcceptance {
+                                invite,
+                                claimed_owner: owner_pubkey,
+                                queued_at_secs: unix_now().get(),
+                            });
+                        match self.try_pending_outgoing_invite_acceptance(owner_pubkey)? {
+                            Some(chat_id) => Ok(AcceptInviteDispatch::Completed(chat_id)),
+                            None => {
+                                self.request_protocol_subscription_refresh();
+                                Ok(AcceptInviteDispatch::Pending)
+                            }
+                        }
+                    } else {
+                        self.accept_parsed_invite(invite, owner_pubkey)?
+                            .map(AcceptInviteDispatch::Completed)
+                            .ok_or_else(|| anyhow::anyhow!("Invite authorization is unavailable."))
+                    }
+                })
             }
-            Ok(PublicInviteInput::DirectChat) => self.open_direct_chat_from_peer_input(trimmed),
+            Ok(PublicInviteInput::DirectChat) => self
+                .open_direct_chat_from_peer_input(trimmed)
+                .map(AcceptInviteDispatch::Completed),
             Err(_) => Err(anyhow::anyhow!("Invalid invite link.")),
         };
 
         match result {
-            Ok(chat_id) => {
+            Ok(AcceptInviteDispatch::Completed(chat_id)) => {
                 self.active_chat_id = Some(chat_id.clone());
                 self.screen_stack = vec![Screen::Chat { chat_id }];
                 self.request_protocol_subscription_refresh_forced();
                 self.fetch_recent_protocol_state();
                 self.persist_best_effort();
+                self.state.busy.accepting_invite = false;
             }
-            Err(error) => self.state.toast = Some(error.to_string()),
+            Ok(AcceptInviteDispatch::Pending) => {
+                self.state.toast = Some("Verifying the invite owner's device…".to_string());
+            }
+            Err(error) => {
+                self.state.toast = Some(error.to_string());
+                self.state.busy.accepting_invite = false;
+            }
         }
 
-        self.state.busy.accepting_invite = false;
         self.rebuild_state();
         self.emit_state();
     }
 
-    fn accept_parsed_invite(&mut self, invite: Invite) -> anyhow::Result<String> {
-        let owner_pubkey = invite.owner_public_key.unwrap_or(invite.inviter);
-        let chat_id = owner_pubkey.to_hex();
-        let result = self
+    fn accept_parsed_invite(
+        &mut self,
+        invite: Invite,
+        owner_pubkey: PublicKey,
+    ) -> anyhow::Result<Option<String>> {
+        let outcome = self
             .protocol_engine
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("Protocol engine is not ready."))?
             .accept_invite(&invite, Some(owner_pubkey))?;
+        let result = match outcome {
+            ProtocolAcceptInviteOutcome::Accepted(result) => result,
+            ProtocolAcceptInviteOutcome::Blocked(
+                ProtocolAcceptInviteBlock::MissingOwnerRoster { .. },
+            ) => return Ok(None),
+            ProtocolAcceptInviteOutcome::Blocked(
+                ProtocolAcceptInviteBlock::UnauthorizedDevice { .. },
+            ) => anyhow::bail!("The invite device is not authorized by its claimed owner."),
+        };
+        let chat_id = result.owner_pubkey.to_hex();
 
         self.ensure_thread_record(&chat_id, unix_now().get())
             .unread_count = 0;
@@ -280,87 +618,79 @@ impl AppCore {
         // cached mobile-push snapshot so the new recipient appears.
         self.mark_mobile_push_dirty();
         self.process_protocol_engine_effects(result.effects);
-        Ok(chat_id)
+        Ok(Some(chat_id))
     }
 
-    fn preload_invite_owner_device_roster(&mut self, invite: &Invite) {
-        let Some(owner_pubkey) = invite.owner_public_key else {
-            return;
-        };
-        if owner_pubkey == invite.inviter {
-            return;
-        }
-        let Some((client, relay_urls)) = self
-            .logged_in
+    fn try_pending_outgoing_invite_acceptance(
+        &mut self,
+        owner: PublicKey,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(pending) = self
+            .pending_outgoing_invite_acceptance
             .as_ref()
-            .filter(|logged_in| !logged_in.relay_urls.is_empty())
-            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
+            .filter(|pending| pending.claimed_owner == owner)
+            .cloned()
         else {
-            return;
+            return Ok(None);
         };
-
-        let filter = Filter::new()
-            .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
-            .author(owner_pubkey)
-            .limit(10);
-        let fetched = self.runtime.block_on(async {
-            ensure_session_relays_configured(&client, &relay_urls).await;
-            connect_client_with_timeout(&client, Duration::from_secs(2)).await;
-            client.fetch_events(filter, Duration::from_secs(2)).await
-        });
-
-        let Ok(events) = fetched else {
-            self.push_debug_log(
-                "invite.device_roster.preload",
-                format!("owner={} result=fetch_failed", owner_pubkey.to_hex()),
+        if unix_now().get().saturating_sub(pending.queued_at_secs)
+            >= PENDING_OUTGOING_INVITE_ACCEPTANCE_TTL_SECS
+        {
+            self.pending_outgoing_invite_acceptance = None;
+            anyhow::bail!(
+                "Could not verify the invite owner's device list. Reopen the invite to retry."
             );
-            return;
-        };
-
-        let mut roster_events = events
-            .into_iter()
-            .filter(is_app_keys_event)
-            .collect::<Vec<_>>();
-        if roster_events.is_empty() {
-            self.push_debug_log(
-                "invite.device_roster.preload",
-                format!("owner={} result=not_found", owner_pubkey.to_hex()),
-            );
-            return;
         }
+        let accepted = self.accept_parsed_invite(pending.invite, owner)?;
+        if accepted.is_some() {
+            self.pending_outgoing_invite_acceptance = None;
+        }
+        Ok(accepted)
+    }
 
-        roster_events.sort_by(|left, right| {
-            left.created_at
-                .as_secs()
-                .cmp(&right.created_at.as_secs())
-                .then_with(|| left.id.to_hex().cmp(&right.id.to_hex()))
-        });
-        let latest_created_at = roster_events
-            .iter()
-            .map(|event| event.created_at.as_secs())
-            .max()
-            .unwrap_or_default();
-        let applied = roster_events.iter().try_fold(0usize, |count, event| {
-            self.apply_app_keys_event(event)
-                .map(|changed| count + usize::from(changed))
-        });
-        match applied {
-            Ok(_) => self.push_debug_log(
-                "invite.device_roster.preload",
-                format!(
-                    "owner={} result=applied created_at={latest_created_at}",
-                    owner_pubkey.to_hex()
-                ),
-            ),
-            Err(error) => self.push_debug_log(
-                "invite.device_roster.preload",
-                format!(
-                    "owner={} result=apply_failed error={error}",
-                    owner_pubkey.to_hex()
-                ),
-            ),
+    pub(super) fn resume_pending_outgoing_invite_acceptance(&mut self, owner: PublicKey) {
+        match self.try_pending_outgoing_invite_acceptance(owner) {
+            Ok(Some(chat_id)) => {
+                self.state.busy.accepting_invite = false;
+                self.state.toast = None;
+                self.active_chat_id = Some(chat_id.clone());
+                self.screen_stack = vec![Screen::Chat { chat_id }];
+                self.request_protocol_subscription_refresh_forced();
+                self.fetch_recent_protocol_state();
+                self.persist_best_effort();
+                self.rebuild_state();
+                self.emit_state();
+            }
+            Ok(None) => {}
+            Err(error) => {
+                self.pending_outgoing_invite_acceptance = None;
+                self.state.busy.accepting_invite = false;
+                self.state.toast = Some(error.to_string());
+                self.request_protocol_subscription_refresh();
+                self.rebuild_state();
+                self.emit_state();
+            }
         }
     }
+
+    pub(super) fn reset_pending_invite_acceptance(&mut self) {
+        if self.pending_outgoing_invite_acceptance.take().is_some() {
+            self.state.toast = None;
+        }
+        self.state.busy.accepting_invite = false;
+    }
+}
+
+enum AcceptInviteDispatch {
+    Completed(String),
+    Pending,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PrivateInviteResponseDisposition {
+    NotMatched,
+    Handled,
+    RetryableFailure,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -440,6 +770,36 @@ pub(super) fn load_private_chat_invites(
         }
     }
     Ok(invites)
+}
+
+pub(super) fn load_pending_private_invite_responses(
+    storage: &dyn StorageAdapter,
+) -> anyhow::Result<BTreeMap<String, PendingPrivateInviteResponseV1>> {
+    let mut responses = BTreeMap::new();
+    let now_secs = unix_now().get();
+    for key in storage.list(PENDING_PRIVATE_INVITE_RESPONSE_KEY_PREFIX)? {
+        let Some(serialized) = storage.get(&key)? else {
+            continue;
+        };
+        match serde_json::from_str::<PendingPrivateInviteResponseV1>(&serialized) {
+            Ok(pending)
+                if serialized.len() <= PENDING_PRIVATE_INVITE_RESPONSE_MAX_BYTES
+                    && key
+                        == format!(
+                            "{PENDING_PRIVATE_INVITE_RESPONSE_KEY_PREFIX}{}",
+                            pending.encrypted_event.id
+                        )
+                    && now_secs.saturating_sub(pending.queued_at_secs)
+                        < PENDING_PRIVATE_INVITE_RESPONSE_TTL_SECS =>
+            {
+                responses.insert(pending.encrypted_event.id.to_string(), pending);
+            }
+            _ => {
+                let _ = storage.del(&key);
+            }
+        }
+    }
+    Ok(responses)
 }
 
 fn parse_invite_candidate(candidate: &str) -> anyhow::Result<Invite> {

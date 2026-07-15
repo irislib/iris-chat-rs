@@ -1,9 +1,11 @@
 const PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
 const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
+const PROTOCOL_APP_KEYS_PROVENANCE_VERSION: u8 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
 const DELIVERED_GROUP_SENDER_KEY_ACK_LIMIT: usize = 512;
 const ANSWERED_GROUP_SENDER_KEY_REPAIR_LIMIT: usize = 512;
+const PROCESSED_PRIVATE_INVITE_RESPONSE_LIMIT: usize = 128;
 
 fn group_chat_id(group_id: &str) -> String {
     format!("group:{group_id}")
@@ -14,6 +16,24 @@ struct ProtocolEnginePersistedState {
     version: u32,
     session_manager: SessionManagerSnapshot,
     group_manager: GroupManagerSnapshot,
+    /// Owners whose current roster was installed through trusted AppKeys ingestion.
+    ///
+    /// This defaults to empty so v1 states written before roster provenance was
+    /// persisted can be loaded and quarantined instead of treating synthetic
+    /// invite-owner rosters as authoritative.
+    #[serde(default)]
+    verified_app_keys_owners: BTreeSet<NdrOwnerPubkey>,
+    /// Nonzero only for states written after roster-provenance quarantine was
+    /// introduced. Legacy booleans are ignored because vulnerable releases
+    /// could synthesize them from an owner hint.
+    #[serde(default)]
+    app_keys_provenance_version: u8,
+    /// Exact signed evidence used for invite owner/device authorization.
+    /// Reconstructed device lists and legacy booleans are never sufficient.
+    #[serde(default)]
+    invite_owner_app_keys_evidence: BTreeMap<NdrOwnerPubkey, ProtocolAppKeysEvidence>,
+    #[serde(default)]
+    processed_private_invite_response_ids: Vec<String>,
     #[serde(default)]
     pending_inbound: Vec<ProtocolPendingInbound>,
     #[serde(default)]
@@ -35,6 +55,12 @@ struct ProtocolEnginePersistedState {
     group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
     #[serde(default)]
     subscription_generation: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum ProtocolAppKeysEvidence {
+    Verified(Box<Event>),
+    Ambiguous { created_at_secs: u64 },
 }
 
 #[derive(Clone, Debug)]
@@ -234,6 +260,31 @@ pub struct ProtocolAcceptInviteResult {
     pub effects: Vec<ProtocolEffect>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProtocolAcceptInviteBlock {
+    MissingOwnerRoster {
+        owner_pubkey: PublicKey,
+        device_pubkey: PublicKey,
+    },
+    UnauthorizedDevice {
+        owner_pubkey: PublicKey,
+        device_pubkey: PublicKey,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub enum ProtocolAcceptInviteOutcome {
+    Accepted(ProtocolAcceptInviteResult),
+    Blocked(ProtocolAcceptInviteBlock),
+}
+
+#[derive(Clone, Debug)]
+pub enum ProtocolInviteSessionImportOutcome {
+    Imported(ProtocolRetryBatch),
+    AlreadyImported,
+    Blocked(ProtocolAcceptInviteBlock),
+}
+
 #[derive(Clone, Debug)]
 pub struct ProtocolDecryptedMessage {
     pub sender: PublicKey,
@@ -333,6 +384,7 @@ pub struct ProtocolEngine {
     owner_pubkey: PublicKey,
     local_owner: NdrOwnerPubkey,
     local_device: NdrDevicePubkey,
+    local_device_secret: [u8; 32],
     storage: Arc<dyn StorageAdapter>,
     session_manager: SessionManager,
     group_manager: GroupEventManager,
@@ -348,6 +400,9 @@ pub struct ProtocolEngine {
     group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
     known_message_author_cache: std::cell::RefCell<Option<KnownMessageAuthorCache>>,
     known_message_author_cache_build_count: std::cell::Cell<u64>,
+    verified_app_keys_owners: BTreeSet<NdrOwnerPubkey>,
+    invite_owner_app_keys_evidence: BTreeMap<NdrOwnerPubkey, ProtocolAppKeysEvidence>,
+    processed_private_invite_response_ids: Vec<String>,
     local_app_keys_observed: bool,
     subscription_generation: u64,
     /// While > 0, `persist()` only flips `batch_persist_dirty` instead of
@@ -375,5 +430,9 @@ struct ProtocolEngineCheckpoint {
     answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
+    verified_app_keys_owners: BTreeSet<NdrOwnerPubkey>,
+    invite_owner_app_keys_evidence: BTreeMap<NdrOwnerPubkey, ProtocolAppKeysEvidence>,
+    processed_private_invite_response_ids: Vec<String>,
+    local_app_keys_observed: bool,
     subscription_generation: u64,
 }

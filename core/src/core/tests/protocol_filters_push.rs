@@ -197,12 +197,19 @@ fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys
         GroupEventManager::new(local_owner).snapshot(),
     )
     .expect("seed protocol state");
-    let engine = ProtocolEngine::load_or_create_for_local_device(
+    let mut engine = ProtocolEngine::load_or_create_for_local_device(
         storage,
         owner.public_key(),
         &device,
     )
     .expect("protocol engine");
+    engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
+            1,
+        )
+        .expect("verify peer roster provenance");
 
     let authors = engine.message_author_pubkeys_for_owner(peer_owner.public_key());
     assert!(
@@ -2208,6 +2215,108 @@ fn mobile_push_decrypt_renders_matching_pending_invite_response_with_chat_id() {
             .and_then(|value| value.as_str())
             .and_then(|value| value.parse::<u64>().ok()),
         Some(INVITE_RESPONSE_KIND as u64)
+    );
+}
+
+#[test]
+fn mobile_push_decrypt_suppresses_unverified_invite_owner_claim() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let claimed_owner = Keys::generate();
+    let attacker_device = Keys::generate();
+    let mut core = logged_in_test_core("mobile-push-invite-owner-spoof", &owner, &device);
+    core.handle_action(AppAction::CreatePublicInvite);
+    let invite = core
+        .private_chat_invites
+        .values()
+        .next()
+        .expect("private invite")
+        .clone();
+    let (_session, response) = invite
+        .accept_with_owner(
+            attacker_device.public_key(),
+            attacker_device.secret_key().to_secret_bytes(),
+            Some(attacker_device.public_key().to_hex()),
+            Some(claimed_owner.public_key()),
+        )
+        .expect("accept invite with forged owner claim");
+    let response_event = nostr_double_ratchet::invite_response_event(&response)
+        .expect("invite response event");
+    let payload = serde_json::json!({
+        "event": serde_json::to_string(&response_event).expect("event json"),
+        "title": "Iris Chat",
+        "body": "New activity",
+    })
+    .to_string();
+
+    let resolution = decrypt_mobile_push_notification(
+        core.data_dir.to_string_lossy().to_string(),
+        owner.public_key().to_hex(),
+        device
+            .secret_key()
+            .to_bech32()
+            .unwrap_or_else(|_| device.secret_key().to_secret_hex()),
+        payload,
+    );
+
+    assert!(!resolution.should_show);
+    assert_eq!(resolution.title, "");
+    assert_eq!(resolution.body, "");
+}
+
+#[test]
+fn mobile_push_decrypt_uses_verified_invite_owner_claim() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("mobile-push-invite-owner-verified", &owner, &device);
+    core.handle_action(AppAction::CreatePublicInvite);
+    let invite = core
+        .private_chat_invites
+        .values()
+        .next()
+        .expect("private invite")
+        .clone();
+    let peer_app_keys = signed_app_keys_authorization_event(
+        &peer_owner,
+        peer_device.public_key(),
+        10,
+    );
+    core.handle_relay_event(peer_app_keys);
+    let (_session, response) = invite
+        .accept_with_owner(
+            peer_device.public_key(),
+            peer_device.secret_key().to_secret_bytes(),
+            Some(peer_device.public_key().to_hex()),
+            Some(peer_owner.public_key()),
+        )
+        .expect("accept invite with verified owner claim");
+    let response_event = nostr_double_ratchet::invite_response_event(&response)
+        .expect("invite response event");
+    let payload = serde_json::json!({
+        "event": serde_json::to_string(&response_event).expect("event json"),
+        "title": "Iris Chat",
+        "body": "New activity",
+    })
+    .to_string();
+
+    let resolution = decrypt_mobile_push_notification(
+        core.data_dir.to_string_lossy().to_string(),
+        owner.public_key().to_hex(),
+        device
+            .secret_key()
+            .to_bech32()
+            .unwrap_or_else(|_| device.secret_key().to_secret_hex()),
+        payload,
+    );
+
+    assert!(resolution.should_show);
+    let resolved: serde_json::Value =
+        serde_json::from_str(&resolution.payload_json).expect("payload json");
+    assert_eq!(
+        resolved.get("chat_id").and_then(|value| value.as_str()),
+        Some(peer_owner.public_key().to_hex().as_str())
     );
 }
 

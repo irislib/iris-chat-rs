@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+mod invite_owner;
+use invite_owner::pending_invite_response_owner;
+
 const MOBILE_PUSH_REACTION_KIND: u64 = 7;
 const MOBILE_PUSH_AUTH_KIND: u16 = 27_235;
 const MOBILE_PUSH_CHAT_MESSAGE_KIND: u64 = CHAT_MESSAGE_KIND as u64;
@@ -870,44 +873,6 @@ fn lookup_group_name(data_dir: &str, group_id: &str) -> Option<String> {
         .ok()?;
     let trimmed = name.trim().to_string();
     (!trimmed.is_empty()).then_some(trimmed)
-}
-
-fn pending_invite_response_owner(
-    data_dir: &str,
-    owner_pubkey: PublicKey,
-    device_keys: &Keys,
-    event: &nostr::Event,
-) -> Option<String> {
-    let shared_conn = super::storage::open_database(Path::new(data_dir)).ok()?;
-    let storage = super::storage::SqliteStorageAdapter::new(
-        shared_conn,
-        owner_pubkey.to_hex(),
-        device_keys.public_key().to_hex(),
-    );
-    let device_secret = device_keys.secret_key().to_secret_bytes();
-    let mut invites = Vec::new();
-
-    let device_id = device_keys.public_key().to_hex();
-    if let Some(serialized) = storage
-        .get(&format!("device-invite/{device_id}"))
-        .ok()
-        .flatten()
-    {
-        if let Ok(mut invite) = Invite::deserialize(&serialized) {
-            invite.owner_public_key = Some(owner_pubkey);
-            invites.push(invite);
-        }
-    }
-    if let Ok(private_invites) = super::invites::load_private_chat_invites(&storage) {
-        invites.extend(private_invites.into_values());
-    }
-
-    invites.into_iter().find_map(|invite| {
-        nostr_double_ratchet::process_invite_response_event(&invite, event, device_secret)
-            .ok()
-            .flatten()
-            .map(|response| response.resolved_owner_pubkey().to_hex())
-    })
 }
 
 pub(crate) fn resolve_mobile_push_notification(

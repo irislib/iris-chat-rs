@@ -26,7 +26,18 @@ fn first_contact_send_queues_text_until_peer_protocol_state_is_ready() {
         &bob_device,
     );
     bob.pending_relay_publishes.clear();
+    let alice_app_keys = signed_app_keys_authorization_event(
+        &alice_owner,
+        alice_device.public_key(),
+        10,
+    );
+    bob.handle_relay_event(alice_app_keys.clone());
     bob.handle_action(AppAction::AcceptInvite { invite_input: invite_url });
+    ingest_invite_owner_app_keys(
+        &mut bob,
+        alice_owner.public_key(),
+        vec![alice_app_keys],
+    );
     bob.handle_action(AppAction::SendMessage {
         chat_id: alice_owner.public_key().to_hex(),
         text: "payload before bootstrap".to_string(),
@@ -87,15 +98,37 @@ fn cold_app_key_first_direct_message_is_recipient_scoped() {
         &bob_owner,
         &bob_device,
     );
+    let alice_app_keys = signed_app_keys_authorization_event(
+        &alice_owner,
+        alice_device.public_key(),
+        10,
+    );
+    bob_acceptor.handle_relay_event(alice_app_keys.clone());
     bob_acceptor.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
     });
+    ingest_invite_owner_app_keys(
+        &mut bob_acceptor,
+        alice_owner.public_key(),
+        vec![alice_app_keys],
+    );
     let response = pending_events_with_kind(&bob_acceptor, INVITE_RESPONSE_KIND)
         .into_iter()
         .next()
         .expect("bob invite response");
     let bob_bootstrap_messages = pending_events_with_kind(&bob_acceptor, MESSAGE_EVENT_KIND);
+    let bob_app_keys = signed_app_keys_authorization_event(
+        &bob_owner,
+        bob_device.public_key(),
+        10,
+    );
+    alice.handle_relay_event(bob_app_keys.clone());
     alice.handle_relay_event(response);
+    ingest_invite_owner_app_keys(
+        &mut alice,
+        bob_owner.public_key(),
+        vec![bob_app_keys],
+    );
     for event in bob_bootstrap_messages {
         alice.handle_relay_event(event);
     }

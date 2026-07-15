@@ -2,7 +2,7 @@ use super::account_app_keys::{
     known_app_keys_to_ndr, next_app_keys_created_at, next_removed_app_keys_created_at,
     normalize_device_label,
 };
-use super::invites::load_private_chat_invites;
+use super::invites::{load_pending_private_invite_responses, load_private_chat_invites};
 use super::persistence::apply_persisted_preferences;
 use super::*;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -55,6 +55,7 @@ impl AppCore {
         self.fetch_recent_messages_for_tracked_peers();
         self.retry_protocol_engine_pending_work("app_foreground");
         self.retry_pending_relay_publishes("app_foreground");
+        self.prune_pending_private_invite_responses();
         self.refresh_protocol_sync_busy();
         self.rebuild_state();
         self.persist_best_effort();
@@ -343,7 +344,10 @@ impl AppCore {
         let previous_rev = self.state.rev;
         self.stop_pending_linked_device();
         self.stop_device_sync();
+        self.reset_pending_invite_acceptance();
         self.private_chat_invites.clear();
+        self.pending_private_invite_responses.clear();
+        self.pending_private_invite_cleanup_retry = false;
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.message_expiry_token = self.message_expiry_token.wrapping_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
@@ -478,6 +482,9 @@ impl AppCore {
         );
         self.stop_pending_linked_device();
         self.stop_device_sync();
+        self.reset_pending_invite_acceptance();
+        self.pending_private_invite_responses.clear();
+        self.pending_private_invite_cleanup_retry = false;
         self.protocol_engine = None;
         if let Some(existing) = self.logged_in.take() {
             let client = existing.client;
@@ -660,6 +667,8 @@ impl AppCore {
             device_pubkey.to_hex(),
         )) as Arc<dyn StorageAdapter>;
         self.private_chat_invites = load_private_chat_invites(storage.as_ref())?;
+        self.pending_private_invite_responses =
+            load_pending_private_invite_responses(storage.as_ref())?;
 
         let protocol_engine =
             ProtocolEngine::load_or_create_for_local_device(storage, owner_pubkey, &device_keys)?;
@@ -687,6 +696,7 @@ impl AppCore {
             relay_urls,
             authorization_state,
         });
+        self.prune_orphaned_pending_private_invite_responses();
         self.refresh_local_authorization_state();
         self.reconcile_device_sync();
         self.push_debug_log(
@@ -725,6 +735,7 @@ impl AppCore {
         let owner_pubkey = logged_in.owner_pubkey;
 
         self.ingest_restored_app_keys_for_protocol();
+        self.retry_all_pending_private_invite_responses();
         self.load_pending_relay_publish_queue(owner_pubkey);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
@@ -1056,10 +1067,17 @@ impl AppCore {
             .iter()
             .any(|device| device.identity_pubkey_hex.eq_ignore_ascii_case(&device_hex));
         if registered {
-            let has_local_session = self
-                .protocol_engine
-                .as_ref()
-                .is_some_and(|engine| engine.active_session_count_for_owner(owner_pubkey) > 0);
+            let has_local_session = self.protocol_engine.as_ref().is_some_and(|engine| {
+                // The owner-signed AppKeys snapshot above already proves
+                // that this local device is authorized. Here a session is
+                // only an approval-handshake readiness signal; its remote
+                // device must not be promoted to the owner for messaging
+                // unless that separate O -> D binding is verified.
+                ProtocolEngine::active_session_count_for_owner_with_snapshot(
+                    &engine.session_manager_snapshot(),
+                    owner_pubkey,
+                ) > 0
+            });
             if has_local_session {
                 return LocalAuthorizationState::Authorized;
             }

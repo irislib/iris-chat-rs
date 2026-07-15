@@ -5,6 +5,29 @@ impl ProtocolEngine {
         app_keys: AppKeys,
         created_at: u64,
     ) -> anyhow::Result<ProtocolRetryBatch> {
+        self.ingest_app_keys_snapshot_inner(owner_pubkey, app_keys, created_at, None)
+    }
+
+    pub fn ingest_app_keys_event(
+        &mut self,
+        event: &Event,
+    ) -> anyhow::Result<ProtocolRetryBatch> {
+        let app_keys = AppKeys::from_event(event)?;
+        self.ingest_app_keys_snapshot_inner(
+            event.pubkey,
+            app_keys,
+            event.created_at.as_secs(),
+            Some(event),
+        )
+    }
+
+    fn ingest_app_keys_snapshot_inner(
+        &mut self,
+        owner_pubkey: PublicKey,
+        app_keys: AppKeys,
+        created_at: u64,
+        source_event: Option<&Event>,
+    ) -> anyhow::Result<ProtocolRetryBatch> {
         let checkpoint = self.state_checkpoint();
         let owner = ndr_owner(owner_pubkey);
         let roster = DeviceRoster::new(
@@ -34,11 +57,25 @@ impl ProtocolEngine {
         } else {
             self.session_manager.observe_peer_roster(owner, roster)
         };
-        if matches!(
+        let stale = matches!(
             decision,
             nostr_double_ratchet::RosterSnapshotDecision::Stale
-        ) {
+        );
+        if stale && source_event.is_none() {
             return Ok(ProtocolRetryBatch::default());
+        }
+        let exact_source_is_valid = source_event.is_some_and(|event| {
+            invite_owner_app_keys_event_is_valid(owner_pubkey, event, unix_now().get())
+        });
+        if exact_source_is_valid {
+            let event = source_event.expect("validated AppKeys source event");
+            self.update_invite_owner_app_keys_evidence(owner, event, &app_keys);
+        }
+        // Roster projections continue to drive established protocol routing.
+        // Invite acceptance is stricter and consults only exact signed evidence.
+        self.verified_app_keys_owners.insert(owner);
+        if owner_pubkey == self.owner_pubkey {
+            self.local_app_keys_observed = true;
         }
         self.invalidate_known_message_author_cache();
         self.wake_pending_protocol_for_owner(owner);
@@ -46,9 +83,6 @@ impl ProtocolEngine {
             self.restore_checkpoint(checkpoint);
             self.invalidate_known_message_author_cache();
             return Err(error);
-        }
-        if owner_pubkey == self.owner_pubkey {
-            self.local_app_keys_observed = true;
         }
         self.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))
     }
@@ -139,57 +173,126 @@ impl ProtocolEngine {
         &mut self,
         invite: &Invite,
         owner_pubkey_hint: Option<PublicKey>,
-    ) -> anyhow::Result<ProtocolAcceptInviteResult> {
-        let invite_owner = if let Some(owner) = owner_pubkey_hint.or_else(|| {
-            invite
-                .inviter_owner_pubkey
-                .and_then(|owner| public_owner(owner).ok())
-        }) {
-            owner
-        } else {
-            public_device(invite.inviter_device_pubkey)?
-        };
-        let mut invite = invite.clone();
-        invite.inviter_owner_pubkey = Some(ndr_owner(invite_owner));
-        self.session_manager
-            .observe_device_invite(ndr_owner(invite_owner), invite.clone())?;
-        self.session_manager.observe_peer_roster(
-            ndr_owner(invite_owner),
-            DeviceRoster::new(
-                NdrUnixSeconds(unix_now().get()),
-                vec![AuthorizedDevice::new(
-                    invite.inviter_device_pubkey,
-                    invite.created_at,
-                )],
-            ),
-        );
-        self.invalidate_known_message_author_cache();
-        // Bootstrap the session by sending a typing rumor with an
-        // already-elapsed expiration. We need the inner kind-1060 publish to
-        // make the inviter create their side of the session (otherwise the
-        // inviter never learns our session ephemeral pubkey and their replies
-        // never reach this device, matching what
-        // `SessionManager.acceptInvite` does in TypeScript iris-chat).
-        // The expired expiration is the same shape as `stop_typing`, so the
-        // receiver treats this rumor as "stop typing" and does not flash a
-        // typing indicator for a chat the user hasn't started typing in.
-        let now = unix_now();
-        let typing = pairwise_codec::typing_event(
-            self.owner_pubkey,
-            pairwise_codec::EncodeOptions::new(now.get(), current_unix_millis()).with_expiration(1),
-        )?;
-        let mut bootstrap =
-            self.send_direct_unsigned_event(invite_owner, &invite_owner.to_hex(), typing, now)?;
-        for effect in &mut bootstrap.effects {
-            let ProtocolEffect::Publish(publish) = effect;
-            publish.inner_event_id = None;
+    ) -> anyhow::Result<ProtocolAcceptInviteOutcome> {
+        let invite_owner = resolve_invite_owner(invite, owner_pubkey_hint)?;
+        let inviter_device = public_device(invite.inviter_device_pubkey)?;
+        let owner = ndr_owner(invite_owner);
+
+        if invite_owner != inviter_device {
+            let Some(authorized) = self.invite_owner_app_keys_membership(owner, inviter_device)
+            else {
+                return Ok(ProtocolAcceptInviteOutcome::Blocked(
+                    ProtocolAcceptInviteBlock::MissingOwnerRoster {
+                        owner_pubkey: invite_owner,
+                        device_pubkey: inviter_device,
+                    },
+                ));
+            };
+            if !authorized {
+                return Ok(ProtocolAcceptInviteOutcome::Blocked(
+                    ProtocolAcceptInviteBlock::UnauthorizedDevice {
+                        owner_pubkey: invite_owner,
+                        device_pubkey: inviter_device,
+                    },
+                ));
+            }
         }
-        Ok(ProtocolAcceptInviteResult {
-            owner_pubkey: invite_owner,
-            inviter_device_pubkey: public_device(invite.inviter_device_pubkey)?,
-            device_id: public_device(invite.inviter_device_pubkey)?.to_hex(),
-            effects: bootstrap.effects,
-        })
+
+        let mut invite = invite.clone();
+        invite.inviter_owner_pubkey = Some(owner);
+        let checkpoint = self.state_checkpoint();
+        self.session_manager
+            .observe_device_invite(owner, invite.clone())?;
+        if invite_owner == inviter_device {
+            let has_roster = self
+                .session_manager
+                .snapshot()
+                .users
+                .into_iter()
+                .find(|user| user.owner_pubkey == owner)
+                .and_then(|user| user.roster)
+                .is_some();
+            if !has_roster {
+                self.session_manager.observe_peer_roster(
+                    owner,
+                    DeviceRoster::new(
+                        NdrUnixSeconds(unix_now().get()),
+                        vec![AuthorizedDevice::new(
+                            invite.inviter_device_pubkey,
+                            invite.created_at,
+                        )],
+                    ),
+                );
+            }
+        }
+        self.invalidate_known_message_author_cache();
+        let now = unix_now();
+        let result = (|| -> anyhow::Result<ProtocolAcceptInviteResult> {
+            let mut rng = OsRng;
+            let mut ctx = ProtocolContext::new(NdrUnixSeconds(now.get()), &mut rng);
+            let (mut session, response) = invite.accept_with_owner_context(
+                &mut ctx,
+                self.local_device,
+                self.local_device_secret,
+                Some(self.local_owner),
+            )?;
+
+            // Publish the actual invite response, then an expired typing rumor
+            // through the newly-created session. The second event bootstraps
+            // the inviter's receiving state without showing a typing indicator.
+            let response_event = invite_response_event(&response)?;
+            let mut typing = pairwise_codec::typing_event(
+                self.owner_pubkey,
+                pairwise_codec::EncodeOptions::new(now.get(), current_unix_millis())
+                    .with_expiration(1),
+            )?;
+            typing.ensure_id();
+            let typing_payload = serde_json::to_vec(&typing)?;
+            let plan = session.plan_send(&typing_payload, ctx.now)?;
+            let mut envelope = session.apply_send(plan).envelope;
+            envelope.recipient = Some(invite.inviter_device_pubkey);
+            let typing_event = message_event_for_delivery(&Delivery {
+                owner_pubkey: owner,
+                device_pubkey: invite.inviter_device_pubkey,
+                envelope,
+            })?;
+
+            self.session_manager.import_session_state(
+                owner,
+                invite.inviter_device_pubkey,
+                session.state,
+                ctx.now,
+            );
+            self.invalidate_known_message_author_cache();
+            self.persist()?;
+
+            let chat_id = invite_owner.to_hex();
+            Ok(ProtocolAcceptInviteResult {
+                owner_pubkey: invite_owner,
+                inviter_device_pubkey: inviter_device,
+                device_id: inviter_device.to_hex(),
+                effects: vec![
+                    ProtocolEffect::Publish(ProtocolPublish {
+                        event: response_event,
+                        chat_id: chat_id.clone(),
+                        inner_event_id: None,
+                    }),
+                    ProtocolEffect::Publish(ProtocolPublish {
+                        event: typing_event,
+                        chat_id,
+                        inner_event_id: None,
+                    }),
+                ],
+            })
+        })();
+
+        match result {
+            Ok(result) => Ok(ProtocolAcceptInviteOutcome::Accepted(result)),
+            Err(error) => {
+                self.restore_checkpoint(checkpoint);
+                Err(error)
+            }
+        }
     }
 
     pub fn import_session_state(
@@ -559,6 +662,7 @@ impl ProtocolEngine {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn send_direct_payloads(
         &mut self,
         peer_pubkey: PublicKey,
@@ -655,6 +759,7 @@ impl ProtocolEngine {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn send_direct_payloads_inner(
         &mut self,
         peer_pubkey: PublicKey,

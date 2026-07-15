@@ -6,18 +6,15 @@ impl ProtocolEngine {
     ) -> bool {
         let owner = ndr_owner(owner_pubkey);
         let device = ndr_device(device_pubkey);
-        self.session_manager
-            .snapshot()
-            .users
-            .into_iter()
-            .find(|user| user.owner_pubkey == owner)
-            .and_then(|user| user.roster)
-            .is_some_and(|roster| {
-                roster
-                    .devices()
-                    .iter()
-                    .any(|entry| entry.device_pubkey == device)
-            })
+        self.has_verified_device_owner_claim(owner, device)
+            && self
+                .session_manager
+                .snapshot()
+                .users
+                .into_iter()
+                .find(|user| user.owner_pubkey == owner)
+                .and_then(|user| user.roster)
+                .is_some_and(|roster| roster.get_device(&device).is_some())
     }
 }
 

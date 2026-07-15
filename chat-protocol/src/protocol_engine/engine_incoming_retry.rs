@@ -145,6 +145,7 @@ impl ProtocolEngine {
             from_owner_pubkey,
             from_sender_device_pubkey,
             true,
+            false,
         )
     }
 
@@ -159,6 +160,7 @@ impl ProtocolEngine {
             from_owner_pubkey,
             from_sender_device_pubkey,
             false,
+            true,
         )
     }
 
@@ -168,6 +170,7 @@ impl ProtocolEngine {
         from_owner_pubkey: PublicKey,
         from_sender_device_pubkey: Option<PublicKey>,
         forward_to_local_siblings: bool,
+        trust_local_sibling_attribution: bool,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
         let (is_group_payload, is_supported_group_payload) =
             classify_group_pairwise_payload(payload).unwrap_or((false, false));
@@ -179,7 +182,22 @@ impl ProtocolEngine {
         }
         let sender_device = from_sender_device_pubkey.map(ndr_device);
         let sender_owner = ndr_owner(from_owner_pubkey);
-        let sender_owner =
+        if is_supported_group_payload && sender_device.is_none() && !trust_local_sibling_attribution
+        {
+            // A remote owner claim without the authenticated device identity D
+            // cannot be checked against AppKeys. Consume the control payload
+            // without applying it; normal pairwise decrypts always supply D.
+            return Ok(ProtocolGroupIncomingResult {
+                consumed: true,
+                ..Default::default()
+            });
+        }
+        let sender_owner = if trust_local_sibling_attribution {
+            // The outer pairwise session already authenticated a current local
+            // sibling. Its wrapper can carry the original remote owner/device
+            // so every sibling does not need to race the same AppKeys event.
+            sender_owner
+        } else {
             match self.resolve_group_pairwise_sender_owner(sender_owner, sender_device) {
                 ProtocolSenderOwnerResolution::Verified { owner }
                 | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => owner,
@@ -202,7 +220,8 @@ impl ProtocolEngine {
                     }
                     storage_owner
                 }
-            };
+            }
+        };
         let remote_sender_key_distribution_group_id =
             if sender_owner != self.local_owner && sender_device.is_some() {
                 JsonGroupPayloadCodecV1
@@ -392,7 +411,7 @@ impl ProtocolEngine {
         envelope: &MessageEnvelope,
         record_delivery: bool,
     ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
-        let sender_owner = match self.resolve_message_sender_owner(&envelope) {
+        let sender_owner = match self.resolve_message_sender_owner(envelope) {
             ProtocolSenderOwnerResolution::Verified { owner }
             | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => owner,
             ProtocolSenderOwnerResolution::PendingOwnerClaim { .. } => {
@@ -403,7 +422,7 @@ impl ProtocolEngine {
         let mut ctx = ProtocolContext::new(NdrUnixSeconds(event.created_at.as_secs()), &mut rng);
         let Some(received) = self
             .session_manager
-            .receive(&mut ctx, sender_owner, &envelope)?
+            .receive(&mut ctx, sender_owner, envelope)?
         else {
             return Ok(None);
         };
@@ -445,8 +464,10 @@ impl ProtocolEngine {
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
-        let mut result = ProtocolGroupIncomingResult::default();
-        result.consumed = false;
+        let mut result = ProtocolGroupIncomingResult {
+            consumed: false,
+            ..Default::default()
+        };
 
         let pairwise = std::mem::take(&mut self.pending_group_pairwise_payloads);
         let mut still_pairwise = Vec::new();
@@ -459,6 +480,12 @@ impl ProtocolEngine {
             let (_, is_supported_group_payload) =
                 classify_group_pairwise_payload(&pending.payload).unwrap_or((false, false));
             if !is_supported_group_payload {
+                persist_needed = true;
+                continue;
+            }
+            if pending.sender_device.is_none() {
+                // Legacy device-less entries have no cryptographic identity to
+                // authorize against the claimed owner and can never be promoted.
                 persist_needed = true;
                 continue;
             }

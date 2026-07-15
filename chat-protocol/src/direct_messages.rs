@@ -5,8 +5,11 @@ use nostr::{Event, Filter, Keys, PublicKey, UnsignedEvent};
 use nostr_double_ratchet::Invite;
 use rusqlite::{params, Connection, OptionalExtension};
 
+#[cfg(test)]
+use crate::AppKeys;
 use crate::{
-    invite_unsigned_event, is_app_keys_event, parse_invite_url, AppKeys, ProtocolDecryptedMessage,
+    invite_unsigned_event, is_app_keys_event, parse_invite_url, resolve_invite_owner,
+    ProtocolAcceptInviteBlock, ProtocolAcceptInviteOutcome, ProtocolDecryptedMessage,
     ProtocolEffect, ProtocolEngine, ProtocolRetryBatch, SharedConnection, SqliteStorageAdapter,
     UnixSeconds, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND,
     MESSAGE_EVENT_KIND,
@@ -110,6 +113,19 @@ pub enum DirectMessageCommand {
         subscription_id: String,
         filters: Vec<Filter>,
         durable: bool,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub enum DirectInviteAcceptanceOutcome {
+    Accepted {
+        thread: DirectThreadSnapshot,
+        commands: Vec<DirectMessageCommand>,
+    },
+    PendingOwnerRoster {
+        owner_pubkey: String,
+        device_pubkey: String,
+        commands: Vec<DirectMessageCommand>,
     },
 }
 
@@ -264,25 +280,74 @@ impl DirectMessageService {
     pub fn accept_invite(
         &mut self,
         invite_input: &str,
-        _keys: &Keys,
+        keys: &Keys,
     ) -> Result<(DirectThreadSnapshot, Vec<DirectMessageCommand>), String> {
+        match self.accept_invite_with_status(invite_input, keys)? {
+            DirectInviteAcceptanceOutcome::Accepted { thread, commands } => {
+                Ok((thread, commands))
+            }
+            DirectInviteAcceptanceOutcome::PendingOwnerRoster {
+                owner_pubkey,
+                device_pubkey,
+                ..
+            } => Err(format!(
+                "Invite owner device list is not available yet for owner {owner_pubkey} and device {device_pubkey}; use accept_invite_with_status, process its discovery commands, and retry"
+            )),
+        }
+    }
+
+    pub fn accept_invite_with_status(
+        &mut self,
+        invite_input: &str,
+        _keys: &Keys,
+    ) -> Result<DirectInviteAcceptanceOutcome, String> {
         let invite = parse_direct_invite_input(invite_input)?;
-        let owner = invite.owner_public_key.unwrap_or(invite.inviter);
-        let chat_id = owner.to_hex();
+        let owner = resolve_invite_owner(&invite, None).map_err(|error| error.to_string())?;
+        let outcome = {
+            let engine = self
+                .protocol_engine
+                .as_mut()
+                .ok_or_else(|| "Direct message runtime is not ready".to_string())?;
+            engine
+                .accept_invite(&invite, Some(owner))
+                .map_err(|error| error.to_string())?
+        };
+        let result = match outcome {
+            ProtocolAcceptInviteOutcome::Accepted(result) => result,
+            ProtocolAcceptInviteOutcome::Blocked(
+                ProtocolAcceptInviteBlock::MissingOwnerRoster {
+                    owner_pubkey,
+                    device_pubkey,
+                },
+            ) => {
+                let commands = vec![DirectMessageCommand::Subscribe {
+                    subscription_id: format!("iris-native-app-keys-{}", owner_pubkey.to_hex()),
+                    filters: vec![Filter::new()
+                        .kind(nostr::Kind::from(APP_KEYS_EVENT_KIND as u16))
+                        .author(owner_pubkey)
+                        .limit(16)],
+                    durable: true,
+                }];
+                return Ok(DirectInviteAcceptanceOutcome::PendingOwnerRoster {
+                    owner_pubkey: owner_pubkey.to_hex(),
+                    device_pubkey: device_pubkey.to_hex(),
+                    commands,
+                });
+            }
+            ProtocolAcceptInviteOutcome::Blocked(
+                ProtocolAcceptInviteBlock::UnauthorizedDevice { .. },
+            ) => {
+                return Err("Invite device is not authorized by its claimed owner".to_string());
+            }
+        };
+        let chat_id = result.owner_pubkey.to_hex();
         self.ensure_thread(&chat_id, unix_now());
-        let engine = self
-            .protocol_engine
-            .as_mut()
-            .ok_or_else(|| "Direct message runtime is not ready".to_string())?;
-        let result = engine
-            .accept_invite(&invite, Some(owner))
-            .map_err(|error| error.to_string())?;
         let mut commands = self.commands_from_effects(result.effects);
         commands.extend(self.protocol_subscription_commands());
         let thread = self
             .thread(&chat_id)
             .ok_or_else(|| "Invite chat open failed".to_string())?;
-        Ok((thread, commands))
+        Ok(DirectInviteAcceptanceOutcome::Accepted { thread, commands })
     }
 
     pub fn send_message(
@@ -336,12 +401,8 @@ impl DirectMessageService {
         let mut decrypted = None;
 
         let processed = match kind {
-            APP_KEYS_EVENT_KIND if is_app_keys_event(&event) => match AppKeys::from_event(&event) {
-                Ok(app_keys) => match engine.ingest_app_keys_snapshot(
-                    event.pubkey,
-                    app_keys,
-                    event.created_at.as_secs(),
-                ) {
+            APP_KEYS_EVENT_KIND if is_app_keys_event(&event) => {
+                match engine.ingest_app_keys_event(&event) {
                     Ok(batch) => {
                         retry_batch = batch;
                         true
@@ -351,9 +412,8 @@ impl DirectMessageService {
                             Some(format!("Direct message device roster failed: {error}"));
                         false
                     }
-                },
-                Err(_) => false,
-            },
+                }
+            }
             INVITE_EVENT_KIND => match engine.observe_invite_event(&event) {
                 Ok(batch) => {
                     retry_batch = batch;
@@ -381,12 +441,18 @@ impl DirectMessageService {
         if !processed {
             return Vec::new();
         }
+        let app_keys_owner =
+            (kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event)).then_some(event.pubkey);
         self.mark_seen_event(&event_id);
         if let Some(message) = decrypted {
             self.apply_decrypted_protocol_message(message);
         }
         effects.extend(self.effects_from_retry_batch(retry_batch));
-        self.commands_from_effects(effects)
+        let mut commands = self.commands_from_effects(effects);
+        if app_keys_owner.is_some() {
+            commands.extend(self.protocol_subscription_commands());
+        }
+        commands
     }
 
     pub fn mobile_push_message_author_pubkeys(&self) -> Vec<String> {
@@ -595,6 +661,7 @@ impl DirectMessageService {
         messages
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn insert_message(
         &self,
         chat_id: &str,
@@ -749,7 +816,7 @@ fn unix_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{invite_url, parse_invite_event};
+    use crate::{invite_url, parse_invite_event, DeviceEntry};
     use nostr::Kind;
 
     fn publish_events(commands: Vec<DirectMessageCommand>) -> Vec<Event> {
@@ -839,5 +906,76 @@ mod tests {
             inviter_thread.messages[0].delivery,
             DirectMessageDelivery::Received
         );
+    }
+
+    #[test]
+    fn claimed_owner_invite_retries_after_ordinary_app_keys_ingestion() {
+        let inviter_owner = Keys::generate();
+        let inviter_device = Keys::generate();
+        let accepter_keys = Keys::generate();
+        let mut accepter = DirectMessageService::memory_for_local_device(
+            accepter_keys.public_key(),
+            &accepter_keys,
+        );
+        let mut invite = Invite::create_new(
+            inviter_device.public_key(),
+            Some(inviter_device.public_key().to_hex()),
+            Some(1),
+        )
+        .expect("invite");
+        invite.owner_public_key = Some(inviter_owner.public_key());
+        invite.purpose = Some("private".to_string());
+        let invite_url = route_wrapped_invite_url(&invite);
+
+        let pending = accepter
+            .accept_invite_with_status(&invite_url, &accepter_keys)
+            .expect("pending acceptance");
+        let commands = match pending {
+            DirectInviteAcceptanceOutcome::PendingOwnerRoster {
+                owner_pubkey,
+                device_pubkey,
+                commands,
+            } => {
+                assert_eq!(owner_pubkey, inviter_owner.public_key().to_hex());
+                assert_eq!(device_pubkey, inviter_device.public_key().to_hex());
+                commands
+            }
+            DirectInviteAcceptanceOutcome::Accepted { .. } => {
+                panic!("owner claim must wait for AppKeys")
+            }
+        };
+        let owner_hex = inviter_owner.public_key().to_hex();
+        assert!(commands.iter().any(|command| {
+            matches!(
+                command, DirectMessageCommand::Subscribe { filters, durable: true, .. }
+                    if filters.iter().any(|filter| {
+                        serde_json::to_string(filter)
+                            .is_ok_and(|json| json.contains(&owner_hex))
+                    })
+            )
+        }));
+        assert!(accepter
+            .chats()
+            .iter()
+            .all(|chat| chat.chat_id != owner_hex));
+
+        let roster = AppKeys::new(vec![DeviceEntry::new(inviter_device.public_key(), 10)])
+            .get_event_at(inviter_owner.public_key(), 10)
+            .sign_with_keys(&inviter_owner)
+            .expect("signed inviter AppKeys");
+        let completion = accepter.process_event(roster.clone(), &accepter_keys);
+
+        assert!(accepter
+            .chats()
+            .iter()
+            .all(|chat| chat.chat_id != owner_hex));
+        assert!(publish_kinds(&completion).is_empty());
+        let accepted = accepter
+            .accept_invite_with_status(&invite_url, &accepter_keys)
+            .expect("authorized retry");
+        assert!(matches!(
+            accepted,
+            DirectInviteAcceptanceOutcome::Accepted { .. }
+        ));
     }
 }

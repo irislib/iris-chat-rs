@@ -29,6 +29,12 @@ impl ProtocolEngine {
             version: PROTOCOL_ENGINE_STATE_VERSION,
             session_manager: self.session_manager.snapshot(),
             group_manager: self.group_manager.snapshot(),
+            verified_app_keys_owners: self.verified_app_keys_owners.clone(),
+            app_keys_provenance_version: PROTOCOL_APP_KEYS_PROVENANCE_VERSION,
+            invite_owner_app_keys_evidence: self.invite_owner_app_keys_evidence.clone(),
+            processed_private_invite_response_ids: self
+                .processed_private_invite_response_ids
+                .clone(),
             pending_inbound: self.pending_inbound.clone(),
             pending_group_fanouts: self.pending_group_fanouts.clone(),
             pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),

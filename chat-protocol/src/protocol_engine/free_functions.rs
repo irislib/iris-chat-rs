@@ -93,6 +93,45 @@ fn public_device_pubkey(device_pubkey: NdrDevicePubkey) -> anyhow::Result<Public
     Ok(PublicKey::from_slice(&device_pubkey.to_bytes())?)
 }
 
+/// Resolve the single owner claim carried by an invite and optional caller
+/// hint. Duplicated compatibility fields must agree; the hint may supply a
+/// missing claim but may never override one already present in the invite.
+pub fn resolve_invite_owner(
+    invite: &Invite,
+    owner_pubkey_hint: Option<PublicKey>,
+) -> anyhow::Result<PublicKey> {
+    let inviter_device = public_device(invite.inviter_device_pubkey)?;
+    if invite.inviter != inviter_device {
+        anyhow::bail!("invite author does not match inviter device");
+    }
+
+    let owner_alias = invite.owner_public_key;
+    let owner_protocol = invite.inviter_owner_pubkey.map(public_owner).transpose()?;
+    if owner_alias
+        .zip(owner_protocol)
+        .is_some_and(|(alias, protocol)| alias != protocol)
+    {
+        anyhow::bail!("invite owner fields disagree");
+    }
+    let embedded_owner = owner_alias.or(owner_protocol);
+    if owner_pubkey_hint
+        .zip(embedded_owner)
+        .is_some_and(|(hint, embedded)| hint != embedded)
+    {
+        anyhow::bail!("invite owner hint disagrees with invite payload");
+    }
+
+    Ok(owner_pubkey_hint.or(embedded_owner).unwrap_or(inviter_device))
+}
+
+fn app_keys_device_pubkeys(app_keys: &AppKeys) -> BTreeSet<PublicKey> {
+    app_keys
+        .get_all_devices()
+        .into_iter()
+        .map(|device| device.identity_pubkey)
+        .collect()
+}
+
 fn classify_group_pairwise_payload(payload: &[u8]) -> anyhow::Result<(bool, bool)> {
     let codec = JsonGroupPayloadCodecV1;
     let Some(command) = codec.decode_pairwise_command(payload)? else {

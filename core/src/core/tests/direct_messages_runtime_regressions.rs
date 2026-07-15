@@ -45,8 +45,11 @@ fn direct_group_pairwise_payload_that_looks_like_runtime_rumor_is_applied() {
     let admin_owner = Keys::generate();
     let admin_device = Keys::generate();
     let mut core = logged_in_test_core("direct-runtime-shaped-group-pairwise", &owner, &device);
-    let admin_app_keys = AppKeys::new(vec![DeviceEntry::new(admin_device.public_key(), 1)]);
-    core.apply_known_app_keys_snapshot(admin_owner.public_key(), &admin_app_keys, 1);
+    core.handle_relay_event(signed_app_keys_authorization_event(
+        &admin_owner,
+        admin_device.public_key(),
+        1,
+    ));
 
     let group_id = "runtime-shaped-group-pairwise".to_string();
     let group = test_group_snapshot(

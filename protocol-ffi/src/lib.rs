@@ -6,9 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use iris_chat_protocol::{
     build_protocol_discovery_filters, invite_unsigned_event, invite_url, is_app_keys_event,
     parse_invite_event, parse_invite_response_event, parse_invite_url, parse_message_event,
-    AppKeys, DeviceEntry, FileStorageAdapter, InMemoryStorage, NdrUnixSeconds,
-    ProtocolDecryptedMessage, ProtocolEffect, ProtocolEngine, ProtocolRetryBatch, StorageAdapter,
-    UnixSeconds, APP_KEYS_EVENT_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
+    resolve_invite_owner, AppKeys, DeviceEntry, FileStorageAdapter, InMemoryStorage,
+    NdrUnixSeconds, ProtocolDecryptedMessage, ProtocolEffect, ProtocolEngine, ProtocolRetryBatch,
+    StorageAdapter, UnixSeconds, APP_KEYS_EVENT_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND,
+    MESSAGE_EVENT_KIND,
 };
 use nostr::{Event, Filter, Keys, Kind, PublicKey, SecretKey};
 
@@ -103,7 +104,7 @@ impl InviteHandle {
             .inner
             .lock()
             .map_err(|_| NdrError::StateMismatch("invite mutex poisoned".to_string()))?;
-        Ok(invite_url(&invite, &root).map_err(invalid_event_error)?)
+        invite_url(&invite, &root).map_err(invalid_event_error)
     }
 
     pub fn get_inviter_pubkey_hex(&self) -> String {
@@ -111,6 +112,16 @@ impl InviteHandle {
             .lock()
             .map(|invite| invite.inviter.to_hex())
             .unwrap_or_default()
+    }
+
+    pub fn get_owner_pubkey_hex(&self) -> Result<String, NdrError> {
+        let invite = self
+            .inner
+            .lock()
+            .map_err(|_| NdrError::StateMismatch("invite mutex poisoned".to_string()))?;
+        Ok(resolve_invite_owner(&invite, None)
+            .map_err(invalid_event_error)?
+            .to_hex())
     }
 }
 
@@ -320,6 +331,15 @@ impl SessionManagerHandle {
                 continue;
             }
             for device in user.devices {
+                let Ok(device_pubkey) = PublicKey::parse(&device.device_pubkey.to_string()) else {
+                    continue;
+                };
+                if !device.authorized
+                    || device.is_stale
+                    || !engine.owner_device_binding_is_verified(peer, device_pubkey)
+                {
+                    continue;
+                }
                 if let Some(state) = device.active_session {
                     return Ok(Some(serde_json::to_string(&state)?));
                 }
@@ -336,10 +356,9 @@ impl SessionManagerHandle {
                 inner.engine.as_ref().map(|engine| {
                     let local = inner.owner_pubkey.to_hex();
                     let mut owners = engine
-                        .session_manager_snapshot()
-                        .users
+                        .known_verified_peer_owner_pubkeys()
                         .into_iter()
-                        .map(|user| user.owner_pubkey.to_string())
+                        .map(|owner| owner.to_hex())
                         .filter(|owner| owner != &local)
                         .collect::<Vec<_>>();
                     owners.sort();
@@ -375,8 +394,8 @@ impl SessionManagerHandle {
         let Some(engine) = inner.engine.as_ref() else {
             return Ok(Vec::new());
         };
-        let snapshot = engine.session_manager_snapshot();
-        ProtocolEngine::message_session_debug_snapshots_with_snapshot(&snapshot, peer)
+        engine
+            .verified_message_session_snapshots_for_owner(peer)
             .into_iter()
             .map(|state| {
                 Ok(MessagePushSessionStateResult {
@@ -447,9 +466,43 @@ impl SessionManagerHandle {
             .transpose()?;
         let mut inner = self.lock_inner()?;
         let engine = inner.engine_mut()?;
-        let candidate_owner = invite_owner_candidate(&invite, owner_hint);
+        let candidate_owner =
+            resolve_invite_owner(&invite, owner_hint).map_err(invalid_event_error)?;
         let active_before = engine.active_session_count_for_owner(candidate_owner);
-        let result = engine.accept_invite(&invite, owner_hint)?;
+        let result = match engine.accept_invite(&invite, owner_hint)? {
+            iris_chat_protocol::ProtocolAcceptInviteOutcome::Accepted(result) => result,
+            iris_chat_protocol::ProtocolAcceptInviteOutcome::Blocked(
+                iris_chat_protocol::ProtocolAcceptInviteBlock::MissingOwnerRoster {
+                    owner_pubkey,
+                    device_pubkey,
+                },
+            ) => {
+                inner.enqueue_subscribe_filter(
+                    "invite-owner-app-keys",
+                    Filter::new()
+                        .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
+                        .author(owner_pubkey)
+                        .limit(16),
+                )?;
+                return Err(NdrError::SessionNotReady(format!(
+                    "signed device roster for invite owner {} is not available; cannot authorize device {}; an AppKeys subscription was queued",
+                    owner_pubkey.to_hex(),
+                    device_pubkey.to_hex()
+                )));
+            }
+            iris_chat_protocol::ProtocolAcceptInviteOutcome::Blocked(
+                iris_chat_protocol::ProtocolAcceptInviteBlock::UnauthorizedDevice {
+                    owner_pubkey,
+                    device_pubkey,
+                },
+            ) => {
+                return Err(NdrError::InviteError(format!(
+                    "device {} is not authorized by invite owner {}",
+                    device_pubkey.to_hex(),
+                    owner_pubkey.to_hex()
+                )))
+            }
+        };
         let active_after = engine.active_session_count_for_owner(result.owner_pubkey);
         let output = SessionManagerAcceptInviteResult {
             owner_pubkey_hex: result.owner_pubkey.to_hex(),
@@ -640,9 +693,7 @@ fn process_event_inner(inner: &mut SessionManagerInner, event: Event) -> Result<
     let kind = event.kind.as_u16() as u32;
     let engine = inner.engine_mut()?;
     if kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event) {
-        let app_keys = AppKeys::from_event(&event).map_err(invalid_event_error)?;
-        let retry =
-            engine.ingest_app_keys_snapshot(event.pubkey, app_keys, event.created_at.as_secs())?;
+        let retry = engine.ingest_app_keys_event(&event)?;
         inner.enqueue_retry_batch(retry)?;
         return Ok(());
     }
@@ -692,19 +743,6 @@ fn validate_device_pubkey(expected_hex: &str, keys: &Keys) -> Result<(), NdrErro
         ));
     }
     Ok(())
-}
-
-fn invite_owner_candidate(
-    invite: &iris_chat_protocol::Invite,
-    hint: Option<PublicKey>,
-) -> PublicKey {
-    hint.or(invite.owner_public_key)
-        .or_else(|| {
-            invite
-                .inviter_owner_pubkey
-                .and_then(|owner| PublicKey::parse(&owner.to_string()).ok())
-        })
-        .unwrap_or(invite.inviter)
 }
 
 fn invalid_event_error(error: impl std::fmt::Display) -> NdrError {
@@ -778,6 +816,10 @@ mod tests {
         let from_url = InviteHandle::from_url(compact_url).expect("url invite");
         assert_eq!(
             from_url.get_inviter_pubkey_hex(),
+            bob_keys.public_key().to_hex()
+        );
+        assert_eq!(
+            from_url.get_owner_pubkey_hex().expect("invite owner"),
             bob_keys.public_key().to_hex()
         );
 
@@ -854,6 +896,71 @@ mod tests {
                 .known_peer_owner_pubkeys()
                 .contains(&bob_owner_keys.public_key().to_hex()),
             "shared AppKeys snapshots should surface the peer owner"
+        );
+    }
+
+    #[test]
+    fn missing_invite_owner_roster_subscribes_then_accepts_after_app_keys() {
+        let accepter_keys = Keys::generate();
+        let claimed_owner = Keys::generate();
+        let attacker_device = Keys::generate();
+        let accepter = manager(&accepter_keys);
+        accepter.init().expect("accepter init");
+        let _ = accepter.drain_events().expect("startup drain");
+
+        let mut invite = iris_chat_protocol::Invite::create_new(
+            attacker_device.public_key(),
+            Some(attacker_device.public_key().to_hex()),
+            Some(1),
+        )
+        .expect("invite");
+        invite.owner_public_key = Some(claimed_owner.public_key());
+        invite.purpose = Some("private".to_string());
+        let invite_url = invite_url(&invite, "https://chat.iris.to").expect("invite URL");
+        let invite_handle = InviteHandle::from_url(invite_url.clone()).expect("invite handle");
+        assert_eq!(
+            invite_handle.get_owner_pubkey_hex().expect("claimed owner"),
+            claimed_owner.public_key().to_hex()
+        );
+
+        let error = accepter
+            .accept_invite_from_url(invite_url.clone(), None)
+            .expect_err("missing owner roster must block acceptance");
+        assert!(matches!(error, NdrError::SessionNotReady(_)));
+
+        let owner_hex = claimed_owner.public_key().to_hex();
+        let events = accepter.drain_events().expect("discovery drain");
+        let subscription = events
+            .iter()
+            .find(|event| event.kind == "subscribe")
+            .expect("owner AppKeys subscription");
+        assert!(subscription
+            .filter_json
+            .as_deref()
+            .is_some_and(|filter| filter.contains(&owner_hex)));
+
+        let roster_created_at = now_secs();
+        let app_keys_event = AppKeys::new(vec![DeviceEntry::new(
+            attacker_device.public_key(),
+            roster_created_at,
+        )])
+        .get_event_at(claimed_owner.public_key(), roster_created_at)
+        .sign_with_keys(&claimed_owner)
+        .expect("signed owner AppKeys");
+        accepter
+            .process_event(serde_json::to_string(&app_keys_event).expect("AppKeys json"))
+            .expect("ordinary AppKeys ingestion");
+
+        let accepted = accepter
+            .accept_invite_from_url(invite_url, None)
+            .expect("signed roster authorizes acceptance");
+        assert_eq!(
+            accepted.owner_pubkey_hex,
+            claimed_owner.public_key().to_hex()
+        );
+        assert_eq!(
+            accepted.inviter_device_pubkey_hex,
+            attacker_device.public_key().to_hex()
         );
     }
 

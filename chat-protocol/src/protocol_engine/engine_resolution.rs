@@ -26,9 +26,17 @@ impl ProtocolEngine {
             if let Some(record) = self.session_record_for_device_identity(sender_device) {
                 return self.owner_resolution_for_sender_record(record);
             }
-            if sender_owner == provisional_owner_from_sender_pubkey(sender_device) {
+            let provisional_owner = provisional_owner_from_sender_pubkey(sender_device);
+            if sender_owner == provisional_owner {
                 return ProtocolSenderOwnerResolution::ProvisionalDeviceOwner {
                     owner: sender_owner,
+                };
+            }
+            if !self.has_verified_device_owner_claim(sender_owner, sender_device) {
+                return ProtocolSenderOwnerResolution::PendingOwnerClaim {
+                    storage_owner: sender_owner,
+                    claimed_owner: sender_owner,
+                    sender_device,
                 };
             }
         }
@@ -60,9 +68,17 @@ impl ProtocolEngine {
             ProtocolSenderOwnerResolution::ProvisionalDeviceOwner {
                 owner: record.storage_owner,
             }
-        } else {
+        } else if self
+            .has_verified_device_owner_claim(record.storage_owner, record.device_pubkey)
+        {
             ProtocolSenderOwnerResolution::Verified {
                 owner: record.storage_owner,
+            }
+        } else {
+            ProtocolSenderOwnerResolution::PendingOwnerClaim {
+                storage_owner: record.storage_owner,
+                claimed_owner: record.storage_owner,
+                sender_device: record.device_pubkey,
             }
         }
     }
@@ -111,11 +127,17 @@ impl ProtocolEngine {
         None
     }
 
-    fn has_verified_device_owner_claim(
+    pub(super) fn has_verified_device_owner_claim(
         &self,
         owner: NdrOwnerPubkey,
         device: NdrDevicePubkey,
     ) -> bool {
+        if owner == provisional_owner_from_sender_pubkey(device) {
+            return true;
+        }
+        if !self.verified_app_keys_owners.contains(&owner) {
+            return false;
+        }
         self.session_manager
             .snapshot()
             .users
@@ -141,10 +163,8 @@ impl ProtocolEngine {
         let pending_inbound_ids = self
             .pending_inbound
             .iter()
-            .filter_map(|pending| {
-                self.pending_inbound_matches_owner(pending, owner)
-                    .then(|| pending.event.id)
-            })
+            .filter(|pending| self.pending_inbound_matches_owner(pending, owner))
+            .map(|pending| pending.event.id)
             .collect::<HashSet<_>>();
         for pending in &mut self.pending_inbound {
             if pending_inbound_ids.contains(&pending.event.id) {
