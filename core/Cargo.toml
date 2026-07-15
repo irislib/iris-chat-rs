@@ -35,7 +35,7 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 flume = "0.11"
-fips-core = { version = "0.3.98", features = ["webrtc-transport"] }
+fips-core = { version = "=0.3.98", features = ["webrtc-transport"] }
 fips-tcp = "0.1.0"
 fips-tcp-endpoint = "0.1.0"
 hashtree-blossom = { version = "0.2.81", default-features = false, features = ["store"] }
