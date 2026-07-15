@@ -30,6 +30,7 @@ impl ProtocolEngine {
     ) -> anyhow::Result<ProtocolRetryBatch> {
         let checkpoint = self.state_checkpoint();
         let owner = ndr_owner(owner_pubkey);
+        let now = unix_now();
         let roster = DeviceRoster::new(
             NdrUnixSeconds(created_at),
             app_keys
@@ -43,39 +44,59 @@ impl ProtocolEngine {
                 })
                 .collect(),
         );
-        let decision = if owner_pubkey == self.owner_pubkey {
+        let roster_changed = if owner_pubkey == self.owner_pubkey {
             if should_replace_provisional_local_roster(
                 &self.session_manager.snapshot(),
                 self.owner_pubkey,
                 self.local_device,
                 &roster,
             ) {
-                self.session_manager.replace_local_roster(roster)
+                !matches!(
+                    self.session_manager.replace_local_roster(roster),
+                    nostr_double_ratchet::RosterSnapshotDecision::Stale
+                )
             } else {
-                self.session_manager.apply_local_roster(roster)
+                !matches!(
+                    self.session_manager.apply_local_roster(roster),
+                    nostr_double_ratchet::RosterSnapshotDecision::Stale
+                )
             }
+        } else if let Some(event) = source_event {
+            self.session_manager
+                .observe_peer_app_keys_event(event.clone(), NdrUnixSeconds(now.get()))?
         } else {
-            self.session_manager.observe_peer_roster(owner, roster)
+            !matches!(
+                self.session_manager.observe_peer_roster(owner, roster),
+                nostr_double_ratchet::RosterSnapshotDecision::Stale
+            )
         };
-        let stale = matches!(
-            decision,
-            nostr_double_ratchet::RosterSnapshotDecision::Stale
-        );
-        if stale && source_event.is_none() {
-            return Ok(ProtocolRetryBatch::default());
-        }
         let exact_source_is_valid = source_event.is_some_and(|event| {
-            invite_owner_app_keys_event_is_valid(owner_pubkey, event, unix_now().get())
+            invite_owner_app_keys_event_is_valid(owner_pubkey, event, now.get())
         });
-        if exact_source_is_valid {
+        let exact_evidence_changed = if exact_source_is_valid {
             let event = source_event.expect("validated AppKeys source event");
-            self.update_invite_owner_app_keys_evidence(owner, event, &app_keys);
-        }
+            self.update_invite_owner_app_keys_evidence(owner, event, &app_keys)
+        } else {
+            false
+        };
         // Roster projections continue to drive established protocol routing.
         // Invite acceptance is stricter and consults only exact signed evidence.
-        self.verified_app_keys_owners.insert(owner);
+        let provenance_changed = if owner_pubkey == self.owner_pubkey || exact_source_is_valid {
+            self.verified_app_keys_owners.insert(owner)
+        } else {
+            false
+        };
+        let local_observation_changed =
+            owner_pubkey == self.owner_pubkey && !self.local_app_keys_observed;
         if owner_pubkey == self.owner_pubkey {
             self.local_app_keys_observed = true;
+        }
+        if !roster_changed
+            && !exact_evidence_changed
+            && !provenance_changed
+            && !local_observation_changed
+        {
+            return Ok(ProtocolRetryBatch::default());
         }
         self.invalidate_known_message_author_cache();
         self.wake_pending_protocol_for_owner(owner);
@@ -84,7 +105,7 @@ impl ProtocolEngine {
             self.invalidate_known_message_author_cache();
             return Err(error);
         }
-        self.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))
+        self.retry_pending_protocol(NdrUnixSeconds(now.get()))
     }
 
     pub fn observe_invite_event(&mut self, event: &Event) -> anyhow::Result<ProtocolRetryBatch> {
