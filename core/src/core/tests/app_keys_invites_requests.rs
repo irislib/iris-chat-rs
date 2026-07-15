@@ -10,12 +10,16 @@ fn peer_profile_debug_reports_known_user_context() {
     let app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 10)]);
 
     core.apply_known_app_keys_snapshot(peer.public_key(), &app_keys, 10);
+    let app_keys_event = app_keys
+        .get_event_at(peer.public_key(), 10)
+        .sign_with_keys(&peer)
+        .expect("signed peer appkeys");
     let batch = core
         .protocol_engine
         .as_mut()
         .expect("protocol engine")
-        .ingest_app_keys_snapshot(peer.public_key(), app_keys, 10)
-        .expect("ingest app keys");
+        .ingest_app_keys_event(&app_keys_event)
+        .expect("ingest app keys event");
     core.process_protocol_engine_retry_batch("test_app_keys", batch);
     core.remember_recent_handshake_peer(peer_hex.clone(), peer_device_hex, 123);
     core.handle_action(AppAction::CreateChat {

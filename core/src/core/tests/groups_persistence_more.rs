@@ -569,19 +569,34 @@ fn observe_current_device_appkeys_for_test(
         .expect("local appkeys");
 }
 
+fn observe_peer_appkeys_for_test(
+    engine: &mut ProtocolEngine,
+    owner: &Keys,
+    devices: &[PublicKey],
+    created_at: u64,
+) {
+    let event = AppKeys::new(
+        devices
+            .iter()
+            .copied()
+            .map(|device| DeviceEntry::new(device, created_at))
+            .collect(),
+    )
+    .get_event_at(owner.public_key(), created_at)
+    .sign_with_keys(owner)
+    .expect("signed peer appkeys");
+    engine
+        .ingest_app_keys_event(&event)
+        .expect("peer appkeys event");
+}
+
 fn observe_peer_device_invite_for_test(
     engine: &mut ProtocolEngine,
     owner: &Keys,
     device: &Keys,
     created_at: u64,
 ) {
-    engine
-        .ingest_app_keys_snapshot(
-            owner.public_key(),
-            AppKeys::new(vec![DeviceEntry::new(device.public_key(), created_at)]),
-            created_at,
-        )
-        .expect("peer appkeys");
+    observe_peer_appkeys_for_test(engine, owner, &[device.public_key()], created_at);
     let mut rng = OsRng;
     let mut ctx = ProtocolContext::new(NdrUnixSeconds(created_at), &mut rng);
     let invite = Invite::create_new_with_context(

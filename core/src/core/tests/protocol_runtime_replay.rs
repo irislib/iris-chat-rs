@@ -5,13 +5,12 @@ fn invite_response_observation_installs_session_author_state() {
     let peer_owner = Keys::generate();
     let peer_device = Keys::generate();
     let mut engine = test_protocol_engine(&owner, &device);
-    engine
-        .ingest_app_keys_snapshot(
-            peer_owner.public_key(),
-            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
-            1,
-        )
-        .expect("peer appkeys");
+    observe_peer_appkeys_for_test(
+        &mut engine,
+        &peer_owner,
+        &[peer_device.public_key()],
+        1,
+    );
 
     let invite = engine.local_invite().expect("local invite");
     let (_peer_session, response) = invite
@@ -140,13 +139,13 @@ fn appcore_direct_message_from_unverified_claimed_owner_retries_after_appkeys() 
         vec![format!("owner:{}", peer_owner.public_key().to_hex())]
     );
 
+    let peer_app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 12)])
+        .get_event_at(peer_owner.public_key(), 12)
+        .sign_with_keys(&peer_owner)
+        .expect("signed peer appkeys");
     let batch = engine
-        .ingest_app_keys_snapshot(
-            peer_owner.public_key(),
-            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 12)]),
-            12,
-        )
-        .expect("peer appkeys");
+        .ingest_app_keys_event(&peer_app_keys)
+        .expect("peer appkeys event");
     assert_eq!(batch.direct_messages.len(), 1);
     assert_eq!(batch.direct_messages[0].sender, peer_owner.public_key());
     assert_eq!(
@@ -215,13 +214,13 @@ fn appcore_pending_group_payload_from_claimed_device_uses_owner_after_appkeys() 
         1
     );
 
+    let peer_app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 12)])
+        .get_event_at(peer_owner.public_key(), 12)
+        .sign_with_keys(&peer_owner)
+        .expect("signed peer appkeys");
     let batch = engine
-        .ingest_app_keys_snapshot(
-            peer_owner.public_key(),
-            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 12)]),
-            12,
-        )
-        .expect("peer appkeys");
+        .ingest_app_keys_event(&peer_app_keys)
+        .expect("peer appkeys event");
     let created = batch
         .group_result
         .events

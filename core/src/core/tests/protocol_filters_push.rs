@@ -83,13 +83,12 @@ fn appcore_ownerless_invite_uses_known_roster_owner_for_first_contact() {
     let mut engine = test_protocol_engine(&owner, &device);
     observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
 
-    engine
-        .ingest_app_keys_snapshot(
-            peer_owner.public_key(),
-            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
-            1,
-        )
-        .expect("peer appkeys");
+    observe_peer_appkeys_for_test(
+        &mut engine,
+        &peer_owner,
+        &[peer_device.public_key()],
+        1,
+    );
 
     let mut rng = OsRng;
     let mut ctx = ProtocolContext::new(NdrUnixSeconds(2), &mut rng);
@@ -164,10 +163,15 @@ fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys
         previous_sending_chain_message_count: 0,
         skipped_keys,
     };
+    let peer_app_keys_event = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)])
+        .get_event_at(peer_owner.public_key(), 1)
+        .sign_with_keys(&peer_owner)
+        .expect("signed peer appkeys");
     let seed_session_manager = SessionManagerSnapshot {
         local_owner_pubkey: local_owner,
         local_device_pubkey: local_device,
         local_invite: None,
+        verified_peer_app_keys_events: vec![peer_app_keys_event],
         users: vec![nostr_double_ratchet::UserRecordSnapshot {
             owner_pubkey: peer_owner_pubkey,
             roster: Some(DeviceRoster::new(
@@ -197,19 +201,12 @@ fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys
         GroupEventManager::new(local_owner).snapshot(),
     )
     .expect("seed protocol state");
-    let mut engine = ProtocolEngine::load_or_create_for_local_device(
+    let engine = ProtocolEngine::load_or_create_for_local_device(
         storage,
         owner.public_key(),
         &device,
     )
     .expect("protocol engine");
-    engine
-        .ingest_app_keys_snapshot(
-            peer_owner.public_key(),
-            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
-            1,
-        )
-        .expect("verify peer roster provenance");
 
     let authors = engine.message_author_pubkeys_for_owner(peer_owner.public_key());
     assert!(
@@ -387,11 +384,15 @@ fn recipient_filter_stays_until_every_known_peer_device_has_a_session() {
     );
     core.active_chat_id = Some(peer_owner.public_key().to_hex());
 
-    core.protocol_engine
-        .as_mut()
-        .expect("protocol engine")
-        .ingest_app_keys_snapshot(peer_owner.public_key(), peer_app_keys, 1)
-        .expect("peer appkeys");
+    observe_peer_appkeys_for_test(
+        core.protocol_engine.as_mut().expect("protocol engine"),
+        &peer_owner,
+        &peer_devices
+            .iter()
+            .map(|peer| peer.public_key())
+            .collect::<Vec<_>>(),
+        1,
+    );
     for (index, peer_device) in peer_devices.iter().enumerate() {
         core.protocol_engine
             .as_mut()
@@ -419,11 +420,12 @@ fn recipient_filter_stays_until_every_known_peer_device_has_a_session() {
         peer_owner.public_key().to_hex(),
         known_app_keys_from_ndr(peer_owner.public_key(), &rotated_app_keys, 4),
     );
-    core.protocol_engine
-        .as_mut()
-        .expect("protocol engine")
-        .ingest_app_keys_snapshot(peer_owner.public_key(), rotated_app_keys, 4)
-        .expect("rotated peer appkeys");
+    observe_peer_appkeys_for_test(
+        core.protocol_engine.as_mut().expect("protocol engine"),
+        &peer_owner,
+        &[peer_devices[1].public_key(), replacement_device.public_key()],
+        4,
+    );
     assert!(
         core.message_recipient_bootstrap_needed(),
         "a stale removed-device session must not hide the missing replacement-device session"
@@ -546,10 +548,12 @@ fn remote_group_metadata_syncs_to_local_sibling() {
         .observe_invite_event(&primary_invite_event)
         .expect("linked observes primary invite");
 
-    let admin_app_keys = AppKeys::new(vec![DeviceEntry::new(admin_device.public_key(), 1)]);
-    primary
-        .ingest_app_keys_snapshot(admin_owner.public_key(), admin_app_keys, 1)
-        .expect("primary admin appkeys");
+    observe_peer_appkeys_for_test(
+        &mut primary,
+        &admin_owner,
+        &[admin_device.public_key()],
+        1,
+    );
 
     let group_id = "remote-group-local-sibling-sync".to_string();
     let snapshot = test_group_snapshot(
@@ -747,13 +751,18 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
         .observe_invite_event(&primary_invite_event)
         .expect("linked observes primary invite");
 
-    let admin_app_keys = AppKeys::new(vec![DeviceEntry::new(admin_device.public_key(), 1)]);
-    primary
-        .ingest_app_keys_snapshot(admin_owner.public_key(), admin_app_keys.clone(), 1)
-        .expect("primary admin appkeys");
-    linked
-        .ingest_app_keys_snapshot(admin_owner.public_key(), admin_app_keys, 1)
-        .expect("linked admin appkeys");
+    observe_peer_appkeys_for_test(
+        &mut primary,
+        &admin_owner,
+        &[admin_device.public_key()],
+        1,
+    );
+    observe_peer_appkeys_for_test(
+        &mut linked,
+        &admin_owner,
+        &[admin_device.public_key()],
+        1,
+    );
 
     let group_id = "linked-sibling-group".to_string();
     let snapshot = test_group_snapshot(

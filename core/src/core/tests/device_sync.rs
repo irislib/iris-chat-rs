@@ -435,11 +435,16 @@ fn device_sync_bootstraps_missing_chats_groups_and_post_roster_messages_once() {
     assert!(core.preferences.accepted_owner_pubkeys.contains(&peer_hex));
     assert_eq!(core.app_keys[&peer_hex].created_at_secs, 80);
     assert_eq!(core.app_keys[&group_member_hex].created_at_secs, 81);
-    assert!(core
+    assert!(!core
         .protocol_engine
         .as_ref()
         .unwrap()
         .has_device_roster_entry_for_owner(peer.public_key(), peer_device.public_key()));
+    assert!(core
+        .compute_protocol_subscription_plan()
+        .expect("protocol subscription plan")
+        .roster_authors
+        .contains(&peer_hex));
 
     let unrelated = Keys::generate();
     let unrelated_hex = unrelated.public_key().to_hex();

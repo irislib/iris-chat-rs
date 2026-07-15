@@ -11,10 +11,18 @@ fn seed_protocol_storage_for_test(
     seed_session_manager: SessionManagerSnapshot,
     seed_group_manager: GroupManagerSnapshot,
 ) -> anyhow::Result<()> {
+    let verified_app_keys_owners = seed_session_manager
+        .verified_peer_app_keys_events
+        .iter()
+        .map(|event| ndr_owner_pubkey(event.pubkey))
+        .collect::<std::collections::BTreeSet<_>>();
     let state = serde_json::json!({
         "version": 1,
         "session_manager": seed_session_manager,
         "group_manager": seed_group_manager,
+        "verified_app_keys_owners": verified_app_keys_owners,
+        "app_keys_provenance_version": 1,
+        "invite_owner_app_keys_evidence": {},
         "pending_outbound": [],
         "pending_inbound": [],
         "pending_group_fanouts": [],

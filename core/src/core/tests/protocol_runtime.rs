@@ -321,6 +321,7 @@ fn protocol_engine_load_or_create_prefers_persisted_protocol_invite() {
         local_owner_pubkey: local_owner,
         local_device_pubkey: local_device,
         local_invite: Some(protocol_invite.clone()),
+        verified_peer_app_keys_events: Vec::new(),
         users: Vec::new(),
     };
     seed_protocol_storage_for_test(
@@ -2063,12 +2064,16 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_sessio
 
     let peer_app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]);
     {
+        let peer_app_keys_event = peer_app_keys
+            .get_event_at(peer_owner.public_key(), 1)
+            .sign_with_keys(&peer_owner)
+            .expect("signed peer appkeys");
         let batch = core
             .protocol_engine
             .as_mut()
             .expect("protocol engine")
-            .ingest_app_keys_snapshot(peer_owner.public_key(), peer_app_keys.clone(), 1)
-            .expect("ingest peer appkeys");
+            .ingest_app_keys_event(&peer_app_keys_event)
+            .expect("ingest peer appkeys event");
         core.process_protocol_engine_retry_batch("test_app_keys", batch);
     }
     core.app_keys.insert(

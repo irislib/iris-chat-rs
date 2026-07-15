@@ -53,16 +53,12 @@ fn observe_local_invite_for_test(
     device: &Keys,
     invite: &Invite,
 ) {
-    engine
-        .ingest_app_keys_snapshot(
-            owner.public_key(),
-            AppKeys::new(vec![DeviceEntry::new(
-                device.public_key(),
-                invite.created_at.get(),
-            )]),
-            invite.created_at.get(),
-        )
-        .expect("peer appkeys");
+    observe_peer_appkeys_for_test(
+        engine,
+        owner,
+        &[device.public_key()],
+        invite.created_at.get(),
+    );
     let mut invite = invite.clone();
     invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
     let event = nostr_double_ratchet::invite_unsigned_event(&invite)
