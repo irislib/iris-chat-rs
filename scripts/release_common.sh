@@ -72,7 +72,7 @@ git_commit_timestamp_utc() {
 
 semantic_version_code() {
   local version="$1"
-  local core major minor patch build
+  local core major minor patch build code
 
   core="${version%%[-+]*}"
   if [[ ! "$core" =~ ^([0-9]+)(\.([0-9]+))?(\.([0-9]+))?(\.([0-9]+))?$ ]]; then
@@ -84,7 +84,20 @@ semantic_version_code() {
   patch="${BASH_REMATCH[5]:-0}"
   build="${BASH_REMATCH[7]:-0}"
 
-  printf '%d\n' "$((10#$major * 10000 + 10#$minor * 1000 + 10#$patch * 100 + 10#$build))"
+  # Reserve two decimal digits for every component after major. For date-based
+  # versions this is YYYYMMDDbb, where bb is an optional same-day build.
+  # The previous packing overlapped month and day values (2026.7.14 and
+  # 2026.8.4 both became 20268400) and fell behind older run-number overrides.
+  if (( ${#major} > 4 || 10#$major > 2100 || 10#$minor > 99 || 10#$patch > 99 || 10#$build > 99 )); then
+    return 1
+  fi
+
+  code="$((10#$major * 1000000 + 10#$minor * 10000 + 10#$patch * 100 + 10#$build))"
+  if (( code < 1 || code > 2100000000 )); then
+    return 1
+  fi
+
+  printf '%d\n' "$code"
 }
 
 # Apple's CFBundleShortVersionString accepts at most three integer components.

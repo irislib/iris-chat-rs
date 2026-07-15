@@ -65,8 +65,9 @@ These values are the common boundary between Android, iOS, and the Rust core:
 `IRIS_APP_VERSION_NAME` accepts an optional 4th `.build` segment
 (`YYYY.M.D.B`) so that re-releases on the same calendar day still get a unique
 version name on Zapstore and the htree release tree. The auto-derived
-`IRIS_APP_VERSION_CODE` is `major*10000 + minor*1000 + patch*100 + build`, which
-also keeps Android `versionCode` strictly increasing across same-day rebuilds.
+`IRIS_APP_VERSION_CODE` is `major*1000000 + minor*10000 + patch*100 + build`,
+which packs date releases as `YYYYMMDDbb` and keeps Android `versionCode`
+strictly increasing across same-day rebuilds.
 Apple's App Store rejects 4-part `CFBundleShortVersionString` values, so
 `scripts/ios-release` and `scripts/macos-build` strip the `.build` segment
 before passing `MARKETING_VERSION` to Xcode; uniqueness on Apple comes from

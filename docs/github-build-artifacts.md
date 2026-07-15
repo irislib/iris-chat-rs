@@ -34,12 +34,12 @@ commit before any platform job starts.
 The selected commit is the sole source of version identity:
 
 - version name: the commit's UTC date as `YYYY.M.D`
-- version code: `year * 10000 + month * 1000 + day * 100`
+- version code: `year * 1000000 + month * 10000 + day * 100`
 - build timestamp: the commit timestamp in UTC
 - build SHA: the selected full commit plus its 12-character short form
 
 For example, a commit from 2026-07-14 has version `2026.7.14` and version code
-`20268400`. Every job receives these values from the metadata job. Rebuilding
+`2026071400`. Every job receives these values from the metadata job. Rebuilding
 the same commit produces the same identity regardless of dispatch date.
 
 ## Workflow
