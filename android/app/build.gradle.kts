@@ -67,6 +67,8 @@ val cargoTargetDir =
             ?: "${System.getProperty("user.home")}/.cache/cargo-target",
     )
 val publicRelayFallbackCsv = "wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social,wss://temp.iris.to"
+val deviceApprovalRelayUrl =
+    System.getenv("IRIS_DEVICE_APPROVAL_RELAY_URL") ?: "wss://temp.iris.to"
 
 fun configValue(propertyName: String, envName: String): String? =
     localProperties.getProperty(propertyName)?.takeIf { it.isNotBlank() }
@@ -310,6 +312,7 @@ val buildRustHostDebug by tasks.registering(Exec::class) {
     environment("IRIS_BUILD_GIT_SHA", buildGitSha)
     environment("IRIS_BUILD_TIMESTAMP_UTC", buildTimestampUtc)
     environment("IRIS_DEFAULT_RELAYS", debugRelayConfig.relaysCsv)
+    environment("IRIS_DEVICE_APPROVAL_RELAY_URL", deviceApprovalRelayUrl)
     environment("IRIS_RELAY_SET_ID", debugRelayConfig.relaySetId)
     environment("IRIS_TRUSTED_TEST_BUILD", debugRelayConfig.trustedTestBuild.toString())
     commandLine(
@@ -326,6 +329,7 @@ val buildRustHostDebug by tasks.registering(Exec::class) {
     inputs.property("ndrBuildGitSha", buildGitSha)
     inputs.property("ndrBuildTimestampUtc", buildTimestampUtc)
     inputs.property("ndrDefaultRelays", debugRelayConfig.relaysCsv)
+    inputs.property("ndrDeviceApprovalRelayUrl", deviceApprovalRelayUrl)
     inputs.property("ndrRelaySetId", debugRelayConfig.relaySetId)
     inputs.property("ndrTrustedTestBuild", debugRelayConfig.trustedTestBuild)
     inputs.property("cargoTargetDir", cargoTargetDir.absolutePath)
@@ -391,6 +395,7 @@ fun registerRustAndroidTask(
         environment("IRIS_BUILD_GIT_SHA", buildGitSha)
         environment("IRIS_BUILD_TIMESTAMP_UTC", buildTimestampUtc)
         environment("IRIS_DEFAULT_RELAYS", relayConfig.relaysCsv)
+        environment("IRIS_DEVICE_APPROVAL_RELAY_URL", deviceApprovalRelayUrl)
         environment("IRIS_RELAY_SET_ID", relayConfig.relaySetId)
         environment("IRIS_TRUSTED_TEST_BUILD", relayConfig.trustedTestBuild.toString())
         val command =
@@ -419,6 +424,7 @@ fun registerRustAndroidTask(
         inputs.property("ndrBuildGitSha", buildGitSha)
         inputs.property("ndrBuildTimestampUtc", buildTimestampUtc)
         inputs.property("ndrDefaultRelays", relayConfig.relaysCsv)
+        inputs.property("ndrDeviceApprovalRelayUrl", deviceApprovalRelayUrl)
         inputs.property("ndrRelaySetId", relayConfig.relaySetId)
         inputs.property("ndrTrustedTestBuild", relayConfig.trustedTestBuild)
         inputs.property("cargoTargetDir", cargoTargetDir.absolutePath)

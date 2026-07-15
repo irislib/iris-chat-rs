@@ -12,6 +12,7 @@ pub(super) const BUILD_CHANNEL: &str = env!("IRIS_BUILD_CHANNEL");
 pub(super) const BUILD_GIT_SHA: &str = env!("IRIS_BUILD_GIT_SHA");
 pub(super) const BUILD_TIMESTAMP_UTC: &str = env!("IRIS_BUILD_TIMESTAMP_UTC");
 pub(super) const COMPILED_DEFAULT_RELAYS_CSV: &str = env!("IRIS_DEFAULT_RELAYS");
+pub(super) const COMPILED_DEVICE_APPROVAL_RELAY_URL: &str = env!("IRIS_DEVICE_APPROVAL_RELAY_URL");
 pub(super) const RELAY_SET_ID: &str = env!("IRIS_RELAY_SET_ID");
 pub(super) const TRUSTED_TEST_BUILD: &str = env!("IRIS_TRUSTED_TEST_BUILD");
 pub(super) const MAX_SEEN_EVENT_IDS: usize = 2048;

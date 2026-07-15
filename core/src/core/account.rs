@@ -7,8 +7,6 @@ use super::persistence::apply_persisted_preferences;
 use super::*;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
-pub(super) const DEVICE_APPROVAL_RELAY_URL: &str = "wss://temp.iris.to";
-
 impl AppCore {
     pub(super) fn create_account(&mut self, name: &str) {
         self.state.busy.creating_account = true;

@@ -1,4 +1,4 @@
-use super::account::DEVICE_APPROVAL_RELAY_URL;
+use super::config::COMPILED_DEVICE_APPROVAL_RELAY_URL;
 use super::persistence::apply_persisted_preferences;
 use super::*;
 
@@ -68,7 +68,7 @@ impl AppCore {
             protocol_engine: None,
             pending_linked_device: None,
             device_approval_relay_urls: relay_urls_from_strings(&[
-                DEVICE_APPROVAL_RELAY_URL.to_string()
+                COMPILED_DEVICE_APPROVAL_RELAY_URL.to_string(),
             ]),
             private_chat_invites: BTreeMap::new(),
             threads: BTreeMap::new(),

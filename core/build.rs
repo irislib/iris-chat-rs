@@ -3,6 +3,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const FALLBACK_RELAYS: &str = "wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social,wss://temp.iris.to";
+const FALLBACK_DEVICE_APPROVAL_RELAY: &str = "wss://temp.iris.to";
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -13,6 +14,7 @@ fn main() {
         "IRIS_BUILD_GIT_SHA",
         "IRIS_BUILD_TIMESTAMP_UTC",
         "IRIS_DEFAULT_RELAYS",
+        "IRIS_DEVICE_APPROVAL_RELAY_URL",
         "IRIS_RELAY_SET_ID",
         "IRIS_TRUSTED_TEST_BUILD",
         "SOURCE_DATE_EPOCH",
@@ -48,6 +50,11 @@ fn main() {
     emit(
         "IRIS_DEFAULT_RELAYS",
         env::var("IRIS_DEFAULT_RELAYS").unwrap_or_else(|_| FALLBACK_RELAYS.to_string()),
+    );
+    emit(
+        "IRIS_DEVICE_APPROVAL_RELAY_URL",
+        env::var("IRIS_DEVICE_APPROVAL_RELAY_URL")
+            .unwrap_or_else(|_| FALLBACK_DEVICE_APPROVAL_RELAY.to_string()),
     );
     emit(
         "IRIS_RELAY_SET_ID",

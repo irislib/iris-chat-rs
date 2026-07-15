@@ -3,6 +3,8 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT_DIR}/scripts/mobile_relay_common.sh"
 ANDROID_DIR="${ROOT_DIR}/android"
 ANDROID_TEST_AVD="${IRIS_ANDROID_QA_AVD:-Medium_Phone_API_36.1}"
 PACKAGE_NAME="to.iris.chat.debug"
@@ -64,6 +66,17 @@ reset_android_app_state() {
   "${adb_path}" -s "${serial}" shell pm clear "${TEST_PACKAGE_NAME}" >/dev/null 2>&1 || true
 }
 
+remove_android_relay_reverse() {
+  local serial="$1"
+  local sdk_dir adb_path
+  sdk_dir="$(android_sdk_dir)"
+  adb_path="${sdk_dir}/platform-tools/adb"
+  if [[ -n "${sdk_dir}" && -x "${adb_path}" ]]; then
+    "${adb_path}" -s "${serial}" reverse --remove "tcp:$(local_relay_port)" \
+      >/dev/null 2>&1 || true
+  fi
+}
+
 run_filtered_android_test() {
   local serial="$1"
   local classes="$2"
@@ -98,6 +111,29 @@ if [[ -z "${ANDROID_SERIAL_VALUE}" ]]; then
   echo "Failed to resolve an Android emulator serial for qa-native-contract." >&2
   exit 1
 fi
+
+if [[ -z "${IRIS_LOCAL_RELAY_PORT:-}" ]]; then
+  IRIS_LOCAL_RELAY_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+)"
+  export IRIS_LOCAL_RELAY_PORT
+fi
+RELAY_LOG="${TMPDIR:-/tmp}/iris-chat-native-contract-relay-${IRIS_LOCAL_RELAY_PORT}.log"
+RELAY_PID="$(start_local_rust_relay "${RELAY_LOG}")"
+trap 'remove_android_relay_reverse "${ANDROID_SERIAL_VALUE}"; stop_local_rust_relay "${RELAY_PID}"' EXIT
+
+SDK_DIR="$(android_sdk_dir)"
+ADB_PATH="${SDK_DIR}/platform-tools/adb"
+"${ADB_PATH}" -s "${ANDROID_SERIAL_VALUE}" reverse \
+  "tcp:$(local_relay_port)" "tcp:$(local_relay_port)"
+export IRIS_DEBUG_RELAYS="$(local_android_loopback_relay_url)"
+export IRIS_DEVICE_APPROVAL_RELAY_URL="${IRIS_DEBUG_RELAYS}"
+export IRIS_DEBUG_RELAY_SET_ID="$(local_relay_set_id)"
 
 run_filtered_android_test "${ANDROID_SERIAL_VALUE}" "${CONTRACT_CLASSES}"
 run_filtered_android_test "${ANDROID_SERIAL_VALUE}" "${SMOKE_CLASSES}"

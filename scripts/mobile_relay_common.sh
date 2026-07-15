@@ -191,6 +191,7 @@ build_android_debug_apks() {
   (
     cd "${ROOT_DIR}/android" &&
       IRIS_DEBUG_RELAYS="${relay_url}" \
+      IRIS_DEVICE_APPROVAL_RELAY_URL="${relay_url}" \
       IRIS_DEBUG_RELAY_SET_ID="${relay_set_id}" \
       ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
   )
