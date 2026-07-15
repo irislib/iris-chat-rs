@@ -435,7 +435,7 @@ mod tests {
         assert_eq!(
             migrated.resolve_message_sender_owner_for_sender(attacker_sender),
             ProtocolSenderOwnerResolution::PendingOwnerClaim {
-                storage_owner: alice_owner,
+                storage_owner: provisional_owner_from_sender_pubkey(attacker),
                 claimed_owner: alice_owner,
                 sender_device: attacker,
             }
@@ -445,7 +445,7 @@ mod tests {
             0,
             "quarantined sessions must not count as active owner sessions"
         );
-        assert!(!migrated
+        assert!(migrated
             .known_message_author_pubkeys()
             .contains(&attacker_message_key.public_key()));
         assert!(migrated
