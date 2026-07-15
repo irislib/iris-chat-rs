@@ -182,7 +182,6 @@ quit_idle_ios_simulator_app() {
 wait_for_bootstatus() {
   local udid="$1"
   local timeout_secs="${IRIS_IOS_BOOTSTATUS_TIMEOUT_SECS:-120}"
-  local fallback_sleep="${IRIS_IOS_BOOTSTATUS_FALLBACK_SLEEP_SECS:-20}"
   local deadline=$((SECONDS + timeout_secs))
   local pid=""
 
@@ -201,11 +200,6 @@ wait_for_bootstatus() {
         kill -9 "${pid}" >/dev/null 2>&1 || true
       fi
       wait "${pid}" >/dev/null 2>&1 || true
-      if xcrun simctl list devices booted | grep -q "(${udid}) (Booted)"; then
-        echo "Timed out waiting for iOS simulator ${udid} bootstatus; continuing because simctl reports Booted." >&2
-        sleep "${fallback_sleep}"
-        return 0
-      fi
       echo "Timed out waiting for iOS simulator ${udid} to boot." >&2
       return 1
     fi
@@ -215,12 +209,17 @@ wait_for_bootstatus() {
   if wait "${pid}"; then
     return 0
   fi
-  if xcrun simctl list devices booted | grep -q "(${udid}) (Booted)"; then
-    echo "iOS simulator ${udid} bootstatus failed; continuing because simctl reports Booted." >&2
-    sleep "${fallback_sleep}"
-    return 0
-  fi
+  echo "iOS simulator ${udid} failed bootstatus readiness." >&2
   return 1
+}
+
+recover_unready_device() {
+  local udid="$1"
+  echo "Resetting iOS test simulator ${udid} after bootstatus did not become ready." >&2
+  xcrun simctl shutdown "${udid}" >/dev/null 2>&1 || true
+  xcrun simctl erase "${udid}"
+  xcrun simctl boot "${udid}"
+  wait_for_bootstatus "${udid}"
 }
 
 boot_device() {
@@ -235,15 +234,19 @@ boot_device() {
   fi
   if [[ "${boot_status}" -ne 0 ]]; then
     if xcrun simctl list devices booted | grep -q "(${udid}) (Booted)"; then
-      return 0
+      boot_status=0
+    else
+      printf '%s\n' "${boot_output}" >&2
+      if grep -qi "deleted device" <<< "${boot_output}"; then
+        return 44
+      fi
+      return "${boot_status}"
     fi
-    printf '%s\n' "${boot_output}" >&2
-    if grep -qi "deleted device" <<< "${boot_output}"; then
-      return 44
-    fi
-    return "${boot_status}"
   fi
-  wait_for_bootstatus "${udid}"
+  if wait_for_bootstatus "${udid}"; then
+    return 0
+  fi
+  recover_unready_device "${udid}"
 }
 
 TARGET_UDIDS=()

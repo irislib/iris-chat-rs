@@ -156,7 +156,6 @@ iris_e2e_quit_idle_ios_simulator_app() {
 iris_e2e_wait_for_ios_bootstatus() {
   local udid="$1"
   local timeout_secs="${2:-${IRIS_IOS_BOOTSTATUS_TIMEOUT_SECS:-120}}"
-  local fallback_sleep="${IRIS_IOS_BOOTSTATUS_FALLBACK_SLEEP_SECS:-20}"
   local deadline=$((SECONDS + timeout_secs))
   local pid=""
 
@@ -166,11 +165,6 @@ iris_e2e_wait_for_ios_bootstatus() {
     if (( SECONDS >= deadline )); then
       kill "${pid}" >/dev/null 2>&1 || true
       wait "${pid}" >/dev/null 2>&1 || true
-      if xcrun simctl list devices booted | grep -q "(${udid}) (Booted)"; then
-        echo "Timed out waiting for iOS simulator ${udid} bootstatus; continuing because simctl reports Booted." >&2
-        sleep "${fallback_sleep}"
-        return 0
-      fi
       echo "Timed out waiting for iOS simulator ${udid} to boot." >&2
       return 1
     fi
@@ -180,11 +174,7 @@ iris_e2e_wait_for_ios_bootstatus() {
   if wait "${pid}"; then
     return 0
   fi
-  if xcrun simctl list devices booted | grep -q "(${udid}) (Booted)"; then
-    echo "iOS simulator ${udid} bootstatus failed; continuing because simctl reports Booted." >&2
-    sleep "${fallback_sleep}"
-    return 0
-  fi
+  echo "iOS simulator ${udid} failed bootstatus readiness." >&2
   return 1
 }
 

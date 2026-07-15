@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pre-body-timeout-secs",
         type=int,
-        default=int(os.environ.get("IRIS_IOS_HARNESS_PRE_BODY_TIMEOUT_SECS", "0")),
+        default=int(os.environ.get("IRIS_IOS_HARNESS_PRE_BODY_TIMEOUT_SECS", "120")),
         help="Optional timeout for test-without-building runs that do not reach the harness test body.",
     )
     parser.add_argument(
@@ -114,8 +114,6 @@ def simulator_is_booted(udid: str) -> bool:
 
 def wait_for_simulator_boot(udid: str) -> None:
     timeout_secs = int(os.environ.get("IRIS_IOS_BOOTSTATUS_TIMEOUT_SECS", "120"))
-    fallback_sleep = int(os.environ.get("IRIS_IOS_BOOTSTATUS_FALLBACK_SLEEP_SECS", "20"))
-    booted_grace_secs = int(os.environ.get("IRIS_IOS_BOOTSTATUS_BOOTED_GRACE_SECS", "10"))
     process = subprocess.Popen(
         ["xcrun", "simctl", "bootstatus", udid, "-b"],
         stdout=subprocess.DEVNULL,
@@ -123,63 +121,24 @@ def wait_for_simulator_boot(udid: str) -> None:
         text=True,
     )
     deadline = time.monotonic() + timeout_secs
-    booted_since: float | None = None
     while True:
         if process.poll() is not None:
             if process.returncode == 0:
                 return
-            break
+            raise SystemExit(f"Simulator {udid} failed bootstatus readiness.")
 
         now = time.monotonic()
-        if simulator_is_booted(udid):
-            if booted_since is None:
-                booted_since = now
-            elif now - booted_since >= booted_grace_secs:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-                print(
-                    f"INSTRUMENTATION_RETRY: bootstatus still waiting for {udid}; "
-                    "continuing because simctl reports Booted",
-                    flush=True,
-                )
-                time.sleep(fallback_sleep)
-                return
-        else:
-            booted_since = None
-
         if now >= deadline:
             process.kill()
             process.wait()
-            if simulator_is_booted(udid):
-                print(
-                    f"INSTRUMENTATION_RETRY: bootstatus timed out for {udid}; "
-                    "continuing because simctl reports Booted",
-                    flush=True,
-                )
-                time.sleep(fallback_sleep)
-                return
-            raise SystemExit(f"Timed out waiting for simulator {udid} to boot.")
+            raise SystemExit(f"Timed out waiting for simulator {udid} to finish bootstatus readiness.")
 
         time.sleep(2)
 
-    if simulator_is_booted(udid):
-        print(
-            f"INSTRUMENTATION_RETRY: bootstatus failed for {udid}; continuing because simctl reports Booted",
-            flush=True,
-        )
-        time.sleep(fallback_sleep)
-        return
-    raise SystemExit(f"Simulator {udid} did not finish booting.")
-
 
 def ensure_simulator_booted(udid: str) -> None:
-    if simulator_is_booted(udid):
-        return
-    boot_simulator(udid)
+    if not simulator_is_booted(udid):
+        boot_simulator(udid)
     wait_for_simulator_boot(udid)
 
 

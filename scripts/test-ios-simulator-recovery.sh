@@ -34,7 +34,11 @@ elif [[ "$*" == "simctl create Iris Chat iPhone com.apple.CoreSimulator.SimDevic
 elif [[ "$*" == "simctl boot ${FAKE_FRESH_UDID}" ]]; then
   touch "${FAKE_BOOTED_MARKER}"
 elif [[ "$*" == "simctl bootstatus ${FAKE_FRESH_UDID} -b" ]]; then
-  :
+  [[ -f "${FAKE_RECOVERED_MARKER}" ]]
+elif [[ "$*" == "simctl shutdown ${FAKE_FRESH_UDID}" ]]; then
+  rm -f "${FAKE_BOOTED_MARKER}"
+elif [[ "$*" == "simctl erase ${FAKE_FRESH_UDID}" ]]; then
+  touch "${FAKE_RECOVERED_MARKER}"
 else
   echo "unexpected fake xcrun invocation: $*" >&2
   exit 99
@@ -42,12 +46,27 @@ fi
 EOF
 chmod +x "${TMP_DIR}/xcrun"
 
+touch "${TMP_DIR}/booted"
+if PATH="${TMP_DIR}:${PATH}" \
+  FAKE_XCRUN_LOG="${LOG}" \
+  FAKE_STALE_UDID="${STALE_UDID}" \
+  FAKE_FRESH_UDID="${FRESH_UDID}" \
+  FAKE_BOOTED_MARKER="${TMP_DIR}/booted" \
+  FAKE_RECOVERED_MARKER="${TMP_DIR}/recovered" \
+  bash -c 'source "$1"; iris_e2e_wait_for_ios_bootstatus "$2" 1' \
+  _ "${ROOT}/scripts/e2e_prerelease_common.sh" "${FRESH_UDID}"; then
+  echo "Common iOS readiness helper accepted a Booted label after bootstatus failed." >&2
+  exit 1
+fi
+rm -f "${TMP_DIR}/booted"
+
 destination="$({
   PATH="${TMP_DIR}:${PATH}" \
     FAKE_XCRUN_LOG="${LOG}" \
     FAKE_STALE_UDID="${STALE_UDID}" \
     FAKE_FRESH_UDID="${FRESH_UDID}" \
     FAKE_BOOTED_MARKER="${TMP_DIR}/booted" \
+    FAKE_RECOVERED_MARKER="${TMP_DIR}/recovered" \
     IRIS_E2E_CLOSE_STALE_IOS_SIMS=0 \
     "${ROOT}/scripts/ios-simulator-destination"
 })"
@@ -57,5 +76,8 @@ grep -q "simctl boot ${STALE_UDID}" "${LOG}"
 ! grep -q "simctl delete" "${LOG}"
 grep -q "simctl create Iris Chat iPhone" "${LOG}"
 grep -q "simctl bootstatus ${FRESH_UDID} -b" "${LOG}"
+grep -q "simctl shutdown ${FRESH_UDID}" "${LOG}"
+grep -q "simctl erase ${FRESH_UDID}" "${LOG}"
+[[ "$(grep -c "simctl boot ${FRESH_UDID}" "${LOG}")" -eq 2 ]]
 
 echo "iOS simulator recovery harness passed"
