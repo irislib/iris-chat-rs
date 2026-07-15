@@ -49,6 +49,7 @@ final class MockRustApp: RustAppClient {
     private var chatSnapshotCallCountStorage = 0
     private let chatSnapshotCallCountLock = NSLock()
     private var prepareForSuspendCalls = 0
+    private var prepareForSuspendCallback: (() -> Void)?
     private let prepareForSuspendLock = NSLock()
     private var shutdownCalls = 0
     private let shutdownLock = NSLock()
@@ -70,6 +71,12 @@ final class MockRustApp: RustAppClient {
         prepareForSuspendLock.lock()
         defer { prepareForSuspendLock.unlock() }
         return prepareForSuspendCalls
+    }
+
+    func onNextPrepareForSuspend(_ callback: @escaping () -> Void) {
+        prepareForSuspendLock.lock()
+        prepareForSuspendCallback = callback
+        prepareForSuspendLock.unlock()
     }
 
     var shutdownCallCount: Int {
@@ -255,7 +262,10 @@ final class MockRustApp: RustAppClient {
     func prepareForSuspend() {
         prepareForSuspendLock.lock()
         prepareForSuspendCalls += 1
+        let callback = prepareForSuspendCallback
+        prepareForSuspendCallback = nil
         prepareForSuspendLock.unlock()
+        callback?()
     }
 
     func shutdown() {
@@ -924,14 +934,18 @@ final class IrisChatTests: XCTestCase {
             environment: [:]
         )
 
+        let firstPreparation = expectation(description: "first suspend preparation")
+        rust.onNextPrepareForSuspend { firstPreparation.fulfill() }
         manager.appBackgrounded()
         manager.appBackgrounded()
-        try await Task.sleep(nanoseconds: 50_000_000)
+        await fulfillment(of: [firstPreparation], timeout: 2)
         XCTAssertEqual(rust.prepareForSuspendCallCount, 1)
 
+        let secondPreparation = expectation(description: "second suspend preparation")
+        rust.onNextPrepareForSuspend { secondPreparation.fulfill() }
         manager.appForegrounded()
         manager.appBackgrounded()
-        try await Task.sleep(nanoseconds: 50_000_000)
+        await fulfillment(of: [secondPreparation], timeout: 2)
         XCTAssertEqual(rust.prepareForSuspendCallCount, 2)
         XCTAssertEqual(rust.dispatchedActions.last, .appForegrounded)
     }
