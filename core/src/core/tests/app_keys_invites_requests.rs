@@ -10,12 +10,16 @@ fn peer_profile_debug_reports_known_user_context() {
     let app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 10)]);
 
     core.apply_known_app_keys_snapshot(peer.public_key(), &app_keys, 10);
+    let app_keys_event = app_keys
+        .get_event_at(peer.public_key(), 10)
+        .sign_with_keys(&peer)
+        .expect("signed peer appkeys");
     let batch = core
         .protocol_engine
         .as_mut()
         .expect("protocol engine")
-        .ingest_app_keys_snapshot(peer.public_key(), app_keys, 10)
-        .expect("ingest app keys");
+        .ingest_app_keys_event(&app_keys_event)
+        .expect("ingest app keys event");
     core.process_protocol_engine_retry_batch("test_app_keys", batch);
     core.remember_recent_handshake_peer(peer_hex.clone(), peer_device_hex, 123);
     core.handle_action(AppAction::CreateChat {
@@ -2167,6 +2171,7 @@ fn private_invite_first_message_installs_creator_session() {
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
     });
+    prove_invite_owner(&mut bob, &alice_owner, &alice_device, 10);
     assert_eq!(bob.state.toast, None);
     assert_eq!(bob.active_chat_id, Some(alice_owner.public_key().to_hex()));
 
@@ -2185,6 +2190,7 @@ fn private_invite_first_message_installs_creator_session() {
         .next()
         .expect("invite response event");
     alice.handle_relay_event(response);
+    prove_invite_owner(&mut alice, &bob_owner, &bob_device, 10);
 
     assert!(
         alice.protocol_engine.as_ref().is_some_and(|engine| {
@@ -2236,6 +2242,7 @@ fn accepting_invite_alone_installs_session_and_publishes_response() {
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
     });
+    prove_invite_owner(&mut bob, &alice_owner, &alice_device, 10);
     assert_eq!(bob.state.toast, None);
 
     // After accept alone (no SendMessage yet), Bob must already have a session
@@ -2262,6 +2269,7 @@ fn accepting_invite_alone_installs_session_and_publishes_response() {
         .next()
         .expect("invite response event");
     alice.handle_relay_event(response);
+    prove_invite_owner(&mut alice, &bob_owner, &bob_device, 10);
     assert!(
         alice.protocol_engine.as_ref().is_some_and(|engine| engine
             .active_session_count_for_owner(bob_owner.public_key())
@@ -2391,7 +2399,7 @@ fn runtime_message_from_known_sender_is_kept_when_unknowns_are_blocked() {
 }
 
 #[test]
-fn private_invite_response_from_unknown_sender_can_be_blocked() {
+fn private_invite_capability_response_ignores_unknown_dm_setting_after_owner_roster() {
     let alice_owner = Keys::generate();
     let alice_device = Keys::generate();
     let bob_owner = Keys::generate();
@@ -2418,6 +2426,7 @@ fn private_invite_response_from_unknown_sender_can_be_blocked() {
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
     });
+    prove_invite_owner(&mut bob, &alice_owner, &alice_device, 10);
     bob.handle_action(AppAction::SendMessage {
         chat_id: alice_owner.public_key().to_hex(),
         text: "hello from stranger".to_string(),
@@ -2428,14 +2437,15 @@ fn private_invite_response_from_unknown_sender_can_be_blocked() {
         .expect("invite response event");
 
     alice.handle_relay_event(response);
+    prove_invite_owner(&mut alice, &bob_owner, &bob_device, 10);
 
     assert!(
-        !alice.threads.contains_key(&bob_owner.public_key().to_hex()),
-        "blocked invite response must not create a thread for the stranger"
+        alice.threads.contains_key(&bob_owner.public_key().to_hex()),
+        "possession of the private invite capability plus owner roster admits the response"
     );
     assert!(
-        !alice.private_chat_invites.is_empty(),
-        "blocked invite response must not consume the invite"
+        alice.private_chat_invites.is_empty(),
+        "the verified response consumes the single-use invite"
     );
 }
 

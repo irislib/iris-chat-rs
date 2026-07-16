@@ -218,9 +218,20 @@ fn unknown_users_toggle_off_excludes_non_accepted_peers_from_subs() {
 
     let mut bob = logged_in_test_core("push-filter-toggle-bob", &bob_owner, &bob_device);
     bob.pending_relay_publishes.clear();
+    let alice_app_keys = signed_app_keys_authorization_event(
+        &alice_owner,
+        alice_device.public_key(),
+        10,
+    );
+    bob.handle_relay_event(alice_app_keys.clone());
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
     });
+    ingest_invite_owner_app_keys(
+        &mut bob,
+        alice_owner.public_key(),
+        vec![alice_app_keys],
+    );
     bob.handle_action(AppAction::SendMessage {
         chat_id: alice_owner.public_key().to_hex(),
         text: "hi alice".to_string(),
@@ -229,7 +240,18 @@ fn unknown_users_toggle_off_excludes_non_accepted_peers_from_subs() {
         .into_iter()
         .next()
         .expect("invite response event");
+    let bob_app_keys = signed_app_keys_authorization_event(
+        &bob_owner,
+        bob_device.public_key(),
+        10,
+    );
+    alice.handle_relay_event(bob_app_keys.clone());
     alice.handle_relay_event(response);
+    ingest_invite_owner_app_keys(
+        &mut alice,
+        bob_owner.public_key(),
+        vec![bob_app_keys],
+    );
     let messages = pending_events_with_kind(&bob, MESSAGE_EVENT_KIND);
     for event in messages {
         alice.handle_relay_event(event);
@@ -428,7 +450,7 @@ fn incoming_direct_message_from_known_peer_device_routes_to_owner_thread() {
 }
 
 #[test]
-fn incoming_direct_message_from_tracked_claimed_peer_device_routes_to_owner_thread() {
+fn incoming_direct_message_from_unverified_claimed_peer_device_is_not_attributed_to_owner() {
     let owner = Keys::generate();
     let local_device = Keys::generate();
     let peer_owner = Keys::generate();
@@ -475,7 +497,7 @@ fn incoming_direct_message_from_tracked_claimed_peer_device_routes_to_owner_thre
         None,
     );
 
-    let (content, inner_id) = runtime_rumor_json(
+    let (content, _) = runtime_rumor_json(
         peer_owner.public_key(),
         CHAT_MESSAGE_KIND,
         "sent before app keys backfill",
@@ -495,12 +517,10 @@ fn incoming_direct_message_from_tracked_claimed_peer_device_routes_to_owner_thre
         .threads
         .get(&peer_owner_chat_id)
         .expect("peer owner thread");
-    assert_eq!(thread.messages.len(), 1);
-    assert_eq!(thread.messages[0].id, inner_id);
-    assert_eq!(thread.messages[0].body, "sent before app keys backfill");
+    assert!(thread.messages.is_empty());
     assert!(
         !core.threads.contains_key(&peer_device_chat_id),
-        "tracked claimed peer device must route to the owner chat while AppKeys are still catching up"
+        "an unverified owner claim must not create either an owner-attributed or device-attributed rumor"
     );
 }
 
@@ -2012,9 +2032,20 @@ fn group_delivered_receipt_is_queued_directly_to_message_author() {
         .clone();
 
     let mut bob = logged_in_test_core("group-delivered-author-only-bob", &bob_owner, &bob_device);
+    let alice_app_keys = signed_app_keys_authorization_event(
+        &alice_owner,
+        alice_device.public_key(),
+        10,
+    );
+    bob.handle_relay_event(alice_app_keys.clone());
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
     });
+    ingest_invite_owner_app_keys(
+        &mut bob,
+        alice_owner.public_key(),
+        vec![alice_app_keys],
+    );
     bob.pending_relay_publishes.clear();
 
     let group_id = "group-delivered-author-only".to_string();
@@ -2083,16 +2114,38 @@ fn group_seen_receipt_sent_directly_to_author_updates_sender_copy() {
 
     let mut bob = logged_in_test_core("group-seen-author-bob", &bob_owner, &bob_device);
     bob.pending_relay_publishes.clear();
+    let alice_app_keys = signed_app_keys_authorization_event(
+        &alice_owner,
+        alice_device.public_key(),
+        10,
+    );
+    bob.handle_relay_event(alice_app_keys.clone());
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
     });
+    ingest_invite_owner_app_keys(
+        &mut bob,
+        alice_owner.public_key(),
+        vec![alice_app_keys],
+    );
     bob.handle_action(AppAction::SendMessage {
         chat_id: alice_owner.public_key().to_hex(),
         text: "direct bootstrap".to_string(),
     });
+    let bob_app_keys = signed_app_keys_authorization_event(
+        &bob_owner,
+        bob_device.public_key(),
+        10,
+    );
+    alice.handle_relay_event(bob_app_keys.clone());
     for event in pending_events_with_kind(&bob, INVITE_RESPONSE_KIND) {
         alice.handle_relay_event(event);
     }
+    ingest_invite_owner_app_keys(
+        &mut alice,
+        bob_owner.public_key(),
+        vec![bob_app_keys],
+    );
     for event in pending_events_with_kind(&bob, MESSAGE_EVENT_KIND) {
         alice.handle_relay_event(event);
     }

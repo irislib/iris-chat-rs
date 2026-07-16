@@ -17,13 +17,12 @@ fn direct_send_readiness_advances_from_appkeys_and_invite_state() {
         DirectSendReadiness::MissingPeerAppKeys
     );
 
-    engine
-        .ingest_app_keys_snapshot(
-            peer_owner.public_key(),
-            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
-            1,
-        )
-        .expect("peer appkeys");
+    observe_peer_appkeys_for_test(
+        &mut engine,
+        &peer_owner,
+        &[peer_device.public_key()],
+        1,
+    );
     assert_eq!(
         engine.direct_send_readiness(peer_owner.public_key()),
         DirectSendReadiness::MissingPeerInviteOrSession
@@ -70,16 +69,16 @@ fn appcore_direct_text_queues_until_subscription_state_makes_peer_ready() {
         "queued direct message should keep peer AppKeys in subscription interest"
     );
 
+    let peer_app_keys_event = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 11)])
+        .get_event_at(peer_owner.public_key(), 11)
+        .sign_with_keys(&peer_owner)
+        .expect("signed peer appkeys");
     let app_keys_batch = core
         .protocol_engine
         .as_mut()
         .expect("protocol engine")
-        .ingest_app_keys_snapshot(
-            peer_owner.public_key(),
-            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 11)]),
-            11,
-        )
-        .expect("peer appkeys");
+        .ingest_app_keys_event(&peer_app_keys_event)
+        .expect("peer appkeys event");
     core.process_protocol_engine_retry_batch("test_peer_appkeys", app_keys_batch);
     let still_queued = core
         .threads
@@ -279,13 +278,12 @@ fn appcore_direct_send_storage_failure_rolls_back_protocol_state() {
         storage.clone() as Arc<dyn StorageAdapter>,
     );
     observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
-    engine
-        .ingest_app_keys_snapshot(
-            peer_owner.public_key(),
-            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
-            1,
-        )
-        .expect("peer appkeys");
+    observe_peer_appkeys_for_test(
+        &mut engine,
+        &peer_owner,
+        &[peer_device.public_key()],
+        1,
+    );
     let mut rng = OsRng;
     let mut ctx = ProtocolContext::new(NdrUnixSeconds(2), &mut rng);
     let invite = Invite::create_new_with_context(

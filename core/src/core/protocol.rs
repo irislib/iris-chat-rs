@@ -158,6 +158,16 @@ impl AppCore {
     }
 
     pub(super) fn retry_protocol_engine_pending_work(&mut self, reason: &'static str) {
+        if self.pending_private_invite_cleanup_retry {
+            self.retry_all_pending_private_invite_responses();
+        }
+        if let Some(owner) = self
+            .pending_outgoing_invite_acceptance
+            .as_ref()
+            .map(|pending| pending.claimed_owner)
+        {
+            self.resume_pending_outgoing_invite_acceptance(owner);
+        }
         let Some(protocol_engine) = self.protocol_engine.as_mut() else {
             return;
         };
@@ -261,6 +271,14 @@ impl AppCore {
                             .to_string()
                     }),
             );
+        }
+        owners.extend(
+            self.pending_private_invite_responses
+                .values()
+                .map(|pending| pending.claimed_owner.to_hex()),
+        );
+        if let Some(pending) = self.pending_outgoing_invite_acceptance.as_ref() {
+            owners.insert(pending.claimed_owner.to_hex());
         }
         owners.extend(self.app_keys.keys().cloned());
         if let Some(logged_in) = self.logged_in.as_ref() {

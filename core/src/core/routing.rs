@@ -128,6 +128,7 @@ impl AppCore {
     }
 
     pub(super) fn navigate_back(&mut self) {
+        self.reset_pending_invite_acceptance();
         if self.screen_stack.pop().is_none() {
             return;
         }

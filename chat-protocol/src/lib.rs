@@ -22,13 +22,13 @@ use nostr_double_ratchet::{
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub use direct_messages::{
-    DirectChatSnapshot, DirectMessageCommand, DirectMessageDelivery, DirectMessageService,
-    DirectMessageSnapshot, DirectThreadSnapshot,
+    DirectChatSnapshot, DirectInviteAcceptanceOutcome, DirectMessageCommand, DirectMessageDelivery,
+    DirectMessageService, DirectMessageSnapshot, DirectThreadSnapshot,
 };
 pub use nearby::{
     decode_nearby_envelope_frame, decode_nearby_envelope_json, decode_nearby_frame_json,

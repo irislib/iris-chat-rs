@@ -18,6 +18,7 @@ impl ProtocolEngine {
             owner_pubkey,
             local_owner,
             local_device,
+            local_device_secret: device_secret,
             storage,
             session_manager: SessionManager::new(local_owner, device_secret),
             group_manager: GroupEventManager::new(local_owner),
@@ -32,6 +33,9 @@ impl ProtocolEngine {
             group_roster_fact_histories: BTreeMap::new(),
             known_message_author_cache: std::cell::RefCell::new(None),
             known_message_author_cache_build_count: std::cell::Cell::new(0),
+            verified_app_keys_owners: BTreeSet::new(),
+            invite_owner_app_keys_evidence: BTreeMap::new(),
+            processed_private_invite_response_ids: Vec::new(),
             local_app_keys_observed: false,
             subscription_generation: 0,
             batch_depth: std::cell::Cell::new(0),
@@ -67,13 +71,17 @@ impl ProtocolEngine {
         let Some(raw) = storage.get(PROTOCOL_ENGINE_STATE_KEY)? else {
             return Ok(None);
         };
-        let Ok(state) = serde_json::from_str::<ProtocolEnginePersistedState>(&raw) else {
+        let Ok(mut state) = serde_json::from_str::<ProtocolEnginePersistedState>(&raw) else {
             return Ok(None);
         };
         if state.version != PROTOCOL_ENGINE_STATE_VERSION {
             return Ok(None);
         }
-
+        sanitize_invite_owner_persisted_state(&mut state);
+        quarantine_unverified_owner_rosters(
+            &mut state.session_manager,
+            &state.verified_app_keys_owners,
+        );
         let session_manager = SessionManager::from_snapshot(state.session_manager, device_secret)?;
         let group_manager = GroupEventManager::from_snapshot(state.group_manager)?;
         let mut delivered_group_sender_key_acks = state.delivered_group_sender_key_acks;
@@ -95,6 +103,7 @@ impl ProtocolEngine {
             owner_pubkey,
             local_owner,
             local_device,
+            local_device_secret: device_secret,
             storage,
             session_manager,
             group_manager,
@@ -109,7 +118,11 @@ impl ProtocolEngine {
             group_roster_fact_histories: state.group_roster_fact_histories,
             known_message_author_cache: std::cell::RefCell::new(None),
             known_message_author_cache_build_count: std::cell::Cell::new(0),
-            local_app_keys_observed: false,
+            local_app_keys_observed: state.verified_app_keys_owners.contains(&local_owner),
+            verified_app_keys_owners: state.verified_app_keys_owners,
+            invite_owner_app_keys_evidence: state.invite_owner_app_keys_evidence,
+            processed_private_invite_response_ids: state
+                .processed_private_invite_response_ids,
             subscription_generation: state.subscription_generation,
             batch_depth: std::cell::Cell::new(0),
             batch_persist_dirty: std::cell::Cell::new(false),
@@ -217,15 +230,28 @@ impl ProtocolEngine {
 
     pub fn is_known_local_owner_device(&self, device_pubkey: PublicKey) -> bool {
         let device_pubkey = ndr_device(device_pubkey);
+        if device_pubkey == self.local_device {
+            return true;
+        }
+        if !self.verified_app_keys_owners.contains(&self.local_owner) {
+            return false;
+        }
         self.session_manager
             .snapshot()
             .users
             .into_iter()
             .find(|user| user.owner_pubkey == self.local_owner)
             .is_some_and(|user| {
-                user.devices
+                user.roster.as_ref().is_some_and(|roster| {
+                    roster.get_device(&device_pubkey).is_some()
+                }) && user
+                    .devices
                     .iter()
-                    .any(|device| device.device_pubkey == device_pubkey)
+                    .any(|device| {
+                        device.device_pubkey == device_pubkey
+                            && device.authorized
+                            && !device.is_stale
+                    })
             })
     }
 
@@ -242,12 +268,22 @@ impl ProtocolEngine {
                     continue;
                 }
                 if user.owner_pubkey != provisional_owner {
-                    return public_owner(user.owner_pubkey).ok().map(|owner| {
-                        ProtocolDeviceOwnerHint {
-                            owner,
-                            verified: true,
-                        }
-                    });
+                    if self.verified_app_keys_owners.contains(&user.owner_pubkey)
+                        && user.roster.as_ref().is_some_and(|roster| {
+                            roster.get_device(&record.device_pubkey).is_some()
+                        })
+                    {
+                        return public_owner(user.owner_pubkey).ok().map(|owner| {
+                            ProtocolDeviceOwnerHint {
+                                owner,
+                                verified: true,
+                            }
+                        });
+                    }
+                    if claimed_owner.is_none() {
+                        claimed_owner = Some(user.owner_pubkey);
+                    }
+                    continue;
                 }
                 if claimed_owner.is_none() {
                     claimed_owner = record.claimed_owner_pubkey;
@@ -279,7 +315,10 @@ impl ProtocolEngine {
                 continue;
             }
             if user.owner_pubkey != provisional_owner {
-                return Some(user.owner_pubkey);
+                if self.verified_app_keys_owners.contains(&user.owner_pubkey) {
+                    return Some(user.owner_pubkey);
+                }
+                continue;
             }
             provisional_match = Some(user.owner_pubkey);
         }
@@ -420,7 +459,18 @@ impl ProtocolEngine {
             if !accept_owner(owner) {
                 continue;
             }
+            let roster = user.roster.clone();
             for device in user.devices {
+                if !device.authorized
+                    || device.is_stale
+                    || !self.owner_device_binding_is_verified_in_roster(
+                        user.owner_pubkey,
+                        device.device_pubkey,
+                        roster.as_ref(),
+                    )
+                {
+                    continue;
+                }
                 if let Some(session) = device.active_session.as_ref() {
                     collect_expected_sender_pubkeys(session, &mut authors);
                 }
@@ -554,6 +604,13 @@ impl ProtocolEngine {
                     roster
                         .devices()
                         .iter()
+                        .filter(|device| {
+                            self.owner_device_binding_is_verified_in_roster(
+                                owner,
+                                device.device_pubkey,
+                                Some(&roster),
+                            )
+                        })
                         .filter_map(|device| public_device(device.device_pubkey).ok())
                         .collect::<Vec<_>>()
                 })
@@ -571,7 +628,18 @@ impl ProtocolEngine {
             if user.owner_pubkey != owner {
                 continue;
             }
+            let roster = user.roster.clone();
             for device in user.devices {
+                if !device.authorized
+                    || device.is_stale
+                    || !self.owner_device_binding_is_verified_in_roster(
+                        owner,
+                        device.device_pubkey,
+                        roster.as_ref(),
+                    )
+                {
+                    continue;
+                }
                 if let Some(session) = device.active_session.as_ref() {
                     collect_expected_sender_pubkeys(session, &mut authors);
                 }
@@ -625,6 +693,30 @@ impl ProtocolEngine {
             .collect()
     }
 
+    pub fn verified_message_session_snapshots_for_owner(
+        &self,
+        owner_pubkey: PublicKey,
+    ) -> Vec<ProtocolMessageSessionDebugSnapshot> {
+        let owner = ndr_owner(owner_pubkey);
+        let mut snapshot = self.session_manager.snapshot();
+        for user in &mut snapshot.users {
+            if user.owner_pubkey != owner {
+                continue;
+            }
+            let roster = user.roster.clone();
+            user.devices.retain(|device| {
+                device.authorized
+                    && !device.is_stale
+                    && self.owner_device_binding_is_verified_in_roster(
+                        owner,
+                        device.device_pubkey,
+                        roster.as_ref(),
+                    )
+            });
+        }
+        Self::message_session_debug_snapshots_with_snapshot(&snapshot, owner_pubkey)
+    }
+
     pub fn active_session_count_for_owner_with_snapshot(
         snapshot: &SessionManagerSnapshot,
         owner_pubkey: PublicKey,
@@ -640,10 +732,29 @@ impl ProtocolEngine {
     }
 
     pub fn active_session_count_for_owner(&self, owner_pubkey: PublicKey) -> usize {
-        Self::active_session_count_for_owner_with_snapshot(
-            &self.session_manager.snapshot(),
-            owner_pubkey,
-        )
+        let owner = ndr_owner(owner_pubkey);
+        self.session_manager
+            .snapshot()
+            .users
+            .into_iter()
+            .filter(|user| user.owner_pubkey == owner)
+            .map(|user| {
+                let roster = user.roster;
+                user.devices
+                    .into_iter()
+                    .filter(|device| {
+                        device.active_session.is_some()
+                            && device.authorized
+                            && !device.is_stale
+                            && self.owner_device_binding_is_verified_in_roster(
+                                owner,
+                                device.device_pubkey,
+                                roster.as_ref(),
+                            )
+                    })
+                    .count()
+            })
+            .sum()
     }
 
     pub fn active_roster_session_count_for_owner(&self, owner_pubkey: PublicKey) -> usize {
@@ -660,6 +771,13 @@ impl ProtocolEngine {
                         .iter()
                         .filter(|device| {
                             device.active_session.is_some()
+                                && device.authorized
+                                && !device.is_stale
+                                && self.owner_device_binding_is_verified_in_roster(
+                                    owner,
+                                    device.device_pubkey,
+                                    Some(&roster),
+                                )
                                 && roster.devices().iter().any(|entry| {
                                     entry.device_pubkey == device.device_pubkey
                                 })
@@ -668,6 +786,51 @@ impl ProtocolEngine {
                 )
             })
             .unwrap_or_default()
+    }
+
+    pub fn owner_device_binding_is_verified(
+        &self,
+        owner_pubkey: PublicKey,
+        device_pubkey: PublicKey,
+    ) -> bool {
+        self.has_verified_device_owner_claim(
+            ndr_owner(owner_pubkey),
+            ndr_device(device_pubkey),
+        )
+    }
+
+    fn owner_device_binding_is_verified_in_roster(
+        &self,
+        owner: NdrOwnerPubkey,
+        device: NdrDevicePubkey,
+        roster: Option<&DeviceRoster>,
+    ) -> bool {
+        owner == provisional_owner_from_sender_pubkey(device)
+            || (self.verified_app_keys_owners.contains(&owner)
+                && roster.is_some_and(|roster| roster.get_device(&device).is_some()))
+    }
+
+    pub fn known_verified_peer_owner_pubkeys(&self) -> Vec<PublicKey> {
+        let mut owners = self
+            .session_manager
+            .snapshot()
+            .users
+            .into_iter()
+            .filter(|user| {
+                let roster = user.roster.as_ref();
+                user.devices.iter().any(|device| {
+                    self.owner_device_binding_is_verified_in_roster(
+                        user.owner_pubkey,
+                        device.device_pubkey,
+                        roster,
+                    )
+                })
+            })
+            .filter_map(|user| public_owner(user.owner_pubkey).ok())
+            .collect::<Vec<_>>();
+        owners.sort_by_key(|owner| owner.to_hex());
+        owners.dedup();
+        owners
     }
 
     pub fn has_delivery_blocking_message_work(&self, message_id: &str) -> bool {
@@ -689,6 +852,12 @@ impl ProtocolEngine {
             answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
             pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
             group_roster_fact_histories: self.group_roster_fact_histories.clone(),
+            verified_app_keys_owners: self.verified_app_keys_owners.clone(),
+            invite_owner_app_keys_evidence: self.invite_owner_app_keys_evidence.clone(),
+            processed_private_invite_response_ids: self
+                .processed_private_invite_response_ids
+                .clone(),
+            local_app_keys_observed: self.local_app_keys_observed,
             subscription_generation: self.subscription_generation,
         }
     }
@@ -705,6 +874,11 @@ impl ProtocolEngine {
         self.answered_group_sender_key_repairs = checkpoint.answered_group_sender_key_repairs;
         self.pending_decrypted_deliveries = checkpoint.pending_decrypted_deliveries;
         self.group_roster_fact_histories = checkpoint.group_roster_fact_histories;
+        self.verified_app_keys_owners = checkpoint.verified_app_keys_owners;
+        self.invite_owner_app_keys_evidence = checkpoint.invite_owner_app_keys_evidence;
+        self.processed_private_invite_response_ids =
+            checkpoint.processed_private_invite_response_ids;
+        self.local_app_keys_observed = checkpoint.local_app_keys_observed;
         self.subscription_generation = checkpoint.subscription_generation;
         self.invalidate_known_message_author_cache();
     }
@@ -722,6 +896,40 @@ impl ProtocolEngine {
             Err(error) => {
                 self.restore_checkpoint(checkpoint);
                 Err(error)
+            }
+        }
+    }
+}
+
+fn quarantine_unverified_owner_rosters(
+    snapshot: &mut SessionManagerSnapshot,
+    verified_app_keys_owners: &BTreeSet<NdrOwnerPubkey>,
+) {
+    for user in &mut snapshot.users {
+        if verified_app_keys_owners.contains(&user.owner_pubkey) {
+            continue;
+        }
+
+        // A device may always speak for the identity represented by its own
+        // key. Preserve only that exact legacy singleton; every O != D binding
+        // needs persisted AppKeys provenance.
+        let exact_self_owned_singleton = user.roster.as_ref().is_some_and(|roster| {
+            roster.devices().len() == 1
+                && provisional_owner_from_sender_pubkey(roster.devices()[0].device_pubkey)
+                    == user.owner_pubkey
+        });
+        if !exact_self_owned_singleton {
+            user.roster = None;
+        }
+
+        for device in &mut user.devices {
+            // O = D is authenticated by possession of D's key even when an
+            // older persisted session has no synthetic singleton roster.
+            device.authorized = provisional_owner_from_sender_pubkey(device.device_pubkey)
+                == user.owner_pubkey;
+            if !device.authorized {
+                device.is_stale = false;
+                device.stale_since = None;
             }
         }
     }

@@ -187,6 +187,8 @@ fn fully_approved_linked_device_group_messages_sync_to_primary_without_request()
     let primary_device = Keys::generate();
     let approval_relay = crate::local_relay::TestRelay::start();
     let mut primary = logged_in_test_core("full-linked-group-primary", &owner, &primary_device);
+    primary.upsert_local_app_key_device(owner.public_key(), primary_device.public_key());
+    primary.sync_local_app_keys_to_protocol_engine("test_seed_appkeys");
     primary.pending_relay_publishes.clear();
 
     let linked_temp_dir = tempfile::TempDir::new().expect("linked temp dir");
@@ -251,13 +253,22 @@ fn fully_approved_linked_device_group_messages_sync_to_primary_without_request()
         linked.handle_relay_event(event);
     }
     linked.refresh_local_authorization_state();
+    let active_session_count = linked
+        .protocol_engine
+        .as_ref()
+        .map(|engine| engine.active_session_count_for_owner(owner.public_key()))
+        .unwrap_or_default();
     assert_eq!(
         linked
             .logged_in
             .as_ref()
             .expect("linked logged in")
             .authorization_state,
-        LocalAuthorizationState::Authorized
+        LocalAuthorizationState::Authorized,
+        "active_sessions={} app_keys={:?} debug={:?}",
+        active_session_count,
+        linked.app_keys,
+        linked.debug_log
     );
 
     primary.pending_relay_publishes.clear();

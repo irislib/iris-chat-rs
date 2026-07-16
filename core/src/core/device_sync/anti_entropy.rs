@@ -76,7 +76,7 @@ impl AppCore {
             runtime
                 .tcp
                 .clone()
-                .and_then(|tcp| fips_peer_from_hex(source_pubkey_hex).map(|peer| (tcp, peer)))
+                .zip(fips_peer_from_hex(source_pubkey_hex))
         }) else {
             return;
         };

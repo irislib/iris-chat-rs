@@ -71,6 +71,9 @@ impl AppCore {
                 COMPILED_DEVICE_APPROVAL_RELAY_URL.to_string(),
             ]),
             private_chat_invites: BTreeMap::new(),
+            pending_private_invite_responses: BTreeMap::new(),
+            pending_private_invite_cleanup_retry: false,
+            pending_outgoing_invite_acceptance: None,
             threads: BTreeMap::new(),
             active_chat_id: None,
             screen_stack: Vec::new(),
@@ -295,6 +298,7 @@ impl AppCore {
         self.push_debug_log("app.shutdown", "stopping core");
         self.stop_pending_linked_device();
         self.stop_device_sync();
+        self.reset_pending_invite_acceptance();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);

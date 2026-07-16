@@ -156,12 +156,20 @@ impl AppCore {
             }
             INVITE_RESPONSE_KIND => {
                 self.debug_event_counters.invite_response_events += 1;
-                if self.handle_private_chat_invite_response(&event) {
-                    self.remember_event(event_id);
-                    self.persist_best_effort();
-                    self.rebuild_state();
-                    self.emit_state();
-                    return;
+                match self.handle_private_chat_invite_response(&event) {
+                    super::invites::PrivateInviteResponseDisposition::Handled => {
+                        self.remember_event(event_id);
+                        self.persist_best_effort();
+                        self.rebuild_state();
+                        self.emit_state();
+                        return;
+                    }
+                    super::invites::PrivateInviteResponseDisposition::RetryableFailure => {
+                        self.rebuild_state();
+                        self.emit_state();
+                        return;
+                    }
+                    super::invites::PrivateInviteResponseDisposition::NotMatched => {}
                 }
                 let retry_results = self
                     .protocol_engine
@@ -693,11 +701,7 @@ impl AppCore {
         };
 
         let protocol_retry_batch = if let Some(protocol_engine) = self.protocol_engine.as_mut() {
-            protocol_engine.ingest_app_keys_snapshot(
-                event.pubkey,
-                effective_app_keys.clone(),
-                effective_created_at,
-            )?
+            protocol_engine.ingest_app_keys_event(event)?
         } else {
             ProtocolRetryBatch::default()
         };
@@ -729,6 +733,8 @@ impl AppCore {
         self.persist_best_effort();
         self.emit_state();
         self.process_protocol_engine_retry_batch("app_keys", protocol_retry_batch);
+        self.retry_pending_private_invite_responses(event.pubkey);
+        self.resume_pending_outgoing_invite_acceptance(event.pubkey);
         if app_keys_changed && self.device_sync_tracks_app_keys_owner(event.pubkey) {
             self.broadcast_device_sync_snapshot();
         }
