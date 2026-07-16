@@ -8,9 +8,10 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 PLATFORM_LOCKS = (ROOT / "core" / "Cargo.lock", ROOT / "linux" / "Cargo.lock")
 EXPECTED = {
-    "fips-core": "0.4.0",
+    "fips-core": "0.4.1",
     "fips-tcp": "0.2.0",
     "fips-tcp-endpoint": "0.2.0",
+    "hashtree-fips-transport": "0.4.1",
     "nostr-pubsub": "0.1.11",
     "nostr-pubsub-fips": "0.3.1",
     "nostr-pubsub-social-graph": "0.2.2",
@@ -35,12 +36,19 @@ class DependencyLockConsistencyTests(unittest.TestCase):
                 versions = package_versions(lock_path)
                 for package, expected in EXPECTED.items():
                     self.assertEqual(versions.get(package), {expected}, f"{package} in {lock_path}")
+                self.assertIn(
+                    "0.4.0",
+                    versions.get("nostr-identity", set()),
+                    f"direct nostr-identity release in {lock_path}",
+                )
 
     def test_core_manifest_pins_gated_fips_stack_exactly(self):
         manifest = (ROOT / "core" / "Cargo.toml").read_text(encoding="utf-8")
-        self.assertRegex(manifest, r'(?m)^fips-core = \{ version = "=0\.4\.0",', "fips-core must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^fips-core = \{ version = "=0\.4\.1",', "fips-core must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^fips-tcp = "0\.2\.0"$', "fips-tcp must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^fips-tcp-endpoint = "0\.2\.0"$', "fips-tcp-endpoint must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^hashtree-fips-transport = "=0\.4\.1"$', "Hashtree/FIPS transport must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.4\.0"$', "nostr-identity must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.11"$', "nostr-pubsub must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.3\.1"$', "nostr-pubsub-fips must stay on the gated release")
 

@@ -2,16 +2,18 @@ use super::*;
 use crate::state::AttachmentDownloadResult;
 use async_trait::async_trait;
 use base64::Engine;
+use fips_core::FipsEndpoint;
 use hashtree_blossom::BlossomClient;
 use hashtree_config::Config as HashtreeConfig;
 use hashtree_core::{
-    nhash_decode, nhash_encode_full, to_hex, Cid, Hash, HashTree, HashTreeConfig, NHashData, Store,
-    StoreError,
+    nhash_decode, nhash_encode_full, to_hex, BlobRoute, Cid, Hash, HashTree, HashTreeConfig,
+    MemoryStore, NHashData, Store, StoreBlobRoute, StoreError,
 };
+use hashtree_fips_transport::{SameHostBlobStore, SameHostBlobStoreConfig, SameHostBlobStoreError};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{OnceLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
 use std::time::Duration;
 use tokio::sync::RwLock as AsyncRwLock;
 use tokio_util::compat::TokioAsyncReadCompatExt;
@@ -36,6 +38,47 @@ fn shared_chunk_cache_write() -> RwLockWriteGuard<'static, HashMap<String, Vec<u
     shared_chunk_cache()
         .write()
         .unwrap_or_else(|poison| poison.into_inner())
+}
+
+pub(super) type SameHostAttachmentStore = SameHostBlobStore<MemoryStore>;
+
+fn same_host_attachment_store() -> &'static RwLock<Option<Weak<SameHostAttachmentStore>>> {
+    static STORE: OnceLock<RwLock<Option<Weak<SameHostAttachmentStore>>>> = OnceLock::new();
+    STORE.get_or_init(|| RwLock::new(None))
+}
+
+fn active_same_host_attachment_store() -> Option<Arc<SameHostAttachmentStore>> {
+    same_host_attachment_store()
+        .read()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .as_ref()
+        .and_then(Weak::upgrade)
+}
+
+pub(super) async fn bind_same_host_attachment_store(
+    endpoint: Arc<FipsEndpoint>,
+    standalone: Arc<dyn BlobRoute>,
+) -> Result<Arc<SameHostAttachmentStore>, SameHostBlobStoreError> {
+    let store = Arc::new(
+        SameHostBlobStore::bind(
+            endpoint,
+            Arc::new(MemoryStore::new()),
+            Some(standalone),
+            SameHostBlobStoreConfig::default(),
+        )
+        .await?,
+    );
+    *same_host_attachment_store()
+        .write()
+        .unwrap_or_else(|poison| poison.into_inner()) = Some(Arc::downgrade(&store));
+    Ok(store)
+}
+
+pub(super) async fn start_same_host_attachment_reuse(
+    endpoint: Arc<FipsEndpoint>,
+) -> Result<Arc<SameHostAttachmentStore>, SameHostBlobStoreError> {
+    let standalone: Arc<dyn BlobRoute> = Arc::new(StoreBlobRoute::new(blossom_read_store()));
+    bind_same_host_attachment_store(endpoint, standalone).await
 }
 
 impl AppCore {
@@ -383,24 +426,38 @@ pub(super) async fn download_hashtree_attachment_base64(nhash: &str) -> anyhow::
         hash: data.hash,
         key: data.decrypt_key,
     };
-    let keys = nostr::Keys::generate();
-    let (read_servers, write_servers) = blossom_servers_from_config();
-    let store = Arc::new(UploadingBlossomStore::new(
-        keys,
-        merge_read_servers(read_servers, &write_servers),
-        Vec::new(),
-        None,
-    ));
-    let tree = HashTree::new(HashTreeConfig::new(store));
-    let bytes = tree
-        .get(&cid, None)
-        .await
-        .map_err(|error| anyhow::anyhow!("hashtree download failed: {error}"))?
-        .ok_or_else(|| anyhow::anyhow!("attachment was not found"))?;
+    let bytes = if let Some(store) = active_same_host_attachment_store() {
+        read_hashtree_attachment(&cid, store).await?
+    } else {
+        read_hashtree_attachment(&cid, blossom_read_store()).await?
+    };
     if bytes.len() > 64 * 1024 * 1024 {
         anyhow::bail!("attachment is too large");
     }
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+async fn read_hashtree_attachment<S: Store + 'static>(
+    cid: &Cid,
+    store: Arc<S>,
+) -> anyhow::Result<Vec<u8>> {
+    let tree = HashTree::new(HashTreeConfig::new(store));
+    let bytes = tree
+        .get(cid, None)
+        .await
+        .map_err(|error| anyhow::anyhow!("hashtree download failed: {error}"))?
+        .ok_or_else(|| anyhow::anyhow!("attachment was not found"))?;
+    Ok(bytes)
+}
+
+fn blossom_read_store() -> Arc<UploadingBlossomStore> {
+    let (read_servers, write_servers) = blossom_servers_from_config();
+    Arc::new(UploadingBlossomStore::new(
+        nostr::Keys::generate(),
+        merge_read_servers(read_servers, &write_servers),
+        Vec::new(),
+        None,
+    ))
 }
 
 fn blossom_servers_from_config() -> (Vec<String>, Vec<String>) {
@@ -628,3 +685,7 @@ mod tests {
         assert_eq!(prepared[1].filename, "second.bin");
     }
 }
+
+#[cfg(test)]
+#[path = "attachment_upload/same_host_tests.rs"]
+mod same_host_tests;

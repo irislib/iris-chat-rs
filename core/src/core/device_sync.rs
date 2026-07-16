@@ -1,18 +1,17 @@
 use super::*;
-use fips_core::config::{NostrDiscoveryPolicy, PeerConfig, TransportInstances};
-use fips_core::{Config, FipsEndpoint, PeerIdentity as FipsPeerIdentity, WebRtcConfig};
+use fips_core::{FipsEndpoint, PeerIdentity as FipsPeerIdentity};
 use nostr_double_ratchet::{GroupProtocol, GroupStrategy};
 use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
 use std::collections::BTreeSet;
 use tokio::task::JoinHandle;
 
-use super::update_pubsub::run_update_announcement_subscription;
 use anti_entropy::metadata_page_packets;
 use messages::collect_device_sync_messages;
 
 mod anti_entropy;
 mod body;
 mod messages;
+mod runtime;
 
 pub(super) const DEVICE_SYNC_PORT: u16 = 7369;
 const DEVICE_SYNC_VERSION: u8 = 1;
@@ -20,25 +19,23 @@ const DEVICE_SYNC_MAX_PACKET_BYTES: usize = 64 * 1024;
 const DEVICE_SYNC_PAGE_MESSAGES: usize = 32;
 const DEVICE_SYNC_PAGE_PACKETS: usize = 32;
 const DEVICE_SYNC_SCOPE_PREFIX: &str = "iris-chat-device-sync-v1:";
-
-type DeviceSyncConfig = (
-    String,
-    String,
-    u64,
-    String,
-    Vec<String>,
-    Vec<FipsPeerIdentity>,
-);
-
+struct DeviceSyncConfig {
+    key: String,
+    owner_hex: String,
+    roster_at: u64,
+    secret_hex: String,
+    relay_urls: Vec<String>,
+    siblings: Vec<FipsPeerIdentity>,
+}
 pub(super) struct DeviceSyncRuntime {
     key: String,
     endpoint: Arc<FipsEndpoint>,
-    tcp: DeviceSyncTcpSender,
+    tcp: Option<DeviceSyncTcpSender>,
     siblings: Vec<FipsPeerIdentity>,
+    _attachment_store: Option<Arc<super::attachment_upload::SameHostAttachmentStore>>,
     _update_pubsub: Option<Arc<FipsPubsubClient>>,
     tasks: Vec<JoinHandle<()>>,
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
@@ -73,14 +70,12 @@ enum DeviceSyncPacket {
         messages: Vec<DeviceSyncMessage>,
     },
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceSyncChat {
     id: String,
     updated_at: u64,
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceSyncAppKeys {
@@ -88,14 +83,12 @@ struct DeviceSyncAppKeys {
     created_at: u64,
     devices: Vec<DeviceSyncAppKeyDevice>,
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceSyncAppKeyDevice {
     identity_pubkey: String,
     created_at: u64,
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceSyncGroup {
@@ -116,7 +109,6 @@ struct DeviceSyncGroup {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     accepted: Option<bool>,
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceSyncMessage {
@@ -129,7 +121,6 @@ struct DeviceSyncMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expires_at: Option<u64>,
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceSyncCursor {
@@ -137,7 +128,6 @@ struct DeviceSyncCursor {
     chat_id: String,
     id: String,
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -148,7 +138,6 @@ enum DeviceSyncPage {
     Metadata { offset: usize },
     Messages { after: Option<DeviceSyncCursor> },
 }
-
 impl From<&DeviceSyncMessage> for DeviceSyncCursor {
     fn from(message: &DeviceSyncMessage) -> Self {
         Self {
@@ -158,7 +147,6 @@ impl From<&DeviceSyncMessage> for DeviceSyncCursor {
         }
     }
 }
-
 #[derive(Default)]
 struct DeviceSyncSnapshot {
     roster_at: u64,
@@ -167,7 +155,6 @@ struct DeviceSyncSnapshot {
     groups: Vec<DeviceSyncGroup>,
     messages: Vec<DeviceSyncMessage>,
 }
-
 #[derive(Clone)]
 enum DeviceSyncItem {
     Chat(DeviceSyncChat),
@@ -175,7 +162,6 @@ enum DeviceSyncItem {
     Group(DeviceSyncGroup),
     Message(DeviceSyncMessage),
 }
-
 impl DeviceSyncItem {
     fn push(&self, snapshot: &mut DeviceSyncSnapshot) {
         match self {
@@ -225,139 +211,6 @@ impl DeviceSyncSnapshot {
 }
 
 impl AppCore {
-    pub(super) fn reconcile_device_sync(&mut self) {
-        let Some((key, owner_hex, roster_at, secret_hex, relay_urls, siblings)) =
-            self.device_sync_config()
-        else {
-            self.stop_device_sync();
-            return;
-        };
-        if self
-            .device_sync
-            .as_ref()
-            .is_some_and(|runtime| runtime.key == key)
-        {
-            return;
-        }
-        self.stop_device_sync();
-
-        let mut config = Config::new();
-        config.node.discovery.nostr.enabled = true;
-        config.node.discovery.nostr.advertise = true;
-        config.node.discovery.nostr.advert_relays = relay_urls.clone();
-        config.node.discovery.nostr.app = format!("{DEVICE_SYNC_SCOPE_PREFIX}{owner_hex}");
-        config.node.discovery.nostr.policy = NostrDiscoveryPolicy::ConfiguredOnly;
-        config.peers = siblings
-            .iter()
-            .map(|peer| PeerConfig {
-                npub: peer.npub(),
-                ..PeerConfig::default()
-            })
-            .collect();
-        config.transports.webrtc = TransportInstances::Single(WebRtcConfig {
-            advertise_on_nostr: Some(true),
-            auto_connect: Some(false),
-            accept_connections: Some(true),
-            ..WebRtcConfig::default()
-        });
-
-        let endpoint = match self.runtime.block_on(async {
-            Ok::<_, fips_core::FipsEndpointError>(Arc::new(
-                FipsEndpoint::builder()
-                    .config(config)
-                    .identity_nsec(secret_hex)
-                    .discovery_scope(format!("{DEVICE_SYNC_SCOPE_PREFIX}{owner_hex}"))
-                    .without_system_tun()
-                    .bind()
-                    .await?,
-            ))
-        }) {
-            Ok(value) => value,
-            Err(error) => {
-                self.push_debug_log("device_sync.start.error", error.to_string());
-                return;
-            }
-        };
-        let Ok(request) = serde_json::to_vec(&DeviceSyncPacket::Request {
-            v: DEVICE_SYNC_VERSION,
-            roster_at,
-            page: None,
-        }) else {
-            return;
-        };
-        let Ok(resync_required) = serde_json::to_vec(&DeviceSyncPacket::ResyncRequired {
-            v: DEVICE_SYNC_VERSION,
-        }) else {
-            return;
-        };
-        let (tcp, tcp_task) = match self.runtime.block_on(start_device_sync_tcp(
-            endpoint.clone(),
-            DEVICE_SYNC_PORT,
-            DEVICE_SYNC_MAX_PACKET_BYTES,
-            request,
-            resync_required,
-            self.core_sender.clone(),
-        )) {
-            Ok(value) => value,
-            Err(error) => {
-                self.push_debug_log("device_sync.tcp.start.error", error);
-                return;
-            }
-        };
-        let update_pubsub = match self.runtime.block_on(FipsPubsubClient::start(
-            endpoint.clone(),
-            FipsPubsubClientOptions::default(),
-        )) {
-            Ok(client) => Some(Arc::new(client)),
-            Err(error) => {
-                self.push_debug_log("update.pubsub.start.error", error.to_string());
-                None
-            }
-        };
-        let update_subscription_task = update_pubsub.as_ref().and_then(|pubsub| {
-            let filter = match crate::update_announcements::update_announcement_filter() {
-                Ok(filter) => filter,
-                Err(error) => {
-                    self.push_debug_log("update.pubsub.filter.error", error.to_string());
-                    return None;
-                }
-            };
-            let pubsub = pubsub.clone();
-            let endpoint = endpoint.clone();
-            Some(self.runtime.spawn(async move {
-                run_update_announcement_subscription(endpoint, pubsub, filter).await;
-            }))
-        });
-
-        let mut tasks = vec![tcp_task];
-        if let Some(task) = update_subscription_task {
-            tasks.push(task);
-        }
-
-        let sibling_count = siblings.len();
-        self.device_sync = Some(DeviceSyncRuntime {
-            key,
-            endpoint,
-            tcp,
-            siblings,
-            _update_pubsub: update_pubsub,
-            tasks,
-        });
-        self.push_debug_log("device_sync.start", format!("peers={sibling_count}"));
-    }
-
-    pub(super) fn stop_device_sync(&mut self) {
-        let Some(runtime) = self.device_sync.take() else {
-            return;
-        };
-        for task in runtime.tasks {
-            task.abort();
-        }
-        self.runtime.spawn(async move {
-            let _ = runtime.endpoint.shutdown().await;
-        });
-    }
-
     pub(super) fn handle_device_sync_packet(
         &mut self,
         source_pubkey_hex: &str,
@@ -411,11 +264,12 @@ impl AppCore {
             return;
         };
         let packets = metadata_page_packets(self, roster_at, 0);
-        let Some((tcp, siblings)) = self
-            .device_sync
-            .as_ref()
-            .map(|runtime| (runtime.tcp.clone(), runtime.siblings.clone()))
-        else {
+        let Some((tcp, siblings)) = self.device_sync.as_ref().and_then(|runtime| {
+            runtime
+                .tcp
+                .clone()
+                .map(|tcp| (tcp, runtime.siblings.clone()))
+        }) else {
             return;
         };
         send_device_sync_packets(&tcp, &siblings, &packets);
@@ -455,11 +309,12 @@ impl AppCore {
         if packet.len() > DEVICE_SYNC_MAX_PACKET_BYTES {
             return;
         }
-        let Some((tcp, siblings)) = self
-            .device_sync
-            .as_ref()
-            .map(|runtime| (runtime.tcp.clone(), runtime.siblings.clone()))
-        else {
+        let Some((tcp, siblings)) = self.device_sync.as_ref().and_then(|runtime| {
+            runtime
+                .tcp
+                .clone()
+                .map(|tcp| (tcp, runtime.siblings.clone()))
+        }) else {
             return;
         };
 
@@ -732,8 +587,9 @@ impl AppCore {
         self.device_sync = Some(DeviceSyncRuntime {
             key: "test".to_string(),
             endpoint,
-            tcp,
+            tcp: Some(tcp),
             siblings,
+            _attachment_store: None,
             _update_pubsub: None,
             tasks: Vec::new(),
         });
@@ -746,59 +602,8 @@ impl AppCore {
     ) -> Option<Vec<u8>> {
         self.device_sync
             .as_ref()
-            .and_then(|runtime| runtime.tcp.take_control_for_test(peer))
-    }
-
-    fn device_sync_config(&self) -> Option<DeviceSyncConfig> {
-        let logged_in = self.logged_in.as_ref()?;
-        let owner_hex = logged_in.owner_pubkey.to_hex();
-        let roster = self.app_keys.get(&owner_hex)?;
-        let local_hex = logged_in.device_keys.public_key().to_hex();
-        if roster.created_at_secs == 0
-            || !roster
-                .devices
-                .iter()
-                .any(|device| device.identity_pubkey_hex == local_hex)
-        {
-            return None;
-        }
-        let siblings = roster
-            .devices
-            .iter()
-            .filter(|device| device.identity_pubkey_hex != local_hex)
-            .filter_map(|device| fips_peer_from_hex(&device.identity_pubkey_hex))
-            .collect::<Vec<_>>();
-        if siblings.is_empty() {
-            return None;
-        }
-        let relays = logged_in
-            .relay_urls
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
-        if relays.is_empty() {
-            return None;
-        }
-        let key = format!(
-            "{}:{}:{}:{}",
-            owner_hex,
-            roster.created_at_secs,
-            roster
-                .devices
-                .iter()
-                .map(|device| device.identity_pubkey_hex.as_str())
-                .collect::<Vec<_>>()
-                .join(","),
-            relays.join(",")
-        );
-        Some((
-            key,
-            owner_hex,
-            roster.created_at_secs,
-            logged_in.device_keys.secret_key().to_secret_hex(),
-            relays,
-            siblings,
-        ))
+            .and_then(|runtime| runtime.tcp.as_ref())
+            .and_then(|tcp| tcp.take_control_for_test(peer))
     }
 
     fn device_sync_roster_at(&self) -> Option<u64> {

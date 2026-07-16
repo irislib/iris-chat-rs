@@ -9,6 +9,7 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 - Linked devices now recover ordered chat, group, key, and recent-message snapshots over TCP/FIPS.
 - Message delivery and seen indicators still reflect recipient application receipts, not transport acknowledgements.
+- Attachment downloads can opt into reusing a Hashtree provider running under the same user, then continue through the existing storage path if it has no result or exits.
 
 ## 2026.6.30
 

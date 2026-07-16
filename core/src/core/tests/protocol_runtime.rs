@@ -2373,9 +2373,13 @@ fn scheduled_tracked_peer_catch_up_does_not_force_global_message_backfill() {
     );
 }
 
-fn read_protocol_engine_source() -> String {
+fn read_protocol_engine_source() -> Option<String> {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    [
+    let repo = manifest.parent().expect("core crate has repo parent");
+    if !repo.join("chat-protocol/Cargo.toml").is_file() {
+        return None;
+    }
+    Some([
         "chat-protocol/src/protocol_engine.rs",
         "chat-protocol/src/protocol_engine/types.rs",
         "chat-protocol/src/protocol_engine/engine_core.rs",
@@ -2389,16 +2393,18 @@ fn read_protocol_engine_source() -> String {
     ]
     .into_iter()
     .map(|path| {
-        std::fs::read_to_string(manifest.parent().expect("core crate has repo parent").join(path))
+        std::fs::read_to_string(repo.join(path))
             .unwrap_or_else(|error| panic!("read {path}: {error}"))
     })
     .collect::<Vec<_>>()
-    .join("\n")
+    .join("\n"))
 }
 
 #[test]
 fn appcore_sender_owner_resolution_keeps_claimed_device_pending_until_owner_verified() {
-    let protocol_source = read_protocol_engine_source();
+    let Some(protocol_source) = read_protocol_engine_source() else {
+        return;
+    };
     let start = protocol_source
         .find("fn resolve_message_sender_owner")
         .expect("sender resolver");
@@ -2419,7 +2425,9 @@ fn appcore_sender_owner_resolution_keeps_claimed_device_pending_until_owner_veri
 
 #[test]
 fn pending_inbound_owner_targets_use_cached_metadata_not_event_reparse() {
-    let protocol_source = read_protocol_engine_source();
+    let Some(protocol_source) = read_protocol_engine_source() else {
+        return;
+    };
     let start = protocol_source
         .find("fn pending_inbound_owner_claim_targets")
         .expect("pending inbound target collector");
@@ -2563,7 +2571,9 @@ fn no_header_message_kind_event_is_not_pairwise_decrypted() {
 
 #[test]
 fn group_sender_key_ignored_results_are_consumed_without_retry_queue() {
-    let protocol_source = read_protocol_engine_source();
+    let Some(protocol_source) = read_protocol_engine_source() else {
+        return;
+    };
     let process_start = protocol_source
         .find("fn process_group_outer_event")
         .expect("process group outer function");

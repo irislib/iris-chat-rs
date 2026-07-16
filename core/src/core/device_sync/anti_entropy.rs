@@ -43,7 +43,11 @@ impl AppCore {
             };
             packets.push(page_end);
         }
-        let Some(tcp) = self.device_sync.as_ref().map(|runtime| runtime.tcp.clone()) else {
+        let Some(tcp) = self
+            .device_sync
+            .as_ref()
+            .and_then(|runtime| runtime.tcp.clone())
+        else {
             return;
         };
         let Some(peer) = fips_peer_from_hex(source_pubkey_hex) else {
@@ -69,7 +73,10 @@ impl AppCore {
             return;
         };
         let Some((tcp, peer)) = self.device_sync.as_ref().and_then(|runtime| {
-            fips_peer_from_hex(source_pubkey_hex).map(|peer| (runtime.tcp.clone(), peer))
+            runtime
+                .tcp
+                .clone()
+                .and_then(|tcp| fips_peer_from_hex(source_pubkey_hex).map(|peer| (tcp, peer)))
         }) else {
             return;
         };

@@ -1224,9 +1224,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5eb5c2cd49701461cfe2a9604eec3ddad6d3fadca67aceb11f472b6e665ecf89"
+checksum = "e720d19a0f9b007dad9c03e7e952df8cb79bd0e1a7ab4da1c5cb8c2619cadbe0"
 dependencies = [
  "base64",
  "bluer",
@@ -1616,6 +1616,23 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "hashtree-fips-transport"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8a5920c11eadd389fb0e0a30396c596468c269fb88aa6eb3025490a8d03b564"
+dependencies = [
+ "async-trait",
+ "fips-core",
+ "fips-tcp",
+ "fips-tcp-endpoint",
+ "hashtree-core",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2010,7 +2027,7 @@ checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 
 [[package]]
 name = "iris-chat"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2024,6 +2041,7 @@ dependencies = [
  "hashtree-blossom",
  "hashtree-config",
  "hashtree-core",
+ "hashtree-fips-transport",
  "hashtree-resolver",
  "hashtree-updater",
  "hmac",
@@ -2031,7 +2049,7 @@ dependencies = [
  "nostr",
  "nostr-double-ratchet",
  "nostr-double-ratchet-pairwise-codec",
- "nostr-identity 0.3.0",
+ "nostr-identity 0.4.0",
  "nostr-pubsub",
  "nostr-pubsub-fips",
  "nostr-sdk",
@@ -2517,9 +2535,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-identity"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e60e2d54b509b0359b18ae0675e1c7301a386c8cd8cb4725a89de53e5647e2fb"
+checksum = "95fd048871579a175d1c38d1ea947f1034206d93696ea7ac74d140979e8022bb"
 dependencies = [
  "anyhow",
  "nostr-sdk",

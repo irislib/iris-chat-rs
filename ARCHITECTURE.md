@@ -120,6 +120,26 @@ Native executes platform effects. It does not fork app logic.
 - domain-specific retry rules
 - authorization or chat/group business rules
 
+## Network And Attachment Composition
+
+Chat owns its FIPS endpoint and its linked-device, relay, and WebRTC links.
+Setting `IRIS_CHAT_SAME_HOST_HASHTREE=1` opts that endpoint into ordinary
+authenticated FIPS loopback rendezvous. The same endpoint starts in local-only
+mode for a logged-in single-device profile even when it has no relays; the
+device-sync TCP service, Nostr/WebRTC discovery, and roster dialing remain
+disabled in that case. Finding a same-host process neither delegates existing
+links nor suppresses Chat's outbound connections. Without the opt-in, endpoint
+lifecycle and attachment reads retain their previous behavior.
+
+While the opt-in endpoint is active, attachment reads may use the shared
+`hashtree.blob/1` Store adapter. It is client-private, asks same-host providers
+with HTL 0, verifies content hashes in Hashtree, and caches valid chunks only
+in process memory. A provider miss, transport failure, corrupt reply, or exit
+continues through Chat's existing Blossom-backed Store. With no endpoint or no
+provider, the same standalone Blossom path is used directly. Attachment writes
+remain explicit through Chat's configured Blossom Store; there is no daemon,
+shared-egress policy, write router, or Chat-specific blob protocol.
+
 ## Data Flow
 
 The app uses a one-way Rust-owned state flow:

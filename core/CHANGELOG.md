@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.37
+
+- Update the embedded endpoint to the FIPS 0.4.1 WebRTC fix and `nostr-identity` 0.4.0.
+- Let attachment reads opt into authenticated same-host `hashtree.blob/1` providers through the existing Chat endpoint, including single-device profiles without relays, while retaining the ordinary Blossom path after a provider miss, failure, or exit.
+- Keep attachment writes, linked-device peers, public relay/WebRTC links, and standalone operation application-owned.
+
 ## 0.1.36
 
 - Carry linked-device requests and snapshots as bounded framed records over TCP/FIPS service 7369.
