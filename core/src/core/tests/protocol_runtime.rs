@@ -2385,7 +2385,6 @@ fn read_protocol_engine_source() -> Option<String> {
         return None;
     }
     Some([
-        "chat-protocol/src/protocol_engine.rs",
         "chat-protocol/src/protocol_engine/types.rs",
         "chat-protocol/src/protocol_engine/engine_core.rs",
         "chat-protocol/src/protocol_engine/engine_sends.rs",
