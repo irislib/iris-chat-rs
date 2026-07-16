@@ -1317,9 +1317,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.4.1"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e720d19a0f9b007dad9c03e7e952df8cb79bd0e1a7ab4da1c5cb8c2619cadbe0"
+checksum = "50dbe1eb7c3775c3bf6e01f6bd0e9f414bfe9132a3cdf5a8d199bb3eeb0c79a8"
 dependencies = [
  "base64",
  "bluer",
@@ -2006,9 +2006,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.4.1"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8a5920c11eadd389fb0e0a30396c596468c269fb88aa6eb3025490a8d03b564"
+checksum = "35cf1e88e5e2d7c9972799dd706eb315110f9da376f4dc3f1a8796d5988d6c9c"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -2448,7 +2448,7 @@ checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 
 [[package]]
 name = "iris-chat"
-version = "0.1.37"
+version = "0.1.39"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2982,9 +2982,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet"
-version = "0.0.163"
+version = "0.0.164"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0379d9bd04e5573bccc6fe6cfec3359e6ec91ec99c7b3bf915b8ed178636e597"
+checksum = "339c911826eafc18587fdcb99e50128c5cf7403a9a118d468e7392fe92d494ff"
 dependencies = [
  "base64",
  "hex",
@@ -3001,9 +3001,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet-pairwise-codec"
-version = "0.0.163"
+version = "0.0.164"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18a31b44d820666b5f6b89471a9e8708d5c180b1d99e8e510d6b59a0f463f0d0"
+checksum = "32b144de2005e132880f85b2b8832dee9e94d77b138c6beaa310783c06e15230"
 dependencies = [
  "nostr",
  "serde",

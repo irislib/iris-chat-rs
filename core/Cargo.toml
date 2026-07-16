@@ -57,8 +57,8 @@ nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"]
 nostr-pubsub = "=0.1.11"
 nostr-pubsub-fips = "=0.3.1"
 nostr-identity = "=0.4.0"
-nostr-double-ratchet = "0.0.163"
-nostr-double-ratchet-pairwise-codec = "0.0.163"
+nostr-double-ratchet = "0.0.164"
+nostr-double-ratchet-pairwise-codec = "0.0.164"
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 rusqlite = { version = "0.31", features = ["bundled"] }
