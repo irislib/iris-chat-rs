@@ -70,6 +70,8 @@ use rand::rngs::OsRng;
 mod account;
 mod account_app_keys;
 mod attachment_upload;
+#[cfg(feature = "stack-fixture")]
+pub use attachment_upload::download_hashtree_attachment;
 mod attachments;
 mod chat_reactions;
 mod chat_receipts;

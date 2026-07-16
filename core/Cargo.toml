@@ -1,6 +1,6 @@
 [package]
 name = "iris-chat"
-version = "0.1.37"
+version = "0.1.38"
 edition = "2021"
 description = "Iris Chat command line client and shared encrypted chat core"
 license = "MIT"
@@ -25,8 +25,14 @@ name = "local_nostr_relay"
 path = "src/bin/local_nostr_relay.rs"
 required-features = ["local-relay-bin"]
 
+[[bin]]
+name = "iris-chat-stack-fixture"
+path = "src/bin/iris_chat_stack_fixture.rs"
+required-features = ["stack-fixture"]
+
 [features]
 local-relay-bin = []
+stack-fixture = []
 
 [dependencies]
 anyhow = "1"
@@ -35,13 +41,13 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 flume = "0.11"
-fips-core = { version = "=0.4.1", features = ["webrtc-transport"] }
+fips-core = { version = "=0.4.2", features = ["webrtc-transport"] }
 fips-tcp = "0.2.0"
 fips-tcp-endpoint = "0.2.0"
 hashtree-blossom = { version = "0.2.82", default-features = false, features = ["store"] }
 hashtree-config = "0.2.82"
 hashtree-core = "0.2.84"
-hashtree-fips-transport = "=0.4.1"
+hashtree-fips-transport = "=0.4.2"
 hashtree-resolver = { version = "0.2.82", features = ["nostr"] }
 hashtree-updater = { version = "0.2.82", features = ["secure-nostr-blossom"] }
 hmac = "0.12"

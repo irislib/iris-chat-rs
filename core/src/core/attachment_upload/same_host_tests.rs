@@ -147,6 +147,10 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
         .same_host_runtime_for_test()
         .expect("shared FIPS runtime and attachment store");
     assert!(!has_device_sync, "device-sync service stays disabled");
+    assert!(
+        !core.device_sync_relay_adapter_running_for_test(),
+        "a same-host-only endpoint must not start a relay adapter"
+    );
     assert_eq!(sibling_count, 0, "no device-sync peer is synthesized");
     assert!(Arc::ptr_eq(
         &store,

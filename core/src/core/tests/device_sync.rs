@@ -1,3 +1,207 @@
+fn configure_test_device_sync_profile(
+    core: &mut AppCore,
+    owner: &Keys,
+    local_device: &Keys,
+    sibling_device: &Keys,
+    relay_url: &str,
+) {
+    core.logged_in.as_mut().expect("logged in").relay_urls =
+        relay_urls_from_strings(&[relay_url.to_string()]);
+    let owner_hex = owner.public_key().to_hex();
+    core.app_keys.insert(
+        owner_hex.clone(),
+        KnownAppKeys {
+            owner_pubkey_hex: owner_hex,
+            created_at_secs: 100,
+            devices: vec![
+                KnownAppKeyDevice {
+                    identity_pubkey_hex: local_device.public_key().to_hex(),
+                    created_at_secs: 1,
+                    device_label: None,
+                    client_label: None,
+                    label_updated_at_secs: 0,
+                },
+                KnownAppKeyDevice {
+                    identity_pubkey_hex: sibling_device.public_key().to_hex(),
+                    created_at_secs: 100,
+                    device_label: None,
+                    client_label: None,
+                    label_updated_at_secs: 0,
+                },
+            ],
+        },
+    );
+}
+
+fn test_fips_peer(keys: &Keys) -> fips_core::PeerIdentity {
+    fips_core::PeerIdentity::from_npub(
+        &keys
+            .public_key()
+            .to_bech32()
+            .expect("encode test device npub"),
+    )
+    .expect("test FIPS identity")
+}
+
+#[test]
+fn device_sync_relay_adapter_carries_authenticated_traffic_and_rejects_non_siblings() {
+    const AUTHORIZED_PORT: u16 = 47_001;
+    const UNAUTHORIZED_PORT: u16 = 47_002;
+    const SOURCE_PORT: u16 = 47_000;
+    let relay = crate::local_relay::TestRelay::start();
+    assert!(!relay.url().is_empty(), "test relay should start");
+    let owner = Keys::generate();
+    let alice = Keys::generate();
+    let bob = Keys::generate();
+    let (mut alice_core, _alice_updates, _alice_temp) =
+        logged_in_test_core_with_updates("device-sync-relay-alice", &owner, &alice);
+    let (mut bob_core, _bob_updates, _bob_temp) =
+        logged_in_test_core_with_updates("device-sync-relay-bob", &owner, &bob);
+    configure_test_device_sync_profile(&mut alice_core, &owner, &alice, &bob, relay.url());
+    configure_test_device_sync_profile(&mut bob_core, &owner, &bob, &alice, relay.url());
+
+    alice_core.reconcile_device_sync();
+    bob_core.reconcile_device_sync();
+    assert!(alice_core.device_sync_relay_adapter_running_for_test());
+    assert!(bob_core.device_sync_relay_adapter_running_for_test());
+    let alice_endpoint = alice_core
+        .device_sync_endpoint_for_test()
+        .expect("Alice FIPS endpoint");
+    let bob_endpoint = bob_core
+        .device_sync_endpoint_for_test()
+        .expect("Bob FIPS endpoint");
+    let alice_peer = test_fips_peer(&alice);
+    let bob_peer = test_fips_peer(&bob);
+    let bob_service = bob_core
+        .runtime
+        .block_on(bob_endpoint.register_service_receiver(AUTHORIZED_PORT))
+        .expect("Bob test service");
+
+    alice_core.runtime.block_on(async {
+        let advertised = alice_endpoint
+            .local_advertised_endpoints()
+            .await
+            .expect("Alice advertised endpoints");
+        assert!(advertised.iter().any(|endpoint| {
+            endpoint.transport
+                == fips_core::discovery::nostr::OverlayTransportKind::NostrRelay
+                && endpoint.addr == alice_peer.npub()
+        }));
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let alice_connected = alice_endpoint
+                    .peers()
+                    .await
+                    .expect("Alice peers")
+                    .iter()
+                    .any(|peer| {
+                        peer.connected
+                            && peer.npub == bob_peer.npub()
+                            && peer.transport_type.as_deref() == Some("nostr_relay")
+                    });
+                let bob_connected = bob_endpoint
+                    .peers()
+                    .await
+                    .expect("Bob peers")
+                    .iter()
+                    .any(|peer| {
+                        peer.connected
+                            && peer.npub == alice_peer.npub()
+                            && peer.transport_type.as_deref() == Some("nostr_relay")
+                    });
+                if alice_connected && bob_connected {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("roster siblings should authenticate over the relay transport");
+        alice_endpoint
+            .send_datagram(
+                bob_peer,
+                SOURCE_PORT,
+                AUTHORIZED_PORT,
+                b"authenticated Chat relay traffic".to_vec(),
+            )
+            .await
+            .expect("send authenticated service traffic");
+        let mut datagrams = Vec::new();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            bob_service.recv_batch_into(&mut datagrams, 1),
+        )
+        .await
+        .expect("Bob should receive authenticated relay traffic")
+        .expect("Bob service should stay open");
+        assert_eq!(
+            datagrams[0].source_peer.node_addr(),
+            alice_peer.node_addr(),
+            "authenticated identity should match independent of compressed-key parity"
+        );
+        assert_eq!(datagrams[0].data.as_slice(), b"authenticated Chat relay traffic");
+    });
+
+    let attacker_owner = Keys::generate();
+    let attacker = Keys::generate();
+    let (mut attacker_core, _attacker_updates, _attacker_temp) =
+        logged_in_test_core_with_updates("device-sync-relay-attacker", &attacker_owner, &attacker);
+    configure_test_device_sync_profile(
+        &mut attacker_core,
+        &attacker_owner,
+        &attacker,
+        &alice,
+        relay.url(),
+    );
+    attacker_core.reconcile_device_sync();
+    let attacker_endpoint = attacker_core
+        .device_sync_endpoint_for_test()
+        .expect("attacker FIPS endpoint");
+    let attacker_peer = test_fips_peer(&attacker);
+    let alice_service = alice_core
+        .runtime
+        .block_on(alice_endpoint.register_service_receiver(UNAUTHORIZED_PORT))
+        .expect("Alice rejection service");
+    alice_core.runtime.block_on(async {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(!alice_endpoint
+            .peers()
+            .await
+            .expect("Alice peers after attack")
+            .iter()
+            .any(|peer| peer.npub == attacker_peer.npub() && peer.connected));
+        assert!(!attacker_endpoint
+            .peers()
+            .await
+            .expect("attacker peers")
+            .iter()
+            .any(|peer| peer.npub == alice_peer.npub() && peer.connected));
+        let _ = attacker_endpoint
+            .send_datagram(
+                alice_peer,
+                SOURCE_PORT,
+                UNAUTHORIZED_PORT,
+                b"unauthorized".to_vec(),
+            )
+            .await;
+        let mut datagrams = Vec::new();
+        assert!(tokio::time::timeout(
+            Duration::from_millis(500),
+            alice_service.recv_batch_into(&mut datagrams, 1),
+        )
+        .await
+        .is_err());
+    });
+
+    attacker_core.stop_device_sync();
+    bob_core.stop_device_sync();
+    alice_core.stop_device_sync();
+    assert!(!alice_core.device_sync_relay_adapter_running_for_test());
+    alice_core.runtime.block_on(async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    });
+}
+
 #[test]
 fn device_sync_bootstraps_missing_chats_groups_and_post_roster_messages_once() {
     let owner = Keys::generate();

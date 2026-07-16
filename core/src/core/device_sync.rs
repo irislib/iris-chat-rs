@@ -1,5 +1,5 @@
 use super::*;
-use fips_core::{FipsEndpoint, PeerIdentity as FipsPeerIdentity};
+use fips_core::{FipsEndpoint, NostrRelayAdapter, PeerIdentity as FipsPeerIdentity};
 use nostr_double_ratchet::{GroupProtocol, GroupStrategy};
 use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
 use std::collections::BTreeSet;
@@ -34,6 +34,7 @@ pub(super) struct DeviceSyncRuntime {
     siblings: Vec<FipsPeerIdentity>,
     _attachment_store: Option<Arc<super::attachment_upload::SameHostAttachmentStore>>,
     _update_pubsub: Option<Arc<FipsPubsubClient>>,
+    relay_adapter: Option<NostrRelayAdapter>,
     tasks: Vec<JoinHandle<()>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -591,6 +592,7 @@ impl AppCore {
             siblings,
             _attachment_store: None,
             _update_pubsub: None,
+            relay_adapter: None,
             tasks: Vec::new(),
         });
     }

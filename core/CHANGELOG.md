@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.38
+
+- Run linked-device FIPS traffic through the canonical `fips-core` 0.4.2 Nostr
+  relay adapter, with one low-priority relay route per authorized roster
+  sibling and direct WebRTC paths still preferred.
+- Reject relay handshakes from devices outside the signed sibling roster, and
+  keep single-device same-host attachment reuse completely relay-free.
+- Add a feature-gated process fixture for the Iris Stack released-product lab;
+  it drives the production Chat attachment-read path without adding another
+  blob, discovery, or transport implementation.
+- Update the same-host blob route to `hashtree-fips-transport` 0.4.2 so the
+  released Chat fixture and Hashtree provider share the corrected relay
+  carrier boundary.
+
 ## 0.1.37
 
 - Update the embedded endpoint to the FIPS 0.4.1 WebRTC fix and `nostr-identity` 0.4.0.
