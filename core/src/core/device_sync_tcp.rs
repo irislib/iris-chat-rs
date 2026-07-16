@@ -1,6 +1,6 @@
 use super::*;
 use fips_core::{FipsEndpoint, PeerIdentity};
-use fips_tcp::{Config as TcpConfig, ConnectionId, State};
+use fips_tcp::{Config as TcpConfig, ConnectionId, MarkerStatus, SendMarker, State};
 use fips_tcp_endpoint::{AdapterError, FipsTcpEndpoint};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -41,6 +41,7 @@ pub(super) struct SendBatch {
 struct PendingRecord {
     bytes: Vec<u8>,
     offset: usize,
+    marker: Option<SendMarker>,
     control: bool,
 }
 
@@ -125,6 +126,7 @@ impl DeviceSyncTcpSender {
 
 pub(super) async fn start_device_sync_tcp(
     endpoint: Arc<FipsEndpoint>,
+    allowed_peers: HashSet<String>,
     service_port: u16,
     max_record_bytes: usize,
     initial_request: Vec<u8>,
@@ -143,6 +145,7 @@ pub(super) async fn start_device_sync_tcp(
     let control_retry = Arc::new(Mutex::new(HashMap::new()));
     let task = tokio::spawn(run_device_sync_tcp(
         endpoint,
+        allowed_peers,
         tcp,
         rx,
         dirty.clone(),
@@ -167,6 +170,7 @@ pub(super) async fn start_device_sync_tcp(
 #[allow(clippy::too_many_arguments)]
 async fn run_device_sync_tcp(
     endpoint: Arc<FipsEndpoint>,
+    allowed_peers: HashSet<String>,
     mut tcp: FipsTcpEndpoint,
     commands: flume::Receiver<SendBatch>,
     dirty: Arc<Mutex<HashSet<String>>>,
@@ -229,7 +233,7 @@ async fn run_device_sync_tcp(
             if let Ok(peers) = endpoint.peers().await {
                 connected = peers
                     .into_iter()
-                    .filter(|peer| peer.connected)
+                    .filter(|peer| peer.connected && allowed_peers.contains(&peer.npub))
                     .map(|peer| peer.npub)
                     .collect();
                 reconcile_connections(
@@ -239,6 +243,7 @@ async fn run_device_sync_tcp(
                     &mut readers,
                     &mut pending,
                     &mut requested,
+                    &dirty,
                     &mut tcp,
                     max_record_bytes,
                     now,
@@ -248,28 +253,31 @@ async fn run_device_sync_tcp(
         }
 
         let _ = tcp.poll(now).await;
-        accept_connections(
-            &connected,
-            &mut connections,
-            &mut readers,
-            &mut pending,
-            &mut requested,
-            &mut tcp,
-            max_record_bytes,
-            now,
-        )
-        .await;
         progress_connections(
             &mut connections,
             &mut readers,
             &mut pending,
             &mut pending_count,
             &mut requested,
+            &dirty,
             &initial_request,
             &core_sender,
             service_port,
             &mut tcp,
             now,
+        )
+        .await;
+        accept_connections(
+            &local,
+            &allowed_peers,
+            &connected,
+            &mut connections,
+            &mut readers,
+            &mut pending,
+            &mut requested,
+            &dirty,
+            &mut tcp,
+            max_record_bytes,
         )
         .await;
     }
@@ -283,19 +291,30 @@ async fn reconcile_connections(
     readers: &mut HashMap<ConnectionId, RecordReader>,
     pending: &mut HashMap<String, VecDeque<PendingRecord>>,
     requested: &mut HashSet<ConnectionId>,
+    dirty: &Arc<Mutex<HashSet<String>>>,
     tcp: &mut FipsTcpEndpoint,
     max_record_bytes: usize,
     now: u64,
 ) {
-    let removed = connections
-        .keys()
-        .filter(|peer| !connected.contains(*peer))
-        .cloned()
+    let stale = connections
+        .iter()
+        .filter(|&(peer, id)| {
+            connection_requires_retirement(connected.contains(peer), tcp.state(*id))
+        })
+        .map(|(peer, id)| (peer.clone(), *id))
         .collect::<Vec<_>>();
-    for peer in removed {
-        if let Some(id) = remove_connection_state(&peer, connections, readers, pending, requested) {
-            let _ = tcp.close(id, now).await;
-        }
+    for (peer, id) in stale {
+        retire_connection(
+            &peer,
+            id,
+            connections,
+            readers,
+            pending,
+            requested,
+            dirty,
+            tcp,
+        )
+        .await;
     }
 
     for npub in connected {
@@ -317,29 +336,46 @@ async fn reconcile_connections(
 
 #[allow(clippy::too_many_arguments)]
 async fn accept_connections(
+    local: &PeerIdentity,
+    allowed_peers: &HashSet<String>,
     connected: &HashSet<String>,
     connections: &mut HashMap<String, ConnectionId>,
     readers: &mut HashMap<ConnectionId, RecordReader>,
     pending: &mut HashMap<String, VecDeque<PendingRecord>>,
     requested: &mut HashSet<ConnectionId>,
+    dirty: &Arc<Mutex<HashSet<String>>>,
     tcp: &mut FipsTcpEndpoint,
     max_record_bytes: usize,
-    now: u64,
 ) {
     while let Some(id) = tcp.accept() {
         let Some(identity) = tcp.peer(id) else {
-            let _ = tcp.close(id, now).await;
+            let _ = tcp.abort(id).await;
             continue;
         };
         let peer = identity.npub();
-        if !connected.contains(&peer) {
-            let _ = tcp.close(id, now).await;
+        if !allowed_peers.contains(&peer) || !connected.contains(&peer) {
+            let _ = tcp.abort(id).await;
             continue;
         }
-        if let Some(previous) =
-            remove_connection_state(&peer, connections, readers, pending, requested)
-        {
-            let _ = tcp.close(previous, now).await;
+        if let Some(previous) = connections.get(&peer).copied() {
+            let keep_previous = matches!(tcp.state(previous), Some(State::Established))
+                || (comparison_key(local) < comparison_key(&identity)
+                    && matches!(tcp.state(previous), Some(State::SynSent)));
+            if keep_previous {
+                let _ = tcp.abort(id).await;
+                continue;
+            }
+            retire_connection(
+                &peer,
+                previous,
+                connections,
+                readers,
+                pending,
+                requested,
+                dirty,
+                tcp,
+            )
+            .await;
         }
         connections.insert(peer, id);
         readers.insert(id, RecordReader::new(max_record_bytes));
@@ -353,6 +389,7 @@ async fn progress_connections(
     pending: &mut HashMap<String, VecDeque<PendingRecord>>,
     pending_count: &mut usize,
     requested: &mut HashSet<ConnectionId>,
+    dirty: &Arc<Mutex<HashSet<String>>>,
     initial_request: &[u8],
     core_sender: &Sender<CoreMsg>,
     service_port: u16,
@@ -361,26 +398,102 @@ async fn progress_connections(
 ) {
     for (peer, id) in connections.clone() {
         let Some(state) = tcp.state(id) else {
-            remove_connection_state(&peer, connections, readers, pending, requested);
+            retire_connection(
+                &peer,
+                id,
+                connections,
+                readers,
+                pending,
+                requested,
+                dirty,
+                tcp,
+            )
+            .await;
             continue;
         };
-        if state != State::Established {
-            continue;
+        match state {
+            State::Established => {
+                if !requested.contains(&id)
+                    && enqueue_pending(
+                        pending,
+                        pending_count,
+                        peer.clone(),
+                        frame(initial_request),
+                        false,
+                        true,
+                    )
+                {
+                    requested.insert(id);
+                }
+                drain_writes(&peer, id, pending, pending_count, tcp, now).await;
+                drain_reads(&peer, id, readers, core_sender, service_port, tcp, now).await;
+            }
+            State::CloseWait => {
+                drain_reads(&peer, id, readers, core_sender, service_port, tcp, now).await;
+                retire_connection(
+                    &peer,
+                    id,
+                    connections,
+                    readers,
+                    pending,
+                    requested,
+                    dirty,
+                    tcp,
+                )
+                .await;
+            }
+            State::SynSent | State::SynReceived => {}
+            State::FinWait1
+            | State::FinWait2
+            | State::Closing
+            | State::LastAck
+            | State::TimeWait => {
+                retire_connection(
+                    &peer,
+                    id,
+                    connections,
+                    readers,
+                    pending,
+                    requested,
+                    dirty,
+                    tcp,
+                )
+                .await;
+            }
         }
-        if !requested.contains(&id)
-            && enqueue_pending(
-                pending,
-                pending_count,
-                peer.clone(),
-                frame(initial_request),
-                false,
-                true,
+    }
+}
+
+fn connection_requires_retirement(connected: bool, state: Option<State>) -> bool {
+    !connected
+        || matches!(
+            state,
+            None | Some(
+                State::FinWait1
+                    | State::FinWait2
+                    | State::Closing
+                    | State::LastAck
+                    | State::TimeWait
             )
-        {
-            requested.insert(id);
-        }
-        drain_writes(&peer, id, pending, pending_count, tcp, now).await;
-        drain_reads(&peer, id, readers, core_sender, service_port, tcp, now).await;
+        )
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn retire_connection(
+    peer: &str,
+    id: ConnectionId,
+    connections: &mut HashMap<String, ConnectionId>,
+    readers: &mut HashMap<ConnectionId, RecordReader>,
+    pending: &mut HashMap<String, VecDeque<PendingRecord>>,
+    requested: &mut HashSet<ConnectionId>,
+    dirty: &Arc<Mutex<HashSet<String>>>,
+    tcp: &mut FipsTcpEndpoint,
+) {
+    mark_dirty(dirty, peer.to_string());
+    if remove_connection_state(peer, connections, readers, pending, requested) == Some(id)
+        && tcp.state(id).is_some()
+    {
+        let _ = tcp.abort(id).await;
     }
 }
 
@@ -396,23 +509,40 @@ async fn drain_writes(
         return;
     };
     while let Some(record) = records.front_mut() {
+        if let Some(marker) = record.marker {
+            match tcp.marker_status(&marker) {
+                MarkerStatus::Acked if record.offset == record.bytes.len() => {
+                    records.pop_front();
+                    *pending_count = pending_count.saturating_sub(1);
+                    continue;
+                }
+                MarkerStatus::ConnectionGone => {
+                    record.offset = 0;
+                    record.marker = None;
+                    break;
+                }
+                MarkerStatus::Pending | MarkerStatus::Acked => {}
+            }
+        }
         let Some(remaining) = record.bytes.get(record.offset..) else {
             records.pop_front();
             *pending_count = pending_count.saturating_sub(1);
             continue;
         };
-        let Ok(accepted) = tcp.write(id, remaining, now).await else {
+        if remaining.is_empty() {
+            break;
+        }
+        let Ok((accepted, marker)) = tcp.write_with_marker(id, remaining, now).await else {
             break;
         };
         if accepted == 0 {
             break;
         }
         record.offset += accepted;
+        record.marker = Some(marker);
         if record.offset < record.bytes.len() {
             break;
         }
-        records.pop_front();
-        *pending_count = pending_count.saturating_sub(1);
     }
     if records.is_empty() {
         pending.remove(peer);
@@ -446,6 +576,7 @@ fn enqueue_pending(
     let record = PendingRecord {
         bytes,
         offset: 0,
+        marker: None,
         control,
     };
     if priority {
@@ -512,6 +643,7 @@ fn rewind_pending(pending: &mut HashMap<String, VecDeque<PendingRecord>>, peer: 
     if let Some(records) = pending.get_mut(peer) {
         for record in records {
             record.offset = 0;
+            record.marker = None;
         }
     }
 }
@@ -569,385 +701,5 @@ async fn drain_reads(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn records_survive_split_and_coalesced_stream_reads() {
-        let mut reader = RecordReader::new(8);
-        let bytes = [frame(&[1, 2]), frame(&[3])].concat();
-        assert!(reader.push(&bytes[..5]).unwrap().is_empty());
-        assert_eq!(reader.push(&bytes[5..]).unwrap(), vec![vec![1, 2], vec![3]]);
-        assert!(reader.push(&9_u32.to_be_bytes()).is_err());
-    }
-
-    #[test]
-    fn pending_records_are_bounded_and_resync_notice_has_priority() {
-        let mut pending = HashMap::new();
-        let mut count = 0;
-        let peer = "peer".to_owned();
-        for value in 0..MAX_PENDING_RECORDS_PER_PEER {
-            assert!(enqueue_pending(
-                &mut pending,
-                &mut count,
-                peer.clone(),
-                frame(&[value as u8]),
-                false,
-                false,
-            ));
-        }
-        assert!(!enqueue_pending(
-            &mut pending,
-            &mut count,
-            peer.clone(),
-            frame(b"dropped"),
-            false,
-            false,
-        ));
-        assert_eq!(pending[&peer].len(), MAX_PENDING_RECORDS_PER_PEER);
-        assert_eq!(count, MAX_PENDING_RECORDS_PER_PEER);
-
-        let request = frame(b"request");
-        assert!(enqueue_pending(
-            &mut pending,
-            &mut count,
-            peer.clone(),
-            request.clone(),
-            true,
-            true,
-        ));
-        assert_eq!(pending[&peer].len(), MAX_PENDING_RECORDS_PER_PEER);
-        assert_eq!(pending[&peer].front().unwrap().bytes, request);
-        assert_eq!(count, MAX_PENDING_RECORDS_PER_PEER);
-    }
-
-    #[test]
-    fn priority_control_waits_behind_a_partially_written_frame() {
-        let peer = "peer".to_owned();
-        let original = frame(b"original");
-        let control = frame(b"resync");
-        let mut pending = HashMap::new();
-        let mut count = 0;
-        assert!(enqueue_pending(
-            &mut pending,
-            &mut count,
-            peer.clone(),
-            original.clone(),
-            false,
-            false,
-        ));
-        pending.get_mut(&peer).unwrap().front_mut().unwrap().offset = 3;
-        assert!(enqueue_pending(
-            &mut pending,
-            &mut count,
-            peer.clone(),
-            control,
-            true,
-            true,
-        ));
-
-        let mut stream = original[..3].to_vec();
-        for record in &pending[&peer] {
-            stream.extend_from_slice(&record.bytes[record.offset..]);
-        }
-        assert_eq!(
-            RecordReader::new(1024).push(&stream).unwrap(),
-            vec![b"original".to_vec(), b"resync".to_vec()]
-        );
-    }
-
-    #[test]
-    fn accepted_batch_over_pending_limit_is_deferred_without_loss() {
-        let identity = fips_core::Identity::generate();
-        let peer = PeerIdentity::from_pubkey_full(identity.pubkey_full());
-        let records = (0..MAX_PENDING_RECORDS_PER_PEER + 7)
-            .map(|value| vec![value as u8])
-            .collect::<Vec<_>>();
-        let batch = SendBatch {
-            peer,
-            records: records.clone().into(),
-        };
-        let dirty = Arc::new(Mutex::new(HashSet::new()));
-        let mut deferred = HashMap::new();
-        let mut deferred_count = 0;
-        defer_batch(batch, &dirty, &mut deferred, &mut deferred_count);
-        let mut pending = HashMap::new();
-        let mut count = 0;
-        let mut queued = Vec::new();
-
-        while deferred_count > 0 {
-            enqueue_deferred_records(&mut deferred, &mut deferred_count, &mut pending, &mut count);
-            let item = pending
-                .get_mut(&peer.npub())
-                .and_then(VecDeque::pop_front)
-                .expect("a bounded batch chunk should be queued");
-            count -= 1;
-            queued.push(item.bytes);
-        }
-        if let Some(records) = pending.remove(&peer.npub()) {
-            queued.extend(records.into_iter().map(|record| record.bytes));
-        }
-        assert_eq!(
-            queued,
-            records
-                .iter()
-                .map(|record| frame(record))
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn offline_peer_batch_does_not_block_another_peers_record() {
-        let first = PeerIdentity::from_pubkey_full(fips_core::Identity::generate().pubkey_full());
-        let second = PeerIdentity::from_pubkey_full(fips_core::Identity::generate().pubkey_full());
-        let dirty = Arc::new(Mutex::new(HashSet::new()));
-        let mut deferred = HashMap::new();
-        let mut deferred_count = 0;
-        defer_batch(
-            SendBatch {
-                peer: first,
-                records: vec![b"offline".to_vec(); MAX_PENDING_RECORDS_PER_PEER + 1].into(),
-            },
-            &dirty,
-            &mut deferred,
-            &mut deferred_count,
-        );
-        defer_batch(
-            SendBatch {
-                peer: second,
-                records: vec![b"connected".to_vec()].into(),
-            },
-            &dirty,
-            &mut deferred,
-            &mut deferred_count,
-        );
-        let mut pending = HashMap::new();
-        let mut pending_count = 0;
-        enqueue_deferred_records(
-            &mut deferred,
-            &mut deferred_count,
-            &mut pending,
-            &mut pending_count,
-        );
-        assert_eq!(pending[&first.npub()].len(), MAX_PENDING_RECORDS_PER_PEER);
-        assert_eq!(pending[&second.npub()].len(), 1);
-    }
-
-    #[test]
-    fn four_full_offline_peer_queues_leave_capacity_for_a_fifth_peer() {
-        let mut pending = HashMap::new();
-        let mut pending_count = 0;
-        for peer_index in 0..4 {
-            for record_index in 0..MAX_PENDING_RECORDS_PER_PEER {
-                assert!(enqueue_pending(
-                    &mut pending,
-                    &mut pending_count,
-                    format!("offline-{peer_index}"),
-                    frame(&[record_index as u8]),
-                    false,
-                    false,
-                ));
-            }
-        }
-        assert!(enqueue_pending(
-            &mut pending,
-            &mut pending_count,
-            "connected-fifth".to_string(),
-            frame(b"deliver"),
-            false,
-            false,
-        ));
-    }
-
-    #[test]
-    fn removing_stream_state_rewinds_partial_frame_and_prunes_request_id() {
-        let config = TcpConfig {
-            send_buffer: 8,
-            ..TcpConfig::default()
-        };
-        let mut client = fips_tcp::Stack::new(config.clone(), 1);
-        let mut server = fips_tcp::Stack::new(config, 2);
-        assert!(server.listen(7369).is_ok());
-        let Ok(id) = client.connect("server".to_owned(), 7369, 0) else {
-            panic!("test connection should start");
-        };
-        for _ in 0..4 {
-            for packet in client.drain_outbound() {
-                assert!(server.input("client".to_owned(), &packet.bytes, 0).is_ok());
-            }
-            for packet in server.drain_outbound() {
-                assert!(client.input("server".to_owned(), &packet.bytes, 0).is_ok());
-            }
-        }
-
-        let peer = "server".to_owned();
-        let mut pending = HashMap::new();
-        let mut count = 0;
-        assert!(enqueue_pending(
-            &mut pending,
-            &mut count,
-            peer.clone(),
-            frame(b"long-enough-to-be-partial"),
-            false,
-            false,
-        ));
-        let Some(record) = pending
-            .get_mut(&peer)
-            .and_then(|records| records.front_mut())
-        else {
-            panic!("queued record should exist");
-        };
-        let Ok(accepted) = client.write(id, &record.bytes, 0) else {
-            panic!("established stream should accept bytes");
-        };
-        record.offset += accepted;
-        assert_eq!(record.offset, 8);
-
-        let mut connections = HashMap::from([(peer.clone(), id)]);
-        let mut readers = HashMap::from([(id, RecordReader::new(1024))]);
-        let mut requested = HashSet::from([id]);
-        assert_eq!(
-            remove_connection_state(
-                &peer,
-                &mut connections,
-                &mut readers,
-                &mut pending,
-                &mut requested,
-            ),
-            Some(id)
-        );
-        assert!(connections.is_empty());
-        assert!(readers.is_empty());
-        assert!(requested.is_empty());
-        assert!(pending
-            .get(&peer)
-            .and_then(|records| records.front())
-            .is_some_and(|record| record.offset == 0));
-    }
-
-    #[test]
-    fn sender_rejects_oversized_records_before_the_command_queue() {
-        let (tx, rx) = flume::bounded(1);
-        let sender = DeviceSyncTcpSender {
-            tx,
-            max_record_bytes: 4,
-            dirty: Arc::new(Mutex::new(HashSet::new())),
-            control_retry: Arc::new(Mutex::new(HashMap::new())),
-        };
-        let identity = fips_core::Identity::generate();
-        let peer = PeerIdentity::from_pubkey_full(identity.pubkey_full());
-        assert!(!sender.send_batch(peer, vec![vec![0; 5]]));
-        assert!(rx.is_empty());
-    }
-
-    #[test]
-    fn full_command_queue_schedules_a_priority_resync_notice() {
-        let (sender, _rx) = DeviceSyncTcpSender::test_channel(1, 1024);
-        let identity = fips_core::Identity::generate();
-        let peer = PeerIdentity::from_pubkey_full(identity.pubkey_full());
-        assert!(sender.send_batch(peer, vec![b"accepted".to_vec()]));
-        assert!(!sender.send_batch(peer, vec![b"recover me".to_vec()]));
-        assert!(sender
-            .dirty
-            .lock()
-            .is_ok_and(|peers| peers.contains(&peer.npub())));
-
-        let mut pending = HashMap::new();
-        let mut count = 0;
-        enqueue_dirty_resyncs(&sender.dirty, &mut pending, &mut count, b"resync");
-        assert_eq!(
-            pending[&peer.npub()].front().unwrap().bytes,
-            frame(b"resync")
-        );
-        assert!(sender.dirty.lock().is_ok_and(|peers| peers.is_empty()));
-    }
-
-    #[test]
-    fn snapshot_request_retries_outside_a_full_data_command_queue() {
-        let (sender, _rx) = DeviceSyncTcpSender::test_channel(1, 1024);
-        let identity = fips_core::Identity::generate();
-        let peer = PeerIdentity::from_pubkey_full(identity.pubkey_full());
-        assert!(sender.send_batch(peer, vec![b"fills data queue".to_vec()]));
-        assert!(sender.send_control(
-            peer,
-            b"cursor request".to_vec(),
-            Some((1, 20, "chat".to_string(), "id".to_string())),
-        ));
-        assert!(sender.send_control(peer, b"full request".to_vec(), None));
-        assert!(sender.send_control(
-            peer,
-            b"later cursor".to_vec(),
-            Some((1, 30, "chat".to_string(), "id".to_string())),
-        ));
-        assert!(sender.dirty.lock().is_ok_and(|peers| peers.is_empty()));
-
-        let mut pending = HashMap::new();
-        let mut count = 0;
-        enqueue_control_retries(&sender.control_retry, &mut pending, &mut count);
-        assert_eq!(
-            pending[&peer.npub()].front().unwrap().bytes,
-            frame(b"full request")
-        );
-        assert!(sender
-            .control_retry
-            .lock()
-            .is_ok_and(|records| records.is_empty()));
-    }
-
-    #[tokio::test]
-    async fn record_queued_while_disconnected_is_delivered_after_connect() {
-        let endpoint = Arc::new(
-            FipsEndpoint::builder()
-                .without_system_tun()
-                .bind()
-                .await
-                .expect("bind embedded endpoint"),
-        );
-        let local = PeerIdentity::from_npub(endpoint.npub()).expect("local identity");
-        let peer = local.npub();
-        let mut tcp =
-            FipsTcpEndpoint::bind(endpoint.clone(), 39_017, TcpConfig::default(), 0x1234_5678)
-                .await
-                .expect("bind TCP service");
-        let payload = b"queued before connect";
-        let mut pending = HashMap::new();
-        let mut pending_count = 0;
-        assert!(enqueue_pending(
-            &mut pending,
-            &mut pending_count,
-            peer.clone(),
-            frame(payload),
-            false,
-            false,
-        ));
-
-        let client = tcp.connect(local, 0).await.expect("connect after queue");
-        for _ in 0..3 {
-            tokio::time::timeout(Duration::from_secs(2), tcp.receive(0))
-                .await
-                .expect("handshake timed out")
-                .expect("receive handshake");
-        }
-        let server = tcp.accept().expect("accept loopback connection");
-        drain_writes(
-            &peer,
-            client,
-            &mut pending,
-            &mut pending_count,
-            &mut tcp,
-            10,
-        )
-        .await;
-        tcp.receive(10).await.expect("receive queued record");
-        tcp.receive(10).await.expect("receive acknowledgment");
-
-        let bytes = tcp.read(server, 1024, 10).await.expect("read stream");
-        let records = RecordReader::new(1024)
-            .push(&bytes)
-            .expect("parse framed record");
-        assert_eq!(records, vec![payload.to_vec()]);
-        assert_eq!(pending_count, 0);
-        assert!(pending.is_empty());
-        endpoint.shutdown().await.expect("shutdown endpoint");
-    }
-}
+#[path = "device_sync_tcp/tests.rs"]
+mod tests;

@@ -43,20 +43,105 @@ fn test_fips_peer(keys: &Keys) -> fips_core::PeerIdentity {
     .expect("test FIPS identity")
 }
 
+fn test_keys_with_compressed_prefix(prefix: u8) -> Keys {
+    loop {
+        let keys = Keys::generate();
+        let identity = fips_core::Identity::from_secret_str(&keys.secret_key().to_secret_hex())
+            .expect("test FIPS identity from Nostr secret");
+        if identity.pubkey_full().serialize()[0] == prefix {
+            return keys;
+        }
+    }
+}
+
+async fn device_sync_peer_transport(
+    endpoint: &fips_core::FipsEndpoint,
+    peer: &fips_core::PeerIdentity,
+) -> Option<String> {
+    endpoint
+        .peers()
+        .await
+        .expect("device-sync peer health")
+        .into_iter()
+        .find(|candidate| candidate.connected && candidate.npub == peer.npub())
+        .and_then(|candidate| candidate.transport_type)
+}
+
+async fn device_sync_pair_uses_webrtc(
+    link: [(&fips_core::FipsEndpoint, &fips_core::PeerIdentity); 2],
+) -> bool {
+    device_sync_peer_transport(link[0].0, link[0].1)
+        .await
+        .as_deref()
+        == Some("webrtc")
+        && device_sync_peer_transport(link[1].0, link[1].1)
+            .await
+            .as_deref()
+            == Some("webrtc")
+}
+
+fn has_device_sync_message(core: &AppCore, chat_id: &str, message_id: &str) -> bool {
+    core.threads.get(chat_id).is_some_and(|thread| {
+        thread
+            .messages
+            .iter()
+            .any(|message| message.id == message_id)
+    })
+}
+
+fn wait_for_device_sync_message(
+    sender: &AppCore,
+    receiver: &mut AppCore,
+    messages: &flume::Receiver<CoreMsg>,
+    link: [(&fips_core::FipsEndpoint, &fips_core::PeerIdentity); 2],
+    chat_id: &str,
+    message_id: &str,
+    stable_for: Duration,
+) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10) + stable_for;
+    let mut first_seen = None;
+    loop {
+        while let Ok(message) = messages.try_recv() {
+            receiver.handle_message(message);
+        }
+        let now = std::time::Instant::now();
+        if has_device_sync_message(receiver, chat_id, message_id) {
+            first_seen.get_or_insert(now);
+        }
+        assert!(
+            sender.runtime.block_on(device_sync_pair_uses_webrtc(link)),
+            "production device sync must remain on direct WebRTC"
+        );
+        if first_seen.is_some_and(|seen| now.duration_since(seen) >= stable_for) {
+            return;
+        }
+        assert!(
+            now < deadline,
+            "production fips-tcp device sync should converge: message={message_id}",
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
-fn device_sync_relay_adapter_carries_authenticated_traffic_and_rejects_non_siblings() {
-    const AUTHORIZED_PORT: u16 = 47_001;
+fn device_sync_relay_bootstraps_authenticated_webrtc_and_rejects_non_siblings() {
     const UNAUTHORIZED_PORT: u16 = 47_002;
     const SOURCE_PORT: u16 = 47_000;
     let relay = crate::local_relay::TestRelay::start();
     assert!(!relay.url().is_empty(), "test relay should start");
     let owner = Keys::generate();
-    let alice = Keys::generate();
-    let bob = Keys::generate();
+    let alice = test_keys_with_compressed_prefix(0x03);
+    let bob = test_keys_with_compressed_prefix(0x02);
     let (mut alice_core, _alice_updates, _alice_temp) =
         logged_in_test_core_with_updates("device-sync-relay-alice", &owner, &alice);
     let (mut bob_core, _bob_updates, _bob_temp) =
         logged_in_test_core_with_updates("device-sync-relay-bob", &owner, &bob);
+    let (alice_core_tx, _alice_core_rx) = flume::unbounded();
+    alice_core.core_sender = alice_core_tx.clone();
+    alice_core.priority_sender = alice_core_tx;
+    let (bob_core_tx, bob_core_rx) = flume::unbounded();
+    bob_core.core_sender = bob_core_tx.clone();
+    bob_core.priority_sender = bob_core_tx;
     configure_test_device_sync_profile(&mut alice_core, &owner, &alice, &bob, relay.url());
     configure_test_device_sync_profile(&mut bob_core, &owner, &bob, &alice, relay.url());
 
@@ -72,11 +157,10 @@ fn device_sync_relay_adapter_carries_authenticated_traffic_and_rejects_non_sibli
         .expect("Bob FIPS endpoint");
     let alice_peer = test_fips_peer(&alice);
     let bob_peer = test_fips_peer(&bob);
-    let bob_service = bob_core
-        .runtime
-        .block_on(bob_endpoint.register_service_receiver(AUTHORIZED_PORT))
-        .expect("Bob test service");
-
+    let link = [
+        (alice_endpoint.as_ref(), &bob_peer),
+        (bob_endpoint.as_ref(), &alice_peer),
+    ];
     alice_core.runtime.block_on(async {
         let advertised = alice_endpoint
             .local_advertised_endpoints()
@@ -87,60 +171,68 @@ fn device_sync_relay_adapter_carries_authenticated_traffic_and_rejects_non_sibli
                 == fips_core::discovery::nostr::OverlayTransportKind::NostrRelay
                 && endpoint.addr == alice_peer.npub()
         }));
-        tokio::time::timeout(Duration::from_secs(10), async {
+        assert!(advertised.iter().any(|endpoint| {
+            endpoint.transport
+                == fips_core::discovery::nostr::OverlayTransportKind::WebRtc
+        }));
+        let promotion = tokio::time::timeout(Duration::from_secs(40), async {
             loop {
-                let alice_connected = alice_endpoint
-                    .peers()
-                    .await
-                    .expect("Alice peers")
-                    .iter()
-                    .any(|peer| {
-                        peer.connected
-                            && peer.npub == bob_peer.npub()
-                            && peer.transport_type.as_deref() == Some("nostr_relay")
-                    });
-                let bob_connected = bob_endpoint
-                    .peers()
-                    .await
-                    .expect("Bob peers")
-                    .iter()
-                    .any(|peer| {
-                        peer.connected
-                            && peer.npub == alice_peer.npub()
-                            && peer.transport_type.as_deref() == Some("nostr_relay")
-                    });
-                if alice_connected && bob_connected {
+                if device_sync_pair_uses_webrtc(link).await {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
             }
         })
-        .await
-        .expect("roster siblings should authenticate over the relay transport");
-        alice_endpoint
-            .send_datagram(
-                bob_peer,
-                SOURCE_PORT,
-                AUTHORIZED_PORT,
-                b"authenticated Chat relay traffic".to_vec(),
-            )
-            .await
-            .expect("send authenticated service traffic");
-        let mut datagrams = Vec::new();
-        tokio::time::timeout(
-            Duration::from_secs(5),
-            bob_service.recv_batch_into(&mut datagrams, 1),
-        )
-        .await
-        .expect("Bob should receive authenticated relay traffic")
-        .expect("Bob service should stay open");
-        assert_eq!(
-            datagrams[0].source_peer.node_addr(),
-            alice_peer.node_addr(),
-            "authenticated identity should match independent of compressed-key parity"
-        );
-        assert_eq!(datagrams[0].data.as_slice(), b"authenticated Chat relay traffic");
+        .await;
+        if promotion.is_err() {
+            let alice_status = alice_endpoint.peers().await.expect("Alice diagnostics");
+            let bob_status = bob_endpoint.peers().await.expect("Bob diagnostics");
+            panic!(
+                "relay-authenticated roster siblings did not negotiate direct WebRTC; \
+                 Alice={alice_status:#?}, Bob={bob_status:#?}"
+            );
+        }
+
     });
+
+    let sync_peer = Keys::generate();
+    let sync_chat_id = sync_peer.public_key().to_hex();
+    alice_core.apply_runtime_text_message(
+        sync_peer.public_key(),
+        Some(sync_chat_id.clone()),
+        "production device sync over promoted WebRTC".to_string(),
+        200,
+        None,
+        Some("webrtc-device-sync-message".to_string()),
+        None,
+    );
+    wait_for_device_sync_message(
+        &alice_core,
+        &mut bob_core,
+        &bob_core_rx,
+        link,
+        &sync_chat_id,
+        "webrtc-device-sync-message",
+        Duration::ZERO,
+    );
+    alice_core.apply_runtime_text_message(
+        sync_peer.public_key(),
+        Some(sync_chat_id.clone()),
+        "production device sync stays on WebRTC".to_string(),
+        201,
+        None,
+        Some("stable-webrtc-device-sync-message".to_string()),
+        None,
+    );
+    wait_for_device_sync_message(
+        &alice_core,
+        &mut bob_core,
+        &bob_core_rx,
+        link,
+        &sync_chat_id,
+        "stable-webrtc-device-sync-message",
+        Duration::from_secs(1),
+    );
 
     let attacker_owner = Keys::generate();
     let attacker = Keys::generate();

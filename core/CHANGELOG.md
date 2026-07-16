@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.39
+
+- Upgrade roster-authorized device links from the canonical Nostr relay
+  fallback to direct WebRTC through FIPS's existing authenticated port-257
+  negotiation service.
+- Update to `fips-core` 0.4.4 and `hashtree-fips-transport` 0.4.3. The relay
+  remains a low-priority fallback; same-host-only attachment reuse remains
+  relay-free and application-owned outbound links remain independent.
+- Bind device-sync services before relay ingress, retire stale or disappeared
+  TCP/FIPS streams, and retain records until cumulative TCP acknowledgement so
+  direct-path promotion and stream replacement converge without data loss.
+- Restrict device-sync TCP acceptance and dialing to the owner's sibling roster
+  when the endpoint is also connected to same-host Hashtree providers.
+- Disable the global `fipsctl` control socket on Chat's embedded endpoint so
+  multiple Chat or Iris processes do not contend for daemon-owned state.
+
 ## 0.1.38
 
 - Run linked-device FIPS traffic through the canonical `fips-core` 0.4.2 Nostr

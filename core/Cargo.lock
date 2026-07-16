@@ -1224,9 +1224,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.4.2"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73ee26eaca3f24edd9036706981f862ab65c474c6a305074f59abeea1791a830"
+checksum = "50dbe1eb7c3775c3bf6e01f6bd0e9f414bfe9132a3cdf5a8d199bb3eeb0c79a8"
 dependencies = [
  "base64",
  "bluer",
@@ -1620,9 +1620,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.4.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0155e7caa98e6b6782bb5cd2ab9a7876b5ec773a8efa755f334b05fc1f05d690"
+checksum = "35cf1e88e5e2d7c9972799dd706eb315110f9da376f4dc3f1a8796d5988d6c9c"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -2027,7 +2027,7 @@ checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 
 [[package]]
 name = "iris-chat"
-version = "0.1.38"
+version = "0.1.39"
 dependencies = [
  "anyhow",
  "async-trait",

@@ -86,6 +86,7 @@ impl AppCore {
         self.stop_device_sync();
 
         let mut fips_config = Config::new();
+        fips_config.node.control.enabled = false;
         if device_sync_enabled {
             fips_config.node.discovery.nostr.enabled = true;
             fips_config.node.discovery.nostr.advertise = true;
@@ -112,7 +113,7 @@ impl AppCore {
             });
             fips_config.transports.webrtc = TransportInstances::Single(WebRtcConfig {
                 advertise_on_nostr: Some(true),
-                auto_connect: Some(false),
+                auto_connect: Some(true),
                 accept_connections: Some(true),
                 ..WebRtcConfig::default()
             });
@@ -174,38 +175,14 @@ impl AppCore {
                 return;
             }
         };
-        let relay_adapter = if device_sync_enabled {
-            match self.runtime.block_on(NostrRelayAdapter::start(
-                endpoint.clone(),
-                &config.relay_urls,
-            )) {
-                Ok(Some(adapter)) => Some(adapter),
-                Ok(None) => {
-                    self.push_debug_log(
-                        "device_sync.relay.start.error",
-                        "configured message servers produced no FIPS relay adapter",
-                    );
-                    let _ = self.runtime.block_on(endpoint.shutdown());
-                    return;
-                }
-                Err(error) => {
-                    self.push_debug_log("device_sync.relay.start.error", error);
-                    let _ = self.runtime.block_on(endpoint.shutdown());
-                    return;
-                }
-            }
-        } else {
-            None
-        };
-
         let (tcp, update_pubsub, tasks) = if device_sync_enabled {
             let Some((request, resync_required)) = device_sync_packets else {
-                self.runtime
-                    .block_on(shutdown_shared_fips(endpoint, relay_adapter));
+                let _ = self.runtime.block_on(endpoint.shutdown());
                 return;
             };
             let (tcp, tcp_task) = match self.runtime.block_on(start_device_sync_tcp(
                 endpoint.clone(),
+                config.siblings.iter().map(|peer| peer.npub()).collect(),
                 DEVICE_SYNC_PORT,
                 DEVICE_SYNC_MAX_PACKET_BYTES,
                 request,
@@ -215,8 +192,7 @@ impl AppCore {
                 Ok(value) => value,
                 Err(error) => {
                     self.push_debug_log("device_sync.tcp.start.error", error);
-                    self.runtime
-                        .block_on(shutdown_shared_fips(endpoint, relay_adapter));
+                    let _ = self.runtime.block_on(endpoint.shutdown());
                     return;
                 }
             };
@@ -270,11 +246,42 @@ impl AppCore {
                 Err(error) => {
                     self.push_debug_log("attachment.same_host.start.error", error.to_string());
                     if !device_sync_enabled {
-                        self.runtime
-                            .block_on(shutdown_shared_fips(endpoint, relay_adapter));
+                        let _ = self.runtime.block_on(endpoint.shutdown());
                         return;
                     }
                     None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Own every application service before relay ingress can authenticate
+        // a sibling and deliver its first TCP/FSP segment.
+        let relay_adapter = if device_sync_enabled {
+            match self.runtime.block_on(NostrRelayAdapter::start(
+                endpoint.clone(),
+                &config.relay_urls,
+            )) {
+                Ok(Some(adapter)) => Some(adapter),
+                Ok(None) => {
+                    self.push_debug_log(
+                        "device_sync.relay.start.error",
+                        "configured message servers produced no FIPS relay adapter",
+                    );
+                    for task in &tasks {
+                        task.abort();
+                    }
+                    let _ = self.runtime.block_on(endpoint.shutdown());
+                    return;
+                }
+                Err(error) => {
+                    self.push_debug_log("device_sync.relay.start.error", error);
+                    for task in &tasks {
+                        task.abort();
+                    }
+                    let _ = self.runtime.block_on(endpoint.shutdown());
+                    return;
                 }
             }
         } else {
