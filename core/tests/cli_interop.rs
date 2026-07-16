@@ -426,6 +426,18 @@ fn device_linking_e2e_installs_local_sibling_session() {
         .expect("owner account")
         .public_key_hex
         .clone();
+    wait_for_app_state(
+        &owner,
+        "owner relay startup",
+        Duration::from_secs(30),
+        |state| {
+            state.network_status.as_ref().is_some_and(|network| {
+                network.connected_relay_count > 0
+                    && !network.syncing
+                    && network.pending_outbound_count == 0
+            })
+        },
+    );
 
     linked.dispatch(AppAction::SetNostrRelays {
         relay_urls: vec![relay.url().to_string()],
