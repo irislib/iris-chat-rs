@@ -9,7 +9,8 @@ use hashtree_core::{
     nhash_decode, nhash_encode_full, to_hex, BlobRoute, Cid, Hash, HashTree, HashTreeConfig,
     MemoryStore, NHashData, Store, StoreBlobRoute, StoreError,
 };
-use hashtree_fips_transport::{SameHostBlobStore, SameHostBlobStoreConfig, SameHostBlobStoreError};
+use hashtree_fips_transport::{FipsBlobRoute, TcpBlobTransport, TcpBlobTransportConfig};
+use hashtree_network::{BlobRouteEntry, BlobRouter, BlobRouterConfig, RoutedStore};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -40,15 +41,18 @@ fn shared_chunk_cache_write() -> RwLockWriteGuard<'static, HashMap<String, Vec<u
         .unwrap_or_else(|poison| poison.into_inner())
 }
 
-pub(super) type SameHostAttachmentStore = SameHostBlobStore<MemoryStore>;
+pub(super) struct AttachmentBlobRuntime {
+    store: Arc<RoutedStore<MemoryStore>>,
+    _transport: Arc<TcpBlobTransport<MemoryStore>>,
+}
 
-fn same_host_attachment_store() -> &'static RwLock<Option<Weak<SameHostAttachmentStore>>> {
-    static STORE: OnceLock<RwLock<Option<Weak<SameHostAttachmentStore>>>> = OnceLock::new();
+fn attachment_blob_store() -> &'static RwLock<Option<Weak<RoutedStore<MemoryStore>>>> {
+    static STORE: OnceLock<RwLock<Option<Weak<RoutedStore<MemoryStore>>>>> = OnceLock::new();
     STORE.get_or_init(|| RwLock::new(None))
 }
 
-fn active_same_host_attachment_store() -> Option<Arc<SameHostAttachmentStore>> {
-    same_host_attachment_store()
+fn active_attachment_blob_store() -> Option<Arc<RoutedStore<MemoryStore>>> {
+    attachment_blob_store()
         .read()
         .unwrap_or_else(|poison| poison.into_inner())
         .as_ref()
@@ -58,25 +62,42 @@ fn active_same_host_attachment_store() -> Option<Arc<SameHostAttachmentStore>> {
 pub(super) async fn bind_same_host_attachment_store(
     endpoint: Arc<FipsEndpoint>,
     standalone: Arc<dyn BlobRoute>,
-) -> Result<Arc<SameHostAttachmentStore>, SameHostBlobStoreError> {
-    let store = Arc::new(
-        SameHostBlobStore::bind(
-            endpoint,
-            Arc::new(MemoryStore::new()),
-            Some(standalone),
-            SameHostBlobStoreConfig::default(),
+) -> anyhow::Result<Arc<AttachmentBlobRuntime>> {
+    let primary = Arc::new(MemoryStore::new());
+    let transport = Arc::new(
+        TcpBlobTransport::bind_client_with_config(
+            endpoint.clone(),
+            primary.clone(),
+            TcpBlobTransportConfig::default(),
         )
         .await?,
     );
-    *same_host_attachment_store()
+    let provider = Arc::new(FipsBlobRoute::discovered(endpoint, transport.clone(), 4)?);
+    let router = Arc::new(BlobRouter::new(
+        vec![
+            BlobRouteEntry::new(
+                "attachment-cache",
+                Arc::new(StoreBlobRoute::new(primary.clone())),
+            ),
+            BlobRouteEntry::new("same-host-fips", provider),
+            BlobRouteEntry::new("blossom", standalone),
+        ],
+        Some(primary.clone()),
+        BlobRouterConfig::default(),
+    )?);
+    let runtime = Arc::new(AttachmentBlobRuntime {
+        store: Arc::new(RoutedStore::new(primary, router)),
+        _transport: transport,
+    });
+    *attachment_blob_store()
         .write()
-        .unwrap_or_else(|poison| poison.into_inner()) = Some(Arc::downgrade(&store));
-    Ok(store)
+        .unwrap_or_else(|poison| poison.into_inner()) = Some(Arc::downgrade(&runtime.store));
+    Ok(runtime)
 }
 
 pub(super) async fn start_same_host_attachment_reuse(
     endpoint: Arc<FipsEndpoint>,
-) -> Result<Arc<SameHostAttachmentStore>, SameHostBlobStoreError> {
+) -> anyhow::Result<Arc<AttachmentBlobRuntime>> {
     let standalone: Arc<dyn BlobRoute> = Arc::new(StoreBlobRoute::new(blossom_read_store()));
     bind_same_host_attachment_store(endpoint, standalone).await
 }
@@ -426,7 +447,7 @@ pub(super) async fn download_hashtree_attachment_base64(nhash: &str) -> anyhow::
         hash: data.hash,
         key: data.decrypt_key,
     };
-    let bytes = if let Some(store) = active_same_host_attachment_store() {
+    let bytes = if let Some(store) = active_attachment_blob_store() {
         read_hashtree_attachment(&cid, store).await?
     } else {
         read_hashtree_attachment(&cid, blossom_read_store()).await?

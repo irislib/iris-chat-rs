@@ -25,8 +25,10 @@ Use `--json` for scripts and agents.
 
 Set `IRIS_CHAT_SAME_HOST_HASHTREE=1` to let the logged-in Chat FIPS endpoint
 discover authenticated `hashtree.blob/1` providers over fixed loopback UDP.
-This is an optional read optimization: provider misses or failures continue
-through Chat's configured Blossom sources, and attachment writes are unchanged.
+Chat's local cache, one composite FIPS provider route, and its configured
+Blossom sources share the canonical hash-verifying `BlobRouter`. Provider
+misses, failures, or exit leave the other routes available, while attachment
+writes remain application-owned and unchanged.
 
 Process-level integration tests may set `IRIS_CHAT_FIPS_LOCAL_RENDEZVOUS_ADDR`
 to an isolated non-zero IPv4 loopback address. Normal application runs leave

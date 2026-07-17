@@ -1224,9 +1224,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.4.4"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50dbe1eb7c3775c3bf6e01f6bd0e9f414bfe9132a3cdf5a8d199bb3eeb0c79a8"
+checksum = "12cc0df5e04a1aae16efa85313976e87eb037d6e7955b8a035febd91b00383dc"
 dependencies = [
  "base64",
  "bluer",
@@ -1587,9 +1587,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-config"
-version = "0.2.82"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6dbe3d3e0663d768ace0100e954702e21c7a41a0eaeae9bbc50736e7049da6bf"
+checksum = "661c0bec57ba49999860fc418a7e656714cd79d82a3c3ee272794b90bb49db76"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -1599,9 +1599,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.2.84"
+version = "0.2.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6ef5a7d8f14aef725aebde27e670548832e95f0813d6f84bf3f3a66503561fc"
+checksum = "574476b1fe122bddc7783ba0346dca42ec673a241128b0edf9e38166c1bb800f"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -1620,9 +1620,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.4.3"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35cf1e88e5e2d7c9972799dd706eb315110f9da376f4dc3f1a8796d5988d6c9c"
+checksum = "3817b451831f915787090cb1ca33dac2e5313bc1e5afd2da515f0e57bb0c997f"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -1633,6 +1633,18 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "hashtree-network"
+version = "0.2.87"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa83a68204dfbdc10f2fa9e810740c981e6f87c114a763ee56d8823df02c077e"
+dependencies = [
+ "async-trait",
+ "futures",
+ "hashtree-core",
+ "tokio",
 ]
 
 [[package]]
@@ -2027,7 +2039,7 @@ checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 
 [[package]]
 name = "iris-chat"
-version = "0.1.39"
+version = "0.1.40"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2042,6 +2054,7 @@ dependencies = [
  "hashtree-config",
  "hashtree-core",
  "hashtree-fips-transport",
+ "hashtree-network",
  "hashtree-resolver",
  "hashtree-updater",
  "hmac",

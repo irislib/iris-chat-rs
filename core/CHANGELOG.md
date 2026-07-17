@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.40
+
+- Replace the removed combined same-host store/transport adapter with the
+  canonical Hashtree `BlobRouter` and `RoutedStore`: reads share one verified
+  local-cache, FIPS-provider, and Blossom route set, while writes and pins stay
+  on Chat's explicit primary store.
+- Own TCP/FIPS transport lifetime separately from storage policy and update to
+  FIPS 0.4.6. Provider miss, failure, or exit still permits standalone reads;
+  linked-device and application-owned outbound links remain independent.
+
 ## 0.1.39
 
 - Upgrade roster-authorized device links from the canonical Nostr relay

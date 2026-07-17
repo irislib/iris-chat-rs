@@ -3,7 +3,7 @@ use base64::Engine;
 use fips_core::config::{PeerConfig, RoutingMode, TransportInstances, UdpConfig};
 use fips_core::FipsEndpoint;
 use hashtree_core::{BlobRoute, MemoryStore, StoreBlobRoute};
-use hashtree_fips_transport::{SameHostBlobStoreConfig, TCP_BLOB_CAPABILITY};
+use hashtree_fips_transport::{TcpBlobTransport, TcpBlobTransportConfig, TCP_BLOB_CAPABILITY};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::time::Instant;
 
@@ -97,14 +97,16 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
     let provider_data = b"attachment supplied by the same-host provider".to_vec();
     let provider_nhash =
         provider_runtime.block_on(seed_file(provider_local.clone(), &provider_data));
-    let provider = provider_runtime
-        .block_on(hashtree_fips_transport::SameHostBlobStore::bind(
-            provider_endpoint.clone(),
-            provider_local,
-            None,
-            SameHostBlobStoreConfig::provider(100),
-        ))
-        .expect("bind provider");
+    let provider = Arc::new(
+        provider_runtime
+            .block_on(TcpBlobTransport::bind_advertised_with_config(
+                provider_endpoint.clone(),
+                provider_local,
+                TcpBlobTransportConfig::default(),
+                100,
+            ))
+            .expect("bind provider"),
+    );
     let fallback = Arc::new(MemoryStore::new());
     let before = b"standalone fallback after provider miss".to_vec();
     let after = b"standalone fallback after provider death".to_vec();
@@ -153,8 +155,8 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
     );
     assert_eq!(sibling_count, 0, "no device-sync peer is synthesized");
     assert!(Arc::ptr_eq(
-        &store,
-        &active_same_host_attachment_store().expect("registered attachment store")
+        &store.store,
+        &active_attachment_blob_store().expect("registered attachment store")
     ));
 
     wait_until(|| {

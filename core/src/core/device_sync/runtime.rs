@@ -49,14 +49,14 @@ impl AppCore {
         Arc<FipsEndpoint>,
         bool,
         usize,
-        Arc<super::super::attachment_upload::SameHostAttachmentStore>,
+        Arc<super::super::attachment_upload::AttachmentBlobRuntime>,
     )> {
         let runtime = self.device_sync.as_ref()?;
         Some((
             runtime.endpoint.clone(),
             runtime.tcp.is_some(),
             runtime.siblings.len(),
-            runtime._attachment_store.as_ref()?.clone(),
+            runtime._attachment_blobs.as_ref()?.clone(),
         ))
     }
 
@@ -294,7 +294,7 @@ impl AppCore {
             endpoint,
             tcp,
             siblings: config.siblings,
-            _attachment_store: attachment_store,
+            _attachment_blobs: attachment_store,
             _update_pubsub: update_pubsub,
             relay_adapter,
             tasks,
