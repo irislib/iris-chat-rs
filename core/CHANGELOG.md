@@ -9,6 +9,9 @@
 - Own TCP/FIPS transport lifetime separately from storage policy and update to
   FIPS 0.4.6. Provider miss, failure, or exit still permits standalone reads;
   linked-device and application-owned outbound links remain independent.
+- Publish `iris-chat-protocol` 0.1.8 so packaged builds include signed
+  invite-owner authorization and bounded pending group-fanout recovery instead
+  of relying on the repository-local protocol source.
 
 ## 0.1.39
 
