@@ -331,6 +331,9 @@ impl ProtocolEngine {
                 self.pending_group_fanouts.push(pending);
             }
         }
+        if inner_event_id.is_none() {
+            self.prune_superseded_local_group_sync_fanouts();
+        }
     }
 
     fn queued_group_targets(&self) -> Vec<String> {

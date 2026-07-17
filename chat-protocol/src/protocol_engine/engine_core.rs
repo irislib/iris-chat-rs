@@ -136,8 +136,40 @@ impl ProtocolEngine {
         self.ensure_local_roster(local_invite_created_at);
         self.hydrate_pending_inbound_metadata();
         self.prune_untracked_pending_inbound();
+        self.prune_superseded_local_group_sync_fanouts();
         self.prune_pending_group_sender_key_work_for_inactive_local_groups();
         self.persist()
+    }
+
+    fn prune_superseded_local_group_sync_fanouts(&mut self) -> bool {
+        let original_len = self.pending_group_fanouts.len();
+        if original_len < 2 {
+            return false;
+        }
+
+        let mut seen_groups = HashSet::new();
+        let mut compacted = Vec::with_capacity(original_len);
+        for pending in std::mem::take(&mut self.pending_group_fanouts)
+            .into_iter()
+            .rev()
+        {
+            let keep = if pending.inner_event_id.is_none()
+                && matches!(
+                    &pending.fanout,
+                    GroupPendingFanout::LocalSiblings { .. }
+                )
+            {
+                seen_groups.insert(pending.group_id.clone())
+            } else {
+                true
+            };
+            if keep {
+                compacted.push(pending);
+            }
+        }
+        compacted.reverse();
+        self.pending_group_fanouts = compacted;
+        self.pending_group_fanouts.len() != original_len
     }
 
     fn hydrate_pending_inbound_metadata(&mut self) {

@@ -871,6 +871,112 @@ mod tests {
         assert_eq!(engine.group_manager.snapshot(), groups);
     }
 
+    #[test]
+    fn reload_compacts_superseded_local_group_sync_fanouts() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let storage = Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+        let mut engine = ProtocolEngine::load_or_create_for_local_device(
+            Arc::clone(&storage),
+            owner.public_key(),
+            &device,
+        )
+        .expect("protocol engine");
+        engine.pending_group_fanouts = vec![
+            pending_local_group_fanout("group-a", None, b"old", 10),
+            pending_local_group_fanout("group-b", None, b"other", 11),
+            pending_local_group_fanout("group-a", None, b"new", 12),
+            pending_local_group_fanout("group-a", Some("message-1"), b"message", 13),
+        ];
+        engine.persist().expect("persist legacy fanout queue");
+        drop(engine);
+
+        let reloaded =
+            ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), &device)
+                .expect("reload protocol engine");
+
+        assert_eq!(reloaded.pending_group_fanouts.len(), 3);
+        assert!(reloaded.pending_group_fanouts.iter().any(|pending| {
+            pending.group_id == "group-a"
+                && pending.inner_event_id.is_none()
+                && matches!(
+                    &pending.fanout,
+                    GroupPendingFanout::LocalSiblings { payload } if payload == b"new"
+                )
+        }));
+        assert!(reloaded
+            .pending_group_fanouts
+            .iter()
+            .any(|pending| pending.inner_event_id.as_deref() == Some("message-1")));
+    }
+
+    #[test]
+    fn local_group_sync_enqueue_replaces_obsolete_pending_payload() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let mut engine = test_engine(&owner, &device);
+        let mut prepared = GroupPreparedPublish::empty();
+        prepared.pending_fanouts = vec![GroupPendingFanout::LocalSiblings {
+            payload: b"old".to_vec(),
+        }];
+        engine.queue_group_pending_fanouts("group-a", &prepared, None);
+        prepared.pending_fanouts = vec![GroupPendingFanout::LocalSiblings {
+            payload: b"new".to_vec(),
+        }];
+        engine.queue_group_pending_fanouts("group-a", &prepared, None);
+
+        assert_eq!(engine.pending_group_fanouts.len(), 1);
+        assert!(matches!(
+            &engine.pending_group_fanouts[0].fanout,
+            GroupPendingFanout::LocalSiblings { payload } if payload == b"new"
+        ));
+    }
+
+    #[test]
+    fn group_fanout_retry_processes_a_bounded_due_batch() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let mut engine = test_engine(&owner, &device);
+        for index in 0..70 {
+            engine
+                .pending_group_fanouts
+                .push(pending_local_group_fanout(
+                    "group-a",
+                    Some(&format!("message-{index}")),
+                    &[index as u8],
+                    1,
+                ));
+        }
+
+        engine
+            .retry_pending_group_fanouts(NdrUnixSeconds(10))
+            .expect("retry pending fanouts");
+
+        let due_remaining = engine
+            .pending_group_fanouts
+            .iter()
+            .filter(|pending| pending.next_retry_at_secs <= 10)
+            .count();
+        assert_eq!(due_remaining, 6);
+    }
+
+    fn pending_local_group_fanout(
+        group_id: &str,
+        inner_event_id: Option<&str>,
+        payload: &[u8],
+        created_at_secs: u64,
+    ) -> ProtocolPendingGroupFanout {
+        ProtocolPendingGroupFanout {
+            group_id: group_id.to_string(),
+            fanout: GroupPendingFanout::LocalSiblings {
+                payload: payload.to_vec(),
+            },
+            inner_event_id: inner_event_id.map(str::to_string),
+            created_at_secs,
+            next_retry_at_secs: created_at_secs,
+        }
+    }
+
     fn group_snapshot_for_test(
         group_id: &str,
         name: &str,

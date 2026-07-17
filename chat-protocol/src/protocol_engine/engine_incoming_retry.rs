@@ -610,11 +610,17 @@ impl ProtocolEngine {
         let mut effects = Vec::new();
         let mut persist_needed = false;
         let mut session_changed = false;
+        let mut processed_due = 0usize;
         for mut pending in pending {
             if pending.next_retry_at_secs > now.get() {
                 still_pending.push(pending);
                 continue;
             }
+            if processed_due >= PENDING_GROUP_FANOUT_RETRY_BATCH_SIZE {
+                still_pending.push(pending);
+                continue;
+            }
+            processed_due = processed_due.saturating_add(1);
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(now, &mut rng);
             let prepared = match &pending.fanout {
