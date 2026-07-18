@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.41
+
+- Replace the retired Nostr relay packet carrier with authenticated FIPS
+  WebSocket seed peers while preserving ordinary Nostr relays for events and
+  discovery/signaling.
+- Update device sync and update-announcement pubsub to FIPS 0.4.11 and the
+  shared INV/WANT-capable `nostr-pubsub` 0.1.13 / FIPS adapter 0.4.1 stack.
+
 ## 0.1.40
 
 - Replace the removed combined same-host store/transport adapter with the

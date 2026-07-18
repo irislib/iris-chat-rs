@@ -34,5 +34,11 @@ Process-level integration tests may set `IRIS_CHAT_FIPS_LOCAL_RENDEZVOUS_ADDR`
 to an isolated non-zero IPv4 loopback address. Normal application runs leave
 it unset and use the fixed FIPS same-host rendezvous address.
 
+Multi-device sync requires at least one first-adjacency FIPS WebSocket seed.
+Set `IRIS_FIPS_WEBSOCKET_SEED_URLS` to a comma-separated list of explicit
+`wss://.../fips` URLs. These are authenticated FIPS physical peers; ordinary
+Nostr message servers remain Nostr event and discovery/signaling relays and do
+not carry FIPS packets.
+
 Primary development is on hashtree:
 https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/iris-chat-rs

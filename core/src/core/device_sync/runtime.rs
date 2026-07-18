@@ -1,20 +1,20 @@
 use super::*;
 use crate::core::update_pubsub::run_update_announcement_subscription;
-use fips_core::config::{
-    NostrDiscoveryPolicy, NostrRelayConfig, PeerAddress, PeerConfig, TransportInstances,
-};
+use fips_core::config::{NostrDiscoveryPolicy, PeerConfig, TransportInstances, WebSocketConfig};
 use fips_core::{Config, WebRtcConfig};
 use hashtree_core::BlobRoute;
 use std::net::SocketAddrV4;
 
 const SAME_HOST_HASHTREE_ENV: &str = "IRIS_CHAT_SAME_HOST_HASHTREE";
 const LOCAL_RENDEZVOUS_ADDR_ENV: &str = "IRIS_CHAT_FIPS_LOCAL_RENDEZVOUS_ADDR";
+const WEBSOCKET_SEED_URLS_ENV: &str = "IRIS_FIPS_WEBSOCKET_SEED_URLS";
 
 struct SharedFipsOptions {
     same_host_hashtree: bool,
     rendezvous_addr: Option<SocketAddrV4>,
     standalone_route: Option<Arc<dyn BlobRoute>>,
     additional_peers: Vec<PeerConfig>,
+    websocket: Option<WebSocketConfig>,
 }
 
 impl AppCore {
@@ -24,6 +24,21 @@ impl AppCore {
             rendezvous_addr: None,
             standalone_route: None,
             additional_peers: Vec::new(),
+            websocket: configured_websocket_seeds(),
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reconcile_device_sync_with_websocket_for_test(
+        &mut self,
+        websocket: WebSocketConfig,
+    ) {
+        self.reconcile_shared_fips(SharedFipsOptions {
+            same_host_hashtree: false,
+            rendezvous_addr: None,
+            standalone_route: None,
+            additional_peers: Vec::new(),
+            websocket: Some(websocket),
         });
     }
 
@@ -39,6 +54,7 @@ impl AppCore {
             rendezvous_addr: Some(rendezvous_addr),
             standalone_route: Some(standalone_route),
             additional_peers,
+            websocket: None,
         });
     }
 
@@ -100,17 +116,11 @@ impl AppCore {
                 .map(|peer| {
                     let npub = peer.npub();
                     PeerConfig {
-                        npub: npub.clone(),
-                        addresses: vec![PeerAddress::with_priority("nostr_relay", npub, 250)],
+                        npub,
                         ..PeerConfig::default()
                     }
                 })
                 .collect();
-            fips_config.transports.nostr_relay = TransportInstances::Single(NostrRelayConfig {
-                auto_connect: Some(false),
-                accept_connections: Some(true),
-                ..NostrRelayConfig::default()
-            });
             fips_config.transports.webrtc = TransportInstances::Single(WebRtcConfig {
                 advertise_on_nostr: Some(true),
                 auto_connect: Some(true),
@@ -136,6 +146,9 @@ impl AppCore {
         };
         if let Some(rendezvous_addr) = rendezvous_addr {
             fips_config.node.discovery.local.rendezvous_addr = rendezvous_addr;
+        }
+        if let Some(websocket) = options.websocket {
+            fips_config.transports.websocket = TransportInstances::Single(websocket);
         }
 
         let device_sync_packets = if device_sync_enabled {
@@ -256,38 +269,6 @@ impl AppCore {
             None
         };
 
-        // Own every application service before relay ingress can authenticate
-        // a sibling and deliver its first TCP/FSP segment.
-        let relay_adapter = if device_sync_enabled {
-            match self.runtime.block_on(NostrRelayAdapter::start(
-                endpoint.clone(),
-                &config.relay_urls,
-            )) {
-                Ok(Some(adapter)) => Some(adapter),
-                Ok(None) => {
-                    self.push_debug_log(
-                        "device_sync.relay.start.error",
-                        "configured message servers produced no FIPS relay adapter",
-                    );
-                    for task in &tasks {
-                        task.abort();
-                    }
-                    let _ = self.runtime.block_on(endpoint.shutdown());
-                    return;
-                }
-                Err(error) => {
-                    self.push_debug_log("device_sync.relay.start.error", error);
-                    for task in &tasks {
-                        task.abort();
-                    }
-                    let _ = self.runtime.block_on(endpoint.shutdown());
-                    return;
-                }
-            }
-        } else {
-            None
-        };
-
         let sibling_count = config.siblings.len();
         self.device_sync = Some(DeviceSyncRuntime {
             key: runtime_key,
@@ -296,7 +277,6 @@ impl AppCore {
             siblings: config.siblings,
             _attachment_blobs: attachment_store,
             _update_pubsub: update_pubsub,
-            relay_adapter,
             tasks,
         });
         if device_sync_enabled {
@@ -311,24 +291,14 @@ impl AppCore {
             return;
         };
         let DeviceSyncRuntime {
-            endpoint,
-            relay_adapter,
-            tasks,
-            ..
+            endpoint, tasks, ..
         } = runtime;
         for task in tasks {
             task.abort();
         }
         self.runtime.spawn(async move {
-            shutdown_shared_fips(endpoint, relay_adapter).await;
+            shutdown_shared_fips(endpoint).await;
         });
-    }
-
-    #[cfg(test)]
-    pub(in crate::core) fn device_sync_relay_adapter_running_for_test(&self) -> bool {
-        self.device_sync
-            .as_ref()
-            .is_some_and(|runtime| runtime.relay_adapter.is_some())
     }
 
     #[cfg(test)]
@@ -405,13 +375,7 @@ impl AppCore {
     }
 }
 
-async fn shutdown_shared_fips(
-    endpoint: Arc<FipsEndpoint>,
-    relay_adapter: Option<NostrRelayAdapter>,
-) {
-    if let Some(adapter) = relay_adapter {
-        adapter.stop().await;
-    }
+async fn shutdown_shared_fips(endpoint: Arc<FipsEndpoint>) {
     let _ = endpoint.shutdown().await;
 }
 
@@ -421,6 +385,20 @@ fn same_host_hashtree_enabled() -> bool {
             value.trim().to_ascii_lowercase().as_str(),
             "1" | "true" | "yes" | "on"
         )
+    })
+}
+
+fn configured_websocket_seeds() -> Option<WebSocketConfig> {
+    let seed_urls = std::env::var(WEBSOCKET_SEED_URLS_ENV)
+        .ok()?
+        .split(',')
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    (!seed_urls.is_empty()).then_some(WebSocketConfig {
+        seed_urls,
+        ..WebSocketConfig::default()
     })
 }
 

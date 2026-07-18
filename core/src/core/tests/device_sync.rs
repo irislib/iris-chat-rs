@@ -54,6 +54,11 @@ fn test_keys_with_compressed_prefix(prefix: u8) -> Keys {
     }
 }
 
+fn reserve_tcp_addr() -> std::net::SocketAddr {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve TCP address");
+    listener.local_addr().expect("reserved TCP address")
+}
+
 async fn device_sync_peer_transport(
     endpoint: &fips_core::FipsEndpoint,
     peer: &fips_core::PeerIdentity,
@@ -67,17 +72,28 @@ async fn device_sync_peer_transport(
         .and_then(|candidate| candidate.transport_type)
 }
 
-async fn device_sync_pair_uses_webrtc(
+async fn device_sync_pair_is_connected(
+    link: [(&fips_core::FipsEndpoint, &fips_core::PeerIdentity); 2],
+) -> bool {
+    device_sync_peer_transport(link[0].0, link[0].1)
+        .await
+        .is_some()
+        && device_sync_peer_transport(link[1].0, link[1].1)
+            .await
+            .is_some()
+}
+
+async fn device_sync_pair_uses_websocket(
     link: [(&fips_core::FipsEndpoint, &fips_core::PeerIdentity); 2],
 ) -> bool {
     device_sync_peer_transport(link[0].0, link[0].1)
         .await
         .as_deref()
-        == Some("webrtc")
+        == Some("websocket")
         && device_sync_peer_transport(link[1].0, link[1].1)
             .await
             .as_deref()
-            == Some("webrtc")
+            == Some("websocket")
 }
 
 fn has_device_sync_message(core: &AppCore, chat_id: &str, message_id: &str) -> bool {
@@ -109,8 +125,8 @@ fn wait_for_device_sync_message(
             first_seen.get_or_insert(now);
         }
         assert!(
-            sender.runtime.block_on(device_sync_pair_uses_webrtc(link)),
-            "production device sync must remain on direct WebRTC"
+            sender.runtime.block_on(device_sync_pair_is_connected(link)),
+            "production device sync must retain an authenticated FIPS route"
         );
         if first_seen.is_some_and(|seen| now.duration_since(seen) >= stable_for) {
             return;
@@ -124,7 +140,7 @@ fn wait_for_device_sync_message(
 }
 
 #[test]
-fn device_sync_relay_bootstraps_authenticated_webrtc_and_rejects_non_siblings() {
+fn device_sync_websocket_authenticates_siblings_and_rejects_non_siblings() {
     const UNAUTHORIZED_PORT: u16 = 47_002;
     const SOURCE_PORT: u16 = 47_000;
     let relay = crate::local_relay::TestRelay::start();
@@ -145,10 +161,19 @@ fn device_sync_relay_bootstraps_authenticated_webrtc_and_rejects_non_siblings() 
     configure_test_device_sync_profile(&mut alice_core, &owner, &alice, &bob, relay.url());
     configure_test_device_sync_profile(&mut bob_core, &owner, &bob, &alice, relay.url());
 
-    alice_core.reconcile_device_sync();
-    bob_core.reconcile_device_sync();
-    assert!(alice_core.device_sync_relay_adapter_running_for_test());
-    assert!(bob_core.device_sync_relay_adapter_running_for_test());
+    let websocket_addr = reserve_tcp_addr();
+    alice_core.reconcile_device_sync_with_websocket_for_test(
+        fips_core::config::WebSocketConfig {
+            bind_addr: Some(websocket_addr.to_string()),
+            ..Default::default()
+        },
+    );
+    bob_core.reconcile_device_sync_with_websocket_for_test(
+        fips_core::config::WebSocketConfig {
+            seed_urls: vec![format!("ws://{websocket_addr}/fips")],
+            ..Default::default()
+        },
+    );
     let alice_endpoint = alice_core
         .device_sync_endpoint_for_test()
         .expect("Alice FIPS endpoint");
@@ -168,16 +193,11 @@ fn device_sync_relay_bootstraps_authenticated_webrtc_and_rejects_non_siblings() 
             .expect("Alice advertised endpoints");
         assert!(advertised.iter().any(|endpoint| {
             endpoint.transport
-                == fips_core::discovery::nostr::OverlayTransportKind::NostrRelay
-                && endpoint.addr == alice_peer.npub()
-        }));
-        assert!(advertised.iter().any(|endpoint| {
-            endpoint.transport
                 == fips_core::discovery::nostr::OverlayTransportKind::WebRtc
         }));
         let promotion = tokio::time::timeout(Duration::from_secs(40), async {
             loop {
-                if device_sync_pair_uses_webrtc(link).await {
+                if device_sync_pair_uses_websocket(link).await {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -188,7 +208,7 @@ fn device_sync_relay_bootstraps_authenticated_webrtc_and_rejects_non_siblings() 
             let alice_status = alice_endpoint.peers().await.expect("Alice diagnostics");
             let bob_status = bob_endpoint.peers().await.expect("Bob diagnostics");
             panic!(
-                "relay-authenticated roster siblings did not negotiate direct WebRTC; \
+                "roster siblings did not establish the configured WebSocket seed route; \
                  Alice={alice_status:#?}, Bob={bob_status:#?}"
             );
         }
@@ -200,10 +220,10 @@ fn device_sync_relay_bootstraps_authenticated_webrtc_and_rejects_non_siblings() 
     alice_core.apply_runtime_text_message(
         sync_peer.public_key(),
         Some(sync_chat_id.clone()),
-        "production device sync over promoted WebRTC".to_string(),
+        "production device sync over authenticated WebSocket FIPS".to_string(),
         200,
         None,
-        Some("webrtc-device-sync-message".to_string()),
+        Some("websocket-device-sync-message".to_string()),
         None,
     );
     wait_for_device_sync_message(
@@ -212,16 +232,16 @@ fn device_sync_relay_bootstraps_authenticated_webrtc_and_rejects_non_siblings() 
         &bob_core_rx,
         link,
         &sync_chat_id,
-        "webrtc-device-sync-message",
+        "websocket-device-sync-message",
         Duration::ZERO,
     );
     alice_core.apply_runtime_text_message(
         sync_peer.public_key(),
         Some(sync_chat_id.clone()),
-        "production device sync stays on WebRTC".to_string(),
+        "production device sync stays on authenticated FIPS".to_string(),
         201,
         None,
-        Some("stable-webrtc-device-sync-message".to_string()),
+        Some("stable-websocket-device-sync-message".to_string()),
         None,
     );
     wait_for_device_sync_message(
@@ -230,7 +250,7 @@ fn device_sync_relay_bootstraps_authenticated_webrtc_and_rejects_non_siblings() 
         &bob_core_rx,
         link,
         &sync_chat_id,
-        "stable-webrtc-device-sync-message",
+        "stable-websocket-device-sync-message",
         Duration::from_secs(1),
     );
 
@@ -288,7 +308,7 @@ fn device_sync_relay_bootstraps_authenticated_webrtc_and_rejects_non_siblings() 
     attacker_core.stop_device_sync();
     bob_core.stop_device_sync();
     alice_core.stop_device_sync();
-    assert!(!alice_core.device_sync_relay_adapter_running_for_test());
+    assert!(alice_core.device_sync_endpoint_for_test().is_none());
     alice_core.runtime.block_on(async {
         tokio::time::sleep(Duration::from_millis(50)).await;
     });

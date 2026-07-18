@@ -1,6 +1,6 @@
 [package]
 name = "iris-chat"
-version = "0.1.40"
+version = "0.1.41"
 edition = "2021"
 description = "Iris Chat command line client and shared encrypted chat core"
 license = "MIT"
@@ -41,13 +41,13 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 flume = "0.11"
-fips-core = { version = "=0.4.6", features = ["webrtc-transport"] }
+fips-core = { version = "=0.4.11", features = ["webrtc-transport"] }
 fips-tcp = "0.2.0"
 fips-tcp-endpoint = "0.2.0"
 hashtree-blossom = { version = "=0.2.82", default-features = false, features = ["store"] }
 hashtree-config = "=0.2.83"
 hashtree-core = "=0.2.86"
-hashtree-fips-transport = "=0.4.6"
+hashtree-fips-transport = "=0.4.9"
 hashtree-network = "=0.2.87"
 hashtree-resolver = { version = "=0.2.82", features = ["nostr"] }
 hashtree-updater = { version = "=0.2.82", features = ["secure-nostr-blossom"] }
@@ -55,8 +55,8 @@ hmac = "0.12"
 iris-chat-protocol = { version = "=0.1.8", path = "../chat-protocol" }
 nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
-nostr-pubsub = "=0.1.11"
-nostr-pubsub-fips = "=0.3.1"
+nostr-pubsub = "=0.1.13"
+nostr-pubsub-fips = "=0.4.1"
 nostr-identity = "=0.4.0"
 nostr-double-ratchet = "0.0.164"
 nostr-double-ratchet-pairwise-codec = "0.0.164"
