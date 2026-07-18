@@ -186,6 +186,7 @@ build_linux_docker() {
     -e IRIS_APP_VERSION_CODE \
     -e IRIS_BUILD_GIT_SHA \
     -e IRIS_BUILD_TIMESTAMP_UTC \
+    -e IRIS_CLI_LINUX_BUILD_JOBS="${IRIS_CLI_LINUX_BUILD_JOBS:-2}" \
     --entrypoint /bin/bash \
     "$image" -c '
       set -Eeuo pipefail
@@ -194,7 +195,7 @@ build_linux_docker() {
       apt-get update >/dev/null
       apt-get install -y --no-install-recommends libclang-dev libdbus-1-dev pkg-config >/dev/null
       rm -rf /var/lib/apt/lists/*
-      cargo build --release --bin iris --locked
+      cargo build --release --bin iris --locked --jobs "$IRIS_CLI_LINUX_BUILD_JOBS"
     '
   package_target "$target" "$target_dir/release/iris"
 }
