@@ -175,7 +175,7 @@ build_linux_docker() {
   local repo_basename
   repo_basename="$(basename "$ROOT")"
 
-  rm -rf "$target_dir"
+  mkdir -p "$target_dir"
   docker run \
     --platform "$platform" \
     --rm \
@@ -187,7 +187,15 @@ build_linux_docker() {
     -e IRIS_BUILD_GIT_SHA \
     -e IRIS_BUILD_TIMESTAMP_UTC \
     --entrypoint /bin/bash \
-    "$image" -lc 'set -Eeuo pipefail; cargo build --release --bin iris --locked'
+    "$image" -c '
+      set -Eeuo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      export PATH="/usr/local/cargo/bin:$PATH"
+      apt-get update >/dev/null
+      apt-get install -y --no-install-recommends libclang-dev libdbus-1-dev pkg-config >/dev/null
+      rm -rf /var/lib/apt/lists/*
+      cargo build --release --bin iris --locked
+    '
   package_target "$target" "$target_dir/release/iris"
 }
 
