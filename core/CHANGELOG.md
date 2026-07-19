@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.42
+
+- Use Osiris and LNVPS as the built-in authenticated FIPS WebSocket entry
+  points while preserving an explicit environment override for isolated and
+  operator-managed deployments.
+- Update the peer path to `nostr-pubsub-fips` 0.4.3 and add the
+  `nostr-pubsub-relay` 0.1.11 adapter so signed update announcements arrive
+  through both connected FIPS peers and configured Nostr relays.
+
 ## 0.1.41
 
 - Replace the retired Nostr relay packet carrier with authenticated FIPS

@@ -2461,7 +2461,7 @@ checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 
 [[package]]
 name = "iris-chat"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2487,6 +2487,7 @@ dependencies = [
  "nostr-identity 0.4.0",
  "nostr-pubsub",
  "nostr-pubsub-fips",
+ "nostr-pubsub-relay",
  "nostr-sdk",
  "qrcode",
  "rand 0.8.6",
@@ -3078,9 +3079,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.4.1"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b537942272dbf79ad8ff4176766f6f1c7c49e0a28fe2d4feacea0a3f45b15125"
+checksum = "1bb92eb30b1994c5e2c2cacd310197d6c6553a85fbce76072b22114eab5af2c6"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -3089,6 +3090,19 @@ dependencies = [
  "nostr",
  "nostr-pubsub",
  "nostr-pubsub-social-graph",
+ "tokio",
+]
+
+[[package]]
+name = "nostr-pubsub-relay"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8641200920d163b2d82c34e6f15605cff93a0546e3e0087fce8f3bddaa2329ca"
+dependencies = [
+ "async-trait",
+ "nostr-pubsub",
+ "nostr-sdk",
+ "thiserror 2.0.18",
  "tokio",
 ]
 

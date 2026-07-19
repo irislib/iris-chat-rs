@@ -1,3 +1,8 @@
+# Iris Chat 2026.7.19
+
+- Linked devices now use two independent secure connection points by default.
+- Update notices can arrive through message servers or directly from linked devices.
+
 # Iris Chat 2026.7.15
 
 - Linked devices now recover chats and recent messages reliably across packet loss and reconnects.

@@ -2,6 +2,7 @@ use super::*;
 use fips_core::{FipsEndpoint, PeerIdentity as FipsPeerIdentity};
 use nostr_double_ratchet::{GroupProtocol, GroupStrategy};
 use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
+use nostr_pubsub_relay::RelayEventBus;
 use std::collections::BTreeSet;
 use tokio::task::JoinHandle;
 
@@ -25,6 +26,7 @@ struct DeviceSyncConfig {
     roster_at: u64,
     secret_hex: String,
     relay_urls: Vec<String>,
+    relay_client: Option<Client>,
     siblings: Vec<FipsPeerIdentity>,
 }
 pub(super) struct DeviceSyncRuntime {
@@ -34,6 +36,7 @@ pub(super) struct DeviceSyncRuntime {
     siblings: Vec<FipsPeerIdentity>,
     _attachment_blobs: Option<Arc<super::attachment_upload::AttachmentBlobRuntime>>,
     _update_pubsub: Option<Arc<FipsPubsubClient>>,
+    _update_relay_pubsub: Option<Arc<RelayEventBus>>,
     tasks: Vec<JoinHandle<()>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -591,6 +594,7 @@ impl AppCore {
             siblings,
             _attachment_blobs: None,
             _update_pubsub: None,
+            _update_relay_pubsub: None,
             tasks: Vec::new(),
         });
     }

@@ -1,6 +1,6 @@
 [package]
 name = "iris-chat"
-version = "0.1.41"
+version = "0.1.42"
 edition = "2021"
 description = "Iris Chat command line client and shared encrypted chat core"
 license = "MIT"
@@ -56,7 +56,8 @@ iris-chat-protocol = { version = "=0.1.8", path = "../chat-protocol" }
 nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
 nostr-pubsub = "=0.1.13"
-nostr-pubsub-fips = "=0.4.1"
+nostr-pubsub-fips = "=0.4.3"
+nostr-pubsub-relay = "=0.1.11"
 nostr-identity = "=0.4.0"
 nostr-double-ratchet = "0.0.164"
 nostr-double-ratchet-pairwise-codec = "0.0.164"

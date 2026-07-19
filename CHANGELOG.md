@@ -7,6 +7,12 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 ## Unreleased
 
+## 2026.7.19
+
+- Linked-device connections now use the independent Osiris and LNVPS FIPS
+  WebSocket entry points by default.
+- Signed update announcements now use the newest shared `nostr-pubsub` stack
+  across configured Nostr relays and connected FIPS peers.
 - Linked-device traffic now uses authenticated FIPS WebSocket seed peers;
   message servers remain ordinary Nostr event and discovery relays rather than
   carrying FIPS packets.

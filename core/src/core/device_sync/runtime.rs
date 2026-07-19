@@ -1,5 +1,7 @@
 use super::*;
-use crate::core::update_pubsub::run_update_announcement_subscription;
+use crate::core::update_pubsub::{
+    run_relay_update_announcement_subscription, run_update_announcement_subscription,
+};
 use fips_core::config::{NostrDiscoveryPolicy, PeerConfig, TransportInstances, WebSocketConfig};
 use fips_core::{Config, WebRtcConfig};
 use hashtree_core::BlobRoute;
@@ -8,6 +10,10 @@ use std::net::SocketAddrV4;
 const SAME_HOST_HASHTREE_ENV: &str = "IRIS_CHAT_SAME_HOST_HASHTREE";
 const LOCAL_RENDEZVOUS_ADDR_ENV: &str = "IRIS_CHAT_FIPS_LOCAL_RENDEZVOUS_ADDR";
 const WEBSOCKET_SEED_URLS_ENV: &str = "IRIS_FIPS_WEBSOCKET_SEED_URLS";
+const DEFAULT_WEBSOCKET_SEED_URLS: &[&str] = &[
+    "wss://fips2.iris.to/fips", // osiris
+    "wss://fips1.iris.to/fips", // lnvps
+];
 
 struct SharedFipsOptions {
     same_host_hashtree: bool,
@@ -188,7 +194,7 @@ impl AppCore {
                 return;
             }
         };
-        let (tcp, update_pubsub, tasks) = if device_sync_enabled {
+        let (tcp, update_pubsub, update_relay_pubsub, tasks) = if device_sync_enabled {
             let Some((request, resync_required)) = device_sync_packets else {
                 let _ = self.runtime.block_on(endpoint.shutdown());
                 return;
@@ -219,25 +225,45 @@ impl AppCore {
                     None
                 }
             };
-            let update_subscription_task = update_pubsub.as_ref().and_then(|pubsub| {
-                let filter = match crate::update_announcements::update_announcement_filter() {
-                    Ok(filter) => filter,
+            let update_relay_pubsub = config.relay_client.clone().and_then(|client| {
+                match self.runtime.block_on(RelayEventBus::with_client(
+                    client,
+                    config.relay_urls.clone(),
+                    Duration::from_secs(8),
+                )) {
+                    Ok(pubsub) => Some(Arc::new(pubsub)),
                     Err(error) => {
-                        self.push_debug_log("update.pubsub.filter.error", error.to_string());
-                        return None;
+                        self.push_debug_log("update.pubsub.relay.start.error", error.to_string());
+                        None
                     }
-                };
+                }
+            });
+            let update_filter = match crate::update_announcements::update_announcement_filter() {
+                Ok(filter) => Some(filter),
+                Err(error) => {
+                    self.push_debug_log("update.pubsub.filter.error", error.to_string());
+                    None
+                }
+            };
+            let mut tasks = vec![tcp_task];
+            if let (Some(pubsub), Some(filter)) = (&update_pubsub, &update_filter) {
                 let pubsub = pubsub.clone();
                 let endpoint = endpoint.clone();
-                Some(self.runtime.spawn(async move {
+                let filter = filter.clone();
+                tasks.push(self.runtime.spawn(async move {
                     run_update_announcement_subscription(endpoint, pubsub, filter).await;
-                }))
-            });
-            let mut tasks = vec![tcp_task];
-            tasks.extend(update_subscription_task);
-            (Some(tcp), update_pubsub, tasks)
+                }));
+            }
+            if let (Some(pubsub), Some(filter)) = (&update_relay_pubsub, &update_filter) {
+                let pubsub = pubsub.clone();
+                let filter = filter.clone();
+                tasks.push(self.runtime.spawn(async move {
+                    run_relay_update_announcement_subscription(pubsub, filter).await;
+                }));
+            }
+            (Some(tcp), update_pubsub, update_relay_pubsub, tasks)
         } else {
-            (None, None, Vec::new())
+            (None, None, None, Vec::new())
         };
 
         let attachment_store = if options.same_host_hashtree {
@@ -277,6 +303,7 @@ impl AppCore {
             siblings: config.siblings,
             _attachment_blobs: attachment_store,
             _update_pubsub: update_pubsub,
+            _update_relay_pubsub: update_relay_pubsub,
             tasks,
         });
         if device_sync_enabled {
@@ -318,6 +345,7 @@ impl AppCore {
             roster_at: 0,
             secret_hex: logged_in.device_keys.secret_key().to_secret_hex(),
             relay_urls: Vec::new(),
+            relay_client: None,
             siblings: Vec::new(),
         })
     }
@@ -370,6 +398,7 @@ impl AppCore {
             roster_at: roster.created_at_secs,
             secret_hex: logged_in.device_keys.secret_key().to_secret_hex(),
             relay_urls,
+            relay_client: Some(logged_in.client.clone()),
             siblings,
         })
     }
@@ -389,17 +418,23 @@ fn same_host_hashtree_enabled() -> bool {
 }
 
 fn configured_websocket_seeds() -> Option<WebSocketConfig> {
-    let seed_urls = std::env::var(WEBSOCKET_SEED_URLS_ENV)
-        .ok()?
-        .split(',')
-        .map(str::trim)
-        .filter(|url| !url.is_empty())
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
+    let configured = std::env::var(WEBSOCKET_SEED_URLS_ENV).ok();
+    let seed_urls = websocket_seed_urls(configured.as_deref());
     (!seed_urls.is_empty()).then_some(WebSocketConfig {
         seed_urls,
         ..WebSocketConfig::default()
     })
+}
+
+fn websocket_seed_urls(configured: Option<&str>) -> Vec<String> {
+    configured
+        .map(|value| value.split(',').collect::<Vec<_>>())
+        .unwrap_or_else(|| DEFAULT_WEBSOCKET_SEED_URLS.to_vec())
+        .into_iter()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 fn configured_local_rendezvous_addr() -> Result<Option<SocketAddrV4>, String> {
@@ -427,6 +462,29 @@ fn parse_local_rendezvous_addr(value: &str) -> Result<SocketAddrV4, String> {
 #[cfg(test)]
 mod local_rendezvous_tests {
     use super::*;
+
+    #[test]
+    fn websocket_seeds_default_to_osiris_then_lnvps() {
+        assert_eq!(
+            websocket_seed_urls(None),
+            vec![
+                "wss://fips2.iris.to/fips".to_string(),
+                "wss://fips1.iris.to/fips".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn websocket_seed_override_can_replace_or_disable_defaults() {
+        assert_eq!(
+            websocket_seed_urls(Some(" wss://one.example/fips, wss://two.example/fips ")),
+            vec![
+                "wss://one.example/fips".to_string(),
+                "wss://two.example/fips".to_string(),
+            ]
+        );
+        assert!(websocket_seed_urls(Some("  ")).is_empty());
+    }
 
     #[test]
     fn local_rendezvous_override_requires_nonzero_ipv4_loopback() {
