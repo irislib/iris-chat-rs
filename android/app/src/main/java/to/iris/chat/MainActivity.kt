@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.Parcelable
 import android.provider.Settings
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.SystemBarStyle
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
@@ -314,11 +315,21 @@ class MainActivity : ComponentActivity() {
             container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(false))
             return
         }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            container.nearbyIrisService.setVisible(false)
+            container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(false))
+            Toast.makeText(
+                this,
+                "Bluetooth nearby needs Android 10 or newer.",
+                Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
         requestRuntimePermissionsIfNeeded(
             permissions = nearbyPermissions().toList(),
             preferenceKeys = listOf(BLUETOOTH_PERMISSION_KEY),
             onGranted = {
-                container.nearbyIrisService.setVisible(true)
+                container.nearbyIrisService.setVisible(false)
                 container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(true))
             },
             onDenied = {
@@ -424,8 +435,11 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (preferences.nearbyBluetoothEnabled) {
-            if (container.nearbyIrisService.hasBluetoothPermission()) {
-                container.nearbyIrisService.setVisible(true)
+            if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                    container.nearbyIrisService.hasBluetoothPermission()
+            ) {
+                container.nearbyIrisService.setVisible(false)
             } else {
                 container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(false))
             }

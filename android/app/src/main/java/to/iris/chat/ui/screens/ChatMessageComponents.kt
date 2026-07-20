@@ -1398,6 +1398,8 @@ private fun MessageInfoDialog(
     val haptics = rememberIrisHapticFeedback()
     val palette = IrisTheme.palette
     val trace = message.deliveryTrace
+    val appState = appManager?.state?.collectAsStateWithLifecycle()
+    val account = appState?.value?.account
     val openPerson: (ParticipantInfo) -> Unit = { info ->
         val owner = info.ownerPubkeyHex?.takeIf { it.isNotBlank() && !info.isMe }
         if (owner != null && appManager != null) {
@@ -1570,7 +1572,6 @@ private fun MessageInfoDialog(
                     }
                 }
 
-                val account = appManager?.state?.value?.account
                 val rumorJson = remember(message, chat?.chatId, account?.publicKeyHex) {
                     synthesizeMessageRumorJson(message, chat, account)
                 }

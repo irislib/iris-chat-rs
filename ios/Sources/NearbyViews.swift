@@ -38,7 +38,12 @@ struct NearbyChatListRow: View {
     }
 
     private var active: Bool {
+#if os(iOS)
+        nearbyEnabled &&
+            (manager.state.preferences.nearbyBluetoothEnabled || service.isLanVisible)
+#else
         nearbyEnabled && service.isNearbyActive
+#endif
     }
 
     private var livePeers: [IrisNearbyPeer] {

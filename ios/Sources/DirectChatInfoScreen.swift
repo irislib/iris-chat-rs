@@ -191,6 +191,9 @@ struct DirectChatInfoScreen: View {
                     .irisOnChange(of: advancedExpanded) { _ in
                         loadProfileDebugIfNeeded()
                     }
+                    .irisOnChange(of: manager.state.rev) { _ in
+                        refreshProfileDebugIfExpanded()
+                    }
 
                     IrisSectionCard {
                         Button(role: manager.isUserBlocked(chatId) ? nil : .destructive) {
@@ -390,6 +393,11 @@ struct DirectChatInfoScreen: View {
         profileDebug = manager.peerProfileDebug(ownerInput: chatId)
     }
 
+    private func refreshProfileDebugIfExpanded() {
+        guard advancedExpanded else { return }
+        profileDebug = manager.peerProfileDebug(ownerInput: chatId)
+    }
+
     private func loadCommonGroups() {
         guard commonGroupsLoadedFor != chatId else { return }
         commonGroupsLoadedFor = chatId
@@ -541,6 +549,8 @@ struct DirectChatAdvancedCard: View {
             DisclosureGroup(isExpanded: $isExpanded) {
                 if let debug {
                     VStack(alignment: .leading, spacing: 10) {
+                        DirectChatDebugRow(label: "Send readiness", value: debug.directSendReadiness)
+                            .accessibilityIdentifier("directChatSendReadiness")
                         DirectChatDebugRow(label: "Sessions", value: "\(debug.sessionCount)")
                         DirectChatDebugRow(label: "Active sessions", value: "\(debug.activeSessionCount)")
                         DirectChatDebugRow(label: "Receiving sessions", value: "\(debug.receivingSessionCount)")

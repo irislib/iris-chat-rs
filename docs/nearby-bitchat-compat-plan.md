@@ -2,6 +2,28 @@
 
 Date: 2026-04-28
 
+## Current status
+
+As of 2026-07-20, the mobile implementation uses portable FIPS BLE v2 between
+Iris clients. It is not BitChat wire-compatible. The BitChat packet codec and
+the compatibility work below remain useful for a future interop layer, but
+Iris does not currently implement BitChat's full Noise XX handshake and
+`NDR_EVENT` exchange.
+
+FIPS BLE advertises a small GATT bootstrap characteristic containing the
+platform-assigned L2CAP channel number. GATT is BLE's service-and-characteristic
+API; Iris uses it only for discovery/bootstrap. Message data then travels as
+length-framed packets over an authenticated FIPS L2CAP connection. Android
+support requires Android 10 / API 29 or newer; the app itself still supports
+older Android versions with Bluetooth nearby unavailable.
+
+Physical-device proof completed on 2026-07-20 with an iPhone 12 Pro and a
+Pixel 10 Pro. The Android phone had airplane mode enabled, Bluetooth restored,
+and no message servers configured. The iPhone harness reported a native FIPS
+connection with successful reads and writes and zero message servers; the
+Android harness received the exact probe message and marked it Seen. Network
+settings were restored after the test.
+
 ## Goal
 
 Add a first-row "Nearby" entry to the Iris chat list that can discover and

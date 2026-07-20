@@ -355,7 +355,7 @@ impl AppCore {
             };
             group.created_by.to_string()
         } else {
-            normalized
+            normalized.clone()
         };
         if self
             .preferences
@@ -370,6 +370,26 @@ impl AppCore {
             .push(target_owner_hex);
         self.preferences.accepted_owner_pubkeys.sort();
         self.preferences.accepted_owner_pubkeys.dedup();
+        if self.preferences.send_read_receipts {
+            let already_seen_message_ids = self
+                .threads
+                .get(&normalized)
+                .map(|thread| {
+                    thread
+                        .messages
+                        .iter()
+                        .filter(|message| {
+                            !message.is_outgoing && message.delivery == DeliveryState::Seen
+                        })
+                        .map(|message| message.id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            // Messages may be viewed while the request gate is visible. Their
+            // sender-visible receipts are intentionally suppressed then, so
+            // acceptance must flush them now that the user opted in.
+            self.send_receipt(&normalized, "seen", already_seen_message_ids);
+        }
         // Accepting a request moves the peer into the
         // "subscribed-when-toggle-is-off" set, so push needs to learn
         // about them. Nostr already has the session, but refreshing is

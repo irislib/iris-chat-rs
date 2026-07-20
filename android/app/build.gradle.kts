@@ -1,4 +1,5 @@
 import java.time.Instant
+import java.security.MessageDigest
 import java.util.Properties
 import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
@@ -64,7 +65,14 @@ fun rustRelativeOrAbsoluteFile(rawPath: String) =
 val cargoTargetDir =
     rustRelativeOrAbsoluteFile(
         nonBlankBuildValue("cargo.targetDir", "CARGO_TARGET_DIR")
-            ?: "${System.getProperty("user.home")}/.cache/cargo-target",
+            ?: run {
+                val worktreeKey =
+                    MessageDigest.getInstance("SHA-256")
+                        .digest(rustAppDir.canonicalPath.toByteArray())
+                        .take(8)
+                        .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+                "${System.getProperty("user.home")}/.cache/cargo-target/iris-chat-$worktreeKey"
+            },
     )
 val publicRelayFallbackCsv = "wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social,wss://temp.iris.to"
 val deviceApprovalRelayUrl =
@@ -485,6 +493,7 @@ tasks.configureEach {
 }
 
 dependencies {
+    implementation(project(":fips-ble"))
     implementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(platform(libs.androidx.compose.bom))
 

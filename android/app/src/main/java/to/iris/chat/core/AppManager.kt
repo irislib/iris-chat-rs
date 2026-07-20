@@ -69,6 +69,7 @@ import to.iris.chat.rust.SearchResultSnapshot
 import to.iris.chat.rust.downloadHashtreeAttachment
 import to.iris.chat.push.AndroidMobilePushRuntime
 import to.iris.chat.update.AndroidSelfUpdateManager
+import to.iris.chat.nearby.IrisFipsBleRuntime
 
 interface RustAppClient {
     fun state(): AppState
@@ -120,16 +121,20 @@ interface RustAppClient {
 
     fun prepareForSuspend()
 
+    fun setFipsBleEnabled(enabled: Boolean) = Unit
+
     fun listenForUpdates(reconciler: AppReconciler)
 
     fun shutdown()
 }
 
 private class LiveRustAppClient(
+    private val context: Context,
     dataDir: String,
     appVersion: String,
 ) : RustAppClient {
     private val ffi = FfiApp(dataDir = dataDir, keychainGroup = "", appVersion = appVersion)
+    private var fipsBle: IrisFipsBleRuntime? = null
 
     override fun state(): AppState = ffi.state()
 
@@ -211,11 +216,22 @@ private class LiveRustAppClient(
         ffi.prepareForSuspend()
     }
 
+    override fun setFipsBleEnabled(enabled: Boolean) {
+        if (enabled && fipsBle == null) {
+            fipsBle = IrisFipsBleRuntime(context, ffi)
+        } else if (!enabled) {
+            fipsBle?.close()
+            fipsBle = null
+        }
+    }
+
     override fun listenForUpdates(reconciler: AppReconciler) {
         ffi.listenForUpdates(reconciler)
     }
 
     override fun shutdown() {
+        fipsBle?.close()
+        fipsBle = null
         ffi.shutdown()
     }
 }
@@ -1911,6 +1927,12 @@ class AppManager(
 
     private fun publishState(snapshot: AppState) {
         IrisDebugLog.enabled = snapshot.preferences.debugLoggingEnabled
+        rust.setFipsBleEnabled(
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                snapshot.account != null &&
+                snapshot.preferences.nearbyEnabled &&
+                snapshot.preferences.nearbyBluetoothEnabled,
+        )
         mutableState.value = snapshot
         if (
             snapshot.account?.authorizationState == DeviceAuthorizationState.REVOKED &&
@@ -2053,6 +2075,7 @@ class AppManager(
     private fun createRustApp(): RustAppClient =
         rustFactory?.invoke(rustDataDir, appVersion(appContext))
             ?: LiveRustAppClient(
+                context = appContext,
                 dataDir = rustDataDir,
                 appVersion = appVersion(appContext),
             )

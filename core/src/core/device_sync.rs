@@ -28,12 +28,16 @@ struct DeviceSyncConfig {
     relay_urls: Vec<String>,
     relay_client: Option<Client>,
     siblings: Vec<FipsPeerIdentity>,
+    peers: Vec<FipsPeerIdentity>,
+    nearby_ip_enabled: bool,
 }
 pub(super) struct DeviceSyncRuntime {
     key: String,
-    endpoint: Arc<FipsEndpoint>,
+    pub(super) endpoint: Arc<FipsEndpoint>,
     tcp: Option<DeviceSyncTcpSender>,
     siblings: Vec<FipsPeerIdentity>,
+    pub(super) nearby_bootstrap_payloads: Arc<RwLock<Vec<Vec<u8>>>>,
+    pub(super) nearby_outbox: Arc<RwLock<super::fips_nearby::FipsNearbyOutbox>>,
     _attachment_blobs: Option<Arc<super::attachment_upload::AttachmentBlobRuntime>>,
     _update_pubsub: Option<Arc<FipsPubsubClient>>,
     _update_relay_pubsub: Option<Arc<RelayEventBus>>,
@@ -592,6 +596,8 @@ impl AppCore {
             endpoint,
             tcp: Some(tcp),
             siblings,
+            nearby_bootstrap_payloads: Arc::new(RwLock::new(Vec::new())),
+            nearby_outbox: Arc::new(RwLock::new(super::fips_nearby::FipsNearbyOutbox::default())),
             _attachment_blobs: None,
             _update_pubsub: None,
             _update_relay_pubsub: None,
@@ -774,7 +780,7 @@ fn encode_device_sync_chunks(snapshot: DeviceSyncSnapshot) -> Vec<Vec<u8>> {
     packets
 }
 
-fn fips_peer_from_hex(pubkey_hex: &str) -> Option<FipsPeerIdentity> {
+pub(super) fn fips_peer_from_hex(pubkey_hex: &str) -> Option<FipsPeerIdentity> {
     let pubkey = PublicKey::from_hex(pubkey_hex).ok()?;
     FipsPeerIdentity::from_npub(&pubkey.to_bech32().ok()?).ok()
 }

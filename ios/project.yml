@@ -15,6 +15,10 @@ settings:
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: 5.0
 
+packages:
+  FipsBle:
+    path: FipsBle
+
 schemes:
   IrisChat:
     build:
@@ -60,6 +64,7 @@ targets:
         embed: false
       - target: NotificationService
       - target: ShareExtension
+      - package: FipsBle
 
   NotificationService:
     type: app-extension

@@ -2,9 +2,12 @@ use super::*;
 use crate::core::update_pubsub::{
     run_relay_update_announcement_subscription, run_update_announcement_subscription,
 };
-use fips_core::config::{NostrDiscoveryPolicy, PeerConfig, TransportInstances, WebSocketConfig};
-use fips_core::{Config, WebRtcConfig};
+use fips_core::config::{
+    BleConfig, NostrDiscoveryPolicy, PeerConfig, TransportInstances, WebSocketConfig,
+};
+use fips_core::{Config, FipsEndpointOutboundDatagram, WebRtcConfig};
 use hashtree_core::BlobRoute;
+use std::collections::BTreeMap;
 use std::net::SocketAddrV4;
 
 const SAME_HOST_HASHTREE_ENV: &str = "IRIS_CHAT_SAME_HOST_HASHTREE";
@@ -83,8 +86,13 @@ impl AppCore {
     }
 
     fn reconcile_shared_fips(&mut self, options: SharedFipsOptions) {
+        let host_ble_requested = self.pending_host_ble.is_some() || self.host_ble_attached;
         let (config, device_sync_enabled) = match self.device_sync_config() {
-            Some(config) => (config, true),
+            Some(config) => {
+                let device_sync_enabled =
+                    !config.siblings.is_empty() && !config.relay_urls.is_empty();
+                (config, device_sync_enabled)
+            }
             None if options.same_host_hashtree => {
                 let Some(config) = self.same_host_endpoint_config() else {
                     self.stop_device_sync();
@@ -97,7 +105,36 @@ impl AppCore {
                 return;
             }
         };
-        let runtime_key = format!("{}:same-host={}", config.key, options.same_host_hashtree);
+        let nearby_enabled = host_ble_requested || config.nearby_ip_enabled;
+        let runtime_key = format!(
+            "{}:same-host={}:nearby={}:ble={}",
+            config.key, options.same_host_hashtree, nearby_enabled, host_ble_requested
+        );
+        let refreshed_bootstrap = self
+            .host_ble_attached
+            .then(|| self.local_fips_nearby_bootstrap_payloads());
+        if self.host_ble_attached {
+            if let Some(runtime) = self.device_sync.as_mut() {
+                runtime.key = runtime_key;
+                runtime.siblings = config.siblings.clone();
+                if let Ok(mut payloads) = runtime.nearby_bootstrap_payloads.write() {
+                    *payloads = refreshed_bootstrap.unwrap_or_default();
+                }
+                let endpoint = runtime.endpoint.clone();
+                let peer_config = config
+                    .peers
+                    .iter()
+                    .map(|peer| PeerConfig {
+                        npub: peer.npub(),
+                        ..PeerConfig::default()
+                    })
+                    .collect();
+                self.runtime.spawn(async move {
+                    let _ = endpoint.update_peers(peer_config).await;
+                });
+                return;
+            }
+        }
         if self
             .device_sync
             .as_ref()
@@ -105,28 +142,33 @@ impl AppCore {
         {
             return;
         }
-        self.stop_device_sync();
+        if self.pending_host_ble.is_some() {
+            self.stop_device_sync_now();
+        } else {
+            self.stop_device_sync();
+        }
 
         let mut fips_config = Config::new();
         fips_config.node.control.enabled = false;
-        if device_sync_enabled {
+        fips_config.peers = config
+            .peers
+            .iter()
+            .map(|peer| PeerConfig {
+                npub: peer.npub(),
+                ..PeerConfig::default()
+            })
+            .collect();
+        let nostr_network_enabled = device_sync_enabled || config.nearby_ip_enabled;
+        if nostr_network_enabled {
             fips_config.node.discovery.nostr.enabled = true;
             fips_config.node.discovery.nostr.advertise = true;
             fips_config.node.discovery.nostr.advert_relays = config.relay_urls.clone();
-            fips_config.node.discovery.nostr.app =
-                format!("{DEVICE_SYNC_SCOPE_PREFIX}{}", config.owner_hex);
+            fips_config.node.discovery.nostr.app = if nearby_enabled {
+                super::super::fips_nearby::FIPS_NEARBY_SCOPE.to_string()
+            } else {
+                format!("{DEVICE_SYNC_SCOPE_PREFIX}{}", config.owner_hex)
+            };
             fips_config.node.discovery.nostr.policy = NostrDiscoveryPolicy::ConfiguredOnly;
-            fips_config.peers = config
-                .siblings
-                .iter()
-                .map(|peer| {
-                    let npub = peer.npub();
-                    PeerConfig {
-                        npub,
-                        ..PeerConfig::default()
-                    }
-                })
-                .collect();
             fips_config.transports.webrtc = TransportInstances::Single(WebRtcConfig {
                 advertise_on_nostr: Some(true),
                 auto_connect: Some(true),
@@ -177,10 +219,32 @@ impl AppCore {
         let mut builder = FipsEndpoint::builder()
             .config(fips_config)
             .identity_nsec(config.secret_hex)
-            .discovery_scope(format!("{DEVICE_SYNC_SCOPE_PREFIX}{}", config.owner_hex))
+            .discovery_scope(if nearby_enabled {
+                super::super::fips_nearby::FIPS_NEARBY_SCOPE.to_string()
+            } else {
+                format!("{DEVICE_SYNC_SCOPE_PREFIX}{}", config.owner_hex)
+            })
             .without_system_tun();
         if options.same_host_hashtree {
             builder = builder.local_rendezvous();
+        }
+        let attaching_ble = self.pending_host_ble.is_some();
+        if let Some(mut attachment) = self.pending_host_ble.take() {
+            let Some(io) = attachment.take() else {
+                self.push_debug_log(
+                    "fips_ble.start.error",
+                    "BLE attachment was empty".to_string(),
+                );
+                return;
+            };
+            builder = builder.host_ble(
+                io,
+                BleConfig {
+                    adapter: Some("mobile".to_string()),
+                    auto_connect: Some(true),
+                    ..BleConfig::default()
+                },
+            );
         }
         let endpoint = match self.runtime.block_on(builder.bind()) {
             Ok(endpoint) => Arc::new(endpoint),
@@ -194,7 +258,23 @@ impl AppCore {
                 return;
             }
         };
-        let (tcp, update_pubsub, update_relay_pubsub, tasks) = if device_sync_enabled {
+        self.host_ble_attached = attaching_ble;
+        let nearby_receiver = if nearby_enabled {
+            match self.runtime.block_on(
+                endpoint.register_service_receiver(super::super::fips_nearby::FIPS_NEARBY_PORT),
+            ) {
+                Ok(receiver) => Some(receiver),
+                Err(error) => {
+                    self.push_debug_log("fips_nearby.start.error", error.to_string());
+                    let _ = self.runtime.block_on(endpoint.shutdown());
+                    self.host_ble_attached = false;
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let (tcp, update_pubsub, update_relay_pubsub, mut tasks) = if device_sync_enabled {
             let Some((request, resync_required)) = device_sync_packets else {
                 let _ = self.runtime.block_on(endpoint.shutdown());
                 return;
@@ -295,12 +375,59 @@ impl AppCore {
             None
         };
 
+        let nearby_bootstrap_payloads = Arc::new(RwLock::new(if nearby_enabled {
+            self.local_fips_nearby_bootstrap_payloads()
+        } else {
+            Vec::new()
+        }));
+        let mut initial_nearby_outbox = super::super::fips_nearby::FipsNearbyOutbox::default();
+        if nearby_enabled {
+            for event in self
+                .pending_relay_publishes
+                .values()
+                .rev()
+                .take(super::super::fips_nearby::FIPS_NEARBY_OUTBOX_MAX_EVENTS)
+                .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
+            {
+                if let Some(payload) = super::super::fips_nearby::encode_fips_nearby_event(&event) {
+                    initial_nearby_outbox.insert(event.id.to_string(), payload);
+                }
+            }
+        }
+        let nearby_outbox = Arc::new(RwLock::new(initial_nearby_outbox));
+        if let Some(receiver) = nearby_receiver {
+            let nearby_tx = self.core_sender.clone();
+            tasks.push(self.runtime.spawn(async move {
+                let mut datagrams = Vec::with_capacity(32);
+                while receiver.recv_batch_into(&mut datagrams, 32).await.is_some() {
+                    for datagram in datagrams.drain(..) {
+                        let _ = nearby_tx.send(CoreMsg::Internal(Box::new(
+                            InternalEvent::FipsNearbyPacket {
+                                source_pubkey_hex: datagram.source_peer.pubkey().to_string(),
+                                source_port: datagram.source_port,
+                                data: datagram.data.into_vec(),
+                            },
+                        )));
+                    }
+                }
+            }));
+        }
+        if nearby_enabled {
+            tasks.push(self.runtime.spawn(run_fips_nearby_link_monitor(
+                endpoint.clone(),
+                nearby_bootstrap_payloads.clone(),
+                nearby_outbox.clone(),
+            )));
+        }
+
         let sibling_count = config.siblings.len();
         self.device_sync = Some(DeviceSyncRuntime {
             key: runtime_key,
             endpoint,
             tcp,
             siblings: config.siblings,
+            nearby_bootstrap_payloads,
+            nearby_outbox,
             _attachment_blobs: attachment_store,
             _update_pubsub: update_pubsub,
             _update_relay_pubsub: update_relay_pubsub,
@@ -308,12 +435,15 @@ impl AppCore {
         });
         if device_sync_enabled {
             self.push_debug_log("device_sync.start", format!("peers={sibling_count}"));
+        } else if nearby_enabled {
+            self.push_debug_log("fips_nearby.start", "nearby-only");
         } else {
             self.push_debug_log("attachment.same_host.start", "local-only");
         }
     }
 
     pub(in crate::core) fn stop_device_sync(&mut self) {
+        self.host_ble_attached = false;
         let Some(runtime) = self.device_sync.take() else {
             return;
         };
@@ -326,6 +456,20 @@ impl AppCore {
         self.runtime.spawn(async move {
             shutdown_shared_fips(endpoint).await;
         });
+    }
+
+    pub(in crate::core) fn stop_device_sync_now(&mut self) {
+        self.host_ble_attached = false;
+        let Some(runtime) = self.device_sync.take() else {
+            return;
+        };
+        let DeviceSyncRuntime {
+            endpoint, tasks, ..
+        } = runtime;
+        for task in tasks {
+            task.abort();
+        }
+        let _ = self.runtime.block_on(endpoint.shutdown());
     }
 
     #[cfg(test)]
@@ -347,60 +491,167 @@ impl AppCore {
             relay_urls: Vec::new(),
             relay_client: None,
             siblings: Vec::new(),
+            peers: Vec::new(),
+            nearby_ip_enabled: false,
         })
     }
 
     fn device_sync_config(&self) -> Option<DeviceSyncConfig> {
         let logged_in = self.logged_in.as_ref()?;
         let owner_hex = logged_in.owner_pubkey.to_hex();
-        let roster = self.app_keys.get(&owner_hex)?;
         let local_hex = logged_in.device_keys.public_key().to_hex();
-        if roster.created_at_secs == 0
-            || !roster
-                .devices
-                .iter()
-                .any(|device| device.identity_pubkey_hex == local_hex)
-        {
-            return None;
-        }
+        let roster = self.app_keys.get(&owner_hex);
+        let roster_at = roster
+            .filter(|roster| {
+                roster.created_at_secs > 0
+                    && roster
+                        .devices
+                        .iter()
+                        .any(|device| device.identity_pubkey_hex == local_hex)
+            })
+            .map(|roster| roster.created_at_secs)
+            .unwrap_or_default();
         let siblings = roster
-            .devices
-            .iter()
+            .into_iter()
+            .flat_map(|roster| roster.devices.iter())
             .filter(|device| device.identity_pubkey_hex != local_hex)
             .filter_map(|device| fips_peer_from_hex(&device.identity_pubkey_hex))
             .collect::<Vec<_>>();
-        if siblings.is_empty() {
-            return None;
+        let mut peer_by_npub = BTreeMap::new();
+        for peer in self
+            .app_keys
+            .values()
+            .flat_map(|known| known.devices.iter())
+            .filter(|device| device.identity_pubkey_hex != local_hex)
+            .filter_map(|device| fips_peer_from_hex(&device.identity_pubkey_hex))
+        {
+            peer_by_npub.insert(peer.npub(), peer);
         }
+        for peer in &siblings {
+            peer_by_npub.insert(peer.npub(), *peer);
+        }
+        let peers = peer_by_npub.into_values().collect::<Vec<_>>();
         let relay_urls = logged_in
             .relay_urls
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        if relay_urls.is_empty() {
+        let ble_requested = self.pending_host_ble.is_some() || self.host_ble_attached;
+        let nearby_ip_enabled = self.preferences.nearby_enabled && !peers.is_empty();
+        if siblings.is_empty() && !ble_requested && !nearby_ip_enabled {
+            return None;
+        }
+        if relay_urls.is_empty() && !ble_requested {
             return None;
         }
         let key = format!(
-            "{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:{}",
             owner_hex,
-            roster.created_at_secs,
-            roster
-                .devices
+            roster_at,
+            peers
                 .iter()
-                .map(|device| device.identity_pubkey_hex.as_str())
+                .map(FipsPeerIdentity::npub)
                 .collect::<Vec<_>>()
                 .join(","),
-            relay_urls.join(",")
+            relay_urls.join(","),
+            ble_requested,
+            nearby_ip_enabled
         );
         Some(DeviceSyncConfig {
             key,
             owner_hex,
-            roster_at: roster.created_at_secs,
+            roster_at,
             secret_hex: logged_in.device_keys.secret_key().to_secret_hex(),
             relay_urls,
             relay_client: Some(logged_in.client.clone()),
             siblings,
+            peers,
+            nearby_ip_enabled,
         })
+    }
+}
+
+async fn run_fips_nearby_link_monitor(
+    endpoint: Arc<FipsEndpoint>,
+    bootstrap_payloads: Arc<RwLock<Vec<Vec<u8>>>>,
+    outbox: Arc<RwLock<super::super::fips_nearby::FipsNearbyOutbox>>,
+) {
+    let mut initialized_links = BTreeMap::<String, u64>::new();
+    loop {
+        let peers = match endpoint.peers().await {
+            Ok(peers) => peers,
+            Err(_) => return,
+        };
+        for peer in peers.into_iter().filter(|peer| peer.connected) {
+            let Ok(identity) = FipsPeerIdentity::from_npub(&peer.npub) else {
+                continue;
+            };
+            let initialized = if initialized_links.get(&peer.npub) == Some(&peer.link_id) {
+                true
+            } else {
+                let payloads = bootstrap_payloads
+                    .read()
+                    .map(|payloads| payloads.clone())
+                    .unwrap_or_default();
+                let sent = if payloads.is_empty() {
+                    true
+                } else {
+                    let datagrams = payloads
+                        .into_iter()
+                        .map(|data| {
+                            FipsEndpointOutboundDatagram::new(
+                                super::super::fips_nearby::FIPS_NEARBY_PORT,
+                                super::super::fips_nearby::FIPS_NEARBY_PORT,
+                                data,
+                            )
+                        })
+                        .collect();
+                    endpoint
+                        .send_datagram_batch_to_peer(identity, datagrams)
+                        .await
+                        .is_ok()
+                };
+                if sent {
+                    initialized_links.insert(peer.npub.clone(), peer.link_id);
+                }
+                sent
+            };
+            if !initialized {
+                continue;
+            }
+
+            let pending = outbox
+                .read()
+                .map(|outbox| outbox.pending_for_link(&peer.npub, peer.link_id))
+                .unwrap_or_default();
+            if pending.is_empty() {
+                continue;
+            }
+            let event_ids = pending
+                .iter()
+                .map(|(event_id, _)| event_id.clone())
+                .collect::<Vec<_>>();
+            let datagrams = pending
+                .into_iter()
+                .map(|(_, data)| {
+                    FipsEndpointOutboundDatagram::new(
+                        super::super::fips_nearby::FIPS_NEARBY_PORT,
+                        super::super::fips_nearby::FIPS_NEARBY_PORT,
+                        data,
+                    )
+                })
+                .collect();
+            if endpoint
+                .send_datagram_batch_to_peer(identity, datagrams)
+                .await
+                .is_ok()
+            {
+                if let Ok(mut outbox) = outbox.write() {
+                    outbox.mark_sent_on_link(&peer.npub, peer.link_id, &event_ids);
+                }
+            }
+        }
+        sleep(Duration::from_secs(1)).await;
     }
 }
 

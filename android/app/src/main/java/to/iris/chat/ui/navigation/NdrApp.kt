@@ -150,15 +150,9 @@ fun NdrApp(
     }
 
     LaunchedEffect(preferences.nearbyEnabled, preferences.nearbyBluetoothEnabled) {
-        if (
-            preferences.nearbyEnabled &&
-            preferences.nearbyBluetoothEnabled &&
-                container.nearbyIrisService.hasBluetoothPermission()
-        ) {
-            container.nearbyIrisService.setVisible(true)
-        } else {
-            container.nearbyIrisService.setVisible(false)
-        }
+        // FIPS owns Bluetooth. Keep the legacy GATT transport off while its
+        // LAN half remains available until the device matrix is complete.
+        container.nearbyIrisService.setVisible(false)
     }
 
     LaunchedEffect(preferences.nearbyEnabled, preferences.nearbyLanEnabled) {
@@ -201,7 +195,8 @@ fun NdrApp(
             offlineNowSecs.saturatingSubtract(foregroundedAtSecs) >= OFFLINE_BANNER_GRACE_SECS
         ) {
             val nearbySnapshot = nearbySnapshotProvider()
-            val bluetoothState = if (nearbyBluetoothEnabled(nearbySnapshot)) "on" else "off"
+            val bluetoothState =
+                if (preferences.nearbyEnabled && preferences.nearbyBluetoothEnabled) "on" else "off"
             val wifiState = if (nearbyWifiEnabled(nearbySnapshot)) "on" else "off"
             IrisOfflineBannerState("Offline · Bluetooth $bluetoothState · Wi-Fi $wifiState")
         } else {
@@ -1168,28 +1163,6 @@ private fun nearbyPeerResolvedName(
 private fun nearbyWifiEnabled(snapshot: IrisNearbyService.Snapshot): Boolean =
     snapshot.localNetworkVisible &&
         snapshot.localNetworkStatus in nearbyWifiOnStatuses
-
-private fun nearbyBluetoothEnabled(snapshot: IrisNearbyService.Snapshot): Boolean =
-    snapshot.visible &&
-        snapshot.status !in nearbyBluetoothBlockingStatuses &&
-        snapshot.status !in nearbyTransportOffStatuses
-
-private val nearbyBluetoothBlockingStatuses =
-    setOf(
-        "No Bluetooth access",
-        "Bluetooth off",
-        "Bluetooth unavailable",
-        "Advertise unavailable",
-        "Advertise failed",
-        "Scan failed",
-        "Connect failed",
-    )
-
-private val nearbyTransportOffStatuses =
-    setOf(
-        "Off",
-        "Starting",
-    )
 
 private val nearbyWifiOnStatuses =
     setOf(

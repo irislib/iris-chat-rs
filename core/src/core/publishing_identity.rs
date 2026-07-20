@@ -1,10 +1,12 @@
-use super::publishing::send_nearby_published_event;
 use super::*;
 
+type LabeledIdentityEvents = Vec<(&'static str, Event)>;
+type LocalIdentityArtifacts = (LabeledIdentityEvents, LabeledIdentityEvents);
+
 impl AppCore {
-    pub(super) fn publish_local_identity_artifacts(&mut self) {
+    pub(super) fn build_local_identity_artifacts(&self) -> LocalIdentityArtifacts {
         let Some(logged_in) = self.logged_in.as_ref() else {
-            return;
+            return (Vec::new(), Vec::new());
         };
 
         let owner_keys = logged_in.owner_keys.clone();
@@ -17,10 +19,6 @@ impl AppCore {
         let local_app_keys = self.app_keys.get(&owner_pubkey.to_hex()).cloned();
         let local_profile = self.owner_profiles.get(&owner_pubkey.to_hex()).cloned();
         let publish_app_keys = !self.defer_owner_app_keys_publish;
-        let client = logged_in.client.clone();
-        let relay_urls = logged_in.relay_urls.clone();
-        let tx = self.core_sender.clone();
-        let update_tx = self.update_tx.clone();
 
         let mut background_events: Vec<(&'static str, Event)> = Vec::new();
         let mut durable_events: Vec<(&'static str, Event)> = Vec::new();
@@ -58,9 +56,21 @@ impl AppCore {
             }
         }
 
+        (background_events, durable_events)
+    }
+
+    pub(super) fn publish_local_identity_artifacts(&mut self) {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return;
+        };
+        let client = logged_in.client.clone();
+        let relay_urls = logged_in.relay_urls.clone();
+        let tx = self.core_sender.clone();
+        let (background_events, durable_events) = self.build_local_identity_artifacts();
+
         for (_, event) in &background_events {
             self.remember_event(event.id.to_string());
-            send_nearby_published_event(&update_tx, event);
+            self.emit_nearby_published_event(event);
         }
         for (label, event) in durable_events {
             self.publish_runtime_event(event, label, None);

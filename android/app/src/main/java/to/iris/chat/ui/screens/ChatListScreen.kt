@@ -351,6 +351,7 @@ fun ChatListScreen(
                         NearbyChatListItem(
                             appManager = appManager,
                             nearbyEnabled = appState.preferences.nearbyEnabled,
+                            nearbyBluetoothEnabled = appState.preferences.nearbyBluetoothEnabled,
                             knownDirectChatNames = appState.knownDirectChatNames(),
                             service = nearby,
                             onClick = onNearbyClick,
@@ -652,6 +653,7 @@ private fun ChatSwipeActionButton(
 private fun NearbyChatListItem(
     appManager: AppManager,
     nearbyEnabled: Boolean,
+    nearbyBluetoothEnabled: Boolean,
     knownDirectChatNames: Map<String, String>,
     service: IrisNearbyService,
     onClick: () -> Unit,
@@ -659,7 +661,7 @@ private fun NearbyChatListItem(
     onPeerLongClick: (String) -> Unit,
 ) {
     val snapshot by rememberNearbySnapshotState(service)
-    val nearbyActive = nearbyEnabled && (snapshot.visible || snapshot.localNetworkVisible)
+    val nearbyActive = nearbyEnabled && (nearbyBluetoothEnabled || snapshot.localNetworkVisible)
     val visiblePeers =
         if (nearbyEnabled) {
             rememberSortedNearbyPeers(

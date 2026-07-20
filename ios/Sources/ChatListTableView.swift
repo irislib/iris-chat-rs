@@ -228,7 +228,7 @@ struct ChatListTableView: UIViewRepresentable {
             "time:\(Int(relativeNow.timeIntervalSince1970 / 30))",
             "search:\(isSearchActive):\(searchText):\(messageLimit):\(expanded)",
             "nearby:\(preferences.nearbyShowInChatList):\(preferences.nearbyEnabled):\(manager.nearbyIris.sidebarSubtitle):" +
-                "\(manager.nearbyIris.isVisible):\(manager.nearbyIris.isLanVisible):" +
+                "\(preferences.nearbyBluetoothEnabled):\(manager.nearbyIris.isVisible):\(manager.nearbyIris.isLanVisible):" +
                 manager.nearbyIris.peers.map {
                     "\($0.id):\($0.name):\($0.pictureURL ?? ""):\($0.ownerPubkeyHex ?? "")"
                 }.joined(separator: "\u{1E}"),
@@ -439,7 +439,8 @@ struct ChatListTableView: UIViewRepresentable {
             cell.accessibilityLabel = nearbyAccessibilityLabel(
                 nearbyEnabled: nearbyEnabled,
                 hasPeers: nearbyEnabled && !service.peers.isEmpty,
-                active: nearbyEnabled && service.isNearbyActive
+                active: nearbyEnabled &&
+                    (preferences?.nearbyBluetoothEnabled == true || service.isLanVisible)
             )
             cell.accessibilityTraits = []
             cell.isAccessibilityElement = false

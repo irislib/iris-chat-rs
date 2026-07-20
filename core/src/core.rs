@@ -82,6 +82,7 @@ mod config;
 mod device_approval;
 mod device_sync;
 mod device_sync_tcp;
+mod fips_nearby;
 mod groups;
 mod identity;
 mod invites;
@@ -131,6 +132,7 @@ pub(crate) use config::{
 };
 use device_sync::*;
 use device_sync_tcp::*;
+pub(crate) use fips_nearby::HostBleAttachment;
 use identity::*;
 pub(crate) use identity::{normalize_peer_input_for_display, parse_peer_input};
 pub(crate) use mobile_push::{
@@ -520,6 +522,8 @@ pub struct AppCore {
     relay_connected_count: u64,
     all_relays_offline_since_secs: Option<u64>,
     device_sync: Option<DeviceSyncRuntime>,
+    pending_host_ble: Option<HostBleAttachment>,
+    host_ble_attached: bool,
     pending_relay_publishes: BTreeMap<String, PendingRelayPublish>,
     pending_relay_publish_inflight: HashSet<String>,
     pending_decrypted_delivery_acks: HashSet<String>,

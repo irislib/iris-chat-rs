@@ -11,6 +11,7 @@ core/target-codex-test/
 core/uniffi-bindgen/target/
 ios/Bindings/
 ios/.build/
+ios/FipsBle/.build/
 ios/Frameworks/
 ios/*.xcodeproj/
 macos/.build/

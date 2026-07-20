@@ -2,6 +2,10 @@
 
 ## 0.1.42
 
+- Add portable FIPS BLE v2 transport on iOS and Android, using BLE discovery
+  only to bootstrap authenticated, length-framed L2CAP links. Nearby Iris
+  events now reuse normal signed-event ingestion, delivery channels, and
+  durable reconnect replay.
 - Use Osiris and LNVPS as the built-in authenticated FIPS WebSocket entry
   points while preserving an explicit environment override for isolated and
   operator-managed deployments.

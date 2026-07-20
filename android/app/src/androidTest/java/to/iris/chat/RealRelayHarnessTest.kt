@@ -1,9 +1,11 @@
 package to.iris.chat
 
+import android.Manifest
 import android.database.sqlite.SQLiteDatabase
-import android.util.Base64
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.util.Base64
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -1274,6 +1276,100 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
     }
 
     @Test
+    fun send_nearby_message_burst_from_args() {
+        ensureLoggedIn()
+        maybeDisableRelays()
+        appManager().dispatch(AppAction.SetDebugLoggingEnabled(true))
+        enableFipsBleForPhysicalPeer()
+        val peerInput = requiredArg("peer_input")
+        val messagePrefix = requiredArg("message_prefix")
+        val messageCount = (optionalArg("message_count")?.toIntOrNull() ?: 24).coerceIn(1, 64)
+        val messageSize = (optionalArg("message_size")?.toIntOrNull() ?: 512).coerceIn(32, 4_096)
+        val timeoutMs = optionalArg("timeout_ms")?.toLongOrNull() ?: 180_000L
+        val preSendDelayMs = optionalArg("pre_send_delay_ms")?.toLongOrNull() ?: 0L
+        val chat = ensureChatOpen(peerInput)
+        val initialPeerProtocol =
+            kotlinx.coroutines.runBlocking { appManager().peerProfileDebug(peerInput) }
+        if (initialPeerProtocol?.directSendReadiness == "MissingLocalAppKeys") {
+            // The production New Chat screen performs this bootstrap action.
+            // This harness opens chats directly, so mirror that side effect
+            // before measuring BLE transport throughput.
+            appManager().dispatch(AppAction.CreatePublicInvite)
+        }
+        val peerProtocol =
+            waitForState("nearby peer protocol ready", timeoutMs = 90_000) {
+                kotlinx.coroutines
+                    .runBlocking { appManager().peerProfileDebug(peerInput) }
+                    ?.takeIf { debug -> debug.directSendReadiness == "Ready" }
+            }
+        val messages =
+            (1..messageCount).map { index ->
+                val header = "$messagePrefix-${index.toString().padStart(3, '0')}-"
+                header + "x".repeat((messageSize - header.length).coerceAtLeast(0))
+            }
+
+        if (preSendDelayMs > 0) {
+            SystemClock.sleep(preSendDelayMs)
+        }
+        val sendStartedMs = SystemClock.elapsedRealtime()
+        messages.forEach { message -> appManager().sendText(chat.chatId, message) }
+        val enqueueDurationMs = SystemClock.elapsedRealtime() - sendStartedMs
+
+        val seenMessages =
+            waitForState("nearby burst receipts", timeoutMs = timeoutMs) {
+                appManager()
+                    .state
+                    .value
+                    .currentChat
+                    ?.takeIf { current -> current.chatId.equals(chat.chatId, ignoreCase = true) }
+                    ?.messages
+                    ?.filter { entry -> entry.isOutgoing && entry.body in messages }
+                    ?.takeIf { entries ->
+                        entries.size == messageCount &&
+                            entries.all { entry ->
+                                entry.delivery == DeliveryState.SEEN ||
+                                    entry.recipientDeliveries.any { recipient ->
+                                        recipient.delivery == DeliveryState.SEEN
+                                    }
+                            }
+                    }
+            }
+
+        appManager().state.value.toast?.takeIf { it.isNotBlank() }?.let { toast ->
+            fail("Unexpected toast after nearby burst: $toast")
+        }
+        SystemClock.sleep(3_000)
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "peer_protocol_ready" to peerProtocol.directSendReadiness,
+            "message_count" to seenMessages.size.toString(),
+            "message_size" to messageSize.toString(),
+            "enqueue_duration_ms" to enqueueDurationMs.toString(),
+            "all_seen" to "true",
+            "relay_count" to appManager().state.value.preferences.nostrRelayUrls.size.toString(),
+        )
+    }
+
+    @Test
+    fun report_nearby_peer_protocol_from_args() {
+        ensureLoggedIn()
+        maybeDisableRelays()
+        enableFipsBleForPhysicalPeer()
+        val peerInput = requiredArg("peer_input")
+        val debug =
+            waitForState("nearby peer protocol diagnostics", timeoutMs = 30_000) {
+                kotlinx.coroutines.runBlocking { appManager().peerProfileDebug(peerInput) }
+            }
+        reportStatus(
+            "direct_send_readiness" to debug.directSendReadiness,
+            "known_device_count" to debug.knownDeviceCount.toString(),
+            "active_session_count" to debug.activeSessionCount.toString(),
+            "session_count" to debug.sessionCount.toString(),
+            "receiving_session_count" to debug.receivingSessionCount.toString(),
+        )
+    }
+
+    @Test
     fun disable_relays_and_report() {
         ensureLoggedIn()
         disableRelays()
@@ -1495,6 +1591,145 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
             "message_ids" to messageIds.joinToString(","),
             "seen" to "true",
         )
+    }
+
+    @Test
+    fun accept_and_mark_incoming_message_seen_from_args() {
+        ensureLoggedIn()
+        enableFipsBleForPhysicalPeer()
+        reportStatus("fips_ble_ready" to "true")
+        val expectedMessage = requiredArg("message")
+        val timeoutMs = optionalArg("timeout_ms")?.toLongOrNull() ?: 120_000L
+        val chatId = acceptAndMarkIncomingMessageSeen(expectedMessage, timeoutMs)
+
+        // Keep the host process alive long enough for the signed receipt event
+        // to leave over the physical FIPS BLE link before instrumentation exits.
+        SystemClock.sleep(3_000)
+        reportStatus(
+            "chat_id" to chatId,
+            "message" to expectedMessage,
+            "accepted" to "true",
+            "seen" to "true",
+        )
+    }
+
+    @Test
+    fun accept_and_mark_two_incoming_messages_seen_from_args() {
+        ensureLoggedIn()
+        enableFipsBleForPhysicalPeer()
+        reportStatus("fips_ble_ready" to "true")
+        val timeoutMs = optionalArg("timeout_ms")?.toLongOrNull() ?: 180_000L
+        val firstMessage = requiredArg("first_message")
+        val secondMessage = requiredArg("second_message")
+
+        val firstChatId = acceptAndMarkIncomingMessageSeen(firstMessage, timeoutMs)
+        reportStatus("first_message_seen" to "true")
+        val secondChatId = acceptAndMarkIncomingMessageSeen(secondMessage, timeoutMs)
+        SystemClock.sleep(3_000)
+        reportStatus(
+            "chat_id" to secondChatId,
+            "same_chat" to firstChatId.equals(secondChatId, ignoreCase = true).toString(),
+            "first_message" to firstMessage,
+            "second_message" to secondMessage,
+            "seen" to "true",
+        )
+    }
+
+    private fun acceptAndMarkIncomingMessageSeen(expectedMessage: String, timeoutMs: Long): String {
+
+        val chatId =
+            waitForState("incoming message", timeoutMs = timeoutMs) {
+                val state = appManager().state.value
+                state.currentChat
+                    ?.takeIf { chat ->
+                        chat.messages.any { message ->
+                            !message.isOutgoing && message.body == expectedMessage
+                        }
+                    }
+                    ?.chatId
+                    ?: state.chatList
+                        .firstOrNull { thread ->
+                            thread.lastMessageIsOutgoing == false &&
+                                thread.lastMessagePreview == expectedMessage
+                        }
+                        ?.chatId
+            }
+
+        appManager().openChat(chatId)
+        val messageIds =
+            waitForState("incoming message in open chat", timeoutMs = 30_000) {
+                appManager()
+                    .state
+                    .value
+                    .currentChat
+                    ?.takeIf { chat -> chat.chatId.equals(chatId, ignoreCase = true) }
+                    ?.messages
+                    ?.filter { message ->
+                        !message.isOutgoing && message.body == expectedMessage
+                    }
+                    ?.map { message -> message.id }
+                    ?.takeIf { ids -> ids.isNotEmpty() }
+            }
+
+        appManager().dispatch(AppAction.SetMessageRequestAccepted(chatId))
+        waitForState("message request accepted", timeoutMs = 30_000) {
+            appManager()
+                .state
+                .value
+                .currentChat
+                ?.takeIf { chat -> chat.chatId.equals(chatId, ignoreCase = true) }
+                ?.let { chat -> true.takeIf { !chat.isRequest } }
+        }
+        appManager().dispatch(AppAction.MarkMessagesSeen(chatId, messageIds))
+        waitForState("incoming message marked seen", timeoutMs = 30_000) {
+            appManager()
+                .state
+                .value
+                .currentChat
+                ?.takeIf { chat -> chat.chatId.equals(chatId, ignoreCase = true) }
+                ?.messages
+                ?.filter { message -> message.id in messageIds }
+                ?.takeIf { messages ->
+                    messages.isNotEmpty() &&
+                        messages.all { message -> message.delivery == DeliveryState.SEEN }
+                }
+        }
+        return chatId
+    }
+
+    private fun enableFipsBleForPhysicalPeer() {
+        val permissions =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                listOf(
+                    Manifest.permission.BLUETOOTH_SCAN,
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                    Manifest.permission.BLUETOOTH_ADVERTISE,
+                )
+            } else {
+                listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        permissions.forEach { permission ->
+            runCatching {
+                instrumentation.uiAutomation.grantRuntimePermission(appPackageName(), permission)
+            }
+        }
+        withActivity {
+            nearbyService().setVisible(false)
+        }
+        appManager().dispatch(AppAction.SetNearbyBluetoothEnabled(false))
+        waitForState("FIPS Bluetooth reset", timeoutMs = 30_000) {
+            appManager().state.value.preferences.takeIf { preferences ->
+                !preferences.nearbyBluetoothEnabled
+            }
+        }
+        appManager().dispatch(AppAction.SetNearbyEnabled(true))
+        appManager().dispatch(AppAction.SetNearbyBluetoothEnabled(true))
+        waitForState("FIPS Bluetooth enabled", timeoutMs = 30_000) {
+            appManager().state.value.preferences.takeIf { preferences ->
+                preferences.nearbyEnabled && preferences.nearbyBluetoothEnabled
+            }
+        }
     }
 
     @Test

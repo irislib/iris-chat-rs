@@ -41,6 +41,11 @@ pub(crate) enum CoreMsg {
         owner_input: String,
         reply_tx: Sender<MutualGroupsSnapshot>,
     },
+    AttachHostBle {
+        attachment: crate::core::HostBleAttachment,
+        reply_tx: Sender<Result<(), String>>,
+    },
+    DetachHostBle(Sender<()>),
     PrepareForSuspend(Sender<()>),
     /// Snapshot of core-internal perf counters (debug-snapshot
     /// rebuild count etc.) — read by `FfiApp::core_perf_counters()`
@@ -64,6 +69,11 @@ pub(crate) enum InternalEvent {
     NearbyEvent {
         event: Event,
         transport: String,
+    },
+    FipsNearbyPacket {
+        source_pubkey_hex: String,
+        source_port: u16,
+        data: Vec<u8>,
     },
     FetchTrackedPeerCatchUp {
         token: u64,

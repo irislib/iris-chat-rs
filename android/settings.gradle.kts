@@ -16,3 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "Iris Chat"
 include(":app")
+include(":fips-ble")
+project(":fips-ble").projectDir = file("fips-ble")

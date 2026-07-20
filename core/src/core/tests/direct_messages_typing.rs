@@ -790,6 +790,48 @@ fn mark_seen_syncs_message_requests_to_local_siblings_without_peer_receipt() {
 }
 
 #[test]
+fn accepting_message_request_sends_receipt_for_messages_already_seen() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("seen-request-accept", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let message_id = "e".repeat(64);
+    core.push_incoming_message_from(
+        &chat_id,
+        Some(message_id.clone()),
+        "read before accepting".to_string(),
+        1_777_159_492,
+        None,
+        Some(chat_id.clone()),
+        Some(chat_id.clone()),
+        Some("outer-request-accept".to_string()),
+    );
+
+    assert!(core.thread_is_message_request(&chat_id));
+    core.mark_messages_seen(&chat_id, std::slice::from_ref(&message_id));
+    assert!(
+        core.pending_outgoing_receipts
+            .get(&(chat_id.clone(), "seen".to_string()))
+            .is_none(),
+        "request-gated Seen must not be queued for the sender yet"
+    );
+
+    // Hold the outgoing batch open so the assertion can inspect the receipt
+    // IDs without requiring a ratchet session in this focused unit test.
+    core.batch_depth = 1;
+    core.handle_action(AppAction::SetMessageRequestAccepted {
+        chat_id: chat_id.clone(),
+    });
+
+    let queued = core
+        .pending_outgoing_receipts
+        .get(&(chat_id, "seen".to_string()))
+        .expect("accepting queues the previously suppressed Seen receipt");
+    assert_eq!(queued, &vec![message_id]);
+}
+
+#[test]
 fn self_synced_direct_message_is_rendered_as_outgoing_on_linked_device() {
     let owner = Keys::generate();
     let device = Keys::generate();

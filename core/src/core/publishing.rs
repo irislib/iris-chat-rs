@@ -20,6 +20,10 @@ pub(super) fn send_nearby_published_event(update_tx: &Sender<AppUpdate>, event: 
 
 impl AppCore {
     pub(super) fn emit_nearby_published_event(&self, event: &Event) {
+        self.publish_fips_nearby(event);
+        if super::fips_nearby::is_fips_nearby_bootstrap_event(event) {
+            self.refresh_fips_nearby_bootstrap();
+        }
         send_nearby_published_event(&self.update_tx, event);
     }
 
@@ -145,12 +149,15 @@ impl AppCore {
             return false;
         }
         self.remember_event(event.id.to_string());
-        self.emit_nearby_published_event(&event);
         let event_id = event.id.to_string();
         let stored = self.remember_pending_relay_publish(&event, label, chat_id, inner_event_id);
         if !stored {
             return false;
         }
+        // Record the outer event on its message before exposing it to a
+        // low-latency nearby transport. Otherwise a BLE receipt can race the
+        // delivery-trace update and be permanently orphaned under bursts.
+        self.emit_nearby_published_event(&event);
         let Some(relay_urls) = self
             .logged_in
             .as_ref()
@@ -242,6 +249,16 @@ impl AppCore {
     pub(super) fn retry_pending_relay_publishes(&mut self, reason: &str) {
         if self.pending_relay_publishes.is_empty() {
             return;
+        }
+        let nearby_events = self
+            .pending_relay_publishes
+            .values()
+            .rev()
+            .take(64)
+            .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
+            .collect::<Vec<_>>();
+        for event in &nearby_events {
+            self.publish_fips_nearby(event);
         }
         let Some((client, relay_urls)) = self
             .logged_in

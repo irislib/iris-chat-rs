@@ -604,6 +604,74 @@ final class InteropHarnessTests: XCTestCase {
             status("message", message)
             status("delivery", delivery)
             status("relay_count", String(manager.state.preferences.nostrRelayUrls.count))
+        case "send_fips_ble_message_from_args":
+            _ = try await createOrLoadAccount(manager: manager, env: env)
+            try await maybeDisableRelays(manager: manager, env: env)
+
+            manager.setNearbyEnabled(true)
+            _ = try await waitFor(label: "nearby enabled", timeout: 30) {
+                manager.state.preferences.nearbyEnabled ? true : nil
+            }
+            manager.setNearbyBluetoothEnabled(true)
+            _ = try await waitFor(label: "nearby Bluetooth enabled", timeout: 30) {
+                manager.state.preferences.nearbyBluetoothEnabled ? true : nil
+            }
+
+            let message = try requiredEnv("IRIS_IOS_HARNESS_MESSAGE", env: env)
+            let chatID = try await ensureChatOpen(
+                manager: manager,
+                dataDir: dataDir,
+                chatID: env["IRIS_IOS_HARNESS_CHAT_ID"],
+                peerInput: env["IRIS_IOS_HARNESS_PEER_INPUT"]
+            )
+            manager.dispatch(.sendMessage(chatId: chatID, text: message))
+
+            let outgoing: ChatMessageSnapshot = try await waitFor(
+                label: "queued FIPS BLE message \(message)",
+                timeout: 30
+            ) {
+                manager.state.currentChat?.messages.first(where: {
+                    $0.isOutgoing && $0.body == message
+                })
+            }
+            let ble: IrisFipsBleDebugSnapshot = try await waitFor(
+                label: "native FIPS BLE traffic",
+                timeout: 60
+            ) {
+                guard let snapshot = manager.fipsBleDebugSnapshot(),
+                      snapshot.connectionCount > 0,
+                      snapshot.bytesReceivedCount > 0,
+                      snapshot.writeCompletedCount > 0 else {
+                    return nil
+                }
+                return snapshot
+            }
+            let holdMs = min(max(Int(env["IRIS_IOS_HARNESS_HOLD_MS"] ?? "") ?? 15_000, 0), 60_000)
+            if holdMs > 0 {
+                try await Task.sleep(nanoseconds: UInt64(holdMs) * 1_000_000)
+            }
+
+            let liveMessage = manager.state.currentChat?.messages.first(where: {
+                $0.isOutgoing && $0.body == message
+            })
+            let delivery = liveMessage.map { String(describing: $0.delivery) }
+                ?? splitPersistenceMessageDelivery(
+                    dataDir: dataDir,
+                    chatID: chatID,
+                    message: message,
+                    direction: "outgoing"
+                )
+                ?? String(describing: outgoing.delivery)
+
+            status("chat_id", chatID)
+            status("message", message)
+            status("delivery", delivery)
+            let transportChannels = liveMessage?.deliveryTrace.transportChannels ?? []
+            status("transport_channels", transportChannels.joined(separator: "|"))
+            status("fips_ble_connections", String(ble.connectionCount))
+            status("fips_ble_reads", String(ble.bytesReceivedCount))
+            status("fips_ble_writes", String(ble.writeCompletedCount))
+            status("relay_count", String(manager.state.preferences.nostrRelayUrls.count))
         case "disable_relays_and_report":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             try await disableRelays(manager: manager)

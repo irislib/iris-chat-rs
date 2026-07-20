@@ -3,6 +3,7 @@ use super::persistence::apply_persisted_preferences;
 use super::*;
 
 pub(super) const CATCH_UP_EVENT_PROCESS_CHUNK_SIZE: usize = 64;
+const APP_RUNTIME_THREAD_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 impl AppCore {
     #[cfg(test)]
@@ -41,6 +42,11 @@ impl AppCore {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .max_blocking_threads(8)
+            // FIPS control-plane turns contain several deliberately bounded
+            // async layers. Android's default Tokio worker stack overflows in
+            // debug builds while polling a tree announce immediately after a
+            // BLE Noise handshake, before the application receipt can run.
+            .thread_stack_size(APP_RUNTIME_THREAD_STACK_BYTES)
             .build()?;
 
         let data_dir = PathBuf::from(data_dir);
@@ -104,6 +110,8 @@ impl AppCore {
             relay_connected_count: 0,
             all_relays_offline_since_secs: None,
             device_sync: None,
+            pending_host_ble: None,
+            host_ble_attached: false,
             pending_relay_publishes: BTreeMap::new(),
             pending_relay_publish_inflight: HashSet::new(),
             pending_decrypted_delivery_acks: HashSet::new(),
@@ -157,6 +165,7 @@ impl AppCore {
             CoreMsg::Internal(event) => match event.as_ref() {
                 InternalEvent::RelayEvent(_) => "RelayEvent",
                 InternalEvent::NearbyEvent { .. } => "NearbyEvent",
+                InternalEvent::FipsNearbyPacket { .. } => "FipsNearbyPacket",
                 InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
                 InternalEvent::ProfileMetadataFetchFinished { .. } => {
                     "ProfileMetadataFetchFinished"
@@ -202,6 +211,8 @@ impl AppCore {
             CoreMsg::ExportSupportBundle(_) => "ExportSupportBundle",
             CoreMsg::PeerProfileDebug { .. } => "PeerProfileDebug",
             CoreMsg::MutualGroups { .. } => "MutualGroups",
+            CoreMsg::AttachHostBle { .. } => "AttachHostBle",
+            CoreMsg::DetachHostBle(_) => "DetachHostBle",
             CoreMsg::CorePerfCounters(_) => "CorePerfCounters",
             CoreMsg::PrepareForSuspend(_) => "PrepareForSuspend",
             CoreMsg::Shutdown(_) => "Shutdown",
@@ -240,6 +251,21 @@ impl AppCore {
                 reply_tx,
             } => {
                 let _ = reply_tx.send(self.mutual_groups_snapshot(&owner_input));
+            }
+            CoreMsg::AttachHostBle {
+                attachment,
+                reply_tx,
+            } => {
+                let result = self.attach_host_ble(attachment);
+                let accepted = result.is_ok();
+                let _ = reply_tx.send(result);
+                if accepted {
+                    self.reconcile_device_sync();
+                }
+            }
+            CoreMsg::DetachHostBle(reply_tx) => {
+                self.detach_host_ble();
+                let _ = reply_tx.send(());
             }
             CoreMsg::PrepareForSuspend(reply_tx) => {
                 self.prepare_for_suspend();
@@ -580,6 +606,13 @@ impl AppCore {
                     &transport
                 };
                 self.handle_relay_event_with_channel(event, channel);
+            }
+            InternalEvent::FipsNearbyPacket {
+                source_pubkey_hex,
+                source_port,
+                data,
+            } => {
+                self.handle_fips_nearby_packet(&source_pubkey_hex, source_port, &data);
             }
             InternalEvent::FetchTrackedPeerCatchUp { token } => {
                 if token

@@ -156,6 +156,34 @@ class IrisChatUiSmokeTest {
     }
 
     @Test
+    fun prepare_fips_ble_physical_peer() {
+        grantNearbyPermissions()
+        composeRule.ensureChatList()
+        composeRule.hideKeyboard()
+
+        composeRule.onNodeWithTag("nearbyChatRow", useUnmergedTree = true).performClick()
+        composeRule.waitForDisplayedTag("nearbyIrisSheet")
+
+        val appManager =
+            (composeRule.activity.application as IrisChatApp)
+                .container
+                .appManager
+        if (!appManager.state.value.preferences.nearbyEnabled) {
+            composeRule.onNodeWithTag("nearbyEnabledSwitch", useUnmergedTree = true)
+                .performClick()
+        }
+        if (!appManager.state.value.preferences.nearbyBluetoothEnabled) {
+            composeRule.onNodeWithTag("nearbyVisibilitySwitch", useUnmergedTree = true)
+                .performClick()
+        }
+        composeRule.waitUntil(10_000) {
+            appManager.state.value.preferences.let { preferences ->
+                preferences.nearbyEnabled && preferences.nearbyBluetoothEnabled
+            }
+        }
+    }
+
+    @Test
     fun manage_devices_plain_device_key_is_rejected_on_paste() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()

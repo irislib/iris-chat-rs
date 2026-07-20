@@ -694,6 +694,7 @@ struct ChatMessageRow: View, Equatable {
                             .irisDismissOnMacOutsideClick { showReactionPicker = false }
                         }
                         .accessibilityIdentifier("chatMessage-\(message.id)")
+                        .accessibilityValue(message.isOutgoing ? irisDeliveryLabel(message.delivery) : "")
                         .background(
                             GeometryReader { geometry in
                                 Color.clear.preference(

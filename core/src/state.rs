@@ -428,6 +428,7 @@ pub struct MobilePushSyncSnapshot {
 pub struct PeerProfileDebugSnapshot {
     pub owner_pubkey_hex: String,
     pub owner_npub: String,
+    pub direct_send_readiness: String,
     pub roster_device_count: u64,
     pub known_device_count: u64,
     pub active_session_count: u64,

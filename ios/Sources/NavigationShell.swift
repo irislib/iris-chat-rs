@@ -412,6 +412,7 @@ struct OfflineStatusBanner: View {
 
     let networkStatus: NetworkStatusSnapshot?
     @ObservedObject var nearbyService: IrisNearbyService
+    let bluetoothEnabled: Bool
     let appSceneIsActive: Bool
     let foregroundedAt: Date
     let onTap: () -> Void
@@ -464,7 +465,7 @@ struct OfflineStatusBanner: View {
     private func bannerText(at date: Date) -> String? {
         offlineStatusBannerText(
             networkStatus: networkStatus,
-            bluetoothOn: nearbyService.isBluetoothOn,
+            bluetoothOn: bluetoothEnabled,
             wifiOn: mobileWifiEnabled(nearbyService),
             appSceneIsActive: appSceneIsActive,
             foregroundedAt: foregroundedAt,
@@ -479,7 +480,7 @@ struct OfflineStatusBanner: View {
             String(networkStatus?.allRelaysOfflineSinceSecs ?? 0),
             networkStatus?.relayConnections.map { "\($0.url)=\($0.status)" }.joined(separator: ",") ?? "",
             String(foregroundedAt.timeIntervalSince1970),
-            nearbyService.isBluetoothOn ? "bt-on" : "bt-off",
+            bluetoothEnabled ? "bt-on" : "bt-off",
             mobileWifiEnabled(nearbyService) ? "wifi-on" : "wifi-off",
         ].joined(separator: "|")
     }

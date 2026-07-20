@@ -289,6 +289,11 @@ struct RootView: View {
             }
             .buttonStyle(.irisUnpressed)
             .accessibilityIdentifier("chatListProfileButton")
+            .accessibilityValue(
+                ProcessInfo.processInfo.environment["IRIS_UI_TEST_EXPOSE_ACCOUNT_NPUB"] == "1"
+                    ? account.npub
+                    : ""
+            )
         )
     }
 
@@ -402,6 +407,8 @@ struct RootView: View {
             OfflineStatusBanner(
                 networkStatus: manager.state.networkStatus,
                 nearbyService: manager.nearbyIris,
+                bluetoothEnabled: manager.state.preferences.nearbyEnabled &&
+                    manager.state.preferences.nearbyBluetoothEnabled,
                 appSceneIsActive: manager.appSceneIsActive,
                 foregroundedAt: manager.lastForegroundedAt,
                 onTap: {

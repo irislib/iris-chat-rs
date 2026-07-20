@@ -125,6 +125,11 @@ impl AppCore {
                     .len() as u64
             })
             .unwrap_or(0);
+        let direct_send_readiness = self
+            .protocol_engine
+            .as_ref()
+            .map(|engine| format!("{:?}", engine.direct_send_readiness(owner_pubkey)))
+            .unwrap_or_else(|| "Unavailable".to_string());
         let counts = self.peer_debug_session_counts(owner_pubkey);
         let recent_handshakes = self
             .recent_handshake_peers
@@ -141,6 +146,7 @@ impl AppCore {
             owner_pubkey_hex: owner_pubkey_hex.clone(),
             owner_npub: owner_npub_from_owner(owner_pubkey)
                 .unwrap_or_else(|| owner_pubkey_hex.clone()),
+            direct_send_readiness,
             roster_device_count,
             known_device_count,
             active_session_count: counts.active_session_count,
