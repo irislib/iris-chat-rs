@@ -1,6 +1,6 @@
 mod actions;
 mod core;
-pub mod desktop_nearby;
+mod desktop_nearby;
 mod desktop_update;
 mod emoji;
 pub mod image_proxy;
@@ -27,6 +27,7 @@ pub use actions::AppAction;
 #[cfg(feature = "stack-fixture")]
 #[doc(hidden)]
 pub use core::download_hashtree_attachment;
+pub use desktop_nearby::*;
 pub use desktop_update::*;
 pub use emoji::*;
 pub use qr::*;
@@ -42,44 +43,9 @@ uniffi::setup_scaffolding!();
 pub(crate) const CORE_RESTART_TOAST: &str = "Iris needs restart. Copy support bundle in Settings.";
 const SUPPORT_BUNDLE_REPLY_TIMEOUT: Duration = Duration::from_secs(8);
 
-fn enqueue_update_for_delivery(
-    update: AppUpdate,
-    latest_full_state: &mut Option<AppUpdate>,
-    before_full_state: &mut Vec<AppUpdate>,
-    after_full_state: &mut Vec<AppUpdate>,
-) {
-    match update {
-        full @ AppUpdate::FullState(_) => *latest_full_state = Some(full),
-        nearby @ AppUpdate::NearbyPublishedEvent { .. } => after_full_state.push(nearby),
-        other => before_full_state.push(other),
-    }
-}
-
 #[uniffi::export(callback_interface)]
 pub trait AppReconciler: Send + Sync + 'static {
     fn reconcile(&self, update: AppUpdate);
-}
-
-#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
-pub struct DesktopNearbyPeerSnapshot {
-    pub id: String,
-    pub name: String,
-    pub owner_pubkey_hex: Option<String>,
-    pub picture_url: Option<String>,
-    pub profile_event_id: Option<String>,
-    pub last_seen_secs: u64,
-}
-
-#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
-pub struct DesktopNearbySnapshot {
-    pub visible: bool,
-    pub status: String,
-    pub peers: Vec<DesktopNearbyPeerSnapshot>,
-}
-
-#[uniffi::export(callback_interface)]
-pub trait DesktopNearbyObserver: Send + Sync + 'static {
-    fn desktop_nearby_changed(&self, snapshot: DesktopNearbySnapshot);
 }
 
 #[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
@@ -181,7 +147,6 @@ pub(crate) struct FfiPerfCounters {
     pub state: AtomicU64,
     pub dispatch: AtomicU64,
     pub search: AtomicU64,
-    pub ingest_nearby_event_json: AtomicU64,
     pub export_support_bundle_json: AtomicU64,
     pub peer_profile_debug: AtomicU64,
     pub mutual_groups: AtomicU64,
@@ -193,7 +158,6 @@ pub struct FfiPerfCountersSnapshot {
     pub state: u64,
     pub dispatch: u64,
     pub search: u64,
-    pub ingest_nearby_event_json: u64,
     pub export_support_bundle_json: u64,
     pub peer_profile_debug: u64,
     pub mutual_groups: u64,
@@ -334,11 +298,6 @@ impl CoreRecoveryState {
 }
 
 #[derive(uniffi::Object)]
-pub struct FfiDesktopNearby {
-    service: Arc<desktop_nearby::DesktopNearbyService>,
-}
-
-#[derive(uniffi::Object)]
 pub struct FfiFipsBle {
     runtime: tokio::runtime::Runtime,
     adapter: Arc<fips_core::transport::ble::host::HostBleAdapter>,
@@ -388,7 +347,6 @@ impl FfiApp {
             state: self.perf.state.load(Ordering::Relaxed),
             dispatch: self.perf.dispatch.load(Ordering::Relaxed),
             search: self.perf.search.load(Ordering::Relaxed),
-            ingest_nearby_event_json: self.perf.ingest_nearby_event_json.load(Ordering::Relaxed),
             export_support_bundle_json: self
                 .perf
                 .export_support_bundle_json
@@ -561,101 +519,6 @@ impl FfiApp {
                 before_limit as usize,
                 after_limit as usize,
             )
-        })
-    }
-
-    pub fn ingest_nearby_event_json(&self, event_json: String) -> bool {
-        self.perf
-            .ingest_nearby_event_json
-            .fetch_add(1, Ordering::Relaxed);
-        self.ingest_nearby_event_json_with_transport(event_json, String::new())
-    }
-
-    pub fn ingest_nearby_event_json_with_transport(
-        &self,
-        event_json: String,
-        transport: String,
-    ) -> bool {
-        ffi_or("ffiapp.ingest_nearby_event_json", false, || {
-            let event = match serde_json::from_str::<nostr_sdk::prelude::Event>(&event_json) {
-                Ok(event) => event,
-                Err(_) => return false,
-            };
-            if event.verify().is_err() {
-                return false;
-            }
-            self.background_tx
-                .send(CoreMsg::Internal(Box::new(InternalEvent::NearbyEvent {
-                    event,
-                    transport,
-                })))
-                .is_ok()
-        })
-    }
-
-    pub fn build_nearby_presence_event_json(
-        &self,
-        peer_id: String,
-        my_nonce: String,
-        their_nonce: String,
-        profile_event_id: String,
-    ) -> String {
-        ffi_or(
-            "ffiapp.build_nearby_presence_event_json",
-            String::new(),
-            || {
-                let (reply_tx, reply_rx) = flume::bounded(1);
-                if self
-                    .background_tx
-                    .send(CoreMsg::BuildNearbyPresenceEvent {
-                        peer_id,
-                        my_nonce,
-                        their_nonce,
-                        profile_event_id,
-                        reply_tx,
-                    })
-                    .is_err()
-                {
-                    return String::new();
-                }
-                reply_rx
-                    .recv_timeout(Duration::from_secs(2))
-                    .unwrap_or_default()
-            },
-        )
-    }
-
-    pub fn verify_nearby_presence_event_json(
-        &self,
-        event_json: String,
-        peer_id: String,
-        my_nonce: String,
-        their_nonce: String,
-    ) -> String {
-        ffi_or(
-            "ffiapp.verify_nearby_presence_event_json",
-            String::new(),
-            || verify_nearby_presence_event_json(&event_json, &peer_id, &my_nonce, &their_nonce),
-        )
-    }
-
-    pub fn nearby_encode_frame(&self, envelope_json: String) -> Vec<u8> {
-        ffi_or("ffiapp.nearby_encode_frame", Vec::new(), || {
-            iris_chat_protocol::encode_nearby_frame_json(&envelope_json).unwrap_or_default()
-        })
-    }
-
-    pub fn nearby_decode_frame(&self, frame: Vec<u8>) -> String {
-        ffi_or("ffiapp.nearby_decode_frame", String::new(), || {
-            iris_chat_protocol::decode_nearby_frame_json(&frame).unwrap_or_default()
-        })
-    }
-
-    pub fn nearby_frame_body_len_from_header(&self, header: Vec<u8>) -> i32 {
-        ffi_or("ffiapp.nearby_frame_body_len_from_header", -1, || {
-            iris_chat_protocol::nearby_frame_body_len_from_header(&header)
-                .and_then(|len| i32::try_from(len).ok())
-                .unwrap_or(-1)
         })
     }
 
@@ -872,6 +735,7 @@ impl FfiApp {
                             AppUpdate::FullState(_) => "FullState",
                             AppUpdate::PersistAccountBundle { .. } => "PersistAccountBundle",
                             AppUpdate::NearbyPublishedEvent { .. } => "NearbyPublishedEvent",
+                            AppUpdate::NearbyPeersChanged { .. } => "NearbyPeersChanged",
                         };
                         let t0 = crate::perflog::now_ms();
                         crate::perflog!("reconcile.start kind={kind}");
@@ -901,33 +765,6 @@ impl FfiApp {
             Ok(slot) => slot.clone(),
             Err(poison) => poison.into_inner().clone(),
         }
-    }
-}
-
-#[uniffi::export]
-impl FfiDesktopNearby {
-    #[uniffi::constructor]
-    pub fn new(app: Arc<FfiApp>, observer: Box<dyn DesktopNearbyObserver>) -> Arc<Self> {
-        Arc::new(Self {
-            service: desktop_nearby::DesktopNearbyService::new(app, observer.into()),
-        })
-    }
-
-    pub fn start(&self, local_name: String) {
-        self.service.start(local_name);
-    }
-
-    pub fn stop(&self) {
-        self.service.stop();
-    }
-
-    pub fn snapshot(&self) -> DesktopNearbySnapshot {
-        self.service.snapshot()
-    }
-
-    pub fn publish(&self, event_id: String, kind: u32, created_at_secs: u64, event_json: String) {
-        self.service
-            .publish(event_id, kind, created_at_secs, event_json);
     }
 }
 
@@ -1594,67 +1431,6 @@ fn short_chat_label(chat_id: &str) -> String {
     }
 }
 
-fn verify_nearby_presence_event_json(
-    event_json: &str,
-    peer_id: &str,
-    my_nonce: &str,
-    their_nonce: &str,
-) -> String {
-    let Ok(event) = serde_json::from_str::<nostr_sdk::prelude::Event>(event_json) else {
-        return String::new();
-    };
-    if event.verify().is_err() || event.kind.as_u16() != crate::core::NEARBY_PRESENCE_KIND {
-        return String::new();
-    }
-    let Ok(content) = serde_json::from_str::<serde_json::Value>(&event.content) else {
-        return String::new();
-    };
-    let get = |key: &str| {
-        content
-            .get(key)
-            .and_then(|value| value.as_str())
-            .unwrap_or("")
-    };
-    let transport = get("transport");
-    if get("protocol") != "iris-nearby-v1"
-        || !(transport == "ble" || transport == "nearby" || transport == "lan")
-        || get("peer_id") != peer_id.trim()
-        || get("my_nonce") != their_nonce.trim()
-        || get("their_nonce") != my_nonce.trim()
-    {
-        return String::new();
-    }
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let expires_at = content
-        .get("expires_at")
-        .and_then(|value| value.as_u64())
-        .unwrap_or(0);
-    let created_at = event.created_at.as_secs();
-    if expires_at < now
-        || expires_at > now.saturating_add(300)
-        || created_at.saturating_add(300) < now
-        || created_at > now.saturating_add(300)
-    {
-        return String::new();
-    }
-
-    let profile_event_id = get("profile_event_id");
-    let profile_event_id = if profile_event_id.len() == 64 {
-        profile_event_id
-    } else {
-        ""
-    };
-    serde_json::json!({
-        "owner_pubkey_hex": event.pubkey.to_hex(),
-        "profile_event_id": profile_event_id,
-    })
-    .to_string()
-}
-
 impl Drop for FfiApp {
     fn drop(&mut self) {
         let _ = self.foreground_tx.send(CoreMsg::Shutdown(None));
@@ -2075,7 +1851,7 @@ mod ffi_hardening_tests {
         let mut before_full_state = Vec::new();
         let mut after_full_state = Vec::new();
 
-        enqueue_update_for_delivery(
+        updates::enqueue_update_for_delivery(
             AppUpdate::NearbyPublishedEvent {
                 event_id: "a".repeat(64),
                 kind: 14,
@@ -2088,7 +1864,7 @@ mod ffi_hardening_tests {
         );
         let mut stale = AppState::empty();
         stale.rev = 1;
-        enqueue_update_for_delivery(
+        updates::enqueue_update_for_delivery(
             AppUpdate::FullState(stale),
             &mut latest_full_state,
             &mut before_full_state,
@@ -2122,6 +1898,7 @@ mod ffi_hardening_tests {
                 AppUpdate::PersistAccountBundle { .. } => "persist".to_string(),
                 AppUpdate::FullState(state) => format!("state:{}", state.rev),
                 AppUpdate::NearbyPublishedEvent { .. } => "nearby".to_string(),
+                AppUpdate::NearbyPeersChanged { .. } => "nearby-peers".to_string(),
             })
             .collect::<Vec<_>>();
 

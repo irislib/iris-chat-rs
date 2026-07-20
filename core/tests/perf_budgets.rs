@@ -268,7 +268,6 @@ fn countDelta(
         state: after.state - before.state,
         dispatch: after.dispatch - before.dispatch,
         search: after.search - before.search,
-        ingest_nearby_event_json: after.ingest_nearby_event_json - before.ingest_nearby_event_json,
         export_support_bundle_json: after.export_support_bundle_json
             - before.export_support_bundle_json,
         peer_profile_debug: after.peer_profile_debug - before.peer_profile_debug,

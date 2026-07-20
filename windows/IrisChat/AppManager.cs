@@ -818,12 +818,9 @@ public sealed partial class AppManager : INotifyPropertyChanged
                 }
                 SettleBootstrapIfNeeded(next);
                 SyncCurrentDeviceLabels(next);
-
                 SyncNearbyPreference(prev, next);
                 PostDesktopNotifications(prev, next);
-
                 NotifyAll();
-
                 if (!string.IsNullOrEmpty(next.toast))
                 {
                     ShowToast(next.toast!);
@@ -832,6 +829,9 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
             case AppUpdate.NearbyPublishedEvent nearby:
                 _ = Task.Run(() => PublishNearbySafely(nearby));
+                break;
+            case AppUpdate.NearbyPeersChanged nearby:
+                ApplyNearbySnapshot(nearby.snapshot);
                 break;
         }
     }

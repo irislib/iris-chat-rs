@@ -30,8 +30,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
@@ -54,6 +52,7 @@ import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.CurrentChatSnapshot
 import to.iris.chat.rust.DeviceAuthorizationState
 import to.iris.chat.rust.DeviceRosterSnapshot
+import to.iris.chat.rust.DesktopNearbySnapshot
 import to.iris.chat.rust.GroupDetailsSnapshot
 import to.iris.chat.rust.NetworkStatusSnapshot
 import to.iris.chat.rust.PreferencesSnapshot
@@ -90,30 +89,6 @@ interface RustAppClient {
     ): CurrentChatSnapshot?
 
     fun mutualGroups(ownerInput: String): List<ChatThreadSnapshot>
-
-    fun ingestNearbyEventJson(eventJson: String): Boolean
-
-    fun ingestNearbyEventJsonWithTransport(eventJson: String, transport: String): Boolean
-
-    fun buildNearbyPresenceEventJson(
-        peerId: String,
-        myNonce: String,
-        theirNonce: String,
-        profileEventId: String,
-    ): String
-
-    fun verifyNearbyPresenceEventJson(
-        eventJson: String,
-        peerId: String,
-        myNonce: String,
-        theirNonce: String,
-    ): String
-
-    fun nearbyEncodeFrame(envelopeJson: String): ByteArray
-
-    fun nearbyDecodeFrame(frame: ByteArray): String
-
-    fun nearbyFrameBodyLenFromHeader(header: ByteArray): Int
 
     fun exportSupportBundleJson(): String
 
@@ -166,46 +141,6 @@ private class LiveRustAppClient(
 
     override fun mutualGroups(ownerInput: String): List<ChatThreadSnapshot> =
         ffi.mutualGroups(ownerInput = ownerInput).groups
-
-    override fun ingestNearbyEventJson(eventJson: String): Boolean = ffi.ingestNearbyEventJson(eventJson)
-
-    override fun ingestNearbyEventJsonWithTransport(eventJson: String, transport: String): Boolean =
-        ffi.ingestNearbyEventJsonWithTransport(eventJson, transport)
-
-    override fun buildNearbyPresenceEventJson(
-        peerId: String,
-        myNonce: String,
-        theirNonce: String,
-        profileEventId: String,
-    ): String =
-        ffi.buildNearbyPresenceEventJson(
-            peerId = peerId,
-            myNonce = myNonce,
-            theirNonce = theirNonce,
-            profileEventId = profileEventId,
-        )
-
-    override fun verifyNearbyPresenceEventJson(
-        eventJson: String,
-        peerId: String,
-        myNonce: String,
-        theirNonce: String,
-    ): String =
-        ffi.verifyNearbyPresenceEventJson(
-            eventJson = eventJson,
-            peerId = peerId,
-            myNonce = myNonce,
-            theirNonce = theirNonce,
-        )
-
-    override fun nearbyEncodeFrame(envelopeJson: String): ByteArray =
-        ffi.nearbyEncodeFrame(envelopeJson = envelopeJson)
-
-    override fun nearbyDecodeFrame(frame: ByteArray): String =
-        ffi.nearbyDecodeFrame(frame = frame)
-
-    override fun nearbyFrameBodyLenFromHeader(header: ByteArray): Int =
-        ffi.nearbyFrameBodyLenFromHeader(header = header)
 
     override fun exportSupportBundleJson(): String = ffi.exportSupportBundleJson()
 
@@ -312,13 +247,6 @@ private fun normalizedNotificationId(value: String): String? =
         .takeIf { it.isNotEmpty() }
         ?.lowercase(Locale.ROOT)
 
-data class NearbyPublishedEvent(
-    val eventId: String,
-    val kind: UInt,
-    val createdAtSecs: ULong,
-    val eventJson: String,
-)
-
 data class PendingShare(
     val text: String,
     val attachments: List<OutgoingAttachment>,
@@ -379,9 +307,6 @@ class AppManager(
     private var rust = createRustApp()
     private var rustGeneration: Long = 0
     @Volatile
-    private var nearbyEventPublisher: ((NearbyPublishedEvent) -> Unit)? = null
-    private val nearbyPublishMutex = Mutex()
-    @Volatile
     private var appInForeground: Boolean = false
 
     private var lastRevApplied: ULong = 0u
@@ -392,6 +317,8 @@ class AppManager(
     private var lastSyncedDeviceLabelsKey: String? = null
     private var automaticRevocationLogoutInFlight = false
     private var pendingNavigationOverride: PendingNavigationOverride? = null
+    private var fipsNearbyPeersPublisher:
+        ((DesktopNearbySnapshot, List<String>, List<String>) -> Unit)? = null
     private val olderChatPageLoads = Collections.synchronizedSet(mutableSetOf<String>())
     private val exhaustedOlderChatPages = Collections.synchronizedSet(mutableSetOf<String>())
     private val aroundChatPageLoads = Collections.synchronizedSet(mutableSetOf<String>())
@@ -475,6 +402,12 @@ class AppManager(
 
     fun createAccount() {
         createAccount("")
+    }
+
+    fun setFipsNearbyPeersPublisher(
+        publisher: (DesktopNearbySnapshot, List<String>, List<String>) -> Unit,
+    ) {
+        fipsNearbyPeersPublisher = publisher
     }
 
     fun createAccount(name: String) {
@@ -565,59 +498,6 @@ class AppManager(
                 shortcut = null,
             )
         }
-
-    fun setNearbyEventPublisher(publisher: ((NearbyPublishedEvent) -> Unit)?) {
-        nearbyEventPublisher = publisher
-    }
-
-    fun ingestNearbyEventJson(eventJson: String): Boolean =
-        runCatching { rust.ingestNearbyEventJson(eventJson) }.getOrDefault(false)
-
-    fun ingestNearbyEventJsonWithTransport(eventJson: String, transport: String): Boolean =
-        runCatching { rust.ingestNearbyEventJsonWithTransport(eventJson, transport) }.getOrDefault(false)
-
-    fun buildNearbyPresenceEventJson(
-        peerId: String,
-        myNonce: String,
-        theirNonce: String,
-        profileEventId: String?,
-    ): String =
-        runCatching {
-            rust.buildNearbyPresenceEventJson(
-                peerId = peerId,
-                myNonce = myNonce,
-                theirNonce = theirNonce,
-                profileEventId = profileEventId.orEmpty(),
-            )
-        }.getOrDefault("")
-
-    fun verifyNearbyPresenceEventJson(
-        eventJson: String,
-        peerId: String,
-        myNonce: String,
-        theirNonce: String,
-    ): String =
-        runCatching {
-            rust.verifyNearbyPresenceEventJson(
-                eventJson = eventJson,
-                peerId = peerId,
-                myNonce = myNonce,
-                theirNonce = theirNonce,
-            )
-        }.getOrDefault("")
-
-    fun encodeNearbyFrame(envelope: JSONObject): ByteArray? =
-        runCatching {
-            rust.nearbyEncodeFrame(envelope.toString()).takeIf { it.isNotEmpty() }
-        }.getOrNull()
-
-    fun decodeNearbyFrame(frame: ByteArray): JSONObject? =
-        runCatching {
-            rust.nearbyDecodeFrame(frame).takeIf { it.isNotBlank() }?.let(::JSONObject)
-        }.getOrNull()
-
-    fun nearbyFrameBodyLenFromHeader(header: ByteArray): Int =
-        runCatching { rust.nearbyFrameBodyLenFromHeader(header) }.getOrDefault(-1)
 
     fun appForegrounded() {
         appInForeground = true
@@ -1317,8 +1197,13 @@ class AppManager(
                     )
                 }
             }
-            is AppUpdate.NearbyPublishedEvent -> {
-                publishNearbyEventAsync(update)
+            is AppUpdate.NearbyPublishedEvent -> Unit
+            is AppUpdate.NearbyPeersChanged -> {
+                fipsNearbyPeersPublisher?.invoke(
+                    update.snapshot,
+                    update.bluetoothPeerIds,
+                    update.lanPeerIds,
+                )
             }
             is AppUpdate.FullState -> {
                 // Rust owns authoritative state. The shell only accepts the newest full snapshot.
@@ -1339,30 +1224,6 @@ class AppManager(
                 )
                 publishState(reconciledState)
                 scheduleMobilePushSyncIfNeeded(reconciledState, cachedAccountBundle?.ownerNsec)
-            }
-        }
-    }
-
-    private fun publishNearbyEventAsync(update: AppUpdate.NearbyPublishedEvent) {
-        val publisher = nearbyEventPublisher ?: return
-        val event =
-            NearbyPublishedEvent(
-                eventId = update.eventId,
-                kind = update.kind,
-                createdAtSecs = update.createdAtSecs,
-                eventJson = update.eventJson,
-            )
-        applicationScope.launch(ioDispatcher) {
-            try {
-                nearbyPublishMutex.withLock {
-                    publisher(event)
-                }
-            } catch (error: Throwable) {
-                if (isFatalJvmError(error)) {
-                    throw error
-                }
-                logFfiFailure("ffi.update_callback.failed", "NearbyPublishedEvent", error)
-                publishShellToast(DISPATCH_FAILURE_TOAST)
             }
         }
     }

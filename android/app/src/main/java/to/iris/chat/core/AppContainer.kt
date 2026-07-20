@@ -22,9 +22,7 @@ class AppContainer(context: Context) {
                 applicationScope = applicationScope,
                 secureSecretStore = secureSecretStore,
             )
-        nearbyIrisService = IrisNearbyService(appContext, applicationScope, appManager)
-        appManager.setNearbyEventPublisher { event ->
-            nearbyIrisService.publish(event)
-        }
+        nearbyIrisService = IrisNearbyService(appContext)
+        appManager.setFipsNearbyPeersPublisher(nearbyIrisService::applyFipsPeerSnapshot)
     }
 }

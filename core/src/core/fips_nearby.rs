@@ -1,4 +1,5 @@
 use super::*;
+use crate::{DesktopNearbyPeerSnapshot, DesktopNearbySnapshot};
 use fips_core::transport::ble::host::HostBleIo;
 use fips_core::PeerIdentity as FipsPeerIdentity;
 
@@ -208,7 +209,7 @@ impl AppCore {
     }
 
     pub(super) fn publish_fips_nearby(&self, event: &Event) {
-        if !self.preferences.nearby_enabled {
+        if !self.preferences.nearby_enabled || !self.preferences.nearby_mailbag_enabled {
             return;
         }
         let Some(runtime) = self.device_sync.as_ref() else {
@@ -331,6 +332,7 @@ impl AppCore {
                     return;
                 }
                 self.handle_relay_event_with_channel(event, "FIPS nearby");
+                self.emit_fips_nearby_peers();
                 let Some(source) = fips_peer_from_hex(source_pubkey_hex) else {
                     return;
                 };
@@ -372,6 +374,62 @@ impl AppCore {
                 }
             }
         }
+    }
+
+    pub(super) fn emit_fips_nearby_peers(&self) {
+        let now = unix_now().get();
+        let mut bluetooth_peer_ids = Vec::new();
+        let mut lan_peer_ids = Vec::new();
+        let peers = self
+            .fips_nearby_links
+            .iter()
+            .map(|link| {
+                let owner_pubkey_hex = self.app_keys.iter().find_map(|(owner, app_keys)| {
+                    app_keys
+                        .devices
+                        .iter()
+                        .any(|device| {
+                            device
+                                .identity_pubkey_hex
+                                .eq_ignore_ascii_case(&link.device_pubkey_hex)
+                        })
+                        .then(|| owner.clone())
+                });
+                let id = link.device_pubkey_hex.clone();
+                let transport = link.transport_type.to_ascii_lowercase();
+                if transport.contains("ble") || transport.contains("bluetooth") {
+                    bluetooth_peer_ids.push(id.clone());
+                } else if transport.contains("udp") || transport.contains("ethernet") {
+                    lan_peer_ids.push(id.clone());
+                }
+                let name = owner_pubkey_hex
+                    .as_deref()
+                    .map(|owner| self.owner_display_label(owner))
+                    .unwrap_or_else(|| "Nearby user".to_string());
+                let picture_url = owner_pubkey_hex
+                    .as_deref()
+                    .and_then(|owner| self.owner_picture_url(owner));
+                DesktopNearbyPeerSnapshot {
+                    id,
+                    name,
+                    owner_pubkey_hex,
+                    picture_url,
+                    profile_event_id: None,
+                    last_seen_secs: now,
+                }
+            })
+            .collect::<Vec<_>>();
+        let visible = self.preferences.nearby_enabled
+            && (self.preferences.nearby_bluetooth_enabled || self.preferences.nearby_lan_enabled);
+        let _ = self.update_tx.send(AppUpdate::NearbyPeersChanged {
+            snapshot: DesktopNearbySnapshot {
+                visible,
+                status: if visible { "Visible" } else { "Off" }.to_string(),
+                peers,
+            },
+            bluetooth_peer_ids,
+            lan_peer_ids,
+        });
     }
 }
 
@@ -534,13 +592,19 @@ mod tests {
         .unwrap();
 
         let bob_dir = tempfile::TempDir::new().unwrap();
+        let (bob_updates_tx, bob_updates_rx) = flume::unbounded();
         let mut bob = AppCore::new(
-            flume::unbounded().0,
+            bob_updates_tx,
             flume::unbounded().0,
             bob_dir.path().to_string_lossy().to_string(),
             Arc::new(RwLock::new(AppState::empty())),
         );
         bob.create_account("Bob");
+        bob.fips_nearby_links = vec![crate::updates::FipsNearbyLinkSnapshot {
+            device_pubkey_hex: alice_device.clone(),
+            transport_type: "UDP".to_string(),
+        }];
+        while bob_updates_rx.try_recv().is_ok() {}
         bob.handle_fips_nearby_packet(&alice_device, FIPS_NEARBY_PORT, &payload);
 
         assert_eq!(bob.debug_event_counters.app_keys_events, 1);
@@ -549,6 +613,23 @@ mod tests {
             .devices
             .iter()
             .any(|device| device.identity_pubkey_hex == alice_device));
+        let peer_update = bob_updates_rx
+            .try_iter()
+            .find_map(|update| match update {
+                AppUpdate::NearbyPeersChanged {
+                    snapshot,
+                    lan_peer_ids,
+                    ..
+                } => Some((snapshot, lan_peer_ids)),
+                _ => None,
+            })
+            .expect("FIPS peer projection update");
+        assert_eq!(peer_update.0.peers.len(), 1);
+        assert_eq!(
+            peer_update.0.peers[0].owner_pubkey_hex.as_deref(),
+            Some(alice_owner.as_str())
+        );
+        assert_eq!(peer_update.1, vec![alice_device]);
     }
 
     fn assert_fips_bootstrap_drains_queued_message(

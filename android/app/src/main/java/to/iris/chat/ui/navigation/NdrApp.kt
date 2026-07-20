@@ -111,14 +111,15 @@ import to.iris.chat.ui.screens.rememberNhashImageData
 @Composable
 fun NdrApp(
     container: AppContainer,
-    onNearbyVisibilityChange: (Boolean) -> Unit = { container.nearbyIrisService.setVisible(it) },
+    onNearbyVisibilityChange: (Boolean) -> Unit = { enabled ->
+        container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(enabled))
+    },
     onNearbyLanVisibilityChange: (Boolean) -> Unit = { visible ->
         container.nearbyIrisService.setLocalNetworkVisible(visible)
         container.appManager.dispatch(AppAction.SetNearbyLanEnabled(visible))
     },
     onNearbyEnabledChange: (Boolean) -> Unit = { enabled ->
         if (!enabled) {
-            container.nearbyIrisService.setVisible(false)
             container.nearbyIrisService.setLocalNetworkVisible(false)
         }
         container.appManager.dispatch(AppAction.SetNearbyEnabled(enabled))
@@ -150,9 +151,9 @@ fun NdrApp(
     }
 
     LaunchedEffect(preferences.nearbyEnabled, preferences.nearbyBluetoothEnabled) {
-        // FIPS owns Bluetooth. Keep the legacy GATT transport off while its
-        // LAN half remains available until the device matrix is complete.
-        container.nearbyIrisService.setVisible(false)
+        container.nearbyIrisService.setFipsBluetoothVisible(
+            preferences.nearbyEnabled && preferences.nearbyBluetoothEnabled,
+        )
     }
 
     LaunchedEffect(preferences.nearbyEnabled, preferences.nearbyLanEnabled) {

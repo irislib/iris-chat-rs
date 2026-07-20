@@ -112,6 +112,7 @@ impl AppCore {
             device_sync: None,
             pending_host_ble: None,
             host_ble_attached: false,
+            fips_nearby_links: Vec::new(),
             pending_relay_publishes: BTreeMap::new(),
             pending_relay_publish_inflight: HashSet::new(),
             pending_decrypted_delivery_acks: HashSet::new(),
@@ -164,8 +165,8 @@ impl AppCore {
             },
             CoreMsg::Internal(event) => match event.as_ref() {
                 InternalEvent::RelayEvent(_) => "RelayEvent",
-                InternalEvent::NearbyEvent { .. } => "NearbyEvent",
                 InternalEvent::FipsNearbyPacket { .. } => "FipsNearbyPacket",
+                InternalEvent::FipsNearbyPeersChanged(_) => "FipsNearbyPeersChanged",
                 InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
                 InternalEvent::ProfileMetadataFetchFinished { .. } => {
                     "ProfileMetadataFetchFinished"
@@ -207,7 +208,6 @@ impl AppCore {
                 InternalEvent::OpenChatFinalize { .. } => "OpenChatFinalize",
                 InternalEvent::DeviceSyncPacket { .. } => "DeviceSyncPacket",
             },
-            CoreMsg::BuildNearbyPresenceEvent { .. } => "BuildNearbyPresenceEvent",
             CoreMsg::ExportSupportBundle(_) => "ExportSupportBundle",
             CoreMsg::PeerProfileDebug { .. } => "PeerProfileDebug",
             CoreMsg::MutualGroups { .. } => "MutualGroups",
@@ -222,20 +222,6 @@ impl AppCore {
         match msg {
             CoreMsg::Action(action) => self.handle_action(action),
             CoreMsg::Internal(event) => self.handle_internal(*event),
-            CoreMsg::BuildNearbyPresenceEvent {
-                peer_id,
-                my_nonce,
-                their_nonce,
-                profile_event_id,
-                reply_tx,
-            } => {
-                let _ = reply_tx.send(self.build_nearby_presence_event_json(
-                    &peer_id,
-                    &my_nonce,
-                    &their_nonce,
-                    &profile_event_id,
-                ));
-            }
             CoreMsg::ExportSupportBundle(reply_tx) => {
                 let _ = reply_tx.send(self.export_support_bundle_json());
             }
@@ -593,26 +579,16 @@ impl AppCore {
             InternalEvent::RelayEvent(event) => {
                 self.handle_relay_event_with_channel(event, "message servers");
             }
-            InternalEvent::NearbyEvent { event, transport } => {
-                let event_id = event.id.to_string();
-                let kind = event.kind.as_u16() as u32;
-                self.push_debug_log(
-                    "nearby.event",
-                    format!("kind_raw={kind} id={event_id} transport={transport}"),
-                );
-                let channel: &str = if transport.is_empty() {
-                    "nearby"
-                } else {
-                    &transport
-                };
-                self.handle_relay_event_with_channel(event, channel);
-            }
             InternalEvent::FipsNearbyPacket {
                 source_pubkey_hex,
                 source_port,
                 data,
             } => {
                 self.handle_fips_nearby_packet(&source_pubkey_hex, source_port, &data);
+            }
+            InternalEvent::FipsNearbyPeersChanged(peers) => {
+                self.fips_nearby_links = peers;
+                self.emit_fips_nearby_peers();
             }
             InternalEvent::FetchTrackedPeerCatchUp { token } => {
                 if token

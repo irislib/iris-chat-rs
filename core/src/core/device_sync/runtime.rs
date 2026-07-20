@@ -3,7 +3,7 @@ use crate::core::update_pubsub::{
     run_relay_update_announcement_subscription, run_update_announcement_subscription,
 };
 use fips_core::config::{
-    BleConfig, NostrDiscoveryPolicy, PeerConfig, TransportInstances, WebSocketConfig,
+    BleConfig, NostrDiscoveryPolicy, PeerConfig, TransportInstances, UdpConfig, WebSocketConfig,
 };
 use fips_core::{Config, FipsEndpointOutboundDatagram, WebRtcConfig};
 use hashtree_core::BlobRoute;
@@ -168,7 +168,14 @@ impl AppCore {
             } else {
                 format!("{DEVICE_SYNC_SCOPE_PREFIX}{}", config.owner_hex)
             };
-            fips_config.node.discovery.nostr.policy = NostrDiscoveryPolicy::ConfiguredOnly;
+            // Nearby is an app-scoped, open service: compatible Iris peers are not
+            // necessarily in our device roster yet. FIPS still bounds open discovery
+            // and authenticates every connection with Noise.
+            fips_config.node.discovery.nostr.policy = if config.nearby_ip_enabled {
+                NostrDiscoveryPolicy::Open
+            } else {
+                NostrDiscoveryPolicy::ConfiguredOnly
+            };
             fips_config.transports.webrtc = TransportInstances::Single(WebRtcConfig {
                 advertise_on_nostr: Some(true),
                 auto_connect: Some(true),
@@ -178,8 +185,8 @@ impl AppCore {
         } else {
             fips_config.node.discovery.nostr.enabled = false;
             fips_config.node.discovery.nostr.advertise = false;
-            fips_config.node.discovery.lan.enabled = false;
         }
+        configure_fips_lan(&mut fips_config, config.nearby_ip_enabled);
         fips_config.peers.extend(options.additional_peers);
         let rendezvous_addr = match (options.same_host_hashtree, options.rendezvous_addr) {
             (_, Some(address)) => Some(address),
@@ -417,6 +424,7 @@ impl AppCore {
                 endpoint.clone(),
                 nearby_bootstrap_payloads.clone(),
                 nearby_outbox.clone(),
+                self.core_sender.clone(),
             )));
         }
 
@@ -537,11 +545,12 @@ impl AppCore {
             .map(ToString::to_string)
             .collect::<Vec<_>>();
         let ble_requested = self.pending_host_ble.is_some() || self.host_ble_attached;
-        let nearby_ip_enabled = self.preferences.nearby_enabled && !peers.is_empty();
+        let nearby_ip_enabled =
+            self.preferences.nearby_enabled && self.preferences.nearby_lan_enabled;
         if siblings.is_empty() && !ble_requested && !nearby_ip_enabled {
             return None;
         }
-        if relay_urls.is_empty() && !ble_requested {
+        if relay_urls.is_empty() && !ble_requested && !nearby_ip_enabled {
             return None;
         }
         let key = format!(
@@ -571,17 +580,57 @@ impl AppCore {
     }
 }
 
+fn configure_fips_lan(config: &mut Config, enabled: bool) {
+    config.node.discovery.lan.enabled = enabled;
+    config.transports.udp = if enabled {
+        TransportInstances::Single(UdpConfig {
+            bind_addr: Some("0.0.0.0:0".to_string()),
+            advertise_on_nostr: Some(false),
+            public: Some(false),
+            outbound_only: Some(false),
+            accept_connections: Some(true),
+            ..UdpConfig::default()
+        })
+    } else {
+        TransportInstances::default()
+    };
+}
+
 async fn run_fips_nearby_link_monitor(
     endpoint: Arc<FipsEndpoint>,
     bootstrap_payloads: Arc<RwLock<Vec<Vec<u8>>>>,
     outbox: Arc<RwLock<super::super::fips_nearby::FipsNearbyOutbox>>,
+    core_sender: Sender<CoreMsg>,
 ) {
     let mut initialized_links = BTreeMap::<String, u64>::new();
+    let mut reported_links = Vec::new();
     loop {
         let peers = match endpoint.peers().await {
             Ok(peers) => peers,
             Err(_) => return,
         };
+        let mut current_links = peers
+            .iter()
+            .filter(|peer| peer.connected)
+            .filter_map(|peer| {
+                let identity = FipsPeerIdentity::from_npub(&peer.npub).ok()?;
+                Some(crate::updates::FipsNearbyLinkSnapshot {
+                    device_pubkey_hex: identity.pubkey().to_string(),
+                    transport_type: peer.transport_type.clone().unwrap_or_default(),
+                })
+            })
+            .collect::<Vec<_>>();
+        current_links.sort_by(|left, right| {
+            left.device_pubkey_hex
+                .cmp(&right.device_pubkey_hex)
+                .then_with(|| left.transport_type.cmp(&right.transport_type))
+        });
+        if current_links != reported_links {
+            reported_links = current_links.clone();
+            let _ = core_sender.send(CoreMsg::Internal(Box::new(
+                InternalEvent::FipsNearbyPeersChanged(current_links),
+            )));
+        }
         for peer in peers.into_iter().filter(|peer| peer.connected) {
             let Ok(identity) = FipsPeerIdentity::from_npub(&peer.npub) else {
                 continue;
@@ -746,5 +795,50 @@ mod local_rendezvous_tests {
         assert!(parse_local_rendezvous_addr("0.0.0.0:32112").is_err());
         assert!(parse_local_rendezvous_addr("127.0.0.1:0").is_err());
         assert!(parse_local_rendezvous_addr("[::1]:32112").is_err());
+    }
+
+    #[test]
+    fn fips_lan_uses_scoped_bidirectional_ephemeral_udp() {
+        let mut config = Config::new();
+        configure_fips_lan(&mut config, true);
+
+        assert!(config.node.discovery.lan.enabled);
+        let TransportInstances::Single(udp) = config.transports.udp else {
+            panic!("expected one UDP transport");
+        };
+        assert_eq!(udp.bind_addr.as_deref(), Some("0.0.0.0:0"));
+        assert_eq!(udp.advertise_on_nostr, Some(false));
+        assert_eq!(udp.public, Some(false));
+        assert_eq!(udp.outbound_only, Some(false));
+        assert_eq!(udp.accept_connections, Some(true));
+    }
+
+    #[test]
+    fn disabling_fips_lan_removes_udp_transport() {
+        let mut config = Config::new();
+        configure_fips_lan(&mut config, true);
+        configure_fips_lan(&mut config, false);
+
+        assert!(!config.node.discovery.lan.enabled);
+        assert!(config.transports.udp.is_empty());
+    }
+
+    #[test]
+    fn fips_lan_can_start_before_any_remote_peer_is_known() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let mut core = AppCore::new(
+            flume::unbounded().0,
+            flume::unbounded().0,
+            temp_dir.path().to_string_lossy().to_string(),
+            Arc::new(RwLock::new(AppState::empty())),
+        );
+        core.create_account("LAN discovery");
+        core.preferences.nearby_enabled = true;
+        core.preferences.nearby_lan_enabled = true;
+
+        let config = core.device_sync_config().expect("nearby-only config");
+
+        assert!(config.peers.is_empty());
+        assert!(config.nearby_ip_enabled);
     }
 }

@@ -333,13 +333,15 @@ final class InteropHarnessTests: XCTestCase {
             status("delivery", finalizedDelivery)
         case "enable_nearby_and_report_peers":
             _ = try await ensureLoggedIn(manager: manager, env: env)
-            manager.nearbyIris.setVisible(true)
+            manager.setNearbyEnabled(true)
+            manager.setNearbyBluetoothEnabled(true)
             try await Task.sleep(nanoseconds: 1_000_000_000)
             reportNearbySnapshot(manager: manager)
         case "enable_lan_nearby_and_report_peers":
             _ = try await ensureLoggedIn(manager: manager, env: env)
-            manager.nearbyIris.setVisible(false)
-            manager.nearbyIris.setLanVisible(true)
+            manager.setNearbyBluetoothEnabled(false)
+            manager.setNearbyEnabled(true)
+            manager.setNearbyLanEnabled(true)
             try await Task.sleep(nanoseconds: 1_000_000_000)
             reportNearbySnapshot(manager: manager)
         case "wait_for_nearby_peer_profile_from_args":
@@ -348,7 +350,8 @@ final class InteropHarnessTests: XCTestCase {
                 manager: manager,
                 peerInput: try requiredEnv("IRIS_IOS_HARNESS_PEER_INPUT", env: env)
             )
-            manager.nearbyIris.setVisible(true)
+            manager.setNearbyEnabled(true)
+            manager.setNearbyBluetoothEnabled(true)
             let timeout = nearbyProfileTimeout(env: env)
             let peer = try await waitFor(label: "nearby peer profile \(peerOwnerHex)", timeout: timeout) {
                 manager.nearbyIris.peers.first(where: { nearby in
@@ -369,8 +372,9 @@ final class InteropHarnessTests: XCTestCase {
                 manager: manager,
                 peerInput: try requiredEnv("IRIS_IOS_HARNESS_PEER_INPUT", env: env)
             )
-            manager.nearbyIris.setVisible(false)
-            manager.nearbyIris.setLanVisible(true)
+            manager.setNearbyBluetoothEnabled(false)
+            manager.setNearbyEnabled(true)
+            manager.setNearbyLanEnabled(true)
             let timeout = nearbyProfileTimeout(env: env)
             let peer = try await waitFor(label: "LAN nearby peer profile \(peerOwnerHex)", timeout: timeout) {
                 manager.nearbyIris.peers.first(where: { nearby in
@@ -585,7 +589,8 @@ final class InteropHarnessTests: XCTestCase {
             status("delivery", finalizedDelivery)
         case "send_nearby_message_from_args":
             try await maybeDisableRelays(manager: manager, env: env)
-            manager.nearbyIris.setVisible(true)
+            manager.setNearbyEnabled(true)
+            manager.setNearbyBluetoothEnabled(true)
             let message = try requiredEnv("IRIS_IOS_HARNESS_MESSAGE", env: env)
             let chatID = try await ensureChatOpen(
                 manager: manager,
@@ -725,7 +730,8 @@ final class InteropHarnessTests: XCTestCase {
             let prefix = env["IRIS_IOS_HARNESS_PREFIX"] ?? "nearby"
             let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: peerInput)
 
-            manager.nearbyIris.setVisible(true)
+            manager.setNearbyEnabled(true)
+            manager.setNearbyBluetoothEnabled(true)
             _ = try await waitFor(label: "nearby peer \(peerOwnerHex)", timeout: 60) {
                 manager.nearbyIris.peers.first(where: { peer in
                     peer.ownerPubkeyHex?.caseInsensitiveCompare(peerOwnerHex) == .orderedSame

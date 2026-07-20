@@ -13,8 +13,6 @@ import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.IOException
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -188,66 +186,6 @@ class AppManagerContractTest {
 
         assertEquals("Action failed. Copy support bundle in Settings.", appManager.state.value.toast)
         assertTrue(rust.dispatchedActions.isEmpty())
-    }
-
-    @Test
-    fun update_side_effect_failure_does_not_escape_reconciler_callback() {
-        val appManager = createManager()
-        val rust = rustFactory.instances.single()
-        appManager.setNearbyEventPublisher {
-            throw LinkageError("bluetooth callback failed")
-        }
-
-        rust.emit(
-            AppUpdate.NearbyPublishedEvent(
-                eventId = "a".repeat(64),
-                kind = 1u,
-                createdAtSecs = 42u,
-                eventJson = """{"id":"${"a".repeat(64)}"}""",
-            ),
-        )
-
-        waitFor("nearby failure toast") {
-            appManager.state.value.toast == "Action failed. Copy support bundle in Settings."
-        }
-    }
-
-    @Test
-    fun nearby_publish_does_not_block_reconciler_callback() {
-        val appManager = createManager()
-        val rust = rustFactory.instances.single()
-        val publisherEntered = CountDownLatch(1)
-        val releasePublisher = CountDownLatch(1)
-        appManager.setNearbyEventPublisher {
-            publisherEntered.countDown()
-            releasePublisher.await(5, TimeUnit.SECONDS)
-        }
-
-        val callbackReturned = CountDownLatch(1)
-        val callbackThread =
-            Thread {
-                rust.emit(
-                    AppUpdate.NearbyPublishedEvent(
-                        eventId = "b".repeat(64),
-                        kind = 14u,
-                        createdAtSecs = 43u,
-                        eventJson = """{"id":"${"b".repeat(64)}"}""",
-                    ),
-                )
-                callbackReturned.countDown()
-            }
-
-        callbackThread.start()
-        try {
-            assertTrue("nearby publisher did not start", publisherEntered.await(1, TimeUnit.SECONDS))
-            assertTrue(
-                "nearby publish blocked the reconciler callback",
-                callbackReturned.await(250, TimeUnit.MILLISECONDS),
-            )
-        } finally {
-            releasePublisher.countDown()
-            callbackThread.join(1_000)
-        }
     }
 
     @Test
@@ -1045,30 +983,6 @@ private class MockRustAppClient(
         afterLimit: UInt,
     ): CurrentChatSnapshot? =
         pagesAround[chatId.trim() to messageId.trim()]
-
-    override fun ingestNearbyEventJson(eventJson: String): Boolean = true
-
-    override fun ingestNearbyEventJsonWithTransport(eventJson: String, transport: String): Boolean = true
-
-    override fun buildNearbyPresenceEventJson(
-        peerId: String,
-        myNonce: String,
-        theirNonce: String,
-        profileEventId: String,
-    ): String = ""
-
-    override fun verifyNearbyPresenceEventJson(
-        eventJson: String,
-        peerId: String,
-        myNonce: String,
-        theirNonce: String,
-    ): String = ""
-
-    override fun nearbyEncodeFrame(envelopeJson: String): ByteArray = ByteArray(0)
-
-    override fun nearbyDecodeFrame(frame: ByteArray): String = ""
-
-    override fun nearbyFrameBodyLenFromHeader(header: ByteArray): Int = -1
 
     override fun exportSupportBundleJson(): String = """{"ok":true}"""
 

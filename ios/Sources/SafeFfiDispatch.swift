@@ -133,24 +133,6 @@ extension FfiApp {
         }
     }
 
-    func buildNearbyPresenceEventJsonSafely(
-        peerID: String,
-        myNonce: String,
-        theirNonce: String,
-        profileEventID: String
-    ) -> String {
-        ffiString("ffiapp.buildNearbyPresenceEventJson") { status in
-            try uniffi_iris_chat_core_fn_method_ffiapp_build_nearby_presence_event_json(
-                self.uniffiClonePointer(),
-                lowerString(peerID),
-                lowerString(myNonce),
-                lowerString(theirNonce),
-                lowerString(profileEventID),
-                status
-            )
-        }
-    }
-
     func exportSupportBundleJsonSafely() -> String {
         ffiString("ffiapp.exportSupportBundleJson", fallback: "{}") { status in
             uniffi_iris_chat_core_fn_method_ffiapp_export_support_bundle_json(
@@ -197,81 +179,12 @@ extension FfiApp {
         }
     }
 
-    func ingestNearbyEventJsonSafely(eventJson: String) -> Bool {
-        ffiBool("ffiapp.ingestNearbyEventJson") { status in
-            try uniffi_iris_chat_core_fn_method_ffiapp_ingest_nearby_event_json(
-                self.uniffiClonePointer(),
-                lowerString(eventJson),
-                status
-            )
-        }
-    }
-
-    func ingestNearbyEventJsonWithTransportSafely(eventJson: String, transport: String) -> Bool {
-        ffiBool("ffiapp.ingestNearbyEventJsonWithTransport") { status in
-            try uniffi_iris_chat_core_fn_method_ffiapp_ingest_nearby_event_json_with_transport(
-                self.uniffiClonePointer(),
-                lowerString(eventJson),
-                lowerString(transport),
-                status
-            )
-        }
-    }
-
     @discardableResult
     func listenForUpdatesSafely(reconciler: AppReconciler) -> Bool {
         ffiVoid("ffiapp.listenForUpdates") { status in
             uniffi_iris_chat_core_fn_method_ffiapp_listen_for_updates(
                 self.uniffiClonePointer(),
                 FfiConverterCallbackInterfaceAppReconciler_lower(reconciler),
-                status
-            )
-        }
-    }
-
-    func nearbyDecodeFrameSafely(frame: Data) -> String {
-        ffiString("ffiapp.nearbyDecodeFrame") { status in
-            try uniffi_iris_chat_core_fn_method_ffiapp_nearby_decode_frame(
-                self.uniffiClonePointer(),
-                lowerData(frame),
-                status
-            )
-        }
-    }
-
-    func nearbyEncodeFrameSafely(envelopeJson: String) -> Data {
-        ffiData("ffiapp.nearbyEncodeFrame") { status in
-            try uniffi_iris_chat_core_fn_method_ffiapp_nearby_encode_frame(
-                self.uniffiClonePointer(),
-                lowerString(envelopeJson),
-                status
-            )
-        }
-    }
-
-    func nearbyFrameBodyLenFromHeaderSafely(header: Data) -> Int {
-        Int(ffiInt32("ffiapp.nearbyFrameBodyLenFromHeader", fallback: -1) { status in
-            try uniffi_iris_chat_core_fn_method_ffiapp_nearby_frame_body_len_from_header(
-                self.uniffiClonePointer(),
-                lowerData(header),
-                status
-            )
-        })
-    }
-
-    func verifyNearbyPresenceEventJsonSafely(
-        eventJson: String,
-        peerID: String,
-        myNonce: String,
-        theirNonce: String
-    ) -> String {
-        ffiString("ffiapp.verifyNearbyPresenceEventJson") { status in
-            try uniffi_iris_chat_core_fn_method_ffiapp_verify_nearby_presence_event_json(
-                self.uniffiClonePointer(),
-                lowerString(eventJson),
-                lowerString(peerID),
-                lowerString(myNonce),
-                lowerString(theirNonce),
                 status
             )
         }
@@ -343,22 +256,6 @@ private func ffiString(
     }
 }
 
-private func ffiData(
-    _ label: String,
-    fallback: Data = Data(),
-    _ body: (UnsafeMutablePointer<RustCallStatus>) throws -> RustBuffer
-) -> Data {
-    do {
-        var status = makeRustCallStatus()
-        let buffer = try body(&status)
-        try checkRustCallStatus(status)
-        return try liftData(buffer)
-    } catch {
-        logSafeFfiFailure(label, error)
-        return fallback
-    }
-}
-
 private func ffiBool(
     _ label: String,
     fallback: Bool = false,
@@ -369,22 +266,6 @@ private func ffiBool(
         let value = try body(&status)
         try checkRustCallStatus(status)
         return value != 0
-    } catch {
-        logSafeFfiFailure(label, error)
-        return fallback
-    }
-}
-
-private func ffiInt32(
-    _ label: String,
-    fallback: Int32,
-    _ body: (UnsafeMutablePointer<RustCallStatus>) throws -> Int32
-) -> Int32 {
-    do {
-        var status = makeRustCallStatus()
-        let value = try body(&status)
-        try checkRustCallStatus(status)
-        return value
     } catch {
         logSafeFfiFailure(label, error)
         return fallback
@@ -556,16 +437,6 @@ private func lowerOptionalString(_ value: String?) throws -> RustBuffer {
     return try rustBuffer(from: bytes)
 }
 
-private func lowerData(_ value: Data) throws -> RustBuffer {
-    guard value.count <= Int(Int32.max) else {
-        throw SafeFfiDispatchError.callError("Data too large")
-    }
-    var bytes: [UInt8] = []
-    appendInt32(Int32(value.count), to: &bytes)
-    bytes.append(contentsOf: value)
-    return try rustBuffer(from: bytes)
-}
-
 private func rustBuffer(from bytes: [UInt8]) throws -> RustBuffer {
     let copy = bytes
     return try copy.withUnsafeBufferPointer { pointer in
@@ -586,26 +457,6 @@ private func liftString(_ buffer: RustBuffer) throws -> String {
     }
     let bytes = UnsafeBufferPointer<UInt8>(start: data, count: Int(buffer.len))
     return String(bytes: bytes, encoding: .utf8) ?? ""
-}
-
-private func liftData(_ buffer: RustBuffer) throws -> Data {
-    defer { freeRustBuffer(buffer) }
-    guard let data = buffer.data, buffer.len > 0 else {
-        return Data()
-    }
-    let bytes = Array(UnsafeBufferPointer<UInt8>(start: data, count: Int(buffer.len)))
-    guard bytes.count >= 4 else {
-        throw SafeFfiDispatchError.callError("Invalid data buffer")
-    }
-    let count = readInt32(from: bytes, offset: 0)
-    guard count >= 0 else {
-        throw SafeFfiDispatchError.callError("Invalid data length")
-    }
-    let end = 4 + Int(count)
-    guard bytes.count >= end else {
-        throw SafeFfiDispatchError.callError("Short data buffer")
-    }
-    return Data(bytes[4..<end])
 }
 
 private func safeFfiReader(from buffer: RustBuffer) throws -> SafeFfiReader {

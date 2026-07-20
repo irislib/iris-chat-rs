@@ -250,13 +250,6 @@ protocol RustAppClient: AnyObject {
     func chatSnapshotBefore(chatId: String, beforeMessageId: String, limit: UInt32) -> CurrentChatSnapshot?
     func chatSnapshotAroundMessage(chatId: String, messageId: String, beforeLimit: UInt32, afterLimit: UInt32) -> CurrentChatSnapshot?
     func mutualGroups(ownerInput: String) -> [ChatThreadSnapshot]
-    func ingestNearbyEventJson(eventJson: String) -> Bool
-    func ingestNearbyEventJsonWithTransport(eventJson: String, transport: String) -> Bool
-    func buildNearbyPresenceEventJson(peerID: String, myNonce: String, theirNonce: String, profileEventID: String) -> String
-    func verifyNearbyPresenceEventJson(eventJson: String, peerID: String, myNonce: String, theirNonce: String) -> String
-    func nearbyEncodeFrame(envelopeJson: String) -> Data
-    func nearbyDecodeFrame(frame: Data) -> String
-    func nearbyFrameBodyLenFromHeader(header: Data) -> Int
     func exportSupportBundleJson() -> String
     func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot?
     func prepareForSuspend()
@@ -271,7 +264,7 @@ extension RustAppClient {
 
 final class LiveRustAppClient: RustAppClient {
     private let ffi: FfiApp
-#if os(iOS)
+#if os(iOS) || os(macOS)
     private var fipsBle: IrisFipsBleRuntime?
 #endif
 
@@ -312,44 +305,6 @@ final class LiveRustAppClient: RustAppClient {
         ffi.mutualGroupsSafely(ownerInput: ownerInput)
     }
 
-    func ingestNearbyEventJson(eventJson: String) -> Bool {
-        ffi.ingestNearbyEventJsonSafely(eventJson: eventJson)
-    }
-
-    func ingestNearbyEventJsonWithTransport(eventJson: String, transport: String) -> Bool {
-        ffi.ingestNearbyEventJsonWithTransportSafely(eventJson: eventJson, transport: transport)
-    }
-
-    func buildNearbyPresenceEventJson(peerID: String, myNonce: String, theirNonce: String, profileEventID: String) -> String {
-        ffi.buildNearbyPresenceEventJsonSafely(
-            peerID: peerID,
-            myNonce: myNonce,
-            theirNonce: theirNonce,
-            profileEventID: profileEventID
-        )
-    }
-
-    func verifyNearbyPresenceEventJson(eventJson: String, peerID: String, myNonce: String, theirNonce: String) -> String {
-        ffi.verifyNearbyPresenceEventJsonSafely(
-            eventJson: eventJson,
-            peerID: peerID,
-            myNonce: myNonce,
-            theirNonce: theirNonce
-        )
-    }
-
-    func nearbyEncodeFrame(envelopeJson: String) -> Data {
-        ffi.nearbyEncodeFrameSafely(envelopeJson: envelopeJson)
-    }
-
-    func nearbyDecodeFrame(frame: Data) -> String {
-        ffi.nearbyDecodeFrameSafely(frame: frame)
-    }
-
-    func nearbyFrameBodyLenFromHeader(header: Data) -> Int {
-        ffi.nearbyFrameBodyLenFromHeaderSafely(header: header)
-    }
-
     func exportSupportBundleJson() -> String {
         ffi.exportSupportBundleJsonSafely()
     }
@@ -363,7 +318,7 @@ final class LiveRustAppClient: RustAppClient {
     }
 
     func setFipsBleEnabled(_ enabled: Bool) {
-#if os(iOS)
+#if os(iOS) || os(macOS)
         if enabled, fipsBle == nil {
             fipsBle = IrisFipsBleRuntime(app: ffi)
         } else if !enabled {
@@ -373,14 +328,14 @@ final class LiveRustAppClient: RustAppClient {
 #endif
     }
 
-#if os(iOS)
+#if os(iOS) || os(macOS)
     func fipsBleDebugSnapshot() -> IrisFipsBleDebugSnapshot? {
         fipsBle?.debugSnapshot()
     }
 #endif
 
     func shutdown() {
-#if os(iOS)
+#if os(iOS) || os(macOS)
         fipsBle?.close()
         fipsBle = nil
 #endif
@@ -876,8 +831,6 @@ final class AppManager: ObservableObject {
         qos: .userInitiated
     )
     private static let supportBundleQueue = DispatchQueue(label: "fi.siriusbusiness.irischat.support-bundle", qos: .utility)
-    private static let nearbyLanPermissionPromptAttemptedKey = "nearbyLanPermissionPromptAttempted"
-    private static let nearbyLanPermissionGrantedKey = "nearbyLanPermissionGranted"
 
     @Published private(set) var state: AppState
     @Published private(set) var bootstrapInFlight = true
@@ -924,13 +877,8 @@ final class AppManager: ObservableObject {
 #if os(macOS)
     private let currentAppVersion: String
 #endif
-#if os(macOS)
-    let nearbyBitchat = MacBitchatNearbyService()
-#endif
 #if os(iOS) || os(macOS)
     let nearbyIris = IrisNearbyService()
-    private var nearbyLanPermissionPromptAttempted = false
-    private var nearbyLanPermissionGranted = false
 #endif
 #if os(iOS)
     private let mobilePushRuntime = MobilePushRuntime()
@@ -950,7 +898,6 @@ final class AppManager: ObservableObject {
     private var storedAccountBundle: StoredAccountBundle?
     private var persistedRestoreInFlight = false
     private var automaticRevocationLogoutInFlight = false
-    private var nearbySettingsWasOpened = false
     // UI-test escape hatch: when IRIS_UI_TEST_SEED_PEER + IRIS_UI_TEST_SEED_COUNT
     // are set, AppManager auto-creates a chat with that peer once the account
     // is ready, then dispatches `count` outgoing messages back-to-back. Lets
@@ -1053,15 +1000,6 @@ final class AppManager: ObservableObject {
         self.state = initialState
         irisSetDebugLoggingEnabled(initialState.preferences.debugLoggingEnabled)
         self.lastRevApplied = initialState.rev
-#if os(iOS) || os(macOS)
-        self.nearbyLanPermissionPromptAttempted = UserDefaults.standard.bool(
-            forKey: Self.nearbyLanPermissionPromptAttemptedKey
-        )
-        self.nearbyLanPermissionGranted = UserDefaults.standard.bool(
-            forKey: Self.nearbyLanPermissionGrantedKey
-        )
-#endif
-
         resolvedRust.listenForUpdates(reconciler: reconciler)
         let initialDeviceRevoked = initialState.account?.authorizationState == .revoked
         if !initialDeviceRevoked {
@@ -1079,57 +1017,12 @@ final class AppManager: ObservableObject {
 #endif
 
 #if os(iOS) || os(macOS)
-        nearbyIris.ingestEventJson = { [weak self] eventJson, transport in
-            self?.rust.ingestNearbyEventJsonWithTransport(eventJson: eventJson, transport: transport) ?? false
-        }
-        nearbyIris.buildPresenceEventJson = { [weak self] peerID, myNonce, theirNonce, profileEventID in
-            self?.rust.buildNearbyPresenceEventJson(
-                peerID: peerID,
-                myNonce: myNonce,
-                theirNonce: theirNonce,
-                profileEventID: profileEventID ?? ""
-            ) ?? ""
-        }
-        nearbyIris.verifyPresenceEventJson = { [weak self] eventJson, peerID, myNonce, theirNonce in
-            self?.rust.verifyNearbyPresenceEventJson(
-                eventJson: eventJson,
-                peerID: peerID,
-                myNonce: myNonce,
-                theirNonce: theirNonce
-            ) ?? ""
-        }
-        nearbyIris.encodeFrameJson = { [weak self] envelopeJson in
-            guard let self else { return nil }
-            let frame = self.rust.nearbyEncodeFrame(envelopeJson: envelopeJson)
-            return frame.isEmpty ? nil : frame
-        }
-        nearbyIris.decodeFrame = { [weak self] frame in
-            self?.rust.nearbyDecodeFrame(frame: frame) ?? ""
-        }
-        nearbyIris.frameBodyLength = { [weak self] header in
-            self?.rust.nearbyFrameBodyLenFromHeader(header: header) ?? -1
-        }
-        nearbyIris.onBluetoothPermissionDenied = { [weak self] in
-            self?.handleNearbyBluetoothPermissionDenied()
-        }
-        nearbyIris.onLanPermissionDenied = { [weak self] in
-            self?.handleNearbyLanPermissionDenied()
-        }
-        nearbyIris.onLanPermissionGranted = { [weak self] in
-            self?.markNearbyLanPermissionGranted()
-        }
-        nearbyIris.isMailbagEnabled = { [weak self] in
-            self?.state.preferences.nearbyMailbagEnabled ?? true
-        }
-        if initialState.preferences.nearbyBluetoothEnabled, nearbyIris.bluetoothPermissionGranted {
-#if os(iOS)
+        if initialState.preferences.nearbyBluetoothEnabled {
             resolvedRust.setFipsBleEnabled(initialState.account != nil)
-#else
-            nearbyIris.setVisible(true)
-#endif
+            nearbyIris.setFipsBluetoothVisible(initialState.account != nil)
         }
-        if initialState.preferences.nearbyLanEnabled, canAutoStartNearbyLan {
-            nearbyIris.setLanVisible(true)
+        if initialState.preferences.nearbyLanEnabled {
+            nearbyIris.setFipsLanVisible(initialState.account != nil)
         }
 #endif
 
@@ -1160,18 +1053,10 @@ final class AppManager: ObservableObject {
             bootstrapInFlight = false
         }
 
-#if os(macOS)
-#if DEBUG
-        nearbyBitchat.configureDebugMessageToSendOnFirstPeer(environment["IRIS_BITCHAT_NEARBY_TEST_MESSAGE"])
-        if environment["IRIS_BITCHAT_NEARBY_AUTOSTART"] == "1" {
-            nearbyBitchat.setVisible(true)
-        }
-#endif
-#endif
 #if os(iOS) || os(macOS)
 #if DEBUG
         if environment["IRIS_NEARBY_AUTOSTART"] == "1" {
-            nearbyIris.setVisible(true)
+            setNearbyBluetoothTransportVisible(true)
         }
 #endif
 #endif
@@ -2057,10 +1942,6 @@ final class AppManager: ObservableObject {
     func setNearbyBluetoothEnabled(_ enabled: Bool) {
 #if os(iOS) || os(macOS)
         let canStartTransport = state.preferences.nearbyEnabled
-        if enabled && canStartTransport && nearbyIris.bluetoothPermissionNeedsSettings {
-            showNearbySettingsHint("Allow Bluetooth in Settings")
-            return
-        }
         setNearbyBluetoothTransportVisible(enabled && canStartTransport)
         dispatchToRust(.setNearbyBluetoothEnabled(enabled: enabled))
 #endif
@@ -2069,14 +1950,7 @@ final class AppManager: ObservableObject {
     func setNearbyLanEnabled(_ enabled: Bool) {
 #if os(iOS) || os(macOS)
         let canStartTransport = state.preferences.nearbyEnabled
-        if enabled && canStartTransport && nearbyIris.lanPermissionNeedsSettings {
-            showNearbySettingsHint("Allow Wi-Fi in Settings")
-            return
-        }
-        if enabled && canStartTransport {
-            markNearbyLanPermissionPromptAttempted()
-        }
-        nearbyIris.setLanVisible(enabled && canStartTransport)
+        nearbyIris.setFipsLanVisible(enabled && canStartTransport && state.account != nil)
         dispatchToRust(.setNearbyLanEnabled(enabled: enabled))
 #endif
     }
@@ -2085,7 +1959,7 @@ final class AppManager: ObservableObject {
 #if os(iOS) || os(macOS)
         if !enabled {
             setNearbyBluetoothTransportVisible(false)
-            nearbyIris.setLanVisible(false)
+            nearbyIris.setFipsLanVisible(false)
         }
 #endif
         dispatchToRust(.setNearbyEnabled(enabled: enabled))
@@ -2133,21 +2007,13 @@ final class AppManager: ObservableObject {
         updates.runStartupCheckIfNeeded()
 #endif
 #if os(iOS) || os(macOS)
-        if nearbySettingsWasOpened {
-            nearbySettingsWasOpened = false
-            nearbyIris.refreshBluetoothAuthorizationStatus()
-            nearbyIris.clearLanPermissionSettingsHint()
-        }
         if state.preferences.nearbyEnabled,
-           state.preferences.nearbyBluetoothEnabled,
-           nearbyIris.bluetoothPermissionGranted {
+           state.preferences.nearbyBluetoothEnabled {
             setNearbyBluetoothTransportVisible(true)
         }
         if state.preferences.nearbyEnabled,
-           state.preferences.nearbyLanEnabled,
-           canAutoStartNearbyLan,
-           (!nearbyIris.isLanVisible || nearbyIris.shouldRestartLanAfterFailure) {
-            nearbyIris.setLanVisible(true)
+           state.preferences.nearbyLanEnabled {
+            nearbyIris.setFipsLanVisible(state.account != nil)
         }
 #if os(iOS)
         processPendingShareFilesIfNeeded()
@@ -2172,7 +2038,7 @@ final class AppManager: ObservableObject {
 
         setNearbyBluetoothTransportVisible(false)
         if nearbyIris.isLanVisible {
-            nearbyIris.setLanVisible(false)
+            nearbyIris.setFipsLanVisible(false)
         }
 
         let runner = SuspendPreparationRunner(rust: rust)
@@ -2209,68 +2075,6 @@ final class AppManager: ObservableObject {
         ].joined(separator: ":")
     }
 
-#if os(iOS) || os(macOS)
-    private var canAutoStartNearbyLan: Bool {
-        nearbyLanPermissionGranted
-    }
-
-    private func markNearbyLanPermissionPromptAttempted() {
-        setNearbyLanPermissionDefault(true, forKey: Self.nearbyLanPermissionPromptAttemptedKey)
-    }
-
-    private func markNearbyLanPermissionGranted() {
-        setNearbyLanPermissionDefault(true, forKey: Self.nearbyLanPermissionPromptAttemptedKey)
-        setNearbyLanPermissionDefault(true, forKey: Self.nearbyLanPermissionGrantedKey)
-    }
-
-    private func markNearbyLanPermissionDenied() {
-        setNearbyLanPermissionDefault(true, forKey: Self.nearbyLanPermissionPromptAttemptedKey)
-        setNearbyLanPermissionDefault(false, forKey: Self.nearbyLanPermissionGrantedKey)
-    }
-
-    private func setNearbyLanPermissionDefault(_ value: Bool, forKey key: String) {
-        if key == Self.nearbyLanPermissionPromptAttemptedKey {
-            guard nearbyLanPermissionPromptAttempted != value else {
-                return
-            }
-            nearbyLanPermissionPromptAttempted = value
-        } else if key == Self.nearbyLanPermissionGrantedKey {
-            guard nearbyLanPermissionGranted != value else {
-                return
-            }
-            nearbyLanPermissionGranted = value
-        } else if UserDefaults.standard.bool(forKey: key) == value {
-            return
-        }
-        UserDefaults.standard.set(value, forKey: key)
-    }
-
-    private func handleNearbyBluetoothPermissionDenied() {
-        guard state.preferences.nearbyBluetoothEnabled || nearbyIris.isVisible else {
-            return
-        }
-        nearbyIris.setVisible(false)
-        rust.setFipsBleEnabled(false)
-        dispatchToRust(.setNearbyBluetoothEnabled(enabled: false), showsToastOnFailure: false)
-        showToast("Allow Bluetooth in Settings")
-    }
-
-    private func handleNearbyLanPermissionDenied() {
-        guard state.preferences.nearbyLanEnabled || nearbyIris.isLanVisible else {
-            return
-        }
-        markNearbyLanPermissionDenied()
-        nearbyIris.setLanVisible(false)
-        dispatchToRust(.setNearbyLanEnabled(enabled: false), showsToastOnFailure: false)
-        showToast("Allow Wi-Fi in Settings")
-    }
-
-    private func showNearbySettingsHint(_ message: String) {
-        showToast(message)
-        nearbySettingsWasOpened = true
-        PlatformAppSettings.open()
-    }
-#endif
 
     private func syncStartupAtLoginPreference(_ enabled: Bool) {
         guard PlatformStartupAtLogin.isSupported else {
@@ -2726,19 +2530,16 @@ final class AppManager: ObservableObject {
             syncMobilePushIfNeeded(state: state)
 #endif
         case .nearbyPublishedEvent(let eventID, let kind, let createdAtSecs, let eventJson):
-#if os(iOS) || os(macOS)
-            nearbyIris.publish(
-                eventID: eventID,
-                kind: kind,
-                createdAtSecs: createdAtSecs,
-                eventJson: eventJson
-            )
-#else
             _ = eventID
             _ = kind
             _ = createdAtSecs
             _ = eventJson
-#endif
+        case .nearbyPeersChanged(let snapshot, let bluetoothPeerIds, let lanPeerIds):
+            nearbyIris.applyFipsPeerSnapshot(
+                snapshot,
+                bluetoothPeerIds: bluetoothPeerIds,
+                lanPeerIds: lanPeerIds
+            )
         case .fullState(let nextState):
             applyFullState(nextState)
         }
@@ -3164,39 +2965,28 @@ final class AppManager: ObservableObject {
         let wasVisible = oldState.preferences.nearbyEnabled && oldState.preferences.nearbyBluetoothEnabled
         let shouldBeVisible = nextState.account != nil && nextState.preferences.nearbyEnabled && nextState.preferences.nearbyBluetoothEnabled
         if shouldBeVisible {
-            if nearbyIris.bluetoothPermissionGranted {
-                setNearbyBluetoothTransportVisible(true)
-            }
+            setNearbyBluetoothTransportVisible(true)
         } else if wasVisible || nearbyIris.isVisible {
             setNearbyBluetoothTransportVisible(false)
         }
     }
 
     private func setNearbyBluetoothTransportVisible(_ enabled: Bool) {
-#if os(iOS)
-        nearbyIris.setVisible(false)
+        nearbyIris.setFipsBluetoothVisible(enabled && state.account != nil)
         rust.setFipsBleEnabled(enabled && state.account != nil)
-#else
-        nearbyIris.setVisible(enabled)
-#endif
     }
 
-#if os(iOS)
     func fipsBleDebugSnapshot() -> IrisFipsBleDebugSnapshot? {
         (rust as? LiveRustAppClient)?.fipsBleDebugSnapshot()
     }
-#endif
 
     private func syncNearbyLanPreference(from oldState: AppState, to nextState: AppState) {
         let wasVisible = oldState.preferences.nearbyEnabled && oldState.preferences.nearbyLanEnabled
-        let shouldBeVisible = nextState.preferences.nearbyEnabled && nextState.preferences.nearbyLanEnabled
+        let shouldBeVisible = nextState.account != nil && nextState.preferences.nearbyEnabled && nextState.preferences.nearbyLanEnabled
         if shouldBeVisible {
-            if canAutoStartNearbyLan,
-               (!nearbyIris.isLanVisible || nearbyIris.shouldRestartLanAfterFailure) {
-                nearbyIris.setLanVisible(true)
-            }
+            nearbyIris.setFipsLanVisible(true)
         } else if wasVisible || nearbyIris.isLanVisible {
-            nearbyIris.setLanVisible(false)
+            nearbyIris.setFipsLanVisible(false)
         }
     }
 #endif

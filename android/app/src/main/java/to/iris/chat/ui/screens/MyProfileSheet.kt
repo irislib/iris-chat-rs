@@ -511,19 +511,6 @@ fun MyProfileSheet(
                                     },
                                     tag = "myProfileMailbagSwitch",
                                 )
-                                // The bag's contents survive the toggle so the
-                                // user can pause sync without losing what's
-                                // already queued; surface the wipe action only
-                                // when there's something to wipe.
-                                if (nearbyService != null && nearbyService.mailbagEventCount() > 0) {
-                                    ProfileActionRow(
-                                        title = "Empty mailbag (${nearbyService.mailbagEventCount()})",
-                                        icon = IrisIcons.DeleteForever,
-                                        destructive = true,
-                                        onClick = { nearbyService.emptyMailbag() },
-                                        modifier = Modifier.testTag("myProfileEmptyMailbagButton"),
-                                    )
-                                }
                                 SettingsToggleRow(
                                     title = "Show in chat list",
                                     checked = preferences.nearbyShowInChatList,

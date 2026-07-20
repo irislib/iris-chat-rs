@@ -253,6 +253,15 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
                         event_json,
                     );
                 }
+                AppUpdate::NearbyPeersChanged { snapshot, .. } => {
+                    manager_for_updates.apply_nearby_snapshot(snapshot);
+                    apply_state(
+                        &content_for_updates,
+                        &header_for_updates,
+                        &manager_for_updates,
+                        &current_for_updates.borrow(),
+                    );
+                }
                 AppUpdate::PersistAccountBundle { .. } => {}
             }
         }

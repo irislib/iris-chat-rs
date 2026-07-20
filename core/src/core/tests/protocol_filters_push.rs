@@ -1579,66 +1579,6 @@ fn delete_profile_metadata_publishes_blank_profile_and_clears_local_record() {
 }
 
 #[test]
-fn nearby_presence_event_binds_owner_to_ble_nonce_pair() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let mut core = AppCore::new(
-        flume::unbounded().0,
-        flume::unbounded().0,
-        temp_dir.path().to_string_lossy().to_string(),
-        Arc::new(RwLock::new(AppState::empty())),
-    );
-    core.logged_in = Some(LoggedInState {
-        owner_pubkey: owner.public_key(),
-        owner_keys: Some(owner.clone()),
-        device_keys: device.clone(),
-        client: Client::new(device.clone()),
-        relay_urls: Vec::new(),
-        authorization_state: LocalAuthorizationState::Authorized,
-    });
-
-    let event_json = core.build_nearby_presence_event_json(
-        "peer-a",
-        "nonce-a",
-        "nonce-b",
-        "f".repeat(64).as_str(),
-    );
-    let event: Event = serde_json::from_str(&event_json).expect("presence event");
-    assert_eq!(event.kind.as_u16(), NEARBY_PRESENCE_KIND);
-    event.verify().expect("valid signature");
-    assert_eq!(event.pubkey, owner.public_key());
-
-    let content: serde_json::Value = serde_json::from_str(&event.content).expect("content");
-    assert_eq!(content["protocol"], "iris-nearby-v1");
-    assert_eq!(content["peer_id"], "peer-a");
-    assert_eq!(content["my_nonce"], "nonce-a");
-    assert_eq!(content["their_nonce"], "nonce-b");
-    assert_eq!(content["profile_event_id"], "f".repeat(64));
-
-    let verified =
-        crate::verify_nearby_presence_event_json(&event_json, "peer-a", "nonce-b", "nonce-a");
-    let verified: serde_json::Value = serde_json::from_str(&verified).expect("verified presence");
-    assert_eq!(verified["owner_pubkey_hex"], owner.public_key().to_hex());
-    assert_eq!(verified["profile_event_id"], "f".repeat(64));
-
-    assert!(crate::verify_nearby_presence_event_json(
-        &event_json,
-        "peer-a",
-        "wrong-receiver-nonce",
-        "nonce-a",
-    )
-    .is_empty());
-    assert!(crate::verify_nearby_presence_event_json(
-        &event_json,
-        "wrong-peer",
-        "nonce-b",
-        "nonce-a",
-    )
-    .is_empty());
-}
-
-#[test]
 fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();

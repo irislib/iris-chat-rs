@@ -311,12 +311,10 @@ class MainActivity : ComponentActivity() {
 
     private fun setNearbyVisible(visible: Boolean) {
         if (!visible) {
-            container.nearbyIrisService.setVisible(false)
             container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(false))
             return
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            container.nearbyIrisService.setVisible(false)
             container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(false))
             Toast.makeText(
                 this,
@@ -329,11 +327,9 @@ class MainActivity : ComponentActivity() {
             permissions = nearbyPermissions().toList(),
             preferenceKeys = listOf(BLUETOOTH_PERMISSION_KEY),
             onGranted = {
-                container.nearbyIrisService.setVisible(false)
                 container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(true))
             },
             onDenied = {
-                container.nearbyIrisService.setVisible(false)
                 container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(false))
             },
         )
@@ -430,7 +426,6 @@ class MainActivity : ComponentActivity() {
     private fun restoreNearbyVisibilityPreference() {
         val preferences = container.appManager.state.value.preferences
         if (!preferences.nearbyEnabled) {
-            container.nearbyIrisService.setVisible(false)
             container.nearbyIrisService.setLocalNetworkVisible(false)
             return
         }
@@ -439,7 +434,7 @@ class MainActivity : ComponentActivity() {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
                     container.nearbyIrisService.hasBluetoothPermission()
             ) {
-                container.nearbyIrisService.setVisible(false)
+                container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(true))
             } else {
                 container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(false))
             }

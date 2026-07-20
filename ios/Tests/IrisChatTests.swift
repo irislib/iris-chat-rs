@@ -219,34 +219,6 @@ final class MockRustApp: RustAppClient {
         pagesAround["\(chatId.trimmingCharacters(in: .whitespacesAndNewlines))|\(messageId.trimmingCharacters(in: .whitespacesAndNewlines))"]
     }
 
-    func ingestNearbyEventJson(eventJson: String) -> Bool {
-        true
-    }
-
-    func ingestNearbyEventJsonWithTransport(eventJson: String, transport: String) -> Bool {
-        true
-    }
-
-    func buildNearbyPresenceEventJson(peerID: String, myNonce: String, theirNonce: String, profileEventID: String) -> String {
-        ""
-    }
-
-    func verifyNearbyPresenceEventJson(eventJson: String, peerID: String, myNonce: String, theirNonce: String) -> String {
-        ""
-    }
-
-    func nearbyEncodeFrame(envelopeJson: String) -> Data {
-        Data()
-    }
-
-    func nearbyDecodeFrame(frame: Data) -> String {
-        ""
-    }
-
-    func nearbyFrameBodyLenFromHeader(header: Data) -> Int {
-        -1
-    }
-
     func exportSupportBundleJson() -> String {
         supportBundleJson
     }
@@ -2300,37 +2272,6 @@ final class IrisChatTests: XCTestCase {
             app.state().router.screenStack == [.createAccount]
         }
         XCTAssertTrue(reachedCreateAccount)
-    }
-
-    @MainActor
-    func testLiveSafeFfiHelpersReturnFallbacksForBadNearbyInput() async throws {
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-
-        let app = FfiApp(dataDir: tempDir.path, keychainGroup: "", appVersion: "test")
-
-        let envelopeJson = #"{"v":1,"type":"hello","peer_id":"abc"}"#
-        let frame = app.nearbyEncodeFrameSafely(envelopeJson: envelopeJson)
-        XCTAssertFalse(frame.isEmpty)
-        let decoded = app.nearbyDecodeFrameSafely(frame: frame)
-        let decodedObject = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(decoded.utf8)) as? [String: Any]
-        )
-        XCTAssertEqual(decodedObject["peer_id"] as? String, "abc")
-        XCTAssertEqual(app.nearbyFrameBodyLenFromHeaderSafely(header: Data(frame.prefix(13))), frame.count - 13)
-
-        XCTAssertEqual(app.nearbyDecodeFrameSafely(frame: Data([0x01, 0x02, 0x03])), "")
-        XCTAssertEqual(app.nearbyFrameBodyLenFromHeaderSafely(header: Data([0x01])), -1)
-        XCTAssertEqual(
-            app.verifyNearbyPresenceEventJsonSafely(
-                eventJson: "{",
-                peerID: "peer",
-                myNonce: "mine",
-                theirNonce: "theirs"
-            ),
-            ""
-        )
     }
 
     @MainActor

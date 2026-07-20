@@ -60,9 +60,6 @@ struct NearbySettingsRows: View {
                 accessibilityID: "myProfileNearbyShowInChatListSwitch"
             )
         }
-        .onAppear {
-            service.startBluetoothStateMonitoring()
-        }
     }
 
     private func settingsToggle(
@@ -179,29 +176,6 @@ struct MailbagSettingsCard: View {
                 .foregroundStyle(palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // The bag's contents survive the toggle so the user can
-            // flip it off without losing work; clearing is a separate
-            // action, only surfaced when there's actually something to
-            // clear.
-            if service.mailbagEventCount > 0 {
-                Divider().overlay(palette.border)
-                Button(role: .destructive) {
-                    service.emptyMailbag()
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "trash")
-                            .frame(width: 24)
-                        Text("Empty mailbag (\(service.mailbagEventCount))")
-                            .font(.system(.body, design: .rounded, weight: .semibold))
-                        Spacer(minLength: 0)
-                    }
-                    .foregroundStyle(.red)
-                    .padding(.vertical, 2)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.irisPlain)
-                .accessibilityIdentifier("mailbagSettingsEmptyButton")
-            }
         }
     }
 }

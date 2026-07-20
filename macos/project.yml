@@ -18,6 +18,10 @@ settings:
       ENABLE_TESTABILITY: YES
       SWIFT_OPTIMIZATION_LEVEL: -Onone
 
+packages:
+  FipsBle:
+    path: ../ios/FipsBle
+
 schemes:
   IrisChatMac:
     build:
@@ -75,6 +79,7 @@ targets:
       - framework: Frameworks/IrisChatCore.xcframework
         embed: false
       - target: ShareExtension
+      - package: FipsBle
 
   ShareExtension:
     type: app-extension

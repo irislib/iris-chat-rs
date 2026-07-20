@@ -90,7 +90,6 @@ mod lifecycle;
 mod message_expiry;
 mod mobile_push;
 mod model;
-mod nearby;
 pub(crate) mod notifications;
 mod payloads;
 mod persistence;
@@ -111,7 +110,6 @@ mod support;
 mod tests;
 mod update_pubsub;
 
-pub(crate) const NEARBY_PRESENCE_KIND: u16 = 22242;
 pub(super) const APPCORE_PROTOCOL_LABEL: &str = "appcore-protocol";
 pub(super) const LOCAL_INVITE_PUBLISH_LABEL: &str = "invite";
 pub(super) const PENDING_RELAY_CONTROL_PUBLISH_MAX_ROWS: usize = 2_048;
@@ -524,6 +522,7 @@ pub struct AppCore {
     device_sync: Option<DeviceSyncRuntime>,
     pending_host_ble: Option<HostBleAttachment>,
     host_ble_attached: bool,
+    fips_nearby_links: Vec<crate::updates::FipsNearbyLinkSnapshot>,
     pending_relay_publishes: BTreeMap<String, PendingRelayPublish>,
     pending_relay_publish_inflight: HashSet<String>,
     pending_decrypted_delivery_acks: HashSet<String>,

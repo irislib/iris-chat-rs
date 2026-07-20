@@ -41,7 +41,7 @@
   <string>Find and message nearby people.</string>
   <key>NSBonjourServices</key>
   <array>
-    <string>_iris-chat._tcp</string>
+    <string>_fips._udp</string>
   </array>
   <key>NSHighResolutionCapable</key>
   <true/>

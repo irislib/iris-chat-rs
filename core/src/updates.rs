@@ -1,5 +1,6 @@
 use crate::actions::AppAction;
 use crate::state::{AppState, MutualGroupsSnapshot, PeerProfileDebugSnapshot};
+use crate::DesktopNearbySnapshot;
 use flume::Sender;
 use nostr_sdk::prelude::{Event, RelayStatus};
 
@@ -19,19 +20,39 @@ pub enum AppUpdate {
         created_at_secs: u64,
         event_json: String,
     },
+    NearbyPeersChanged {
+        snapshot: DesktopNearbySnapshot,
+        bluetooth_peer_ids: Vec<String>,
+        lan_peer_ids: Vec<String>,
+    },
+}
+
+pub(crate) fn enqueue_update_for_delivery(
+    update: AppUpdate,
+    latest_full_state: &mut Option<AppUpdate>,
+    before_full_state: &mut Vec<AppUpdate>,
+    after_full_state: &mut Vec<AppUpdate>,
+) {
+    match update {
+        full @ AppUpdate::FullState(_) => *latest_full_state = Some(full),
+        nearby
+        @ (AppUpdate::NearbyPublishedEvent { .. } | AppUpdate::NearbyPeersChanged { .. }) => {
+            after_full_state.push(nearby)
+        }
+        other => before_full_state.push(other),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FipsNearbyLinkSnapshot {
+    pub(crate) device_pubkey_hex: String,
+    pub(crate) transport_type: String,
 }
 
 #[derive(Debug)]
 pub(crate) enum CoreMsg {
     Action(AppAction),
     Internal(Box<InternalEvent>),
-    BuildNearbyPresenceEvent {
-        peer_id: String,
-        my_nonce: String,
-        their_nonce: String,
-        profile_event_id: String,
-        reply_tx: Sender<String>,
-    },
     ExportSupportBundle(Sender<String>),
     PeerProfileDebug {
         owner_input: String,
@@ -66,15 +87,12 @@ pub(crate) struct CorePerfCountersSnapshot {
 #[derive(Debug)]
 pub(crate) enum InternalEvent {
     RelayEvent(Event),
-    NearbyEvent {
-        event: Event,
-        transport: String,
-    },
     FipsNearbyPacket {
         source_pubkey_hex: String,
         source_port: u16,
         data: Vec<u8>,
     },
+    FipsNearbyPeersChanged(Vec<FipsNearbyLinkSnapshot>),
     FetchTrackedPeerCatchUp {
         token: u64,
     },

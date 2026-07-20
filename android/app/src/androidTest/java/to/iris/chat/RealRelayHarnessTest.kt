@@ -136,9 +136,8 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
     @Test
     fun enable_nearby_and_report_peers() {
         ensureLoggedIn(createIfMissing = true)
-        withActivity {
-            nearbyService().setVisible(true)
-        }
+        appManager().dispatch(AppAction.SetNearbyEnabled(true))
+        appManager().dispatch(AppAction.SetNearbyBluetoothEnabled(true))
         SystemClock.sleep(1_000)
         reportNearbySnapshot(nearbyService().snapshot)
     }
@@ -146,10 +145,8 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
     @Test
     fun enable_lan_nearby_and_report_peers() {
         ensureLoggedIn(createIfMissing = true)
-        withActivity {
-            nearbyService().setVisible(false)
-            nearbyService().setLocalNetworkVisible(true)
-        }
+        appManager().dispatch(AppAction.SetNearbyEnabled(true))
+        appManager().dispatch(AppAction.SetNearbyLanEnabled(true))
         SystemClock.sleep(1_000)
         reportNearbySnapshot(nearbyService().snapshot)
     }
@@ -160,9 +157,8 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
         val peerOwnerHex = peerInputToHex(requiredArg("peer_input")).ifBlank {
             normalizePeerInput(requiredArg("peer_input"))
         }
-        withActivity {
-            nearbyService().setVisible(true)
-        }
+        appManager().dispatch(AppAction.SetNearbyEnabled(true))
+        appManager().dispatch(AppAction.SetNearbyBluetoothEnabled(true))
         val timeoutMs =
             (optionalArg("timeout_ms")?.toLongOrNull() ?: NEARBY_PROFILE_TIMEOUT_MS)
                 .coerceIn(1_000, NEARBY_PROFILE_TIMEOUT_MS)
@@ -193,10 +189,8 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
         val peerOwnerHex = peerInputToHex(requiredArg("peer_input")).ifBlank {
             normalizePeerInput(requiredArg("peer_input"))
         }
-        withActivity {
-            nearbyService().setVisible(false)
-            nearbyService().setLocalNetworkVisible(true)
-        }
+        appManager().dispatch(AppAction.SetNearbyEnabled(true))
+        appManager().dispatch(AppAction.SetNearbyLanEnabled(true))
         val timeoutMs =
             (optionalArg("timeout_ms")?.toLongOrNull() ?: NEARBY_PROFILE_TIMEOUT_MS)
                 .coerceIn(1_000, NEARBY_PROFILE_TIMEOUT_MS)
@@ -1244,9 +1238,8 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
     fun send_nearby_message_from_args() {
         ensureLoggedIn()
         maybeDisableRelays()
-        withActivity {
-            nearbyService().setVisible(true)
-        }
+        appManager().dispatch(AppAction.SetNearbyEnabled(true))
+        appManager().dispatch(AppAction.SetNearbyBluetoothEnabled(true))
         val peerInput = optionalArg("peer_input").orEmpty()
         val chatIdArg = optionalArg("chat_id")
         val message = requiredArg("message")
@@ -1412,9 +1405,8 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
         val prefix = optionalArg("prefix") ?: "nearby"
         val peerOwnerHex = peerInputToHex(peerInput).ifBlank { normalizePeerInput(peerInput) }
 
-        withActivity {
-            nearbyService().setVisible(true)
-        }
+        appManager().dispatch(AppAction.SetNearbyEnabled(true))
+        appManager().dispatch(AppAction.SetNearbyBluetoothEnabled(true))
         waitForState("nearby peer $peerOwnerHex", timeoutMs = 60_000) {
             nearbyService().snapshot.peers.firstOrNull { peer ->
                 peer.ownerPubkeyHex?.equals(peerOwnerHex, ignoreCase = true) == true
@@ -1713,9 +1705,6 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
             runCatching {
                 instrumentation.uiAutomation.grantRuntimePermission(appPackageName(), permission)
             }
-        }
-        withActivity {
-            nearbyService().setVisible(false)
         }
         appManager().dispatch(AppAction.SetNearbyBluetoothEnabled(false))
         waitForState("FIPS Bluetooth reset", timeoutMs = 30_000) {

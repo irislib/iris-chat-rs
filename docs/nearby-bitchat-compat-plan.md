@@ -5,10 +5,17 @@ Date: 2026-04-28
 ## Current status
 
 As of 2026-07-20, the mobile implementation uses portable FIPS BLE v2 between
-Iris clients. It is not BitChat wire-compatible. The BitChat packet codec and
-the compatibility work below remain useful for a future interop layer, but
-Iris does not currently implement BitChat's full Noise XX handshake and
-`NDR_EVENT` exchange.
+Iris clients. It is not BitChat wire-compatible. The unused BitChat codec and
+the custom BLE/mDNS/TCP transports have been removed; FIPS owns discovery,
+authentication, framing, BLE, and LAN transport.
+
+The shared application scope is `iris-chat-nearby-v1`. FIPS carries that scope
+in its generic `_fips._udp` LAN advertisement and in its signed Nostr overlay
+advertisement, and ignores advertisements for other scopes. The LAN advert is
+only a routing hint; FIPS authenticates the advertised device identity with
+Noise before accepting traffic. Platform code only supplies OS integration
+required by FIPS: the Apple Bonjour declaration, Android's multicast lock, and
+the mobile BLE command adapters.
 
 FIPS BLE advertises a small GATT bootstrap characteristic containing the
 platform-assigned L2CAP channel number. GATT is BLE's service-and-characteristic
@@ -23,6 +30,9 @@ and no message servers configured. The iPhone harness reported a native FIPS
 connection with successful reads and writes and zero message servers; the
 Android harness received the exact probe message and marked it Seen. Network
 settings were restored after the test.
+
+The remainder of this document is historical design context, not the current
+implementation plan.
 
 ## Goal
 
