@@ -28,14 +28,22 @@ ANDROID_TEST_PACKAGE = "to.iris.chat.test"
 STATUS_RE = re.compile(r"^(?:HARNESS_STATUS|INSTRUMENTATION_STATUS): ([^=]+)=(.*)$")
 RAW_STATUS_RE = re.compile(r"^([a-z_][a-z0-9_]*)=(.*)$")
 SENSITIVE_VALUE_RE = re.compile(
-    r"((?:^|\s|:)(?:secret_key|IRIS_IOS_HARNESS_SECRET_KEY)=)([^ \n\r]+)",
+    r"((?:^|\s|:)(?:secret_key|IRIS_IOS_HARNESS_SECRET_KEY|invite_input|invite_url|link_url|device_input)=)([^ \n\r]+)",
     re.IGNORECASE,
 )
-SENSITIVE_ARG_RE = re.compile(r"(secret|private|nsec)", re.IGNORECASE)
+SENSITIVE_DEVICE_APPROVAL_RE = re.compile(
+    r"nostr-identity://device-approval/[^ \n\r]+",
+    re.IGNORECASE,
+)
+SENSITIVE_ARG_RE = re.compile(
+    r"(secret|private|nsec|invite_input|invite_url|link_url|device_input)",
+    re.IGNORECASE,
+)
 
 
 def redact_sensitive_text(value: str) -> str:
-    return SENSITIVE_VALUE_RE.sub(r"\1<redacted>", value)
+    redacted = SENSITIVE_VALUE_RE.sub(r"\1<redacted>", value)
+    return SENSITIVE_DEVICE_APPROVAL_RE.sub("<redacted-device-approval>", redacted)
 
 
 def redact_status_value(key: str, value: Any) -> str:
