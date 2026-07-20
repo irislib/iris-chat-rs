@@ -8,7 +8,7 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 PLATFORM_LOCKS = (ROOT / "core" / "Cargo.lock", ROOT / "linux" / "Cargo.lock")
 EXPECTED = {
-    "fips-core": "0.4.11",
+    "fips-core": "0.4.20",
     "fips-tcp": "0.2.0",
     "fips-tcp-endpoint": "0.2.0",
     "hashtree-config": "0.2.83",
@@ -48,7 +48,7 @@ class DependencyLockConsistencyTests(unittest.TestCase):
 
     def test_core_manifest_pins_gated_fips_stack_exactly(self):
         manifest = (ROOT / "core" / "Cargo.toml").read_text(encoding="utf-8")
-        self.assertRegex(manifest, r'(?m)^fips-core = \{ version = "=0\.4\.11",', "fips-core must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^fips-core = \{ version = "=0\.4\.20",', "fips-core must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^fips-tcp = "0\.2\.0"$', "fips-tcp must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^fips-tcp-endpoint = "0\.2\.0"$', "fips-tcp-endpoint must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-config = "=0\.2\.83"$', "Hashtree config must stay on the gated release")
