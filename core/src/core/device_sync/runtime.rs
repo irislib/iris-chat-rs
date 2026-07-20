@@ -13,6 +13,8 @@ use std::net::SocketAddrV4;
 const SAME_HOST_HASHTREE_ENV: &str = "IRIS_CHAT_SAME_HOST_HASHTREE";
 const LOCAL_RENDEZVOUS_ADDR_ENV: &str = "IRIS_CHAT_FIPS_LOCAL_RENDEZVOUS_ADDR";
 const WEBSOCKET_SEED_URLS_ENV: &str = "IRIS_FIPS_WEBSOCKET_SEED_URLS";
+const RECENT_PEERS_FILE_NAME: &str = "fips-recent-peers.json";
+const RECENT_PEERS_OBSERVE_INTERVAL: Duration = Duration::from_secs(30);
 const DEFAULT_WEBSOCKET_SEED_URLS: &[&str] = &[
     "wss://fips2.iris.to/fips", // osiris
     "wss://fips1.iris.to/fips", // lnvps
@@ -106,6 +108,11 @@ impl AppCore {
             }
         };
         let nearby_enabled = host_ble_requested || config.nearby_ip_enabled;
+        let discovery_scope = if nearby_enabled {
+            super::super::fips_nearby::FIPS_NEARBY_SCOPE.to_string()
+        } else {
+            format!("{DEVICE_SYNC_SCOPE_PREFIX}{}", config.owner_hex)
+        };
         let runtime_key = format!(
             "{}:same-host={}:nearby={}:ble={}",
             config.key, options.same_host_hashtree, nearby_enabled, host_ble_requested
@@ -121,14 +128,19 @@ impl AppCore {
                     *payloads = refreshed_bootstrap.unwrap_or_default();
                 }
                 let endpoint = runtime.endpoint.clone();
-                let peer_config = config
+                let mut peer_config = config
                     .peers
                     .iter()
                     .map(|peer| PeerConfig {
                         npub: peer.npub(),
                         ..PeerConfig::default()
                     })
-                    .collect();
+                    .collect::<Vec<_>>();
+                if let Some(recent_peers) = &runtime.recent_peers {
+                    if let Ok(recent_peers) = recent_peers.read() {
+                        recent_peers.merge_into(&mut peer_config);
+                    }
+                }
                 self.runtime.spawn(async move {
                     let _ = endpoint.update_peers(peer_config).await;
                 });
@@ -148,26 +160,47 @@ impl AppCore {
             self.stop_device_sync();
         }
 
-        let mut fips_config = Config::new();
-        fips_config.node.control.enabled = false;
-        fips_config.peers = config
+        let mut peer_config = config
             .peers
             .iter()
             .map(|peer| PeerConfig {
                 npub: peer.npub(),
                 ..PeerConfig::default()
             })
-            .collect();
+            .collect::<Vec<_>>();
+        peer_config.extend(options.additional_peers);
+        let recent_peers = match DeviceSyncRecentPeers::load(
+            self.data_dir.join(RECENT_PEERS_FILE_NAME),
+            &config.local_npub,
+            &discovery_scope,
+            crate::perflog::now_ms(),
+        ) {
+            Ok((recent_peers, warning)) => {
+                if let Some(warning) = warning {
+                    self.push_debug_log("fips.recent_peers.load.error", warning);
+                }
+                Some(Arc::new(RwLock::new(recent_peers)))
+            }
+            Err(error) => {
+                self.push_debug_log("fips.recent_peers.init.error", error);
+                None
+            }
+        };
+        if let Some(recent_peers) = &recent_peers {
+            if let Ok(recent_peers) = recent_peers.read() {
+                recent_peers.merge_into(&mut peer_config);
+            }
+        }
+
+        let mut fips_config = Config::new();
+        fips_config.node.control.enabled = false;
+        fips_config.peers = peer_config;
         let nostr_network_enabled = device_sync_enabled || config.nearby_ip_enabled;
         if nostr_network_enabled {
             fips_config.node.discovery.nostr.enabled = true;
             fips_config.node.discovery.nostr.advertise = true;
             fips_config.node.discovery.nostr.advert_relays = config.relay_urls.clone();
-            fips_config.node.discovery.nostr.app = if nearby_enabled {
-                super::super::fips_nearby::FIPS_NEARBY_SCOPE.to_string()
-            } else {
-                format!("{DEVICE_SYNC_SCOPE_PREFIX}{}", config.owner_hex)
-            };
+            fips_config.node.discovery.nostr.app = discovery_scope.clone();
             // Nearby is an app-scoped, open service: compatible Iris peers are not
             // necessarily in our device roster yet. FIPS still bounds open discovery
             // and authenticates every connection with Noise.
@@ -187,7 +220,6 @@ impl AppCore {
             fips_config.node.discovery.nostr.advertise = false;
         }
         configure_fips_lan(&mut fips_config, config.nearby_ip_enabled);
-        fips_config.peers.extend(options.additional_peers);
         let rendezvous_addr = match (options.same_host_hashtree, options.rendezvous_addr) {
             (_, Some(address)) => Some(address),
             (true, None) => match configured_local_rendezvous_addr() {
@@ -226,11 +258,7 @@ impl AppCore {
         let mut builder = FipsEndpoint::builder()
             .config(fips_config)
             .identity_nsec(config.secret_hex)
-            .discovery_scope(if nearby_enabled {
-                super::super::fips_nearby::FIPS_NEARBY_SCOPE.to_string()
-            } else {
-                format!("{DEVICE_SYNC_SCOPE_PREFIX}{}", config.owner_hex)
-            })
+            .discovery_scope(discovery_scope)
             .without_system_tun();
         if options.same_host_hashtree {
             builder = builder.local_rendezvous();
@@ -427,6 +455,12 @@ impl AppCore {
                 self.core_sender.clone(),
             )));
         }
+        if let Some(recent_peers) = &recent_peers {
+            tasks.push(self.runtime.spawn(run_recent_peer_observer(
+                endpoint.clone(),
+                recent_peers.clone(),
+            )));
+        }
 
         let sibling_count = config.siblings.len();
         self.device_sync = Some(DeviceSyncRuntime {
@@ -439,6 +473,7 @@ impl AppCore {
             _attachment_blobs: attachment_store,
             _update_pubsub: update_pubsub,
             _update_relay_pubsub: update_relay_pubsub,
+            recent_peers,
             tasks,
         });
         if device_sync_enabled {
@@ -456,13 +491,16 @@ impl AppCore {
             return;
         };
         let DeviceSyncRuntime {
-            endpoint, tasks, ..
+            endpoint,
+            recent_peers,
+            tasks,
+            ..
         } = runtime;
         for task in tasks {
             task.abort();
         }
         self.runtime.spawn(async move {
-            shutdown_shared_fips(endpoint).await;
+            shutdown_shared_fips(endpoint, recent_peers).await;
         });
     }
 
@@ -472,12 +510,16 @@ impl AppCore {
             return;
         };
         let DeviceSyncRuntime {
-            endpoint, tasks, ..
+            endpoint,
+            recent_peers,
+            tasks,
+            ..
         } = runtime;
         for task in tasks {
             task.abort();
         }
-        let _ = self.runtime.block_on(endpoint.shutdown());
+        self.runtime
+            .block_on(shutdown_shared_fips(endpoint, recent_peers));
     }
 
     #[cfg(test)]
@@ -491,9 +533,11 @@ impl AppCore {
         let logged_in = self.logged_in.as_ref()?;
         let owner_hex = logged_in.owner_pubkey.to_hex();
         let device_hex = logged_in.device_keys.public_key().to_hex();
+        let local_npub = fips_peer_from_hex(&device_hex)?.npub();
         Some(DeviceSyncConfig {
             key: format!("{owner_hex}:{device_hex}:local-only"),
             owner_hex,
+            local_npub,
             roster_at: 0,
             secret_hex: logged_in.device_keys.secret_key().to_secret_hex(),
             relay_urls: Vec::new(),
@@ -508,6 +552,7 @@ impl AppCore {
         let logged_in = self.logged_in.as_ref()?;
         let owner_hex = logged_in.owner_pubkey.to_hex();
         let local_hex = logged_in.device_keys.public_key().to_hex();
+        let local_npub = fips_peer_from_hex(&local_hex)?.npub();
         let roster = self.app_keys.get(&owner_hex);
         let roster_at = roster
             .filter(|roster| {
@@ -569,6 +614,7 @@ impl AppCore {
         Some(DeviceSyncConfig {
             key,
             owner_hex,
+            local_npub,
             roster_at,
             secret_hex: logged_in.device_keys.secret_key().to_secret_hex(),
             relay_urls,
@@ -704,7 +750,37 @@ async fn run_fips_nearby_link_monitor(
     }
 }
 
-async fn shutdown_shared_fips(endpoint: Arc<FipsEndpoint>) {
+async fn run_recent_peer_observer(
+    endpoint: Arc<FipsEndpoint>,
+    recent_peers: Arc<RwLock<DeviceSyncRecentPeers>>,
+) {
+    loop {
+        let peers = match endpoint.peers().await {
+            Ok(peers) => peers,
+            Err(_) => return,
+        };
+        if let Ok(mut recent_peers) = recent_peers.write() {
+            if let Err(error) =
+                recent_peers.observe_and_flush_if_due(&peers, crate::perflog::now_ms())
+            {
+                crate::perflog!("fips_recent_peers.observe error={error}");
+            }
+        }
+        sleep(RECENT_PEERS_OBSERVE_INTERVAL).await;
+    }
+}
+
+async fn shutdown_shared_fips(
+    endpoint: Arc<FipsEndpoint>,
+    recent_peers: Option<Arc<RwLock<DeviceSyncRecentPeers>>>,
+) {
+    if let (Some(recent_peers), Ok(peers)) = (recent_peers, endpoint.peers().await) {
+        if let Ok(mut recent_peers) = recent_peers.write() {
+            if let Err(error) = recent_peers.observe_and_flush(&peers, crate::perflog::now_ms()) {
+                crate::perflog!("fips_recent_peers.shutdown error={error}");
+            }
+        }
+    }
     let _ = endpoint.shutdown().await;
 }
 

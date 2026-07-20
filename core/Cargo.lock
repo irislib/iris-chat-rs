@@ -1224,8 +1224,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.4.20"
-source = "git+https://github.com/mmalmi/fips.git?rev=4c72dcfc946d7505407dab5f315fff7ceab87d36#4c72dcfc946d7505407dab5f315fff7ceab87d36"
+version = "0.4.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32df0dc0ec23734b8efff0caacb7bb4639dd458e0be9caaf611b4dce1f05caca"
 dependencies = [
  "base64",
  "bluer",
@@ -1266,9 +1267,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fips-endpoint"
+version = "0.4.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af729c3bc8ba40d1e9bc36ba3809cba289ef39fc52a379a0a87ec41eeb78ac4c"
+dependencies = [
+ "fips-core",
+]
+
+[[package]]
 name = "fips-identity"
 version = "0.3.2"
-source = "git+https://github.com/mmalmi/fips.git?rev=4c72dcfc946d7505407dab5f315fff7ceab87d36#4c72dcfc946d7505407dab5f315fff7ceab87d36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6f523b6e13208470a1340f26da6255c653980ce773ee883ffc956a05d15dbcd"
 dependencies = [
  "bech32",
  "hex",
@@ -2045,6 +2056,7 @@ dependencies = [
  "base64",
  "clap",
  "fips-core",
+ "fips-endpoint",
  "fips-tcp",
  "fips-tcp-endpoint",
  "flume",

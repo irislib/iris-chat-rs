@@ -8,10 +8,12 @@ use tokio::task::JoinHandle;
 
 use anti_entropy::metadata_page_packets;
 use messages::collect_device_sync_messages;
+use recent_peers::DeviceSyncRecentPeers;
 
 mod anti_entropy;
 mod body;
 mod messages;
+mod recent_peers;
 mod runtime;
 
 pub(super) const DEVICE_SYNC_PORT: u16 = 7369;
@@ -23,6 +25,7 @@ const DEVICE_SYNC_SCOPE_PREFIX: &str = "iris-chat-device-sync-v1:";
 struct DeviceSyncConfig {
     key: String,
     owner_hex: String,
+    local_npub: String,
     roster_at: u64,
     secret_hex: String,
     relay_urls: Vec<String>,
@@ -41,6 +44,7 @@ pub(super) struct DeviceSyncRuntime {
     _attachment_blobs: Option<Arc<super::attachment_upload::AttachmentBlobRuntime>>,
     _update_pubsub: Option<Arc<FipsPubsubClient>>,
     _update_relay_pubsub: Option<Arc<RelayEventBus>>,
+    recent_peers: Option<Arc<RwLock<DeviceSyncRecentPeers>>>,
     tasks: Vec<JoinHandle<()>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -601,6 +605,7 @@ impl AppCore {
             _attachment_blobs: None,
             _update_pubsub: None,
             _update_relay_pubsub: None,
+            recent_peers: None,
             tasks: Vec::new(),
         });
     }

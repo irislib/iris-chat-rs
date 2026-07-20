@@ -41,7 +41,8 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 flume = "0.11"
-fips-core = { version = "=0.4.20", features = ["webrtc-transport", "host-ble-transport"] }
+fips-core = { version = "=0.4.28", features = ["webrtc-transport", "host-ble-transport"] }
+fips-endpoint = "=0.4.28"
 fips-tcp = "0.2.0"
 fips-tcp-endpoint = "0.2.0"
 hashtree-blossom = { version = "=0.2.82", default-features = false, features = ["store"] }
@@ -78,6 +79,3 @@ uuid = "1"
 
 [dev-dependencies]
 tempfile = "3"
-
-[patch.crates-io]
-fips-core = { git = "https://github.com/mmalmi/fips.git", rev = "4c72dcfc946d7505407dab5f315fff7ceab87d36" }
