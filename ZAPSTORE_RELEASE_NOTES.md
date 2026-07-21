@@ -1,3 +1,9 @@
+# Iris Chat 2026.7.21
+
+- Linked devices reconnect more reliably after changing networks.
+- Interrupted secure connections and key refreshes recover more quickly.
+- Peer messaging now waits for real delivered data before considering a link healthy.
+
 # Iris Chat 2026.7.19
 
 - Linked devices now use two independent secure connection points by default.

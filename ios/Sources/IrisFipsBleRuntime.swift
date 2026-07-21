@@ -21,8 +21,13 @@ final class IrisFipsBleRuntime {
     private var bytesReceivedCount = 0
     private var writeCompletedCount = 0
 
-    init(app: FfiApp) {
-        bridge = FfiFipsBle(app: app)
+    init?(app: FfiApp) {
+        do {
+            bridge = try FfiFipsBle(app: app)
+        } catch {
+            NSLog("Iris FIPS BLE could not start: %@", "\(error)")
+            return nil
+        }
         platform = AppleFipsBlePlatform()
         runner = FipsBleCommandRunner(platform: platform)
         platform.eventSink = { [weak self] event in

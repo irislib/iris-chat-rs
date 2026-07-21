@@ -7,6 +7,15 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 ## Unreleased
 
+## 2026.7.21
+
+- Linked devices recover direct connections more reliably after changing
+  networks or briefly losing connectivity.
+- Connection retries now wait for validated payload traffic instead of being
+  cancelled by control-only heartbeats.
+- Linked-device routing uses FIPS 0.4.34 and the newest shared
+  `nostr-pubsub` peer adapter.
+
 ## 2026.7.19
 
 - Linked-device connections now use the independent Osiris and LNVPS FIPS

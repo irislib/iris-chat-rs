@@ -4,6 +4,19 @@ type LabeledIdentityEvents = Vec<(&'static str, Event)>;
 type LocalIdentityArtifacts = (LabeledIdentityEvents, LabeledIdentityEvents);
 
 impl AppCore {
+    fn newest_pending_app_keys_event(&self, author: PublicKey) -> Option<Event> {
+        self.pending_relay_publishes
+            .values()
+            .filter(|pending| pending.label == "app-keys")
+            .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
+            .filter(|event| event.pubkey == author && is_app_keys_event(event))
+            .max_by(|left, right| {
+                left.created_at
+                    .cmp(&right.created_at)
+                    .then_with(|| left.id.cmp(&right.id))
+            })
+    }
+
     pub(super) fn build_local_identity_artifacts(&self) -> LocalIdentityArtifacts {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return (Vec::new(), Vec::new());
@@ -73,7 +86,14 @@ impl AppCore {
             self.emit_nearby_published_event(event);
         }
         for (label, event) in durable_events {
-            self.publish_runtime_event(event, label, None);
+            let app_keys_author = (label == "app-keys").then_some(event.pubkey);
+            if !self.publish_runtime_event(event, label, None) {
+                if let Some(pending_event) =
+                    app_keys_author.and_then(|author| self.newest_pending_app_keys_event(author))
+                {
+                    self.emit_nearby_published_event(&pending_event);
+                }
+            }
         }
 
         self.runtime.spawn(async move {

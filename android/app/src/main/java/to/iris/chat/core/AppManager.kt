@@ -153,7 +153,13 @@ private class LiveRustAppClient(
 
     override fun setFipsBleEnabled(enabled: Boolean) {
         if (enabled && fipsBle == null) {
-            fipsBle = IrisFipsBleRuntime(context, ffi)
+            fipsBle =
+                try {
+                    IrisFipsBleRuntime(context, ffi)
+                } catch (error: Exception) {
+                    IrisDebugLog.d("FipsBle", "FIPS BLE could not start", error)
+                    null
+                }
         } else if (!enabled) {
             fipsBle?.close()
             fipsBle = null

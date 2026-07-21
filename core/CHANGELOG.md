@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.43
+
+- Update FIPS to 0.4.34 for reliable direct-path recovery across network
+  changes, reconnects, handshakes, and rekeys.
+- Update the FIPS peer adapter to `nostr-pubsub-fips` 0.4.7 while keeping
+  `nostr-pubsub` on the newest 0.1.13 release.
+
 ## 0.1.42
 
 - Add portable FIPS BLE v2 transport on iOS and Android, using BLE discovery

@@ -832,18 +832,7 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
-    func testNearbyLanDoesNotAutoStartBeforeLocalNetworkGrant() async throws {
-        let attemptedKey = "nearbyLanPermissionPromptAttempted"
-        let grantedKey = "nearbyLanPermissionGranted"
-        let previousAttempted = UserDefaults.standard.object(forKey: attemptedKey)
-        let previousGranted = UserDefaults.standard.object(forKey: grantedKey)
-        defer {
-            restoreUserDefault(previousAttempted, forKey: attemptedKey)
-            restoreUserDefault(previousGranted, forKey: grantedKey)
-        }
-        UserDefaults.standard.removeObject(forKey: attemptedKey)
-        UserDefaults.standard.removeObject(forKey: grantedKey)
-
+    func testNearbyLanStartsFromPersistedFipsPreference() async throws {
         var preferences = makeLargeFixtureState().preferences
         preferences.nearbyLanEnabled = true
         let dataDir = FileManager.default.temporaryDirectory
@@ -857,22 +846,11 @@ final class IrisChatTests: XCTestCase {
             environment: [:]
         )
 
-        XCTAssertFalse(manager.nearbyIris.isLanVisible)
+        XCTAssertTrue(manager.nearbyIris.isLanVisible)
     }
 
     @MainActor
-    func testNearbyLanPreferenceSyncWaitsForLocalNetworkGrant() async throws {
-        let attemptedKey = "nearbyLanPermissionPromptAttempted"
-        let grantedKey = "nearbyLanPermissionGranted"
-        let previousAttempted = UserDefaults.standard.object(forKey: attemptedKey)
-        let previousGranted = UserDefaults.standard.object(forKey: grantedKey)
-        defer {
-            restoreUserDefault(previousAttempted, forKey: attemptedKey)
-            restoreUserDefault(previousGranted, forKey: grantedKey)
-        }
-        UserDefaults.standard.removeObject(forKey: attemptedKey)
-        UserDefaults.standard.removeObject(forKey: grantedKey)
-
+    func testNearbyLanPreferenceSyncStartsFipsTransport() async throws {
         let dataDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dataDir) }
@@ -890,7 +868,7 @@ final class IrisChatTests: XCTestCase {
         await Task.yield()
 
         XCTAssertTrue(manager.state.preferences.nearbyLanEnabled)
-        XCTAssertFalse(manager.nearbyIris.isLanVisible)
+        XCTAssertTrue(manager.nearbyIris.isLanVisible)
     }
 
     @MainActor

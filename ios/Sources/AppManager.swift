@@ -2535,6 +2535,11 @@ final class AppManager: ObservableObject {
             _ = createdAtSecs
             _ = eventJson
         case .nearbyPeersChanged(let snapshot, let bluetoothPeerIds, let lanPeerIds):
+#if os(iOS)
+            guard screenshotFixture == nil else {
+                return
+            }
+#endif
             nearbyIris.applyFipsPeerSnapshot(
                 snapshot,
                 bluetoothPeerIds: bluetoothPeerIds,
