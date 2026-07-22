@@ -277,6 +277,8 @@ run_ios_ui_test_shard() {
   local -a tests=()
   local -a command=()
   local test=""
+  local status=0
+  local shard_udid=""
 
   case "$worker_count:$shard" in
     1:1)
@@ -326,6 +328,21 @@ run_ios_ui_test_shard() {
     command+=("-only-testing:IrisChatUITests/${test}")
   done
   command+=(test-without-building)
+  "${command[@]}" || status=$?
+  if [[ "$status" -ne 133 ]]; then
+    return "$status"
+  fi
+
+  echo "Xcode runner crashed with SIGTRAP; resetting and retrying iOS UI shard ${shard}." >&2
+  if [[ "$destination" =~ id=([0-9A-Fa-f-]{36}) ]]; then
+    shard_udid="${BASH_REMATCH[1]}"
+  else
+    return "$status"
+  fi
+  xcrun simctl shutdown "$shard_udid" >/dev/null 2>&1 || true
+  xcrun simctl erase "$shard_udid"
+  xcrun simctl boot "$shard_udid"
+  xcrun simctl bootstatus "$shard_udid" -b
   "${command[@]}"
 }
 
