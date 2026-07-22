@@ -697,6 +697,25 @@ impl CliApp {
         }
     }
 
+    fn wait_for_current_chat(
+        &self,
+        expected_chat_id: &str,
+        timeout: Duration,
+    ) -> Result<CurrentChatSnapshot> {
+        let started = Instant::now();
+        while started.elapsed() < timeout {
+            let state = self.app.state();
+            fail_on_toast(&state)?;
+            if let Some(chat) = state.current_chat {
+                if chat.chat_id.eq_ignore_ascii_case(expected_chat_id) {
+                    return Ok(chat);
+                }
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        anyhow::bail!("Timed out opening chat {expected_chat_id}.")
+    }
+
     fn wait_for_restored_account(&self, timeout: Duration) -> Result<AppState> {
         let started = Instant::now();
         while started.elapsed() < timeout {
@@ -1129,24 +1148,26 @@ fn restore_account(cli: &CliApp, secret_key: &str) -> Result<Value> {
 }
 
 fn create_chat(cli: &CliApp, user_id: &str) -> Result<Value> {
+    let chat_id = owner_input_to_hex(user_id)?;
     cli.dispatch_and_wait(
         AppAction::CreateChat {
             peer_input: user_id.to_string(),
         },
         Duration::from_secs(3),
     )?;
-    let state = cli.app.state();
-    fail_on_toast(&state)?;
-    let chat = state.current_chat.context("No chat was opened.")?;
+    let chat = cli.wait_for_current_chat(&chat_id, Duration::from_secs(3))?;
     Ok(chat_json(&chat, usize::MAX))
 }
 
 fn open_chat(cli: &CliApp, chat: &str) -> Result<CurrentChatSnapshot> {
     let chat_id = chat_action_input(&cli.app.state(), chat);
-    cli.dispatch_and_wait(AppAction::OpenChat { chat_id }, Duration::from_secs(2))?;
-    let state = cli.app.state();
-    fail_on_toast(&state)?;
-    state.current_chat.context("No chat is open.")
+    cli.dispatch_and_wait(
+        AppAction::OpenChat {
+            chat_id: chat_id.clone(),
+        },
+        Duration::from_secs(2),
+    )?;
+    cli.wait_for_current_chat(&chat_id, Duration::from_secs(2))
 }
 
 fn send_message(
