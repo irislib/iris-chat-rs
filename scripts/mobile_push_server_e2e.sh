@@ -165,6 +165,10 @@ grant_ios_notification_permission() {
   }
 }
 
+ios_notifications_deliverable() {
+  grep -Eq 'notification_authorization=.*rawValue: [234]'
+}
+
 cleanup() {
   set +e
   run_ios clear_mobile_push_delivery_probe >/dev/null 2>&1
@@ -201,8 +205,15 @@ IOS_NPUB="$(printf '%s\n' "$IOS_IDENTITY" | status_value npub)"
 require_value "iOS user ID" "$IOS_NPUB"
 
 echo "Granting and verifying iOS notification permission"
-grant_ios_notification_permission >/dev/null
-run_ios report_notification_authorization >/dev/null
+IOS_AUTHORIZATION="$(run_ios report_notification_authorization)"
+if ! ios_notifications_deliverable <<<"$IOS_AUTHORIZATION"; then
+  grant_ios_notification_permission >/dev/null
+  IOS_AUTHORIZATION="$(run_ios report_notification_authorization)"
+fi
+ios_notifications_deliverable <<<"$IOS_AUTHORIZATION" || {
+  echo "iOS notifications are not authorized." >&2
+  exit 1
+}
 
 echo "Building and installing Android E2E packages"
 (

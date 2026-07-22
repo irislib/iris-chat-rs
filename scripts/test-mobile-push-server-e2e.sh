@@ -28,6 +28,10 @@ chmod +x "$TMP_DIR/run-emulators"
 IRIS_MOBILE_PUSH_E2E_SOURCE_ONLY=1 source "$ROOT/scripts/mobile_push_server_e2e.sh"
 grep -q -- '-collect-test-diagnostics never' "$ROOT/scripts/mobile_push_server_e2e.sh"
 grep -q -- '-maximum-test-execution-time-allowance 90' "$ROOT/scripts/mobile_push_server_e2e.sh"
+printf 'INSTRUMENTATION_STATUS: notification_authorization=UNAuthorizationStatus(rawValue: 2)\n' |
+  ios_notifications_deliverable
+! printf 'INSTRUMENTATION_STATUS: notification_authorization=UNAuthorizationStatus(rawValue: 1)\n' |
+  ios_notifications_deliverable
 ADB="$TMP_DIR/adb"
 ANDROID_EMULATOR_RUNNER="$TMP_DIR/run-emulators"
 
