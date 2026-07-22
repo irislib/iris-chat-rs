@@ -425,7 +425,7 @@ final class InteropHarnessTests: XCTestCase {
             let settings = await UNUserNotificationCenter.current().notificationSettings()
             let authorization = String(describing: settings.authorizationStatus)
             status("notification_authorization", authorization)
-            guard [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus) else {
+            guard [.authorized, .provisional].contains(settings.authorizationStatus) else {
                 throw HarnessError.unexpected(
                     "notification permission is not enabled: \(authorization)"
                 )
