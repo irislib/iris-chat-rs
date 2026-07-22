@@ -811,9 +811,6 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
         tapWelcomeAction(app, "welcomeRestoreAction")
 
         XCTAssertTrue(element(app, "restoreAccountScreen").waitForExistence(timeout: 10))
-#if os(iOS)
-        acceptOnboardingTermsIfNeeded(app)
-#endif
         XCTAssertFalse(element(app, "importKeyButton").exists)
         XCTAssertTrue(element(app, "importKeyField").waitForExistence(timeout: 10))
         typeText(validOwnerNsec, into: editableElement(app, "importKeyField"), app: app)
@@ -827,9 +824,6 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
         tapWelcomeAction(app, "welcomeRestoreAction")
 
         XCTAssertTrue(element(app, "restoreAccountScreen").waitForExistence(timeout: 10))
-#if os(iOS)
-        acceptOnboardingTermsIfNeeded(app)
-#endif
         XCTAssertTrue(element(app, "importKeyField").waitForExistence(timeout: 10))
         XCTAssertFalse(element(app, "importKeyButton").exists)
         typeText(invalidCompleteOwnerNsec, into: editableElement(app, "importKeyField"), app: app)

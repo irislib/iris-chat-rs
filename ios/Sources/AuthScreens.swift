@@ -198,10 +198,6 @@ struct RestoreAccountScreen: View {
         irisRequiresOnboardingTermsAcceptance()
     }
 
-    private var canUseRestoreActions: Bool {
-        !requiresTermsAcceptance || termsAccepted
-    }
-
     var body: some View {
         IrisScrollScreen {
             IrisSectionCard {
@@ -236,39 +232,20 @@ struct RestoreAccountScreen: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(IrisSecondaryButtonStyle())
-                .disabled(!canUseRestoreActions)
+                .disabled(requiresTermsAcceptance && !termsAccepted)
                 .accessibilityIdentifier("restoreLinkDeviceAction")
             }
-        }
-        .irisOnChange(of: termsAccepted) { _ in
-            submitRestoreIfReady(restoreSecret.text)
         }
     }
 
     private func updateSecret(_ value: String) {
         restoreSecret.text = value
-        submitRestoreIfReady(value)
-    }
-
-    private func submitRestoreIfReady(_ value: String) {
         let current = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard shouldAutoSubmitSecret(current: current) else { return }
-        submitRestore(current)
-    }
-
-    private func submitRestore(_ value: String) {
-        guard canUseRestoreActions else { return }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            manager.restoreSession(ownerNsec: trimmed)
-            return
-        }
         guard !manager.state.busy.restoringSession else { return }
-        guard lastSubmittedSecret != trimmed else {
-            return
-        }
-        lastSubmittedSecret = trimmed
-        manager.restoreSession(ownerNsec: trimmed)
+        guard lastSubmittedSecret != current else { return }
+        lastSubmittedSecret = current
+        manager.restoreSession(ownerNsec: current)
     }
 }
 
