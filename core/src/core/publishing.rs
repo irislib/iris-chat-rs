@@ -6,18 +6,6 @@ const PENDING_RELAY_DRAIN_BATCH_SIZE: usize = 16;
 const PENDING_RELAY_DRAIN_STALE_AFTER: Duration = RELAY_PUBLISH_ATTEMPT_TIMEOUT;
 const PENDING_RELAY_PUBLISH_IN_PROGRESS: &str = "publish attempt in progress";
 
-pub(super) fn send_nearby_published_event(update_tx: &Sender<AppUpdate>, event: &Event) {
-    let Ok(event_json) = serde_json::to_string(event) else {
-        return;
-    };
-    let _ = update_tx.send(AppUpdate::NearbyPublishedEvent {
-        event_id: event.id.to_string(),
-        kind: event.kind.as_u16() as u32,
-        created_at_secs: event.created_at.as_secs(),
-        event_json,
-    });
-}
-
 impl AppCore {
     pub(super) fn emit_nearby_published_event(&self, event: &Event) {
         self.publish_fips_nearby(event);

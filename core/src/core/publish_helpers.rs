@@ -7,6 +7,18 @@ const RELAY_PUBLISH_TIMEOUT: Duration = Duration::from_secs(RELAY_PUBLISH_TIMEOU
 pub(super) const RELAY_PUBLISH_ATTEMPT_TIMEOUT: Duration =
     Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS + (RELAY_PUBLISH_TIMEOUT_SECS * 2) + 5);
 
+pub(super) fn send_nearby_published_event(update_tx: &Sender<AppUpdate>, event: &Event) {
+    let Ok(event_json) = serde_json::to_string(event) else {
+        return;
+    };
+    let _ = update_tx.send(AppUpdate::NearbyPublishedEvent {
+        event_id: event.id.to_string(),
+        kind: event.kind.as_u16() as u32,
+        created_at_secs: event.created_at.as_secs(),
+        event_json,
+    });
+}
+
 pub(super) async fn publish_event_with_retry(
     client: &Client,
     relay_urls: &[RelayUrl],
