@@ -48,6 +48,8 @@ parallel_step_start "iOS cloneable simulator selection harness" \
   "${ROOT_DIR}/scripts/test-ios-cloneable-simulator-selection.sh"
 parallel_step_start "iOS harness retry contract" python3 "${ROOT_DIR}/scripts/test_ios_harness_retry_contract.py"
 parallel_step_start "mobile relay AVD selection harness" "${ROOT_DIR}/scripts/test-mobile-relay-common.sh"
+parallel_step_start "mobile push FCM selection harness" \
+  "${ROOT_DIR}/scripts/test-mobile-push-server-e2e.sh"
 
 run_step "Rust panic/unwrap lint" "${ROOT_DIR}/scripts/check-rust-panics" || lint_status=$?
 parallel_step_wait || static_status=$?

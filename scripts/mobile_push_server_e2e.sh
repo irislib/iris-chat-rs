@@ -11,6 +11,7 @@ ANDROID_TEST_PACKAGE="to.iris.chat.test"
 ANDROID_RUNNER="$ANDROID_TEST_PACKAGE/androidx.test.runner.AndroidJUnitRunner"
 ANDROID_CHAT_CLASS="to.iris.chat.RealRelayHarnessTest"
 ANDROID_PUSH_CLASS="to.iris.chat.push.FirebaseChatNotificationE2eTest"
+ANDROID_EMULATOR_RUNNER="${IRIS_ANDROID_EMULATOR_RUNNER:-$ROOT/scripts/run_android_emulators.sh}"
 RUN_ID="mobile-push-$(date +%s)"
 IOS_RUN_ID="$RUN_ID-ios"
 MESSAGE_IOS="server-apns-$RUN_ID"
@@ -42,12 +43,37 @@ resolve_android_serial() {
   fi
   local serial status
   while read -r serial status; do
-    if [[ "$status" == "device" ]] &&
-      "$ADB" -s "$serial" shell pm path com.google.android.gms 2>/dev/null | grep -q '^package:'; then
+    if [[ "$status" == "device" ]] && has_google_play_services "$serial"; then
       printf '%s\n' "$serial"
       return
     fi
   done < <("$ADB" devices | tail -n +2)
+}
+
+resolve_android_push_serial() {
+  if [[ -n "${IRIS_ANDROID_PUSH_E2E_SERIAL:-${ANDROID_SERIAL:-}}" ]]; then
+    resolve_android_serial
+    return
+  fi
+
+  local avd="${IRIS_ANDROID_PUSH_E2E_AVD:-Iris_Android_E2E_B}"
+  if [[ "$avd" != "off" ]]; then
+    local boot_output serial
+    boot_output="$("$ANDROID_EMULATOR_RUNNER" --headless "$avd")"
+    serial="$(awk -v avd="$avd" '$1 == avd { print $2; exit }' <<<"$boot_output")"
+    if [[ -n "$serial" ]] && has_google_play_services "$serial"; then
+      printf '%s\n' "$serial"
+      return
+    fi
+  fi
+
+  resolve_android_serial
+}
+
+has_google_play_services() {
+  local packages
+  packages="$("$ADB" -s "$1" shell pm path com.google.android.gms </dev/null 2>/dev/null || true)"
+  [[ "$packages" == *"package:"* ]]
 }
 
 status_value() {
@@ -141,21 +167,24 @@ cleanup() {
   run_ios disable_mobile_push_and_wait >/dev/null 2>&1
   run_android "$ANDROID_CHAT_CLASS" disable_mobile_push_and_wait >/dev/null 2>&1
 }
+
+if [[ "${IRIS_MOBILE_PUSH_E2E_SOURCE_ONLY:-0}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
 trap cleanup EXIT
 
 SDK="$(android_sdk)"
 require_value "Android SDK" "$SDK"
 ADB="$SDK/platform-tools/adb"
 IOS_UDID="$(resolve_ios_udid)"
-ANDROID_SERIAL_RESOLVED="$(resolve_android_serial)"
+ANDROID_SERIAL_RESOLVED="$(resolve_android_push_serial)"
 require_value "connected physical iPhone" "$IOS_UDID"
 require_value "connected FCM-capable Android device" "$ANDROID_SERIAL_RESOLVED"
 if xcrun simctl list devices 2>/dev/null | grep -q "$IOS_UDID"; then
   echo "The iOS notification E2E requires a physical iPhone, not a simulator." >&2
   exit 1
 fi
-if ! "$ADB" -s "$ANDROID_SERIAL_RESOLVED" shell pm path com.google.android.gms 2>/dev/null |
-  grep -q '^package:'; then
+if ! has_google_play_services "$ANDROID_SERIAL_RESOLVED"; then
   echo "The Android notification E2E requires Google Play services for FCM." >&2
   exit 1
 fi
