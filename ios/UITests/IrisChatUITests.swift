@@ -34,6 +34,27 @@ class IrisChatUITestCase: XCTestCase {
 
 final class IrisChatUITests: IrisChatUITestCase {
 
+    func testGrantNotificationPermissionForProductionPushE2E() throws {
+#if os(macOS)
+        throw XCTSkip("Production APNs permission setup is iOS-only")
+#else
+        let app = XCUIApplication()
+        app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = "production-push-permission"
+        app.launchEnvironment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] = "1"
+        app.launchEnvironment["IRIS_ENABLE_NOTIFICATIONS_FOR_AUTOMATION"] = "1"
+        app.launchEnvironment["IRIS_REQUEST_NOTIFICATION_PERMISSION_FOR_AUTOMATION"] = "1"
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let allowButton = springboard.buttons["Allow"]
+        if allowButton.waitForExistence(timeout: 15) {
+            allowButton.tap()
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        }
+#endif
+    }
+
     /// Regression: constructing CBCentralManager / CBPeripheralManager
     /// in the root view's onAppear was triggering the iOS Bluetooth
     /// permission alert before the user ever opened the Nearby modal.

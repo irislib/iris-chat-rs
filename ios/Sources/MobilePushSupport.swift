@@ -18,7 +18,13 @@ final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
 #if targetEnvironment(simulator)
         return true
 #else
-        UNUserNotificationCenter.current().delegate = self
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        if ProcessInfo.processInfo.environment["IRIS_REQUEST_NOTIFICATION_PERMISSION_FOR_AUTOMATION"] == "1" {
+            Task {
+                _ = try? await center.requestAuthorization(options: [.alert, .badge, .sound])
+            }
+        }
         return true
 #endif
     }
@@ -228,7 +234,9 @@ final class MobilePushRuntime {
 #if targetEnvironment(simulator)
         return nil
 #else
-        guard AppPaths.testRunId(environment: ProcessInfo.processInfo.environment) == nil else {
+        guard !AppPaths.notificationsDisabledForAutomation(
+            environment: ProcessInfo.processInfo.environment
+        ) else {
             return nil
         }
         let center = UNUserNotificationCenter.current()

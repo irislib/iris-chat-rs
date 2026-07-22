@@ -1,3 +1,10 @@
+# Iris Chat 2026.7.22
+
+- Restoring a profile with a valid secret key now continues automatically.
+- Messages no longer remain stuck while device details are restored; queued messages recover automatically.
+- Sent-message status now uses familiar checkmarks instead of a paper-plane icon.
+- Typing indicators and read receipts are off by default; notifications are on by default.
+
 # Iris Chat 2026.7.21
 
 - Linked devices reconnect more reliably after changing networks.

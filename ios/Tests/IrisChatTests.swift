@@ -1449,6 +1449,21 @@ final class IrisChatTests: XCTestCase {
 #endif
     }
 
+    func testNotificationAutomationRequiresExplicitOverride() {
+        XCTAssertTrue(AppPaths.notificationsDisabledForAutomation(environment: [
+            "IRIS_UI_TEST_RUN_ID": "ordinary-test",
+        ]))
+        XCTAssertFalse(AppPaths.notificationsDisabledForAutomation(environment: [
+            "IRIS_UI_TEST_RUN_ID": "push-e2e",
+            "IRIS_ENABLE_NOTIFICATIONS_FOR_AUTOMATION": "1",
+        ]))
+        XCTAssertTrue(AppPaths.notificationsDisabledForAutomation(environment: [
+            "IRIS_UI_TEST_RUN_ID": "push-e2e",
+            "IRIS_ENABLE_NOTIFICATIONS_FOR_AUTOMATION": "1",
+            "IRIS_DISABLE_NOTIFICATIONS": "1",
+        ]))
+    }
+
     func testFileAccountSecretStoreRoundTrip() throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }

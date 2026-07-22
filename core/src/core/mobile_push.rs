@@ -1004,6 +1004,7 @@ pub(crate) fn build_mobile_push_create_subscription_request(
         apns_topic.as_deref(),
         message_author_pubkeys,
         invite_response_pubkeys,
+        is_release,
     )?;
     build_mobile_push_subscription_request(
         owner_nsec,
@@ -1035,6 +1036,7 @@ pub(crate) fn build_mobile_push_update_subscription_request(
         apns_topic.as_deref(),
         message_author_pubkeys,
         invite_response_pubkeys,
+        is_release,
     )?;
     build_mobile_push_subscription_request(
         owner_nsec,
@@ -1104,6 +1106,7 @@ fn mobile_push_subscription_body_json(
     apns_topic: Option<&str>,
     message_author_pubkeys: Vec<String>,
     invite_response_pubkeys: Vec<String>,
+    is_release: bool,
 ) -> Option<String> {
     let platform = normalize_platform_key(platform_key);
     let token = push_token.trim();
@@ -1144,6 +1147,17 @@ fn mobile_push_subscription_body_json(
                 object.insert(
                     "apns_topic".to_string(),
                     serde_json::Value::String(topic.to_string()),
+                );
+                object.insert(
+                    "apns_environment".to_string(),
+                    serde_json::Value::String(
+                        if is_release {
+                            "production"
+                        } else {
+                            "development"
+                        }
+                        .to_string(),
+                    ),
                 );
             }
         }

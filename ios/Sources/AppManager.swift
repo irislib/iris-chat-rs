@@ -464,7 +464,11 @@ enum AppPaths {
     }
 
     static func notificationsDisabledForAutomation(environment: [String: String]) -> Bool {
-        environment["IRIS_DISABLE_NOTIFICATIONS"] == "1" || testRunId(environment: environment) != nil
+        if environment["IRIS_DISABLE_NOTIFICATIONS"] == "1" {
+            return true
+        }
+        return testRunId(environment: environment) != nil &&
+            environment["IRIS_ENABLE_NOTIFICATIONS_FOR_AUTOMATION"] != "1"
     }
 
     static func keychainService(environment: [String: String]) -> String {
@@ -888,7 +892,6 @@ final class AppManager: ObservableObject {
     )
     private var iosSideEffectGate = IosStateSideEffectGate()
     private let isUiTestRun: Bool
-    private let shouldApplyIosFreshInstallNotificationDefaults: Bool
 #endif
     private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
@@ -959,12 +962,6 @@ final class AppManager: ObservableObject {
         self.screenshotFixtureReferenceDate = Date()
         self.screenshotFixtureShowsNearbyTransportPeers =
             environment["IRIS_UI_TEST_NEARBY_TAPPABLE_FIRST_PEER_HEX"] != nil
-        self.shouldApplyIosFreshInstallNotificationDefaults =
-            environment["IRIS_IOS_ENABLE_NOTIFICATION_DEFAULTS_IN_TESTS"] == "1" ||
-            (
-                AppPaths.testRunId(environment: environment) == nil &&
-                AppPaths.testRunId(environment: ProcessInfo.processInfo.environment) == nil
-            )
 #endif
         try? fileManager.createDirectory(at: resolvedDataDir, withIntermediateDirectories: true)
         AppPaths.prepareDataDirForBackgroundNotificationReads(resolvedDataDir, fileManager: fileManager)
@@ -2088,9 +2085,6 @@ final class AppManager: ObservableObject {
         guard !trimmed.isEmpty else {
             return
         }
-#if os(iOS)
-        applyIosFreshInstallNotificationDefaultsIfNeeded()
-#endif
         dispatchToRust(.createAccount(name: trimmed))
     }
 
@@ -2124,16 +2118,10 @@ final class AppManager: ObservableObject {
             showToast("Invalid key.")
             return
         }
-#if os(iOS)
-        applyIosFreshInstallNotificationDefaultsIfNeeded()
-#endif
         dispatchToRust(.restoreSession(ownerNsec: trimmed))
     }
 
     func startLinkedDevice(ownerInput: String) {
-#if os(iOS)
-        applyIosFreshInstallNotificationDefaultsIfNeeded()
-#endif
         dispatchToRust(.startLinkedDevice(ownerInput: ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)))
     }
 
@@ -2455,9 +2443,6 @@ final class AppManager: ObservableObject {
         nextRust.listenForUpdates(reconciler: reconciler)
         applyFullState(nextRust.state(), force: true)
         automaticRevocationLogoutInFlight = false
-#if os(iOS)
-        applyIosFreshInstallNotificationDefaultsIfNeeded()
-#endif
     }
 
     private func syncCurrentDeviceLabelsIfNeeded(state: AppState) {
@@ -2737,9 +2722,6 @@ final class AppManager: ObservableObject {
             storedAccountBundle = nil
             bootstrapInFlight = false
             appendClientDebugLog(category: "session.restore", detail: "stored_bundle_loaded=false")
-#if os(iOS)
-            applyIosFreshInstallNotificationDefaultsIfNeeded()
-#endif
             return
         }
         appendClientDebugLog(
@@ -2764,19 +2746,6 @@ final class AppManager: ObservableObject {
             appendClientDebugLog(category: "session.restore", detail: "dispatch=true")
         }
     }
-
-#if os(iOS)
-    private func applyIosFreshInstallNotificationDefaultsIfNeeded() {
-        guard shouldApplyIosFreshInstallNotificationDefaults else { return }
-        guard state.account == nil else { return }
-        if state.preferences.desktopNotificationsEnabled {
-            dispatchToRust(.setDesktopNotificationsEnabled(enabled: false), showsToastOnFailure: false)
-        }
-        if state.preferences.inviteAcceptanceNotificationsEnabled {
-            dispatchToRust(.setInviteAcceptanceNotificationsEnabled(enabled: false), showsToastOnFailure: false)
-        }
-    }
-#endif
 
     private func settleBootstrapIfNeeded(with nextState: AppState) {
         guard persistedRestoreInFlight else {

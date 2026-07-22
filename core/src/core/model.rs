@@ -388,9 +388,9 @@ pub(super) struct PersistedState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PersistedPreferences {
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub(super) send_typing_indicators: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub(super) send_read_receipts: bool,
     #[serde(default = "default_true")]
     pub(super) desktop_notifications_enabled: bool,

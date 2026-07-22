@@ -35,7 +35,7 @@ Options:
   --macos-vm-e2e       Include macOS VM public-relay prerelease E2E.
   --on-device          Require Android + iPhone + Mac LAN visibility.
   --lan-available      Run LAN visibility if at least two participants are available.
-  --notifications      Include Android notification decrypt / FCM checks.
+  --notifications      Require production-server APNs + FCM delivery on physical devices.
   --no-native-contract Skip Android native contract UI lane.
   --skip-fast          Reuse a fast tier that already passed in this invocation.
   --idle-cpu           Run available platform idle CPU gates.
@@ -66,6 +66,7 @@ while [[ $# -gt 0 ]]; do
       RUN_INTEROP=1
       RUN_PRODUCTION_CLI=1
       RUN_APP_STORE_REVIEW=1
+      RUN_NOTIFICATIONS=1
       if [[ "${IRIS_TEST_GATE_IDLE_CPU:-1}" != "0" ]]; then
         RUN_IDLE_CPU=1
       fi
@@ -245,9 +246,8 @@ run_exclusive_device_checks() {
   fi
 
   if [[ "${RUN_NOTIFICATIONS}" == "1" ]]; then
-    run_step "notification decrypt e2e" "${ROOT_DIR}/scripts/notification_decrypt_e2e.sh"
-    run_step "Android Firebase notification e2e" \
-      "${ROOT_DIR}/scripts/android_firebase_chat_notification_e2e.sh"
+    run_step "production mobile push server E2E (iOS APNs + Android FCM)" \
+      "${ROOT_DIR}/scripts/mobile_push_server_e2e.sh"
   fi
 }
 

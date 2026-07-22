@@ -332,6 +332,19 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
     }
 
     @Test
+    fun disable_mobile_push_and_wait() {
+        ensureLoggedIn()
+        appManager().dispatch(AppAction.SetDesktopNotificationsEnabled(false))
+        waitForState("mobile push disabled", timeoutMs = 15_000) {
+            appManager().state.value.preferences.takeIf { preferences ->
+                !preferences.desktopNotificationsEnabled
+            }
+        }
+        SystemClock.sleep(3_000)
+        reportStatus("mobile_push_disabled" to "true")
+    }
+
+    @Test
     fun start_linked_device_and_report_identity() {
         val ownerInput = requiredArg("owner_input")
         val account = ensureLinkedDeviceStarted(ownerInput)

@@ -635,6 +635,7 @@ fn delivered_receipt_waits_for_debounce_before_sending() {
     let device = Keys::generate();
     let peer = Keys::generate();
     let mut core = logged_in_test_core("delivered-debounce-flushes", &owner, &device);
+    core.preferences.send_read_receipts = true;
 
     let chat_id = peer.public_key().to_hex();
     core.handle_action(AppAction::SetMessageRequestAccepted {
@@ -673,6 +674,7 @@ fn seen_cancels_pending_delivered_receipt_before_debounce_flush() {
     let device = Keys::generate();
     let peer = Keys::generate();
     let mut core = logged_in_test_core("delivered-debounce-seen-cancels", &owner, &device);
+    core.preferences.send_read_receipts = true;
 
     let chat_id = peer.public_key().to_hex();
     core.handle_action(AppAction::SetMessageRequestAccepted {
@@ -795,6 +797,7 @@ fn accepting_message_request_sends_receipt_for_messages_already_seen() {
     let device = Keys::generate();
     let peer = Keys::generate();
     let mut core = logged_in_test_core("seen-request-accept", &owner, &device);
+    core.preferences.send_read_receipts = true;
     let chat_id = peer.public_key().to_hex();
     let message_id = "e".repeat(64);
     core.push_incoming_message_from(
@@ -2074,6 +2077,7 @@ fn group_delivered_receipt_is_queued_directly_to_message_author() {
         .clone();
 
     let mut bob = logged_in_test_core("group-delivered-author-only-bob", &bob_owner, &bob_device);
+    bob.preferences.send_read_receipts = true;
     let alice_app_keys = signed_app_keys_authorization_event(
         &alice_owner,
         alice_device.public_key(),
@@ -2155,6 +2159,7 @@ fn group_seen_receipt_sent_directly_to_author_updates_sender_copy() {
         .clone();
 
     let mut bob = logged_in_test_core("group-seen-author-bob", &bob_owner, &bob_device);
+    bob.preferences.send_read_receipts = true;
     bob.pending_relay_publishes.clear();
     let alice_app_keys = signed_app_keys_authorization_event(
         &alice_owner,

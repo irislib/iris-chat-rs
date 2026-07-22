@@ -7,6 +7,17 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 ## Unreleased
 
+## 2026.7.22
+
+- Restoring a profile with a valid secret key now continues without requiring
+  another tap or click.
+- Secret-key restores can send immediately while the linked-device roster is
+  recovered, and messages already waiting for that roster retry automatically.
+- Message delivery status uses familiar checkmarks instead of a paper-plane
+  icon, including when delivered and seen receipts are disabled.
+- Fresh installs default typing indicators and read receipts off while keeping
+  notifications enabled on every supported platform.
+
 ## 2026.7.21
 
 - Linked devices recover direct connections more reliably after changing

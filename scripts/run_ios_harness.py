@@ -41,6 +41,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-root", default="/tmp/ndr-ios-harness", help="Stable filesystem root for harness data")
     parser.add_argument("--reset", action="store_true", help="Clear harness state before starting")
     parser.add_argument("--use-app-storage", action="store_true", help="Run against the installed app's normal App Group storage/keychain service")
+    parser.add_argument(
+        "--enable-notifications",
+        action="store_true",
+        help="Explicitly enable APNs while running the physical-device notification E2E harness.",
+    )
+    parser.add_argument(
+        "--notification-server-url",
+        help="Notification server override injected into the test-hosted app.",
+    )
     parser.add_argument("--rebuild", action="store_true", help="Force build-for-testing before running")
     parser.add_argument(
         "--timeout-secs",
@@ -507,6 +516,10 @@ def build_env(args: argparse.Namespace) -> dict[str, str]:
         env_vars["IRIS_IOS_HARNESS_RESET"] = "1"
     if args.use_app_storage:
         env_vars["IRIS_IOS_HARNESS_USE_APP_STORAGE"] = "1"
+    if args.enable_notifications:
+        env_vars["IRIS_ENABLE_NOTIFICATIONS_FOR_AUTOMATION"] = "1"
+    if args.notification_server_url:
+        env_vars["IRIS_NOTIFICATION_SERVER_URL"] = args.notification_server_url
 
     for item in args.arg:
         if "=" not in item:

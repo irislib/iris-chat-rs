@@ -413,6 +413,23 @@ final class InteropHarnessTests: XCTestCase {
         case "report_mobile_push_server_snapshot":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             try await reportMobilePushServerSnapshot(manager: manager)
+        case "disable_mobile_push_and_wait":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            manager.dispatch(.setDesktopNotificationsEnabled(enabled: false))
+            _ = try await waitFor(label: "mobile push disabled", timeout: 15) {
+                manager.state.preferences.desktopNotificationsEnabled ? nil : true
+            }
+            try await Task.sleep(nanoseconds: 3_000_000_000)
+            status("mobile_push_disabled", "true")
+        case "report_notification_authorization":
+            let settings = await UNUserNotificationCenter.current().notificationSettings()
+            let authorization = String(describing: settings.authorizationStatus)
+            status("notification_authorization", authorization)
+            guard [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus) else {
+                throw HarnessError.unexpected(
+                    "notification permission is not enabled: \(authorization)"
+                )
+            }
         case "clear_delivered_notifications":
             UNUserNotificationCenter.current().removeAllDeliveredNotifications()
             status("cleared", "true")

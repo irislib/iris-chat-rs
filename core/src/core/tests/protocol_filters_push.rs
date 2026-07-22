@@ -2341,6 +2341,34 @@ fn mobile_push_subscription_body_includes_invite_response_filter() {
         body["filters"][1]["#p"][0].as_str(),
         Some(invite_response_pubkey.as_str())
     );
+    assert_eq!(body["apns_topic"].as_str(), Some("to.iris.chat"));
+    assert_eq!(body["apns_environment"].as_str(), Some("production"));
+
+    let development_request = build_mobile_push_create_subscription_request(
+        owner
+            .secret_key()
+            .to_bech32()
+            .unwrap_or_else(|_| owner.secret_key().to_secret_hex()),
+        "ios".to_string(),
+        "development-apns-token".to_string(),
+        Some("to.iris.chat".to_string()),
+        vec![author],
+        Vec::new(),
+        false,
+        Some("https://notifications.iris.to".to_string()),
+    )
+    .expect("development subscription request");
+    let development_body: serde_json::Value = serde_json::from_str(
+        development_request
+            .body_json
+            .as_deref()
+            .expect("development body json"),
+    )
+    .expect("development json");
+    assert_eq!(
+        development_body["apns_environment"].as_str(),
+        Some("development")
+    );
 }
 
 #[test]
@@ -2582,10 +2610,25 @@ fn core_with_divergent_login_and_protocol_invites_with_updates(
 }
 
 #[test]
-fn typing_indicators_default_to_enabled() {
-    assert!(PersistedPreferences::default().send_typing_indicators);
-    assert!(AppState::empty().preferences.send_typing_indicators);
-    assert!(serde_json::from_str::<PersistedPreferences>("{}").expect("decode preferences").send_typing_indicators);
+fn privacy_and_notification_defaults_match_fresh_installs() {
+    let persisted = PersistedPreferences::default();
+    let decoded = serde_json::from_str::<PersistedPreferences>("{}").expect("decode preferences");
+    let state = AppState::empty();
+
+    assert!(!persisted.send_typing_indicators);
+    assert!(!persisted.send_read_receipts);
+    assert!(persisted.desktop_notifications_enabled);
+    assert!(persisted.invite_acceptance_notifications_enabled);
+
+    assert!(!decoded.send_typing_indicators);
+    assert!(!decoded.send_read_receipts);
+    assert!(decoded.desktop_notifications_enabled);
+    assert!(decoded.invite_acceptance_notifications_enabled);
+
+    assert!(!state.preferences.send_typing_indicators);
+    assert!(!state.preferences.send_read_receipts);
+    assert!(state.preferences.desktop_notifications_enabled);
+    assert!(state.preferences.invite_acceptance_notifications_enabled);
 }
 
 #[test]

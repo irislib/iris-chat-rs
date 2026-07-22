@@ -95,8 +95,8 @@ pub struct PreferencesSnapshot {
 impl Default for PreferencesSnapshot {
     fn default() -> Self {
         Self {
-            send_typing_indicators: true,
-            send_read_receipts: true,
+            send_typing_indicators: false,
+            send_read_receipts: false,
             desktop_notifications_enabled: true,
             invite_acceptance_notifications_enabled: true,
             startup_at_login_enabled: true,

@@ -338,7 +338,7 @@ extension InteropHarnessTests {
             ownerNsec: ownerNsec,
             platformKey: "ios",
             isRelease: false,
-            serverUrlOverride: nil
+            serverUrlOverride: ProcessInfo.processInfo.environment["IRIS_NOTIFICATION_SERVER_URL"]
         )
         guard let request else {
             throw HarnessError.unexpected("could not build mobile push list request")

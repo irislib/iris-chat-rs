@@ -22,6 +22,7 @@ require_executable scripts/verify.sh
 require_executable scripts/verify_full_native.sh
 require_executable scripts/native_lab.py
 require_executable scripts/native_state_reset.sh
+require_executable scripts/mobile_push_server_e2e.sh
 require_contains justfile "verify-fast:"
 require_contains justfile "verify-full:"
 require_contains justfile "verify-health:"
@@ -31,6 +32,7 @@ require_contains scripts/verify_full_native.sh "--no-native-contract"
 require_contains scripts/test-all-platforms "--skip-rust"
 require_contains scripts/test-release-gate "--skip-fast"
 require_contains scripts/test-release-gate 'parallel_step_start "exclusive device and simulator checks"'
+require_contains scripts/test-release-gate 'mobile_push_server_e2e.sh'
 require_contains scripts/ios-build "build-for-testing"
 require_contains scripts/ios-build "test-without-building"
 require_contains scripts/ios-build "IrisChatFlowUITests"
