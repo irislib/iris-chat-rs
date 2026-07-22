@@ -59,10 +59,8 @@ struct RootView: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
             }
-            .irisOnChange(of: manager.state.account?.publicKeyHex) { accountId in
-                if accountId == nil {
-                    showingSettingsSheet = false
-                }
+            .irisOnChange(of: manager.state.account == nil && manager.activeScreen == .welcome) { loggedOut in
+                if loggedOut { showingSettingsSheet = false }
             }
             .onReceive(NotificationCenter.default.publisher(for: irisOpenSettingsNotification)) { note in
                 if let focus = note.userInfo?["focus"] as? SettingsFocusSection {
