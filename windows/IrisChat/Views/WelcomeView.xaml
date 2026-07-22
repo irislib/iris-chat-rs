@@ -34,13 +34,24 @@
             </Button>
 
             <Button Style="{StaticResource SecondaryButton}"
-                    Click="OnRestore">
+                    Click="OnRestore"
+                    Margin="0,0,0,12">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE192;"
                                FontFamily="Segoe MDL2 Assets"
                                FontSize="16"
                                Margin="0,0,8,0" />
                     <TextBlock Text="Restore profile" />
+                </StackPanel>
+            </Button>
+            <Button Style="{StaticResource SecondaryButton}"
+                    Click="OnLink">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE8EA;"
+                               FontFamily="Segoe MDL2 Assets"
+                               FontSize="16"
+                               Margin="0,0,8,0" />
+                    <TextBlock Text="Link this device" />
                 </StackPanel>
             </Button>
         </StackPanel>

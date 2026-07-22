@@ -45,6 +45,12 @@ pub fn render(manager: &Rc<AppManager>) -> gtk::Widget {
     });
     container.append(&restore);
 
+    let link = welcome_button("Link this device", "phone-symbolic", false);
+    dispatch_on_click(&link, manager, || AppAction::PushScreen {
+        screen: Screen::AddDevice,
+    });
+    container.append(&link);
+
     container.upcast()
 }
 

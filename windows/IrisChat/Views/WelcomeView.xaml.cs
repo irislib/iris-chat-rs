@@ -16,4 +16,7 @@ public partial class WelcomeView : UserControl
 
     private void OnRestore(object sender, RoutedEventArgs e) =>
         App.CurrentManager.Push(new Screen.RestoreAccount());
+
+    private void OnLink(object sender, RoutedEventArgs e) =>
+        App.CurrentManager.Push(new Screen.AddDevice());
 }

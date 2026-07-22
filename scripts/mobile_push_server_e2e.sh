@@ -153,6 +153,10 @@ grant_ios_notification_permission() {
     -xctestrun "$xctestrun"
     -destination "id=$IOS_UDID"
     -parallel-testing-enabled NO
+    -collect-test-diagnostics never
+    -test-timeouts-enabled YES
+    -default-test-execution-time-allowance 60
+    -maximum-test-execution-time-allowance 90
     -only-testing:IrisChatUITests/IrisChatUITests/testGrantNotificationPermissionForProductionPushE2E
   )
   "${command[@]}" || {
