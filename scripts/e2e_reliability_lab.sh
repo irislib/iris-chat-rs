@@ -321,6 +321,24 @@ if [[ "${NEEDS_IOS}" -eq 1 && ( -z "${IOS_SIM_A}" || -z "${IOS_SIM_B}" ) ]]; the
   exit 2
 fi
 
+REUSE_LOCAL_BUILDS=0
+RELIABILITY_RELAY_PORT=""
+RELIABILITY_IOS_RELAY_URL=""
+RELIABILITY_ANDROID_RELAY_URL=""
+if [[ "${RELAY}" == "local" && "${NEEDS_PHYSICAL}" -eq 0 ]]; then
+  REUSE_LOCAL_BUILDS=1
+  RELIABILITY_RELAY_PORT="${IRIS_E2E_RELIABILITY_RELAY_PORT:-$(python3 - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+)}"
+  RELIABILITY_IOS_RELAY_URL="ws://127.0.0.1:${RELIABILITY_RELAY_PORT}"
+  RELIABILITY_ANDROID_RELAY_URL="ws://10.0.2.2:${RELIABILITY_RELAY_PORT}"
+  export IRIS_E2E_RELAY_SET_ID="${IRIS_E2E_RELAY_SET_ID:-reliability-lab-local}"
+fi
+
 mkdir -p "${RUN_DIR}"
 LOG_FILE="${RUN_DIR}/reliability-lab.log"
 STEPS_FILE="${RUN_DIR}/steps.tsv"
@@ -337,6 +355,8 @@ iris_e2e_record_repo_trace "${ROOT_DIR}" "${RUN_DIR}" || true
   printf 'headless=%s\n' "${HEADLESS}"
   printf 'wipe_data=%s\n' "${WIPE_DATA}"
   printf 'skip_build=%s\n' "${SKIP_BUILD}"
+  printf 'reuse_local_builds=%s\n' "${REUSE_LOCAL_BUILDS}"
+  printf 'reliability_relay_port=%s\n' "${RELIABILITY_RELAY_PORT}"
 } >"${RUN_DIR}/manifest.env"
 
 NO_PHYSICAL_ENV=(env -u IRIS_ANDROID_E2E_SERIALS -u IRIS_ANDROID_E2E_SERIAL -u IRIS_ANDROID_PHONE_SERIAL)
@@ -346,6 +366,24 @@ COMMON_ANDROID_ARGS=()
 [[ "${WIPE_DATA}" -eq 1 ]] && COMMON_ANDROID_ARGS+=(--wipe-data)
 COMMON_SKIP_ARGS=()
 [[ "${SKIP_BUILD}" -eq 1 ]] && COMMON_SKIP_ARGS+=(--skip-build)
+COMMON_IOS_RELAY_ARGS=()
+COMMON_ANDROID_RELAY_ARGS=()
+COMMON_MIXED_RELAY_ARGS=()
+if [[ "${REUSE_LOCAL_BUILDS}" -eq 1 ]]; then
+  COMMON_IOS_RELAY_ARGS=(
+    --relay-port "${RELIABILITY_RELAY_PORT}"
+    --relay-url "${RELIABILITY_IOS_RELAY_URL}"
+  )
+  COMMON_ANDROID_RELAY_ARGS=(
+    --relay-port "${RELIABILITY_RELAY_PORT}"
+    --relay-url "${RELIABILITY_ANDROID_RELAY_URL}"
+  )
+  COMMON_MIXED_RELAY_ARGS=(
+    --relay-port "${RELIABILITY_RELAY_PORT}"
+    --relay-url "${RELIABILITY_IOS_RELAY_URL}"
+    --android-relay-url "${RELIABILITY_ANDROID_RELAY_URL}"
+  )
+fi
 
 run_step() {
   local name="$1"
@@ -378,6 +416,7 @@ run_smoke() {
       --artifact-dir "${RUN_DIR}/$(printf '%02d-f15-ios-secret-key-restore' "$((STEP_COUNT + 1))")" \
       --relay-mode "${RELAY}" \
       --simulators "${IOS_SIMULATORS}" \
+      ${COMMON_IOS_RELAY_ARGS[@]+"${COMMON_IOS_RELAY_ARGS[@]}"} \
       ${COMMON_SKIP_ARGS[@]+"${COMMON_SKIP_ARGS[@]}"}
 
   run_step "F06 Android offline restart recovery" \
@@ -386,7 +425,14 @@ run_smoke() {
       --artifact-dir "${RUN_DIR}/$(printf '%02d-f06-android-offline-restart' "$((STEP_COUNT + 1))")" \
       --avds "${avd_two}" \
       ${COMMON_ANDROID_ARGS[@]+"${COMMON_ANDROID_ARGS[@]}"} \
+      ${COMMON_ANDROID_RELAY_ARGS[@]+"${COMMON_ANDROID_RELAY_ARGS[@]}"} \
       ${COMMON_SKIP_ARGS[@]+"${COMMON_SKIP_ARGS[@]}"}
+
+  # The first two smoke flows populated the shared iOS and Android artifacts.
+  # Remaining local emulator flows use the same compiled relay configuration.
+  if [[ "${REUSE_LOCAL_BUILDS}" -eq 1 && "${SKIP_BUILD}" -eq 0 ]]; then
+    COMMON_SKIP_ARGS=(--skip-build)
+  fi
 
   run_step "F16 mixed cold group invite" \
     "${RUN_DIR}/$(printf '%02d-f16-mixed-cold-group-invite' "$((STEP_COUNT + 1))")" \
@@ -396,6 +442,7 @@ run_smoke() {
       --avd "${ANDROID_AVD_LIST[0]}" \
       --simulator "${IOS_SIM_A}" \
       ${COMMON_ANDROID_ARGS[@]+"${COMMON_ANDROID_ARGS[@]}"} \
+      ${COMMON_MIXED_RELAY_ARGS[@]+"${COMMON_MIXED_RELAY_ARGS[@]}"} \
       ${COMMON_SKIP_ARGS[@]+"${COMMON_SKIP_ARGS[@]}"}
 }
 
@@ -409,6 +456,7 @@ run_daily_extra() {
       --relay-mode "${RELAY}" \
       --avds "${avd_two}" \
       ${COMMON_ANDROID_ARGS[@]+"${COMMON_ANDROID_ARGS[@]}"} \
+      ${COMMON_ANDROID_RELAY_ARGS[@]+"${COMMON_ANDROID_RELAY_ARGS[@]}"} \
       ${COMMON_SKIP_ARGS[@]+"${COMMON_SKIP_ARGS[@]}"}
 
   run_step "F06 mixed offline restart recovery" \
@@ -418,6 +466,7 @@ run_daily_extra() {
       --avd "${ANDROID_AVD_LIST[0]}" \
       --simulator "${IOS_SIM_A}" \
       ${COMMON_ANDROID_ARGS[@]+"${COMMON_ANDROID_ARGS[@]}"} \
+      ${COMMON_MIXED_RELAY_ARGS[@]+"${COMMON_MIXED_RELAY_ARGS[@]}"} \
       ${COMMON_SKIP_ARGS[@]+"${COMMON_SKIP_ARGS[@]}"}
 
   run_step "F08 mixed group membership" \
@@ -428,6 +477,7 @@ run_daily_extra() {
       --avd "${ANDROID_AVD_LIST[0]}" \
       --simulators "${IOS_SIMULATORS}" \
       ${COMMON_ANDROID_ARGS[@]+"${COMMON_ANDROID_ARGS[@]}"} \
+      ${COMMON_MIXED_RELAY_ARGS[@]+"${COMMON_MIXED_RELAY_ARGS[@]}"} \
       ${COMMON_SKIP_ARGS[@]+"${COMMON_SKIP_ARGS[@]}"}
 
   run_step "F12 mixed app parity" \
@@ -438,6 +488,7 @@ run_daily_extra() {
       --avd "${ANDROID_AVD_LIST[0]}" \
       --simulator "${IOS_SIM_A}" \
       ${COMMON_ANDROID_ARGS[@]+"${COMMON_ANDROID_ARGS[@]}"} \
+      ${COMMON_MIXED_RELAY_ARGS[@]+"${COMMON_MIXED_RELAY_ARGS[@]}"} \
       ${COMMON_SKIP_ARGS[@]+"${COMMON_SKIP_ARGS[@]}"}
 
   run_step "F10 mixed linked-device revocation" \
@@ -449,6 +500,7 @@ run_daily_extra() {
       --avd "${ANDROID_AVD_LIST[0]}" \
       --simulators "${IOS_SIMULATORS}" \
       ${COMMON_ANDROID_ARGS[@]+"${COMMON_ANDROID_ARGS[@]}"} \
+      ${COMMON_MIXED_RELAY_ARGS[@]+"${COMMON_MIXED_RELAY_ARGS[@]}"} \
       ${COMMON_SKIP_ARGS[@]+"${COMMON_SKIP_ARGS[@]}"}
 
   run_step "F17 mixed multi-device mesh" \
@@ -460,6 +512,7 @@ run_daily_extra() {
       --avds "${avd_two}" \
       --simulators "${IOS_SIMULATORS}" \
       ${COMMON_ANDROID_ARGS[@]+"${COMMON_ANDROID_ARGS[@]}"} \
+      ${COMMON_MIXED_RELAY_ARGS[@]+"${COMMON_MIXED_RELAY_ARGS[@]}"} \
       ${COMMON_SKIP_ARGS[@]+"${COMMON_SKIP_ARGS[@]}"}
 }
 
@@ -474,6 +527,7 @@ run_soak() {
       --simulators "${IOS_SIMULATORS}" \
       --iterations "${SOAK_ITERATIONS}" \
       ${COMMON_ANDROID_ARGS[@]+"${COMMON_ANDROID_ARGS[@]}"} \
+      ${COMMON_MIXED_RELAY_ARGS[@]+"${COMMON_MIXED_RELAY_ARGS[@]}"} \
       ${COMMON_SKIP_ARGS[@]+"${COMMON_SKIP_ARGS[@]}"}
 }
 

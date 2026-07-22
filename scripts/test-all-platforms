@@ -3,10 +3,41 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/parallel_steps.sh"
 
-"$ROOT/scripts/test_rust.sh"
-"$ROOT/scripts/test-android"
-"$ROOT/scripts/test-ios"
-"$ROOT/scripts/test-macos"
-"$ROOT/scripts/test-linux"
-"$ROOT/scripts/test-windows"
+RUN_RUST=1
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skip-rust)
+      RUN_RUST=0
+      shift
+      ;;
+    -h|--help)
+      echo "usage: scripts/test-all-platforms [--skip-rust]"
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+run_apple_tests() {
+  # Both builds regenerate ios/Bindings, so they share one ordered lane.
+  "$ROOT/scripts/test-ios"
+  "$ROOT/scripts/test-macos"
+}
+
+if [[ "$RUN_RUST" == "1" ]]; then
+  "$ROOT/scripts/test_rust.sh"
+else
+  echo "Skipping Rust tests; caller supplied an already-passed fast tier."
+fi
+
+parallel_step_start "Android tests" "$ROOT/scripts/test-android"
+parallel_step_start "iOS and macOS tests" run_apple_tests
+parallel_step_start "Linux tests" "$ROOT/scripts/test-linux"
+parallel_step_start "Windows tests" "$ROOT/scripts/test-windows"
+parallel_step_wait

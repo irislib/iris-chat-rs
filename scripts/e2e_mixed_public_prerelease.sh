@@ -385,6 +385,7 @@ if [[ "${SKIP_BUILD}" -eq 0 ]]; then
       IRIS_DEFAULT_RELAYS="${RELAYS}" \
       IRIS_RELAY_SET_ID="${RELAY_SET_ID}" \
       IRIS_TRUSTED_TEST_BUILD=true \
+      IRIS_IOS_RUST_TARGETS=aarch64-apple-ios-sim \
       ./scripts/ios-build ios-xcframework
   ) 2>&1 | tee -a "${LOG_FILE}"
   (

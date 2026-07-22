@@ -297,6 +297,7 @@ log "Building iOS app against local message server"
   cd "${ROOT_DIR}"
   IRIS_DEFAULT_RELAYS="${RELAYS}" \
   IRIS_RELAY_SET_ID="${RELAY_SET_ID}" \
+  IRIS_IOS_RUST_TARGETS=aarch64-apple-ios-sim \
     ./scripts/ios-build ios-xcframework
   ./scripts/ios-build ios-xcodeproj
 )

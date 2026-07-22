@@ -5,6 +5,8 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/release_common.sh"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/parallel_steps.sh"
 load_release_env "$ROOT"
 resolve_shared_build_metadata "$ROOT"
 CORE_DIR="$ROOT/core"
@@ -208,8 +210,36 @@ default_ios_destination() {
   "$ROOT/scripts/ios-simulator-destination"
 }
 
+IOS_TEST_SHARD_UDIDS=()
+
+cleanup_ios_test_shards() {
+  local index=0
+  local shard_count=0
+  local udid=""
+  set +u
+  shard_count="${#IOS_TEST_SHARD_UDIDS[@]}"
+  set -u
+  for ((index = 0; index < shard_count; index++)); do
+    udid="${IOS_TEST_SHARD_UDIDS[$index]}"
+    [[ -n "$udid" ]] || continue
+    xcrun simctl delete "$udid" >/dev/null 2>&1 || true
+  done
+  IOS_TEST_SHARD_UDIDS=()
+}
+
+ios_build_on_exit() {
+  local status=$?
+  trap - EXIT
+  cleanup_ios_test_shards
+  parallel_steps_abort
+  exit "$status"
+}
+
+trap ios_build_on_exit EXIT
+
 run_ios_build_sim() {
   local destination="${IRIS_IOS_SIM_DESTINATION:-$(default_ios_destination)}"
+  TARGETS="${IRIS_IOS_SIM_RUST_TARGETS:-aarch64-apple-ios-sim}"
   run_ios_xcframework
   run_ios_xcodeproj
   xcodebuild \
@@ -219,15 +249,131 @@ run_ios_build_sim() {
     build
 }
 
+create_ios_test_shards() {
+  local source_udid="$1"
+  local worker_count="$2"
+  local index clone_udid clone_name
+
+  IOS_TEST_SHARD_UDIDS=()
+  xcrun simctl shutdown "$source_udid" >/dev/null 2>&1 || true
+  for ((index = 1; index <= worker_count; index++)); do
+    clone_name="Iris test shard $$-${RANDOM}-${index}"
+    clone_udid="$(xcrun simctl clone "$source_udid" "$clone_name")"
+    if [[ ! "$clone_udid" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
+      echo "Failed to clone iOS test simulator for shard ${index}." >&2
+      cleanup_ios_test_shards
+      return 1
+    fi
+    IOS_TEST_SHARD_UDIDS+=("$clone_udid")
+    xcrun simctl boot "$clone_udid"
+    xcrun simctl bootstatus "$clone_udid" -b
+  done
+}
+
+run_ios_ui_test_shard() {
+  local shard="$1"
+  local destination="$2"
+  local worker_count="$3"
+  local -a tests=()
+  local -a command=()
+  local test=""
+
+  case "$worker_count:$shard" in
+    1:1)
+      tests=(IrisChatUITests)
+      ;;
+    2:1)
+      tests=(IrisChatUITests IrisChatTimelineUITests)
+      ;;
+    2:2)
+      tests=(IrisChatComposerUITests IrisChatFlowUITests ScreenshotTests AppStoreReviewUITests FipsBlePhysicalUITests)
+      ;;
+    3:1)
+      tests=(IrisChatUITests ScreenshotTests AppStoreReviewUITests FipsBlePhysicalUITests)
+      ;;
+    3:2)
+      tests=(IrisChatComposerUITests IrisChatFlowUITests)
+      ;;
+    3:3)
+      tests=(IrisChatTimelineUITests)
+      ;;
+    4:1)
+      tests=(IrisChatUITests)
+      ;;
+    4:2)
+      tests=(IrisChatComposerUITests)
+      ;;
+    4:3)
+      tests=(IrisChatTimelineUITests)
+      ;;
+    4:4)
+      tests=(IrisChatFlowUITests ScreenshotTests AppStoreReviewUITests FipsBlePhysicalUITests)
+      ;;
+    *)
+      echo "Unsupported iOS test shard ${shard}/${worker_count}." >&2
+      return 2
+      ;;
+  esac
+
+  command=(
+    xcodebuild
+    -project "$IOS_DIR/IrisChat.xcodeproj"
+    -scheme IrisChat
+    -destination "$destination"
+    -parallel-testing-enabled NO
+  )
+  for test in "${tests[@]}"; do
+    command+=("-only-testing:IrisChatUITests/${test}")
+  done
+  command+=(test-without-building)
+  "${command[@]}"
+}
+
 run_ios_test() {
-  local destination="${IRIS_IOS_SIM_DESTINATION:-$(default_ios_destination)}"
+  local parallel_workers="${IRIS_IOS_TEST_PARALLEL_WORKERS:-4}"
+  if [[ ! "$parallel_workers" =~ ^[1-4]$ ]]; then
+    echo "IRIS_IOS_TEST_PARALLEL_WORKERS must be an integer from 1 to 4." >&2
+    exit 2
+  fi
+  local source_destination="${IRIS_IOS_SIM_DESTINATION:-$(IRIS_IOS_REQUIRE_CLONEABLE=1 default_ios_destination)}"
+  local source_udid=""
+  if [[ "$source_destination" =~ id=([0-9A-Fa-f-]{36}) ]]; then
+    source_udid="${BASH_REMATCH[1]}"
+  else
+    echo "iOS tests require an explicit simulator id destination, got: ${source_destination}" >&2
+    exit 2
+  fi
+  TARGETS="${IRIS_IOS_TEST_RUST_TARGETS:-aarch64-apple-ios-sim}"
   run_ios_xcframework
   run_ios_xcodeproj
+
   xcodebuild \
     -project "$IOS_DIR/IrisChat.xcodeproj" \
     -scheme IrisChat \
-    -destination "$destination" \
-    test
+    -destination "$source_destination" \
+    -parallel-testing-enabled NO \
+    build-for-testing
+
+  xcodebuild \
+    -project "$IOS_DIR/IrisChat.xcodeproj" \
+    -scheme IrisChat \
+    -destination "$source_destination" \
+    -parallel-testing-enabled NO \
+    -only-testing:IrisChatTests \
+    test-without-building
+
+  create_ios_test_shards "$source_udid" "$parallel_workers"
+  local index destination
+  for ((index = 1; index <= parallel_workers; index++)); do
+    destination="platform=iOS Simulator,id=${IOS_TEST_SHARD_UDIDS[$((index - 1))]}"
+    parallel_step_start "iOS UI test shard ${index}/${parallel_workers}" \
+      run_ios_ui_test_shard "$index" "$destination" "$parallel_workers"
+  done
+
+  local shard_status=0
+  parallel_step_wait || shard_status=$?
+  cleanup_ios_test_shards
+  return "$shard_status"
 }
 
 case "${1:-}" in

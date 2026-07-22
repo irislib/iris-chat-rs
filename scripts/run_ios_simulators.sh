@@ -132,6 +132,44 @@ for device in data.get("devices", {}).get(runtime_id, []):
 ' "${RUNTIME_ID}" "${simulator_name}"
 }
 
+cleanup_clone_probe() {
+  local probe_name="$1"
+  local probe_udid=""
+  while IFS= read -r probe_udid; do
+    [[ -n "${probe_udid}" ]] || continue
+    xcrun simctl delete "${probe_udid}" >/dev/null 2>&1 || true
+  done < <(find_device_udids "${probe_name}")
+}
+
+device_is_cloneable() {
+  local udid="$1"
+  if [[ "${IRIS_IOS_REQUIRE_CLONEABLE:-0}" != "1" ]]; then
+    return 0
+  fi
+
+  local probe_name="Iris clone probe ${udid:0:8} $$-${RANDOM}"
+  local clone_output=""
+  local clone_udid=""
+  local clone_status=0
+
+  xcrun simctl shutdown "${udid}" >/dev/null 2>&1 || true
+  if clone_output="$(xcrun simctl clone "${udid}" "${probe_name}" 2>&1)"; then
+    clone_status=0
+  else
+    clone_status=$?
+  fi
+  clone_udid="$(printf '%s\n' "${clone_output}" | tail -n 1)"
+
+  if [[ "${clone_status}" -eq 0 && "${clone_udid}" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
+    xcrun simctl delete "${clone_udid}" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  cleanup_clone_probe "${probe_name}"
+  printf '%s\n' "${clone_output}" >&2
+  return 1
+}
+
 shutdown_stale_ios_simulators() {
   if [[ "${IRIS_E2E_CLOSE_STALE_IOS_SIMS:-1}" == "0" ]]; then
     return 0
@@ -254,6 +292,10 @@ for simulator_name in "${SIMULATORS[@]}"; do
   udid=""
   while IFS= read -r candidate_udid; do
     [[ -n "${candidate_udid}" ]] || continue
+    if ! device_is_cloneable "${candidate_udid}"; then
+      echo "Skipping iOS simulator ${candidate_udid}: Xcode cannot clone it for parallel tests." >&2
+      continue
+    fi
     if boot_device "${candidate_udid}"; then
       udid="${candidate_udid}"
       break
@@ -270,6 +312,10 @@ for simulator_name in "${SIMULATORS[@]}"; do
   if [[ -z "${udid}" ]]; then
     udid="$(xcrun simctl create "${simulator_name}" "${DEVICE_TYPE_ID}" "${RUNTIME_ID}")"
     echo "Created iOS simulator ${simulator_name} (${udid})" >&2
+    if ! device_is_cloneable "${udid}"; then
+      echo "New iOS simulator ${udid} cannot be cloned for parallel tests." >&2
+      exit 1
+    fi
     if ! boot_device "${udid}"; then
       echo "Retrying first boot for new iOS simulator ${udid}" >&2
       sleep 1

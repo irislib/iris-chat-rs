@@ -3,7 +3,7 @@ import XCTest
 import AppKit
 #endif
 
-extension IrisChatUITests {
+extension IrisChatUITestCase {
     func element(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
     }

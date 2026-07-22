@@ -56,6 +56,8 @@ class Scenario(MobileScenarioDeviceMixin, MobileScenarioHarnessMixin):
         relay.setdefault("set_id", f"local-{self.name}")
         relay.setdefault("bind_host", "0.0.0.0")
         relay.setdefault("host_interface", "en0")
+        if shared_set_id := os.environ.get("IRIS_E2E_RELAY_SET_ID"):
+            relay["set_id"] = shared_set_id
         return relay
 
     def uses_local_relay(self) -> bool:

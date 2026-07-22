@@ -28,9 +28,15 @@ if [[ "${IRIS_NATIVE_LAB_RESET:-0}" == "1" ]]; then
     --test-bundle-id "${IRIS_CHAT_ANDROID_TEST_PACKAGE:-to.iris.chat.test}"
 fi
 
-"$ROOT/scripts/test-all-platforms"
+platform_args=()
+if [[ "${IRIS_VERIFY_FAST_TIER_PASSED:-0}" == "1" ]]; then
+  platform_args+=(--skip-rust)
+fi
+"$ROOT/scripts/test-all-platforms" "${platform_args[@]}"
 
-gate_args=(--full --on-device --skip-fast)
+# test-all-platforms just ran every Android connected test, including the
+# contract/smoke subset, so do not immediately run that subset a second time.
+gate_args=(--full --on-device --skip-fast --no-native-contract)
 if [[ "${IRIS_VERIFY_FULL_RELIABILITY:-1}" == "1" ]]; then
   gate_args+=(--reliability-lab)
 fi

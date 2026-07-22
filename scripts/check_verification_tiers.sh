@@ -27,7 +27,13 @@ require_contains justfile "verify-full:"
 require_contains justfile "verify-health:"
 require_contains scripts/verify.sh 'cargo clippy --manifest-path core/Cargo.toml --all-targets -- -D warnings'
 require_contains scripts/verify_full_native.sh "--on-device"
+require_contains scripts/verify_full_native.sh "--no-native-contract"
+require_contains scripts/test-all-platforms "--skip-rust"
 require_contains scripts/test-release-gate "--skip-fast"
+require_contains scripts/test-release-gate 'parallel_step_start "exclusive device and simulator checks"'
+require_contains scripts/ios-build "build-for-testing"
+require_contains scripts/ios-build "test-without-building"
+require_contains scripts/ios-build "IrisChatFlowUITests"
 
 bash -n \
   "$ROOT/scripts/verify.sh" \

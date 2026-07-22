@@ -27,6 +27,18 @@ of one core. Results are stored under `artifacts/idle-cpu/`. Set
 `IRIS_TEST_GATE_IDLE_CPU=0` only when intentionally excluding this release
 criterion.
 
+The native platform matrix runs Android, the Apple lane, Linux, and Windows in
+parallel. iOS and macOS remain ordered within one lane because both regenerate
+the shared Swift bindings. When the fast tier passed in the same full
+invocation, the matrix reuses its Rust result and the release gate does not
+repeat Android contract tests already covered by the full connected suite.
+
+The iOS gate builds once, runs unit tests once, then runs four balanced UI-test
+shards on temporary simulator clones that are booted before the tests start.
+This avoids CoreSimulator's concurrent-clone startup race. Set
+`IRIS_IOS_TEST_PARALLEL_WORKERS=1` through `4` to tune the shard count for the
+host; temporary clones are deleted after the run.
+
 Configure `IRIS_WINDOWS_SSH_HOST` explicitly. Local allocations use:
 
 - `IRIS_CHAT_LAB_IOS_SIMULATOR`

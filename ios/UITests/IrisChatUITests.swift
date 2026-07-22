@@ -1,9 +1,38 @@
 import XCTest
 
-final class IrisChatUITests: XCTestCase {
-    private let validPeerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
-    private let validOwnerNsec = "nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw"
-    private let invalidCompleteOwnerNsec = "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+class IrisChatUITestCase: XCTestCase {
+    let validPeerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
+    let validOwnerNsec = "nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw"
+    let invalidCompleteOwnerNsec = "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+
+    func launchNearbyFixtureApp(firstPeerOwnerHex: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
+        app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = "nearby-tap-\(UUID().uuidString)"
+        app.launchEnvironment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] = "1"
+        app.launchEnvironment["IRIS_DISABLE_NOTIFICATIONS"] = "1"
+        app.launchEnvironment["IRIS_UI_TEST_SCREENSHOT_FIXTURE"] = "1"
+        app.launchEnvironment["IRIS_UI_TEST_NEARBY_TAPPABLE_FIRST_PEER_HEX"] = firstPeerOwnerHex
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
+
+        // Mirrors ScreenshotTests.createAccount(in:): no keyboard-focus
+        // assertion and no inner waitForChatList — fixture mode triggers
+        // a longer round-trip than the regular create flow, so we wait
+        // for the chat list back in the caller with a generous timeout.
+        submitWelcomeName(app, name: "Alex Rivera", assertFocus: false)
+        return app
+    }
+
+    func openChatWithPeer(_ app: XCUIApplication) {
+        tapNewChat(app)
+        XCTAssertTrue(element(app, "newChatPeerInput").waitForExistence(timeout: 10))
+        typeText(validPeerNpub, into: editableElement(app, "newChatPeerInput"), app: app)
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 15))
+    }
+}
+
+final class IrisChatUITests: IrisChatUITestCase {
 
     /// Regression: constructing CBCentralManager / CBPeripheralManager
     /// in the root view's onAppear was triggering the iOS Bluetooth
@@ -271,6 +300,10 @@ final class IrisChatUITests: XCTestCase {
 #endif
     }
 
+}
+
+final class IrisChatComposerUITests: IrisChatUITestCase {
+
     func testComposerRestoresDraftWhenReopeningChat() throws {
 #if os(macOS)
         throw XCTSkip("Covered by the shared draft persistence unit tests on macOS")
@@ -463,6 +496,10 @@ final class IrisChatUITests: XCTestCase {
             "chat opened without scrolling to the latest message — the jump-to-bottom button is visible"
         )
     }
+
+}
+
+final class IrisChatTimelineUITests: IrisChatUITestCase {
 
     func testDaySeparatorHandoffKeepsYesterdayUntilTodayHeaderReachesTop() throws {
 #if os(macOS)
@@ -664,6 +701,10 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "groupDetailsAddMembersButton").waitForExistence(timeout: 5))
     }
 
+}
+
+final class IrisChatFlowUITests: IrisChatUITestCase {
+
     func testCreateSelfOnlyGroup() {
         let app = launchCleanApp()
 
@@ -762,32 +803,6 @@ final class IrisChatUITests: XCTestCase {
         )
         assertNoDispatchFailureToast(app)
 #endif
-    }
-
-    private func launchNearbyFixtureApp(firstPeerOwnerHex: String) -> XCUIApplication {
-        let app = XCUIApplication()
-        app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
-        app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = "nearby-tap-\(UUID().uuidString)"
-        app.launchEnvironment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] = "1"
-        app.launchEnvironment["IRIS_DISABLE_NOTIFICATIONS"] = "1"
-        app.launchEnvironment["IRIS_UI_TEST_SCREENSHOT_FIXTURE"] = "1"
-        app.launchEnvironment["IRIS_UI_TEST_NEARBY_TAPPABLE_FIRST_PEER_HEX"] = firstPeerOwnerHex
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
-
-        // Mirrors ScreenshotTests.createAccount(in:): no keyboard-focus
-        // assertion and no inner waitForChatList — fixture mode triggers
-        // a longer round-trip than the regular create flow, so we wait
-        // for the chat list back in the caller with a generous timeout.
-        submitWelcomeName(app, name: "Alex Rivera", assertFocus: false)
-        return app
-    }
-
-    private func openChatWithPeer(_ app: XCUIApplication) {
-        tapNewChat(app)
-        XCTAssertTrue(element(app, "newChatPeerInput").waitForExistence(timeout: 10))
-        typeText(validPeerNpub, into: editableElement(app, "newChatPeerInput"), app: app)
-        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 15))
     }
 
     func testRestoreAccountOpensDedicatedScreenAndEntersChatList() {

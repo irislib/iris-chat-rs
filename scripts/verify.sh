@@ -79,6 +79,7 @@ case "${1:-}" in
   full)
     if [[ "${IRIS_VERIFY_SKIP_FAST:-0}" != "1" ]]; then
       run_fast
+      export IRIS_VERIFY_FAST_TIER_PASSED=1
     fi
     run_managed_full
     ;;

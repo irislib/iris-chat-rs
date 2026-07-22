@@ -8,7 +8,6 @@ source "${ROOT_DIR}/scripts/parallel_steps.sh"
 
 MODE="${IRIS_TEST_GATE_MODE:-local}"
 RUN_NATIVE_CONTRACT="${IRIS_TEST_GATE_NATIVE_CONTRACT:-1}"
-RUN_CORE_LAN="${IRIS_TEST_GATE_CORE_LAN:-1}"
 RUN_INTEROP="${IRIS_TEST_GATE_INTEROP:-0}"
 RUN_PRODUCTION_CLI="${IRIS_TEST_GATE_PRODUCTION_CLI:-0}"
 RUN_APP_STORE_REVIEW="${IRIS_TEST_GATE_APP_STORE_REVIEW:-0}"
@@ -36,7 +35,6 @@ Options:
   --macos-vm-e2e       Include macOS VM public-relay prerelease E2E.
   --on-device          Require Android + iPhone + Mac LAN visibility.
   --lan-available      Run LAN visibility if at least two participants are available.
-  --no-core-lan        Skip same-host core LAN visibility smoke.
   --notifications      Include Android notification decrypt / FCM checks.
   --no-native-contract Skip Android native contract UI lane.
   --skip-fast          Reuse a fast tier that already passed in this invocation.
@@ -50,7 +48,6 @@ Environment:
   IRIS_TEST_GATE_APP_STORE_REVIEW=1
   IRIS_TEST_GATE_RELIABILITY_LAB=1
   IRIS_TEST_GATE_MACOS_VM_E2E=1
-  IRIS_TEST_GATE_CORE_LAN=0
   IRIS_TEST_GATE_ONDEVICE=1
   IRIS_TEST_GATE_NOTIFICATIONS=1
   IRIS_TEST_GATE_LAN_AVAILABLE=1
@@ -108,10 +105,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --lan-available)
       RUN_LAN_AVAILABLE=1
-      shift
-      ;;
-    --no-core-lan)
-      RUN_CORE_LAN=0
       shift
       ;;
     --notifications)
@@ -213,6 +206,88 @@ run_core_package_check() {
   esac
 }
 
+run_exclusive_device_checks() {
+  if [[ "${RUN_NATIVE_CONTRACT}" == "1" ]]; then
+    run_step "Android native contract/UI tests" \
+      env IRIS_SKIP_FAST=1 "${ROOT_DIR}/scripts/test_native_contract.sh"
+  fi
+
+  if [[ "${RUN_LAN_AVAILABLE}" == "1" ]]; then
+    run_step "LAN nearby visibility where available" \
+      "${ROOT_DIR}/scripts/nearby_lan_visibility_matrix.sh" --allow-skip
+  fi
+
+  if [[ "${RUN_INTEROP}" == "1" ]]; then
+    run_step "interop confidence" "${ROOT_DIR}/scripts/test_interop_confidence.sh"
+  fi
+
+  if [[ "${RUN_APP_STORE_REVIEW}" == "1" ]]; then
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+      echo "iOS App Store review e2e requires macOS." >&2
+      return 1
+    fi
+    run_step "iOS App Store review block/report e2e" \
+      "${ROOT_DIR}/scripts/e2e_ios_app_store_review_block_report.sh"
+  fi
+
+  if [[ "${RUN_RELIABILITY_LAB}" == "1" ]]; then
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+      echo "Simulator/emulator reliability lab requires macOS for iOS simulators." >&2
+      return 1
+    fi
+    run_step "simulator/emulator reliability lab" \
+      "${ROOT_DIR}/scripts/e2e_reliability_lab.sh" --tier daily --tier soak --headless
+  fi
+
+  if [[ "${RUN_ONDEVICE}" == "1" ]]; then
+    run_step "on-device LAN visibility" \
+      "${ROOT_DIR}/scripts/nearby_lan_visibility_matrix.sh" --on-device
+  fi
+
+  if [[ "${RUN_NOTIFICATIONS}" == "1" ]]; then
+    run_step "notification decrypt e2e" "${ROOT_DIR}/scripts/notification_decrypt_e2e.sh"
+    run_step "Android Firebase notification e2e" \
+      "${ROOT_DIR}/scripts/android_firebase_chat_notification_e2e.sh"
+  fi
+}
+
+run_macos_vm_check() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "macOS VM prerelease E2E requires macOS." >&2
+    return 1
+  fi
+  "${ROOT_DIR}/scripts/e2e_macos_vm_prerelease.sh"
+}
+
+run_local_darwin_idle_cpu_checks() {
+  run_step "macOS logged-in direct/group idle CPU" \
+    "${ROOT_DIR}/scripts/idle-cpu-platform-gate.sh" --platform macos
+  run_step "iOS logged-in direct/group idle CPU" \
+    "${ROOT_DIR}/scripts/idle-cpu-platform-gate.sh" --platform ios
+  if command -v adb >/dev/null 2>&1 \
+    && { [[ -n "${IRIS_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}" ]] \
+      || adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { found = 1 } END { exit !found }'; }; then
+    run_step "Android logged-in direct/group idle CPU" \
+      "${ROOT_DIR}/scripts/idle-cpu-platform-gate.sh" --platform android
+  else
+    echo "Skipping Android idle CPU gate because no emulator is online and no physical device was explicitly authorized."
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    run_step "Linux logged-in direct/group idle CPU" \
+      "${ROOT_DIR}/scripts/linux-idle-cpu-gate-docker.sh"
+  else
+    echo "Skipping Linux idle CPU gate because Docker is unavailable."
+  fi
+}
+
+run_windows_idle_cpu_check() {
+  if windows_build_host_available; then
+    "${ROOT_DIR}/scripts/windows-build" windows-idle-cpu
+  else
+    echo "Skipping Windows idle CPU gate because the configured Windows host is unreachable."
+  fi
+}
+
 echo "iris chat release gate (${MODE})"
 
 parallel_step_start "release publish guard" "${ROOT_DIR}/scripts/test_release_publish_guard"
@@ -230,87 +305,29 @@ if [[ "$fast_status" -ne 0 || "$prereq_status" -ne 0 ]]; then
   exit 1
 fi
 
-if [[ "${RUN_CORE_LAN}" == "1" ]]; then
-  run_step "core LAN nearby smoke" "${ROOT_DIR}/scripts/nearby_lan_core_smoke.sh"
-fi
-
-if [[ "${RUN_NATIVE_CONTRACT}" == "1" ]]; then
-  run_step "Android native contract/UI tests" env IRIS_SKIP_FAST=1 "${ROOT_DIR}/scripts/test_native_contract.sh"
-fi
-
-run_step "Rust protocol crate package check" \
+# Package verification uses crate-local targets. The Android lane uses its
+# worktree-specific Cargo target, while Docker and VM checks are isolated.
+parallel_step_start "Rust protocol crate package check" \
   cargo package --manifest-path "${ROOT_DIR}/chat-protocol/Cargo.toml" --locked --allow-dirty
-
-run_step "Rust core crate package check" run_core_package_check
-
-if [[ "${RUN_LAN_AVAILABLE}" == "1" ]]; then
-  run_step "LAN nearby visibility where available" \
-    "${ROOT_DIR}/scripts/nearby_lan_visibility_matrix.sh" --allow-skip
-fi
-
-if [[ "${RUN_INTEROP}" == "1" ]]; then
-  run_step "interop confidence" "${ROOT_DIR}/scripts/test_interop_confidence.sh"
-fi
-
+parallel_step_start "Rust core crate package check" run_core_package_check
+parallel_step_start "exclusive device and simulator checks" run_exclusive_device_checks
 if [[ "${RUN_PRODUCTION_CLI}" == "1" ]]; then
-  run_step "production relay CLI Docker e2e" \
+  parallel_step_start "production relay CLI Docker e2e" \
     "${ROOT_DIR}/scripts/cli_production_relay_e2e_docker"
 fi
-
-if [[ "${RUN_APP_STORE_REVIEW}" == "1" ]]; then
-  if [[ "$(uname -s)" != "Darwin" ]]; then
-    echo "iOS App Store review e2e requires macOS." >&2
-    exit 1
-  fi
-  run_step "iOS App Store review block/report e2e" \
-    "${ROOT_DIR}/scripts/e2e_ios_app_store_review_block_report.sh"
-fi
-
-if [[ "${RUN_RELIABILITY_LAB}" == "1" ]]; then
-  if [[ "$(uname -s)" != "Darwin" ]]; then
-    echo "Simulator/emulator reliability lab requires macOS for iOS simulators." >&2
-    exit 1
-  fi
-  run_step "simulator/emulator reliability lab" \
-    "${ROOT_DIR}/scripts/e2e_reliability_lab.sh" --tier daily --tier soak --headless
-fi
-
 if [[ "${RUN_MACOS_VM_E2E}" == "1" ]]; then
-  if [[ "$(uname -s)" != "Darwin" ]]; then
-    echo "macOS VM prerelease E2E requires macOS." >&2
-    exit 1
-  fi
-  run_step "macOS VM prerelease E2E" \
-    "${ROOT_DIR}/scripts/e2e_macos_vm_prerelease.sh"
+  parallel_step_start "macOS VM prerelease E2E" run_macos_vm_check
 fi
+parallel_step_wait
 
 if [[ "$RUN_IDLE_CPU" == "1" ]]; then
   case "$(uname -s)" in
     Darwin)
-      run_step "macOS logged-in direct/group idle CPU" \
-        "${ROOT_DIR}/scripts/idle-cpu-platform-gate.sh" --platform macos
-      run_step "iOS logged-in direct/group idle CPU" \
-        "${ROOT_DIR}/scripts/idle-cpu-platform-gate.sh" --platform ios
-      if command -v adb >/dev/null 2>&1 \
-        && { [[ -n "${IRIS_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}" ]] \
-          || adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { found = 1 } END { exit !found }'; }; then
-        run_step "Android logged-in direct/group idle CPU" \
-          "${ROOT_DIR}/scripts/idle-cpu-platform-gate.sh" --platform android
-      else
-        echo "Skipping Android idle CPU gate because no emulator is online and no physical device was explicitly authorized."
-      fi
-      if command -v docker >/dev/null 2>&1; then
-        run_step "Linux logged-in direct/group idle CPU" \
-          "${ROOT_DIR}/scripts/linux-idle-cpu-gate-docker.sh"
-      else
-        echo "Skipping Linux idle CPU gate because Docker is unavailable."
-      fi
-      if windows_build_host_available; then
-        run_step "Windows logged-in direct/group idle CPU" \
-          "${ROOT_DIR}/scripts/windows-build" windows-idle-cpu
-      else
-        echo "Skipping Windows idle CPU gate because the configured Windows host is unreachable."
-      fi
+      # Windows samples on a separate host and can safely overlap the local
+      # macOS/iOS/Android/Linux sequence.
+      parallel_step_start "local platform idle CPU checks" run_local_darwin_idle_cpu_checks
+      parallel_step_start "Windows logged-in direct/group idle CPU" run_windows_idle_cpu_check
+      parallel_step_wait
       ;;
     Linux)
       run_step "Linux logged-in direct/group idle CPU" \
@@ -321,16 +338,6 @@ if [[ "$RUN_IDLE_CPU" == "1" ]]; then
       exit 1
       ;;
   esac
-fi
-
-if [[ "${RUN_ONDEVICE}" == "1" ]]; then
-  run_step "on-device LAN visibility" \
-    "${ROOT_DIR}/scripts/nearby_lan_visibility_matrix.sh" --on-device
-fi
-
-if [[ "${RUN_NOTIFICATIONS}" == "1" ]]; then
-  run_step "notification decrypt e2e" "${ROOT_DIR}/scripts/notification_decrypt_e2e.sh"
-  run_step "Android Firebase notification e2e" "${ROOT_DIR}/scripts/android_firebase_chat_notification_e2e.sh"
 fi
 
 echo
