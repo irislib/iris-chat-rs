@@ -40,7 +40,14 @@ resolve_android_serial() {
     printf '%s\n' "${IRIS_ANDROID_PUSH_E2E_SERIAL:-$ANDROID_SERIAL}"
     return
   fi
-  "$ADB" devices | awk 'NR > 1 && $2 == "device" { print $1; exit }'
+  local serial status
+  while read -r serial status; do
+    if [[ "$status" == "device" ]] &&
+      "$ADB" -s "$serial" shell pm path com.google.android.gms 2>/dev/null | grep -q '^package:'; then
+      printf '%s\n' "$serial"
+      return
+    fi
+  done < <("$ADB" devices | tail -n +2)
 }
 
 status_value() {
@@ -114,16 +121,23 @@ grant_ios_notification_permission() {
   xctestrun="$(find "$ROOT/ios/.build/harness-derived-data/Build/Products" \
     -maxdepth 2 -name '*.xctestrun' -path '*iphoneos*' -print | head -n 1)"
   require_value "physical-device xctestrun" "$xctestrun"
-  xcodebuild \
-    test-without-building \
-    -xctestrun "$xctestrun" \
-    -destination "id=$IOS_UDID" \
-    -parallel-testing-enabled NO \
+  local command=(
+    xcodebuild
+    test-without-building
+    -xctestrun "$xctestrun"
+    -destination "id=$IOS_UDID"
+    -parallel-testing-enabled NO
     -only-testing:IrisChatUITests/IrisChatUITests/testGrantNotificationPermissionForProductionPushE2E
+  )
+  "${command[@]}" || {
+    echo "Retrying transient iOS UI automation startup failure" >&2
+    "${command[@]}"
+  }
 }
 
 cleanup() {
   set +e
+  run_ios clear_mobile_push_delivery_probe >/dev/null 2>&1
   run_ios disable_mobile_push_and_wait >/dev/null 2>&1
   run_android "$ANDROID_CHAT_CLASS" disable_mobile_push_and_wait >/dev/null 2>&1
 }
@@ -135,9 +149,14 @@ ADB="$SDK/platform-tools/adb"
 IOS_UDID="$(resolve_ios_udid)"
 ANDROID_SERIAL_RESOLVED="$(resolve_android_serial)"
 require_value "connected physical iPhone" "$IOS_UDID"
-require_value "connected Android device" "$ANDROID_SERIAL_RESOLVED"
+require_value "connected FCM-capable Android device" "$ANDROID_SERIAL_RESOLVED"
 if xcrun simctl list devices 2>/dev/null | grep -q "$IOS_UDID"; then
   echo "The iOS notification E2E requires a physical iPhone, not a simulator." >&2
+  exit 1
+fi
+if ! "$ADB" -s "$ANDROID_SERIAL_RESOLVED" shell pm path com.google.android.gms 2>/dev/null |
+  grep -q '^package:'; then
+  echo "The Android notification E2E requires Google Play services for FCM." >&2
   exit 1
 fi
 
@@ -194,13 +213,31 @@ if ! printf '%s\n' "$IOS_SUBSCRIPTIONS" | grep -Eq 'subscriptions=.*apns=[1-9]';
   exit 1
 fi
 
+ANDROID_SUBSCRIPTIONS=""
+for _ in $(seq 1 12); do
+  ANDROID_SUBSCRIPTIONS="$(
+    run_android "$ANDROID_CHAT_CLASS" report_mobile_push_server_snapshot 2>/dev/null || true
+  )"
+  if printf '%s\n' "$ANDROID_SUBSCRIPTIONS" | grep -Eq 'subscriptions=.*fcm=[1-9]'; then
+    break
+  fi
+  sleep 2
+done
+if ! printf '%s\n' "$ANDROID_SUBSCRIPTIONS" | grep -Eq 'subscriptions=.*fcm=[1-9]'; then
+  echo "notifications.iris.to did not report an Android FCM subscription." >&2
+  printf '%s\n' "$ANDROID_SUBSCRIPTIONS" >&2
+  exit 1
+fi
+
 echo "Verifying notifications.iris.to → APNs → physical iPhone"
 run_ios clear_delivered_notifications >/dev/null
+IOS_PROBE="$(run_ios arm_mobile_push_delivery_probe)"
+IOS_PROBE_ID="$(printf '%s\n' "$IOS_PROBE" | status_value probe_id)"
+require_value "iOS delivery probe" "$IOS_PROBE_ID"
 run_android "$ANDROID_CHAT_CLASS" send_message_from_args \
   peer_input "$IOS_NPUB" message "$MESSAGE_IOS" >/dev/null
-sleep 8
-IOS_PUSH="$(run_ios wait_for_visible_delivered_notification timeout_secs 90)"
-require_value "iOS delivered notification" "$(printf '%s\n' "$IOS_PUSH" | status_value notification_id)"
+IOS_PUSH="$(run_ios wait_for_mobile_push_delivery_probe probe_id "$IOS_PROBE_ID" timeout_secs 90)"
+require_value "iOS delivered notification" "$(printf '%s\n' "$IOS_PUSH" | status_value probe_id)"
 
 echo "Verifying notifications.iris.to → FCM → physical Android"
 run_android "$ANDROID_PUSH_CLASS" clear_push_probe >/dev/null

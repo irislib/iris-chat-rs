@@ -2479,7 +2479,9 @@ final class AppManager: ObservableObject {
     }
 
     private func syncMobilePushIfNeeded(state: AppState) {
-        guard !isUiTestRun else {
+        guard !AppPaths.notificationsDisabledForAutomation(
+            environment: ProcessInfo.processInfo.environment
+        ) else {
             iosSideEffectGate.resetMobilePush()
             return
         }

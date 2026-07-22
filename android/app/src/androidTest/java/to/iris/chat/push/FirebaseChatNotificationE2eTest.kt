@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.os.Bundle
 import android.os.SystemClock
+import android.util.Base64
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.firebase.messaging.FirebaseMessaging
@@ -71,7 +72,7 @@ class FirebaseChatNotificationE2eTest {
     fun wait_for_firebase_chat_notification() {
         val expectedBody = requiredArg("message")
         val expectedTitle = optionalArg("expected_title")
-        val timeoutMs = arguments.getString("timeout_ms")?.toLongOrNull() ?: 120_000L
+        val timeoutMs = optionalArg("timeout_ms")?.toLongOrNull() ?: 120_000L
         val snapshot =
             waitForSnapshot("Firebase chat notification", timeoutMs) {
                 val candidate = PushNotificationProbe.snapshot(context)
@@ -112,7 +113,7 @@ class FirebaseChatNotificationE2eTest {
     @Test
     fun wait_for_active_chat_push_suppression() {
         val expectedBody = requiredArg("message")
-        val timeoutMs = arguments.getString("timeout_ms")?.toLongOrNull() ?: 120_000L
+        val timeoutMs = optionalArg("timeout_ms")?.toLongOrNull() ?: 120_000L
         val snapshot =
             waitForSnapshot("active-chat push suppression", timeoutMs) {
                 val candidate = PushNotificationProbe.snapshot(context)
@@ -145,7 +146,7 @@ class FirebaseChatNotificationE2eTest {
         val expectedBodies = jsonStringArray(requiredArg("messages_json"))
         val expectedTitle = optionalArg("expected_title")
         assertTrue("Expected at least one notification body", expectedBodies.isNotEmpty())
-        val timeoutMs = arguments.getString("timeout_ms")?.toLongOrNull() ?: 120_000L
+        val timeoutMs = optionalArg("timeout_ms")?.toLongOrNull() ?: 120_000L
         val snapshot =
             waitForSnapshot("Firebase chat notifications", timeoutMs) {
                 val candidate = PushNotificationProbe.snapshot(context)
@@ -243,7 +244,7 @@ class FirebaseChatNotificationE2eTest {
     }
 
     private fun requiredArg(name: String): String =
-        arguments.getString(name)?.takeIf { it.isNotBlank() }
+        optionalArg(name)
             ?: run {
                 if (arguments.getString("class").isNullOrBlank()) {
                     assumeTrue("Push harness action requires instrumentation argument: $name", false)
@@ -251,7 +252,11 @@ class FirebaseChatNotificationE2eTest {
                 throw AssertionError("Missing instrumentation argument `$name`")
             }
 
-    private fun optionalArg(name: String): String? = arguments.getString(name)?.takeIf { it.isNotBlank() }
+    private fun optionalArg(name: String): String? =
+        arguments.getString("${name}_b64")
+            ?.let { String(Base64.decode(it, Base64.NO_WRAP or Base64.URL_SAFE), Charsets.UTF_8) }
+            ?.takeIf { it.isNotBlank() }
+            ?: arguments.getString(name)?.takeIf { it.isNotBlank() }
 
     private fun requireHarnessInvocation(reason: String) {
         if (arguments.getString("class").isNullOrBlank()) {

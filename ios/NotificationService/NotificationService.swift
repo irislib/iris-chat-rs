@@ -30,6 +30,7 @@ final class NotificationService: UNNotificationServiceExtension {
         _ request: UNNotificationRequest,
         withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
     ) {
+        MobilePushDeliveryProbe.recordIfArmed()
         self.contentHandler = contentHandler
         let bestAttempt = (request.content.mutableCopy() as? UNMutableNotificationContent)
             ?? UNMutableNotificationContent()

@@ -71,6 +71,7 @@ targets:
     platform: iOS
     sources:
       - path: NotificationService/NotificationService.swift
+      - path: Sources/MobilePushDeliveryProbe.swift
       - path: Bindings
         excludes:
           - "*.h"

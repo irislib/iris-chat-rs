@@ -24,11 +24,14 @@ import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.CurrentChatSnapshot
 import to.iris.chat.rust.DeliveryState
 import to.iris.chat.rust.DeviceAuthorizationState
+import to.iris.chat.rust.buildMobilePushListSubscriptionsRequest
 import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.rust.peerInputToHex
 import to.iris.chat.rust.Screen
 import to.iris.chat.nearby.IrisNearbyService
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 @RunWith(AndroidJUnit4::class)
 class RealRelayHarnessTest : RealRelayHarnessBase() {
@@ -328,6 +331,57 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
             "owner_pubkey_hex" to snapshot.ownerPubkeyHex.orEmpty(),
             "message_author_pubkeys" to snapshot.messageAuthorPubkeys.joinToString(","),
             "session_count" to snapshot.sessions.size.toString(),
+        )
+    }
+
+    @Test
+    fun report_mobile_push_server_snapshot() {
+        ensureLoggedIn()
+        val manager = appManager()
+        val ownerNsec =
+            kotlinx.coroutines.runBlocking { manager.exportOwnerNsec() }
+                ?: throw AssertionError("Secret key was not available for mobile push lookup")
+        val state = manager.state.value
+        val serverOverride =
+            state.preferences.mobilePushServerUrl.trim().ifEmpty {
+                BuildConfig.MOBILE_PUSH_SERVER_URL.trim()
+            }.ifEmpty { null }
+        val request =
+            buildMobilePushListSubscriptionsRequest(
+                ownerNsec = ownerNsec,
+                platformKey = "android",
+                isRelease = false,
+                serverUrlOverride = serverOverride,
+            ) ?: throw AssertionError("Could not build mobile push list request")
+        val connection = URL(request.url).openConnection() as HttpURLConnection
+        val response =
+            try {
+                connection.requestMethod = request.method
+                connection.setRequestProperty("accept", "application/json")
+                connection.setRequestProperty("authorization", request.authorizationHeader)
+                val statusCode = connection.responseCode
+                val body =
+                    (if (statusCode in 200..299) connection.inputStream else connection.errorStream)
+                        ?.bufferedReader()
+                        ?.use { it.readText() }
+                        .orEmpty()
+                statusCode to body
+            } finally {
+                connection.disconnect()
+            }
+        val subscriptions = runCatching { JSONObject(response.second) }.getOrElse { JSONObject() }
+        var fcmTokens = 0
+        var apnsTokens = 0
+        val ids = subscriptions.keys()
+        while (ids.hasNext()) {
+            val subscription = subscriptions.optJSONObject(ids.next()) ?: continue
+            fcmTokens += subscription.optJSONArray("fcm_tokens")?.length() ?: 0
+            apnsTokens += subscription.optJSONArray("apns_tokens")?.length() ?: 0
+        }
+        reportStatus(
+            "status_code" to response.first.toString(),
+            "subscription_count" to subscriptions.length().toString(),
+            "subscriptions" to "fcm=$fcmTokens,apns=$apnsTokens",
         )
     }
 

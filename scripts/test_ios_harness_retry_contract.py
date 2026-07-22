@@ -73,12 +73,31 @@ class IOSHarnessRetryContractTests(unittest.TestCase):
                 "11111111-1111-1111-1111-111111111111",
                 Path("test.xctestrun"),
                 timeout_secs=420,
+                simulator=True,
                 pre_body_timeout_secs=120,
                 pre_test_retries=1,
             )
         self.assertEqual(result.returncode, 124)
         self.assertEqual(run_test.call_count, 2)
         reboot.assert_called_once()
+
+    def test_physical_device_pre_body_failure_waits_and_retries(self):
+        failure = subprocess.CompletedProcess(["xcodebuild"], 70, "Device is busy")
+        success = subprocess.CompletedProcess(["xcodebuild"], 0, "HARNESS_STATUS: action=probe")
+        with mock.patch.object(HARNESS, "run_test", side_effect=[failure, success]) as run_test, mock.patch.object(
+            HARNESS, "reboot_simulator"
+        ) as reboot, mock.patch.object(HARNESS.time, "sleep") as sleep:
+            result = HARNESS.run_test_with_retries(
+                "physical-device",
+                Path("test.xctestrun"),
+                timeout_secs=420,
+                simulator=False,
+                pre_test_retries=1,
+            )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(run_test.call_count, 2)
+        reboot.assert_not_called()
+        sleep.assert_called_once_with(10)
 
 
 if __name__ == "__main__":

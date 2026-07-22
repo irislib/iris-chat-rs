@@ -10,6 +10,8 @@ import com.google.firebase.messaging.FirebaseMessaging
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -29,12 +31,13 @@ class AndroidMobilePushRuntime(
     private val httpClient: OkHttpClient = OkHttpClient(),
     private val messaging: FirebaseMessaging = FirebaseMessaging.getInstance(),
 ) {
-    private var lastSyncSignature: String? = null
+    private val syncMutex = Mutex()
+    @Volatile private var lastSyncSignature: String? = null
 
     suspend fun sync(
         state: AppState,
         ownerNsec: String?,
-    ) {
+    ): Boolean = syncMutex.withLock {
         val owner = state.mobilePush.ownerPubkeyHex?.trim()?.ifEmpty { null }
         val ownerSecret = ownerNsec?.trim()?.ifEmpty { null }
         val authors = state.mobilePush.messageAuthorPubkeys
@@ -51,24 +54,39 @@ class AndroidMobilePushRuntime(
                 serverOverride.orEmpty(),
             ).joinToString("|")
         if (signature == lastSyncSignature) {
-            return
+            return@withLock true
         }
-        lastSyncSignature = signature
 
         val storageKeyName = mobilePushSubscriptionIdKey(PLATFORM_KEY)
         val storageKey = stringPreferencesKey(storageKeyName)
         if (!enabled || ownerSecret == null || (authors.isEmpty() && inviteResponses.isEmpty())) {
-            disableStoredSubscription(ownerSecret, storageKey, serverOverride)
-            return
+            val disabled = disableStoredSubscription(ownerSecret, storageKey, serverOverride)
+            if (disabled) {
+                lastSyncSignature = signature
+            }
+            return@withLock disabled
         }
 
-        val token = messaging.token.await()?.trim()?.ifEmpty { null } ?: return
+        val token = messaging.token.await()?.trim()?.ifEmpty { null }
+        if (token == null) {
+            Log.w(TAG, "FCM token unavailable; mobile push sync will retry")
+            return@withLock false
+        }
         val storedId = currentStoredId(storageKey)
         val existingId = resolveExistingSubscriptionId(ownerSecret, token, storedId, serverOverride)
         if (existingId != null && updateSubscription(ownerSecret, existingId, token, authors, inviteResponses, storageKey, serverOverride)) {
-            return
+            lastSyncSignature = signature
+            return@withLock true
         }
-        createSubscription(ownerSecret, token, authors, inviteResponses, storageKey, serverOverride)
+        val created = createSubscription(ownerSecret, token, authors, inviteResponses, storageKey, serverOverride)
+        if (created) {
+            lastSyncSignature = signature
+        }
+        created
+    }
+
+    fun invalidate() {
+        lastSyncSignature = null
     }
 
     suspend fun unregisterStoredSubscription(
@@ -154,7 +172,7 @@ class AndroidMobilePushRuntime(
         inviteResponses: List<String>,
         storageKey: Preferences.Key<String>,
         serverOverride: String?,
-    ) {
+    ): Boolean {
         val request =
             buildMobilePushCreateSubscriptionRequest(
                 ownerNsec = ownerNsec,
@@ -165,10 +183,11 @@ class AndroidMobilePushRuntime(
                 inviteResponsePubkeys = inviteResponses,
                 isRelease = !BuildConfig.DEBUG,
                 serverUrlOverride = serverOverride,
-            ) ?: return
+            ) ?: return false
         val response = perform(request)
         if (!response.isSuccess) {
-            return
+            Log.w(TAG, "mobile push subscription create failed with status ${response.statusCode}")
+            return false
         }
         val id =
             response.body
@@ -176,19 +195,20 @@ class AndroidMobilePushRuntime(
                 ?.optString("id")
                 ?.trim()
                 ?.ifEmpty { null }
-                ?: return
+                ?: return false
         dataStore.edit { preferences -> preferences[storageKey] = id }
+        return true
     }
 
     private suspend fun disableStoredSubscription(
         ownerNsec: String?,
         storageKey: Preferences.Key<String>,
         serverOverride: String?,
-    ) {
-        val storedId = currentStoredId(storageKey) ?: return
+    ): Boolean {
+        val storedId = currentStoredId(storageKey) ?: return true
         if (ownerNsec == null) {
             dataStore.edit { preferences -> preferences.remove(storageKey) }
-            return
+            return true
         }
         val request =
             buildMobilePushDeleteSubscriptionRequest(
@@ -197,11 +217,13 @@ class AndroidMobilePushRuntime(
                 platformKey = PLATFORM_KEY,
                 isRelease = !BuildConfig.DEBUG,
                 serverUrlOverride = serverOverride,
-            ) ?: return
+            ) ?: return false
         val response = perform(request)
         if (response.isSuccess || response.statusCode == 404) {
             dataStore.edit { preferences -> preferences.remove(storageKey) }
+            return true
         }
+        return false
     }
 
     private suspend fun currentStoredId(storageKey: Preferences.Key<String>): String? {

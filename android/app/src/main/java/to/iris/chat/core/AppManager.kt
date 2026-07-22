@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
@@ -320,6 +321,8 @@ class AppManager(
     private var persistedRestoreInFlight = false
     private var cachedAccountBundle: StoredAccountBundle? = null
     private var lastMobilePushSyncInput: AndroidMobilePushSyncInput? = null
+    private var mobilePushRetryInput: AndroidMobilePushSyncInput? = null
+    private var mobilePushRetryAttempt = 0
     private var lastSyncedDeviceLabelsKey: String? = null
     private var automaticRevocationLogoutInFlight = false
     private var pendingNavigationOverride: PendingNavigationOverride? = null
@@ -1628,15 +1631,45 @@ class AppManager(
         val input = mobilePushSyncInput(state, ownerNsec)
         if (input.ownerPubkeyHex == null) {
             lastMobilePushSyncInput = null
+            mobilePushRetryInput = null
+            mobilePushRetryAttempt = 0
             return
+        }
+        if (input != mobilePushRetryInput) {
+            mobilePushRetryInput = input
+            mobilePushRetryAttempt = 0
         }
         if (input == lastMobilePushSyncInput) {
             return
         }
         lastMobilePushSyncInput = input
         applicationScope.launch(ioDispatcher) {
-            mobilePushRuntime.sync(state, ownerNsec)
+            if (mobilePushRuntime.sync(state, ownerNsec)) {
+                if (mobilePushRetryInput == input) {
+                    mobilePushRetryAttempt = 0
+                }
+            } else if (lastMobilePushSyncInput == input) {
+                val retryDelay =
+                    minOf(
+                        MOBILE_PUSH_MAX_RETRY_DELAY_MS,
+                        MOBILE_PUSH_INITIAL_RETRY_DELAY_MS shl mobilePushRetryAttempt.coerceAtMost(4),
+                    )
+                mobilePushRetryAttempt += 1
+                delay(retryDelay)
+                if (lastMobilePushSyncInput == input) {
+                    lastMobilePushSyncInput = null
+                    scheduleMobilePushSyncIfNeeded(mutableState.value, cachedAccountBundle?.ownerNsec)
+                }
+            }
         }
+    }
+
+    fun refreshMobilePushSubscription() {
+        mobilePushRuntime.invalidate()
+        lastMobilePushSyncInput = null
+        mobilePushRetryInput = null
+        mobilePushRetryAttempt = 0
+        scheduleMobilePushSyncIfNeeded(mutableState.value, cachedAccountBundle?.ownerNsec)
     }
 
     private fun mobilePushSyncInput(
@@ -1908,6 +1941,8 @@ class AppManager(
         const val DATASTORE_NAME = "iris_chat_secure_store.preferences_pb"
         const val DISPATCH_FAILURE_TOAST = "Action failed. Copy support bundle in Settings."
         const val NAVIGATION_OVERRIDE_TTL_MS = 10_000L
+        const val MOBILE_PUSH_INITIAL_RETRY_DELAY_MS = 5_000L
+        const val MOBILE_PUSH_MAX_RETRY_DELAY_MS = 60_000L
         const val CHAT_PAGE_SIZE = 80u
         const val CHAT_AROUND_BEFORE_LIMIT = 40u
         const val CHAT_AROUND_AFTER_LIMIT = 40u

@@ -11,6 +11,7 @@ import to.iris.chat.IrisDebugLog
 class IrisFirebaseMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
         IrisDebugLog.d(TAG, "FCM token refreshed")
+        (applicationContext as? IrisChatApp)?.container?.appManager?.refreshMobilePushSubscription()
     }
 
     override fun onMessageReceived(message: RemoteMessage) {

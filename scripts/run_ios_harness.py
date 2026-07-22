@@ -473,6 +473,7 @@ def run_test_with_retries(
     xctestrun_path: Path,
     timeout_secs: int,
     *,
+    simulator: bool,
     pre_body_timeout_secs: int = 0,
     pre_test_retries: int = 1,
 ) -> subprocess.CompletedProcess[str]:
@@ -487,12 +488,17 @@ def run_test_with_retries(
         if completed.returncode == 0:
             return completed
         if is_install_service_flake(completed.stdout):
-            print("INSTRUMENTATION_RETRY: iOS simulator install service was not ready; rebooting simulator and retrying")
+            reason = "iOS install service was not ready"
         elif is_pre_test_start_failure(completed):
-            print("INSTRUMENTATION_RETRY: iOS harness did not reach test body; rebooting simulator and retrying")
+            reason = "iOS harness did not reach test body"
         else:
             return completed
-        reboot_simulator(udid)
+        if simulator:
+            print(f"INSTRUMENTATION_RETRY: {reason}; rebooting simulator and retrying")
+            reboot_simulator(udid)
+        else:
+            print(f"INSTRUMENTATION_RETRY: {reason}; waiting for physical device and retrying")
+            time.sleep(10)
         remaining_retries -= 1
         completed = run_test(
             udid,
@@ -551,21 +557,14 @@ def main() -> int:
     env_vars = build_env(args)
     xctestrun_path = prepare_xctestrun(xctestrun_source, env_vars)
     try:
-        if simulator:
-            completed = run_test_with_retries(
-                udid,
-                xctestrun_path,
-                timeout_secs=args.timeout_secs,
-                pre_body_timeout_secs=args.pre_body_timeout_secs,
-                pre_test_retries=args.pre_test_retries,
-            )
-        else:
-            completed = run_test(
-                udid,
-                xctestrun_path,
-                timeout_secs=args.timeout_secs,
-                pre_body_timeout_secs=args.pre_body_timeout_secs,
-            )
+        completed = run_test_with_retries(
+            udid,
+            xctestrun_path,
+            timeout_secs=args.timeout_secs,
+            simulator=simulator,
+            pre_body_timeout_secs=args.pre_body_timeout_secs,
+            pre_test_retries=args.pre_test_retries,
+        )
     finally:
         if xctestrun_path != xctestrun_source:
             try:
