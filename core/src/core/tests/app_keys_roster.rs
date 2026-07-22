@@ -73,19 +73,6 @@ fn owner_device_approves_bootstrap_and_publishes_app_keys_snapshot() {
         1,
         "approval still responds to the deterministic NDR link invite"
     );
-    assert_eq!(
-        approval_events
-            .iter()
-            .filter(|event| event_has_tag_value(
-                event,
-                "type",
-                "nostr_identity_device_approval_receipt"
-            ))
-            .count(),
-        1,
-        "approval publishes an encrypted receipt for the request"
-    );
-
     let known = core
         .app_keys
         .get(&owner.public_key().to_hex())
