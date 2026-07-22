@@ -99,7 +99,9 @@ These should be scoped to a protected `ios-build` environment.
 Runs natively on `windows-2025`. `scripts/windows-build-local.ps1` builds the
 Rust DLL, generates C# UniFFI bindings, publishes the self-contained WPF app,
 and packages the NSIS installer and ZIP. The existing Mac-to-Windows SSH wrapper
-calls the same entrypoint for local compatibility.
+calls the same entrypoint for local compatibility. The workflow then silently
+installs the generated NSIS installer, launches the installed app, requires it
+to survive startup, and uninstalls it before upload.
 
 ### macOS
 
@@ -112,13 +114,16 @@ unsigned DMG and updater archive for build testing. Signed runs use the
 - App Store Connect credentials for notarization
 
 The workflow verifies code signatures, notarization tickets, and Gatekeeper
-acceptance before uploading the files. Secret values and signing identifiers
-stay in the protected environment rather than the repository.
+acceptance, then launches the packaged app and requires it to survive startup
+before uploading the files. Secret values and signing identifiers stay in the
+protected environment rather than the repository.
 
 ### Linux
 
 Runs `scripts/linux-release` on `ubuntu-24.04`, preserving the existing Docker
-build environment and producing the DEB and tarball.
+build environment and producing the DEB and tarball. The release binary is
+launched from the extracted tarball under a virtual display, and the DEB is
+required to contain the same executable.
 
 ### CLI
 
@@ -129,6 +134,8 @@ One three-entry runner matrix calls `scripts/cli-release` for:
 - `x86_64-unknown-linux-gnu`
 
 Each archive contains `iris/iris`, `iris/install.sh`, and `iris/README.txt`.
+The native archive is extracted and its packaged `iris --version` is executed;
+cross-architecture archives receive structural and binary-format checks.
 
 ### Artifacts
 

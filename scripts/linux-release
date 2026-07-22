@@ -187,14 +187,26 @@ README
 
     tar -czf "$OUT/${ARTIFACT_BASENAME}.tar.gz" -C "$STAGE" iris-chat
 
+    SMOKE_STAGE=$(mktemp -d)
+    tar -xzf "$OUT/${ARTIFACT_BASENAME}.tar.gz" -C "$SMOKE_STAGE"
+    "/workspace/$IRIS_REPO_BASENAME/scripts/linux-app-launch-smoke.sh" \
+      "$SMOKE_STAGE/iris-chat/iris-chat"
+
     if cargo deb --no-build --deb-version "$IRIS_LINUX_DEB_VERSION" --output \
         "$OUT/${ARTIFACT_BASENAME}.deb" 2>/dev/null; then
+      DEB_STAGE=$(mktemp -d)
+      dpkg-deb --extract "$OUT/${ARTIFACT_BASENAME}.deb" "$DEB_STAGE"
+      test -x "$DEB_STAGE/usr/bin/iris-chat"
+      cmp "$SMOKE_STAGE/iris-chat/iris-chat" "$DEB_STAGE/usr/bin/iris-chat"
       echo "Built deb at $OUT/${ARTIFACT_BASENAME}.deb"
     else
       echo "[skip] cargo-deb failed (likely missing [package.metadata.deb]); only tarball was produced." >&2
     fi
 
-    rm -rf "$STAGE"
+    rm -rf "$STAGE" "$SMOKE_STAGE"
+    if [ -n "${DEB_STAGE:-}" ]; then
+      rm -rf "$DEB_STAGE"
+    fi
   '
 
 ls -la "$DIST_DIR" | grep -E "${ARTIFACT_BASENAME}\.(tar\.gz|deb)$" || true

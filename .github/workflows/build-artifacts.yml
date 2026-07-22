@@ -392,6 +392,7 @@ jobs:
             xcrun stapler validate "$dmg"
             spctl --assess --type execute --verbose=2 "$app"
           fi
+          IRIS_MACOS_APP_SMOKE_PATH="$app" ./scripts/macos-app-launch-smoke.sh
       - name: Upload macOS build
         uses: actions/upload-artifact@v7
         with:
@@ -451,6 +452,7 @@ jobs:
           if ('IrisChat.exe' -notin $entries -or 'iris_chat_core.dll' -notin $entries) {
             throw 'Portable ZIP is missing IrisChat.exe or iris_chat_core.dll'
           }
+          & ./scripts/windows-installer-smoke.ps1 -InstallerPath $installer
       - name: Upload Windows build
         uses: actions/upload-artifact@v7
         with:
@@ -543,6 +545,17 @@ jobs:
           ./scripts/cli-release "$target"
           tar -tzf "$archive" | grep '^iris/iris$' >/dev/null
           tar -tzf "$archive" | grep '^iris/install.sh$' >/dev/null
+          extracted="$(mktemp -d)"
+          trap 'rm -rf "$extracted"' EXIT
+          tar -xzf "$archive" -C "$extracted"
+          case "$(uname -m):$target" in
+            arm64:aarch64-*|aarch64:aarch64-*|x86_64:x86_64-*|amd64:x86_64-*)
+              "$extracted/iris/iris" --version
+              ;;
+            *)
+              file "$extracted/iris/iris"
+              ;;
+          esac
       - name: Upload CLI build
         uses: actions/upload-artifact@v7
         with:
