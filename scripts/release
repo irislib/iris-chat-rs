@@ -32,6 +32,7 @@ TESTFLIGHT_MODE=""
 SKIP_HOMEBREW_TAP=0
 RELEASE_GATE=1
 RELEASE_GATE_ARGS=()
+FORCE_RELEASE_GATE=0
 RELEASE_TREE=""
 TAG_OVERRIDE=""
 ONLY_RAW=""
@@ -67,6 +68,7 @@ Options:
   --skip-testflight        Do not send the iOS build to TestFlight
   --gate <mode>            Release gate mode: local, full, on-device, none
   --skip-gate              Do not run the release gate
+  --force-gate             Run the gate even if this commit has a recent matching receipt
   --tag <vX.Y.Z>           Override release tag (defaults to v$IRIS_APP_VERSION_NAME)
   --release-tree <name>    htree release tree name (default: releases/iris-chat-rs)
   --only <csv>             Only run named steps (macos,windows,android,linux,cli,ios)
@@ -83,6 +85,7 @@ Environment:
   IRIS_RELEASE_REQUIRED_LATEST_STEPS
                             Required steps for --publish latest (default: macos,windows,android,linux,cli)
   IRIS_RELEASE_GATE_ARGS    Extra/default args for scripts/test-release-gate
+  IRIS_RELEASE_GATE_FORCE_RERUN
   IRIS_RELEASE_TESTFLIGHT   both, internal, public, or 0
   IRIS_RELEASE_PUBLISH_ZAPSTORE
   IRIS_RELEASE_SKIP_ZAPSTORE
@@ -120,6 +123,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --skip-gate) RELEASE_GATE=0 ;;
+    --force-gate) FORCE_RELEASE_GATE=1 ;;
     --dry-run) DRY_RUN=1 ;;
     --tag) TAG_OVERRIDE="$2"; shift ;;
     --release-tree) RELEASE_TREE="$2"; shift ;;
@@ -152,6 +156,12 @@ if [[ "${#RELEASE_GATE_ARGS[@]}" -eq 0 ]]; then
 fi
 if bool_is_true "${IRIS_RELEASE_SKIP_GATE:-false}"; then
   RELEASE_GATE=0
+fi
+if bool_is_true "${IRIS_RELEASE_GATE_FORCE_RERUN:-false}"; then
+  FORCE_RELEASE_GATE=1
+fi
+if [[ "$FORCE_RELEASE_GATE" -eq 1 ]]; then
+  RELEASE_GATE_ARGS+=(--force-rerun)
 fi
 
 if [[ -z "${PUBLISH_ZAPSTORE}" ]]; then

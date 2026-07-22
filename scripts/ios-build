@@ -60,9 +60,9 @@ build_host() {
   (
     cd "$CORE_DIR"
     if [[ "$PROFILE" == "release" ]]; then
-      cargo build --release
+      cargo build --release --lib
     else
-      cargo build
+      cargo build --lib
     fi
   )
 }
@@ -143,7 +143,7 @@ run_ios_rust() {
           IRIS_APP_VERSION="${IRIS_APP_VERSION_NAME:-}" \
           IRIS_BUILD_GIT_SHA="${IRIS_BUILD_GIT_SHA:-}" \
           IRIS_BUILD_TIMESTAMP_UTC="${IRIS_BUILD_TIMESTAMP_UTC:-}" \
-          cargo build --release --target "$target"
+          cargo build --release --lib --target "$target"
       else
         env \
           SDKROOT="$sdkroot" \
@@ -162,7 +162,7 @@ run_ios_rust() {
           IRIS_APP_VERSION="${IRIS_APP_VERSION_NAME:-}" \
           IRIS_BUILD_GIT_SHA="${IRIS_BUILD_GIT_SHA:-}" \
           IRIS_BUILD_TIMESTAMP_UTC="${IRIS_BUILD_TIMESTAMP_UTC:-}" \
-          cargo build --target "$target"
+          cargo build --lib --target "$target"
       fi
     done
   )

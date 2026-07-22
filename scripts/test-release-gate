@@ -4,6 +4,8 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
+source "${ROOT_DIR}/scripts/release_common.sh"
+# shellcheck disable=SC1091
 source "${ROOT_DIR}/scripts/parallel_steps.sh"
 
 MODE="${IRIS_TEST_GATE_MODE:-local}"
@@ -18,6 +20,7 @@ RUN_RELIABILITY_LAB="${IRIS_TEST_GATE_RELIABILITY_LAB:-0}"
 RUN_MACOS_VM_E2E="${IRIS_TEST_GATE_MACOS_VM_E2E:-0}"
 RUN_FAST="${IRIS_TEST_GATE_RUN_FAST:-1}"
 RUN_IDLE_CPU="${IRIS_TEST_GATE_IDLE_CPU:-0}"
+FORCE_RERUN="${IRIS_RELEASE_GATE_FORCE_RERUN:-0}"
 
 usage() {
   cat <<'EOF'
@@ -40,6 +43,7 @@ Options:
   --skip-fast          Reuse a fast tier that already passed in this invocation.
   --idle-cpu           Run available platform idle CPU gates.
   --no-idle-cpu        Skip platform idle CPU gates (sampler tests still run).
+  --force-rerun        Ignore a matching recent receipt and run every gate again.
   -h, --help           Show this help
 
 Environment:
@@ -52,6 +56,8 @@ Environment:
   IRIS_TEST_GATE_NOTIFICATIONS=1
   IRIS_TEST_GATE_LAN_AVAILABLE=1
   IRIS_TEST_GATE_IDLE_CPU=1
+  IRIS_RELEASE_GATE_FORCE_RERUN=1
+  IRIS_RELEASE_GATE_RECEIPT_TTL_SECONDS=43200
 EOF
 }
 
@@ -120,6 +126,10 @@ while [[ $# -gt 0 ]]; do
       RUN_FAST=0
       shift
       ;;
+    --force-rerun)
+      FORCE_RERUN=1
+      shift
+      ;;
     -h|--help|help)
       usage
       exit 0
@@ -131,6 +141,38 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+GATE_CONFIG="$(printf '%s\n' \
+  "receipt_version=1" \
+  "mode=$MODE" \
+  "native_contract=$RUN_NATIVE_CONTRACT" \
+  "interop=$RUN_INTEROP" \
+  "production_cli=$RUN_PRODUCTION_CLI" \
+  "app_store_review=$RUN_APP_STORE_REVIEW" \
+  "on_device=$RUN_ONDEVICE" \
+  "notifications=$RUN_NOTIFICATIONS" \
+  "lan_available=$RUN_LAN_AVAILABLE" \
+  "reliability_lab=$RUN_RELIABILITY_LAB" \
+  "macos_vm_e2e=$RUN_MACOS_VM_E2E" \
+  "fast=$RUN_FAST" \
+  "idle_cpu=$RUN_IDLE_CPU" \
+  "system=$(uname -s)" \
+  "architecture=$(uname -m)" \
+  "android_device=${IRIS_ANDROID_SERIAL:-${ANDROID_SERIAL:-auto}}" \
+  "ios_workers=${IRIS_IOS_TEST_PARALLEL_WORKERS:-auto}" \
+  "windows_hosts=${IRIS_WINDOWS_SSH_HOST:-${IRIS_WINDOWS_SSH_HOSTS:-auto}}")"
+
+receipt_command() {
+  IRIS_RELEASE_GATE_ROOT_DIR="$ROOT_DIR" \
+    IRIS_RELEASE_GATE_CONFIG="$GATE_CONFIG" \
+    "$ROOT_DIR/scripts/release_gate_receipt.sh" "$1"
+}
+
+if ! bool_is_true "$FORCE_RERUN" && receipt_command check; then
+  echo "Release gate already passed for this exact clean commit and configuration."
+  echo "Reusing the recent receipt; pass --force-rerun to run it again."
+  exit 0
+fi
 
 run_step() {
   local name="$1"
@@ -342,3 +384,8 @@ fi
 
 echo
 echo "Release gate passed."
+if receipt_command write; then
+  echo "Saved a reusable receipt for this exact clean commit and configuration."
+else
+  echo "Receipt not saved because the worktree is not clean or Git metadata is unavailable."
+fi

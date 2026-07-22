@@ -50,6 +50,10 @@ parallel_step_start "iOS harness retry contract" python3 "${ROOT_DIR}/scripts/te
 parallel_step_start "mobile relay AVD selection harness" "${ROOT_DIR}/scripts/test-mobile-relay-common.sh"
 parallel_step_start "mobile push FCM selection harness" \
   "${ROOT_DIR}/scripts/test-mobile-push-server-e2e.sh"
+parallel_step_start "release gate receipt harness" \
+  "${ROOT_DIR}/scripts/test-release-gate-receipt.sh"
+parallel_step_start "release workflow contract" \
+  python3 "${ROOT_DIR}/scripts/test_release_workflow.py"
 
 run_step "Rust panic/unwrap lint" "${ROOT_DIR}/scripts/check-rust-panics" || lint_status=$?
 parallel_step_wait || static_status=$?

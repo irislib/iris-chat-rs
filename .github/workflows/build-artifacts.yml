@@ -335,6 +335,10 @@ jobs:
           archive="$(find dist/ios -maxdepth 1 -type d -name '*.xcarchive' | head -n 1)"
           ipa="$(find dist/ios -type f -name '*.ipa' | head -n 1)"
           test -f "$ipa"
+          ipa_output="dist/ios/iris-chat-v${IRIS_APP_VERSION_NAME}-ios.ipa"
+          if [[ "$ipa" != "$ipa_output" ]]; then
+            cp "$ipa" "$ipa_output"
+          fi
           app="$(find "$archive/Products/Applications" -maxdepth 1 -type d -name '*.app' | head -n 1)"
           codesign --verify --deep --strict --verbose=2 "$app"
           archive_zip="dist/ios/iris-chat-v${IRIS_APP_VERSION_NAME}-ios.xcarchive.zip"
@@ -344,7 +348,7 @@ jobs:
         with:
           name: iris-ios-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
           path: |
-            ${{ env.APP_DIR }}/dist/ios/**/*.ipa
+            ${{ env.APP_DIR }}/dist/ios/*.ipa
             ${{ env.APP_DIR }}/dist/ios/*.xcarchive.zip
           if-no-files-found: error
           retention-days: ${{ inputs.artifact_retention_days }}
