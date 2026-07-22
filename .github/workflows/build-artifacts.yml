@@ -220,33 +220,99 @@ jobs:
             ${{ github.workspace }}/cargo-target
           key: all-builds-ios-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/ios/project.yml') }}
           restore-keys: all-builds-ios-${{ runner.arch }}-
-      - name: Configure Apple authentication
+      - name: Configure iOS distribution signing
         env:
-          ASC_PRIVATE_KEY_P8: ${{ secrets.ASC_PRIVATE_KEY_P8 }}
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_SIGNING_IDENTITY: ${{ secrets.IOS_SIGNING_IDENTITY }}
+          IOS_APP_PROFILE_BASE64: ${{ secrets.IRIS_IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_APP_PROFILE_UUID: ${{ secrets.IRIS_IOS_PROVISIONING_PROFILE_UUID }}
+          IOS_NOTIFICATION_PROFILE_BASE64: ${{ secrets.IRIS_IOS_NOTIFICATION_PROVISIONING_PROFILE_BASE64 }}
+          IOS_NOTIFICATION_PROFILE_UUID: ${{ secrets.IRIS_IOS_NOTIFICATION_PROVISIONING_PROFILE_UUID }}
+          IOS_SHARE_PROFILE_BASE64: ${{ secrets.IRIS_IOS_SHARE_PROVISIONING_PROFILE_BASE64 }}
+          IOS_SHARE_PROFILE_UUID: ${{ secrets.IRIS_IOS_SHARE_PROVISIONING_PROFILE_UUID }}
           IOS_BUNDLE_ID: ${{ vars.IRIS_IOS_BUNDLE_ID }}
           IOS_TEAM: ${{ vars.IRIS_IOS_DEVELOPMENT_TEAM }}
         run: |
           set -Eeuo pipefail
-          : "${ASC_PRIVATE_KEY_P8:?Missing App Store Connect key}"
-          : "${ASC_KEY_ID:?Missing App Store Connect key ID}"
-          : "${ASC_ISSUER_ID:?Missing App Store Connect issuer ID}"
-          : "${IOS_BUNDLE_ID:?Missing iOS bundle ID variable}"
-          : "${IOS_TEAM:?Missing iOS development team variable}"
-          key="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
-          printf '%b\n' "$ASC_PRIVATE_KEY_P8" > "$key"
-          chmod 600 "$key"
+          for name in \
+            IOS_CERTIFICATE_P12_BASE64 \
+            IOS_CERTIFICATE_PASSWORD \
+            IOS_SIGNING_IDENTITY \
+            IOS_APP_PROFILE_BASE64 \
+            IOS_APP_PROFILE_UUID \
+            IOS_NOTIFICATION_PROFILE_BASE64 \
+            IOS_NOTIFICATION_PROFILE_UUID \
+            IOS_SHARE_PROFILE_BASE64 \
+            IOS_SHARE_PROFILE_UUID \
+            IOS_BUNDLE_ID \
+            IOS_TEAM; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required ios-build setting: $name"
+              exit 1
+            fi
+          done
+
+          signing_dir="$RUNNER_TEMP/iris-ios-signing"
+          keychain="$RUNNER_TEMP/iris-ios-release.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          profile_dir="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+          mkdir -p "$signing_dir" "$profile_dir"
+          chmod 700 "$signing_dir"
+
+          certificate="$signing_dir/ios-distribution.p12"
+          printf '%s' "$IOS_CERTIFICATE_P12_BASE64" | /usr/bin/base64 -D > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          security default-keychain -s "$keychain"
+          security find-identity -v -p codesigning "$keychain" | grep -F "$IOS_SIGNING_IDENTITY" >/dev/null
+
+          app_profile="$profile_dir/${IOS_APP_PROFILE_UUID}.mobileprovision"
+          notification_profile="$profile_dir/${IOS_NOTIFICATION_PROFILE_UUID}.mobileprovision"
+          share_profile="$profile_dir/${IOS_SHARE_PROFILE_UUID}.mobileprovision"
+          printf '%s' "$IOS_APP_PROFILE_BASE64" | /usr/bin/base64 -D > "$app_profile"
+          printf '%s' "$IOS_NOTIFICATION_PROFILE_BASE64" | /usr/bin/base64 -D > "$notification_profile"
+          printf '%s' "$IOS_SHARE_PROFILE_BASE64" | /usr/bin/base64 -D > "$share_profile"
+          chmod 600 "$certificate" "$app_profile" "$notification_profile" "$share_profile"
+
+          verify_profile() {
+            local profile="$1"
+            local expected_app_id="$2"
+            local actual_uuid actual_app_id
+            actual_uuid="$(security cms -D -i "$profile" | plutil -extract UUID raw -o - -)"
+            actual_app_id="$(security cms -D -i "$profile" | plutil -extract Entitlements.application-identifier raw -o - -)"
+            if [[ "$actual_uuid" != "$(basename "$profile" .mobileprovision)" ]]; then
+              echo "::error::iOS profile UUID does not match its configured filename"
+              return 1
+            fi
+            if [[ "$actual_app_id" != "$IOS_TEAM.$expected_app_id" ]]; then
+              echo "::error::iOS profile does not authorize $expected_app_id"
+              return 1
+            fi
+          }
+          verify_profile "$app_profile" "$IOS_BUNDLE_ID"
+          verify_profile "$notification_profile" "$IOS_BUNDLE_ID.NotificationService"
+          verify_profile "$share_profile" "$IOS_BUNDLE_ID.ShareExtension"
+
           {
-            echo "IRIS_ASC_AUTH_KEY_PATH=$key"
-            echo "IRIS_ASC_AUTH_KEY_ID=$ASC_KEY_ID"
-            echo "IRIS_ASC_AUTH_KEY_ISSUER_ID=$ASC_ISSUER_ID"
             echo "IRIS_IOS_BUNDLE_ID=$IOS_BUNDLE_ID"
             echo "IRIS_IOS_DEVELOPMENT_TEAM=$IOS_TEAM"
-            echo "IRIS_IOS_SIGNING_STYLE=automatic"
+            echo "IRIS_IOS_SIGNING_STYLE=manual"
+            echo "IRIS_IOS_CODE_SIGN_IDENTITY=$IOS_SIGNING_IDENTITY"
+            echo "IRIS_IOS_PROVISIONING_PROFILE_UUID=$IOS_APP_PROFILE_UUID"
+            echo "IRIS_IOS_NOTIFICATION_PROVISIONING_PROFILE_UUID=$IOS_NOTIFICATION_PROFILE_UUID"
+            echo "IRIS_IOS_SHARE_PROVISIONING_PROFILE_UUID=$IOS_SHARE_PROFILE_UUID"
             echo "IRIS_IOS_EXPORT_METHOD=app-store-connect"
-            echo "IRIS_IOS_ALLOW_PROVISIONING_UPDATES=true"
+            echo "IRIS_IOS_ALLOW_PROVISIONING_UPDATES=false"
             echo "IRIS_IOS_ATTACH_INTERNAL_AFTER_UPLOAD=false"
+            echo "IRIS_IOS_KEYCHAIN_PATH=$keychain"
+            echo "IRIS_IOS_APP_PROFILE_PATH=$app_profile"
+            echo "IRIS_IOS_NOTIFICATION_PROFILE_PATH=$notification_profile"
+            echo "IRIS_IOS_SHARE_PROFILE_PATH=$share_profile"
           } >> "$GITHUB_ENV"
       - name: Build and verify iOS artifacts
         run: |
@@ -269,6 +335,18 @@ jobs:
             ${{ env.APP_DIR }}/dist/ios/*.xcarchive.zip
           if-no-files-found: error
           retention-days: ${{ inputs.artifact_retention_days }}
+      - name: Remove temporary iOS signing material
+        if: ${{ always() }}
+        run: |
+          security default-keychain -s login.keychain-db || true
+          security list-keychains -d user -s login.keychain-db || true
+          if [[ -n "${IRIS_IOS_KEYCHAIN_PATH:-}" ]]; then
+            security delete-keychain "$IRIS_IOS_KEYCHAIN_PATH" || true
+          fi
+          rm -f \
+            "${IRIS_IOS_APP_PROFILE_PATH:-}" \
+            "${IRIS_IOS_NOTIFICATION_PROFILE_PATH:-}" \
+            "${IRIS_IOS_SHARE_PROFILE_PATH:-}"
 
   macos:
     name: macOS DMG and app archive

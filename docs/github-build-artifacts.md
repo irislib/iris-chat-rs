@@ -84,12 +84,16 @@ Required environment secrets:
 ### iOS
 
 Runs on `macos-15` using the existing archive/export implementation in
-`scripts/ios-release`. It verifies the signed app and stores the IPA and zipped
-xcarchive. It never invokes the upload or TestFlight commands.
+`scripts/ios-release`. It imports a reusable distribution identity and three
+App Store profiles, verifies the signed app, and stores the IPA and zipped
+xcarchive. It never invokes the upload or TestFlight commands and never asks
+Xcode to create certificates.
 
 Required secrets and variables:
 
-- `ASC_PRIVATE_KEY_P8`, `ASC_KEY_ID`, and `ASC_ISSUER_ID`
+- the iOS distribution certificate packaged as PKCS#12
+- App Store provisioning profiles for the app, Notification Service, and Share
+  Extension
 - `IRIS_IOS_BUNDLE_ID` and `IRIS_IOS_DEVELOPMENT_TEAM`
 
 These should be scoped to a protected `ios-build` environment.
