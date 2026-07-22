@@ -86,12 +86,9 @@ public partial class MessageBubble : UserControl
             .LocalDateTime.ToString("HH:mm");
         DeliveryText.Text = message.delivery switch
         {
-            DeliveryState.Queued => "queued",
-            DeliveryState.Pending => "sending",
-            DeliveryState.Sent => "sent",
-            DeliveryState.Received => "received",
-            DeliveryState.Seen => "seen",
-            DeliveryState.Failed => "failed",
+            DeliveryState.Queued or DeliveryState.Pending or DeliveryState.Sent => "✓",
+            DeliveryState.Received or DeliveryState.Seen => "✓✓",
+            DeliveryState.Failed => "!",
             _ => string.Empty,
         };
 

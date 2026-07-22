@@ -647,9 +647,7 @@ struct IrisDeliveryGlyph: View {
     @ViewBuilder
     private var glyph: some View {
         switch delivery {
-        case .queued, .pending:
-            Image(systemName: "paperplane.fill")
-        case .sent:
+        case .queued, .pending, .sent:
             Image(systemName: "checkmark")
         case .received, .seen:
             HStack(spacing: -7) {

@@ -937,9 +937,7 @@ fun DeliveryGlyph(
         }
     val imageVector =
         when (delivery) {
-            DeliveryState.QUEUED -> Icons.AutoMirrored.Rounded.Send
-            DeliveryState.PENDING -> Icons.AutoMirrored.Rounded.Send
-            DeliveryState.SENT -> Icons.Rounded.Check
+            DeliveryState.QUEUED, DeliveryState.PENDING, DeliveryState.SENT -> Icons.Rounded.Check
             DeliveryState.RECEIVED -> Icons.Rounded.DoneAll
             DeliveryState.SEEN -> Icons.Rounded.DoneAll
             DeliveryState.FAILED -> Icons.Rounded.MoreHoriz

@@ -1710,9 +1710,7 @@ fn day_label_secs(secs: u64) -> String {
 fn delivery_glyph(state: &DeliveryState) -> &'static str {
     use DeliveryState::*;
     match state {
-        Queued => "⋯",
-        Pending => "⋯",
-        Sent => "✓",
+        Queued | Pending | Sent => "✓",
         Received => "✓✓",
         Seen => "✓✓",
         Failed => "!",
