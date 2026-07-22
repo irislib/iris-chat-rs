@@ -22,7 +22,7 @@
   <array>
     <dict>
       <key>CFBundleURLName</key>
-      <string>to.iris.chat.macos</string>
+      <string>fi.siriusbusiness.irischat</string>
       <key>CFBundleURLSchemes</key>
       <array>
         <string>irischat</string>

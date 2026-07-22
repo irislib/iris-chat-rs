@@ -1,7 +1,7 @@
 import AppKit
 import UniformTypeIdentifiers
 
-private let appGroupIdentifier = "group.to.iris.chat"
+private let appGroupIdentifier = "group.fi.siriusbusiness.irischat"
 
 private struct StoredShareAttachment: Codable {
     let path: String

@@ -1,6 +1,7 @@
 # GitHub Artifact Builds
 
-Status: implemented in the worktree but not yet run on GitHub.
+Status: available as both a manual artifact build and the reusable build stage
+of the GitHub release workflow.
 
 ## Scope
 
@@ -8,12 +9,15 @@ Status: implemented in the worktree but not yet run on GitHub.
 
 - signed Android APK and AAB
 - signed iOS IPA and zipped xcarchive
+- macOS DMG and updater app archive
 - unsigned Windows installer and portable ZIP, matching existing behavior
 - Linux DEB and tarball
 - CLI archives for macOS ARM64, macOS x64, and Linux x64
 
-The macOS GUI app, DMG, updater archive, Developer ID signing, and notarization
-are deliberately excluded. The existing local macOS scripts remain unchanged.
+Manual runs build macOS artifacts unsigned by default. Enabling `sign_macos`
+uses the protected `macos-release` environment to apply Developer ID signing,
+provision the app and Share Extension, notarize the app and DMG, and validate
+their Gatekeeper tickets. Tag releases always enable this mode.
 
 The workflow never creates tags or GitHub Releases, uploads to TestFlight or an
 app store, publishes to Hashtree, Zapstore, Homebrew, or crates.io, or updates a
@@ -21,10 +25,11 @@ app store, publishes to Hashtree, Zapstore, Homebrew, or crates.io, or updates a
 
 ## Invocation
 
-The manual workflow accepts only:
+The manual workflow accepts:
 
 - `ref`: branch, tag, or commit to build
 - `artifact_retention_days`: 7, 30, or 90
+- `sign_macos`: opt in to signed and notarized macOS artifacts
 
 There is no version override. The metadata job resolves `ref` to one immutable
 commit before any platform job starts.
@@ -33,7 +38,8 @@ commit before any platform job starts.
 
 The selected commit is the sole source of version identity:
 
-- version name: the commit's UTC date as `YYYY.M.D`
+- version name: the semantic version from a `vX.Y.Z` tag, otherwise the
+  commit's UTC date as `YYYY.M.D`
 - version code: `year * 1000000 + month * 10000 + day * 100`
 - build timestamp: the commit timestamp in UTC
 - build SHA: the selected full commit plus its 12-character short form
@@ -50,6 +56,7 @@ flowchart TD
 
     Metadata --> Android["Android artifact: signed APK + AAB"]
     Metadata --> IOS["iOS artifact: signed IPA + xcarchive"]
+    Metadata --> MacOS["macOS artifact: DMG + app archive"]
     Metadata --> Windows["Windows artifact: installer + portable ZIP"]
     Metadata --> Linux["Linux artifact: DEB + tarball"]
     Metadata --> CLI["Three CLI artifacts: macOS ARM64/x64 + Linux x64"]
@@ -94,6 +101,20 @@ Rust DLL, generates C# UniFFI bindings, publishes the self-contained WPF app,
 and packages the NSIS installer and ZIP. The existing Mac-to-Windows SSH wrapper
 calls the same entrypoint for local compatibility.
 
+### macOS
+
+Runs on `macos-15` using `scripts/macos-build`. A normal manual run creates an
+unsigned DMG and updater archive for build testing. Signed runs use the
+`macos-release` environment and require:
+
+- a Developer ID Application certificate packaged as PKCS#12
+- Developer ID provisioning profiles for the app and Share Extension
+- App Store Connect credentials for notarization
+
+The workflow verifies code signatures, notarization tickets, and Gatekeeper
+acceptance before uploading the files. Secret values and signing identifiers
+stay in the protected environment rather than the repository.
+
 ### Linux
 
 Runs `scripts/linux-release` on `ubuntu-24.04`, preserving the existing Docker
@@ -123,18 +144,29 @@ uploads its required files. GitHub records a digest for each uploaded artifact.
 - YAML anchors reuse immutable checkout and the shared build environment.
 - A matrix represents the three structurally identical CLI builds.
 - Each platform uploads directly; there is no custom manifest format, artifact
-  restaging, final repackaging job, or provenance-only action.
+  restaging, or final repackaging job.
 - Existing local release publication remains separate.
 
-## First Run
+## GitHub Releases
+
+`.github/workflows/release.yml` runs on a pushed `v*` tag or can be dispatched
+for an existing tag. It verifies the release notes and fast project gate, calls
+this workflow for the complete platform set, attests the resulting files with
+GitHub artifact attestations, and creates the GitHub Release.
+
+The release includes the platform binaries directly and records their build
+provenance with GitHub artifact attestations.
+
+## Manual Run
 
 1. Commit and push the workflow, then merge it to the default branch so manual
    dispatch is available.
-2. Confirm `android-release` and `ios-build` contain the settings above.
+2. Confirm `android-release`, `ios-build`, and `macos-release` contain the
+   required protected settings.
 3. Run **Actions → Build artifacts → Run workflow** with `ref=main`.
 4. Approve protected build environments if configured.
 5. Download the desired `iris-<platform>-<version>-<sha>` artifact from the
    completed workflow run.
 
-The first hosted run is still required to validate the new native Windows path
-and each platform's hosted toolchain.
+Use `sign_macos=true` when validating the complete signed release path without
+creating a tag or GitHub Release.

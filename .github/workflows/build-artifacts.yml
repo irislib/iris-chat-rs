@@ -1,6 +1,22 @@
 name: Build artifacts
 
 on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to build."
+        required: true
+        type: string
+      artifact_retention_days:
+        description: "How long GitHub should retain build artifacts."
+        required: false
+        default: 7
+        type: number
+      sign_macos:
+        description: "Sign and notarize macOS artifacts with the macos-release environment."
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       ref:
@@ -14,6 +30,11 @@ on:
         default: "30"
         type: choice
         options: ["7", "30", "90"]
+      sign_macos:
+        description: "Sign and notarize the macOS app. Requires the macos-release environment."
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -57,11 +78,18 @@ jobs:
 
       - name: Resolve build identity
         id: metadata
+        env:
+          REQUESTED_REF: ${{ inputs.ref }}
         run: |
           set -Eeuo pipefail
           source scripts/release_common.sh
           commit="$(git rev-parse HEAD)"
-          version_name="$(TZ=UTC git log -1 --format=%cd --date=format:'%Y.%-m.%-d' HEAD)"
+          requested_tag="${REQUESTED_REF#refs/tags/}"
+          if [[ "$requested_tag" =~ ^v([0-9]+(\.[0-9]+){2,3}([-+][0-9A-Za-z.-]+)?)$ ]]; then
+            version_name="${BASH_REMATCH[1]}"
+          else
+            version_name="$(TZ=UTC git log -1 --format=%cd --date=format:'%Y.%-m.%-d' HEAD)"
+          fi
           version_code="$(semantic_version_code "$version_name")"
           build_timestamp_utc="$(TZ=UTC git log -1 --format=%cd --date=format:'%Y-%m-%dT%H:%M:%SZ' HEAD)"
           {
@@ -241,6 +269,149 @@ jobs:
             ${{ env.APP_DIR }}/dist/ios/*.xcarchive.zip
           if-no-files-found: error
           retention-days: ${{ inputs.artifact_retention_days }}
+
+  macos:
+    name: macOS DMG and app archive
+    needs: metadata
+    runs-on: macos-15
+    timeout-minutes: 120
+    environment: macos-release
+    env: *build_metadata
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.APP_DIR }}
+    steps:
+      - *checkout_build
+      - name: Install build tools
+        run: |
+          set -Eeuo pipefail
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-darwin
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+            ${{ github.workspace }}/${{ env.APP_DIR }}/macos/.build/cargo-target
+          key: all-builds-macos-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/macos/project.yml') }}
+          restore-keys: all-builds-macos-${{ runner.arch }}-
+      - name: Configure macOS signing and notarization
+        if: ${{ inputs.sign_macos }}
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          MACOS_APP_PROFILE_BASE64: ${{ secrets.IRIS_MACOS_PROVISIONING_PROFILE_BASE64 }}
+          MACOS_APP_PROFILE_SPECIFIER: ${{ secrets.IRIS_MACOS_PROVISIONING_PROFILE_SPECIFIER }}
+          MACOS_SHARE_PROFILE_BASE64: ${{ secrets.IRIS_MACOS_SHARE_PROVISIONING_PROFILE_BASE64 }}
+          MACOS_SHARE_PROFILE_SPECIFIER: ${{ secrets.IRIS_MACOS_SHARE_PROVISIONING_PROFILE_SPECIFIER }}
+          ASC_PRIVATE_KEY_P8: ${{ secrets.ASC_PRIVATE_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -Eeuo pipefail
+          for name in \
+            MACOS_CERTIFICATE_P12_BASE64 \
+            MACOS_CERTIFICATE_PASSWORD \
+            MACOS_SIGNING_IDENTITY \
+            MACOS_APP_PROFILE_BASE64 \
+            MACOS_APP_PROFILE_SPECIFIER \
+            MACOS_SHARE_PROFILE_BASE64 \
+            MACOS_SHARE_PROFILE_SPECIFIER \
+            ASC_PRIVATE_KEY_P8 \
+            ASC_KEY_ID \
+            ASC_ISSUER_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required macos-release secret: $name"
+              exit 1
+            fi
+          done
+
+          signing_dir="$RUNNER_TEMP/iris-macos-signing"
+          keychain="$RUNNER_TEMP/iris-release.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          profile_dir="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+          mkdir -p "$signing_dir" "$profile_dir"
+          chmod 700 "$signing_dir"
+
+          certificate="$signing_dir/developer-id.p12"
+          printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | /usr/bin/base64 -D > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          security default-keychain -s "$keychain"
+          security find-identity -v -p codesigning "$keychain" | grep -F "$MACOS_SIGNING_IDENTITY" >/dev/null
+
+          app_profile="$profile_dir/${MACOS_APP_PROFILE_SPECIFIER}.provisionprofile"
+          share_profile="$profile_dir/${MACOS_SHARE_PROFILE_SPECIFIER}.provisionprofile"
+          printf '%s' "$MACOS_APP_PROFILE_BASE64" | /usr/bin/base64 -D > "$app_profile"
+          printf '%s' "$MACOS_SHARE_PROFILE_BASE64" | /usr/bin/base64 -D > "$share_profile"
+
+          notary_key="$signing_dir/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%b\n' "$ASC_PRIVATE_KEY_P8" > "$notary_key"
+          chmod 600 "$certificate" "$app_profile" "$share_profile" "$notary_key"
+
+          {
+            echo "MACOS_SIGNING_IDENTITY=$MACOS_SIGNING_IDENTITY"
+            echo "IRIS_MACOS_PROVISIONING_PROFILE_SPECIFIER=$MACOS_APP_PROFILE_SPECIFIER"
+            echo "IRIS_MACOS_SHARE_PROVISIONING_PROFILE_SPECIFIER=$MACOS_SHARE_PROFILE_SPECIFIER"
+            echo "IRIS_ASC_AUTH_KEY_PATH=$notary_key"
+            echo "IRIS_ASC_AUTH_KEY_ID=$ASC_KEY_ID"
+            echo "IRIS_ASC_AUTH_KEY_ISSUER_ID=$ASC_ISSUER_ID"
+            echo "IRIS_MACOS_KEYCHAIN_PATH=$keychain"
+            echo "IRIS_MACOS_APP_PROFILE_PATH=$app_profile"
+            echo "IRIS_MACOS_SHARE_PROFILE_PATH=$share_profile"
+          } >> "$GITHUB_ENV"
+      - name: Build and verify macOS artifacts
+        env:
+          IRIS_RELEASE_TAG: v${{ needs.metadata.outputs.version_name }}
+          SIGN_MACOS: ${{ inputs.sign_macos }}
+        run: |
+          set -Eeuo pipefail
+          ./scripts/macos-build macos-dmg
+          IRIS_MACOS_FORCE_REBUILD_APP=false ./scripts/macos-build macos-updater-archive
+
+          app="dist/macos/Iris Chat.app"
+          dmg="dist/macos/iris-chat-v${IRIS_APP_VERSION_NAME}-macos-arm64.dmg"
+          archive="dist/macos/iris-chat-v${IRIS_APP_VERSION_NAME}-macos-arm64.app.tar.gz"
+          test -x "$app/Contents/MacOS/Iris Chat"
+          hdiutil verify "$dmg"
+          tar -tzf "$archive" | grep -F 'Iris Chat.app/Contents/MacOS/Iris Chat' >/dev/null
+
+          if [[ "$SIGN_MACOS" == "true" ]]; then
+            codesign --verify --deep --strict --verbose=2 "$app"
+            xcrun stapler validate "$app"
+            xcrun stapler validate "$dmg"
+            spctl --assess --type execute --verbose=2 "$app"
+          fi
+      - name: Upload macOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: iris-macos-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
+          path: |
+            ${{ env.APP_DIR }}/dist/macos/*.dmg
+            ${{ env.APP_DIR }}/dist/macos/*.app.tar.gz
+          if-no-files-found: error
+          retention-days: ${{ inputs.artifact_retention_days }}
+      - name: Remove temporary signing material
+        if: ${{ always() && inputs.sign_macos }}
+        run: |
+          security default-keychain -s login.keychain-db || true
+          security list-keychains -d user -s login.keychain-db || true
+          if [[ -n "${IRIS_MACOS_KEYCHAIN_PATH:-}" ]]; then
+            security delete-keychain "$IRIS_MACOS_KEYCHAIN_PATH" || true
+          fi
+          rm -f \
+            "${IRIS_MACOS_APP_PROFILE_PATH:-}" \
+            "${IRIS_MACOS_SHARE_PROFILE_PATH:-}"
 
   windows:
     name: Windows installer and portable ZIP

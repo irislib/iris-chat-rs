@@ -157,8 +157,8 @@ final class SingleInstanceCoordinator: NSObject {
     private let isolatedRunID = ProcessInfo.processInfo.environment["IRIS_UI_TEST_RUN_ID"]?
         .trimmingCharacters(in: .whitespacesAndNewlines)
     private lazy var notificationName = Notification.Name(
-        isolatedRunID.flatMap { $0.isEmpty ? nil : "to.iris.chat.macos.open.\(Self.lockSuffix($0))" }
-            ?? "to.iris.chat.macos.open"
+        isolatedRunID.flatMap { $0.isEmpty ? nil : "fi.siriusbusiness.irischat.macos.open.\(Self.lockSuffix($0))" }
+            ?? "fi.siriusbusiness.irischat.macos.open"
     )
     private var lockFds: [Int32] = []
     var onOpen: (([URL]) -> Void)?
@@ -222,9 +222,9 @@ final class SingleInstanceCoordinator: NSObject {
     private static func lockFilePaths(isolatedRunID: String?) -> [String] {
         if let isolatedRunID, !isolatedRunID.isEmpty {
             let suffix = lockSuffix(isolatedRunID)
-            return ["/tmp/to.iris.chat.gui.\(getuid()).\(suffix).lock"]
+            return ["/tmp/fi.siriusbusiness.irischat.gui.\(getuid()).\(suffix).lock"]
         }
-        var paths = ["/tmp/to.iris.chat.gui.\(getuid()).lock"]
+        var paths = ["/tmp/fi.siriusbusiness.irischat.gui.\(getuid()).lock"]
         if let dir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first?
@@ -253,7 +253,7 @@ final class SingleInstanceCoordinator: NSObject {
         guard let app = NSWorkspace.shared.runningApplications.first(where: { app in
             app.processIdentifier != currentPid
                 && app.activationPolicy == .regular
-                && app.bundleIdentifier == "to.iris.chat.macos"
+                && app.bundleIdentifier == "fi.siriusbusiness.irischat"
         }) else {
             return false
         }

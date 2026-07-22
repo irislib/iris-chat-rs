@@ -1,13 +1,14 @@
 name: IrisChatMac
 options:
-  bundleIdPrefix: to.iris.chat
+  bundleIdPrefix: fi.siriusbusiness.irischat
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
 
 settings:
   base:
-    PRODUCT_BUNDLE_IDENTIFIER: to.iris.chat.macos
+    PRODUCT_BUNDLE_IDENTIFIER: fi.siriusbusiness.irischat
+    DEVELOPMENT_TEAM: 8G9P8AN75D
     MARKETING_VERSION: ${IRIS_XCODE_MARKETING_VERSION}
     CURRENT_PROJECT_VERSION: ${IRIS_APP_VERSION_CODE}
     VERSIONING_SYSTEM: apple-generic
@@ -89,8 +90,8 @@ targets:
     settings:
       base:
         PRODUCT_NAME: ShareExtension
-        PRODUCT_BUNDLE_IDENTIFIER: to.iris.chat.macos.ShareExtension
-        DEVELOPMENT_TEAM: J8PPJKD7TA
+        PRODUCT_BUNDLE_IDENTIFIER: fi.siriusbusiness.irischat.ShareExtension
+        DEVELOPMENT_TEAM: 8G9P8AN75D
         CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
         PROVISIONING_PROFILE_SPECIFIER: $(IRIS_MACOS_SHARE_PROVISIONING_PROFILE_SPECIFIER)
         INFOPLIST_FILE: ShareExtension/Info.plist
@@ -103,7 +104,7 @@ targets:
       base:
         PRODUCT_NAME: "$(TARGET_NAME)"
         PRODUCT_MODULE_NAME: "$(TARGET_NAME)"
-        PRODUCT_BUNDLE_IDENTIFIER: to.iris.chat.macos.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: fi.siriusbusiness.irischat.macos.uitests
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: IrisChatMac
     sources:
@@ -129,7 +130,7 @@ targets:
       base:
         PRODUCT_NAME: "$(TARGET_NAME)"
         PRODUCT_MODULE_NAME: "$(TARGET_NAME)"
-        PRODUCT_BUNDLE_IDENTIFIER: to.iris.chat.macos.tests
+        PRODUCT_BUNDLE_IDENTIFIER: fi.siriusbusiness.irischat.macos.tests
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: IrisChatMac
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Iris Chat.app/Contents/MacOS/Iris Chat"
