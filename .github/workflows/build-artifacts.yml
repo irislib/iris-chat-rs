@@ -70,7 +70,7 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
     steps:
       - name: Checkout requested ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: ${{ env.APP_DIR }}
           ref: ${{ inputs.ref }}
@@ -118,12 +118,12 @@ jobs:
     steps:
       - &checkout_build
         name: Checkout immutable build commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: ${{ env.APP_DIR }}
           ref: ${{ needs.metadata.outputs.commit }}
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -141,7 +141,7 @@ jobs:
           yes | "$sdkmanager" --licenses >/dev/null || true
           "$sdkmanager" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
       - name: Cache Cargo and Gradle
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -183,7 +183,7 @@ jobs:
           "$build_tools/apksigner" verify --verbose --print-certs "$apk"
           jarsigner -verify "$aab" 2>&1 | grep '^jar verified' >/dev/null
       - name: Upload Android build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: iris-android-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
           path: |
@@ -212,7 +212,7 @@ jobs:
           rustup default stable
           rustup target add aarch64-apple-ios aarch64-apple-ios-sim
       - name: Cache Cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -261,7 +261,7 @@ jobs:
           archive_zip="dist/ios/iris-chat-v${IRIS_APP_VERSION_NAME}-ios.xcarchive.zip"
           ditto -c -k --sequesterRsrc --keepParent "$archive" "$archive_zip"
       - name: Upload iOS build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: iris-ios-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
           path: |
@@ -291,7 +291,7 @@ jobs:
           rustup default stable
           rustup target add aarch64-apple-darwin
       - name: Cache Cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -393,7 +393,7 @@ jobs:
             spctl --assess --type execute --verbose=2 "$app"
           fi
       - name: Upload macOS build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: iris-macos-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
           path: |
@@ -432,7 +432,7 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
           choco install nsis --no-progress -y
       - name: Cache Cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -452,7 +452,7 @@ jobs:
             throw 'Portable ZIP is missing IrisChat.exe or iris_chat_core.dll'
           }
       - name: Upload Windows build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: iris-windows-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
           path: |
@@ -481,7 +481,7 @@ jobs:
           dpkg-deb --info "$deb" >/dev/null
           tar -tzf "$archive" | grep '/iris-chat$' >/dev/null
       - name: Upload Linux build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: iris-linux-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
           path: |
@@ -526,7 +526,7 @@ jobs:
           rustup default stable
           rustup target add "${{ matrix.target }}"
       - name: Cache Cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -544,7 +544,7 @@ jobs:
           tar -tzf "$archive" | grep '^iris/iris$' >/dev/null
           tar -tzf "$archive" | grep '^iris/install.sh$' >/dev/null
       - name: Upload CLI build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: iris-${{ matrix.platform }}-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
           path: ${{ env.APP_DIR }}/dist/cli/iris-${{ matrix.target }}.tar.gz
