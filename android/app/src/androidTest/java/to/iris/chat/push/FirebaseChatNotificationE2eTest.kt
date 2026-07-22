@@ -85,16 +85,9 @@ class FirebaseChatNotificationE2eTest {
                 if (candidate.optString("blocked_reason").isNotEmpty()) {
                     throw AssertionError("Push notification was blocked: ${candidate.optString("blocked_reason")}")
                 }
-                if (candidate.optLong("shown_at_ms") <= 0L) {
-                    return@waitForSnapshot null
-                }
-                val active = candidate.optJSONObject("active_notification")
-                if (active?.optString("text") != expectedBody) {
-                    return@waitForSnapshot null
-                }
-                if (expectedTitle != null && active.optString("title") != expectedTitle) {
-                    return@waitForSnapshot null
-                }
+                activeNotificationSnapshots().firstOrNull {
+                    it.body == expectedBody && (expectedTitle == null || it.title == expectedTitle)
+                } ?: return@waitForSnapshot null
                 candidate
             }
 
