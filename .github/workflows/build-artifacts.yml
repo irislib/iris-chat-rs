@@ -282,15 +282,28 @@ jobs:
           verify_profile() {
             local profile="$1"
             local expected_app_id="$2"
-            local actual_uuid actual_app_id
-            actual_uuid="$(security cms -D -i "$profile" | plutil -extract UUID raw -o - -)"
-            actual_app_id="$(security cms -D -i "$profile" | plutil -extract Entitlements.application-identifier raw -o - -)"
+            local expected_app_group="group.$IOS_BUNDLE_ID"
+            local decoded_profile="$signing_dir/$(basename "$profile").plist"
+            local actual_uuid actual_app_id actual_app_groups
+            security cms -D -i "$profile" > "$decoded_profile"
+            actual_uuid="$(plutil -extract UUID raw -o - "$decoded_profile")"
+            actual_app_id="$(plutil -extract Entitlements.application-identifier raw -o - "$decoded_profile")"
+            actual_app_groups="$(
+              /usr/libexec/PlistBuddy \
+                -c 'Print :Entitlements:com.apple.security.application-groups' \
+                "$decoded_profile" 2>/dev/null \
+                | sed -n 's/^[[:space:]]*//; /^group\./p'
+            )"
             if [[ "$actual_uuid" != "$(basename "$profile" .mobileprovision)" ]]; then
               echo "::error::iOS profile UUID does not match its configured filename"
               return 1
             fi
             if [[ "$actual_app_id" != "$IOS_TEAM.$expected_app_id" ]]; then
               echo "::error::iOS profile does not authorize $expected_app_id"
+              return 1
+            fi
+            if ! grep -Fx "$expected_app_group" <<< "$actual_app_groups" >/dev/null; then
+              echo "::error::iOS profile for $expected_app_id does not authorize $expected_app_group"
               return 1
             fi
           }
