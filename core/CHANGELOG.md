@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.44
+
+- Recover direct sends immediately after secret-key restore instead of waiting
+  for linked-device roster backfill, and retry already queued messages.
+- Default typing indicators and read receipts off while keeping notifications
+  enabled on supported platforms.
+- Include the mobile notification subscription metadata needed for correct
+  APNs environment and app routing.
+
 ## 0.1.43
 
 - Update FIPS to 0.4.34 for reliable direct-path recovery across network

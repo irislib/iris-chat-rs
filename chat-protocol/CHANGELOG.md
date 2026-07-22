@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.9
+
+- Let a runtime holding the profile secret key send immediately while its
+  signed linked-device roster is still being recovered.
+
 ## 0.1.8
 
 - Require signed AppKeys evidence before accepting an invite's claimed owner
