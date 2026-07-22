@@ -405,6 +405,10 @@ pub struct ProtocolEngine {
     invite_owner_app_keys_evidence: BTreeMap<NdrOwnerPubkey, ProtocolAppKeysEvidence>,
     processed_private_invite_response_ids: Vec<String>,
     local_app_keys_observed: bool,
+    /// Ephemeral proof that this runtime holds the owner's secret key. This
+    /// permits outbound recovery while a restored AppKeys roster is still
+    /// being fetched, without persisting or publishing a provisional roster.
+    local_owner_authenticated: bool,
     subscription_generation: u64,
     /// While > 0, `persist()` only flips `batch_persist_dirty` instead of
     /// serializing+writing. AppCore wraps catch-up bursts and other

@@ -37,6 +37,7 @@ impl ProtocolEngine {
             invite_owner_app_keys_evidence: BTreeMap::new(),
             processed_private_invite_response_ids: Vec::new(),
             local_app_keys_observed: false,
+            local_owner_authenticated: false,
             subscription_generation: 0,
             batch_depth: std::cell::Cell::new(0),
             batch_persist_dirty: std::cell::Cell::new(false),
@@ -123,6 +124,7 @@ impl ProtocolEngine {
             invite_owner_app_keys_evidence: state.invite_owner_app_keys_evidence,
             processed_private_invite_response_ids: state
                 .processed_private_invite_response_ids,
+            local_owner_authenticated: false,
             subscription_generation: state.subscription_generation,
             batch_depth: std::cell::Cell::new(0),
             batch_persist_dirty: std::cell::Cell::new(false),
@@ -403,7 +405,10 @@ impl ProtocolEngine {
 
     pub fn direct_send_readiness(&self, peer_pubkey: PublicKey) -> DirectSendReadiness {
         let snapshot = self.session_manager.snapshot();
-        if !self.local_app_keys_observed && !self.has_authoritative_local_roster() {
+        if !self.local_owner_authenticated
+            && !self.local_app_keys_observed
+            && !self.has_authoritative_local_roster()
+        {
             return DirectSendReadiness::MissingLocalAppKeys;
         }
 
@@ -437,6 +442,17 @@ impl ProtocolEngine {
         }
 
         DirectSendReadiness::Ready
+    }
+
+    pub fn authenticate_local_owner_for_sending(
+        &mut self,
+        owner_keys: &Keys,
+    ) -> anyhow::Result<()> {
+        if owner_keys.public_key() != self.owner_pubkey {
+            anyhow::bail!("local owner key does not match protocol owner");
+        }
+        self.local_owner_authenticated = true;
+        Ok(())
     }
 
     pub fn local_invite(&self) -> Option<Invite> {

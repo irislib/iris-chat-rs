@@ -10,6 +10,14 @@ fn direct_send_readiness_advances_from_appkeys_and_invite_state() {
         engine.direct_send_readiness(peer_owner.public_key()),
         DirectSendReadiness::MissingLocalAppKeys
     );
+    assert!(engine
+        .authenticate_local_owner_for_sending(&peer_owner)
+        .is_err());
+    assert_eq!(
+        engine.direct_send_readiness(peer_owner.public_key()),
+        DirectSendReadiness::MissingLocalAppKeys,
+        "a mismatched owner key must not bypass local roster readiness"
+    );
 
     observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
     assert_eq!(
@@ -33,6 +41,110 @@ fn direct_send_readiness_advances_from_appkeys_and_invite_state() {
         engine.direct_send_readiness(peer_owner.public_key()),
         DirectSendReadiness::Ready
     );
+}
+
+#[test]
+fn nsec_restore_sends_without_waiting_for_local_roster_backfill() {
+    let owner = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let owner_nsec = owner
+        .secret_key()
+        .to_bech32()
+        .unwrap_or_else(|_| owner.secret_key().to_secret_hex());
+    let (update_tx, update_rx) = flume::unbounded();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        update_tx,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+
+    core.restore_primary_session(&owner_nsec);
+    assert!(core.defer_owner_app_keys_publish);
+    assert!(!core.app_keys.contains_key(&owner.public_key().to_hex()));
+
+    {
+        let engine = core.protocol_engine.as_mut().expect("protocol engine");
+        observe_peer_appkeys_for_test(
+            engine,
+            &peer_owner,
+            &[peer_device.public_key()],
+            1,
+        );
+        observe_peer_device_invite_for_test(engine, &peer_owner, &peer_device, 2);
+        assert_eq!(
+            engine.direct_send_readiness(peer_owner.public_key()),
+            DirectSendReadiness::Ready,
+            "owner-authenticated restore must not remain stuck on MissingLocalAppKeys"
+        );
+    }
+
+    let chat_id = peer_owner.public_key().to_hex();
+    core.send_direct_message(&chat_id, "recovered hello", UnixSeconds(3), None);
+
+    let message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| thread.messages.first())
+        .expect("sent message");
+    assert_ne!(message.id, "1", "queued message should drain immediately");
+    assert!(!message.delivery_trace.outer_event_ids.is_empty());
+    assert!(update_rx.try_iter().all(|update| match update {
+        AppUpdate::NearbyPublishedEvent { event_json, .. } => serde_json::from_str::<Event>(&event_json)
+            .map(|event| !is_app_keys_event(&event))
+            .unwrap_or(true),
+        _ => true,
+    }), "recovery must not publish a provisional one-device AppKeys roster");
+}
+
+#[test]
+fn owner_authentication_drains_message_stuck_on_missing_local_app_keys() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("owner-auth-recovers-queue", &owner, &device);
+    {
+        let engine = core.protocol_engine.as_mut().expect("protocol engine");
+        observe_peer_appkeys_for_test(
+            engine,
+            &peer_owner,
+            &[peer_device.public_key()],
+            1,
+        );
+        observe_peer_device_invite_for_test(engine, &peer_owner, &peer_device, 2);
+    }
+
+    let chat_id = peer_owner.public_key().to_hex();
+    core.send_direct_message(&chat_id, "stuck hello", UnixSeconds(3), None);
+    let queued = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| thread.messages.first())
+        .expect("queued message");
+    assert_eq!(queued.delivery, DeliveryState::Queued);
+    assert!(queued.delivery_trace.outer_event_ids.is_empty());
+    let queued_id = queued.id.clone();
+
+    core.protocol_engine
+        .as_mut()
+        .expect("protocol engine")
+        .authenticate_local_owner_for_sending(&owner)
+        .expect("owner authentication");
+    core.process_protocol_engine_retry_batch(
+        "test_owner_authentication",
+        ProtocolRetryBatch::default(),
+    );
+
+    let sent = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| thread.messages.first())
+        .expect("recovered message");
+    assert_ne!(sent.id, queued_id);
+    assert!(!sent.delivery_trace.outer_event_ids.is_empty());
 }
 
 #[test]

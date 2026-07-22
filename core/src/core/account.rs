@@ -664,8 +664,11 @@ impl AppCore {
         self.pending_private_invite_responses =
             load_pending_private_invite_responses(storage.as_ref())?;
 
-        let protocol_engine =
+        let mut protocol_engine =
             ProtocolEngine::load_or_create_for_local_device(storage, owner_pubkey, &device_keys)?;
+        if let Some(owner_keys) = owner_keys.as_ref() {
+            protocol_engine.authenticate_local_owner_for_sending(owner_keys)?;
+        }
         self.protocol_engine = Some(protocol_engine);
 
         let authorization_state = self.restored_local_authorization_state(
