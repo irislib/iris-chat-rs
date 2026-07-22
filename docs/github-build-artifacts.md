@@ -168,6 +168,13 @@ GitHub artifact attestations, and creates the GitHub Release.
 The release includes the platform binaries directly and records their build
 provenance with GitHub artifact attestations.
 
+GitHub Releases and Hashtree self-published releases both use
+`scripts/render-release-notes.py`. The shared renderer puts the normal macOS,
+Windows, Android, and Debian/Ubuntu installers under **Most People Will Want**,
+then separates command-line downloads and advanced packaging files. GitHub
+passes its release download URL and attestation note; Hashtree uses relative
+asset links and includes its command-line install URL.
+
 ## Manual Run
 
 1. Commit and push the workflow, then merge it to the default branch so manual

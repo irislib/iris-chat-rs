@@ -20,6 +20,17 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('compgen -G "artifacts/$pattern"', workflow)
         self.assertIn("'*.ipa'", workflow)
 
+    def test_github_and_self_publish_share_release_notes_renderer(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        local_release = (ROOT / "scripts/release").read_text()
+        renderer = "scripts/render-release-notes.py"
+
+        self.assertIn(renderer, workflow)
+        self.assertIn(renderer, local_release)
+        self.assertIn("--asset-base-url", workflow)
+        self.assertIn("--verification-line", workflow)
+        self.assertIn("--install-url", local_release)
+
 
 if __name__ == "__main__":
     unittest.main()

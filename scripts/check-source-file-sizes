@@ -58,7 +58,6 @@ baseline_limit_for() {
     ios/UITests/IrisChatUITests.swift) echo 1180 ;;
     linux/src/screens/chat.rs) echo 2846 ;;
     scripts/protocol_fault_validation.py) echo 1342 ;;
-    scripts/release) echo 1293 ;;
     windows/IrisChat/AppManager.cs) echo 1489 ;;
     *) echo "$MAX_LINES" ;;
   esac
