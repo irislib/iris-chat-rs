@@ -1610,9 +1610,9 @@ final class IrisChatTests: XCTestCase {
         )
 
         rust.emit(.persistPendingDeviceLink(deviceNsec: "nsec1device", approvalBootstrapJson: "{}"))
-        XCTAssertTrue(await waitUntil { pendingStore.link != nil })
+        let persisted = await waitUntil { pendingStore.link != nil }; XCTAssertTrue(persisted)
         rust.emit(.clearPendingDeviceLink)
-        XCTAssertTrue(await waitUntil { pendingStore.link == nil })
+        let cleared = await waitUntil { pendingStore.link == nil }; XCTAssertTrue(cleared)
     }
 
     @MainActor
