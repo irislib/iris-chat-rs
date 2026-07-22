@@ -22,17 +22,17 @@ resolve_serial() {
     return 0
   fi
 
-  local sdk_dir adb_path attached_serial
+  local sdk_dir adb_path emulator_serial
   sdk_dir="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
   if [[ -z "${sdk_dir}" && -f "${ANDROID_DIR}/local.properties" ]]; then
     sdk_dir="$(sed -n 's/^sdk\.dir=//p' "${ANDROID_DIR}/local.properties" | tail -n 1)"
   fi
   adb_path="${sdk_dir}/platform-tools/adb"
   if [[ -n "${sdk_dir}" && -x "${adb_path}" ]]; then
-    attached_serial="$("${adb_path}" devices -l 2>/dev/null |
-      awk 'NR > 1 && $2 == "device" && $1 !~ /^emulator-/ { print $1; exit }')"
-    if [[ -n "${attached_serial}" ]]; then
-      printf '%s\n' "${attached_serial}"
+    emulator_serial="$("${adb_path}" devices -l 2>/dev/null |
+      awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { print $1; exit }')"
+    if [[ -n "${emulator_serial}" ]]; then
+      printf '%s\n' "${emulator_serial}"
       return 0
     fi
   fi
