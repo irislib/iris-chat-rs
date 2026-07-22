@@ -7,6 +7,18 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 ## Unreleased
 
+## 2026.7.23
+
+- A linked device now goes directly from its link code to the chat list; the
+  redundant "Finish linking" screen has been removed on every platform.
+- Device approval now waits only for the exact owner-signed device entry and
+  the response authenticated by that link code, while the optional receipt no
+  longer delays login.
+- Interrupted, disconnected, or reordered approvals retry automatically within
+  two seconds and survive app relaunches and updates.
+- Messages waiting for local device keys now retry normally instead of staying
+  stuck in `MissingLocalAppKeys`.
+
 ## 2026.7.22
 
 - Restoring a profile with a valid secret key now continues without requiring

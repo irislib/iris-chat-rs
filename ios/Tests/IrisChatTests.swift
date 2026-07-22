@@ -27,6 +27,24 @@ final class InMemorySecretStore: AccountSecretStore {
     }
 }
 
+final class InMemoryPendingDeviceLinkSecretStore: PendingDeviceLinkSecretStore {
+    var link: StoredPendingDeviceLink?
+    init(link: StoredPendingDeviceLink? = nil) {
+        self.link = link
+    }
+    func loadPendingDeviceLink() -> StoredPendingDeviceLink? {
+        link
+    }
+    func savePendingDeviceLink(_ link: StoredPendingDeviceLink) {
+        self.link = link
+    }
+    @discardableResult
+    func clear() -> Bool {
+        link = nil
+        return true
+    }
+}
+
 private final class MockDesktopNotificationPoster: DesktopNotificationPosting {
     var posts: [(title: String, body: String)] = []
     func post(title: String, body: String) {
@@ -1483,6 +1501,24 @@ final class IrisChatTests: XCTestCase {
         XCTAssertNil(store.load())
     }
 
+    func testFilePendingDeviceLinkSecretStoreRoundTrip() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = FileAccountSecretStore(
+            url: tempDir.appendingPathComponent("pending-device-link-secret.json"),
+            fileManager: .default
+        )
+        let expected = StoredPendingDeviceLink(
+            deviceNsec: "nsec1device",
+            approvalBootstrapJson: "{\"v\":1}"
+        )
+
+        store.savePendingDeviceLink(expected)
+        XCTAssertEqual(store.loadPendingDeviceLink(), expected)
+        XCTAssertTrue(store.clear())
+        XCTAssertNil(store.loadPendingDeviceLink())
+    }
+
 #if os(macOS)
     func testMacUiTestSecretStoreUsesDataDirectoryFile() throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -1545,6 +1581,66 @@ final class IrisChatTests: XCTestCase {
         )))
         await Task.yield()
         XCTAssertFalse(manager.bootstrapInFlight)
+    }
+
+    @MainActor
+    func testAppManagerRestoresPendingDeviceLinkBeforeAccountBundle() async {
+        let pending = StoredPendingDeviceLink(
+            deviceNsec: "nsec1device",
+            approvalBootstrapJson: "{\"request\":true}"
+        )
+        let rust = MockRustApp()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: InMemorySecretStore(bundle: StoredAccountBundle(
+                ownerNsec: "stale-owner",
+                ownerPubkeyHex: "stale-owner-hex",
+                deviceNsec: "stale-device"
+            )),
+            pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(link: pending),
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        guard let first = rust.dispatchedActions.first else {
+            return XCTFail("expected pending link restore action")
+        }
+        switch first {
+        case .restorePendingDeviceLink(let deviceNsec, let approvalBootstrapJson):
+            XCTAssertEqual(deviceNsec, pending.deviceNsec)
+            XCTAssertEqual(approvalBootstrapJson, pending.approvalBootstrapJson)
+        default:
+            XCTFail("unexpected action \(first)")
+        }
+        XCTAssertTrue(manager.bootstrapInFlight)
+    }
+
+    @MainActor
+    func testPendingDeviceLinkUpdatesPersistAndClearSecureState() async {
+        let rust = MockRustApp()
+        let pendingStore = InMemoryPendingDeviceLinkSecretStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        _ = AppManager(
+            rust: rust,
+            secretStore: InMemorySecretStore(),
+            pendingDeviceLinkSecretStore: pendingStore,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        rust.emit(.persistPendingDeviceLink(
+            deviceNsec: "nsec1device",
+            approvalBootstrapJson: "{}"
+        ))
+        let persisted = await waitUntil { pendingStore.link != nil }
+        XCTAssertTrue(persisted)
+        rust.emit(.clearPendingDeviceLink)
+        let cleared = await waitUntil { pendingStore.link == nil }
+        XCTAssertTrue(cleared)
     }
 
     @MainActor

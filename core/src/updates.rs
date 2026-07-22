@@ -14,6 +14,11 @@ pub enum AppUpdate {
         owner_pubkey_hex: String,
         device_nsec: String,
     },
+    PersistPendingDeviceLink {
+        device_nsec: String,
+        approval_bootstrap_json: String,
+    },
+    ClearPendingDeviceLink,
     NearbyPublishedEvent {
         event_id: String,
         kind: u32,
@@ -101,6 +106,13 @@ pub(crate) enum InternalEvent {
     },
     PollPendingDeviceInvites {
         token: u64,
+    },
+    PollPendingDeviceLink {
+        token: u64,
+    },
+    PendingDeviceLinkRefreshFinished {
+        token: u64,
+        events: Vec<Event>,
     },
     PruneExpiredMessages {
         token: u64,

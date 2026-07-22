@@ -78,20 +78,36 @@ impl AppCore {
         let app_keys_event = local_app_keys
             .get_encrypted_event_at(owner_keys, created_at)?
             .sign_with_keys(owner_keys)?;
-        let events = [
-            ("device-approval-app-keys", app_keys_event),
-            ("device-approval-receipt", receipt_event),
-            ("device-approval-invite-response", invite_response_event),
-        ];
-
         self.runtime.block_on(async {
-            for (label, event) in &events {
-                publish_event_to_any_relay_raw(approval_relay_urls, event, label).await?;
-            }
+            let (app_keys_result, response_result) = tokio::join!(
+                publish_event_to_any_relay_raw(
+                    approval_relay_urls,
+                    &app_keys_event,
+                    "device-approval-app-keys",
+                ),
+                publish_event_to_any_relay_raw(
+                    approval_relay_urls,
+                    &invite_response_event,
+                    "device-approval-invite-response",
+                ),
+            );
+            app_keys_result?;
+            response_result?;
             Ok::<(), anyhow::Error>(())
         })?;
 
-        for (_, event) in &events {
+        let receipt_relay_urls = approval_relay_urls.to_vec();
+        let receipt_for_publish = receipt_event.clone();
+        self.runtime.spawn(async move {
+            let _ = publish_event_to_any_relay_raw(
+                &receipt_relay_urls,
+                &receipt_for_publish,
+                "device-approval-receipt",
+            )
+            .await;
+        });
+
+        for event in [&app_keys_event, &invite_response_event, &receipt_event] {
             self.remember_event(event.id.to_string());
             self.emit_nearby_published_event(event);
         }

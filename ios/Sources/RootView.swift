@@ -164,7 +164,7 @@ struct RootView: View {
             return false
         }
         switch manager.activeScreen {
-        case .welcome, .createAccount, .restoreAccount, .addDevice, .awaitingDeviceApproval, .deviceRevoked:
+        case .welcome, .createAccount, .restoreAccount, .addDevice, .deviceRevoked:
             return false
         case .chatList, .newChat, .newGroup, .createInvite, .joinInvite, .settings, .chat, .directChatInfo, .groupDetails, .deviceRoster:
             return true
@@ -213,7 +213,7 @@ struct RootView: View {
         case .restoreAccount:
             RestoreAccountScreen(manager: manager)
         case .addDevice:
-            AddDeviceScreen(manager: manager, awaitingApproval: false)
+            AddDeviceScreen(manager: manager)
         case .chatList:
             ChatListScreen(
                 manager: manager,
@@ -246,8 +246,6 @@ struct RootView: View {
             GroupDetailsScreen(manager: manager, groupId: groupId)
         case .deviceRoster:
             DeviceRosterScreen(manager: manager)
-        case .awaitingDeviceApproval:
-            AddDeviceScreen(manager: manager, awaitingApproval: true)
         case .deviceRevoked:
             DeviceRevokedScreen(manager: manager)
         }
@@ -429,8 +427,6 @@ struct RootView: View {
             return "Group"
         case .deviceRoster:
             return "Manage Devices"
-        case .awaitingDeviceApproval:
-            return "Finish Linking"
         case .deviceRevoked:
             return "Device Removed"
         }

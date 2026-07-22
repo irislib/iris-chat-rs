@@ -16,7 +16,6 @@ pub enum Screen {
     DirectChatInfo { chat_id: String },
     GroupDetails { group_id: String },
     DeviceRoster,
-    AwaitingDeviceApproval,
     DeviceRevoked,
 }
 

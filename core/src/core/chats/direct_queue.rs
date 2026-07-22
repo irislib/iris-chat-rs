@@ -1,6 +1,15 @@
 use super::*;
 
 impl AppCore {
+    pub(in crate::core) fn has_queued_direct_text_messages(&self) -> bool {
+        self.threads.iter().any(|(chat_id, thread)| {
+            thread
+                .messages
+                .iter()
+                .any(|message| is_queued_direct_text_message(chat_id, message))
+        })
+    }
+
     pub(in crate::core) fn drain_queued_direct_text_messages(
         &mut self,
         reason: &'static str,

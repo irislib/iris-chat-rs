@@ -6,7 +6,6 @@ use iris_chat_core::{AppAction, AppState, Screen};
 use crate::app_manager::AppManager;
 
 mod add_device;
-mod awaiting_device_approval;
 pub mod chat;
 mod chat_list;
 mod create_account;
@@ -37,7 +36,6 @@ pub fn render(screen: &Screen, state: &AppState, manager: &Rc<AppManager>) -> gt
         Screen::DirectChatInfo { chat_id } => chat::render(chat_id, state, manager),
         Screen::GroupDetails { group_id } => group_details::render(group_id, state, manager),
         Screen::DeviceRoster => device_roster::render(state, manager),
-        Screen::AwaitingDeviceApproval => awaiting_device_approval::render(state, manager),
         Screen::DeviceRevoked => device_revoked::render(state, manager),
         Screen::Settings => settings::render(state, manager),
     }
@@ -59,7 +57,6 @@ pub fn title(screen: &Screen) -> &'static str {
         Screen::DirectChatInfo { .. } => "Details",
         Screen::GroupDetails { .. } => "Group",
         Screen::DeviceRoster => "Devices",
-        Screen::AwaitingDeviceApproval => "Awaiting approval",
         Screen::DeviceRevoked => "Device removed",
     }
 }

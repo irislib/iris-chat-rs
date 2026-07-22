@@ -1,3 +1,5 @@
+use nostr_identity::FACT_OP_KIND;
+
 #[test]
 fn group_created_by_unknown_creator_surfaces_as_request_and_clears_on_accept() {
     use nostr_double_ratchet::{group::GroupSnapshot, GroupProtocol, OwnerPubkey, UnixSeconds};

@@ -11,15 +11,12 @@ pub(super) struct LoggedInState {
 
 pub(super) struct PendingLinkedDeviceState {
     pub(super) device_keys: Keys,
-    pub(super) request_keys: Keys,
-    pub(super) approval_bootstrap: NostrIdentityDeviceApprovalBootstrap,
     pub(super) pairing_client: Client,
     pub(super) pairing_invite: Invite,
     pub(super) pairing_url: String,
-    pub(super) authorized_owner_pubkey: Option<PublicKey>,
-    pub(super) approval_receipt_event: Option<Event>,
     pub(super) authorized_app_keys_event: Option<Event>,
     pub(super) pending_response: Option<PendingLinkInviteResponse>,
+    pub(super) refresh_in_flight: bool,
 }
 
 pub(super) struct PendingLinkInviteResponse {

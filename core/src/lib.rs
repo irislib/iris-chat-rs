@@ -241,7 +241,9 @@ struct CoreRecoveryState {
 impl CoreRecoveryState {
     fn remember_action(&self, action: &AppAction) {
         match action {
-            AppAction::RestoreSession { .. } | AppAction::RestoreAccountBundle { .. } => {
+            AppAction::RestoreSession { .. }
+            | AppAction::RestoreAccountBundle { .. }
+            | AppAction::RestorePendingDeviceLink { .. } => {
                 self.set_restore_action(Some(action.clone()));
             }
             AppAction::Logout => self.set_restore_action(None),
@@ -250,18 +252,26 @@ impl CoreRecoveryState {
     }
 
     fn remember_update(&self, update: &AppUpdate) {
-        if let AppUpdate::PersistAccountBundle {
-            owner_nsec,
-            owner_pubkey_hex,
-            device_nsec,
-            ..
-        } = update
-        {
-            self.set_restore_action(Some(AppAction::RestoreAccountBundle {
+        match update {
+            AppUpdate::PersistAccountBundle {
+                owner_nsec,
+                owner_pubkey_hex,
+                device_nsec,
+                ..
+            } => self.set_restore_action(Some(AppAction::RestoreAccountBundle {
                 owner_nsec: owner_nsec.clone(),
                 owner_pubkey_hex: owner_pubkey_hex.clone(),
                 device_nsec: device_nsec.clone(),
-            }));
+            })),
+            AppUpdate::PersistPendingDeviceLink {
+                device_nsec,
+                approval_bootstrap_json,
+            } => self.set_restore_action(Some(AppAction::RestorePendingDeviceLink {
+                device_nsec: device_nsec.clone(),
+                approval_bootstrap_json: approval_bootstrap_json.clone(),
+            })),
+            AppUpdate::ClearPendingDeviceLink => self.set_restore_action(None),
+            _ => {}
         }
     }
 
@@ -693,7 +703,7 @@ impl FfiApp {
                 // the UI keeps re-rendering for seconds even though only the
                 // final state mattered.
                 //
-                // PersistAccountBundle is a side-effect (key persistence), not
+                // Secret persistence updates are side effects, not
                 // a UI update, so we never collapse those — every one must run.
                 while let Ok(first) = update_rx.recv() {
                     let mut latest_full_state: Option<AppUpdate> = None;
@@ -728,6 +738,10 @@ impl FfiApp {
                         let kind = match &update {
                             AppUpdate::FullState(_) => "FullState",
                             AppUpdate::PersistAccountBundle { .. } => "PersistAccountBundle",
+                            AppUpdate::PersistPendingDeviceLink { .. } => {
+                                "PersistPendingDeviceLink"
+                            }
+                            AppUpdate::ClearPendingDeviceLink => "ClearPendingDeviceLink",
                             AppUpdate::NearbyPublishedEvent { .. } => "NearbyPublishedEvent",
                             AppUpdate::NearbyPeersChanged { .. } => "NearbyPeersChanged",
                         };
@@ -1658,6 +1672,22 @@ mod ffi_hardening_tests {
     }
 
     #[test]
+    fn recovery_state_tracks_and_clears_pending_device_link() {
+        let recovery = CoreRecoveryState::default();
+        recovery.remember_update(&AppUpdate::PersistPendingDeviceLink {
+            device_nsec: "device-secret".to_string(),
+            approval_bootstrap_json: "{}".to_string(),
+        });
+
+        assert!(matches!(
+            recovery.restore_action(),
+            Some(AppAction::RestorePendingDeviceLink { .. })
+        ));
+        recovery.remember_update(&AppUpdate::ClearPendingDeviceLink);
+        assert!(recovery.restore_action().is_none());
+    }
+
+    #[test]
     fn nearby_published_events_wait_behind_latest_state_in_drained_batch() {
         let mut latest_full_state = None;
         let mut before_full_state = Vec::new();
@@ -1708,6 +1738,8 @@ mod ffi_hardening_tests {
             .chain(after_full_state)
             .map(|update| match update {
                 AppUpdate::PersistAccountBundle { .. } => "persist".to_string(),
+                AppUpdate::PersistPendingDeviceLink { .. } => "pending-link".to_string(),
+                AppUpdate::ClearPendingDeviceLink => "clear-pending-link".to_string(),
                 AppUpdate::FullState(state) => format!("state:{}", state.rev),
                 AppUpdate::NearbyPublishedEvent { .. } => "nearby".to_string(),
                 AppUpdate::NearbyPeersChanged { .. } => "nearby-peers".to_string(),

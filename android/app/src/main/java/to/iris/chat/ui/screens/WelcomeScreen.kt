@@ -291,7 +291,10 @@ fun RestoreAccountScreen(
         bottomContent = {
             IrisSecondaryButton(
                 text = "Link this device",
-                onClick = { appManager.pushScreen(Screen.AddDevice) },
+                onClick = {
+                    appManager.startLinkedDevice("")
+                    appManager.pushScreen(Screen.AddDevice)
+                },
                 icon = {
                     Icon(
                         imageVector = Icons.Rounded.Devices,
@@ -368,45 +371,13 @@ private fun Char.isAsciiHexDigit(): Boolean =
 fun AddDeviceScreen(
     appManager: AppManager,
     appState: AppState,
-    awaitingApproval: Boolean,
 ) {
-    var showLogoutConfirmation by remember { mutableStateOf(false) }
     val clipboard = rememberIrisClipboard()
 
-    LaunchedEffect(awaitingApproval, appState.linkDevice, appState.busy.linkingDevice) {
-        if (!awaitingApproval && appState.linkDevice == null && !appState.busy.linkingDevice) {
-            appManager.startLinkedDevice("")
-        }
-    }
-
     OnboardingScaffold(
-        title = if (awaitingApproval) "Finish linking" else "Link this device",
-        subtitle =
-            if (awaitingApproval) {
-                "Waiting for approval from your signed-in device."
-            } else {
-                "Scan this code with your signed-in device."
-            },
-        onBack =
-            if (awaitingApproval) {
-                null
-            } else {
-                { appManager.dispatch(AppAction.UpdateScreenStack(emptyList())) }
-            },
-        bottomContent =
-            if (awaitingApproval) {
-                {
-                    IrisSecondaryButton(
-                        text = "Sign out",
-                        onClick = { showLogoutConfirmation = true },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("awaitingApprovalLogoutButton"),
-                    )
-                }
-            } else {
-                null
-            },
+        title = "Link this device",
+        subtitle = "Scan this code with your signed-in device.",
+        onBack = { appManager.dispatch(AppAction.UpdateScreenStack(emptyList())) },
     ) {
         Column(
             modifier =
@@ -415,16 +386,15 @@ fun AddDeviceScreen(
                     .testTag("addDeviceScreen"),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            if (!awaitingApproval) {
-                val linkDevice = appState.linkDevice
-                if (linkDevice == null) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.testTag("linkDeviceCreating"))
-                    }
-                } else {
+            val linkDevice = appState.linkDevice
+            if (linkDevice == null) {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.testTag("linkDeviceCreating"))
+                }
+            } else {
                     val qrBitmap =
                         remember(linkDevice.url) {
                             createQrBitmap(linkDevice.url, size = 768)
@@ -463,24 +433,10 @@ fun AddDeviceScreen(
                                     .testTag("linkDeviceRefreshButton"),
                         )
                     }
-                }
             }
         }
 
-        if (!awaitingApproval) {
-            OnboardingMessageCard(message = appState.toast)
-        }
-    }
-
-    if (showLogoutConfirmation) {
-        DeleteAppDataConfirmationDialog(
-            onDismiss = { showLogoutConfirmation = false },
-            onConfirm = {
-                showLogoutConfirmation = false
-                appManager.logout()
-            },
-            confirmTag = "awaitingApprovalConfirmLogoutButton",
-        )
+        OnboardingMessageCard(message = appState.toast)
     }
 }
 

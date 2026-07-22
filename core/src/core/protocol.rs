@@ -10,11 +10,12 @@ use self::backfill::{
     group_sender_key_history_filter, protocol_event_summary,
     NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS, PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE,
 };
-pub(super) use self::subscription_helpers::build_protocol_subscription_filters;
+pub(super) use self::subscription_helpers::{
+    build_protocol_subscription_filters, fetch_events_for_filters,
+};
 use self::subscription_helpers::{
-    current_client_relay_statuses, fetch_events_for_filters, pubkeys_from_comma_separated_hexes,
-    pubkeys_from_hexes, subscribe_protocol_filters_with_id, wait_for_connected_relays,
-    ProtocolSubscriptionApplyOutput,
+    current_client_relay_statuses, pubkeys_from_comma_separated_hexes, pubkeys_from_hexes,
+    subscribe_protocol_filters_with_id, wait_for_connected_relays, ProtocolSubscriptionApplyOutput,
 };
 
 const PROTOCOL_SUBSCRIPTION_ID: &str = "ndr-protocol";
@@ -173,6 +174,7 @@ impl AppCore {
         };
         let now = NdrUnixSeconds(unix_now().get());
         if !protocol_engine.has_due_pending_retry_work(now) {
+            self.process_protocol_engine_retry_batch(reason, ProtocolRetryBatch::default());
             return;
         }
         let results = match protocol_engine.retry_pending_protocol(now) {

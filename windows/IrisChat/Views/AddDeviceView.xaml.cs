@@ -6,31 +6,15 @@ namespace IrisChat.Views;
 
 public partial class AddDeviceView : UserControl
 {
-    private readonly bool _awaitingApproval;
-
-    public AddDeviceView() : this(false) { }
-
-    public AddDeviceView(bool awaitingApproval)
+    public AddDeviceView()
     {
         InitializeComponent();
-        _awaitingApproval = awaitingApproval;
-
-        if (_awaitingApproval)
-        {
-            TitleText.Text = "Finish linking";
-            SubtitleText.Text = "Waiting for approval from your signed-in device.";
-            LinkCodeBlock.Visibility = Visibility.Collapsed;
-            WaitingBlock.Visibility = Visibility.Visible;
-        }
-        else
-        {
-            SubtitleText.Text = "Scan this code with your signed-in device.";
-        }
+        SubtitleText.Text = "Scan this code with your signed-in device.";
 
         Loaded += (_, _) =>
         {
             App.CurrentManager.PropertyChanged += OnChanged;
-            if (!_awaitingApproval && App.CurrentManager.LinkDevice == null && !App.CurrentManager.Busy.linkingDevice)
+            if (App.CurrentManager.LinkDevice == null && !App.CurrentManager.Busy.linkingDevice)
             {
                 App.CurrentManager.StartLinkedDevice("");
             }
@@ -43,7 +27,7 @@ public partial class AddDeviceView : UserControl
 
     private void UpdateBusy()
     {
-        if (_awaitingApproval || NewCodeButton == null) return;
+        if (NewCodeButton == null) return;
         var link = App.CurrentManager.LinkDevice;
         var ready = link != null;
 
@@ -64,5 +48,4 @@ public partial class AddDeviceView : UserControl
     private void OnNewCode(object sender, RoutedEventArgs e) =>
         App.CurrentManager.StartLinkedDevice("");
 
-    private void OnCancel(object sender, RoutedEventArgs e) => App.CurrentManager.NavigateBack();
 }

@@ -252,10 +252,8 @@ struct RestoreAccountScreen: View {
 struct AddDeviceScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
-    let awaitingApproval: Bool
 
     @AppStorage(irisTermsAcceptedDefaultsKey) private var termsAccepted = false
-    @State private var showingLogoutConfirmation = false
 
     private var requiresTermsAcceptance: Bool {
         irisRequiresOnboardingTermsAcceptance()
@@ -277,15 +275,6 @@ struct AddDeviceScreen: View {
         .irisOnChange(of: termsAccepted) { _ in
             startLinkedDeviceIfNeeded()
         }
-        .alert("Delete all local data?", isPresented: $showingLogoutConfirmation) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
-                manager.logout()
-            }
-            .accessibilityIdentifier("awaitingApprovalConfirmLogoutButton")
-        } message: {
-            Text("This removes your secret keys, messages, and cached files from this device.")
-        }
     }
 
     private var linkDeviceCard: some View {
@@ -295,32 +284,14 @@ struct AddDeviceScreen: View {
                 .accessibilityIdentifier("addDeviceScreen")
 
             CardHeader(
-                title: awaitingApproval ? "Finish linking" : "Link this device",
-                subtitle: awaitingApproval
-                    ? (canUseLinkDevice
-                        ? "Waiting for approval from your signed-in device."
-                        : "Accept the terms before finishing device linking.")
-                    : (canUseLinkDevice
-                        ? "Scan this code with your signed-in device."
-                        : "Accept the terms before linking this device.")
+                title: "Link this device",
+                subtitle: canUseLinkDevice
+                    ? "Scan this code with your signed-in device."
+                    : "Accept the terms before linking this device."
             )
 
             if !canUseLinkDevice {
                 OnboardingTermsAgreement(accepted: $termsAccepted)
-
-                if awaitingApproval {
-                    Button("Sign out") {
-                        showingLogoutConfirmation = true
-                    }
-                    .buttonStyle(IrisSecondaryButtonStyle())
-                    .accessibilityIdentifier("awaitingApprovalLogoutButton")
-                }
-            } else if awaitingApproval {
-                Button("Sign out") {
-                    showingLogoutConfirmation = true
-                }
-                .buttonStyle(IrisSecondaryButtonStyle())
-                .accessibilityIdentifier("awaitingApprovalLogoutButton")
             } else if let linkDevice = manager.state.linkDevice {
                 ZStack {
                     QrCodeImage(text: linkDevice.url)
@@ -352,8 +323,7 @@ struct AddDeviceScreen: View {
     }
 
     private func startLinkedDeviceIfNeeded() {
-        if !awaitingApproval,
-           canUseLinkDevice,
+        if canUseLinkDevice,
            manager.state.linkDevice == nil,
            !manager.state.busy.linkingDevice {
             manager.startLinkedDevice(ownerInput: "")

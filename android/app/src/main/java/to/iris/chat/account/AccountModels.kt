@@ -34,6 +34,28 @@ data class StoredAccountBundle(
     }
 }
 
+data class StoredPendingDeviceLink(
+    val deviceNsec: String,
+    val approvalBootstrapJson: String,
+) {
+    fun toJson(): String =
+        JSONObject()
+            .put("device_nsec", deviceNsec)
+            .put("approval_bootstrap_json", approvalBootstrapJson)
+            .toString()
+
+    companion object {
+        fun fromJson(value: String): StoredPendingDeviceLink? =
+            runCatching {
+                val json = JSONObject(value)
+                StoredPendingDeviceLink(
+                    deviceNsec = json.getString("device_nsec"),
+                    approvalBootstrapJson = json.getString("approval_bootstrap_json"),
+                )
+            }.getOrNull()
+    }
+}
+
 data class EncryptedSecret(
     val cipherText: ByteArray,
     val iv: ByteArray,

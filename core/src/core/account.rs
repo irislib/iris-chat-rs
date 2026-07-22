@@ -38,6 +38,13 @@ impl AppCore {
         // Lift the suspend gate even when not logged in so a re-foregrounded
         // unauthenticated app can process events again.
         self.suspended = false;
+        if self.pending_linked_device.is_some() {
+            self.push_debug_log("session.link_resume", "refresh device approval");
+            self.refresh_pending_linked_device();
+            self.rebuild_state();
+            self.emit_state();
+            return;
+        }
         if self.logged_in.is_none() {
             return;
         }
@@ -206,7 +213,6 @@ impl AppCore {
         if self.device_approval_relay_urls.len() != 1 {
             anyhow::bail!("Device approval requires exactly one approval relay.");
         }
-        let approval_relay_urls = self.device_approval_relay_urls.clone();
         let device_keys = Keys::generate();
         let device_pubkey = device_keys.public_key();
         let current_device_labels = self.current_device_labels.clone();
@@ -227,78 +233,185 @@ impl AppCore {
                     .and_then(device_approval_bootstrap_label),
             },
         )?;
-        let request_keys = local_request.request_keys.clone();
         let invite =
             device_approval_pairing_invite(device_pubkey, &local_request.request.request_secret)?;
         let bootstrap = nostr_identity_device_approval_bootstrap(&local_request.request)?;
         let url = encode_nostr_identity_device_approval_bootstrap(&bootstrap, None)?;
 
-        let client = Client::new(device_keys.clone());
-        self.start_notifications_loop(client.clone());
-
-        let invite_response_filter = Filter::new()
-            .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
-            .pubkeys(vec![invite.inviter_ephemeral_public_key.to_nostr()?]);
-        let app_keys_authorization_filter =
-            build_app_keys_device_authorization_filter(device_pubkey);
-        let approval_receipt_filter = Filter::new()
-            .kind(Kind::from(FACT_OP_KIND))
-            .pubkey(request_keys.public_key());
-        let client_for_subscription = client.clone();
-        let relay_urls_for_subscription = approval_relay_urls;
-        self.runtime.spawn(async move {
-            ensure_session_relays_configured(
-                &client_for_subscription,
-                &relay_urls_for_subscription,
-            )
-            .await;
-            connect_client_with_timeout(
-                &client_for_subscription,
-                Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS),
-            )
-            .await;
-            let _ = client_for_subscription
-                .subscribe_with_id(
-                    SubscriptionId::new("link-device-response"),
-                    invite_response_filter,
-                    None,
-                )
-                .await;
-            let _ = client_for_subscription
-                .subscribe_with_id(
-                    SubscriptionId::new("link-device-approval"),
-                    app_keys_authorization_filter,
-                    None,
-                )
-                .await;
-            let _ = client_for_subscription
-                .subscribe_with_id(
-                    SubscriptionId::new("link-device-approval-receipt"),
-                    approval_receipt_filter,
-                    None,
-                )
-                .await;
-        });
-
-        self.pending_linked_device = Some(PendingLinkedDeviceState {
-            device_keys,
-            request_keys,
-            approval_bootstrap: bootstrap,
-            pairing_client: client,
-            pairing_invite: invite,
-            pairing_url: url,
-            authorized_owner_pubkey: None,
-            approval_receipt_event: None,
-            authorized_app_keys_event: None,
-            pending_response: None,
-        });
+        self.install_pending_linked_device(device_keys, bootstrap, invite, url, true);
         Ok(())
     }
 
+    pub(super) fn restore_pending_linked_device(
+        &mut self,
+        device_nsec: &str,
+        approval_bootstrap_json: &str,
+    ) {
+        self.state.busy.restoring_session = true;
+        self.emit_state();
+        let result = (|| -> anyhow::Result<()> {
+            let device_keys = Keys::parse(device_nsec.trim())?;
+            let bootstrap: NostrIdentityDeviceApprovalBootstrap =
+                serde_json::from_str(approval_bootstrap_json)?;
+            if PublicKey::parse(&bootstrap.device_app_key_npub)? != device_keys.public_key() {
+                anyhow::bail!("Stored device link does not match its secret key.");
+            }
+            let invite = device_approval_pairing_invite(
+                device_keys.public_key(),
+                &bootstrap.request_secret,
+            )?;
+            let url = encode_nostr_identity_device_approval_bootstrap(&bootstrap, None)?;
+            self.stop_pending_linked_device();
+            self.install_pending_linked_device(device_keys, bootstrap, invite, url, false);
+            Ok(())
+        })();
+        if let Err(error) = result {
+            self.state.toast = Some(error.to_string());
+            let _ = self.update_tx.send(AppUpdate::ClearPendingDeviceLink);
+        }
+        self.state.busy.restoring_session = false;
+        self.screen_stack = vec![Screen::AddDevice];
+        self.rebuild_state();
+        self.emit_state();
+    }
+
+    fn install_pending_linked_device(
+        &mut self,
+        device_keys: Keys,
+        approval_bootstrap: NostrIdentityDeviceApprovalBootstrap,
+        pairing_invite: Invite,
+        pairing_url: String,
+        persist: bool,
+    ) {
+        let pairing_client = Client::new(device_keys.clone());
+        self.start_notifications_loop(pairing_client.clone());
+        if persist {
+            let secret = |keys: &Keys| {
+                keys.secret_key()
+                    .to_bech32()
+                    .unwrap_or_else(|_| keys.secret_key().to_secret_hex())
+            };
+            if let Ok(approval_bootstrap_json) = serde_json::to_string(&approval_bootstrap) {
+                let _ = self.update_tx.send(AppUpdate::PersistPendingDeviceLink {
+                    device_nsec: secret(&device_keys),
+                    approval_bootstrap_json,
+                });
+            }
+        }
+        self.pending_linked_device = Some(PendingLinkedDeviceState {
+            device_keys,
+            pairing_client,
+            pairing_invite,
+            pairing_url,
+            authorized_app_keys_event: None,
+            pending_response: None,
+            refresh_in_flight: false,
+        });
+        self.refresh_pending_linked_device();
+    }
+
+    fn pending_linked_device_filters(pending: &PendingLinkedDeviceState) -> Vec<Filter> {
+        vec![
+            Filter::new()
+                .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
+                .pubkeys(vec![pending
+                    .pairing_invite
+                    .inviter_ephemeral_public_key
+                    .to_nostr()
+                    .expect("validated pairing invite key")]),
+            build_app_keys_device_authorization_filter(pending.device_keys.public_key()),
+        ]
+    }
+
+    pub(super) fn refresh_pending_linked_device(&mut self) {
+        let Some(pending) = self
+            .pending_linked_device
+            .as_mut()
+            .filter(|pending| !pending.refresh_in_flight)
+        else {
+            return;
+        };
+        if self.suspended {
+            return;
+        }
+        pending.refresh_in_flight = true;
+        self.pending_device_link_poll_token = self.pending_device_link_poll_token.wrapping_add(1);
+        let token = self.pending_device_link_poll_token;
+        let client = pending.pairing_client.clone();
+        let filters = Self::pending_linked_device_filters(pending);
+        let relay_urls = self.device_approval_relay_urls.clone();
+        let tx = self.core_sender.clone();
+        self.runtime.spawn(async move {
+            ensure_session_relays_configured(&client, &relay_urls).await;
+            connect_client_with_timeout(
+                &client,
+                Duration::from_secs(PENDING_DEVICE_LINK_CONNECT_TIMEOUT_SECS),
+            )
+            .await;
+            for (id, filter) in ["link-device-response", "link-device-approval"]
+                .into_iter()
+                .zip(filters.iter().cloned())
+            {
+                let _ = client
+                    .subscribe_with_id(SubscriptionId::new(id), filter, None)
+                    .await;
+            }
+            let events = super::protocol::fetch_events_for_filters(
+                &client,
+                filters,
+                Duration::from_secs(PENDING_DEVICE_LINK_FETCH_TIMEOUT_SECS),
+            )
+            .await
+            .unwrap_or_default();
+            let _ = tx.send(CoreMsg::Internal(Box::new(
+                InternalEvent::PendingDeviceLinkRefreshFinished { token, events },
+            )));
+        });
+    }
+
+    pub(super) fn schedule_pending_linked_device_refresh(&mut self, after: Duration) {
+        if self.pending_linked_device.is_none() || self.suspended {
+            return;
+        }
+        self.pending_device_link_poll_token = self.pending_device_link_poll_token.wrapping_add(1);
+        let token = self.pending_device_link_poll_token;
+        let tx = self.core_sender.clone();
+        self.runtime.spawn(async move {
+            sleep(after).await;
+            let _ = tx.send(CoreMsg::Internal(Box::new(
+                InternalEvent::PollPendingDeviceLink { token },
+            )));
+        });
+    }
+
+    pub(super) fn pause_pending_linked_device(&mut self) {
+        self.pending_device_link_poll_token = self.pending_device_link_poll_token.wrapping_add(1);
+        let Some(pending) = self.pending_linked_device.as_mut() else {
+            return;
+        };
+        pending.refresh_in_flight = false;
+        let client = pending.pairing_client.clone();
+        self.runtime.block_on(async move {
+            let _ = tokio::time::timeout(Duration::from_millis(750), async move {
+                client.unsubscribe_all().await;
+                client.disconnect().await;
+            })
+            .await;
+        });
+    }
+
     pub(super) fn stop_pending_linked_device(&mut self) {
+        self.stop_pending_linked_device_inner(true);
+    }
+
+    fn stop_pending_linked_device_inner(&mut self, clear_persisted: bool) {
+        self.pending_device_link_poll_token = self.pending_device_link_poll_token.wrapping_add(1);
         let Some(pending) = self.pending_linked_device.take() else {
             return;
         };
+        if clear_persisted {
+            let _ = self.update_tx.send(AppUpdate::ClearPendingDeviceLink);
+        }
         let client = pending.pairing_client;
         self.runtime.spawn(async move {
             client.unsubscribe_all().await;
@@ -312,27 +425,42 @@ impl AppCore {
         peer_device_id: String,
         session_state: SessionState,
         device_keys: Keys,
+        app_keys_event: Event,
     ) -> anyhow::Result<()> {
-        self.stop_pending_linked_device();
-        self.start_session(owner_pubkey, None, device_keys, false, false)?;
-        let retry_batch = self
-            .protocol_engine
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("Link failed."))?
-            .import_session_state(
-                owner_pubkey,
-                Some(peer_device_id),
-                session_state,
-                unix_now(),
-            )?;
-        self.mark_mobile_push_dirty();
-        self.process_protocol_engine_retry_batch("linked_device_import", retry_batch);
-        self.request_protocol_subscription_refresh_forced();
-        self.fetch_recent_protocol_state();
-        self.persist_best_effort();
-        self.rebuild_state();
-        self.emit_state();
-        Ok(())
+        self.enter_batch();
+        let result = (|| {
+            // Keep the secure restore record until the complete account bundle is emitted. If
+            // session import fails, relaunching can retry the same authenticated link.
+            self.stop_pending_linked_device_inner(false);
+            self.start_session_inner(owner_pubkey, None, device_keys.clone(), false, false, false)?;
+            let retry_batch = self
+                .protocol_engine
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("Link failed."))?
+                .import_session_state(
+                    owner_pubkey,
+                    Some(peer_device_id),
+                    session_state,
+                    unix_now(),
+                )?;
+            self.apply_app_keys_event(&app_keys_event)?;
+            if self.logged_in.as_ref().is_none_or(|logged_in| {
+                logged_in.authorization_state != LocalAuthorizationState::Authorized
+            }) {
+                anyhow::bail!("Link authorization is incomplete.");
+            }
+            self.emit_account_bundle_update(None, &device_keys);
+            self.mark_mobile_push_dirty();
+            self.process_protocol_engine_retry_batch("linked_device_import", retry_batch);
+            self.request_protocol_subscription_refresh_forced();
+            self.fetch_recent_protocol_state();
+            self.persist_best_effort();
+            self.rebuild_state();
+            self.emit_state();
+            Ok(())
+        })();
+        self.exit_batch();
+        result
     }
 
     pub(super) fn logout(&mut self) {
@@ -463,6 +591,25 @@ impl AppCore {
         device_keys: Keys,
         allow_restore: bool,
         allow_protocol_restore: bool,
+    ) -> anyhow::Result<()> {
+        self.start_session_inner(
+            owner_pubkey,
+            owner_keys,
+            device_keys,
+            allow_restore,
+            allow_protocol_restore,
+            true,
+        )
+    }
+
+    fn start_session_inner(
+        &mut self,
+        owner_pubkey: OwnerPubkey,
+        owner_keys: Option<Keys>,
+        device_keys: Keys,
+        allow_restore: bool,
+        allow_protocol_restore: bool,
+        emit_account_bundle: bool,
     ) -> anyhow::Result<()> {
         self.push_debug_log(
             "session.start",
@@ -704,7 +851,9 @@ impl AppCore {
                 device_pubkey.to_hex()
             ),
         );
-        self.emit_account_bundle_update(owner_keys.as_ref(), &device_keys);
+        if emit_account_bundle {
+            self.emit_account_bundle_update(owner_keys.as_ref(), &device_keys);
+        }
         if allow_restore {
             self.rebuild_state();
             self.emit_state();

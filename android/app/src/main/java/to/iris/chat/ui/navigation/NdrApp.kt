@@ -102,7 +102,6 @@ import to.iris.chat.ui.screens.MyProfileSheet
 import to.iris.chat.ui.screens.RestoreAccountScreen
 import to.iris.chat.ui.screens.SplashScreen
 import to.iris.chat.ui.screens.SplashViewModel
-import to.iris.chat.ui.screens.AwaitingDeviceApprovalScreen
 import to.iris.chat.ui.screens.AddDeviceScreen
 import to.iris.chat.ui.screens.WelcomeScreen
 import to.iris.chat.ui.screens.rememberNearbySnapshotState
@@ -251,7 +250,7 @@ fun NdrApp(
                             }
                             Screen.AddDevice -> {
                                 val appState by appManager.state.collectAsStateWithLifecycle()
-                                AddDeviceScreen(appManager = appManager, appState = appState, awaitingApproval = false)
+                                AddDeviceScreen(appManager = appManager, appState = appState)
                             }
                             else -> WelcomeScreen(appManager = appManager)
                         }
@@ -277,7 +276,7 @@ fun NdrApp(
 
                             Screen.AddDevice -> {
                                 val appState by appManager.state.collectAsStateWithLifecycle()
-                                AddDeviceScreen(appManager = appManager, appState = appState, awaitingApproval = false)
+                                AddDeviceScreen(appManager = appManager, appState = appState)
                             }
 
                             Screen.ChatList -> {
@@ -359,11 +358,6 @@ fun NdrApp(
                             Screen.DeviceRoster -> {
                                 val appState by appManager.state.collectAsStateWithLifecycle()
                                 DeviceRosterScreen(appManager = appManager, appState = appState)
-                            }
-
-                            Screen.AwaitingDeviceApproval -> {
-                                val appState by appManager.state.collectAsStateWithLifecycle()
-                                AwaitingDeviceApprovalScreen(appManager = appManager, appState = appState)
                             }
 
                             Screen.DeviceRevoked -> {
@@ -551,7 +545,6 @@ private fun screenRouteKey(screen: Screen): String =
         Screen.JoinInvite -> "joinInvite"
         Screen.Settings -> "settings"
         Screen.DeviceRoster -> "deviceRoster"
-        Screen.AwaitingDeviceApproval -> "awaitingDeviceApproval"
         Screen.DeviceRevoked -> "deviceRevoked"
         is Screen.Chat -> "chat:${screen.chatId}"
         is Screen.DirectChatInfo -> "directChatInfo:${screen.chatId}"

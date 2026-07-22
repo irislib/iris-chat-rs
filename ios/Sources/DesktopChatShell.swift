@@ -133,9 +133,7 @@ struct DesktopChatShell: View {
         case .restoreAccount:
             RestoreAccountScreen(manager: manager)
         case .addDevice:
-            AddDeviceScreen(manager: manager, awaitingApproval: false)
-        case .awaitingDeviceApproval:
-            AddDeviceScreen(manager: manager, awaitingApproval: true)
+            AddDeviceScreen(manager: manager)
         case .deviceRevoked:
             DeviceRevokedScreen(manager: manager)
         }

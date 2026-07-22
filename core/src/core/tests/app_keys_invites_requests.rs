@@ -124,6 +124,41 @@ fn linked_device_authorization_follows_app_keys() {
 }
 
 #[test]
+fn seen_local_app_keys_event_repairs_missing_protocol_roster() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nostr_relay_urls.clear();
+    core.start_session(owner.public_key(), None, device.clone(), false, false)
+        .expect("linked session awaiting roster recovery");
+    let event = signed_app_keys_authorization_event(&owner, device.public_key(), 42);
+    core.remember_event(event.id.to_string());
+
+    assert_eq!(
+        core.protocol_engine
+            .as_ref()
+            .expect("protocol engine")
+            .direct_send_readiness(owner.public_key()),
+        DirectSendReadiness::MissingLocalAppKeys
+    );
+    core.handle_relay_event(event);
+    assert_ne!(
+        core.protocol_engine
+            .as_ref()
+            .expect("protocol engine")
+            .direct_send_readiness(owner.public_key()),
+        DirectSendReadiness::MissingLocalAppKeys,
+        "a redelivered owner roster must repair MissingLocalAppKeys even if its event id was persisted"
+    );
+}
+
+#[test]
 fn restored_authorized_linked_device_is_not_revoked_by_cached_roster() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -1075,8 +1110,9 @@ fn owner_device_rejects_full_request_and_request_event_inputs() {
 fn pending_linked_device_finishes_when_owner_accepts_invite() {
     let owner = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let (update_tx, update_rx) = flume::unbounded();
     let mut core = AppCore::new(
-        flume::unbounded().0,
+        update_tx,
         flume::unbounded().0,
         temp_dir.path().to_string_lossy().to_string(),
         Arc::new(RwLock::new(AppState::empty())),
@@ -1085,6 +1121,7 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
     core.handle_action(AppAction::StartLinkedDevice {
         owner_input: String::new(),
     });
+    let _ = update_rx.try_iter().collect::<Vec<_>>();
 
     let linked_device_pubkey = core
         .pending_linked_device
@@ -1092,12 +1129,6 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
         .expect("pending link invite")
         .device_keys
         .public_key();
-    let approval_bootstrap = core
-        .pending_linked_device
-        .as_ref()
-        .expect("pending link invite")
-        .approval_bootstrap
-        .clone();
     let pending = core
         .pending_linked_device
         .as_ref()
@@ -1117,37 +1148,23 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
     core.handle_relay_event(response_event);
     assert!(
         core.pending_linked_device.is_some(),
-        "invite response waits for owner-signed AppKeys authorization and approval receipt"
+        "invite response waits for owner-signed AppKeys authorization"
     );
     assert!(core.logged_in.is_none());
 
     core.handle_relay_event(signed_app_keys_authorization_event(
         &owner,
+        Keys::generate().public_key(),
+        41,
+    ));
+    assert!(
+        core.pending_linked_device.is_some(),
+        "an owner-signed roster that does not contain this QR's device key must be ignored"
+    );
+
+    core.handle_relay_event(signed_app_keys_authorization_event(
+        &owner,
         linked_device_pubkey,
-        42,
-    ));
-    assert!(
-        core.pending_linked_device.is_some(),
-        "AppKeys authorization without the encrypted approval receipt must not finish"
-    );
-
-    let mut wrong_bootstrap = approval_bootstrap.clone();
-    wrong_bootstrap.request_secret = OTHER_TEST_DEVICE_APPROVAL_REQUEST_SECRET.to_string();
-    core.handle_relay_event(signed_device_approval_receipt_event(
-        &owner,
-        &wrong_bootstrap,
-        owner.public_key(),
-        42,
-    ));
-    assert!(
-        core.pending_linked_device.is_some(),
-        "a validly signed receipt bound to another request secret must be rejected"
-    );
-
-    core.handle_relay_event(signed_device_approval_receipt_event(
-        &owner,
-        &approval_bootstrap,
-        owner.public_key(),
         42,
     ));
 
@@ -1162,6 +1179,31 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
         .protocol_engine
         .as_ref()
         .is_some_and(|engine| engine.active_session_count_for_owner(owner.public_key()) > 0));
+
+    let completion_updates = update_rx.try_iter().collect::<Vec<_>>();
+    assert!(completion_updates
+        .iter()
+        .any(|update| matches!(update, AppUpdate::PersistAccountBundle { .. })));
+    assert!(completion_updates
+        .iter()
+        .all(|update| !matches!(update, AppUpdate::ClearPendingDeviceLink)));
+    assert!(completion_updates.iter().all(|update| {
+        !matches!(
+            update,
+            AppUpdate::FullState(state)
+                if state.account.as_ref().is_some_and(|account| {
+                    account.authorization_state == DeviceAuthorizationState::AwaitingApproval
+                })
+        )
+    }), "link completion must never expose an intermediate awaiting-approval account");
+    assert!(completion_updates.iter().any(|update| matches!(
+        update,
+        AppUpdate::FullState(state)
+            if state.router.default_screen == Screen::ChatList
+                && state.account.as_ref().is_some_and(|account| {
+                    account.authorization_state == DeviceAuthorizationState::Authorized
+                })
+    )));
 }
 
 #[test]
@@ -1185,7 +1227,6 @@ fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
         .expect("pending link invite");
     let pairing_invite = pending.pairing_invite.clone();
     let linked_device_pubkey = pending.device_keys.public_key();
-    let approval_bootstrap = pending.approval_bootstrap.clone();
     assert_eq!(pairing_invite.purpose.as_deref(), Some("link"));
     assert!(pairing_invite.owner_public_key.is_none());
 
@@ -1203,12 +1244,6 @@ fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
     core.handle_relay_event(signed_app_keys_authorization_event(
         &owner,
         linked_device_pubkey,
-        42,
-    ));
-    core.handle_relay_event(signed_device_approval_receipt_event(
-        &owner,
-        &approval_bootstrap,
-        owner.public_key(),
         42,
     ));
     core.handle_relay_event(response_event);
@@ -1229,7 +1264,110 @@ fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
 }
 
 #[test]
-fn local_relay_pairing_e2e_uses_stable_protocol_invite_after_login() {
+fn pending_linked_device_restores_after_relaunch_and_completes() {
+    let owner = Keys::generate();
+    let first_temp_dir = tempfile::TempDir::new().expect("first temp dir");
+    let (first_update_tx, first_update_rx) = flume::unbounded();
+    let mut first = AppCore::new(
+        first_update_tx,
+        flume::unbounded().0,
+        first_temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    first.handle_action(AppAction::StartLinkedDevice {
+        owner_input: String::new(),
+    });
+    let original_url = first
+        .pending_linked_device
+        .as_ref()
+        .expect("pending link")
+        .pairing_url
+        .clone();
+    let stored = first_update_rx
+        .try_iter()
+        .find_map(|update| match update {
+            AppUpdate::PersistPendingDeviceLink {
+                device_nsec,
+                approval_bootstrap_json,
+            } => Some((device_nsec, approval_bootstrap_json)),
+            _ => None,
+        })
+        .expect("pending link secrets persisted");
+    first.shutdown();
+    drop(first);
+
+    let restored_temp_dir = tempfile::TempDir::new().expect("restored temp dir");
+    let mut restored = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        restored_temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    restored.restore_pending_linked_device(&stored.0, &stored.1);
+    let pending = restored
+        .pending_linked_device
+        .as_ref()
+        .expect("restored pending link");
+    assert_eq!(pending.pairing_url, original_url);
+    let pairing_invite = pending.pairing_invite.clone();
+    let linked_device_pubkey = pending.device_keys.public_key();
+    let (_owner_session, response_envelope) = pairing_invite
+        .accept_with_owner(
+            owner.public_key(),
+            owner.secret_key().to_secret_bytes(),
+            Some(owner.public_key().to_hex()),
+            Some(owner.public_key()),
+        )
+        .expect("owner accepts restored link");
+
+    restored.handle_relay_event(signed_app_keys_authorization_event(
+        &owner,
+        linked_device_pubkey,
+        42,
+    ));
+    restored.handle_relay_event(
+        nostr_double_ratchet::invite_response_event(&response_envelope)
+            .expect("invite response event"),
+    );
+
+    assert!(restored.pending_linked_device.is_none());
+    assert_eq!(
+        restored.logged_in.as_ref().map(|state| state.owner_pubkey),
+        Some(owner.public_key())
+    );
+}
+
+#[test]
+fn pending_linked_device_survives_suspend_and_resumes() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.handle_action(AppAction::StartLinkedDevice {
+        owner_input: String::new(),
+    });
+
+    core.prepare_for_suspend();
+    assert!(core.pending_linked_device.is_some());
+    assert!(!core
+        .pending_linked_device
+        .as_ref()
+        .expect("pending link")
+        .refresh_in_flight);
+
+    core.handle_app_foregrounded();
+    assert!(core
+        .pending_linked_device
+        .as_ref()
+        .expect("pending link")
+        .refresh_in_flight);
+}
+
+#[test]
+fn local_relay_pairing_recovers_after_subscription_disconnect() {
     let owner = Keys::generate();
     let relay = crate::local_relay::TestRelay::start();
     let relay_url = relay.url().to_string();
@@ -1273,9 +1411,10 @@ fn local_relay_pairing_e2e_uses_stable_protocol_invite_after_login() {
     }
     primary.refresh_relay_connection_status();
 
+    let (linked_core_tx, linked_core_rx) = flume::unbounded();
     let mut linked = AppCore::new(
         flume::unbounded().0,
-        flume::unbounded().0,
+        linked_core_tx,
         linked_temp_dir.path().to_string_lossy().to_string(),
         Arc::new(RwLock::new(AppState::empty())),
     );
@@ -1297,41 +1436,48 @@ fn local_relay_pairing_e2e_uses_stable_protocol_invite_after_login() {
         .expect("pending linked device")
         .pairing_invite
         .clone();
-    let linked_device_hex = linked
-        .pending_linked_device
-        .as_ref()
-        .expect("pending linked device")
-        .device_keys
-        .public_key()
-        .to_hex();
     let pairing_response_pubkey = pairing_invite
         .inviter_ephemeral_public_key
         .to_nostr()
         .expect("pairing response pubkey");
+    let initial_refresh_deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < initial_refresh_deadline
+        && linked
+            .pending_linked_device
+            .as_ref()
+            .is_some_and(|pending| pending.refresh_in_flight)
+    {
+        while let Ok(message) = linked_core_rx.try_recv() {
+            linked.handle_message(message);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let pairing_client = linked
+        .pending_linked_device
+        .as_ref()
+        .expect("pending linked device")
+        .pairing_client
+        .clone();
+    linked.runtime.block_on(async {
+        pairing_client.unsubscribe_all().await;
+        pairing_client.disconnect().await;
+    });
     dispatch_device_approval_for_test(&mut primary, &relay_url, pairing_url);
     assert_eq!(primary.state.toast.as_deref(), Some("Device added"));
-    let app_keys_event = relay_events(&relay)
-        .into_iter()
-        .find(|event| {
-            event.kind.as_u16() as u32 == APP_KEYS_EVENT_KIND
-                && event_has_tag_value(event, "device", &linked_device_hex)
-        })
-        .expect("owner publishes AppKeys authorization for linked device");
-    let receipt_event = relay_events(&relay)
-        .into_iter()
-        .find(|event| event_has_tag_value(
-            event,
-            "type",
-            "nostr_identity_device_approval_receipt"
-        ))
-        .expect("owner publishes encrypted device approval receipt");
-    let response_event = relay_events(&relay)
-        .into_iter()
-        .find(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND)
-        .expect("owner publishes invite response to approval relay");
-    linked.handle_relay_event(app_keys_event);
-    linked.handle_relay_event(receipt_event);
-    linked.handle_relay_event(response_event);
+
+    let deadline = Instant::now() + Duration::from_secs(6);
+    while Instant::now() < deadline && linked.pending_linked_device.is_some() {
+        while let Ok(message) = linked_core_rx.try_recv() {
+            linked.handle_message(message);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        linked.pending_linked_device.is_none(),
+        "the open app must re-fetch approval after its live subscription disconnects; relay_events={} logs={:?}",
+        relay_events(&relay).len(),
+        linked.debug_log,
+    );
 
     let stable_invite = linked
         .protocol_engine

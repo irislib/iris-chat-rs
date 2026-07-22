@@ -133,10 +133,7 @@ fn owner_authentication_drains_message_stuck_on_missing_local_app_keys() {
         .expect("protocol engine")
         .authenticate_local_owner_for_sending(&owner)
         .expect("owner authentication");
-    core.process_protocol_engine_retry_batch(
-        "test_owner_authentication",
-        ProtocolRetryBatch::default(),
-    );
+    core.retry_protocol_engine_pending_work("test_owner_authentication");
 
     let sent = core
         .threads

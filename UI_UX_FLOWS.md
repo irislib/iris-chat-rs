@@ -20,7 +20,6 @@ This covers the user-visible flows driven by the current shared route model:
 - `Chat`
 - `GroupDetails`
 - `DeviceRoster`
-- `AwaitingDeviceApproval`
 - `DeviceRevoked`
 - profile/support surfaces
 
@@ -52,7 +51,6 @@ The route inventory is currently:
 - `Chat { chat_id }`
 - `GroupDetails { group_id }`
 - `DeviceRoster`
-- `AwaitingDeviceApproval`
 - `DeviceRevoked`
 
 ## Cross-Platform UX Patterns
@@ -224,74 +222,32 @@ Turn the current device into a secondary/linked device under an existing owner.
 1. User lands on the `Welcome` chooser.
 2. User taps `Add this device`.
 3. Rust pushes the `AddDevice` route.
-4. The shell shows a dedicated add-device screen with:
-   - owner input
-   - scan/paste shortcuts
-   - a persistent QR panel placeholder
-5. User acquires the owner identity by:
-   - scanning the owner QR
-   - pasting the owner `npub` or hex key
-6. User taps the continue action.
-7. Shell dispatches `StartLinkedDevice { owner_input }`.
-8. Rust creates a local linked-device identity and routes the user to
-   `AwaitingDeviceApproval`.
+4. The shell creates and displays a link QR.
+5. User scans the QR from a signed-in device and approves it.
+6. The new device waits on the same QR screen while automatically retrying
+   partial or reordered relay delivery.
+7. The owner-signed AppKeys roster and QR-secret-bound handshake complete.
+8. The new device goes directly to `ChatList`.
 
 ### Result
 
 - current device now has a device identity
-- user is blocked pending approval from an owner-capable device
-- the placeholder QR panel is replaced by the real approval QR/code
+- the unfinished link survives relaunches and app updates
+- no intermediate post-scan approval screen is shown
 
 ### Inputs
 
-- owner `npub` or owner public key hex
+- link QR/code generated on this device
 
 ### Validation
 
-- invalid owner input blocks the action
-- scan/paste input is normalized before dispatch
+- the signed roster must contain the exact device key generated for this QR
+- the handshake must authenticate with the QR's random secret
 
 ### UX notes
 
-- The add-device screen keeps the linking context visible before and after the
-  session starts by preserving the QR panel area.
-- The actual approval still happens on the owner device in `DeviceRoster`.
-
-## Flow 5: Finish Linked Device Approval
-
-### Entry points
-
-- automatic route after `StartLinkedDevice`
-
-### User intent
-
-Show the information the owner device needs in order to approve the pending
-linked device.
-
-### Current path
-
-1. After `StartLinkedDevice`, Rust persists the linked-device session and lands
-   on `AwaitingDeviceApproval`.
-2. The shell renders this as the waiting state of the same add-device journey.
-2. Screen shows:
-   - owner `npub`
-   - current device `npub`
-   - encoded device-approval QR
-3. On relaunch, the device comes back to this waiting state rather than the
-   initial chooser.
-4. User opens the owner device and navigates to `Manage devices`.
-5. Owner either scans or pastes the device code into the roster flow.
-
-### Result
-
-- this screen remains the waiting room until the owner approves the device
-- once authorized, the linked device converges into the normal logged-in shell
-
-### UX notes
-
-- The screen is strong as a handoff surface because it focuses on one job.
-- The user still has to understand the two-device choreography:
-  secondary device waits here while the owner device does the approval work.
+- The add-device screen remains visible until linking is actually complete.
+- The actual approval happens on the signed-in device in `DeviceRoster`.
 
 ## Flow 6: Approve Or Remove Devices On The Owner
 
@@ -701,10 +657,9 @@ lot.
 Linking is split across:
 
 - `AddDevice` on the new device
-- `AwaitingDeviceApproval` on the new device
 - `DeviceRoster` on the owner device
 
-This is functionally sound but mentally heavier than the chat flows.
+The new device stays on one screen until it opens the chat list.
 
 ### Group creation packs in multiple concepts
 

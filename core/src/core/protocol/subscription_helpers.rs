@@ -144,7 +144,7 @@ pub(super) async fn subscribe_protocol_filters_with_id(
     }
 }
 
-pub(super) async fn fetch_events_for_filters(
+pub(in crate::core) async fn fetch_events_for_filters(
     client: &Client,
     filters: Vec<Filter>,
     timeout: Duration,

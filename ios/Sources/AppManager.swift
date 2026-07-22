@@ -18,6 +18,11 @@ struct StoredAccountBundle: Codable, Equatable {
     let deviceNsec: String
 }
 
+struct StoredPendingDeviceLink: Codable, Equatable {
+    let deviceNsec: String
+    let approvalBootstrapJson: String
+}
+
 struct StagedAttachment: Identifiable, Equatable {
     let id = UUID()
     let path: String
@@ -94,7 +99,14 @@ protocol AccountSecretStore {
     func clear() -> Bool
 }
 
-final class KeychainSecretStore: AccountSecretStore {
+protocol PendingDeviceLinkSecretStore {
+    func loadPendingDeviceLink() -> StoredPendingDeviceLink?
+    func savePendingDeviceLink(_ link: StoredPendingDeviceLink)
+    @discardableResult
+    func clear() -> Bool
+}
+
+final class KeychainSecretStore: AccountSecretStore, PendingDeviceLinkSecretStore {
     private let service: String
     private let account: String
     private let accessGroup: String?
@@ -133,7 +145,7 @@ final class KeychainSecretStore: AccountSecretStore {
         return query
     }
 
-    func load() -> StoredAccountBundle? {
+    private func loadValue<Value: Decodable>(_ type: Value.Type) -> Value? {
         var query = baseQuery()
         query[kSecReturnData] = true
         query[kSecMatchLimit] = kSecMatchLimitOne
@@ -142,11 +154,11 @@ final class KeychainSecretStore: AccountSecretStore {
         guard status == errSecSuccess, let data = item as? Data else {
             return nil
         }
-        return try? JSONDecoder().decode(StoredAccountBundle.self, from: data)
+        return try? JSONDecoder().decode(type, from: data)
     }
 
-    func save(_ bundle: StoredAccountBundle) {
-        guard let data = try? JSONEncoder().encode(bundle) else {
+    private func saveValue<Value: Encodable>(_ value: Value) {
+        guard let data = try? JSONEncoder().encode(value) else {
             return
         }
         let query = baseQuery()
@@ -167,6 +179,22 @@ final class KeychainSecretStore: AccountSecretStore {
         SecItemAdd(insert as CFDictionary, nil)
     }
 
+    func load() -> StoredAccountBundle? {
+        loadValue(StoredAccountBundle.self)
+    }
+
+    func save(_ bundle: StoredAccountBundle) {
+        saveValue(bundle)
+    }
+
+    func loadPendingDeviceLink() -> StoredPendingDeviceLink? {
+        loadValue(StoredPendingDeviceLink.self)
+    }
+
+    func savePendingDeviceLink(_ link: StoredPendingDeviceLink) {
+        saveValue(link)
+    }
+
     private func deletionQueries() -> [[CFString: Any]] {
         var queries = [baseQuery()]
         var synchronized = baseQuery()
@@ -185,7 +213,9 @@ final class KeychainSecretStore: AccountSecretStore {
                 NSLog("Iris Chat keychain secret clear failed: status=%d service=%@ account=%@", status, service, account)
             }
         }
-        if load() != nil {
+        var verify = baseQuery()
+        verify[kSecMatchLimit] = kSecMatchLimitOne
+        if SecItemCopyMatching(verify as CFDictionary, nil) != errSecItemNotFound {
             NSLog("Iris Chat keychain secret clear failed: item still readable service=%@ account=%@", service, account)
             return false
         }
@@ -193,7 +223,7 @@ final class KeychainSecretStore: AccountSecretStore {
     }
 }
 
-final class FileAccountSecretStore: AccountSecretStore {
+final class FileAccountSecretStore: AccountSecretStore, PendingDeviceLinkSecretStore {
     private let url: URL
     private let fileManager: FileManager
 
@@ -202,15 +232,15 @@ final class FileAccountSecretStore: AccountSecretStore {
         self.fileManager = fileManager
     }
 
-    func load() -> StoredAccountBundle? {
+    private func loadValue<Value: Decodable>(_ type: Value.Type) -> Value? {
         guard let data = try? Data(contentsOf: url) else {
             return nil
         }
-        return try? JSONDecoder().decode(StoredAccountBundle.self, from: data)
+        return try? JSONDecoder().decode(type, from: data)
     }
 
-    func save(_ bundle: StoredAccountBundle) {
-        guard let data = try? JSONEncoder().encode(bundle) else {
+    private func saveValue<Value: Encodable>(_ value: Value) {
+        guard let data = try? JSONEncoder().encode(value) else {
             return
         }
         do {
@@ -228,6 +258,22 @@ final class FileAccountSecretStore: AccountSecretStore {
         }
     }
 
+    func load() -> StoredAccountBundle? {
+        loadValue(StoredAccountBundle.self)
+    }
+
+    func save(_ bundle: StoredAccountBundle) {
+        saveValue(bundle)
+    }
+
+    func loadPendingDeviceLink() -> StoredPendingDeviceLink? {
+        loadValue(StoredPendingDeviceLink.self)
+    }
+
+    func savePendingDeviceLink(_ link: StoredPendingDeviceLink) {
+        saveValue(link)
+    }
+
     @discardableResult
     func clear() -> Bool {
         do {
@@ -238,7 +284,7 @@ final class FileAccountSecretStore: AccountSecretStore {
             NSLog("Iris Chat file secret clear failed: %@", "\(error)")
             return false
         }
-        return load() == nil
+        return !fileManager.fileExists(atPath: url.path)
     }
 }
 
@@ -500,6 +546,23 @@ enum AppPaths {
             )
         }
         return KeychainSecretStore(service: keychainService(environment: environment))
+    }
+
+    static func pendingDeviceLinkSecretStore(
+        dataDir: URL,
+        fileManager: FileManager,
+        environment: [String: String]
+    ) -> PendingDeviceLinkSecretStore {
+        if testRunId(environment: environment) != nil || environment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] == "1" {
+            return FileAccountSecretStore(
+                url: dataDir.appendingPathComponent("pending-device-link-secret.json"),
+                fileManager: fileManager
+            )
+        }
+        return KeychainSecretStore(
+            service: keychainService(environment: environment),
+            account: "pending-device-link"
+        )
     }
 
     static func dataDir(fileManager: FileManager, environment: [String: String]) -> URL {
@@ -874,6 +937,7 @@ final class AppManager: ObservableObject {
     private var rust: RustAppClient
     private let makeRustClient: () -> RustAppClient
     private let secretStore: AccountSecretStore
+    private let pendingDeviceLinkSecretStore: PendingDeviceLinkSecretStore
     private let desktopNotifications: DesktopNotificationPosting
     private let dataDir: URL
     private let fileManager: FileManager
@@ -926,6 +990,7 @@ final class AppManager: ObservableObject {
     init(
         rust: RustAppClient? = nil,
         secretStore: AccountSecretStore? = nil,
+        pendingDeviceLinkSecretStore: PendingDeviceLinkSecretStore? = nil,
         desktopNotifications: DesktopNotificationPosting? = nil,
         dataDir: URL? = nil,
         fileManager: FileManager = .default,
@@ -942,9 +1007,16 @@ final class AppManager: ObservableObject {
             fileManager: fileManager,
             environment: environment
         )
+        let resolvedPendingDeviceLinkSecretStore = pendingDeviceLinkSecretStore
+            ?? AppPaths.pendingDeviceLinkSecretStore(
+                dataDir: resolvedDataDir,
+                fileManager: fileManager,
+                environment: environment
+            )
 
         if environment["IRIS_UI_TEST_RESET"] == "1" {
             resolvedSecretStore.clear()
+            resolvedPendingDeviceLinkSecretStore.clear()
             try? fileManager.removeItem(at: resolvedDataDir)
             UserDefaults.standard.removeObject(forKey: irisTermsAcceptedDefaultsKey)
         }
@@ -983,6 +1055,7 @@ final class AppManager: ObservableObject {
         self.rust = resolvedRust
         self.makeRustClient = resolvedRustFactory
         self.secretStore = resolvedSecretStore
+        self.pendingDeviceLinkSecretStore = resolvedPendingDeviceLinkSecretStore
 #if os(iOS)
         self.isUiTestRun = AppPaths.testRunId(environment: environment) != nil
         self.desktopNotifications = desktopNotifications ?? NoopDesktopNotificationPoster()
@@ -1310,7 +1383,6 @@ final class AppManager: ObservableObject {
         case .createAccount,
              .restoreAccount,
              .addDevice,
-             .awaitingDeviceApproval,
              .deviceRevoked,
              .welcome:
             return nil
@@ -2413,7 +2485,7 @@ final class AppManager: ObservableObject {
 #if os(iOS)
         mobilePushRuntime.unregisterStoredSubscription(state: state, ownerNsec: storedAccountBundle?.ownerNsec ?? secretStore.load()?.ownerNsec)
 #endif
-        guard secretStore.clear() else {
+        guard secretStore.clear(), pendingDeviceLinkSecretStore.clear() else {
             automaticRevocationLogoutInFlight = false
             showToast("Could not clear secret key.")
             return
@@ -2513,9 +2585,17 @@ final class AppManager: ObservableObject {
             )
             secretStore.save(bundle)
             storedAccountBundle = bundle
+            pendingDeviceLinkSecretStore.clear()
 #if os(iOS)
             syncMobilePushIfNeeded(state: state)
 #endif
+        case .persistPendingDeviceLink(let deviceNsec, let approvalBootstrapJson):
+            pendingDeviceLinkSecretStore.savePendingDeviceLink(StoredPendingDeviceLink(
+                deviceNsec: deviceNsec,
+                approvalBootstrapJson: approvalBootstrapJson
+            ))
+        case .clearPendingDeviceLink:
+            pendingDeviceLinkSecretStore.clear()
         case .nearbyPublishedEvent(let eventID, let kind, let createdAtSecs, let eventJson):
             _ = eventID
             _ = kind
@@ -2720,6 +2800,18 @@ final class AppManager: ObservableObject {
 
     private func restorePersistedSession() {
         // Native restore only rehydrates secure inputs. Rust rebuilds the authoritative app state.
+        if let link = pendingDeviceLinkSecretStore.loadPendingDeviceLink() {
+            persistedRestoreInFlight = true
+            let dispatched = dispatchToRust(.restorePendingDeviceLink(
+                deviceNsec: link.deviceNsec,
+                approvalBootstrapJson: link.approvalBootstrapJson
+            ))
+            if !dispatched {
+                persistedRestoreInFlight = false
+                bootstrapInFlight = false
+            }
+            return
+        }
         guard let bundle = secretStore.load() else {
             storedAccountBundle = nil
             bootstrapInFlight = false

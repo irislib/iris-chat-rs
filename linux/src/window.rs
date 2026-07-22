@@ -263,6 +263,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
                     );
                 }
                 AppUpdate::PersistAccountBundle { .. } => {}
+                AppUpdate::PersistPendingDeviceLink { .. } | AppUpdate::ClearPendingDeviceLink => {}
             }
         }
     });

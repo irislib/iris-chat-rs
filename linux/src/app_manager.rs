@@ -13,7 +13,9 @@ use iris_chat_core::{
 };
 use serde::Serialize;
 
-use crate::secure_storage::{FileSecretStore, SecretStore, StoredAccountBundle};
+use crate::secure_storage::{
+    FileSecretStore, SecretStore, StoredAccountBundle, StoredPendingDeviceLink,
+};
 
 const ACTIVE_CHAT_SEEN_IDLE_LIMIT: Duration = Duration::from_secs(5 * 60);
 const SECRET_CLEAR_FAILURE_TOAST: &str = "Could not clear secret key.";
@@ -93,18 +95,33 @@ impl DesktopNearbyObserver for NearbyObserver {
 
 impl AppReconciler for Reconciler {
     fn reconcile(&self, update: AppUpdate) {
-        if let AppUpdate::PersistAccountBundle {
-            owner_nsec,
-            owner_pubkey_hex,
-            device_nsec,
-            ..
-        } = &update
-        {
-            self.secret_store.save(&StoredAccountBundle {
-                owner_nsec: owner_nsec.clone(),
-                owner_pubkey_hex: owner_pubkey_hex.clone(),
-                device_nsec: device_nsec.clone(),
-            });
+        match &update {
+            AppUpdate::PersistAccountBundle {
+                owner_nsec,
+                owner_pubkey_hex,
+                device_nsec,
+                ..
+            } => {
+                self.secret_store.save(&StoredAccountBundle {
+                    owner_nsec: owner_nsec.clone(),
+                    owner_pubkey_hex: owner_pubkey_hex.clone(),
+                    device_nsec: device_nsec.clone(),
+                });
+                self.secret_store.clear_pending_device_link();
+            }
+            AppUpdate::PersistPendingDeviceLink {
+                device_nsec,
+                approval_bootstrap_json,
+            } => self
+                .secret_store
+                .save_pending_device_link(&StoredPendingDeviceLink {
+                    device_nsec: device_nsec.clone(),
+                    approval_bootstrap_json: approval_bootstrap_json.clone(),
+                }),
+            AppUpdate::ClearPendingDeviceLink => {
+                self.secret_store.clear_pending_device_link();
+            }
+            _ => {}
         }
         let _ = self.tx.send_blocking(update);
     }
@@ -159,13 +176,26 @@ impl AppManager {
         }
 
         let initial_device_revoked = current_device_revoked(&initial_state);
-        let persisted_bundle = if initial_device_revoked {
+        let persisted_pending_link = if initial_device_revoked {
             None
         } else {
-            secret_store.load()
+            secret_store.load_pending_device_link()
         };
-        let mut persisted_restore_in_flight = persisted_bundle.is_some();
-        if let Some(bundle) = persisted_bundle {
+        let persisted_bundle = (!initial_device_revoked && persisted_pending_link.is_none())
+            .then(|| secret_store.load())
+            .flatten();
+        let mut persisted_restore_in_flight =
+            persisted_pending_link.is_some() || persisted_bundle.is_some();
+        if let Some(link) = persisted_pending_link {
+            persisted_restore_in_flight =
+                catch_ffi("ffiapp.restore_pending_device_link", false, || {
+                    ffi.dispatch(AppAction::RestorePendingDeviceLink {
+                        device_nsec: link.device_nsec,
+                        approval_bootstrap_json: link.approval_bootstrap_json,
+                    });
+                    true
+                });
+        } else if let Some(bundle) = persisted_bundle {
             persisted_restore_in_flight = catch_ffi("ffiapp.restore_account_bundle", false, || {
                 ffi.dispatch(AppAction::RestoreAccountBundle {
                     owner_nsec: bundle.owner_nsec,
@@ -512,7 +542,6 @@ impl AppManager {
             Screen::CreateAccount
             | Screen::RestoreAccount
             | Screen::AddDevice
-            | Screen::AwaitingDeviceApproval
             | Screen::DeviceRevoked
             | Screen::Welcome => None,
         }

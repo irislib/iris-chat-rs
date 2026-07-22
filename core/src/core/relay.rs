@@ -22,7 +22,15 @@ impl AppCore {
                 .is_some_and(|engine| engine.is_known_group_sender_event_author(event.pubkey));
         let should_try_group_sender_key_event =
             kind == MESSAGE_EVENT_KIND && (!message_has_header || is_known_group_sender_key_event);
-        if self.has_seen_event(&event_id) {
+        let must_reapply_local_app_keys = is_app_keys_protocol_event
+            && self.logged_in.as_ref().is_some_and(|logged_in| {
+                logged_in.owner_pubkey == event.pubkey
+                    && self.protocol_engine.as_ref().is_some_and(|engine| {
+                        engine.direct_send_readiness(logged_in.owner_pubkey)
+                            == DirectSendReadiness::MissingLocalAppKeys
+                    })
+            });
+        if self.has_seen_event(&event_id) && !must_reapply_local_app_keys {
             // Only persist + rebuild + emit when the transport-channel
             // set actually grew. Without this guard, every mirrored
             // relay re-delivery of an already-seen event burns a full
@@ -366,7 +374,7 @@ impl AppCore {
         let kind = event.kind.as_u16() as u32;
         if kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event) {
             let event_id = event.id.to_string();
-            let Some((owner_pubkey, pending_response, device_keys, approval_ready)) = ({
+            let (owner_pubkey, pending_response, device_keys) = {
                 let Some(pending) = self.pending_linked_device.as_mut() else {
                     return false;
                 };
@@ -378,130 +386,29 @@ impl AppCore {
                     _ => return false,
                 };
                 pending.authorized_app_keys_event = Some(event.clone());
-                let approval_ready = pending
-                    .authorized_owner_pubkey
-                    .is_some_and(|approved_owner| approved_owner == owner)
-                    && pending.approval_receipt_event.is_some();
-                Some((
+                (
                     owner,
-                    if approval_ready {
-                        pending.pending_response.take()
-                    } else {
-                        None
-                    },
+                    pending.pending_response.take(),
                     pending.device_keys.clone(),
-                    approval_ready,
-                ))
-            }) else {
-                return false;
+                )
             };
-
-            if let Ok(app_keys) = AppKeys::from_event(&event) {
-                self.app_keys.insert(
-                    owner_pubkey.to_hex(),
-                    known_app_keys_from_ndr(owner_pubkey, &app_keys, event.created_at.as_secs()),
-                );
-            }
 
             self.push_debug_log(
                 "session.link_authorized",
-                format!(
-                    "event_id={event_id} owner={} receipt_ready={approval_ready}",
-                    owner_pubkey.to_hex()
-                ),
-            );
-
-            if let Some(response) = pending_response {
-                match self.complete_pending_linked_device(
-                    owner_pubkey,
-                    response.peer_device_id,
-                    response.session_state,
-                    device_keys,
-                ) {
-                    Ok(()) => {
-                        let _ = self.apply_app_keys_event(&event);
-                    }
-                    Err(error) => {
-                        self.state.toast = Some(error.to_string());
-                        self.rebuild_state();
-                        self.emit_state();
-                    }
-                }
-            }
-            return true;
-        }
-
-        if kind == u32::from(FACT_OP_KIND) {
-            let event_id = event.id.to_string();
-            let Some((owner_pubkey, pending_response, device_keys, app_keys_event)) = ({
-                let Some(pending) = self.pending_linked_device.as_mut() else {
-                    return false;
-                };
-                let receipt = match parse_nostr_identity_device_approval_receipt_event_for_bootstrap(
-                    &event,
-                    &pending.request_keys,
-                    &pending.approval_bootstrap,
-                ) {
-                    Ok(receipt) => receipt,
-                    Err(_) => return false,
-                };
-                let Some(owner_hex) = receipt.subject_pubkey.as_deref() else {
-                    self.push_debug_log(
-                        "session.link_receipt.error",
-                        format!("event_id={event_id} error=missing_owner"),
-                    );
-                    return true;
-                };
-                let owner_pubkey = match PublicKey::from_hex(owner_hex) {
-                    Ok(owner_pubkey) => owner_pubkey,
-                    Err(error) => {
-                        self.push_debug_log(
-                            "session.link_receipt.error",
-                            format!("event_id={event_id} error={error}"),
-                        );
-                        return true;
-                    }
-                };
-                pending.authorized_owner_pubkey = Some(owner_pubkey);
-                pending.approval_receipt_event = Some(event.clone());
-                let app_keys_event = pending.authorized_app_keys_event.clone();
-                let app_keys_ready = app_keys_event.is_some();
-                Some((
-                    owner_pubkey,
-                    if app_keys_ready {
-                        pending.pending_response.take()
-                    } else {
-                        None
-                    },
-                    pending.device_keys.clone(),
-                    app_keys_event,
-                ))
-            }) else {
-                return false;
-            };
-
-            self.push_debug_log(
-                "session.link_receipt",
                 format!("event_id={event_id} owner={}", owner_pubkey.to_hex()),
             );
 
             if let Some(response) = pending_response {
-                match self.complete_pending_linked_device(
+                if let Err(error) = self.complete_pending_linked_device(
                     owner_pubkey,
                     response.peer_device_id,
                     response.session_state,
                     device_keys,
+                    event,
                 ) {
-                    Ok(()) => {
-                        if let Some(app_keys_event) = app_keys_event {
-                            let _ = self.apply_app_keys_event(&app_keys_event);
-                        }
-                    }
-                    Err(error) => {
-                        self.state.toast = Some(error.to_string());
-                        self.rebuild_state();
-                        self.emit_state();
-                    }
+                    self.state.toast = Some(error.to_string());
+                    self.rebuild_state();
+                    self.emit_state();
                 }
             }
             return true;
@@ -550,20 +457,15 @@ impl AppCore {
             let Some(pending) = self.pending_linked_device.as_mut() else {
                 return false;
             };
-            pending
-                .authorized_owner_pubkey
-                .map(|owner_pubkey| {
-                    (
-                        owner_pubkey,
-                        pending.device_keys.clone(),
-                        pending.authorized_app_keys_event.clone(),
-                    )
-                })
-                .filter(|(_, _, app_keys_event)| app_keys_event.is_some())
-                .or_else(|| {
-                    pending.pending_response = pending_response.take();
-                    None
-                })
+            if let Some(app_keys_event) = pending.authorized_app_keys_event.clone() {
+                resolve_app_keys_owner_for_device(&app_keys_event, pending.device_keys.public_key())
+                    .ok()
+                    .flatten()
+                    .map(|owner_pubkey| (owner_pubkey, pending.device_keys.clone(), app_keys_event))
+            } else {
+                pending.pending_response = pending_response.take();
+                None
+            }
         };
         let Some((owner_pubkey, device_keys, app_keys_event)) = owner_and_device else {
             self.push_debug_log(
@@ -586,22 +488,16 @@ impl AppCore {
             ),
         );
 
-        match self.complete_pending_linked_device(
+        if let Err(error) = self.complete_pending_linked_device(
             owner_pubkey,
             peer_device_id,
             session_state,
             device_keys,
+            app_keys_event,
         ) {
-            Ok(()) => {
-                if let Some(app_keys_event) = app_keys_event {
-                    let _ = self.apply_app_keys_event(&app_keys_event);
-                }
-            }
-            Err(error) => {
-                self.state.toast = Some(error.to_string());
-                self.rebuild_state();
-                self.emit_state();
-            }
+            self.state.toast = Some(error.to_string());
+            self.rebuild_state();
+            self.emit_state();
         }
         true
     }

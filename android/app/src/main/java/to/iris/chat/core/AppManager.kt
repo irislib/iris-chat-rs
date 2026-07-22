@@ -33,6 +33,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import to.iris.chat.BuildConfig
@@ -43,6 +45,7 @@ import to.iris.chat.account.AndroidKeystoreSecretStore
 import to.iris.chat.account.EncryptedSecret
 import to.iris.chat.account.SecureSecretStore
 import to.iris.chat.account.StoredAccountBundle
+import to.iris.chat.account.StoredPendingDeviceLink
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppReconciler
 import to.iris.chat.rust.AccountSnapshot
@@ -320,6 +323,7 @@ class AppManager(
     private var restoreCheckComplete = false
     private var persistedRestoreInFlight = false
     private var cachedAccountBundle: StoredAccountBundle? = null
+    private val secretPersistenceMutex = Mutex()
     private var lastMobilePushSyncInput: AndroidMobilePushSyncInput? = null
     private var mobilePushRetryInput: AndroidMobilePushSyncInput? = null
     private var mobilePushRetryAttempt = 0
@@ -880,7 +884,6 @@ class AppManager(
             is Screen.CreateAccount,
             is Screen.RestoreAccount,
             is Screen.AddDevice,
-            is Screen.AwaitingDeviceApproval,
             is Screen.DeviceRevoked,
             is Screen.Welcome,
             -> null
@@ -1193,17 +1196,34 @@ class AppManager(
             is AppUpdate.PersistAccountBundle -> {
                 // Secure persistence is a shell side effect and must be applied even if snapshot revs race.
                 applicationScope.launch(ioDispatcher) {
-                    val bundle =
-                        StoredAccountBundle(
-                            ownerNsec = update.ownerNsec,
-                            ownerPubkeyHex = update.ownerPubkeyHex,
-                            deviceNsec = update.deviceNsec,
-                        )
-                    persistBundle(bundle)
+                    val bundle = StoredAccountBundle(
+                        ownerNsec = update.ownerNsec,
+                        ownerPubkeyHex = update.ownerPubkeyHex,
+                        deviceNsec = update.deviceNsec,
+                    )
+                    secretPersistenceMutex.withLock {
+                        persistBundle(bundle)
+                        clearPersistedPendingDeviceLink()
+                    }
                     scheduleMobilePushSyncIfNeeded(
                         mutableState.value,
                         bundle.ownerNsec,
                     )
+                }
+            }
+            is AppUpdate.PersistPendingDeviceLink -> {
+                applicationScope.launch(ioDispatcher) {
+                    secretPersistenceMutex.withLock {
+                        persistPendingDeviceLink(StoredPendingDeviceLink(
+                            deviceNsec = update.deviceNsec,
+                            approvalBootstrapJson = update.approvalBootstrapJson,
+                        ))
+                    }
+                }
+            }
+            AppUpdate.ClearPendingDeviceLink -> {
+                applicationScope.launch(ioDispatcher) {
+                    secretPersistenceMutex.withLock { clearPersistedPendingDeviceLink() }
                 }
             }
             is AppUpdate.NearbyPublishedEvent -> Unit
@@ -1439,6 +1459,24 @@ class AppManager(
     private suspend fun restoreSessionFromSecureStore() {
         // Native restore only rehydrates secure inputs. Rust rebuilds the authoritative app state.
         IrisDebugLog.d(TAG, "restoreSessionFromSecureStore start")
+        val pendingLink = loadPersistedPendingDeviceLink()
+        if (pendingLink != null) {
+            restoreCheckComplete = true
+            persistedRestoreInFlight = true
+            val dispatched =
+                dispatchToRust(
+                    AppAction.RestorePendingDeviceLink(
+                        deviceNsec = pendingLink.deviceNsec,
+                        approvalBootstrapJson = pendingLink.approvalBootstrapJson,
+                    ),
+                    showsToastOnFailure = false,
+                )
+            if (!dispatched) {
+                persistedRestoreInFlight = false
+                publishBootstrapNeedsLogin()
+            }
+            return
+        }
         val encrypted = loadPersistedSecret()
         if (encrypted == null) {
             IrisDebugLog.d(TAG, "restoreSessionFromSecureStore no persisted secret")
@@ -1560,6 +1598,37 @@ class AppManager(
         cachedAccountBundle = bundle
     }
 
+    private suspend fun persistPendingDeviceLink(link: StoredPendingDeviceLink) {
+        val encrypted = secureSecretStore.encrypt(link.toJson().encodeToByteArray())
+        dataStore.edit { preferences ->
+            preferences[PENDING_LINK_CIPHERTEXT] = encrypted.cipherText.toBase64()
+            preferences[PENDING_LINK_IV] = encrypted.iv.toBase64()
+        }
+    }
+
+    private suspend fun loadPersistedPendingDeviceLink(): StoredPendingDeviceLink? {
+        val preferences =
+            dataStore.data
+                .catch { throwable ->
+                    if (throwable is IOException) emit(emptyPreferences()) else throw throwable
+                }.first()
+        val cipherText = preferences[PENDING_LINK_CIPHERTEXT] ?: return null
+        val iv = preferences[PENDING_LINK_IV] ?: return null
+        val decrypted = runCatching {
+            secureSecretStore.decrypt(
+                EncryptedSecret(cipherText.fromBase64(), iv.fromBase64()),
+            ).decodeToString()
+        }.getOrNull() ?: return null
+        return StoredPendingDeviceLink.fromJson(decrypted)
+    }
+
+    private suspend fun clearPersistedPendingDeviceLink() {
+        dataStore.edit { preferences ->
+            preferences.remove(PENDING_LINK_CIPHERTEXT)
+            preferences.remove(PENDING_LINK_IV)
+        }
+    }
+
     private suspend fun loadPersistedBundle(): StoredAccountBundle? {
         val encrypted = loadPersistedSecret() ?: return null
         val decrypted = runCatching { secureSecretStore.decrypt(encrypted).decodeToString() }.getOrNull()
@@ -1590,39 +1659,42 @@ class AppManager(
         dataStore.edit { preferences ->
             preferences.remove(SECRET_CIPHERTEXT)
             preferences.remove(SECRET_IV)
+            preferences.remove(PENDING_LINK_CIPHERTEXT)
+            preferences.remove(PENDING_LINK_IV)
         }
         cachedAccountBundle = null
         lastMobilePushSyncInput = null
     }
 
-    private suspend fun clearNativeSecretsBeforeReset(showToast: Boolean = true): Boolean {
-        val keyCleared =
-            runCatching { secureSecretStore.clear() }
-                .onFailure { error -> Log.w(TAG, "failed to clear Android secure key", error) }
-                .getOrDefault(false)
-        if (!keyCleared) {
-            if (showToast) {
-                publishShellToast("Could not clear secret key.")
+    private suspend fun clearNativeSecretsBeforeReset(showToast: Boolean = true): Boolean =
+        secretPersistenceMutex.withLock {
+            val keyCleared =
+                runCatching { secureSecretStore.clear() }
+                    .onFailure { error -> Log.w(TAG, "failed to clear Android secure key", error) }
+                    .getOrDefault(false)
+            if (!keyCleared) {
+                if (showToast) {
+                    publishShellToast("Could not clear secret key.")
+                }
+                return@withLock false
             }
-            return false
-        }
 
-        val persistedCleared =
-            runCatching { clearPersistedSecret() }
-                .onFailure { error -> Log.w(TAG, "failed to clear stored account bundle", error) }
-                .isSuccess
-        val persistedSecretGone =
-            runCatching { loadPersistedSecret() == null }
-                .onFailure { error -> Log.w(TAG, "failed to verify stored account bundle clear", error) }
-                .getOrDefault(false)
-        if (!persistedCleared || !persistedSecretGone) {
-            if (showToast) {
-                publishShellToast("Could not clear secret key.")
+            val persistedCleared =
+                runCatching { clearPersistedSecret() }
+                    .onFailure { error -> Log.w(TAG, "failed to clear stored account bundle", error) }
+                    .isSuccess
+            val persistedSecretGone =
+                runCatching { loadPersistedSecret() == null }
+                    .onFailure { error -> Log.w(TAG, "failed to verify stored account bundle clear", error) }
+                    .getOrDefault(false)
+            if (!persistedCleared || !persistedSecretGone) {
+                if (showToast) {
+                    publishShellToast("Could not clear secret key.")
+                }
+                return@withLock false
             }
-            return false
+            true
         }
-        return true
-    }
 
     private fun scheduleMobilePushSyncIfNeeded(
         state: AppState,
@@ -1692,6 +1764,7 @@ class AppManager(
         val previous = rust
         previous.shutdown()
         wipeAppStorage()
+        pendingNavigationOverride = null
         val initial = bindRust(createRustApp())
         restoreCheckComplete = true
         publishState(initial)
@@ -1951,6 +2024,8 @@ class AppManager(
         const val MAX_CLIENT_DEBUG_LOG_DETAIL_CHARS = 1_000
         val SECRET_CIPHERTEXT = stringPreferencesKey("secret_ciphertext")
         val SECRET_IV = stringPreferencesKey("secret_iv")
+        val PENDING_LINK_CIPHERTEXT = stringPreferencesKey("pending_link_ciphertext")
+        val PENDING_LINK_IV = stringPreferencesKey("pending_link_iv")
 
         fun attachmentCacheName(
             nhash: String,

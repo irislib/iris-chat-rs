@@ -249,8 +249,9 @@ impl AppCore {
             .map(|logged_in| logged_in.authorization_state)
         {
             None => Screen::Welcome,
-            Some(LocalAuthorizationState::Authorized) => Screen::ChatList,
-            Some(LocalAuthorizationState::AwaitingApproval) => Screen::AwaitingDeviceApproval,
+            Some(
+                LocalAuthorizationState::Authorized | LocalAuthorizationState::AwaitingApproval,
+            ) => Screen::ChatList,
             Some(LocalAuthorizationState::Revoked) => Screen::DeviceRevoked,
         };
 

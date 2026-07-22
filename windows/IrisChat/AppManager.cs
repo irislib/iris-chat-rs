@@ -36,6 +36,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
     private readonly FfiApp _ffi;
     private readonly WindowsCredentialStore _secretStore;
+    private readonly WindowsCredentialStore _pendingDeviceLinkSecretStore;
     private readonly IDesktopNotificationPoster _notifier;
     private readonly HashtreeAttachmentCache _cache;
     private readonly UpdateService _updateService = new();
@@ -70,6 +71,10 @@ public sealed partial class AppManager : INotifyPropertyChanged
     {
         _dataDir = dataDir;
         _secretStore = new WindowsCredentialStore(filePath: testSecretPath);
+        _pendingDeviceLinkSecretStore = new WindowsCredentialStore(
+            targetName: "to.iris.chat/pending-device-link",
+            filePath: testSecretPath is null ? null : testSecretPath + ".pending-link"
+        );
         _notifier = notifier ?? new SystemDesktopNotificationPoster();
         _cache = new HashtreeAttachmentCache(dataDir);
         _ui = Application.Current.Dispatcher;
@@ -286,7 +291,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
     public void Logout()
     {
         _automaticRevocationLogoutInFlight = true;
-        if (!_secretStore.Clear())
+        if (!_secretStore.Clear() || !_pendingDeviceLinkSecretStore.Clear())
         {
             _automaticRevocationLogoutInFlight = false;
             ShowToast("Could not clear secret key.");
@@ -766,6 +771,24 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
     private void TryRestorePersistedSession()
     {
+        var pendingLink = _pendingDeviceLinkSecretStore.LoadPendingDeviceLink();
+        if (pendingLink != null)
+        {
+            _persistedRestoreInFlight = true;
+            BootstrapInFlight = true;
+            Notify(nameof(BootstrapInFlight));
+            var restored = DispatchToRust(new AppAction.RestorePendingDeviceLink(
+                pendingLink.DeviceNsec,
+                pendingLink.ApprovalBootstrapJson
+            ), showToastOnFailure: false);
+            if (!restored)
+            {
+                _persistedRestoreInFlight = false;
+                BootstrapInFlight = false;
+                Notify(nameof(BootstrapInFlight));
+            }
+            return;
+        }
         var bundle = _secretStore.Load();
         if (bundle == null)
         {
@@ -799,6 +822,20 @@ public sealed partial class AppManager : INotifyPropertyChanged
                     p.ownerPubkeyHex,
                     p.deviceNsec
                 ));
+                _pendingDeviceLinkSecretStore.Clear();
+                break;
+
+            case AppUpdate.PersistPendingDeviceLink p:
+                _pendingDeviceLinkSecretStore.SavePendingDeviceLink(
+                    new WindowsCredentialStore.StoredPendingDeviceLink(
+                        p.deviceNsec,
+                        p.approvalBootstrapJson
+                    )
+                );
+                break;
+
+            case AppUpdate.ClearPendingDeviceLink:
+                _pendingDeviceLinkSecretStore.Clear();
                 break;
 
             case AppUpdate.FullState f:
@@ -1282,7 +1319,8 @@ public sealed partial class AppManager : INotifyPropertyChanged
         action is AppAction.AcceptInvite ||
         action is AppAction.Logout ||
         action is AppAction.RestoreSession ||
-        action is AppAction.RestoreAccountBundle;
+        action is AppAction.RestoreAccountBundle ||
+        action is AppAction.RestorePendingDeviceLink;
 
     private static string ActionLogName(AppAction action) =>
         action.GetType().Name;

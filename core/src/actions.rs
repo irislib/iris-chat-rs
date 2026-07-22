@@ -18,6 +18,10 @@ pub enum AppAction {
         owner_pubkey_hex: String,
         device_nsec: String,
     },
+    RestorePendingDeviceLink {
+        device_nsec: String,
+        approval_bootstrap_json: String,
+    },
     StartLinkedDevice {
         owner_input: String,
     },

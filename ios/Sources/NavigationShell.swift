@@ -179,8 +179,6 @@ struct NavigationRoute: Equatable {
             return "groupDetails:\(groupId)"
         case .deviceRoster:
             return "deviceRoster"
-        case .awaitingDeviceApproval:
-            return "awaitingDeviceApproval"
         case .deviceRevoked:
             return "deviceRevoked"
         }

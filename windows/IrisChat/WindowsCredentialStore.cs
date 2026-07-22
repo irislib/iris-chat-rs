@@ -16,6 +16,10 @@ public sealed class WindowsCredentialStore
         string OwnerPubkeyHex,
         string DeviceNsec
     );
+    public sealed record StoredPendingDeviceLink(
+        string DeviceNsec,
+        string ApprovalBootstrapJson
+    );
 
     private readonly string _targetName;
     private readonly string? _filePath;
@@ -29,12 +33,18 @@ public sealed class WindowsCredentialStore
     }
 
     public StoredAccountBundle? Load()
+        => LoadValue<StoredAccountBundle>();
+
+    public StoredPendingDeviceLink? LoadPendingDeviceLink()
+        => LoadValue<StoredPendingDeviceLink>();
+
+    private T? LoadValue<T>() where T : class
     {
         if (_filePath is not null)
         {
             try
             {
-                return JsonSerializer.Deserialize<StoredAccountBundle>(File.ReadAllText(_filePath));
+                return JsonSerializer.Deserialize<T>(File.ReadAllText(_filePath));
             }
             catch
             {
@@ -57,7 +67,7 @@ public sealed class WindowsCredentialStore
             var data = new byte[cred.CredentialBlobSize];
             Marshal.Copy(cred.CredentialBlob, data, 0, (int)cred.CredentialBlobSize);
             var json = Encoding.UTF8.GetString(data);
-            return JsonSerializer.Deserialize<StoredAccountBundle>(json);
+            return JsonSerializer.Deserialize<T>(json);
         }
         catch
         {
@@ -70,8 +80,14 @@ public sealed class WindowsCredentialStore
     }
 
     public void Save(StoredAccountBundle bundle)
+        => SaveValue(bundle);
+
+    public void SavePendingDeviceLink(StoredPendingDeviceLink link)
+        => SaveValue(link);
+
+    private void SaveValue<T>(T value)
     {
-        var json = JsonSerializer.Serialize(bundle);
+        var json = JsonSerializer.Serialize(value);
         if (_filePath is not null)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);

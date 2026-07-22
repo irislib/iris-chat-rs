@@ -49,21 +49,7 @@ fn start_linked_device_stores_bounded_bootstrap_without_publishing_request_event
         relay_events(&approval_relay).is_empty(),
         "starting a link must not publish a request event"
     );
-    assert_eq!(
-        bootstrap,
-        core.pending_linked_device
-            .as_ref()
-            .expect("pending link")
-            .approval_bootstrap
-    );
-    assert_eq!(
-        PublicKey::parse(&bootstrap.request_npub).expect("request npub"),
-        core.pending_linked_device
-            .as_ref()
-            .expect("pending link")
-            .request_keys
-            .public_key()
-    );
+    PublicKey::parse(&bootstrap.request_npub).expect("request npub");
     assert_eq!(
         bootstrap.request_secret.len(),
         43,
@@ -73,16 +59,6 @@ fn start_linked_device_stores_bounded_bootstrap_without_publishing_request_event
         .request_secret
         .bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')));
-    assert_ne!(
-        bootstrap.request_secret,
-        core.pending_linked_device
-            .as_ref()
-            .expect("pending link")
-            .request_keys
-            .secret_key()
-            .to_secret_hex(),
-        "the anti-spam request secret must be independent of the receipt decryption key"
-    );
     let pairing_client = core
         .pending_linked_device
         .as_ref()
@@ -124,33 +100,6 @@ fn signed_app_keys_authorization_event(
         .get_event_at(owner.public_key(), created_at)
         .sign_with_keys(owner)
         .expect("signed app keys authorization")
-}
-
-fn signed_device_approval_receipt_event(
-    owner_device: &Keys,
-    bootstrap: &NostrIdentityDeviceApprovalBootstrap,
-    owner_pubkey: PublicKey,
-    created_at: u64,
-) -> Event {
-    let request_pubkey = PublicKey::parse(&bootstrap.request_npub).expect("request npub");
-    let device_app_key_pubkey =
-        PublicKey::parse(&bootstrap.device_app_key_npub).expect("device AppKey npub");
-    build_nostr_identity_device_approval_receipt_event(
-        owner_device,
-        NostrIdentityDeviceApprovalReceipt {
-            schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
-            profile_id: account::nostr_identity_profile_id_for_owner(owner_pubkey),
-            request_pubkey: request_pubkey.to_hex(),
-            device_app_key_pubkey: device_app_key_pubkey.to_hex(),
-            approved_by_pubkey: owner_device.public_key().to_hex(),
-            approved_at: i64::try_from(created_at).expect("created_at fits i64"),
-            request_secret: bootstrap.request_secret.clone(),
-            subject_pubkey: Some(owner_pubkey.to_hex()),
-            roster_op_id: None,
-            signed_roster_event: None,
-        },
-    )
-    .expect("signed device approval receipt")
 }
 
 fn device_approval_bootstrap_for_test(
@@ -264,15 +213,19 @@ fn bootstrap_only_link_finishes_pairing_and_authorizes_linked_device() {
                 && event_has_tag_value(event, "device", &linked_device_hex)
         })
         .expect("approval publishes AppKeys authorization");
-    let approval_events = relay_events(&approval_relay);
-    let receipt_event = approval_events
-        .into_iter()
-        .find(|event| event_has_tag_value(
-            event,
-            "type",
-            "nostr_identity_device_approval_receipt"
-        ))
-        .expect("approval publishes encrypted receipt");
+    let receipt_deadline = Instant::now() + Duration::from_secs(2);
+    let receipt_event = loop {
+        if let Some(event) = relay_events(&approval_relay).into_iter().find(|event| {
+            event_has_tag_value(event, "type", "nostr_identity_device_approval_receipt")
+        }) {
+            break event;
+        }
+        assert!(
+            Instant::now() < receipt_deadline,
+            "approval should publish the optional encrypted receipt"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
     assert!(relay_events(&approval_relay).iter().all(|event| {
         !event_has_tag_value(
             event,
@@ -280,28 +233,6 @@ fn bootstrap_only_link_finishes_pairing_and_authorizes_linked_device() {
             "nostr_identity_device_approval_request",
         )
     }));
-    let pending = linked
-        .pending_linked_device
-        .as_ref()
-        .expect("pending linked device");
-    let receipt = parse_nostr_identity_device_approval_receipt_event_for_bootstrap(
-        &receipt_event,
-        &pending.request_keys,
-        &pending.approval_bootstrap,
-    )
-    .expect("receipt bound to bootstrap");
-    assert_eq!(
-        receipt.profile_id,
-        account::nostr_identity_profile_id_for_owner(owner.public_key())
-    );
-    let signed_result =
-        nostr_identity::parse_nostr_identity_device_approval_receipt_roster_op(&receipt)
-            .expect("signed shared approval result");
-    assert_eq!(signed_result.content.actor_pubkey, owner.public_key().to_hex());
-    let NostrIdentityRosterOp::AddFacet { facet } = signed_result.content.op else {
-        panic!("approval result must add the linked AppKey");
-    };
-    assert_eq!(facet.pubkey, linked_device_hex);
     let approval_event_ids = [
         response_event.id.to_string(),
         app_keys_event.id.to_string(),
@@ -323,10 +254,9 @@ fn bootstrap_only_link_finishes_pairing_and_authorizes_linked_device() {
 
     linked.handle_relay_event(app_keys_event);
     assert!(
-        linked.pending_linked_device.is_some(),
-        "AppKeys without the encrypted receipt must not finish device linking"
+        linked.pending_linked_device.is_none(),
+        "the QR-bound handshake and exact AppKeys authorization complete linking"
     );
-
     linked.handle_relay_event(receipt_event);
     let linked_device = linked
         .logged_in

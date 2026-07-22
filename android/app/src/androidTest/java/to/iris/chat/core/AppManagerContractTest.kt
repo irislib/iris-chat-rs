@@ -33,6 +33,7 @@ import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.account.EncryptedSecret
 import to.iris.chat.account.SecureSecretStore
 import to.iris.chat.account.StoredAccountBundle
+import to.iris.chat.account.StoredPendingDeviceLink
 import to.iris.chat.rust.AccountSnapshot
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppReconciler
@@ -217,6 +218,29 @@ class AppManagerContractTest {
         waitFor("bootstrap settles after restored account") {
             appManager.bootstrapState.value is AccountBootstrapState.LoggedIn
         }
+    }
+
+    @Test
+    fun restore_pending_device_link_takes_priority_over_stale_account_bundle() {
+        persistStoredSecret(
+            StoredAccountBundle("stale-owner", "stale-owner-hex", "stale-device").toJson(),
+        )
+        val pending = StoredPendingDeviceLink(
+            deviceNsec = "nsec1device",
+            approvalBootstrapJson = "{\"request\":true}",
+        )
+        persistPendingDeviceLink(pending)
+
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        waitFor("pending link restore dispatch") { rust.dispatchedActions.isNotEmpty() }
+
+        val action = rust.dispatchedActions.single()
+        assertTrue(action is AppAction.RestorePendingDeviceLink)
+        action as AppAction.RestorePendingDeviceLink
+        assertEquals(pending.deviceNsec, action.deviceNsec)
+        assertEquals(pending.approvalBootstrapJson, action.approvalBootstrapJson)
+        assertTrue(appManager.bootstrapState.value is AccountBootstrapState.Loading)
     }
 
     @Test
@@ -469,6 +493,20 @@ class AppManagerContractTest {
     }
 
     @Test
+    fun pending_device_link_updates_persist_and_clear_secure_state() {
+        createManager()
+        val rust = rustFactory.instances.single()
+        rust.emit(AppUpdate.PersistPendingDeviceLink(
+            deviceNsec = "nsec1device",
+            approvalBootstrapJson = "{}",
+        ))
+        waitFor("persisted pending device link") { loadPersistedPendingDeviceLink() != null }
+
+        rust.emit(AppUpdate.ClearPendingDeviceLink)
+        waitFor("cleared pending device link") { loadPersistedPendingDeviceLink() == null }
+    }
+
+    @Test
     fun export_owner_secret_reads_persisted_account_bundle() {
         val appManager = createManager()
         persistStoredSecret(
@@ -649,6 +687,31 @@ class AppManagerContractTest {
                 preferences[SECRET_IV] = Base64.encodeToString(encrypted.iv, Base64.NO_WRAP)
             }
         }
+    }
+
+    private fun persistPendingDeviceLink(link: StoredPendingDeviceLink) {
+        val encrypted = secureSecretStore.encrypt(link.toJson().encodeToByteArray())
+        runBlocking {
+            sharedDataStore.edit { preferences ->
+                preferences[PENDING_LINK_CIPHERTEXT] = Base64.encodeToString(encrypted.cipherText, Base64.NO_WRAP)
+                preferences[PENDING_LINK_IV] = Base64.encodeToString(encrypted.iv, Base64.NO_WRAP)
+            }
+        }
+    }
+
+    private fun loadPersistedPendingDeviceLink(): StoredPendingDeviceLink? {
+        val encrypted = runBlocking {
+            val preferences = sharedDataStore.data.first()
+            val cipherText = preferences[PENDING_LINK_CIPHERTEXT] ?: return@runBlocking null
+            val iv = preferences[PENDING_LINK_IV] ?: return@runBlocking null
+            EncryptedSecret(
+                cipherText = Base64.decode(cipherText, Base64.NO_WRAP),
+                iv = Base64.decode(iv, Base64.NO_WRAP),
+            )
+        } ?: return null
+        return StoredPendingDeviceLink.fromJson(
+            secureSecretStore.decrypt(encrypted).decodeToString(),
+        )
     }
 
     private fun loadPersistedBundle(): StoredAccountBundle? {
@@ -879,6 +942,8 @@ class AppManagerContractTest {
         val LARGE_FIXTURE_MESSAGE_COUNT = 1_200u
         val SECRET_CIPHERTEXT = stringPreferencesKey("secret_ciphertext")
         val SECRET_IV = stringPreferencesKey("secret_iv")
+        val PENDING_LINK_CIPHERTEXT = stringPreferencesKey("pending_link_ciphertext")
+        val PENDING_LINK_IV = stringPreferencesKey("pending_link_iv")
     }
 }
 

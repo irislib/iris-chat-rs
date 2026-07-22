@@ -117,7 +117,7 @@ impl AppCore {
                 self.active_chat_id = None;
                 self.fetch_pending_device_invites_for_local_owner();
             }
-            Screen::AwaitingDeviceApproval | Screen::DeviceRevoked | Screen::Welcome => return,
+            Screen::DeviceRevoked | Screen::Welcome => return,
         }
 
         self.rebuild_persist_and_emit_state();
@@ -163,7 +163,6 @@ impl AppCore {
                 | Screen::RestoreAccount
                 | Screen::AddDevice
                 | Screen::ChatList
-                | Screen::AwaitingDeviceApproval
                 | Screen::DeviceRevoked => {}
                 Screen::Settings => normalized_stack.push(Screen::Settings),
                 Screen::CreateInvite => {

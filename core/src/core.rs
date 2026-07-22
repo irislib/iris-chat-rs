@@ -36,10 +36,9 @@ use nostr_identity::{
     build_nostr_identity_roster_op_event_with_client_nonce,
     create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_bootstrap,
     nostr_identity_device_approval_bootstrap, parse_nostr_identity_device_approval_bootstrap,
-    parse_nostr_identity_device_approval_receipt_event_for_bootstrap,
     ApproveNostrIdentityDeviceApprovalBootstrapOptions,
     CreateNostrIdentityDeviceApprovalRequestOptions, NostrIdentityDeviceApprovalBootstrap,
-    NostrIdentityDeviceApprovalReceipt, NostrIdentityId, NostrIdentityRosterOp, FACT_OP_KIND,
+    NostrIdentityDeviceApprovalReceipt, NostrIdentityId, NostrIdentityRosterOp,
     NOSTR_IDENTITY_DEVICE_APPROVAL_LABEL_MAX_BYTES, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
 };
 use nostr_sdk::prelude::{
@@ -507,6 +506,7 @@ pub struct AppCore {
     seen_event_ids: HashSet<String>,
     seen_event_order: VecDeque<String>,
     device_invite_poll_token: u64,
+    pending_device_link_poll_token: u64,
     message_expiry_token: u64,
     protocol_reconnect_token: u64,
     protocol_liveness_token: u64,

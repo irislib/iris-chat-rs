@@ -97,6 +97,7 @@ impl AppCore {
             seen_event_ids: HashSet::new(),
             seen_event_order: VecDeque::new(),
             device_invite_poll_token: 0,
+            pending_device_link_poll_token: 0,
             message_expiry_token: 0,
             protocol_reconnect_token: 0,
             protocol_liveness_token: 0,
@@ -176,6 +177,10 @@ impl AppCore {
                     "ProtocolSubscriptionLivenessCheck"
                 }
                 InternalEvent::PollPendingDeviceInvites { .. } => "PollPendingDeviceInvites",
+                InternalEvent::PollPendingDeviceLink { .. } => "PollPendingDeviceLink",
+                InternalEvent::PendingDeviceLinkRefreshFinished { .. } => {
+                    "PendingDeviceLinkRefreshFinished"
+                }
                 InternalEvent::PruneExpiredMessages { .. } => "PruneExpiredMessages",
                 InternalEvent::RelayStatusChanged { .. } => "RelayStatusChanged",
                 InternalEvent::ProtocolSubscriptionReconcileCompleted { .. } => {
@@ -308,7 +313,7 @@ impl AppCore {
 
     pub(super) fn shutdown(&mut self) {
         self.push_debug_log("app.shutdown", "stopping core");
-        self.stop_pending_linked_device();
+        self.pause_pending_linked_device();
         self.stop_device_sync();
         self.reset_pending_invite_acceptance();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
@@ -337,7 +342,7 @@ impl AppCore {
         // want before iOS suspends us.
         self.suspended = true;
         self.push_debug_log("app.suspend", "pausing network and flushing storage");
-        self.stop_pending_linked_device();
+        self.pause_pending_linked_device();
         self.stop_device_sync();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.message_expiry_token = self.message_expiry_token.saturating_add(1);
@@ -396,6 +401,10 @@ impl AppCore {
                 owner_pubkey_hex,
                 device_nsec,
             } => self.restore_account_bundle(owner_nsec, &owner_pubkey_hex, &device_nsec),
+            AppAction::RestorePendingDeviceLink {
+                device_nsec,
+                approval_bootstrap_json,
+            } => self.restore_pending_linked_device(&device_nsec, &approval_bootstrap_json),
             AppAction::StartLinkedDevice { owner_input } => self.start_linked_device(&owner_input),
             AppAction::SetCurrentDeviceLabels {
                 device_label,
@@ -629,6 +638,29 @@ impl AppCore {
                 self.fetch_pending_device_invites_for_local_owner();
                 self.schedule_pending_device_invite_poll(Duration::from_secs(
                     DEVICE_INVITE_DISCOVERY_POLL_SECS,
+                ));
+            }
+            InternalEvent::PollPendingDeviceLink { token } => {
+                if token != self.pending_device_link_poll_token {
+                    return;
+                }
+                self.refresh_pending_linked_device();
+            }
+            InternalEvent::PendingDeviceLinkRefreshFinished { token, events } => {
+                if token != self.pending_device_link_poll_token {
+                    return;
+                }
+                if let Some(pending) = self.pending_linked_device.as_mut() {
+                    pending.refresh_in_flight = false;
+                }
+                for event in events {
+                    self.handle_relay_event_with_channel(event, "device approval server");
+                    if self.pending_linked_device.is_none() {
+                        return;
+                    }
+                }
+                self.schedule_pending_linked_device_refresh(Duration::from_secs(
+                    PENDING_DEVICE_LINK_RETRY_SECS,
                 ));
             }
             InternalEvent::PruneExpiredMessages { token } => {

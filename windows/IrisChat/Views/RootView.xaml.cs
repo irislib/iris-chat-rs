@@ -107,8 +107,7 @@ public partial class RootView : UserControl
             Screen.Welcome => new WelcomeView(),
             Screen.CreateAccount => new CreateAccountView(),
             Screen.RestoreAccount => new RestoreAccountView(),
-            Screen.AddDevice => new AddDeviceView(awaitingApproval: false),
-            Screen.AwaitingDeviceApproval => new AddDeviceView(awaitingApproval: true),
+            Screen.AddDevice => new AddDeviceView(),
             Screen.DeviceRevoked => new DeviceRevokedView(),
             Screen.ChatList => new ChatListView(),
             Screen.NewChat => new NewChatView(),
@@ -127,7 +126,7 @@ public partial class RootView : UserControl
         signedIn && screen switch
         {
             Screen.Welcome or Screen.CreateAccount or Screen.RestoreAccount
-                or Screen.AddDevice or Screen.AwaitingDeviceApproval
+                or Screen.AddDevice
                 or Screen.DeviceRevoked => false,
             _ => true,
         };
@@ -157,7 +156,6 @@ public partial class RootView : UserControl
         Screen.DirectChatInfo => "Details",
         Screen.GroupDetails => "Group",
         Screen.DeviceRoster => "Manage Devices",
-        Screen.AwaitingDeviceApproval => "Finish Linking",
         Screen.DeviceRevoked => "Device Removed",
         _ => "Iris Chat",
     };

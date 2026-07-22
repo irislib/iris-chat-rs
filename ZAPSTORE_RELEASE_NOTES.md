@@ -1,3 +1,10 @@
+# Iris Chat 2026.7.23
+
+- Linking a device now goes straight from the code to your chats, with no extra finishing screen.
+- Interrupted or out-of-order approvals recover automatically, even after reopening or updating the app.
+- Linking still verifies both the exact signed device entry and the secret in that specific code.
+- Messages waiting for device details retry automatically instead of getting stuck.
+
 # Iris Chat 2026.7.22
 
 - Restoring a profile with a valid secret key now continues automatically.
