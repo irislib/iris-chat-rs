@@ -68,7 +68,7 @@ impl AppCore {
         let local_app_keys = self
             .app_keys
             .get(&logged_in.owner_pubkey.to_hex())
-            .and_then(known_app_keys_to_ndr)
+            .map(known_app_keys_to_ndr)
             .ok_or_else(|| anyhow::anyhow!("Device roster is not ready."))?;
         let created_at = self
             .app_keys
@@ -109,19 +109,12 @@ impl AppCore {
 
     pub(super) fn sync_local_app_keys_to_protocol_engine(&mut self, label: &'static str) {
         let Some((owner, app_keys, created_at)) = self.logged_in.as_ref().and_then(|logged_in| {
-            self.app_keys
-                .get(&logged_in.owner_pubkey.to_hex())
-                .and_then(known_app_keys_to_ndr)
-                .map(|app_keys| {
-                    (
-                        logged_in.owner_pubkey,
-                        app_keys,
-                        self.app_keys
-                            .get(&logged_in.owner_pubkey.to_hex())
-                            .map(|known| known.created_at_secs)
-                            .unwrap_or_else(|| unix_now().get()),
-                    )
-                })
+            let known = self.app_keys.get(&logged_in.owner_pubkey.to_hex())?;
+            Some((
+                logged_in.owner_pubkey,
+                known_app_keys_to_ndr(known),
+                known.created_at_secs,
+            ))
         }) else {
             return;
         };
@@ -760,9 +753,7 @@ impl AppCore {
         if success {
             self.reconcile_ready_outgoing_message_deliveries();
         }
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
         should_retry
     }
 

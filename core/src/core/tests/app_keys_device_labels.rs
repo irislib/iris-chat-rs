@@ -24,7 +24,6 @@ fn app_keys_device_projection_is_deterministic() {
     );
     assert_eq!(
         known_app_keys_to_ndr(&known)
-            .expect("convert back")
             .get_all_devices()
             .len(),
         2
@@ -52,7 +51,7 @@ fn app_keys_device_labels_roundtrip_through_known_snapshot() {
     assert_eq!(known_device.client_label.as_deref(), Some("Iris Chat iOS"));
     assert_eq!(known_device.label_updated_at_secs, 20);
 
-    let roundtrip = known_app_keys_to_ndr(&known).expect("convert back");
+    let roundtrip = known_app_keys_to_ndr(&known);
     let labels = roundtrip.get_device_labels(&device).expect("device labels");
     assert_eq!(
         labels.device_label.as_deref(),
@@ -87,7 +86,7 @@ fn current_device_labels_update_app_keys_and_roster_snapshot() {
     );
     assert_eq!(known_device.client_label.as_deref(), Some("Iris Chat iOS"));
 
-    let ndr_app_keys = known_app_keys_to_ndr(app_keys).expect("NDR AppKeys");
+    let ndr_app_keys = known_app_keys_to_ndr(app_keys);
     let labels = ndr_app_keys
         .get_device_labels(&device.public_key())
         .expect("NDR labels");

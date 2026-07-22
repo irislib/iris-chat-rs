@@ -560,15 +560,18 @@ impl ProtocolEngine {
             .map(ToString::to_string)
             .unwrap_or_default();
         let remote_payload = serde_json::to_vec(&rumor)?;
-        self.send_direct_payloads(
-            peer_pubkey,
-            chat_id,
-            remote_payload.clone(),
-            local_sibling_payload(peer_pubkey, &remote_payload)?,
-            Some(message_id.clone()),
-            message_id,
-            now,
-        )
+        let sibling_payload = local_sibling_payload(peer_pubkey, &remote_payload)?;
+        self.with_state_checkpoint(|engine| {
+            engine.send_direct_payloads_inner(
+                peer_pubkey,
+                chat_id,
+                remote_payload,
+                sibling_payload,
+                Some(message_id.clone()),
+                message_id,
+                now,
+            )
+        })
     }
 
     pub fn send_direct_unsigned_event(
@@ -585,15 +588,18 @@ impl ProtocolEngine {
             .map(ToString::to_string)
             .unwrap_or_default();
         let remote_payload = serde_json::to_vec(&rumor)?;
-        self.send_direct_payloads(
-            peer_pubkey,
-            chat_id,
-            remote_payload.clone(),
-            local_sibling_payload(peer_pubkey, &remote_payload)?,
-            Some(message_id.clone()),
-            message_id,
-            now,
-        )
+        let sibling_payload = local_sibling_payload(peer_pubkey, &remote_payload)?;
+        self.with_state_checkpoint(|engine| {
+            engine.send_direct_payloads_inner(
+                peer_pubkey,
+                chat_id,
+                remote_payload,
+                sibling_payload,
+                Some(message_id.clone()),
+                message_id,
+                now,
+            )
+        })
     }
 
     pub fn send_direct_unsigned_event_to_peer_only(
@@ -610,14 +616,16 @@ impl ProtocolEngine {
             .map(ToString::to_string)
             .unwrap_or_default();
         let remote_payload = serde_json::to_vec(&rumor)?;
-        self.send_direct_remote_payload(
-            peer_pubkey,
-            chat_id,
-            remote_payload,
-            Some(message_id.clone()),
-            message_id,
-            now,
-        )
+        self.with_state_checkpoint(|engine| {
+            engine.send_direct_remote_payload_inner(
+                peer_pubkey,
+                chat_id,
+                remote_payload,
+                Some(message_id.clone()),
+                message_id,
+                now,
+            )
+        })
     }
 
     pub fn send_local_sibling_unsigned_event(
@@ -634,73 +642,12 @@ impl ProtocolEngine {
             .map(ToString::to_string)
             .unwrap_or_default();
         let payload = serde_json::to_vec(&rumor)?;
-        self.send_local_sibling_payload(
-            chat_id,
-            local_sibling_payload(conversation_owner, &payload)?,
-            Some(message_id.clone()),
-            message_id,
-            now,
-        )
-    }
-
-    fn send_direct_remote_payload(
-        &mut self,
-        peer_pubkey: PublicKey,
-        chat_id: &str,
-        remote_payload: Vec<u8>,
-        inner_event_id: Option<String>,
-        message_id: String,
-        now: UnixSeconds,
-    ) -> anyhow::Result<ProtocolDirectSendResult> {
-        self.with_state_checkpoint(|engine| {
-            engine.send_direct_remote_payload_inner(
-                peer_pubkey,
-                chat_id,
-                remote_payload,
-                inner_event_id,
-                message_id,
-                now,
-            )
-        })
-    }
-
-    fn send_local_sibling_payload(
-        &mut self,
-        chat_id: &str,
-        local_sibling_payload: Vec<u8>,
-        inner_event_id: Option<String>,
-        message_id: String,
-        now: UnixSeconds,
-    ) -> anyhow::Result<ProtocolDirectSendResult> {
+        let sibling_payload = local_sibling_payload(conversation_owner, &payload)?;
         self.with_state_checkpoint(|engine| {
             engine.send_local_sibling_payload_inner(
                 chat_id,
-                local_sibling_payload,
-                inner_event_id,
-                message_id,
-                now,
-            )
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn send_direct_payloads(
-        &mut self,
-        peer_pubkey: PublicKey,
-        chat_id: &str,
-        remote_payload: Vec<u8>,
-        local_sibling_payload: Vec<u8>,
-        inner_event_id: Option<String>,
-        message_id: String,
-        now: UnixSeconds,
-    ) -> anyhow::Result<ProtocolDirectSendResult> {
-        self.with_state_checkpoint(|engine| {
-            engine.send_direct_payloads_inner(
-                peer_pubkey,
-                chat_id,
-                remote_payload,
-                local_sibling_payload,
-                inner_event_id,
+                sibling_payload,
+                Some(message_id.clone()),
                 message_id,
                 now,
             )

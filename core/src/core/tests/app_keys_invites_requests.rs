@@ -445,7 +445,7 @@ fn removing_authorized_device_advances_app_keys_timestamp() {
         DeviceEntry::new(device_a.public_key(), previous_created_at),
         DeviceEntry::new(device_b.public_key(), linked_device_created_at),
     ]);
-    let published_removal = known_app_keys_to_ndr(cached).expect("published removal");
+    let published_removal = known_app_keys_to_ndr(cached);
     let applied = apply_app_keys_snapshot_with_required_device(
         Some(&stale_linked_cache),
         linked_device_created_at,

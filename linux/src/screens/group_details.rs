@@ -4,8 +4,8 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use iris_chat_core::{
-    is_valid_peer_input, normalize_peer_input, proxied_image_url, AppAction, AppState, ChatKind,
-    ChatThreadSnapshot, GroupDetailsSnapshot, GroupMemberSnapshot,
+    is_valid_peer_input, normalize_peer_input, AppAction, AppState, ChatKind, ChatThreadSnapshot,
+    GroupDetailsSnapshot, GroupMemberSnapshot,
 };
 
 use crate::app_manager::AppManager;
@@ -93,14 +93,7 @@ fn settings_card(
     avatar_row.set_activatable(false);
     let avatar = adw::Avatar::new(48, Some(&details.name), true);
     if let Some(url) = details.picture_url.as_ref() {
-        let proxied = proxied_image_url(
-            url.clone(),
-            state.preferences.clone(),
-            Some(96),
-            Some(96),
-            true,
-        );
-        image_cache::fetch_into_avatar(&avatar, &proxied);
+        image_cache::fetch_proxied_into_avatar(&avatar, url, &state.preferences, 96);
     }
     avatar_row.add_prefix(&avatar);
     avatar_row.set_title(&details.name);
@@ -287,14 +280,7 @@ fn member_row(
     }
     let avatar = adw::Avatar::new(36, Some(&member.display_name), true);
     if let Some(url) = member.picture_url.as_ref() {
-        let proxied = proxied_image_url(
-            url.clone(),
-            state.preferences.clone(),
-            Some(72),
-            Some(72),
-            true,
-        );
-        image_cache::fetch_into_avatar(&avatar, &proxied);
+        image_cache::fetch_proxied_into_avatar(&avatar, url, &state.preferences, 72);
     }
     row.add_prefix(&avatar);
 

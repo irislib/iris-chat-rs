@@ -22,9 +22,7 @@ impl AppCore {
                 _ => return,
             }
 
-            self.rebuild_state();
-            self.persist_best_effort();
-            self.emit_state();
+            self.rebuild_persist_and_emit_state();
             return;
         }
 
@@ -122,9 +120,7 @@ impl AppCore {
             Screen::AwaitingDeviceApproval | Screen::DeviceRevoked | Screen::Welcome => return,
         }
 
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn navigate_back(&mut self) {
@@ -133,9 +129,7 @@ impl AppCore {
             return;
         }
         self.sync_active_chat_from_router();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn update_screen_stack(&mut self, stack: Vec<Screen>) {
@@ -157,9 +151,7 @@ impl AppCore {
                 self.stop_pending_linked_device();
             }
             self.active_chat_id = None;
-            self.rebuild_state();
-            self.persist_best_effort();
-            self.emit_state();
+            self.rebuild_persist_and_emit_state();
             return;
         }
 
@@ -224,9 +216,7 @@ impl AppCore {
 
         self.screen_stack = normalized_stack;
         self.sync_active_chat_from_router();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn is_device_roster_open(&self) -> bool {

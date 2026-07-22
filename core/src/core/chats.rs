@@ -248,9 +248,7 @@ impl AppCore {
         // Stub a thread record for brand-new chats so a first-time
         // draft survives a relaunch even before any messages exist.
         self.ensure_thread_record(&chat_id, now).draft = next;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn open_chat(&mut self, chat_id: &str) {
@@ -504,9 +502,7 @@ impl AppCore {
         }
 
         self.state.busy.sending_message = false;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn send_direct_message(
@@ -1213,9 +1209,7 @@ impl AppCore {
         });
 
         self.push_debug_log("chat.delete", normalized);
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn send_group_event(

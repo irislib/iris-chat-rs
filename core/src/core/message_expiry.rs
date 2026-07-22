@@ -50,9 +50,7 @@ impl AppCore {
             return;
         }
 
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     fn prune_loaded_expired_messages(&mut self, now_secs: u64) -> usize {

@@ -539,20 +539,11 @@ impl ProtocolEngine {
 
         let sender_keys = std::mem::take(&mut self.pending_group_sender_key_messages);
         let mut still_sender_keys = Vec::new();
-        let mut stale_sender_repairs = Vec::new();
         for parsed in sender_keys {
-            if let Some(group_id) =
-                self.inactive_local_group_id_for_sender_key_candidate(&parsed)
+            if self
+                .inactive_local_group_id_for_sender_key_candidate(&parsed)
+                .is_some()
             {
-                stale_sender_repairs.push((
-                    group_id,
-                    parsed.sender_event_pubkey,
-                    parsed.encrypted_header.is_none().then_some(parsed.key_id),
-                    parsed
-                        .encrypted_header
-                        .is_none()
-                        .then_some(parsed.message_number),
-                ));
                 persist_needed = true;
                 continue;
             }
@@ -565,15 +556,6 @@ impl ProtocolEngine {
                 continue;
             };
             if self.pending_group_sender_key_candidate_predates_known_distribution(&parsed) {
-                stale_sender_repairs.push((
-                    message.group_id,
-                    parsed.sender_event_pubkey,
-                    parsed.encrypted_header.is_none().then_some(parsed.key_id),
-                    parsed
-                        .encrypted_header
-                        .is_none()
-                        .then_some(parsed.message_number),
-                ));
                 persist_needed = true;
                 continue;
             }

@@ -194,10 +194,8 @@ impl ProtocolEngine {
             return;
         }
         let known_authors = self.known_message_author_hexes();
-        self.pending_inbound.retain(|pending| {
-            pending_inbound_sender_pubkey_hex(pending)
-                .is_some_and(|sender| known_authors.contains(&sender))
-        });
+        self.pending_inbound
+            .retain(|pending| known_authors.contains(&pending_inbound_sender_pubkey_hex(pending)));
     }
 
     pub fn debug_snapshot(&self) -> ProtocolEngineDebugSnapshot {

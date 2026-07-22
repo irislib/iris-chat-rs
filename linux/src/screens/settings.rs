@@ -499,14 +499,7 @@ fn profile_group(
     let avatar_row = adw::ActionRow::new();
     let avatar = adw::Avatar::new(56, Some(&account.display_name), true);
     if let Some(url) = account.picture_url.as_ref() {
-        let proxied = iris_chat_core::proxied_image_url(
-            url.clone(),
-            prefs.clone(),
-            Some(112),
-            Some(112),
-            true,
-        );
-        image_cache::fetch_into_avatar(&avatar, &proxied);
+        image_cache::fetch_proxied_into_avatar(&avatar, url, prefs, 112);
     }
     avatar_row.add_prefix(&avatar);
     avatar_row.set_title(if account.display_name.is_empty() {

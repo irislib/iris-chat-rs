@@ -246,11 +246,11 @@ fn pending_inbound_sender_pubkey(pending: &ProtocolPendingInbound) -> Option<Ndr
         .map(ndr_device)
 }
 
-fn pending_inbound_sender_pubkey_hex(pending: &ProtocolPendingInbound) -> Option<String> {
+fn pending_inbound_sender_pubkey_hex(pending: &ProtocolPendingInbound) -> String {
     pending_inbound_sender_pubkey(pending)
         .and_then(|sender| public_device(sender).ok())
         .map(|sender| sender.to_hex())
-        .or_else(|| Some(pending.event.pubkey.to_hex()))
+        .unwrap_or_else(|| pending.event.pubkey.to_hex())
 }
 
 fn apply_pending_inbound_metadata(

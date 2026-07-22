@@ -280,7 +280,7 @@ impl AppCore {
             .filter(|created_at| *created_at > 0)
             .unwrap_or(1);
         let mut app_keys = known
-            .and_then(known_app_keys_to_ndr)
+            .map(known_app_keys_to_ndr)
             .unwrap_or_else(|| AppKeys::new(Vec::new()));
         let device_pubkey = logged_in.device_keys.public_key();
         if app_keys.get_device(&device_pubkey).is_none() {

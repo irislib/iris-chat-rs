@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use adw::prelude::*;
 use iris_chat_core::{
-    proxied_image_url, AppAction, AppState, ChatInputShortcut, ChatKind, ChatThreadSnapshot,
+    AppAction, AppState, ChatInputShortcut, ChatKind, ChatThreadSnapshot,
     DesktopNearbyPeerSnapshot, MessageSearchHit, PreferencesSnapshot, SearchResultSnapshot,
 };
 
@@ -351,8 +351,7 @@ fn message_hit_row(
     row.show_pointer_cursor();
     let avatar = adw::Avatar::new(40, Some(&hit.chat_display_name), true);
     if let Some(url) = hit.chat_picture_url.as_ref() {
-        let proxied = proxied_image_url(url.clone(), prefs.clone(), Some(80), Some(80), true);
-        image_cache::fetch_into_avatar(&avatar, &proxied);
+        image_cache::fetch_proxied_into_avatar(&avatar, url, prefs, 80);
     }
     row.add_prefix(&avatar);
 
@@ -487,14 +486,7 @@ fn nearby_avatar_strip(
         let name = nearby_peer_resolved_name(peer, manager, "Nearby user");
         let avatar = adw::Avatar::new(avatar_size, Some(&name), true);
         if let Some(url) = peer.picture_url.as_ref() {
-            let proxied = proxied_image_url(
-                url.clone(),
-                prefs.clone(),
-                Some((avatar_size * 2) as u32),
-                Some((avatar_size * 2) as u32),
-                true,
-            );
-            image_cache::fetch_into_avatar(&avatar, &proxied);
+            image_cache::fetch_proxied_into_avatar(&avatar, url, &prefs, (avatar_size * 2) as u32);
         }
         let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
         column.set_size_request(64, -1);
@@ -639,8 +631,7 @@ fn row_for(
 
     let avatar = adw::Avatar::new(40, Some(&chat.display_name), true);
     if let Some(url) = chat.picture_url.as_ref() {
-        let proxied = proxied_image_url(url.clone(), prefs.clone(), Some(80), Some(80), true);
-        image_cache::fetch_into_avatar(&avatar, &proxied);
+        image_cache::fetch_proxied_into_avatar(&avatar, url, prefs, 80);
     }
     row.add_prefix(&avatar);
 

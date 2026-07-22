@@ -4,8 +4,8 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::glib;
 use iris_chat_core::{
-    decide_pending_notifications, proxied_image_url, router_open_chat_id, AccountSnapshot,
-    AppAction, AppState, AppUpdate, ChatThreadSnapshot, CurrentChatSnapshot, Screen,
+    decide_pending_notifications, router_open_chat_id, AccountSnapshot, AppAction, AppState,
+    AppUpdate, ChatThreadSnapshot, CurrentChatSnapshot, Screen,
 };
 
 use crate::app_manager::AppManager;
@@ -537,14 +537,7 @@ fn build_own_avatar(account: &AccountSnapshot, state: &AppState) -> gtk::Widget 
     let avatar = adw::Avatar::new(28, Some(label), true);
     if let Some(url) = account.picture_url.as_deref() {
         if url.starts_with("http://") || url.starts_with("https://") {
-            let proxied = proxied_image_url(
-                url.to_string(),
-                state.preferences.clone(),
-                Some(56),
-                Some(56),
-                true,
-            );
-            image_cache::fetch_into_avatar(&avatar, &proxied);
+            image_cache::fetch_proxied_into_avatar(&avatar, url, &state.preferences, 56);
         }
     }
     avatar.upcast()
@@ -554,14 +547,7 @@ fn build_chat_header_avatar(chat: &CurrentChatSnapshot, state: &AppState) -> gtk
     let avatar = adw::Avatar::new(28, Some(&chat.display_name), true);
     if let Some(url) = chat.picture_url.as_deref() {
         if url.starts_with("http://") || url.starts_with("https://") {
-            let proxied = proxied_image_url(
-                url.to_string(),
-                state.preferences.clone(),
-                Some(56),
-                Some(56),
-                true,
-            );
-            image_cache::fetch_into_avatar(&avatar, &proxied);
+            image_cache::fetch_proxied_into_avatar(&avatar, url, &state.preferences, 56);
         }
     }
     avatar.upcast()

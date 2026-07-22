@@ -75,9 +75,7 @@ impl AppCore {
                 let Some(group) = result.snapshot else {
                     self.state.toast = Some("Group could not be created.".to_string());
                     self.state.busy.creating_group = false;
-                    self.rebuild_state();
-                    self.persist_best_effort();
-                    self.emit_state();
+                    self.rebuild_persist_and_emit_state();
                     return;
                 };
                 let chat_id = group_chat_id(&group.group_id);
@@ -99,9 +97,7 @@ impl AppCore {
         }
 
         self.state.busy.creating_group = false;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn update_group_name(&mut self, group_id: &str, name: &str) {
@@ -131,9 +127,7 @@ impl AppCore {
             None => {}
         }
         self.state.busy.updating_group = false;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn update_group_picture(&mut self, group_id: &str, file_path: &str, filename: &str) {
@@ -283,9 +277,7 @@ impl AppCore {
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
             None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
         }
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     /// Same shape as `set_group_picture`, but for the group's free-text
@@ -310,9 +302,7 @@ impl AppCore {
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
             None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
         }
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn add_group_members(&mut self, group_id: &str, member_inputs: &[String]) {
@@ -358,9 +348,7 @@ impl AppCore {
         // (ndr >=0.0.144), so adding members propagates them automatically —
         // no separate rebroadcast needed.
         self.state.busy.updating_group = false;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_group_admin(
@@ -397,9 +385,7 @@ impl AppCore {
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
             None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
         }
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn remove_group_member(&mut self, group_id: &str, owner_pubkey_hex: &str) {
@@ -427,9 +413,7 @@ impl AppCore {
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
             None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
         }
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     fn apply_local_group_snapshot(

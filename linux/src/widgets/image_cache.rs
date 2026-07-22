@@ -5,6 +5,7 @@ use std::thread;
 
 use gtk::gdk;
 use gtk::glib;
+use iris_chat_core::{proxied_image_url, PreferencesSnapshot};
 
 static BYTES_CACHE: LazyLock<Mutex<HashMap<String, Vec<u8>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -63,6 +64,22 @@ pub fn fetch_into_avatar(avatar: &adw::Avatar, url: &str) {
             av.set_custom_image(Some(&texture));
         }
     });
+}
+
+pub fn fetch_proxied_into_avatar(
+    avatar: &adw::Avatar,
+    url: &str,
+    preferences: &PreferencesSnapshot,
+    size: u32,
+) {
+    let proxied = proxied_image_url(
+        url.to_string(),
+        preferences.clone(),
+        Some(size),
+        Some(size),
+        true,
+    );
+    fetch_into_avatar(avatar, &proxied);
 }
 
 fn cached_texture(url: &str) -> Option<gdk::Texture> {

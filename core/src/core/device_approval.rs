@@ -39,9 +39,7 @@ impl AppCore {
         } else {
             self.state.toast = Some("Device added".to_string());
         }
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     fn accept_link_device_approval_bootstrap(

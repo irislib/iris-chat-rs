@@ -595,6 +595,15 @@ pub struct AppCore {
     suspended: bool,
 }
 
+impl AppCore {
+    #[inline]
+    fn rebuild_persist_and_emit_state(&mut self) {
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+}
+
 async fn connect_client_with_timeout(client: &Client, timeout: Duration) {
     client.connect().await;
     let deadline = Instant::now() + timeout;

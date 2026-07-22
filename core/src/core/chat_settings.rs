@@ -6,9 +6,7 @@ impl AppCore {
             return;
         }
         self.preferences.send_typing_indicators = enabled;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_read_receipts_enabled(&mut self, enabled: bool) {
@@ -16,9 +14,7 @@ impl AppCore {
             return;
         }
         self.preferences.send_read_receipts = enabled;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_chat_message_ttl(&mut self, chat_id: &str, ttl_seconds: Option<u64>) {
@@ -95,9 +91,7 @@ impl AppCore {
                 );
             }
         }
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_chat_muted(&mut self, chat_id: &str, muted: bool) {
@@ -129,9 +123,7 @@ impl AppCore {
         }
         self.preferences.muted_chat_ids = muted_chat_ids;
         self.mark_mobile_push_dirty();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn is_chat_muted(&self, chat_id: &str) -> bool {
@@ -172,9 +164,7 @@ impl AppCore {
             pinned_chat_ids.retain(|existing| existing != &normalized_chat_id);
         }
         self.preferences.pinned_chat_ids = pinned_chat_ids;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn is_chat_pinned(&self, chat_id: &str) -> bool {
@@ -206,9 +196,7 @@ impl AppCore {
         }
         self.preferences.desktop_notifications_enabled = enabled;
         self.mark_mobile_push_dirty();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_invite_acceptance_notifications_enabled(&mut self, enabled: bool) {
@@ -217,9 +205,7 @@ impl AppCore {
         }
         self.preferences.invite_acceptance_notifications_enabled = enabled;
         self.mark_mobile_push_dirty();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_startup_at_login_enabled(&mut self, enabled: bool) {
@@ -227,9 +213,7 @@ impl AppCore {
             return;
         }
         self.preferences.startup_at_login_enabled = enabled;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_nearby_enabled(&mut self, enabled: bool) {
@@ -238,9 +222,7 @@ impl AppCore {
         if !changed {
             return;
         }
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_nearby_mailbag_enabled(&mut self, enabled: bool) {
@@ -248,9 +230,7 @@ impl AppCore {
             return;
         }
         self.preferences.nearby_mailbag_enabled = enabled;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_nearby_show_in_chat_list(&mut self, enabled: bool) {
@@ -258,9 +238,7 @@ impl AppCore {
             return;
         }
         self.preferences.nearby_show_in_chat_list = enabled;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_nearby_bluetooth_enabled(&mut self, enabled: bool) {
@@ -268,9 +246,7 @@ impl AppCore {
             return;
         }
         self.preferences.nearby_bluetooth_enabled = enabled;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_nearby_lan_enabled(&mut self, enabled: bool) {
@@ -278,9 +254,7 @@ impl AppCore {
             return;
         }
         self.preferences.nearby_lan_enabled = enabled;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_debug_logging_enabled(&mut self, enabled: bool) {
@@ -288,9 +262,7 @@ impl AppCore {
             return;
         }
         self.preferences.debug_logging_enabled = enabled;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_accept_unknown_direct_messages(&mut self, enabled: bool) {
@@ -303,9 +275,7 @@ impl AppCore {
         // a fresh subscription out to both layers.
         self.request_protocol_subscription_refresh();
         self.mark_mobile_push_dirty();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_user_blocked(&mut self, owner_pubkey_hex: &str, blocked: bool) {
@@ -332,9 +302,7 @@ impl AppCore {
         }
         self.request_protocol_subscription_refresh();
         self.mark_mobile_push_dirty();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn accept_message_request(&mut self, chat_id: &str) {
@@ -396,9 +364,7 @@ impl AppCore {
         // cheap and keeps both layers in sync.
         self.request_protocol_subscription_refresh();
         self.mark_mobile_push_dirty();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn add_nostr_relay(&mut self, relay_url: &str) {
@@ -479,9 +445,7 @@ impl AppCore {
             return;
         }
         self.preferences.image_proxy_enabled = enabled;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_image_proxy_url(&mut self, url: &str) {
@@ -490,9 +454,7 @@ impl AppCore {
             return;
         }
         self.preferences.image_proxy_url = normalized;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_image_proxy_key_hex(&mut self, key_hex: &str) {
@@ -504,9 +466,7 @@ impl AppCore {
             return;
         }
         self.preferences.image_proxy_key_hex = normalized;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_image_proxy_salt_hex(&mut self, salt_hex: &str) {
@@ -518,9 +478,7 @@ impl AppCore {
             return;
         }
         self.preferences.image_proxy_salt_hex = normalized;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_mobile_push_server_url(&mut self, url: &str) {
@@ -529,9 +487,7 @@ impl AppCore {
             return;
         }
         self.preferences.mobile_push_server_url = normalized;
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn reset_mobile_push_server_url(&mut self) {
@@ -539,9 +495,7 @@ impl AppCore {
             return;
         }
         self.preferences.mobile_push_server_url.clear();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn reset_image_proxy_settings(&mut self) {
@@ -551,9 +505,7 @@ impl AppCore {
             crate::image_proxy::DEFAULT_IMAGE_PROXY_KEY_HEX.to_string();
         self.preferences.image_proxy_salt_hex =
             crate::image_proxy::DEFAULT_IMAGE_PROXY_SALT_HEX.to_string();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     fn apply_nostr_relay_urls(&mut self, relay_urls: Vec<String>) {
@@ -650,9 +602,7 @@ impl AppCore {
             disappearing_timer_notice(actor, ttl_seconds),
             created_at_secs,
         );
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 }
 

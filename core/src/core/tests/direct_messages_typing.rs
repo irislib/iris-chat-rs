@@ -811,9 +811,9 @@ fn accepting_message_request_sends_receipt_for_messages_already_seen() {
     assert!(core.thread_is_message_request(&chat_id));
     core.mark_messages_seen(&chat_id, std::slice::from_ref(&message_id));
     assert!(
-        core.pending_outgoing_receipts
-            .get(&(chat_id.clone(), "seen".to_string()))
-            .is_none(),
+        !core
+            .pending_outgoing_receipts
+            .contains_key(&(chat_id.clone(), "seen".to_string())),
         "request-gated Seen must not be queued for the sender yet"
     );
 

@@ -44,7 +44,7 @@ pub(super) fn canonical_known_app_keys_snapshot(
     incoming_created_at: u64,
     required_device: Option<DeviceEntry>,
 ) -> (AppKeys, KnownAppKeys) {
-    let current_app_keys = current.and_then(known_app_keys_to_ndr);
+    let current_app_keys = current.map(known_app_keys_to_ndr);
     let applied = apply_app_keys_snapshot_with_required_device(
         current_app_keys.as_ref(),
         current.map_or(0, |known| known.created_at_secs),
@@ -101,22 +101,13 @@ pub(super) fn normalize_device_label(label: &str) -> Option<String> {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    let trimmed = normalized.trim();
-    if trimmed.is_empty() {
+    if normalized.is_empty() {
         return None;
     }
-    Some(truncate_chars(trimmed, 160))
+    Some(normalized.chars().take(160).collect())
 }
 
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    let mut out = String::new();
-    for ch in value.chars().take(max_chars) {
-        out.push(ch);
-    }
-    out
-}
-
-pub(super) fn known_app_keys_to_ndr(known: &KnownAppKeys) -> Option<AppKeys> {
+pub(super) fn known_app_keys_to_ndr(known: &KnownAppKeys) -> AppKeys {
     let mut app_keys = AppKeys::new(
         known
             .devices
@@ -142,7 +133,7 @@ pub(super) fn known_app_keys_to_ndr(known: &KnownAppKeys) -> Option<AppKeys> {
             Some(device.label_updated_at_secs),
         );
     }
-    Some(app_keys)
+    app_keys
 }
 
 pub(super) fn known_app_keys_from_ndr(

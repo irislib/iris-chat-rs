@@ -33,9 +33,7 @@ impl AppCore {
                 self.rebuild_state();
                 self.emit_state();
             }
-            if !self.should_replay_seen_protocol_event(&event, is_invite_protocol_event) {
-                return;
-            }
+            return;
         }
         self.event_transport_channels
             .insert(event_id.clone(), channel.to_string());
@@ -110,10 +108,7 @@ impl AppCore {
                         self.rebuild_state();
                         self.emit_state();
                     }
-                    Ok(Some(None)) => {
-                        self.remember_event(event_id);
-                    }
-                    Ok(None) => {
+                    Ok(Some(None) | None) => {
                         self.remember_event(event_id);
                     }
                     Err(error) => {
@@ -657,7 +652,7 @@ impl AppCore {
 
         let owner_hex = event.pubkey.to_hex();
         let current = self.app_keys.get(&owner_hex).cloned();
-        let current_app_keys = current.as_ref().and_then(known_app_keys_to_ndr);
+        let current_app_keys = current.as_ref().map(known_app_keys_to_ndr);
         let current_created_at = current
             .as_ref()
             .map(|known| known.created_at_secs)
@@ -729,9 +724,7 @@ impl AppCore {
         self.migrate_verified_device_owner_threads(event.pubkey, &effective_app_keys);
         self.mark_mobile_push_dirty();
         let _authorization_changed = self.refresh_local_authorization_state();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
         self.process_protocol_engine_retry_batch("app_keys", protocol_retry_batch);
         self.retry_pending_private_invite_responses(event.pubkey);
         self.resume_pending_outgoing_invite_acceptance(event.pubkey);
@@ -742,16 +735,6 @@ impl AppCore {
             self.publish_local_app_keys();
         }
         Ok(true)
-    }
-}
-
-impl AppCore {
-    fn should_replay_seen_protocol_event(
-        &self,
-        _event: &Event,
-        _is_invite_protocol_event: bool,
-    ) -> bool {
-        false
     }
 }
 

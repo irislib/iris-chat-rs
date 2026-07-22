@@ -50,13 +50,11 @@ impl AppCore {
         }
 
         if let (true, Some(keys), Some(app_keys)) = (publish_app_keys, owner_keys, local_app_keys) {
-            if let Some(ndr_app_keys) = known_app_keys_to_ndr(&app_keys) {
-                if let Ok(unsigned) =
-                    ndr_app_keys.get_encrypted_event_at(&keys, app_keys.created_at_secs)
-                {
-                    if let Ok(event) = unsigned.sign_with_keys(&keys) {
-                        durable_events.push(("app-keys", event));
-                    }
+            if let Ok(unsigned) = known_app_keys_to_ndr(&app_keys)
+                .get_encrypted_event_at(&keys, app_keys.created_at_secs)
+            {
+                if let Ok(event) = unsigned.sign_with_keys(&keys) {
+                    durable_events.push(("app-keys", event));
                 }
             }
         }

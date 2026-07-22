@@ -96,14 +96,7 @@ pub fn present_chat_info(
     let avatar = adw::Avatar::new(72, Some(&info.display_name), true);
     if let Some(url) = info.picture_url.as_deref() {
         if url.starts_with("http://") || url.starts_with("https://") {
-            let proxied = proxied_image_url(
-                url.to_string(),
-                info.preferences.clone(),
-                Some(144),
-                Some(144),
-                true,
-            );
-            image_cache::fetch_into_avatar(&avatar, &proxied);
+            image_cache::fetch_proxied_into_avatar(&avatar, url, &info.preferences, 144);
         }
     }
     header_row.append(&avatar);
@@ -416,14 +409,7 @@ fn common_groups_card(
         let avatar = adw::Avatar::new(32, Some(&group.display_name), true);
         if let Some(url) = group.picture_url.as_deref() {
             if url.starts_with("http://") || url.starts_with("https://") {
-                let proxied = proxied_image_url(
-                    url.to_string(),
-                    preferences.clone(),
-                    Some(64),
-                    Some(64),
-                    true,
-                );
-                image_cache::fetch_into_avatar(&avatar, &proxied);
+                image_cache::fetch_proxied_into_avatar(&avatar, url, preferences, 64);
             }
         }
         row.add_prefix(&avatar);
@@ -859,14 +845,7 @@ fn info_recipient_row(
     let avatar = adw::Avatar::new(32, Some(&info.name), true);
     if let Some(url) = info.picture_url.as_deref() {
         if url.starts_with("http://") || url.starts_with("https://") {
-            let proxied = proxied_image_url(
-                url.to_string(),
-                preferences.clone(),
-                Some(64),
-                Some(64),
-                true,
-            );
-            image_cache::fetch_into_avatar(&avatar, &proxied);
+            image_cache::fetch_proxied_into_avatar(&avatar, url, preferences, 64);
         }
     }
     row.append(&avatar);

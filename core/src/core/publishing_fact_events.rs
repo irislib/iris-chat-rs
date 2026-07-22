@@ -49,10 +49,7 @@ impl AppCore {
         let Some(local_app_keys) = self.app_keys.get(&owner_pubkey.to_hex()).cloned() else {
             return false;
         };
-        let Some(ndr_app_keys) = known_app_keys_to_ndr(&local_app_keys) else {
-            return false;
-        };
-        let event = match ndr_app_keys
+        let event = match known_app_keys_to_ndr(&local_app_keys)
             .get_encrypted_event_at(&owner_keys, local_app_keys.created_at_secs)
             .and_then(|unsigned| unsigned.sign_with_keys(&owner_keys).map_err(Into::into))
         {

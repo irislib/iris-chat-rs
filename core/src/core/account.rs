@@ -57,9 +57,7 @@ impl AppCore {
         self.retry_pending_relay_publishes("app_foreground");
         self.prune_pending_private_invite_responses();
         self.refresh_protocol_sync_busy();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_current_device_labels(&mut self, device_label: &str, client_label: &str) {
@@ -77,9 +75,7 @@ impl AppCore {
         if changed && !self.defer_owner_app_keys_publish {
             self.publish_local_app_keys();
         }
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn restore_primary_session(&mut self, owner_nsec: &str) {
@@ -418,9 +414,7 @@ impl AppCore {
 
         self.remove_local_app_key_device(logged_in.owner_pubkey, device_pubkey);
         self.publish_local_app_keys();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn acknowledge_revoked_device(&mut self) {
@@ -749,9 +743,7 @@ impl AppCore {
         self.request_protocol_subscription_refresh();
         self.fetch_recent_protocol_state();
         self.refresh_protocol_sync_busy();
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
+        self.rebuild_persist_and_emit_state();
         self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));
     }
 
@@ -759,18 +751,16 @@ impl AppCore {
         let existing_app_keys = self.app_keys.values().cloned().collect::<Vec<_>>();
         let mut app_keys_retry_batch = ProtocolRetryBatch::default();
         for app_keys in existing_app_keys {
-            if let (Ok(owner), Some(keys)) = (
-                PublicKey::parse(&app_keys.owner_pubkey_hex),
-                known_app_keys_to_ndr(&app_keys),
-            ) {
-                if let Some(protocol_engine) = self.protocol_engine.as_mut() {
-                    if let Ok(batch) = protocol_engine.ingest_app_keys_snapshot(
-                        owner,
-                        keys,
-                        app_keys.created_at_secs,
-                    ) {
-                        Self::append_protocol_retry_batch(&mut app_keys_retry_batch, batch);
-                    }
+            let Ok(owner) = PublicKey::parse(&app_keys.owner_pubkey_hex) else {
+                continue;
+            };
+            if let Some(protocol_engine) = self.protocol_engine.as_mut() {
+                if let Ok(batch) = protocol_engine.ingest_app_keys_snapshot(
+                    owner,
+                    known_app_keys_to_ndr(&app_keys),
+                    app_keys.created_at_secs,
+                ) {
+                    Self::append_protocol_retry_batch(&mut app_keys_retry_batch, batch);
                 }
             }
         }
