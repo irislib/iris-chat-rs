@@ -99,6 +99,63 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
 }
 
 #[test]
+fn legacy_incomplete_link_can_logout_and_create_fresh_account() {
+    let old_owner = Keys::generate();
+    let old_device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let (update_tx, update_rx) = flume::unbounded();
+    let mut core = AppCore::new(
+        update_tx,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nostr_relay_urls.clear();
+    core.start_session(
+        old_owner.public_key(),
+        None,
+        old_device,
+        false,
+        false,
+    )
+    .expect("legacy incomplete linked session");
+    assert_eq!(
+        core.state
+            .account
+            .as_ref()
+            .expect("legacy linked account")
+            .authorization_state,
+        DeviceAuthorizationState::AwaitingApproval
+    );
+    let _ = update_rx.try_iter().collect::<Vec<_>>();
+
+    core.handle_action(AppAction::Logout);
+    assert!(core.logged_in.is_none());
+    assert!(core.pending_linked_device.is_none());
+    assert!(core.state.account.is_none());
+    assert_eq!(core.state.router.default_screen, Screen::Welcome);
+
+    core.handle_action(AppAction::CreateAccount {
+        name: "Fresh profile".to_string(),
+    });
+    let account = core.state.account.as_ref().expect("fresh account");
+    assert_ne!(account.public_key_hex, old_owner.public_key().to_hex());
+    assert_eq!(
+        account.authorization_state,
+        DeviceAuthorizationState::Authorized
+    );
+    assert_eq!(core.state.router.default_screen, Screen::ChatList);
+    assert!(core.state.toast.is_none());
+    assert!(update_rx.try_iter().any(|update| matches!(
+        update,
+        AppUpdate::PersistAccountBundle {
+            owner_nsec: Some(_),
+            ..
+        }
+    )));
+}
+
+#[test]
 fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
     let owner = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
