@@ -34,6 +34,7 @@ grep -q -- 'IOS_PUSH_PID=\$!' "$ROOT/scripts/mobile_push_server_e2e.sh"
 grep -q -- 'MobilePushDeliveryProbe.recordIfArmed()' "$ROOT/ios/Sources/MobilePushSupport.swift"
 grep -q -- 'current_apns_author' "$ROOT/ios/Tests/InteropHarnessReportingHelpers.swift"
 grep -q -- 'current_fcm_author=\[1-9\]' "$ROOT/scripts/mobile_push_server_e2e.sh"
+grep -q -- 'FCM_E2E_POST_WAKE_GRACE_SECS:-10' "$ROOT/scripts/mobile_push_server_e2e.sh"
 grep -q -- 'activeNotificationSnapshots().firstOrNull' \
   "$ROOT/android/app/src/androidTest/java/to/iris/chat/push/FirebaseChatNotificationE2eTest.kt"
 printf 'INSTRUMENTATION_STATUS: notification_authorization=UNAuthorizationStatus(rawValue: 2)\n' |

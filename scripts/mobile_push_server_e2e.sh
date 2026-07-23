@@ -310,6 +310,22 @@ run_android "$ANDROID_PUSH_CLASS" clear_push_probe >/dev/null
 "$ADB" -s "$ANDROID_SERIAL_RESOLVED" shell am kill "$ANDROID_PACKAGE" >/dev/null 2>&1 || true
 run_ios send_message_from_args \
   peer_input "$ANDROID_NPUB" message "$MESSAGE_ANDROID" wait_for_delivery false >/dev/null
+# Starting instrumentation force-stops the target package. Let the FCM-woken
+# process persist its probe first so verification cannot kill delivery mid-flight.
+ANDROID_WAKE_PIDS=""
+for _ in $(seq 1 "${FCM_E2E_WAKE_POLL_SECS:-45}"); do
+  ANDROID_WAKE_PIDS="$(
+    "$ADB" -s "$ANDROID_SERIAL_RESOLVED" shell pidof "$ANDROID_PACKAGE" </dev/null 2>/dev/null |
+      tr -d '\r' || true
+  )"
+  [[ -z "$ANDROID_WAKE_PIDS" ]] || break
+  sleep 1
+done
+if [[ -z "$ANDROID_WAKE_PIDS" ]]; then
+  echo "FCM did not wake ${ANDROID_PACKAGE} before probe verification." >&2
+  exit 1
+fi
+sleep "${FCM_E2E_POST_WAKE_GRACE_SECS:-10}"
 run_android "$ANDROID_PUSH_CLASS" wait_for_firebase_chat_notification \
   message "$MESSAGE_ANDROID" timeout_ms 120000 >/dev/null
 
