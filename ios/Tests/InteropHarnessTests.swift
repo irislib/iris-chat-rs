@@ -434,7 +434,19 @@ final class InteropHarnessTests: XCTestCase {
             UNUserNotificationCenter.current().removeAllDeliveredNotifications()
             status("cleared", "true")
         case "arm_mobile_push_delivery_probe":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            try await reportMobilePushServerSnapshot(manager: manager)
             status("probe_id", try MobilePushDeliveryProbe.arm())
+        case "arm_and_wait_for_mobile_push_delivery":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            try await reportMobilePushServerSnapshot(manager: manager)
+            let probeID = try MobilePushDeliveryProbe.arm()
+            status("probe_id", probeID)
+            let timeout = TimeInterval(Double(env["IRIS_IOS_HARNESS_TIMEOUT_SECS"] ?? "") ?? 90)
+            _ = try await waitFor(label: "mobile push delivery probe", timeout: timeout) {
+                MobilePushDeliveryProbe.received(id: probeID) ? true : nil
+            }
+            status("delivered_probe_id", probeID)
         case "wait_for_mobile_push_delivery_probe":
             let probeID = try requiredEnv("IRIS_IOS_HARNESS_PROBE_ID", env: env)
             let timeout = TimeInterval(Double(env["IRIS_IOS_HARNESS_TIMEOUT_SECS"] ?? "") ?? 30)

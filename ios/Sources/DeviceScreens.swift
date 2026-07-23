@@ -68,7 +68,7 @@ struct DeviceRosterContent: View {
     @State private var pendingDeviceConfirmation: ResolvedDeviceAuthorizationInput?
 
     private var resolvedInput: ResolvedDeviceAuthorizationInput? {
-        guard let roster = manager.state.deviceRoster else {
+        guard manager.state.deviceRoster != nil else {
             return nil
         }
         return resolveDeviceAuthorizationInput(rawInput: deviceInput)

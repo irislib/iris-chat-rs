@@ -16,6 +16,8 @@ RUN_ID="mobile-push-$(date +%s)"
 IOS_RUN_ID="$RUN_ID-ios"
 MESSAGE_IOS="server-apns-$RUN_ID"
 MESSAGE_ANDROID="server-fcm-$RUN_ID"
+IOS_PUSH_LOG=""
+IOS_PUSH_PID=""
 
 android_sdk() {
   if [[ -n "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}" ]]; then
@@ -107,6 +109,10 @@ run_ios() {
       *) cmd+=(--arg "$1=$2"); shift 2 ;;
     esac
   done
+  if [[ "${IRIS_IOS_HARNESS_STREAM:-0}" == "1" ]]; then
+    "${cmd[@]}"
+    return
+  fi
   local output
   output="$("${cmd[@]}" 2>&1)" || {
     printf '%s\n' "$output" >&2
@@ -171,6 +177,11 @@ ios_notifications_deliverable() {
 
 cleanup() {
   set +e
+  if [[ -n "$IOS_PUSH_PID" ]]; then
+    kill "$IOS_PUSH_PID" >/dev/null 2>&1 || true
+    wait "$IOS_PUSH_PID" >/dev/null 2>&1 || true
+  fi
+  [[ -z "$IOS_PUSH_LOG" ]] || rm -f "$IOS_PUSH_LOG"
   run_ios clear_mobile_push_delivery_probe >/dev/null 2>&1
   run_ios disable_mobile_push_and_wait >/dev/null 2>&1
   run_android "$ANDROID_CHAT_CLASS" disable_mobile_push_and_wait >/dev/null 2>&1
@@ -243,45 +254,55 @@ run_android "$ANDROID_CHAT_CLASS" send_message_from_args \
 run_ios wait_for_message_from_args \
   peer_input "$ANDROID_NPUB" message "ready-$RUN_ID" direction incoming timeout_secs 180 >/dev/null
 
-IOS_SUBSCRIPTIONS=""
-for _ in $(seq 1 12); do
-  IOS_SUBSCRIPTIONS="$(run_ios report_mobile_push_server_snapshot 2>/dev/null || true)"
-  if printf '%s\n' "$IOS_SUBSCRIPTIONS" | grep -Eq 'subscriptions=.*apns=[1-9]'; then
-    break
-  fi
-  sleep 2
-done
-if ! printf '%s\n' "$IOS_SUBSCRIPTIONS" | grep -Eq 'subscriptions=.*apns=[1-9]'; then
-  echo "notifications.iris.to did not report an iOS APNs subscription." >&2
-  printf '%s\n' "$IOS_SUBSCRIPTIONS" >&2
-  exit 1
-fi
-
 ANDROID_SUBSCRIPTIONS=""
 for _ in $(seq 1 12); do
   ANDROID_SUBSCRIPTIONS="$(
     run_android "$ANDROID_CHAT_CLASS" report_mobile_push_server_snapshot 2>/dev/null || true
   )"
-  if printf '%s\n' "$ANDROID_SUBSCRIPTIONS" | grep -Eq 'subscriptions=.*fcm=[1-9]'; then
+  if printf '%s\n' "$ANDROID_SUBSCRIPTIONS" | grep -Eq 'current_fcm_author=[1-9]'; then
     break
   fi
   sleep 2
 done
-if ! printf '%s\n' "$ANDROID_SUBSCRIPTIONS" | grep -Eq 'subscriptions=.*fcm=[1-9]'; then
-  echo "notifications.iris.to did not report an Android FCM subscription." >&2
+if ! printf '%s\n' "$ANDROID_SUBSCRIPTIONS" | grep -Eq 'current_fcm_author=[1-9]'; then
+  echo "notifications.iris.to did not match this Android install's FCM token and iOS sender." >&2
   printf '%s\n' "$ANDROID_SUBSCRIPTIONS" >&2
   exit 1
 fi
 
 echo "Verifying notifications.iris.to → APNs → physical iPhone"
 run_ios clear_delivered_notifications >/dev/null
-IOS_PROBE="$(run_ios arm_mobile_push_delivery_probe)"
-IOS_PROBE_ID="$(printf '%s\n' "$IOS_PROBE" | status_value probe_id)"
-require_value "iOS delivery probe" "$IOS_PROBE_ID"
+IOS_PUSH_LOG="$(mktemp -t iris-apns-push.XXXXXX)"
+IRIS_IOS_HARNESS_STREAM=1 run_ios arm_and_wait_for_mobile_push_delivery \
+  timeout_secs 90 >"$IOS_PUSH_LOG" 2>&1 &
+IOS_PUSH_PID=$!
+for _ in $(seq 1 120); do
+  grep -q '^HARNESS_STATUS: probe_id=' "$IOS_PUSH_LOG" && break
+  if ! kill -0 "$IOS_PUSH_PID" 2>/dev/null; then
+    wait "$IOS_PUSH_PID" || true
+    IOS_PUSH_PID=""
+    sed -n '1,$p' "$IOS_PUSH_LOG" >&2
+    exit 1
+  fi
+  sleep 0.5
+done
+grep -q '^HARNESS_STATUS: probe_id=' "$IOS_PUSH_LOG" || {
+  echo "iOS push waiter did not arm within 60 seconds." >&2
+  exit 1
+}
 run_android "$ANDROID_CHAT_CLASS" send_message_from_args \
   peer_input "$IOS_NPUB" message "$MESSAGE_IOS" >/dev/null
-IOS_PUSH="$(run_ios wait_for_mobile_push_delivery_probe probe_id "$IOS_PROBE_ID" timeout_secs 90)"
-require_value "iOS delivered notification" "$(printf '%s\n' "$IOS_PUSH" | status_value probe_id)"
+if ! wait "$IOS_PUSH_PID"; then
+  IOS_PUSH_PID=""
+  sed -n '1,$p' "$IOS_PUSH_LOG" >&2
+  exit 1
+fi
+IOS_PUSH_PID=""
+IOS_PUSH="$(<"$IOS_PUSH_LOG")"
+rm -f "$IOS_PUSH_LOG"
+IOS_PUSH_LOG=""
+require_value "iOS delivered notification" \
+  "$(printf '%s\n' "$IOS_PUSH" | status_value delivered_probe_id)"
 
 echo "Verifying notifications.iris.to → FCM → physical Android"
 run_android "$ANDROID_PUSH_CLASS" clear_push_probe >/dev/null

@@ -350,15 +350,48 @@ extension InteropHarnessTests {
         urlRequest.httpMethod = request.method
         urlRequest.setValue("application/json", forHTTPHeaderField: "accept")
         urlRequest.setValue(request.authorizationHeader, forHTTPHeaderField: "authorization")
-        let (data, response) = try await URLSession.shared.data(for: urlRequest)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-        status("status_code", String(statusCode))
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            status("raw", String(data: data, encoding: .utf8) ?? "")
-            return
+        let expectedAuthors = Set(manager.state.mobilePush.messageAuthorPubkeys)
+        guard !expectedAuthors.isEmpty else {
+            throw HarnessError.unexpected("mobile push sender keys unavailable")
         }
+        let currentToken: String?
+        if let token = MobilePushTokenCenter.shared.currentApnsToken() {
+            currentToken = token
+        } else {
+            currentToken = await MobilePushTokenCenter.shared.waitForApnsToken(
+                timeoutNanoseconds: 15_000_000_000
+            )
+        }
+        guard let currentToken else {
+            throw HarnessError.unexpected("APNs token unavailable")
+        }
+        let deadline = Date().addingTimeInterval(30)
+        var object: JsonObject = [:]
+        var statusCode = 0
+        var currentAuthorMatches = 0
+        repeat {
+            let (data, response) = try await URLSession.shared.data(for: urlRequest)
+            statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            object = (try? JSONSerialization.jsonObject(with: data) as? JsonObject) ?? [:]
+            currentAuthorMatches = object.values.filter { value in
+                let subscription = dictValue(value)
+                let tokens = arrayValue(subscription?["apns_tokens"]).compactMap { $0 as? String }
+                let filters = [subscription?["filter"]].compactMap { $0 } + arrayValue(subscription?["filters"])
+                let authors = filters.flatMap { arrayValue(dictValue($0)?["authors"]) }.compactMap { $0 as? String }
+                return tokens.contains(currentToken) && expectedAuthors.isSubset(of: Set(authors))
+            }.count
+            if currentAuthorMatches > 0 { break }
+            try await Task.sleep(nanoseconds: 500_000_000)
+        } while Date() < deadline
+        status("status_code", String(statusCode))
         status("subscription_count", String(object.count))
         status("subscriptions", summarizeMobilePushServerSubscriptions(object))
+        status("current_apns_author", String(currentAuthorMatches))
+        guard currentAuthorMatches > 0 else {
+            throw HarnessError.unexpected(
+                "notifications.iris.to did not match this iPhone's APNs token and sender keys"
+            )
+        }
     }
 
     func summarizeCurrentChat(_ chat: CurrentChatSnapshot?) -> String {

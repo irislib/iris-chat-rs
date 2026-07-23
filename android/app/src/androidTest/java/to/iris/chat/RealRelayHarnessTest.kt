@@ -29,6 +29,7 @@ import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.rust.peerInputToHex
 import to.iris.chat.rust.Screen
 import to.iris.chat.nearby.IrisNearbyService
+import to.iris.chat.push.currentFcmToken
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -370,18 +371,43 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
                 connection.disconnect()
             }
         val subscriptions = runCatching { JSONObject(response.second) }.getOrElse { JSONObject() }
+        val expectedAuthors = state.mobilePush.messageAuthorPubkeys.toSet()
+        if (expectedAuthors.isEmpty()) throw AssertionError("Mobile push sender keys unavailable")
         var fcmTokens = 0
+        var currentFcmTokens = 0
+        var currentFcmAuthorSubscriptions = 0
         var apnsTokens = 0
+        val currentToken = currentFcmToken()
         val ids = subscriptions.keys()
         while (ids.hasNext()) {
             val subscription = subscriptions.optJSONObject(ids.next()) ?: continue
-            fcmTokens += subscription.optJSONArray("fcm_tokens")?.length() ?: 0
+            val tokens = subscription.optJSONArray("fcm_tokens")
+            fcmTokens += tokens?.length() ?: 0
+            currentFcmTokens += (0 until (tokens?.length() ?: 0)).count { index ->
+                tokens?.optString(index) == currentToken
+            }
+            val filters = buildList {
+                subscription.optJSONObject("filter")?.let(::add)
+                val extra = subscription.optJSONArray("filters")
+                repeat(extra?.length() ?: 0) { index -> extra?.optJSONObject(index)?.let(::add) }
+            }
+            if ((0 until (tokens?.length() ?: 0)).any { tokens?.optString(it) == currentToken } &&
+                filters.any { filter ->
+                    val authors = filter.optJSONArray("authors")
+                    val registeredAuthors =
+                        (0 until (authors?.length() ?: 0)).mapNotNull { authors?.optString(it) }.toSet()
+                    registeredAuthors.containsAll(expectedAuthors)
+                }
+            ) {
+                currentFcmAuthorSubscriptions += 1
+            }
             apnsTokens += subscription.optJSONArray("apns_tokens")?.length() ?: 0
         }
         reportStatus(
             "status_code" to response.first.toString(),
             "subscription_count" to subscriptions.length().toString(),
-            "subscriptions" to "fcm=$fcmTokens,apns=$apnsTokens",
+            "subscriptions" to "fcm=$fcmTokens,current_fcm=$currentFcmTokens,apns=$apnsTokens",
+            "current_fcm_author" to currentFcmAuthorSubscriptions.toString(),
         )
     }
 

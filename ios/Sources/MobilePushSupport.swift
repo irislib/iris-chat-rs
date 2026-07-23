@@ -51,6 +51,7 @@ final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
+        MobilePushDeliveryProbe.recordIfArmed()
         guard let manager else {
             return [.banner, .sound, .list]
         }

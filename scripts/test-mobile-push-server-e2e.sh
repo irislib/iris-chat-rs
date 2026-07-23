@@ -28,6 +28,14 @@ chmod +x "$TMP_DIR/run-emulators"
 IRIS_MOBILE_PUSH_E2E_SOURCE_ONLY=1 source "$ROOT/scripts/mobile_push_server_e2e.sh"
 grep -q -- '-collect-test-diagnostics never' "$ROOT/scripts/mobile_push_server_e2e.sh"
 grep -q -- '-maximum-test-execution-time-allowance 90' "$ROOT/scripts/mobile_push_server_e2e.sh"
+grep -q -- 'arm_and_wait_for_mobile_push_delivery' "$ROOT/scripts/mobile_push_server_e2e.sh"
+grep -q -- 'HARNESS_STATUS: probe_id=' "$ROOT/scripts/mobile_push_server_e2e.sh"
+grep -q -- 'IOS_PUSH_PID=\$!' "$ROOT/scripts/mobile_push_server_e2e.sh"
+grep -q -- 'MobilePushDeliveryProbe.recordIfArmed()' "$ROOT/ios/Sources/MobilePushSupport.swift"
+grep -q -- 'current_apns_author' "$ROOT/ios/Tests/InteropHarnessReportingHelpers.swift"
+grep -q -- 'current_fcm_author=\[1-9\]' "$ROOT/scripts/mobile_push_server_e2e.sh"
+grep -q -- 'activeNotificationSnapshots().firstOrNull' \
+  "$ROOT/android/app/src/androidTest/java/to/iris/chat/push/FirebaseChatNotificationE2eTest.kt"
 printf 'INSTRUMENTATION_STATUS: notification_authorization=UNAuthorizationStatus(rawValue: 2)\n' |
   ios_notifications_deliverable
 ! printf 'INSTRUMENTATION_STATUS: notification_authorization=UNAuthorizationStatus(rawValue: 1)\n' |

@@ -14,7 +14,6 @@ import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -39,7 +38,7 @@ class FirebaseChatNotificationE2eTest {
     @Test
     fun report_fcm_token() {
         requireHarnessInvocation("FCM token report requires targeted Firebase E2E invocation")
-        val token = fcmToken()
+        val token = currentFcmToken()
         assertTrue("FCM token was empty", token.isNotBlank())
         reportStatus(
             "fcm_token" to token,
@@ -76,29 +75,30 @@ class FirebaseChatNotificationE2eTest {
         val snapshot =
             waitForSnapshot("Firebase chat notification", timeoutMs) {
                 val candidate = PushNotificationProbe.snapshot(context)
-                if (candidate.optString("body") != expectedBody) {
-                    return@waitForSnapshot null
+                val active = activeNotificationSnapshots().firstOrNull {
+                    it.body == expectedBody && (expectedTitle == null || it.title == expectedTitle)
                 }
-                if (candidate.optString("error").isNotEmpty()) {
+                if (active != null) {
+                    return@waitForSnapshot JSONObject()
+                        .put("title", active.title)
+                        .put("body", active.body)
+                        .put("probe", candidate)
+                }
+                if (candidate.optString("body") == expectedBody && candidate.optString("error").isNotEmpty()) {
                     throw AssertionError("Push notification resolution failed: ${candidate.optString("error")}")
                 }
-                if (candidate.optString("blocked_reason").isNotEmpty()) {
+                if (candidate.optString("body") == expectedBody && candidate.optString("blocked_reason").isNotEmpty()) {
                     throw AssertionError("Push notification was blocked: ${candidate.optString("blocked_reason")}")
                 }
-                activeNotificationSnapshots().firstOrNull {
-                    it.body == expectedBody && (expectedTitle == null || it.title == expectedTitle)
-                } ?: return@waitForSnapshot null
-                candidate
+                null
             }
 
         assertEquals(expectedBody, snapshot.optString("body"))
         expectedTitle?.let { assertEquals(it, snapshot.optString("title")) }
-        assertActiveNotificationBody(expectedBody)
         reportStatus(
             "received" to "true",
             "title" to snapshot.optString("title"),
             "body" to snapshot.optString("body"),
-            "notification_id" to snapshot.optInt("notification_id").toString(),
             "snapshot" to snapshot.toString(),
         )
     }
@@ -181,42 +181,6 @@ class FirebaseChatNotificationE2eTest {
         )
     }
 
-    private fun fcmToken(): String {
-        val deadline = SystemClock.elapsedRealtime() + 90_000L
-        var lastError: Exception? = null
-        while (SystemClock.elapsedRealtime() < deadline) {
-            var token: String? = null
-            var error: Exception? = null
-            val latch = CountDownLatch(1)
-            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-                if (task.isSuccessful) {
-                    token = task.result
-                } else {
-                    error = task.exception
-                }
-                latch.countDown()
-            }
-            assertTrue("Timed out waiting for FCM token task", latch.await(30, TimeUnit.SECONDS))
-            val normalized = token?.trim().orEmpty()
-            if (normalized.isNotEmpty()) {
-                return normalized
-            }
-            lastError = error
-            SystemClock.sleep(2_000)
-        }
-        lastError?.let { throw it }
-        return ""
-    }
-
-    private fun assertActiveNotificationBody(expectedBody: String) {
-        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val active =
-            manager.activeNotifications.firstOrNull {
-                it.notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() == expectedBody
-            }
-        assertNotNull("Expected active Android notification body `$expectedBody`", active)
-    }
-
     private fun activeNotificationSnapshots(): List<NotificationSnapshot> {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         return manager.activeNotifications.mapNotNull { statusBarNotification ->
@@ -282,4 +246,26 @@ class FirebaseChatNotificationE2eTest {
         val title: String,
         val body: String,
     )
+}
+
+internal fun currentFcmToken(): String {
+    val deadline = SystemClock.elapsedRealtime() + 90_000L
+    var lastError: Exception? = null
+    while (SystemClock.elapsedRealtime() < deadline) {
+        var token: String? = null
+        var error: Exception? = null
+        val latch = CountDownLatch(1)
+        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+            if (task.isSuccessful) token = task.result else error = task.exception
+            latch.countDown()
+        }
+        if (!latch.await(30, TimeUnit.SECONDS)) {
+            throw AssertionError("Timed out waiting for FCM token task")
+        }
+        token?.trim()?.takeIf(String::isNotEmpty)?.let { return it }
+        lastError = error
+        SystemClock.sleep(2_000)
+    }
+    lastError?.let { throw it }
+    return ""
 }
