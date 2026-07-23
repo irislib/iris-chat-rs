@@ -98,7 +98,12 @@ class AppManagerContractTest {
             appManager.bootstrapState.value is AccountBootstrapState.NeedsLogin
         }
 
-        assertTrue(rustFactory.instances.single().dispatchedActions.isEmpty())
+        val labels =
+            rustFactory.instances.single().dispatchedActions
+                .filterIsInstance<AppAction.SetCurrentDeviceLabels>()
+                .single()
+        assertTrue(labels.deviceLabel.isNotBlank())
+        assertTrue(labels.clientLabel.isNotBlank())
     }
 
     @Test
@@ -170,9 +175,7 @@ class AppManagerContractTest {
 
         appManager.createGroup("  Notes  ", emptyList())
 
-        val action = rust.dispatchedActions.single()
-        assertTrue(action is AppAction.CreateGroup)
-        action as AppAction.CreateGroup
+        val action = rust.dispatchedActions.filterIsInstance<AppAction.CreateGroup>().single()
         assertEquals("Notes", action.name)
         assertEquals(emptyList<String>(), action.memberInputs)
     }
@@ -186,7 +189,7 @@ class AppManagerContractTest {
         appManager.dispatch(AppAction.PushScreen(Screen.NewChat))
 
         assertEquals("Action failed. Copy support bundle in Settings.", appManager.state.value.toast)
-        assertTrue(rust.dispatchedActions.isEmpty())
+        assertFalse(rust.dispatchedActions.any { it is AppAction.PushScreen })
     }
 
     @Test
@@ -203,12 +206,11 @@ class AppManagerContractTest {
         val firstRust = rustFactory.instances.single()
 
         waitFor("restore account bundle dispatch") {
-            firstRust.dispatchedActions.isNotEmpty()
+            firstRust.dispatchedActions.any { it is AppAction.RestoreAccountBundle }
         }
 
-        val action = firstRust.dispatchedActions.single()
-        assertTrue(action is AppAction.RestoreAccountBundle)
-        action as AppAction.RestoreAccountBundle
+        val action =
+            firstRust.dispatchedActions.filterIsInstance<AppAction.RestoreAccountBundle>().single()
         assertEquals("nsec1owner", action.ownerNsec)
         assertEquals("owner-hex", action.ownerPubkeyHex)
         assertEquals("nsec1device", action.deviceNsec)
@@ -233,11 +235,12 @@ class AppManagerContractTest {
 
         val appManager = createManager()
         val rust = rustFactory.instances.single()
-        waitFor("pending link restore dispatch") { rust.dispatchedActions.isNotEmpty() }
+        waitFor("pending link restore dispatch") {
+            rust.dispatchedActions.any { it is AppAction.RestorePendingDeviceLink }
+        }
 
-        val action = rust.dispatchedActions.single()
-        assertTrue(action is AppAction.RestorePendingDeviceLink)
-        action as AppAction.RestorePendingDeviceLink
+        val action =
+            rust.dispatchedActions.filterIsInstance<AppAction.RestorePendingDeviceLink>().single()
         assertEquals(pending.deviceNsec, action.deviceNsec)
         assertEquals(pending.approvalBootstrapJson, action.approvalBootstrapJson)
         assertTrue(appManager.bootstrapState.value is AccountBootstrapState.Loading)
@@ -251,12 +254,10 @@ class AppManagerContractTest {
         val firstRust = rustFactory.instances.single()
 
         waitFor("legacy restore dispatch") {
-            firstRust.dispatchedActions.isNotEmpty()
+            firstRust.dispatchedActions.any { it is AppAction.RestoreSession }
         }
 
-        val action = firstRust.dispatchedActions.single()
-        assertTrue(action is AppAction.RestoreSession)
-        action as AppAction.RestoreSession
+        val action = firstRust.dispatchedActions.filterIsInstance<AppAction.RestoreSession>().single()
         assertEquals("nsec1legacy", action.ownerNsec)
     }
 
