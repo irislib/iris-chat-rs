@@ -1031,6 +1031,7 @@ if [[ "$PUBLISH_ZAPSTORE" -eq 1 ]]; then
   if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "[dry-run] would run: $ROOT/scripts/publish-zapstore-release-only.sh publish"
   else
+    ZAPSTORE_APK_PATH="$STAGE_DIR/assets/iris-chat-${TAG}-android-arm64.apk" \
     IRIS_ZAPSTORE_RELEASE_PUBKEY="${IRIS_ZAPSTORE_RELEASE_PUBKEY:-$RELEASE_OWNER_NPUB}" \
       "$ROOT/scripts/publish-zapstore-release-only.sh" publish
   fi

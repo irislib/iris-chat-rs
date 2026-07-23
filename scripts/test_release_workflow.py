@@ -63,6 +63,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
             local_release,
         )
 
+    def test_zapstore_reuses_the_staged_signed_apk(self) -> None:
+        local_release = (ROOT / "scripts/release").read_text()
+
+        self.assertIn(
+            'ZAPSTORE_APK_PATH="$STAGE_DIR/assets/iris-chat-${TAG}-android-arm64.apk"',
+            local_release,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
