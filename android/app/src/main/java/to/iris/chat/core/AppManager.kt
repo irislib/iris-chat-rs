@@ -1765,6 +1765,7 @@ class AppManager(
         previous.shutdown()
         wipeAppStorage()
         pendingNavigationOverride = null
+        lastSyncedDeviceLabelsKey = null
         val initial = bindRust(createRustApp())
         restoreCheckComplete = true
         publishState(initial)
@@ -1850,10 +1851,6 @@ class AppManager(
     }
 
     private fun syncCurrentDeviceLabelsIfNeeded(snapshot: AppState) {
-        if (snapshot.account == null) {
-            lastSyncedDeviceLabelsKey = null
-            return
-        }
         val currentDevice = snapshot.deviceRoster?.devices?.firstOrNull { it.isCurrentDevice }
         val deviceLabel =
             currentDevice?.deviceLabel?.trim()?.ifEmpty { null } ?: currentPlatformDeviceLabel()

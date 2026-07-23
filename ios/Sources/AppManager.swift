@@ -2511,6 +2511,7 @@ final class AppManager: ObservableObject {
         chatSnapshotCacheOrder.removeAll()
         persistedRestoreInFlight = false
         bootstrapInFlight = false
+        lastSyncedDeviceLabelsKey = nil
         let nextRust = makeRustClient()
         reconciliationGeneration &+= 1
         let nextReconciler = UpdateBridge(
@@ -2525,10 +2526,6 @@ final class AppManager: ObservableObject {
     }
 
     private func syncCurrentDeviceLabelsIfNeeded(state: AppState) {
-        guard state.account != nil else {
-            lastSyncedDeviceLabelsKey = nil
-            return
-        }
         let currentDevice = state.deviceRoster?.devices.first(where: \.isCurrentDevice)
         let deviceLabel = nonEmptyLabel(currentDevice?.deviceLabel) ?? PlatformDeviceLabels.currentDeviceLabel
         let clientLabel = nonEmptyLabel(currentDevice?.clientLabel) ?? PlatformDeviceLabels.currentClientLabel

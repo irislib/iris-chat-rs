@@ -359,10 +359,6 @@ impl AppManager {
     }
 
     fn sync_current_device_labels_if_needed(&self, state: &AppState) {
-        if state.account.is_none() {
-            *self.last_synced_device_labels_key.borrow_mut() = None;
-            return;
-        }
         let current_device = state.device_roster.as_ref().and_then(|roster| {
             roster
                 .devices

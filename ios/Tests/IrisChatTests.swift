@@ -1526,6 +1526,26 @@ final class IrisChatTests: XCTestCase {
 #endif
 
     @MainActor
+    func testLoggedOutAppPublishesDeviceLabelsForLinkCode() {
+        let rust = MockRustApp()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        _ = AppManager(
+            rust: rust,
+            secretStore: InMemorySecretStore(),
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        guard case let .setCurrentDeviceLabels(deviceLabel, clientLabel) = rust.dispatchedActions.first else {
+            return XCTFail("expected device labels before a logged-out link request")
+        }
+        XCTAssertFalse(deviceLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        XCTAssertFalse(clientLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    @MainActor
     func testAppManagerRestoresPersistedBundleOnLaunch() async {
         let store = InMemorySecretStore(
             bundle: StoredAccountBundle(
@@ -1546,16 +1566,19 @@ final class IrisChatTests: XCTestCase {
         )
 
         await Task.yield()
-        guard let first = rust.dispatchedActions.first else {
+        guard let restore = rust.dispatchedActions.first(where: {
+            if case .restoreAccountBundle = $0 { return true }
+            return false
+        }) else {
             return XCTFail("expected restore action")
         }
-        switch first {
+        switch restore {
         case .restoreAccountBundle(let ownerNsec, let ownerPubkeyHex, let deviceNsec):
             XCTAssertEqual(ownerNsec, "nsec1owner")
             XCTAssertEqual(ownerPubkeyHex, "owner-hex")
             XCTAssertEqual(deviceNsec, "nsec1device")
         default:
-            XCTFail("unexpected action \(first)")
+            XCTFail("unexpected action \(restore)")
         }
         XCTAssertTrue(manager.bootstrapInFlight)
         rust.emit(.fullState(makeLargeFixtureState(
@@ -1582,15 +1605,25 @@ final class IrisChatTests: XCTestCase {
         )
 
         await Task.yield()
-        guard let first = rust.dispatchedActions.first else {
+        guard let pendingIndex = rust.dispatchedActions.firstIndex(where: {
+            if case .restorePendingDeviceLink = $0 { return true }
+            return false
+        }) else {
             return XCTFail("expected pending link restore action")
         }
-        switch first {
+        switch rust.dispatchedActions[pendingIndex] {
         case .restorePendingDeviceLink(let deviceNsec, let approvalBootstrapJson):
             XCTAssertEqual(deviceNsec, pending.deviceNsec)
             XCTAssertEqual(approvalBootstrapJson, pending.approvalBootstrapJson)
         default:
-            XCTFail("unexpected action \(first)")
+            XCTFail("unexpected action \(rust.dispatchedActions[pendingIndex])")
+        }
+        let accountIndex = rust.dispatchedActions.firstIndex(where: {
+            if case .restoreAccountBundle = $0 { return true }
+            return false
+        })
+        if let accountIndex {
+            XCTAssertLessThan(pendingIndex, accountIndex)
         }
         XCTAssertTrue(manager.bootstrapInFlight)
     }
@@ -2393,7 +2426,10 @@ final class IrisChatTests: XCTestCase {
 
         await Task.yield()
         XCTAssertFalse(manager.bootstrapInFlight)
-        XCTAssertTrue(rust.dispatchedActions.isEmpty)
+        XCTAssertEqual(rust.dispatchedActions.count, 1)
+        guard case .setCurrentDeviceLabels = rust.dispatchedActions.first else {
+            return XCTFail("expected only device labels without stored credentials")
+        }
     }
 
     @MainActor
@@ -2416,7 +2452,11 @@ final class IrisChatTests: XCTestCase {
         )
 
         await Task.yield()
-        XCTAssertEqual(rust.dispatchedActions.count, 1)
+        XCTAssertEqual(rust.dispatchedActions.count, 2)
+        XCTAssertTrue(rust.dispatchedActions.contains(where: {
+            if case .restoreAccountBundle = $0 { return true }
+            return false
+        }))
         XCTAssertTrue(manager.bootstrapInFlight)
         rust.emit(.fullState(makeLargeFixtureState(
             rev: 1,
@@ -2478,7 +2518,10 @@ final class IrisChatTests: XCTestCase {
         XCTAssertNil(resolved.errorMessage)
         XCTAssertEqual(resolved.deviceInput, compactCode)
         XCTAssertTrue(resolved.requiresConfirmation)
-        XCTAssertTrue(rust.dispatchedActions.isEmpty)
+        XCTAssertFalse(rust.dispatchedActions.contains(where: {
+            if case .addAuthorizedDevice = $0 { return true }
+            return false
+        }))
     }
 
     @MainActor

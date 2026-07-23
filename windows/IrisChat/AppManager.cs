@@ -860,12 +860,6 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
     private void SyncCurrentDeviceLabels(AppState state)
     {
-        if (state.account == null)
-        {
-            _lastSyncedDeviceLabelsKey = null;
-            return;
-        }
-
         var currentDevice = state.deviceRoster?.devices.FirstOrDefault(d => d.isCurrentDevice);
         var deviceLabel = string.IsNullOrWhiteSpace(currentDevice?.deviceLabel)
             ? PlatformDeviceLabels.CurrentDeviceLabel

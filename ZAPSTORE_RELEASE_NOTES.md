@@ -3,6 +3,7 @@
 - Messages you send to yourself now reach every linked device instead of waiting on the sending device.
 - Messages stuck in that old queued state recover automatically after updating.
 - Linking after deleting local data now reliably shows a roomy, centered scan code or a clear retry action.
+- New link codes include the requesting device name so it is recognizable in Devices.
 - Creating a profile and linking a device now keep stable button labels while work completes.
 - macOS test runs no longer terminate an installed Iris Chat app.
 
