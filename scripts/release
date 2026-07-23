@@ -941,7 +941,7 @@ fi
 for line in "${BUILT_LINES[@]}"; do
   release_notes_args+=(--built-line "$line")
 done
-for line in "${SKIPPED_LINES[@]}"; do
+for line in ${SKIPPED_LINES[@]+"${SKIPPED_LINES[@]}"}; do
   release_notes_args+=(--skipped-line "$line")
 done
 "$ROOT/scripts/render-release-notes.py" "${release_notes_args[@]}"

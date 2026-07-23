@@ -31,6 +31,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("--verification-line", workflow)
         self.assertIn("--install-url", local_release)
 
+    def test_local_release_handles_an_empty_skipped_platform_list(self) -> None:
+        local_release = (ROOT / "scripts/release").read_text()
+
+        self.assertIn(
+            'for line in ${SKIPPED_LINES[@]+"${SKIPPED_LINES[@]}"}; do',
+            local_release,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
