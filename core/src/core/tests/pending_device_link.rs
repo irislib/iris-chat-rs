@@ -156,6 +156,37 @@ fn legacy_incomplete_link_can_logout_and_create_fresh_account() {
 }
 
 #[test]
+fn create_account_failure_reports_error_and_resets_busy_state() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.screen_stack = vec![Screen::CreateAccount];
+
+    let database = core.app_store.shared();
+    let _ = std::thread::spawn(move || {
+        let _database_guard = database.lock().expect("database lock");
+        panic!("poison database connection");
+    })
+    .join();
+
+    core.handle_action(AppAction::CreateAccount {
+        name: "Fresh profile".to_string(),
+    });
+
+    assert!(core.state.account.is_none());
+    assert!(!core.state.busy.creating_account);
+    assert!(core
+        .state
+        .toast
+        .as_deref()
+        .is_some_and(|message| !message.trim().is_empty()));
+}
+
+#[test]
 fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
     let owner = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
