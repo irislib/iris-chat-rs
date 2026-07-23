@@ -25,6 +25,8 @@ impl AppCore {
             return;
         }
 
+        self.promote_discovered_user_for_peer_input(peer_input);
+
         self.state.busy.creating_chat = true;
         self.emit_state();
 

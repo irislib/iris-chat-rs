@@ -123,6 +123,10 @@ pub(crate) enum InternalEvent {
         events: Vec<Event>,
         error: Option<String>,
     },
+    UserDiscoveryFetchFinished {
+        token: u64,
+        result: crate::core::UserDiscoveryFetchResult,
+    },
     RelayStatusChanged {
         relay_url: String,
         status: RelayStatus,

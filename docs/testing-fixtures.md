@@ -4,7 +4,7 @@ Use the core fixture builders when a test needs lots of chats, groups, or
 messages but does not need relay/protocol behavior:
 
 - `build_large_test_app_state(direct_chat_count, group_chat_count, messages_in_current_chat)`
-- `build_large_test_search_result(query, contact_count, group_count, message_count)`
+- `build_large_test_search_result(query, person_count, contact_count, group_count, message_count)`
 
 These are deterministic and capped so UI/perf tests can safely ask for large
 datasets. They are exposed through UniFFI for shell tests and also usable from

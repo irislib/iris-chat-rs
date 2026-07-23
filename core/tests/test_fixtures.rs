@@ -40,9 +40,10 @@ fn large_app_state_fixture_is_deterministic_and_populated() {
 
 #[test]
 fn large_search_fixture_preserves_all_requested_sections() {
-    let result = build_large_test_search_result("needle".to_string(), 25, 9, 120);
+    let result = build_large_test_search_result("needle".to_string(), 11, 25, 9, 120);
 
     assert_eq!(result.query, "needle");
+    assert_eq!(result.people.len(), 11);
     assert_eq!(result.contacts.len(), 25);
     assert_eq!(result.groups.len(), 9);
     assert_eq!(result.messages.len(), 120);
@@ -68,8 +69,10 @@ fn large_fixtures_cap_unbounded_counts() {
     assert_eq!(state.chat_list.len(), 4_000);
     assert_eq!(current_chat.messages.len(), 10_000);
 
-    let search = build_large_test_search_result(String::new(), u32::MAX, u32::MAX, u32::MAX);
+    let search =
+        build_large_test_search_result(String::new(), u32::MAX, u32::MAX, u32::MAX, u32::MAX);
     assert_eq!(search.query, "needle");
+    assert_eq!(search.people.len(), 2_000);
     assert_eq!(search.contacts.len(), 2_000);
     assert_eq!(search.groups.len(), 2_000);
     assert_eq!(search.messages.len(), 10_000);

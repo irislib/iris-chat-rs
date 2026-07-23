@@ -472,10 +472,24 @@ pub struct MessageSearchHit {
     pub created_at_secs: u64,
 }
 
+/// A followed person who has a current Iris device snapshot and can be
+/// offered as a new direct-chat target. All protocol parsing and display
+/// fallback decisions happen in Rust; shells only render these fields.
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct FollowedUserSearchResult {
+    pub owner_pubkey_hex: String,
+    pub display_label: String,
+    pub profile_label: Option<String>,
+    pub picture_url: Option<String>,
+    pub about: Option<String>,
+    pub user_id: String,
+}
+
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct SearchResultSnapshot {
     pub query: String,
     pub scope_chat_id: Option<String>,
+    pub people: Vec<FollowedUserSearchResult>,
     pub contacts: Vec<ChatThreadSnapshot>,
     pub groups: Vec<ChatThreadSnapshot>,
     pub messages: Vec<MessageSearchHit>,
@@ -514,6 +528,7 @@ impl SearchResultSnapshot {
         Self {
             query,
             scope_chat_id,
+            people: Vec::new(),
             contacts: Vec::new(),
             groups: Vec::new(),
             messages: Vec::new(),
@@ -522,7 +537,8 @@ impl SearchResultSnapshot {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.contacts.is_empty()
+        self.people.is_empty()
+            && self.contacts.is_empty()
             && self.groups.is_empty()
             && self.messages.is_empty()
             && self.shortcut.is_none()
@@ -555,6 +571,10 @@ pub struct AppState {
     pub network_status: Option<NetworkStatusSnapshot>,
     pub mobile_push: MobilePushSyncSnapshot,
     pub preferences: PreferencesSnapshot,
+    /// Changes only when followed-user discovery data or its loading state
+    /// changes, so native search caches do not rerun on unrelated state ticks.
+    pub user_discovery_revision: u64,
+    pub user_discovery_syncing: bool,
     pub toast: Option<String>,
 }
 
@@ -577,6 +597,8 @@ impl AppState {
             network_status: None,
             mobile_push: MobilePushSyncSnapshot::default(),
             preferences: PreferencesSnapshot::default(),
+            user_discovery_revision: 0,
+            user_discovery_syncing: false,
             toast: None,
         }
     }

@@ -80,6 +80,7 @@ extension FfiApp {
             return SearchResultSnapshot(
                 query: query,
                 scopeChatId: scopeChatId,
+                people: [],
                 contacts: [],
                 groups: [],
                 messages: [],
@@ -397,6 +398,8 @@ private func fallbackAppState(toast: String?) -> AppState {
             acceptUnknownDirectMessages: true,
             mobilePushServerUrl: ""
         ),
+        userDiscoveryRevision: 0,
+        userDiscoverySyncing: false,
         toast: toast
     )
 }

@@ -236,12 +236,14 @@ struct ChatListTableView: UIViewRepresentable {
         if let cachedSearchResults {
             values.append(
                 "results:\(cachedSearchResults.query):" +
+                    "\(cachedSearchResults.people.count):" +
                     "\(cachedSearchResults.contacts.count):" +
                     "\(cachedSearchResults.groups.count):" +
                     "\(cachedSearchResults.messages.count):" +
                     "\(cachedSearchResults.shortcut == nil)"
             )
         }
+        values.append("discovery:\(manager.state.userDiscoveryRevision):\(manager.state.userDiscoverySyncing)")
         values.append("hasPinned:\(chats.contains { $0.isPinned })")
         if chats.isEmpty {
             values.append("empty")

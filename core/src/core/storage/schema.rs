@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 26;
+const SCHEMA_VERSION: u32 = 27;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -54,6 +54,24 @@ CREATE TABLE IF NOT EXISTS app_keys (
     created_at_secs INTEGER NOT NULL,
     devices_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS user_discovery_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    follow_event_id TEXT,
+    follow_created_at_secs INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS user_discovery_users (
+    owner_pubkey_hex TEXT PRIMARY KEY,
+    follow_position INTEGER NOT NULL,
+    petname TEXT,
+    app_keys_created_at_secs INTEGER NOT NULL,
+    app_keys_event_id TEXT NOT NULL,
+    app_keys_event_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS user_discovery_users_position_idx
+    ON user_discovery_users(follow_position, owner_pubkey_hex);
 
 CREATE TABLE IF NOT EXISTS groups (
     group_id TEXT PRIMARY KEY,
@@ -456,6 +474,25 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
                  ON pending_relay_publishes(owner_pubkey_hex, created_at_secs);",
         )?;
     }
+    if current < 27 {
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS user_discovery_state (
+                 id INTEGER PRIMARY KEY CHECK (id = 1),
+                 follow_event_id TEXT,
+                 follow_created_at_secs INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS user_discovery_users (
+                 owner_pubkey_hex TEXT PRIMARY KEY,
+                 follow_position INTEGER NOT NULL,
+                 petname TEXT,
+                 app_keys_created_at_secs INTEGER NOT NULL,
+                 app_keys_event_id TEXT NOT NULL,
+                 app_keys_event_json TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS user_discovery_users_position_idx
+                 ON user_discovery_users(follow_position, owner_pubkey_hex);",
+        )?;
+    }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;
     Ok(())
@@ -695,6 +732,32 @@ mod tests {
         assert_eq!(row, (None, Some("Alice".to_string())));
     }
 
+    #[test]
+    fn migrates_v26_to_v27_user_discovery_cache() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA user_version = 26;").unwrap();
+
+        ensure_schema(&mut conn).unwrap();
+
+        assert_eq!(user_version(&conn), SCHEMA_VERSION);
+        assert!(connection_table_exists(&conn, "user_discovery_state"));
+        assert!(connection_table_exists(&conn, "user_discovery_users"));
+        conn.execute(
+            "INSERT INTO user_discovery_state(id, follow_event_id, follow_created_at_secs)
+             VALUES (1, 'head', 42)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO user_discovery_users(
+                 owner_pubkey_hex, follow_position, petname,
+                 app_keys_created_at_secs, app_keys_event_id, app_keys_event_json
+             ) VALUES ('owner', 3, 'Friend', 41, 'appkeys', '{}')",
+            [],
+        )
+        .unwrap();
+    }
+
     fn user_version(conn: &Connection) -> u32 {
         conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap() as u32
@@ -711,5 +774,14 @@ mod tests {
             }
         }
         false
+    }
+
+    fn connection_table_exists(conn: &Connection, table_name: &str) -> bool {
+        conn.query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table_name],
+            |_| Ok(()),
+        )
+        .is_ok()
     }
 }

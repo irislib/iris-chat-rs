@@ -409,6 +409,7 @@ impl AppCore {
         self.owner_profiles.clear();
         self.profile_metadata_fetch_inflight.clear();
         self.app_keys.clear();
+        self.reset_user_discovery_runtime();
         self.groups.clear();
         self.chat_message_ttl_seconds.clear();
         self.recent_handshake_peers.clear();
@@ -559,6 +560,7 @@ impl AppCore {
         self.owner_profiles.clear();
         self.profile_metadata_fetch_inflight.clear();
         self.app_keys.clear();
+        self.reset_user_discovery_runtime();
         self.groups.clear();
         self.chat_message_ttl_seconds.clear();
         self.recent_handshake_peers.clear();
@@ -596,6 +598,14 @@ impl AppCore {
         } else {
             None
         };
+        if allow_restore {
+            self.restore_user_discovery_cache();
+        } else if let Err(error) = self
+            .app_store
+            .replace_user_discovery(&UserDiscoveryCache::default())
+        {
+            self.push_debug_log("user.discovery.reset.error", error.to_string());
+        }
         self.push_debug_log(
             "session.restore_state",
             format!("persisted_present={}", persisted.is_some()),
@@ -805,6 +815,7 @@ impl AppCore {
         self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
         self.start_relay_status_watchers();
         self.schedule_session_connect();
+        self.request_user_discovery_refresh(true);
         self.republish_local_identity_artifacts();
         self.drain_pending_mobile_push_events();
         self.retry_protocol_engine_pending_work("session_start");

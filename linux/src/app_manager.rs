@@ -43,6 +43,7 @@ struct ClientDebugLogEntry {
 #[derive(Default, Clone)]
 pub struct SearchUiState {
     pub query: String,
+    pub people_expanded: bool,
     /// When set, restricts the messages section to a single chat — the
     /// "search in this chat" pill from Signal Desktop. We also stash
     /// the resolved display name so the chip can render without
@@ -240,7 +241,15 @@ impl AppManager {
     }
 
     pub fn set_search_query(&self, query: String) {
-        self.search_ui.borrow_mut().query = query;
+        let mut search = self.search_ui.borrow_mut();
+        if search.query != query {
+            search.people_expanded = false;
+        }
+        search.query = query;
+    }
+
+    pub fn expand_people_search(&self) {
+        self.search_ui.borrow_mut().people_expanded = true;
     }
 
     pub fn enter_chat_scope(&self, chat_id: String, display_name: String) {

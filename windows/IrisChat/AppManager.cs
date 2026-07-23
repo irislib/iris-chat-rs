@@ -1333,8 +1333,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
         null,
         null,
         new MobilePushSyncSnapshot(
-            null,
-            Array.Empty<string>(),
+            null, Array.Empty<string>(),
             Array.Empty<string>(),
             Array.Empty<MobilePushSessionSnapshot>()
         ),
@@ -1369,6 +1368,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
             acceptUnknownDirectMessages: true,
             mobilePushServerUrl: ""
         ),
+        0, false,
         toast
     );
 

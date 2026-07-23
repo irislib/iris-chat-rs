@@ -149,6 +149,8 @@ final class MockRustApp: RustAppClient {
             acceptUnknownDirectMessages: true,
             mobilePushServerUrl: ""
         ),
+        userDiscoveryRevision: 0,
+        userDiscoverySyncing: false,
         toast: nil
     )) {
         self.currentState = state
@@ -171,12 +173,14 @@ final class MockRustApp: RustAppClient {
     func search(query: String, scopeChatId: String?, limit: UInt32) -> SearchResultSnapshot {
         var result = buildLargeTestSearchResult(
             query: query,
+            personCount: 11,
             contactCount: 25,
             groupCount: 9,
             messageCount: max(UInt32(120), limit)
         )
         result.scopeChatId = scopeChatId
         if scopeChatId != nil {
+            result.people = []
             result.contacts = []
             result.groups = []
         }
@@ -267,6 +271,23 @@ private enum MockRustAppError: Error {
     case dispatchFailed
 }
 
+final class FollowedPeopleSearchContractTests: XCTestCase {
+    func testPeopleRowsAndCreateChatActionStayInTheRustContract() throws {
+        let mock = MockRustApp()
+        let global = mock.search(query: "needle", scopeChatId: nil, limit: 50)
+        XCTAssertEqual(global.people.count, 11)
+        XCTAssertTrue(global.people[0].displayLabel.contains("Needle"))
+
+        let person = global.people[0]
+        try mock.dispatch(action: .createChat(peerInput: person.ownerPubkeyHex))
+        guard case let .createChat(peerInput) = mock.dispatchedActions.last else {
+            return XCTFail("Expected the person row to use CreateChat")
+        }
+        XCTAssertEqual(peerInput, person.ownerPubkeyHex)
+        XCTAssertTrue(mock.search(query: "needle", scopeChatId: "chat-1", limit: 50).people.isEmpty)
+    }
+}
+
 final class IrisEmojiPickerSearchTests: XCTestCase {
     func testSearchMatchesUnicodeEmojiNames() {
         XCTAssertTrue(irisEmojiMatchesSearch("👍", category: "Hands", query: "thumbs up"))
@@ -336,6 +357,8 @@ func makeAppState(
         inviteResponsePubkeys: [],
         sessions: []
     ),
+    userDiscoveryRevision: UInt64 = 0,
+    userDiscoverySyncing: Bool = false,
     preferences: PreferencesSnapshot = PreferencesSnapshot(
         sendTypingIndicators: true,
         sendReadReceipts: true,
@@ -376,6 +399,8 @@ func makeAppState(
         networkStatus: nil,
         mobilePush: mobilePush,
         preferences: preferences,
+        userDiscoveryRevision: userDiscoveryRevision,
+        userDiscoverySyncing: userDiscoverySyncing,
         toast: toast
     )
 }

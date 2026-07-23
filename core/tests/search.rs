@@ -6,6 +6,7 @@ use iris_chat_core::{
     classify_chat_input, AppAction, AppReconciler, AppState, AppUpdate, ChatInputShortcut,
     ChatKind, FfiApp,
 };
+use nostr::Keys;
 use rusqlite::Connection;
 use tempfile::TempDir;
 
@@ -62,6 +63,66 @@ fn seed_pre_search_database(data_dir: &Path) {
         "#,
     )
     .unwrap();
+}
+
+#[test]
+fn ffi_search_restores_followed_people_from_sqlite() {
+    let dir = TempDir::new().unwrap();
+    let bootstrap = FfiApp::new(
+        dir.path().to_string_lossy().to_string(),
+        String::new(),
+        "test".to_string(),
+    );
+    bootstrap.shutdown();
+
+    let owner = Keys::generate().public_key().to_hex();
+    let conn = Connection::open(dir.path().join("core.sqlite3")).unwrap();
+    conn.execute(
+        "INSERT INTO user_discovery_state(id, follow_event_id, follow_created_at_secs)
+         VALUES (1, 'follow-head', 10)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO user_discovery_users(
+             owner_pubkey_hex, follow_position, petname,
+             app_keys_created_at_secs, app_keys_event_id, app_keys_event_json
+         ) VALUES (?1, 0, 'Ally', 9, 'appkeys-head', '{}')",
+        [&owner],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO owner_profiles(
+             owner_pubkey_hex, name, display_name, picture, about, updated_at_secs
+         ) VALUES (?1, 'alice', 'Alice Public', 'https://example.com/alice.jpg',
+                   'Builds Rust apps', 8)",
+        [&owner],
+    )
+    .unwrap();
+    drop(conn);
+
+    let app = FfiApp::new(
+        dir.path().to_string_lossy().to_string(),
+        String::new(),
+        "test".to_string(),
+    );
+    let result = app.search("rust".to_string(), None, 20);
+    assert_eq!(result.people.len(), 1);
+    assert_eq!(result.people[0].owner_pubkey_hex, owner);
+    assert_eq!(result.people[0].display_label, "Ally");
+    assert_eq!(
+        result.people[0].profile_label.as_deref(),
+        Some("Alice Public")
+    );
+    assert_eq!(
+        result.people[0].picture_url.as_deref(),
+        Some("https://example.com/alice.jpg")
+    );
+    assert!(app
+        .search("rust".to_string(), Some("chat".to_string()), 20)
+        .people
+        .is_empty());
+    app.shutdown();
 }
 
 /// `classify_chat_input` is the single source of truth for "is this

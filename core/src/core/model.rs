@@ -69,6 +69,38 @@ pub(super) struct KnownAppKeyDevice {
     pub(super) label_updated_at_secs: u64,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub(super) struct UserDiscoveryCache {
+    pub(super) follow_event_id: Option<String>,
+    pub(super) follow_created_at_secs: u64,
+    pub(super) users: BTreeMap<String, DiscoveredUserRecord>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub(super) struct DiscoveredUserRecord {
+    pub(super) owner_pubkey_hex: String,
+    pub(super) follow_position: u32,
+    pub(super) petname: Option<String>,
+    pub(super) app_keys_created_at_secs: u64,
+    pub(super) app_keys_event_id: String,
+    pub(super) app_keys_event_json: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct UserDiscoveryRuntime {
+    pub(super) token: u64,
+    pub(super) in_flight: bool,
+    pub(super) refresh_pending: bool,
+    pub(super) last_started_at: Option<Instant>,
+}
+
+#[derive(Debug)]
+pub(crate) struct UserDiscoveryFetchResult {
+    pub(super) cache: UserDiscoveryCache,
+    pub(super) metadata_events: Vec<Event>,
+    pub(super) detail: String,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct CurrentDeviceLabels {
     pub(super) device_label: Option<String>,

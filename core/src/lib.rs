@@ -389,9 +389,9 @@ impl FfiApp {
         )
     }
 
-    /// Grouped Signal-style search: filters the in-memory chat list
-    /// into contacts/groups by display name + subtitle + chat id, and
-    /// runs the SQLite FTS5 index for the messages section. Optional
+    /// Grouped Signal-style search: matches followed people plus the
+    /// in-memory contact/group list, and runs the SQLite FTS5 index for
+    /// the messages section. Optional
     /// `scope_chat_id` restricts message hits to a single thread (the
     /// "search in this chat" pill in the desktop sidebar). Returns an
     /// empty snapshot for empty / whitespace queries.
@@ -421,24 +421,34 @@ impl FfiApp {
                     filter_threads_for_search(&state_snapshot.chat_list, trimmed)
                 };
                 let shared_db = self.shared_db_snapshot();
-                let messages = match shared_db.as_ref() {
+                let excluded_people = state_snapshot
+                    .chat_list
+                    .iter()
+                    .filter(|chat| chat.kind == ChatKind::Direct)
+                    .map(|chat| chat.chat_id.to_ascii_lowercase())
+                    .collect::<std::collections::HashSet<_>>();
+                let query_db = |conn: &rusqlite::Connection| {
+                    let messages = crate::core::search_messages_fts(
+                        conn,
+                        trimmed,
+                        scope_chat_id.as_deref(),
+                        limit,
+                    )
+                    .unwrap_or_default();
+                    let people = if scope_chat_id.is_none() {
+                        crate::core::search_followed_users(conn, trimmed, &excluded_people)
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    (messages, people)
+                };
+                let (messages, people) = match shared_db.as_ref() {
                     Some(shared) => match shared.lock() {
-                        Ok(conn) => crate::core::search_messages_fts(
-                            &conn,
-                            trimmed,
-                            scope_chat_id.as_deref(),
-                            limit,
-                        )
-                        .unwrap_or_default(),
-                        Err(poison) => crate::core::search_messages_fts(
-                            &poison.into_inner(),
-                            trimmed,
-                            scope_chat_id.as_deref(),
-                            limit,
-                        )
-                        .unwrap_or_default(),
+                        Ok(conn) => query_db(&conn),
+                        Err(poison) => query_db(&poison.into_inner()),
                     },
-                    None => Vec::new(),
+                    None => (Vec::new(), Vec::new()),
                 };
                 let enriched = enrich_message_hits(messages, &state_snapshot.chat_list);
                 // The shortcut row only makes sense for global search.
@@ -453,6 +463,7 @@ impl FfiApp {
                 SearchResultSnapshot {
                     query,
                     scope_chat_id,
+                    people,
                     contacts,
                     groups,
                     messages: enriched,

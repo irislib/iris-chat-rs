@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel;
+using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -20,6 +21,7 @@ public partial class DesktopShell : UserControl
     private bool _showingNearby;
     private bool _syncingSearchText;
     private string _searchQuery = string.Empty;
+    private readonly HashSet<string> _expandedSearchSections = new();
 
     public DesktopShell(AppManager manager, Screen activeScreen)
     {
@@ -134,16 +136,70 @@ public partial class DesktopShell : UserControl
             return;
         }
 
-        var visibleChats = chats.Where(chat => ChatMatchesQuery(chat, query)).ToArray();
-
-        foreach (var chat in visibleChats)
+        var results = _manager.Search(query);
+        var wroteAny = false;
+        if (_manager.State.userDiscoverySyncing && results.people.Length == 0)
         {
-            ChatRows.Items.Add(BuildChatRow(chat, activeChatId));
+            ChatRows.Items.Add(BuildSidebarSectionHeader("People"));
+            ChatRows.Items.Add(BuildFindingPeopleRow());
+            wroteAny = true;
+        }
+        if (results.people.Length > 0)
+        {
+            AddSearchSection("People", results.people, "people", BuildPersonRow);
+            wroteAny = true;
+        }
+        if (results.contacts.Length > 0)
+        {
+            AddSearchSection(
+                "Contacts",
+                results.contacts,
+                "contacts",
+                chat => BuildChatRow(chat, activeChatId)
+            );
+            wroteAny = true;
+        }
+        if (results.groups.Length > 0)
+        {
+            AddSearchSection(
+                "Groups",
+                results.groups,
+                "groups",
+                chat => BuildChatRow(chat, activeChatId)
+            );
+            wroteAny = true;
         }
 
-        if (query.Length > 0 && visibleChats.Length == 0)
+        if (!wroteAny)
         {
             ChatRows.Items.Add(BuildSearchEmptyRow());
+        }
+    }
+
+    private void AddSearchSection<T>(
+        string title,
+        T[] rows,
+        string key,
+        Func<T, FrameworkElement> buildRow)
+    {
+        ChatRows.Items.Add(BuildSidebarSectionHeader(title));
+        IEnumerable<T> visible = _expandedSearchSections.Contains(key) ? rows : rows.Take(7);
+        foreach (var row in visible) ChatRows.Items.Add(buildRow(row));
+        if (!_expandedSearchSections.Contains(key) && rows.Length > 7)
+        {
+            var more = new Button
+            {
+                Content = "View more",
+                Style = (Style)FindResource("GhostButton"),
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(8, 2, 8, 4),
+            };
+            more.Click += (_, _) =>
+            {
+                _expandedSearchSections.Add(key);
+                Refresh();
+            };
+            ChatRows.Items.Add(more);
         }
     }
 
@@ -189,6 +245,72 @@ public partial class DesktopShell : UserControl
             },
         };
 
+    private FrameworkElement BuildFindingPeopleRow() =>
+        new TextBlock
+        {
+            Text = "Finding people…",
+            Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
+            FontSize = 13,
+            Margin = new Thickness(12, 10, 12, 10),
+        };
+
+    private FrameworkElement BuildPersonRow(FollowedUserSearchResult person)
+    {
+        var avatar = new Avatar
+        {
+            Label = person.displayLabel,
+            PictureUrl = person.pictureUrl,
+            Size = 44,
+        };
+        var profile = string.IsNullOrWhiteSpace(person.profileLabel)
+            || string.Equals(person.profileLabel, person.displayLabel, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : person.profileLabel;
+        var subtitle = profile ?? person.about ?? person.userId;
+        var text = new StackPanel
+        {
+            Margin = new Thickness(12, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        text.Children.Add(new TextBlock
+        {
+            Text = person.displayLabel,
+            Foreground = (System.Windows.Media.Brush)FindResource("TextPrimary"),
+            FontSize = 15,
+            FontWeight = FontWeights.SemiBold,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        text.Children.Add(new TextBlock
+        {
+            Text = subtitle,
+            Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
+            FontSize = 13,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(0, 2, 0, 0),
+        });
+        var content = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(2),
+        };
+        content.Children.Add(avatar);
+        content.Children.Add(text);
+        var button = new Button
+        {
+            Content = content,
+            Style = (Style)FindResource("GhostButton"),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Padding = new Thickness(8),
+        };
+        button.Click += (_, _) =>
+        {
+            _showingNearby = false;
+            ClearSidebarSearch(focus: false, refresh: false);
+            _manager.CreateChat(person.ownerPubkeyHex);
+        };
+        return button;
+    }
+
     private FrameworkElement BuildEmptyChatsRow() =>
         new Border
         {
@@ -201,23 +323,6 @@ public partial class DesktopShell : UserControl
                 HorizontalAlignment = HorizontalAlignment.Center,
             },
         };
-
-    private static bool ChatMatchesQuery(ChatThreadSnapshot chat, string query)
-    {
-        var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return terms.Length == 0 || terms.All(term =>
-            ContainsSearch(chat.displayName, term)
-            || ContainsSearch(chat.nickname, term)
-            || ContainsSearch(chat.profileName, term)
-            || ContainsSearch(chat.subtitle, term)
-            || ContainsSearch(chat.chatId, term)
-            || ContainsSearch(chat.lastMessagePreview, term)
-            || ContainsSearch(chat.draft, term));
-    }
-
-    private static bool ContainsSearch(string? value, string query) =>
-        !string.IsNullOrWhiteSpace(value)
-        && value.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
 
     private FrameworkElement BuildMainPane(Screen screen) => screen switch
     {
@@ -258,6 +363,7 @@ public partial class DesktopShell : UserControl
     {
         if (_syncingSearchText) return;
         _searchQuery = SearchInput.Text ?? string.Empty;
+        _expandedSearchSections.Clear();
         var trimmed = _searchQuery.Trim();
         if (TryDispatchSearchShortcut(trimmed)) return;
         Refresh();
@@ -309,6 +415,7 @@ public partial class DesktopShell : UserControl
     private void ClearSidebarSearch(bool focus, bool refresh)
     {
         _searchQuery = string.Empty;
+        _expandedSearchSections.Clear();
         if (SearchInput.Text.Length > 0)
         {
             _syncingSearchText = true;

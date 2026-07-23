@@ -127,6 +127,23 @@ class AppManagerContractTest {
     }
 
     @Test
+    fun followed_people_search_contract_uses_rust_rows_and_create_chat_action() {
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+
+        val global = appManager.search("needle")
+        assertEquals(11, global.people.size)
+        assertTrue(global.people.first().displayLabel.contains("Needle"))
+
+        val person = global.people.first()
+        appManager.dispatch(AppAction.CreateChat(person.ownerPubkeyHex))
+        assertTrue(
+            rust.dispatchedActions.contains(AppAction.CreateChat(person.ownerPubkeyHex)),
+        )
+        assertTrue(appManager.search("needle", "chat-1").people.isEmpty())
+    }
+
+    @Test
     fun active_chat_notification_suppression_matches_direct_sender() {
         rustFactory.initialStates += makeLargeFixtureState(
             currentChat = makeCurrentChat(chatId = "ABCDEF", kind = ChatKind.DIRECT),
@@ -789,6 +806,8 @@ class AppManagerContractTest {
             linkDevice = null,
             networkStatus = null,
             mobilePush = MobilePushSyncSnapshot(null, emptyList(), emptyList(), emptyList()),
+            userDiscoveryRevision = 0u,
+            userDiscoverySyncing = false,
             preferences =
                 PreferencesSnapshot(
                     sendTypingIndicators = true,
@@ -996,12 +1015,14 @@ private class MockRustAppClient(
         val messageCount = if (limit > 120u) limit else 120u
         return buildLargeTestSearchResult(
             query = query,
+            personCount = 11u,
             contactCount = 25u,
             groupCount = 9u,
             messageCount = messageCount,
         ).also { result ->
             result.scopeChatId = scopeChatId
             if (scopeChatId != null) {
+                result.people = emptyList()
                 result.contacts = emptyList()
                 result.groups = emptyList()
             }
@@ -1101,6 +1122,8 @@ private object AppManagerContractDefaults {
             linkDevice = null,
             networkStatus = null,
             mobilePush = MobilePushSyncSnapshot(null, emptyList(), emptyList(), emptyList()),
+            userDiscoveryRevision = 0u,
+            userDiscoverySyncing = false,
             preferences =
                 PreferencesSnapshot(
                     sendTypingIndicators = true,

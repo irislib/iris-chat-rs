@@ -489,8 +489,8 @@ class AppManager(
     }
 
     /**
-     * Grouped search: contacts + groups filtered from the in-memory
-     * chat list, plus message hits from the SQLite FTS5 index. Cheap
+     * Grouped search: followed people, contacts, groups, and message
+     * hits, all ranked and assembled by the Rust core. Cheap
      * enough to call on every keystroke; runs synchronously on the
      * caller thread, so the chat-list view should hop to the IO
      * dispatcher when binding it to a `TextField`.
@@ -505,6 +505,7 @@ class AppManager(
             SearchResultSnapshot(
                 query = query,
                 scopeChatId = scopeChatId,
+                people = emptyList(),
                 contacts = emptyList(),
                 groups = emptyList(),
                 messages = emptyList(),

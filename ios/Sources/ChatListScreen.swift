@@ -54,7 +54,7 @@ struct ChatListScreen: View {
     private var searchActive: Bool { !trimmedQuery.isEmpty }
 
     private var searchRequestToken: String {
-        "\(trimmedQuery)|\(searchMessageLimit)"
+        "\(trimmedQuery)|\(searchMessageLimit)|\(manager.state.userDiscoveryRevision)"
     }
 
     var body: some View {
@@ -202,6 +202,7 @@ struct ChatListScreen: View {
 }
 
 enum ChatListSearchSection: String, Hashable {
+    case people
     case contacts
     case groups
     case messages
@@ -395,12 +396,14 @@ struct SearchResultsList: View {
 
     var body: some View {
         let preferences = manager.state.preferences
-        let isEmpty = results.contacts.isEmpty
+        let findingPeople = manager.state.userDiscoverySyncing && results.people.isEmpty
+        let isEmpty = results.people.isEmpty
+            && results.contacts.isEmpty
             && results.groups.isEmpty
             && results.messages.isEmpty
             && results.shortcut == nil
 
-        if isEmpty {
+        if isEmpty && !findingPeople {
             Text("No matches")
                 .font(.system(.body, design: .rounded))
                 .foregroundStyle(palette.muted)
@@ -414,6 +417,28 @@ struct SearchResultsList: View {
                         shortcut: shortcut,
                         onNavigate: onShortcutNavigate
                     )
+                }
+                if findingPeople {
+                    SearchSectionHeader(title: "People")
+                    Text("Finding people…")
+                        .font(.system(.body, design: .rounded))
+                        .foregroundStyle(palette.muted)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                }
+                if !results.people.isEmpty {
+                    SearchSectionHeader(title: "People")
+                    let people = visibleRows(
+                        results.people,
+                        section: .people,
+                        initialCount: initialChatRows
+                    )
+                    ForEach(people, id: \.ownerPubkeyHex) { person in
+                        FollowedPersonSearchRow(manager: manager, person: person)
+                    }
+                    if shouldShowMore(results.people, visibleRows: people, section: .people) {
+                        SearchViewMoreRow { onViewMore(.people) }
+                    }
                 }
                 if !results.contacts.isEmpty {
                     SearchSectionHeader(title: "Contacts")
@@ -505,6 +530,32 @@ struct SearchResultsList: View {
             && results.messages.count >= Int(messageLimit)
             && messageLimit < UInt32.max
         return mayHaveMoreFetchedRows || mayHaveMoreRemoteRows
+    }
+}
+
+struct FollowedPersonSearchRow: View {
+    let manager: AppManager
+    let person: FollowedUserSearchResult
+
+    var body: some View {
+        let profile = person.profileLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let preview = (profile?.isEmpty == false && profile != person.displayLabel)
+            ? profile!
+            : person.about ?? person.userId
+        IrisChatRow(
+            title: person.displayLabel,
+            preview: preview,
+            subtitle: nil,
+            timeLabel: nil,
+            unreadCount: 0,
+            pictureUrl: person.pictureUrl,
+            preferences: manager.state.preferences,
+            manager: manager,
+            onTap: {
+                manager.dispatch(.createChat(peerInput: person.ownerPubkeyHex))
+            }
+        )
+        .accessibilityIdentifier("personRow-\(String(person.ownerPubkeyHex.prefix(12)))")
     }
 }
 

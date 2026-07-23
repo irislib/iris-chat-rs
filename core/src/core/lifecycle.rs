@@ -87,6 +87,10 @@ impl AppCore {
             owner_profiles: BTreeMap::new(),
             profile_metadata_fetch_inflight: HashSet::new(),
             app_keys: BTreeMap::new(),
+            user_discovery: UserDiscoveryCache::default(),
+            user_discovery_runtime: UserDiscoveryRuntime::default(),
+            user_discovery_revision: 0,
+            user_discovery_syncing: false,
             groups: BTreeMap::new(),
             group_pictures: BTreeMap::new(),
             typing_indicators: BTreeMap::new(),
@@ -172,6 +176,7 @@ impl AppCore {
                 InternalEvent::ProfileMetadataFetchFinished { .. } => {
                     "ProfileMetadataFetchFinished"
                 }
+                InternalEvent::UserDiscoveryFetchFinished { .. } => "UserDiscoveryFetchFinished",
                 InternalEvent::FetchTrackedPeerCatchUp { .. } => "FetchTrackedPeerCatchUp",
                 InternalEvent::ProtocolSubscriptionLivenessCheck { .. } => {
                     "ProtocolSubscriptionLivenessCheck"
@@ -716,6 +721,9 @@ impl AppCore {
                     self.handle_relay_event(event);
                 }
                 self.exit_batch();
+            }
+            InternalEvent::UserDiscoveryFetchFinished { token, result } => {
+                self.handle_user_discovery_fetch_finished(token, result);
             }
             InternalEvent::RelayStatusChanged {
                 relay_url,

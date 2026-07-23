@@ -1,8 +1,9 @@
 use crate::{
     AccountSnapshot, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot, ChatThreadSnapshot,
-    CurrentChatSnapshot, DeliveryState, DeviceAuthorizationState, GroupDetailsSnapshot,
-    GroupMemberSnapshot, MessageDeliveryTraceSnapshot, MessageReactionSnapshot, MessageReactor,
-    MessageSearchHit, PreferencesSnapshot, Router, Screen, SearchResultSnapshot,
+    CurrentChatSnapshot, DeliveryState, DeviceAuthorizationState, FollowedUserSearchResult,
+    GroupDetailsSnapshot, GroupMemberSnapshot, MessageDeliveryTraceSnapshot,
+    MessageReactionSnapshot, MessageReactor, MessageSearchHit, PreferencesSnapshot, Router, Screen,
+    SearchResultSnapshot,
 };
 
 const MAX_FIXTURE_THREADS: u32 = 2_000;
@@ -82,6 +83,8 @@ pub fn build_large_test_app_state(
         link_device: None,
         network_status: None,
         mobile_push: Default::default(),
+        user_discovery_revision: 0,
+        user_discovery_syncing: false,
         preferences: PreferencesSnapshot {
             send_typing_indicators: true,
             nearby_bluetooth_enabled: true,
@@ -98,10 +101,12 @@ pub fn build_large_test_app_state(
 #[uniffi::export]
 pub fn build_large_test_search_result(
     query: String,
+    person_count: u32,
     contact_count: u32,
     group_count: u32,
     message_count: u32,
 ) -> SearchResultSnapshot {
+    let person_count = person_count.min(MAX_FIXTURE_THREADS);
     let contact_count = contact_count.min(MAX_FIXTURE_THREADS);
     let group_count = group_count.min(MAX_FIXTURE_THREADS);
     let message_count = message_count.min(MAX_FIXTURE_MESSAGES);
@@ -114,6 +119,16 @@ pub fn build_large_test_search_result(
     SearchResultSnapshot {
         query: query.clone(),
         scope_chat_id: None,
+        people: (0..person_count)
+            .map(|index| FollowedUserSearchResult {
+                owner_pubkey_hex: fixture_hex(10_000 + index),
+                display_label: format!("{} Person {:04}", title_token(&query), index + 1),
+                profile_label: Some(format!("Public Person {:04}", index + 1)),
+                picture_url: None,
+                about: Some(format!("{query} appears in person profile {}", index + 1)),
+                user_id: format!("npub1fixture…{:04}", index + 1),
+            })
+            .collect(),
         contacts: (0..contact_count)
             .map(|index| {
                 let mut thread = fixture_thread(ChatKind::Direct, index);

@@ -209,6 +209,8 @@ fn state_content_eq(a: &AppState, b: &AppState) -> bool {
         && a.network_status == b.network_status
         && a.mobile_push == b.mobile_push
         && a.preferences == b.preferences
+        && a.user_discovery_revision == b.user_discovery_revision
+        && a.user_discovery_syncing == b.user_discovery_syncing
         && a.toast == b.toast
 }
 
@@ -242,6 +244,8 @@ impl AppCore {
         self.mobile_push_dirty = false;
         self.state.mobile_push = self.cached_mobile_push.clone();
         self.state.preferences = self.preferences.clone();
+        self.state.user_discovery_revision = self.user_discovery_revision;
+        self.state.user_discovery_syncing = self.user_discovery_syncing;
 
         let default_screen = match self
             .logged_in

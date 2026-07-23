@@ -117,7 +117,7 @@ fun ChatListScreen(
 
     // Keep Rust/SQLite work out of composition. Search is refreshed only for
     // user-driven inputs: the query itself and explicit "view more" requests.
-    LaunchedEffect(trimmedQuery, messageSearchLimit) {
+    LaunchedEffect(trimmedQuery, messageSearchLimit, appState.userDiscoveryRevision) {
         searchResults =
             if (trimmedQuery.isEmpty()) {
                 null
@@ -225,12 +225,14 @@ fun ChatListScreen(
             }
             if (searchActive) {
                 val results = searchResults?.takeIf { it.matchesSearchRequest(trimmedQuery) }
+                val findingPeople = appState.userDiscoverySyncing && (results == null || results.people.isEmpty())
                 val emptyResults = results == null
-                    || (results.contacts.isEmpty()
+                    || (results.people.isEmpty()
+                        && results.contacts.isEmpty()
                         && results.groups.isEmpty()
                         && results.messages.isEmpty()
                         && results.shortcut == null)
-                if (emptyResults) {
+                if (emptyResults && !findingPeople) {
                     item(key = "chatListSearchEmpty") {
                         Box(
                             modifier =
@@ -247,7 +249,7 @@ fun ChatListScreen(
                         }
                     }
                 } else {
-                    results!!.shortcut?.let { shortcut ->
+                    results?.shortcut?.let { shortcut ->
                         item(key = "search-shortcut") {
                             ChatInputShortcutRow(
                                 appManager = appManager,
@@ -256,7 +258,37 @@ fun ChatListScreen(
                             )
                         }
                     }
-                    if (results.contacts.isNotEmpty()) {
+                    if (findingPeople) {
+                        item(key = "section-people-finding") {
+                            SearchSectionHeader("People")
+                            Text(
+                                text = "Finding people…",
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = IrisTheme.palette.muted,
+                            )
+                        }
+                    }
+                    if (results?.people?.isNotEmpty() == true) {
+                        item(key = "section-people") { SearchSectionHeader("People") }
+                        val people = visibleSearchRows(
+                            rows = results.people,
+                            section = SearchSection.People,
+                            expandedSections = expandedSearchSections,
+                            initialCount = 7,
+                        )
+                        items(people, key = { "p:${it.ownerPubkeyHex}" }) { person ->
+                            FollowedPersonSearchRow(appManager, appState, person)
+                        }
+                        if (results.people.size > people.size) {
+                            item(key = "section-people-more") {
+                                IrisSearchViewMoreRow {
+                                    expandedSearchSections = expandedSearchSections + SearchSection.People
+                                }
+                            }
+                        }
+                    }
+                    if (results?.contacts?.isNotEmpty() == true) {
                         item(key = "section-contacts") { SearchSectionHeader("Contacts") }
                         val contacts = visibleSearchRows(
                             rows = results.contacts,
@@ -279,7 +311,7 @@ fun ChatListScreen(
                             }
                         }
                     }
-                    if (results.groups.isNotEmpty()) {
+                    if (results?.groups?.isNotEmpty() == true) {
                         item(key = "section-groups") { SearchSectionHeader("Groups") }
                         val groups = visibleSearchRows(
                             rows = results.groups,
@@ -302,7 +334,7 @@ fun ChatListScreen(
                             }
                         }
                     }
-                    if (results.messages.isNotEmpty()) {
+                    if (results?.messages?.isNotEmpty() == true) {
                         item(key = "section-messages") { SearchSectionHeader("Messages") }
                         val messages = visibleSearchRows(
                             rows = results.messages,
@@ -448,6 +480,7 @@ fun ChatListScreen(
 }
 
 private enum class SearchSection {
+    People,
     Contacts,
     Groups,
     Messages,
@@ -1012,54 +1045,7 @@ private fun ChatListSearchField(
     )
 }
 
-@Composable
-private fun SearchSectionHeader(title: String) {
-    Text(
-        text = title,
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
-        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-        color = IrisTheme.palette.muted,
-    )
-}
-
-@Composable
-private fun SearchChatRow(
-    appManager: AppManager,
-    appState: AppState,
-    chat: ChatThreadSnapshot,
-) {
-    val avatarData by rememberNhashImageData(appManager, chat.pictureUrl)
-    val avatarUrl =
-        chat.pictureUrl
-            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-            ?.let { url ->
-                proxiedImageUrl(
-                    originalSrc = url,
-                    preferences = appState.preferences,
-                    width = 84u,
-                    height = 84u,
-                    square = true,
-                )
-            }
-    IrisChatListRow(
-        title = chat.displayName,
-        isMuted = chat.isMuted,
-        isPinned = chat.isPinned,
-        preview = chat.chatListPreview(),
-        timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), System.currentTimeMillis()),
-        imageUrl = avatarUrl,
-        imageData = avatarData,
-        unreadCount = chat.unreadCount.toLong(),
-        lastMessageMine = chat.lastMessageIsOutgoing == true,
-        lastDelivery = chat.lastMessageDelivery,
-        onClick = { appManager.openChat(chat.chatId) },
-    )
-}
-
-private fun ChatThreadSnapshot.chatListPreview(): String {
+internal fun ChatThreadSnapshot.chatListPreview(): String {
     val draftPreview = draft.trim().replace(ChatPreviewWhitespace, " ")
     return when {
         isTyping -> "Typing"

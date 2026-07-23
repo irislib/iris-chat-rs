@@ -1323,6 +1323,7 @@ impl AppCore {
         );
         match status {
             RelayStatus::Connected if !was_connected && is_connected => {
+                self.request_user_discovery_refresh(false);
                 self.reconcile_protocol_subscriptions("relay_connected", false);
                 self.fetch_recent_protocol_state();
                 self.fetch_recent_messages_for_tracked_peers();

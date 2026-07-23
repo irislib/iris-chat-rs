@@ -109,6 +109,7 @@ mod support;
 #[cfg(test)]
 mod tests;
 mod update_pubsub;
+mod user_discovery;
 
 pub(super) const APPCORE_PROTOCOL_LABEL: &str = "appcore-protocol";
 pub(super) const LOCAL_INVITE_PUBLISH_LABEL: &str = "invite";
@@ -140,6 +141,7 @@ pub(crate) use mobile_push::{
     resolve_mobile_push_notification, resolve_mobile_push_server_url,
 };
 pub(crate) use model::ProtocolSubscriptionPlan;
+pub(crate) use model::UserDiscoveryFetchResult;
 use model::*;
 use payloads::*;
 use profile_helpers::*;
@@ -147,6 +149,7 @@ use protocol_filters::*;
 use publish_helpers::*;
 use storage::{open_database, AppStore, DataDirLock, SqliteStorageAdapter};
 pub(crate) use storage::{search_messages_fts, PersistedMessageSearchHit, SharedConnection};
+pub(crate) use user_discovery::search_followed_users;
 
 pub(crate) fn chat_snapshot_from_state_and_db(
     state: &AppState,
@@ -488,6 +491,10 @@ pub struct AppCore {
     owner_profiles: BTreeMap<String, OwnerProfileRecord>,
     profile_metadata_fetch_inflight: HashSet<String>,
     app_keys: BTreeMap<String, KnownAppKeys>,
+    user_discovery: UserDiscoveryCache,
+    user_discovery_runtime: UserDiscoveryRuntime,
+    user_discovery_revision: u64,
+    user_discovery_syncing: bool,
     groups: BTreeMap<String, GroupSnapshot>,
     group_pictures: BTreeMap<String, String>,
     typing_indicators: BTreeMap<String, TypingIndicatorRecord>,

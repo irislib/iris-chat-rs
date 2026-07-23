@@ -4,7 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use adw::prelude::*;
 use iris_chat_core::{
     AppAction, AppState, ChatInputShortcut, ChatKind, ChatThreadSnapshot,
-    DesktopNearbyPeerSnapshot, MessageSearchHit, PreferencesSnapshot, SearchResultSnapshot,
+    DesktopNearbyPeerSnapshot, FollowedUserSearchResult, MessageSearchHit, PreferencesSnapshot,
+    SearchResultSnapshot,
 };
 
 use crate::app_manager::{AppManager, SearchUiState};
@@ -215,6 +216,44 @@ fn append_search_results(
         wrote_any = true;
     }
 
+    if state.user_discovery_syncing && results.people.is_empty() {
+        container.append(&section_label("People"));
+        let finding = gtk::Label::new(Some("Finding people…"));
+        finding.add_css_class("dim-label");
+        finding.set_halign(gtk::Align::Start);
+        finding.set_margin_top(8);
+        finding.set_margin_bottom(8);
+        container.append(&finding);
+        wrote_any = true;
+    }
+
+    if !results.people.is_empty() {
+        container.append(&section_label("People"));
+        let list = grouped_list();
+        let expanded = manager.search_ui().people_expanded;
+        let visible = if expanded {
+            results.people.as_slice()
+        } else {
+            &results.people[..results.people.len().min(7)]
+        };
+        for person in visible {
+            list.append(&person_row(person, &state.preferences, manager));
+        }
+        container.append(&list);
+        if results.people.len() > visible.len() {
+            let more = gtk::Button::with_label("View more");
+            more.add_css_class("flat");
+            more.set_halign(gtk::Align::Start);
+            let manager = manager.clone();
+            more.connect_clicked(move |_| {
+                manager.expand_people_search();
+                manager.redraw_ui();
+            });
+            container.append(&more);
+        }
+        wrote_any = true;
+    }
+
     if !results.contacts.is_empty() {
         container.append(&section_label("Contacts"));
         let list = grouped_list();
@@ -372,6 +411,39 @@ fn message_hit_row(
         });
     });
 
+    row
+}
+
+fn person_row(
+    person: &FollowedUserSearchResult,
+    prefs: &PreferencesSnapshot,
+    manager: &Rc<AppManager>,
+) -> adw::ActionRow {
+    let subtitle = person
+        .profile_label
+        .as_ref()
+        .filter(|label| !label.eq_ignore_ascii_case(&person.display_label))
+        .or(person.about.as_ref())
+        .unwrap_or(&person.user_id);
+    let row = adw::ActionRow::builder()
+        .title(escape(&person.display_label))
+        .subtitle(escape(subtitle))
+        .activatable(true)
+        .build();
+    row.show_pointer_cursor();
+    let avatar = adw::Avatar::new(40, Some(&person.display_label), true);
+    if let Some(url) = person.picture_url.as_ref() {
+        image_cache::fetch_proxied_into_avatar(&avatar, url, prefs, 80);
+    }
+    row.add_prefix(&avatar);
+    let manager = manager.clone();
+    let owner = person.owner_pubkey_hex.clone();
+    row.connect_activated(move |_| {
+        manager.clear_search();
+        manager.dispatch(AppAction::CreateChat {
+            peer_input: owner.clone(),
+        });
+    });
     row
 }
 
