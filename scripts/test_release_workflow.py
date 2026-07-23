@@ -38,6 +38,30 @@ class ReleaseWorkflowTests(unittest.TestCase):
             'for line in ${SKIPPED_LINES[@]+"${SKIPPED_LINES[@]}"}; do',
             local_release,
         )
+        self.assertIn(
+            'for built in ${BUILT_STEPS[@]+"${BUILT_STEPS[@]}"}; do',
+            local_release,
+        )
+
+    def test_local_release_can_resume_an_exact_staged_build(self) -> None:
+        local_release = (ROOT / "scripts/release").read_text()
+
+        self.assertIn("--resume-staged", local_release)
+        self.assertIn('load_staged_release "$EXPECTED_COMMIT"', local_release)
+        self.assertIn('"$ROOT/scripts/validate-staged-release.py"', local_release)
+        self.assertIn('COMMIT="$EXPECTED_COMMIT"', local_release)
+
+    def test_only_cli_archives_are_marked_executable(self) -> None:
+        local_release = (ROOT / "scripts/release").read_text()
+
+        self.assertIn(
+            "iris-aarch64-*.tar.gz|iris-x86_64-*.tar.gz)",
+            local_release,
+        )
+        self.assertNotIn(
+            "case \"$name\" in\n        iris-*.tar.gz)",
+            local_release,
+        )
 
 
 if __name__ == "__main__":

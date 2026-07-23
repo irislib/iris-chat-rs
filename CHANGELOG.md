@@ -7,6 +7,20 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 ## Unreleased
 
+## 2026.7.23.1
+
+- Messages you send to yourself now reach every linked device instead of
+  waiting on the sending device, and previously stuck messages recover after
+  updating.
+- Linking after deleting local data now reliably shows a roomy, centered code
+  or a clear retry action.
+- Link codes include the requesting device name so linked devices are
+  recognizable in Devices.
+- Creating a profile and linking a device now show failures clearly without
+  changing their button labels while work completes.
+- Release checks now verify real iPhone and Android notifications through the
+  production notification server.
+
 ## 2026.7.23
 
 - A linked device now goes directly from its link code to the chat list; the

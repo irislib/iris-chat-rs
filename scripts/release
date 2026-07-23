@@ -33,6 +33,7 @@ SKIP_HOMEBREW_TAP=0
 RELEASE_GATE=1
 RELEASE_GATE_ARGS=()
 FORCE_RELEASE_GATE=0
+RESUME_STAGED=0
 RELEASE_TREE=""
 TAG_OVERRIDE=""
 ONLY_RAW=""
@@ -69,6 +70,7 @@ Options:
   --gate <mode>            Release gate mode: local, full, on-device, none
   --skip-gate              Do not run the release gate
   --force-gate             Run the gate even if this commit has a recent matching receipt
+  --resume-staged          Resume from an exact, validated staged build without rebuilding
   --tag <vX.Y.Z>           Override release tag (defaults to v$IRIS_APP_VERSION_NAME)
   --release-tree <name>    htree release tree name (default: releases/iris-chat-rs)
   --only <csv>             Only run named steps (macos,windows,android,linux,cli,ios)
@@ -124,6 +126,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-gate) RELEASE_GATE=0 ;;
     --force-gate) FORCE_RELEASE_GATE=1 ;;
+    --resume-staged) RESUME_STAGED=1 ;;
     --dry-run) DRY_RUN=1 ;;
     --tag) TAG_OVERRIDE="$2"; shift ;;
     --release-tree) RELEASE_TREE="$2"; shift ;;
@@ -221,6 +224,7 @@ TAG="$(normalize_tag "${TAG_OVERRIDE:-$IRIS_APP_VERSION_NAME}")"
 RELEASE_TREE="${RELEASE_TREE:-${IRIS_RELEASE_TREE:-$RELEASE_TREE_DEFAULT}}"
 RELEASE_OWNER_NPUB="$IRIS_RELEASE_OWNER_NPUB"
 STAGE_DIR="$STAGE_ROOT/$TAG"
+EXPECTED_COMMIT="$(git -C "$ROOT" rev-parse "${IRIS_BUILD_GIT_SHA}^{commit}" 2>/dev/null || printf '%s' "$IRIS_BUILD_GIT_SHA")"
 
 ONLY_SET=""
 SKIP_SET=""
@@ -270,10 +274,44 @@ step_was_built() {
   local needle="$1"
   local built
 
-  for built in "${BUILT_STEPS[@]}"; do
+  for built in ${BUILT_STEPS[@]+"${BUILT_STEPS[@]}"}; do
     [[ "$built" == "$needle" ]] && return 0
   done
   return 1
+}
+
+load_staged_release() {
+  local expected_commit="$1"
+  local asset
+  local validated_assets
+  local step
+
+  validated_assets="$(
+    "$ROOT/scripts/validate-staged-release.py" "$STAGE_DIR" "$TAG" "$expected_commit"
+  )" || return
+
+  while IFS= read -r asset; do
+    [[ -n "$asset" ]] || continue
+    ASSET_PATHS+=("$asset")
+    case "$(basename "$asset")" in
+      iris-chat-"${TAG}"-macos-*) step=macos ;;
+      iris-chat-"${TAG}"-windows-*) step=windows ;;
+      iris-chat-"${TAG}"-android-*) step=android ;;
+      iris-chat-"${TAG}"-linux-*) step=linux ;;
+      iris-chat-"${TAG}"-ios-*) step=ios ;;
+      iris-aarch64-*|iris-x86_64-*) step=cli ;;
+      *) step="" ;;
+    esac
+    if [[ -n "$step" ]] && ! step_was_built "$step"; then
+      mark_step_built "$step"
+    fi
+    note_built "Reused staged artifact: $(basename "$asset")"
+  done <<<"$validated_assets"
+
+  if [[ "$TESTFLIGHT_MODE" != "none" && ! -d "$ROOT/dist/ios/$(release_slug ios).xcarchive" ]]; then
+    echo "The staged iOS archive is valid, but its uploadable xcarchive is missing." >&2
+    return 1
+  fi
 }
 
 required_step_disabled_by_scope() {
@@ -848,18 +886,27 @@ echo "Cargo crate:     $([[ "$PUBLISH_CARGO_CRATE" -eq 1 ]] && printf publish ||
 echo "TestFlight:      $TESTFLIGHT_MODE"
 echo "Homebrew tap:    $([[ "$PUBLISH" -eq 1 && "$SKIP_HOMEBREW_TAP" -eq 0 ]] && printf '%s' "$HOMEBREW_TAP_REPO" || printf skip)"
 echo "Latest requires: ${REQUIRED_LATEST_STEPS[*]}"
+echo "Resume staged:   $([[ "$RESUME_STAGED" -eq 1 ]] && printf yes || printf no)"
 [[ "$DRY_RUN" -eq 1 ]] && echo "(dry-run; no commands executed)"
 
 assert_latest_publish_scope
 
 run_release_gate
 
-run_step macos   build_macos
-run_step windows build_windows
-run_step android build_android
-run_step linux   build_linux
-run_step cli     build_cli
-run_step ios     build_ios
+if [[ "$RESUME_STAGED" -eq 1 ]]; then
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "[dry-run] would validate and resume $STAGE_DIR"
+  else
+    load_staged_release "$EXPECTED_COMMIT"
+  fi
+else
+  run_step macos   build_macos
+  run_step windows build_windows
+  run_step android build_android
+  run_step linux   build_linux
+  run_step cli     build_cli
+  run_step ios     build_ios
+fi
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "Dry run complete."
@@ -874,57 +921,59 @@ if [[ "${#ASSET_PATHS[@]}" -eq 0 ]]; then
 fi
 
 # ---------- Stage ----------
-rm -rf "$STAGE_DIR"
-mkdir -p "$STAGE_DIR/assets"
-for asset in "${ASSET_PATHS[@]}"; do
-  cp "$asset" "$STAGE_DIR/assets/"
-done
-
-if compgen -G "$STAGE_DIR/assets/iris-*.tar.gz" >/dev/null; then
-  write_cli_bootstrap_installer "$STAGE_DIR/install.sh" "$(release_gateway_base_url)"
-fi
-
-CREATED_AT="$(date -u +%s)"
-COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf '%s' "$IRIS_BUILD_GIT_SHA")"
-
-# Build minimal release.json
-{
-  printf '{\n'
-  printf '  "id": "%s",\n' "$TAG"
-  printf '  "title": "%s",\n' "$TAG"
-  printf '  "tag": "%s",\n' "$TAG"
-  printf '  "commit": "%s",\n' "$COMMIT"
-  printf '  "created_at": %s,\n' "$CREATED_AT"
-  printf '  "published_at": %s,\n' "$CREATED_AT"
-  printf '  "draft": false,\n'
-  case "$TAG" in
-    *-*) printf '  "prerelease": true,\n' ;;
-    *)   printf '  "prerelease": false,\n' ;;
-  esac
-  printf '  "notes_file": "notes.md",\n'
-  printf '  "assets": [\n'
-  first=1
-  for asset_path in "$STAGE_DIR"/assets/*; do
-    [[ -e "$asset_path" ]] || continue
-    name="$(basename "$asset_path")"
-    size="$(stat -f%z "$asset_path" 2>/dev/null || stat -c%s "$asset_path")"
-    if [[ $first -eq 1 ]]; then first=0; else printf ',\n'; fi
-    # CLI tarballs (iris-<target>.tar.gz) bundle iris/iris + install.sh.
-    # Setting `executable` makes hashtree-updater classify the asset as
-    # `binary-archive` and extract just the named entry on install,
-    # so users can run `htree install <ref>` without extra flags.
-    case "$name" in
-      iris-*.tar.gz)
-        printf '    { "name": "%s", "path": "assets/%s", "size": %s, "executable": "iris/iris" }' "$name" "$name" "$size"
-        ;;
-      *)
-        printf '    { "name": "%s", "path": "assets/%s", "size": %s }' "$name" "$name" "$size"
-        ;;
-    esac
+COMMIT="$EXPECTED_COMMIT"
+if [[ "$RESUME_STAGED" -eq 0 ]]; then
+  rm -rf "$STAGE_DIR"
+  mkdir -p "$STAGE_DIR/assets"
+  for asset in "${ASSET_PATHS[@]}"; do
+    cp "$asset" "$STAGE_DIR/assets/"
   done
-  printf '\n  ]\n'
-  printf '}\n'
-} > "$STAGE_DIR/release.json"
+
+  if compgen -G "$STAGE_DIR/assets/iris-*.tar.gz" >/dev/null; then
+    write_cli_bootstrap_installer "$STAGE_DIR/install.sh" "$(release_gateway_base_url)"
+  fi
+
+  CREATED_AT="$(date -u +%s)"
+
+  # Build minimal release.json
+  {
+    printf '{\n'
+    printf '  "id": "%s",\n' "$TAG"
+    printf '  "title": "%s",\n' "$TAG"
+    printf '  "tag": "%s",\n' "$TAG"
+    printf '  "commit": "%s",\n' "$COMMIT"
+    printf '  "created_at": %s,\n' "$CREATED_AT"
+    printf '  "published_at": %s,\n' "$CREATED_AT"
+    printf '  "draft": false,\n'
+    case "$TAG" in
+      *-*) printf '  "prerelease": true,\n' ;;
+      *)   printf '  "prerelease": false,\n' ;;
+    esac
+    printf '  "notes_file": "notes.md",\n'
+    printf '  "assets": [\n'
+    first=1
+    for asset_path in "$STAGE_DIR"/assets/*; do
+      [[ -e "$asset_path" ]] || continue
+      name="$(basename "$asset_path")"
+      size="$(stat -f%z "$asset_path" 2>/dev/null || stat -c%s "$asset_path")"
+      if [[ $first -eq 1 ]]; then first=0; else printf ',\n'; fi
+      # CLI tarballs (iris-<target>.tar.gz) bundle iris/iris + install.sh.
+      # Setting `executable` makes hashtree-updater classify the asset as
+      # `binary-archive` and extract just the named entry on install,
+      # so users can run `htree install <ref>` without extra flags.
+      case "$name" in
+        iris-aarch64-*.tar.gz|iris-x86_64-*.tar.gz)
+          printf '    { "name": "%s", "path": "assets/%s", "size": %s, "executable": "iris/iris" }' "$name" "$name" "$size"
+          ;;
+        *)
+          printf '    { "name": "%s", "path": "assets/%s", "size": %s }' "$name" "$name" "$size"
+          ;;
+      esac
+    done
+    printf '\n  ]\n'
+    printf '}\n'
+  } > "$STAGE_DIR/release.json"
+fi
 
 # notes.md uses the same renderer as GitHub Releases so both publication paths
 # present the same download guidance and changelog section.
