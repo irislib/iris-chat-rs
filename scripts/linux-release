@@ -188,14 +188,18 @@ README
     tar -czf "$OUT/${ARTIFACT_BASENAME}.tar.gz" -C "$STAGE" iris-chat
 
     SMOKE_STAGE=$(mktemp -d)
-    tar -xzf "$OUT/${ARTIFACT_BASENAME}.tar.gz" -C "$SMOKE_STAGE"
+    # GNU tar extraction returns ENOSYS in Docker Desktop amd64 emulation.
+    python3 -m tarfile -e "$OUT/${ARTIFACT_BASENAME}.tar.gz" "$SMOKE_STAGE"
     "/workspace/$IRIS_REPO_BASENAME/scripts/linux-app-launch-smoke.sh" \
       "$SMOKE_STAGE/iris-chat/iris-chat"
 
     if cargo deb --no-build --deb-version "$IRIS_LINUX_DEB_VERSION" --output \
         "$OUT/${ARTIFACT_BASENAME}.deb" 2>/dev/null; then
       DEB_STAGE=$(mktemp -d)
-      dpkg-deb --extract "$OUT/${ARTIFACT_BASENAME}.deb" "$DEB_STAGE"
+      DEB_PAYLOAD=$(ar t "$OUT/${ARTIFACT_BASENAME}.deb" | grep -E '\''^data\.tar\.'\'' | head -1)
+      ar p "$OUT/${ARTIFACT_BASENAME}.deb" "$DEB_PAYLOAD" > "$DEB_STAGE/$DEB_PAYLOAD"
+      python3 -m tarfile -e "$DEB_STAGE/$DEB_PAYLOAD" "$DEB_STAGE"
+      rm "$DEB_STAGE/$DEB_PAYLOAD"
       test -x "$DEB_STAGE/usr/bin/iris-chat"
       "/workspace/$IRIS_REPO_BASENAME/scripts/linux-app-launch-smoke.sh" \
         "$DEB_STAGE/usr/bin/iris-chat"
