@@ -24,21 +24,17 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     container.append(&name);
 
     let busy = state.busy.creating_account;
-    let submit = primary_button(if busy {
-        "Creating…"
-    } else {
-        "Create profile"
-    });
+    let submit = primary_button("Create profile");
     submit.set_sensitive(!busy);
 
     let manager_for_submit = manager.clone();
     let name_for_submit = name.clone();
-    submit.connect_clicked(move |btn| {
+    submit.connect_clicked(move |button| {
         let value = name_for_submit.text().trim().to_string();
         if value.is_empty() {
             return;
         }
-        btn.set_sensitive(false);
+        button.set_sensitive(false);
         manager_for_submit.dispatch(AppAction::CreateAccount { name: value });
     });
 

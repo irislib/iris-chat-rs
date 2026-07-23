@@ -14,10 +14,18 @@
                        Margin="0,0,0,16" />
 
             <StackPanel x:Name="LinkCodeBlock" HorizontalAlignment="Center">
-                <TextBlock x:Name="LoadingText"
-                           Text="Creating code…"
-                           Foreground="{StaticResource TextMuted}"
-                           HorizontalAlignment="Center" />
+                <ProgressBar x:Name="LoadingIndicator"
+                             IsIndeterminate="True"
+                             Width="120"
+                             Height="4"
+                             HorizontalAlignment="Center" />
+                <Button x:Name="RetryButton"
+                        Style="{StaticResource SecondaryButton}"
+                        Click="OnNewCode"
+                        HorizontalAlignment="Center"
+                        Visibility="Collapsed">
+                    <TextBlock Text="Try again" />
+                </Button>
                 <chrome:QrCodeView x:Name="LinkQr"
                                    Visibility="Collapsed" />
                 <StackPanel x:Name="LinkButtons"

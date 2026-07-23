@@ -959,6 +959,7 @@ final class AppManager: ObservableObject {
 #endif
     private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
+    private var reconciliationGeneration: UInt64 = 0
     private var pendingNavigationOverride: PendingNavigationOverride?
     private var pendingSharePayloadURLs: [String: URL] = [:]
     private var backgroundSuspendPrepared = false
@@ -986,7 +987,7 @@ final class AppManager: ObservableObject {
     private let screenshotFixtureReferenceDate: Date
     private let screenshotFixtureShowsNearbyTransportPeers: Bool
 #endif
-    private lazy var reconciler = UpdateBridge(owner: self)
+    private lazy var reconciler = UpdateBridge(owner: self, generation: reconciliationGeneration)
     init(
         rust: RustAppClient? = nil,
         secretStore: AccountSecretStore? = nil,
@@ -2511,8 +2512,14 @@ final class AppManager: ObservableObject {
         persistedRestoreInFlight = false
         bootstrapInFlight = false
         let nextRust = makeRustClient()
+        reconciliationGeneration &+= 1
+        let nextReconciler = UpdateBridge(
+            owner: self,
+            generation: reconciliationGeneration
+        )
+        reconciler = nextReconciler
         rust = nextRust
-        nextRust.listenForUpdates(reconciler: reconciler)
+        nextRust.listenForUpdates(reconciler: nextReconciler)
         applyFullState(nextRust.state(), force: true)
         automaticRevocationLogoutInFlight = false
     }
@@ -2574,7 +2581,10 @@ final class AppManager: ObservableObject {
     }
 #endif
 
-    func apply(update: AppUpdate) {
+    func apply(update: AppUpdate, generation: UInt64) {
+        guard generation == reconciliationGeneration else {
+            return
+        }
         switch update {
         case .persistAccountBundle(_, let ownerNsec, let ownerPubkeyHex, let deviceNsec):
             // Secure persistence is a shell side effect and must be applied even if snapshot revs race.
@@ -3664,14 +3674,16 @@ private func normalizedPushString(_ value: Any?) -> String? {
 
 final class UpdateBridge: NSObject, AppReconciler, @unchecked Sendable {
     weak var owner: AppManager?
+    private let generation: UInt64
 
-    init(owner: AppManager) {
+    init(owner: AppManager, generation: UInt64) {
         self.owner = owner
+        self.generation = generation
     }
 
     func reconcile(update: AppUpdate) {
-        Task { @MainActor [weak owner] in
-            owner?.apply(update: update)
+        Task { @MainActor [weak owner, generation] in
+            owner?.apply(update: update, generation: generation)
         }
     }
 }

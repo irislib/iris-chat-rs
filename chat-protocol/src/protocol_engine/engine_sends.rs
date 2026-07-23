@@ -562,15 +562,25 @@ impl ProtocolEngine {
         let remote_payload = serde_json::to_vec(&rumor)?;
         let sibling_payload = local_sibling_payload(peer_pubkey, &remote_payload)?;
         self.with_state_checkpoint(|engine| {
-            engine.send_direct_payloads_inner(
-                peer_pubkey,
-                chat_id,
-                remote_payload,
-                sibling_payload,
-                Some(message_id.clone()),
-                message_id,
-                now,
-            )
+            if peer_pubkey == engine.owner_pubkey {
+                engine.send_local_sibling_payload_inner(
+                    chat_id,
+                    sibling_payload,
+                    Some(message_id.clone()),
+                    message_id,
+                    now,
+                )
+            } else {
+                engine.send_direct_payloads_inner(
+                    peer_pubkey,
+                    chat_id,
+                    remote_payload,
+                    sibling_payload,
+                    Some(message_id.clone()),
+                    message_id,
+                    now,
+                )
+            }
         })
     }
 

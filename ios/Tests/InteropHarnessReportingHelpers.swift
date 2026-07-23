@@ -331,6 +331,7 @@ extension InteropHarnessTests {
     }
 
     func reportMobilePushServerSnapshot(manager: AppManager) async throws {
+#if os(iOS)
         guard let ownerNsec = manager.exportOwnerNsec() else {
             throw HarnessError.unexpected("owner nsec unavailable")
         }
@@ -392,6 +393,10 @@ extension InteropHarnessTests {
                 "notifications.iris.to did not match this iPhone's APNs token and sender keys"
             )
         }
+#else
+        _ = manager
+        throw HarnessError.unexpected("mobile push server snapshot requires iOS")
+#endif
     }
 
     func summarizeCurrentChat(_ chat: CurrentChatSnapshot?) -> String {

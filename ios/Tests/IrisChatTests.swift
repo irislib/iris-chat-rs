@@ -1825,6 +1825,49 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
+    func testLinkDeviceAfterLogoutIgnoresLateStateFromDiscardedCore() async {
+        let firstRust = MockRustApp(state: makeLargeFixtureState(rev: 7, account: makeAccount()))
+        let freshRust = MockRustApp(state: makeAppState(rev: 0))
+        let store = InMemorySecretStore(
+            bundle: StoredAccountBundle(
+                ownerNsec: "nsec1owner",
+                ownerPubkeyHex: "owner-hex",
+                deviceNsec: "nsec1device"
+            )
+        )
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: firstRust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:],
+            rustFactory: { freshRust }
+        )
+
+        await Task.yield()
+        manager.logout()
+
+        firstRust.emit(.fullState(makeAppState(rev: 99)))
+        await Task.yield()
+
+        var linkState = makeAppState(
+            rev: 1,
+            router: Router(defaultScreen: .welcome, screenStack: [.addDevice])
+        )
+        linkState.linkDevice = LinkDeviceSnapshot(
+            url: "https://chat.iris.to/#link-test",
+            deviceInput: "npub1linkeddevice"
+        )
+        freshRust.emit(.fullState(linkState))
+        await Task.yield()
+
+        XCTAssertEqual(manager.state.rev, 1)
+        XCTAssertEqual(manager.state.linkDevice?.url, "https://chat.iris.to/#link-test")
+    }
+
+    @MainActor
     func testLogoutDoesNotDeleteLocalDataWhenSecretClearFails() async {
         let account = makeAccount()
         let rust = MockRustApp(state: makeLargeFixtureState(rev: 1, account: account))

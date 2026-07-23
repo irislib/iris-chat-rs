@@ -6,6 +6,8 @@ namespace IrisChat.Views;
 
 public partial class AddDeviceView : UserControl
 {
+    private bool _attempted;
+
     public AddDeviceView()
     {
         InitializeComponent();
@@ -14,11 +16,14 @@ public partial class AddDeviceView : UserControl
         Loaded += (_, _) =>
         {
             App.CurrentManager.PropertyChanged += OnChanged;
+            UpdateBusy();
             if (App.CurrentManager.LinkDevice == null && !App.CurrentManager.Busy.linkingDevice)
             {
+                _attempted = true;
+                LoadingIndicator.Visibility = Visibility.Visible;
+                RetryButton.Visibility = Visibility.Collapsed;
                 App.CurrentManager.StartLinkedDevice("");
             }
-            UpdateBusy();
         };
         Unloaded += (_, _) => App.CurrentManager.PropertyChanged -= OnChanged;
     }
@@ -30,8 +35,10 @@ public partial class AddDeviceView : UserControl
         if (NewCodeButton == null) return;
         var link = App.CurrentManager.LinkDevice;
         var ready = link != null;
+        var failed = !ready && !App.CurrentManager.Busy.linkingDevice && _attempted;
 
-        LoadingText.Visibility = ready ? Visibility.Collapsed : Visibility.Visible;
+        LoadingIndicator.Visibility = !ready && !failed ? Visibility.Visible : Visibility.Collapsed;
+        RetryButton.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
         LinkQr.Visibility = ready ? Visibility.Visible : Visibility.Collapsed;
         LinkButtons.Visibility = ready ? Visibility.Visible : Visibility.Collapsed;
         NewCodeButton.IsEnabled = !App.CurrentManager.Busy.linkingDevice;
@@ -45,7 +52,12 @@ public partial class AddDeviceView : UserControl
         if (!string.IsNullOrEmpty(url)) App.CurrentManager.CopyToClipboard(url);
     }
 
-    private void OnNewCode(object sender, RoutedEventArgs e) =>
+    private void OnNewCode(object sender, RoutedEventArgs e)
+    {
+        _attempted = true;
+        RetryButton.Visibility = Visibility.Collapsed;
+        LoadingIndicator.Visibility = Visibility.Visible;
         App.CurrentManager.StartLinkedDevice("");
+    }
 
 }

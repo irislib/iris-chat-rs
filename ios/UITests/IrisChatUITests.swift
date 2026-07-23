@@ -911,6 +911,36 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
         XCTAssertTrue(element(app, "linkDeviceCopyButton").waitForExistence(timeout: 10))
     }
 
+    func testLinkDeviceShowsScannableCodeAfterDeletingLocalData() throws {
+        let app = launchCleanApp()
+        createAccount(app)
+
+        XCTAssertTrue(element(app, "chatListProfileButton").waitForExistence(timeout: 15))
+        element(app, "chatListProfileButton").tap()
+        XCTAssertTrue(element(app, "settingsScreen").waitForExistence(timeout: 10))
+        openSettingsPage(app, "settingsAccountDataRow")
+        XCTAssertTrue(element(app, "myProfileDeleteLocalDataButton").waitForExistence(timeout: 10))
+        element(app, "myProfileDeleteLocalDataButton").tap()
+        XCTAssertTrue(element(app, "myProfileConfirmDeleteLocalDataButton").waitForExistence(timeout: 10))
+        app.buttons["myProfileConfirmDeleteLocalDataButton"].firstMatch.tap()
+
+        XCTAssertTrue(element(app, "welcomeChooserCard").waitForExistence(timeout: 20))
+        tapWelcomeAction(app, "welcomeRestoreAction")
+        let linkAction = element(app, "restoreLinkDeviceAction")
+        XCTAssertTrue(linkAction.waitForExistence(timeout: 10))
+#if os(iOS)
+        if !linkAction.isEnabled {
+            acceptOnboardingTermsIfNeeded(app)
+        }
+        XCTAssertTrue(waitUntil(timeout: 5) { linkAction.isEnabled })
+#endif
+        linkAction.tap()
+
+        XCTAssertTrue(element(app, "addDeviceScreen").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "linkDeviceQrCode").waitForExistence(timeout: 20))
+        XCTAssertTrue(element(app, "linkDeviceCopyButton").waitForExistence(timeout: 10))
+    }
+
     func testUploadProfilePictureUpdatesAvatarsInSettingsAndChatList() throws {
 #if os(macOS)
         throw XCTSkip("Profile picture upload is covered outside the default macOS lane")

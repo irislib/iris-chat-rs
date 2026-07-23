@@ -12,7 +12,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let container = screen_container();
     container.set_spacing(16);
 
-    if state.link_device.is_none() && !state.busy.linking_device {
+    if state.link_device.is_none() && !state.busy.linking_device && state.toast.is_none() {
         manager.dispatch(AppAction::StartLinkedDevice {
             owner_input: String::new(),
         });
@@ -38,17 +38,22 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         let invite_url = link.url.clone();
         copy.connect_clicked(move |_| clipboard::copy(&invite_url));
         container.append(&copy);
-    } else {
+    } else if state.busy.linking_device || state.toast.is_none() {
         let spinner = gtk::Spinner::new();
         spinner.start();
         spinner.set_halign(gtk::Align::Center);
         container.append(&spinner);
+    } else {
+        let error = gtk::Label::new(Some("Couldn’t create a link code."));
+        error.add_css_class("dim-label");
+        error.set_halign(gtk::Align::Center);
+        container.append(&error);
     }
 
-    let refresh = pill_button(if state.busy.linking_device {
-        "Creating…"
-    } else {
+    let refresh = pill_button(if state.link_device.is_some() {
         "New code"
+    } else {
+        "Try again"
     });
     refresh.set_sensitive(!state.busy.linking_device);
     refresh.set_halign(gtk::Align::Center);

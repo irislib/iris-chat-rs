@@ -167,7 +167,7 @@ struct CreateAccountScreen: View {
                     OnboardingTermsAgreement(accepted: $termsAccepted)
                 }
 
-                Button(manager.state.busy.creatingAccount ? "Creating…" : "Create profile") {
+                Button("Create profile") {
                     submitCreateAccount()
                 }
                 .buttonStyle(IrisPrimaryButtonStyle())
@@ -279,46 +279,62 @@ struct AddDeviceScreen: View {
 
     private var linkDeviceCard: some View {
         IrisSectionCard {
-            Color.clear
-                .frame(height: 0)
-                .accessibilityIdentifier("addDeviceScreen")
+            VStack(spacing: 24) {
+                Color.clear
+                    .frame(height: 0)
+                    .accessibilityIdentifier("addDeviceScreen")
 
-            CardHeader(
-                title: "Link this device",
-                subtitle: canUseLinkDevice
-                    ? "Scan this code with your signed-in device."
-                    : "Accept the terms before linking this device."
-            )
+                CardHeader(
+                    title: "Link this device",
+                    subtitle: canUseLinkDevice
+                        ? "Scan this code with your signed-in device."
+                        : "Accept the terms before linking this device."
+                )
 
-            if !canUseLinkDevice {
-                OnboardingTermsAgreement(accepted: $termsAccepted)
-            } else if let linkDevice = manager.state.linkDevice {
-                ZStack {
-                    QrCodeImage(text: linkDevice.url)
-                        .frame(width: 240, height: 240)
-                    Color.clear
-                        .accessibilityIdentifier("linkDeviceQrCode")
-                }
-                .frame(maxWidth: .infinity)
-
-                VStack(spacing: 10) {
-                    Button("Copy link code") {
-                        manager.copyToClipboard(linkDevice.url)
+                if !canUseLinkDevice {
+                    OnboardingTermsAgreement(accepted: $termsAccepted)
+                } else if let linkDevice = manager.state.linkDevice {
+                    ZStack {
+                        QrCodeImage(text: linkDevice.url, size: 240)
+                            .padding(16)
+                            .background(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        Color.clear
+                            .accessibilityIdentifier("linkDeviceQrCode")
                     }
-                    .buttonStyle(IrisPrimaryButtonStyle())
-                    .accessibilityIdentifier("linkDeviceCopyButton")
 
-                    Button(manager.state.busy.linkingDevice ? "Creating…" : "New code") {
-                        manager.startLinkedDevice(ownerInput: "")
+                    VStack(spacing: 12) {
+                        Button("Copy link code") {
+                            manager.copyToClipboard(linkDevice.url)
+                        }
+                        .buttonStyle(IrisPrimaryButtonStyle())
+                        .accessibilityIdentifier("linkDeviceCopyButton")
+
+                        Button("New code") {
+                            manager.startLinkedDevice(ownerInput: "")
+                        }
+                        .buttonStyle(IrisSecondaryButtonStyle())
+                        .disabled(manager.state.busy.linkingDevice)
+                        .accessibilityIdentifier("linkDeviceRefreshButton")
                     }
-                    .buttonStyle(IrisSecondaryButtonStyle())
-                    .disabled(!canUseLinkDevice || manager.state.busy.linkingDevice)
-                    .accessibilityIdentifier("linkDeviceRefreshButton")
+                    .frame(maxWidth: 280)
+                } else if manager.state.busy.linkingDevice || manager.state.toast == nil {
+                    ProgressView()
+                        .accessibilityIdentifier("linkDeviceCreating")
+                } else {
+                    VStack(spacing: 12) {
+                        Text("Couldn’t create a link code.")
+                            .foregroundStyle(palette.muted)
+                        Button("Try again") {
+                            manager.startLinkedDevice(ownerInput: "")
+                        }
+                        .buttonStyle(IrisSecondaryButtonStyle())
+                        .accessibilityIdentifier("linkDeviceRetryButton")
+                    }
                 }
-            } else {
-                ProgressView()
-                    .accessibilityIdentifier("linkDeviceCreating")
             }
+            .frame(maxWidth: .infinity, alignment: .center)
+            .multilineTextAlignment(.center)
         }
     }
 

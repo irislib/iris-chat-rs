@@ -363,6 +363,34 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
     assert!(decrypted
         .content
         .contains("sender copy should be immediately discoverable"));
+
+    let self_result = primary
+        .send_direct_text(
+            owner.public_key(),
+            &owner.public_key().to_hex(),
+            "self chat reaches the linked device",
+            None,
+            UnixSeconds(5),
+        )
+        .expect("self-chat send");
+    let known_self_authors = linked.message_author_pubkeys_for_owner(owner.public_key());
+    let self_event = protocol_publish_events(&self_result.effects)
+        .into_iter()
+        .find(|event| known_self_authors.contains(&event.pubkey))
+        .expect("encrypted self-chat event for linked device");
+    let self_message = linked
+        .process_direct_message_event(self_event)
+        .expect("linked processes self-chat event")
+        .expect("linked decrypts self-chat event");
+    assert_eq!(self_message.conversation_owner, Some(owner.public_key()));
+    assert_eq!(self_message.sender, owner.public_key());
+    assert_eq!(
+        self_message.sender_device,
+        Some(primary_device.public_key())
+    );
+    assert!(self_message
+        .content
+        .contains("self chat reaches the linked device"));
 }
 
 #[test]

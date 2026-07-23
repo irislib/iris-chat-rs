@@ -230,7 +230,7 @@ fun CreateAccountScreen(
         onBack = { appManager.dispatch(AppAction.UpdateScreenStack(emptyList())) },
         bottomContent = {
             IrisPrimaryButton(
-                text = if (appState.busy.creatingAccount) "Creating…" else "Create profile",
+                text = "Create profile",
                 onClick = submitCreateAccount,
                 enabled = canCreateAccount,
                 modifier =
@@ -388,11 +388,29 @@ fun AddDeviceScreen(
         ) {
             val linkDevice = appState.linkDevice
             if (linkDevice == null) {
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.testTag("linkDeviceCreating"))
+                if (appState.busy.linkingDevice || appState.toast == null) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.testTag("linkDeviceCreating"))
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            text = "Couldn’t create a link code.",
+                            color = IrisTheme.palette.muted,
+                        )
+                        IrisSecondaryButton(
+                            text = "Try again",
+                            onClick = { appManager.startLinkedDevice("") },
+                            modifier = Modifier.testTag("linkDeviceRetryButton"),
+                        )
+                    }
                 }
             } else {
                     val qrBitmap =
@@ -424,7 +442,7 @@ fun AddDeviceScreen(
                                     .testTag("linkDeviceCopyButton"),
                         )
                         IrisSecondaryButton(
-                            text = if (appState.busy.linkingDevice) "Creating…" else "New code",
+                            text = "New code",
                             onClick = { appManager.startLinkedDevice("") },
                             enabled = !appState.busy.linkingDevice,
                             modifier =

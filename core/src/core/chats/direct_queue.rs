@@ -110,6 +110,30 @@ impl AppCore {
                     blocked: false,
                 }
             }
+            Ok(result)
+                if self
+                    .logged_in
+                    .as_ref()
+                    .is_some_and(|logged_in| logged_in.owner_pubkey == peer_pubkey) =>
+            {
+                self.replace_queued_direct_text_message(
+                    chat_id,
+                    message,
+                    result.message_id.clone(),
+                );
+                self.update_message_delivery(chat_id, &result.message_id, DeliveryState::Sent);
+                self.push_debug_log(
+                    "message.direct.queue.drain",
+                    format!(
+                        "reason={reason} chat_id={chat_id} old_message_id={} new_message_id={} self_chat_local_only=true",
+                        message.id, result.message_id
+                    ),
+                );
+                DirectTextDrainResult {
+                    changed: true,
+                    blocked: false,
+                }
+            }
             Ok(result) => {
                 self.push_debug_log(
                     "message.direct.queue.invariant",

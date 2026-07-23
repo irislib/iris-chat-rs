@@ -187,6 +187,30 @@ fn create_account_failure_reports_error_and_resets_busy_state() {
 }
 
 #[test]
+fn linked_device_code_failure_reports_error_and_resets_busy_state() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.device_approval_relay_urls.clear();
+
+    core.handle_action(AppAction::StartLinkedDevice {
+        owner_input: String::new(),
+    });
+
+    assert!(core.state.link_device.is_none());
+    assert!(!core.state.busy.linking_device);
+    assert!(core
+        .state
+        .toast
+        .as_deref()
+        .is_some_and(|message| !message.trim().is_empty()));
+}
+
+#[test]
 fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
     let owner = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");

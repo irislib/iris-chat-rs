@@ -246,7 +246,17 @@ run_macos_xcodeproj() {
 }
 
 stop_running_macos_app() {
-  killall "${MACOS_APP_NAME%.app}" 2>/dev/null || true
+  local app_executable="${MACOS_APP_NAME%.app}"
+  local command
+  local pid
+  while IFS= read -r pid; do
+    command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    case "$command" in
+      "$MACOS_DERIVED_DATA"/*/"$MACOS_APP_NAME"/Contents/MacOS/"$app_executable")
+        kill "$pid" 2>/dev/null || true
+        ;;
+    esac
+  done < <(pgrep -x "$app_executable" 2>/dev/null || true)
 }
 
 run_macos_build() {

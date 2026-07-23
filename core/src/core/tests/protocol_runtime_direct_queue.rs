@@ -267,6 +267,83 @@ fn appcore_ready_direct_text_uses_same_queue_then_drain_path() {
 }
 
 #[test]
+fn appcore_self_chat_sends_to_linked_sibling_without_waiting_on_current_device() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sibling = Keys::generate();
+    let mut core = logged_in_test_core("self-chat-linked-sibling", &owner, &device);
+
+    {
+        let engine = core.protocol_engine.as_mut().expect("protocol engine");
+        observe_peer_device_invite_for_test(engine, &owner, &sibling, 2);
+        observe_peer_appkeys_for_test(
+            engine,
+            &owner,
+            &[device.public_key(), sibling.public_key()],
+            3,
+        );
+    }
+
+    let chat_id = owner.public_key().to_hex();
+    core.send_direct_message(&chat_id, "hello other me", UnixSeconds(4), None);
+
+    let message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| thread.messages.first())
+        .expect("self-chat message");
+    assert_ne!(
+        message.id, "1",
+        "self-chat must not stay queued waiting for the current device"
+    );
+    assert!(!message.delivery_trace.outer_event_ids.is_empty());
+    assert!(
+        !core.pending_relay_publishes.is_empty(),
+        "self-chat must publish an encrypted sender copy to linked siblings"
+    );
+}
+
+#[test]
+fn session_start_retry_recovers_self_chat_queued_by_older_client() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sibling = Keys::generate();
+    let mut core = logged_in_test_core("self-chat-startup-recovery", &owner, &device);
+    let chat_id = owner.public_key().to_hex();
+    core.push_outgoing_message_with_id(
+        "legacy-queued".to_string(),
+        &chat_id,
+        "recover me".to_string(),
+        3,
+        None,
+        DeliveryState::Queued,
+    );
+
+    {
+        let engine = core.protocol_engine.as_mut().expect("protocol engine");
+        observe_peer_device_invite_for_test(engine, &owner, &sibling, 4);
+        observe_peer_appkeys_for_test(
+            engine,
+            &owner,
+            &[device.public_key(), sibling.public_key()],
+            5,
+        );
+    }
+
+    core.retry_protocol_engine_pending_work("session_start");
+
+    let message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| thread.messages.first())
+        .expect("recovered self-chat message");
+    assert_ne!(message.id, "legacy-queued");
+    assert_eq!(message.body, "recover me");
+    assert!(!message.delivery_trace.outer_event_ids.is_empty());
+    assert!(!core.pending_relay_publishes.is_empty());
+}
+
+#[test]
 fn group_fanout_retry_missing_roster_does_not_rewrite_persisted_state() {
     let owner = Keys::generate();
     let device = Keys::generate();

@@ -1,3 +1,11 @@
+# Iris Chat 2026.7.23.1
+
+- Messages you send to yourself now reach every linked device instead of waiting on the sending device.
+- Messages stuck in that old queued state recover automatically after updating.
+- Linking after deleting local data now reliably shows a roomy, centered scan code or a clear retry action.
+- Creating a profile and linking a device now keep stable button labels while work completes.
+- macOS test runs no longer terminate an installed Iris Chat app.
+
 # Iris Chat 2026.7.23
 
 - Linking a device now goes straight from the code to your chats, with no extra finishing screen.

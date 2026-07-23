@@ -422,6 +422,17 @@ impl ProtocolEngine {
         if peer_devices.is_empty() {
             return DirectSendReadiness::MissingPeerAppKeys;
         }
+        if peer_owner == self.local_owner {
+            return if peer_devices
+                .into_iter()
+                .filter(|device| *device != self.local_device)
+                .any(|device| !user_can_send_to_device(peer_user, device))
+            {
+                DirectSendReadiness::MissingLocalSiblingInviteOrSession
+            } else {
+                DirectSendReadiness::Ready
+            };
+        }
         if peer_devices
             .iter()
             .any(|device| !user_can_send_to_device(peer_user, *device))
