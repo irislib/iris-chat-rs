@@ -288,8 +288,10 @@ From GitHub, open **Actions → iOS App Store Release → Run workflow** and ent
 the release tag. Leave **Upload binary** and **Submit for review** enabled for
 a new production release. If Apple accepted the binary but a later submission
 step failed, rerun with **Upload binary** disabled to reuse the processed
-build. Release mode controls whether an approved build is released
-automatically, manually, or in phases.
+build. If App Store Connect already has an editable record for that version,
+enable **Reuse App Store version** so the workflow updates it instead of
+trying to create it again. Release mode controls whether an approved build is
+released automatically, manually, or in phases.
 
 The workflow uses the same `ASC_PRIVATE_KEY_P8`, `ASC_KEY_ID`, and
 `ASC_ISSUER_ID` secrets as the TestFlight uploader. App Review submission
