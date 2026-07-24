@@ -130,16 +130,12 @@ class AppManagerContractTest {
     fun followed_people_search_contract_uses_rust_rows_and_create_chat_action() {
         val appManager = createManager()
         val rust = rustFactory.instances.single()
-
         val global = appManager.search("needle")
         assertEquals(11, global.people.size)
         assertTrue(global.people.first().displayLabel.contains("Needle"))
-
         val person = global.people.first()
         appManager.dispatch(AppAction.CreateChat(person.ownerPubkeyHex))
-        assertTrue(
-            rust.dispatchedActions.contains(AppAction.CreateChat(person.ownerPubkeyHex)),
-        )
+        assertTrue(rust.dispatchedActions.contains(AppAction.CreateChat(person.ownerPubkeyHex)))
         assertTrue(appManager.search("needle", "chat-1").people.isEmpty())
     }
 
