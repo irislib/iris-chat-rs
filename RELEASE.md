@@ -277,6 +277,24 @@ cd /path/to/iris-chat-rs-cross-platform
 9. Wait for App Store Connect processing, then add the build to internal or
    external TestFlight groups.
 
+### iOS App Store production
+
+The manually dispatched `iOS App Store Release` GitHub workflow is separate
+from tagged releases and TestFlight uploads. It downloads the exact IPA from
+an existing stable GitHub release, verifies its bundle ID and embedded
+version, uploads it to App Store Connect, and can submit it to App Review.
+
+From GitHub, open **Actions → iOS App Store Release → Run workflow** and enter
+the release tag. Leave **Upload binary** and **Submit for review** enabled for
+a new production release. If Apple accepted the binary but a later submission
+step failed, rerun with **Upload binary** disabled to reuse the processed
+build. Release mode controls whether an approved build is released
+automatically, manually, or in phases.
+
+The workflow uses the same `ASC_PRIVATE_KEY_P8`, `ASC_KEY_ID`, and
+`ASC_ISSUER_ID` secrets as the TestFlight uploader. App Review submission
+requires an App Store Connect key with the Admin or App Manager role.
+
 ## Reproducibility Notes
 
 The release scripts normalize:
