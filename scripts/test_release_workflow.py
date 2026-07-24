@@ -21,6 +21,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
             'release_options[:build_number] = ENV.fetch("BUILD_NUMBER")',
             workflow,
         )
+        self.assertIn(
+            'skip_app_version_update: ENV.fetch("REUSE_APP_STORE_VERSION") == "true"',
+            workflow,
+        )
         self.assertIn("environment: ios-app-store-release", workflow)
         self.assertNotIn("./scripts/ios-release archive", workflow)
 

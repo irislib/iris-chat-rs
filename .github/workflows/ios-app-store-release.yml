@@ -19,6 +19,11 @@ on:
         required: true
         default: true
         type: boolean
+      reuse_app_store_version:
+        description: "Reuse an existing editable App Store version record instead of trying to create it."
+        required: true
+        default: false
+        type: boolean
       release_mode:
         description: "How to release the app after Apple approves it."
         required: true
@@ -223,6 +228,7 @@ jobs:
           RELEASE_NOTES_PATH: ${{ steps.notes.outputs.path }}
           UPLOAD_BINARY: ${{ inputs.upload_binary }}
           SUBMIT_FOR_REVIEW: ${{ inputs.submit_for_review }}
+          REUSE_APP_STORE_VERSION: ${{ inputs.reuse_app_store_version }}
           RELEASE_MODE: ${{ inputs.release_mode }}
         run: |
           set -Eeuo pipefail
@@ -250,6 +256,7 @@ jobs:
                   "en-US" => File.read(ENV.fetch("RELEASE_NOTES_PATH")).strip
                 },
                 skip_screenshots: true,
+                skip_app_version_update: ENV.fetch("REUSE_APP_STORE_VERSION") == "true",
                 submit_for_review: ENV.fetch("SUBMIT_FOR_REVIEW") == "true",
                 automatic_release: release_mode != "manual",
                 phased_release: release_mode == "phased",
@@ -281,6 +288,7 @@ jobs:
           BUILD_NUMBER: ${{ steps.ipa.outputs.build }}
           UPLOAD_BINARY: ${{ inputs.upload_binary }}
           SUBMIT_FOR_REVIEW: ${{ inputs.submit_for_review }}
+          REUSE_APP_STORE_VERSION: ${{ inputs.reuse_app_store_version }}
           RELEASE_MODE: ${{ inputs.release_mode }}
         run: |
           {
@@ -293,5 +301,6 @@ jobs:
             echo "- build: \`$BUILD_NUMBER\`"
             echo "- binary upload: \`$UPLOAD_BINARY\`"
             echo "- submitted for review: \`$SUBMIT_FOR_REVIEW\`"
+            echo "- reused App Store version: \`$REUSE_APP_STORE_VERSION\`"
             echo "- release mode after approval: \`$RELEASE_MODE\`"
           } >> "$GITHUB_STEP_SUMMARY"
