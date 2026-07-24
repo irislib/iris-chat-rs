@@ -242,16 +242,13 @@ jobs:
               )
 
               release_mode = ENV.fetch("RELEASE_MODE")
-              upload_to_app_store(
+              release_options = {
                 api_key: api_key,
                 app_identifier: ENV.fetch("IRIS_IOS_BUNDLE_ID"),
-                ipa: ENV.fetch("IPA_PATH"),
                 app_version: ENV.fetch("APP_VERSION"),
-                build_number: ENV.fetch("BUILD_NUMBER"),
                 release_notes: {
                   "en-US" => File.read(ENV.fetch("RELEASE_NOTES_PATH")).strip
                 },
-                skip_binary_upload: ENV.fetch("UPLOAD_BINARY") != "true",
                 skip_screenshots: true,
                 submit_for_review: ENV.fetch("SUBMIT_FOR_REVIEW") == "true",
                 automatic_release: release_mode != "manual",
@@ -261,7 +258,14 @@ jobs:
                   export_compliance_uses_encryption: false
                 },
                 force: true
-              )
+              }
+              if ENV.fetch("UPLOAD_BINARY") == "true"
+                release_options[:ipa] = ENV.fetch("IPA_PATH")
+              else
+                release_options[:skip_binary_upload] = true
+                release_options[:build_number] = ENV.fetch("BUILD_NUMBER")
+              end
+              upload_to_app_store(**release_options)
             end
           end
           RUBY

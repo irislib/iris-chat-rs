@@ -16,6 +16,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('gh release download "$RELEASE_TAG"', workflow)
         self.assertIn("app_store_connect_api_key(", workflow)
         self.assertIn("submit_for_review:", workflow)
+        self.assertIn('release_options[:ipa] = ENV.fetch("IPA_PATH")', workflow)
+        self.assertIn(
+            'release_options[:build_number] = ENV.fetch("BUILD_NUMBER")',
+            workflow,
+        )
         self.assertIn("environment: ios-app-store-release", workflow)
         self.assertNotIn("./scripts/ios-release archive", workflow)
 
