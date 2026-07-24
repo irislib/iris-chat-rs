@@ -8,6 +8,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_app_store_release_uses_the_exact_tagged_ipa(self) -> None:
+        workflow = (ROOT / ".github/workflows/ios-app-store-release.yml").read_text()
+
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn('ipa_name="iris-chat-${RELEASE_TAG}-ios.ipa"', workflow)
+        self.assertIn('gh release download "$RELEASE_TAG"', workflow)
+        self.assertIn("app_store_connect_api_key(", workflow)
+        self.assertIn("submit_for_review:", workflow)
+        self.assertIn("environment: ios-app-store-release", workflow)
+        self.assertNotIn("./scripts/ios-release archive", workflow)
+
     def test_ios_ipa_is_flattened_for_release_assembly(self) -> None:
         workflow = (ROOT / ".github/workflows/build-artifacts.yml").read_text()
         self.assertIn('ipa_output="dist/ios/iris-chat-v${IRIS_APP_VERSION_NAME}-ios.ipa"', workflow)

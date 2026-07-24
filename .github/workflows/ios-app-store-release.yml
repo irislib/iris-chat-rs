@@ -1,0 +1,293 @@
+name: iOS App Store Release
+
+run-name: App Store ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published Iris Chat release tag whose exact IPA should be submitted, for example v2026.7.23."
+        required: true
+        type: string
+      upload_binary:
+        description: "Upload the release IPA. Turn this off when retrying submission after Apple already accepted the build."
+        required: true
+        default: true
+        type: boolean
+      submit_for_review:
+        description: "Submit the selected build to App Review after upload and processing."
+        required: true
+        default: true
+        type: boolean
+      release_mode:
+        description: "How to release the app after Apple approves it."
+        required: true
+        default: automatic
+        type: choice
+        options:
+          - automatic
+          - manual
+          - phased
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-app-store-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  FASTLANE_VERSION: 2.237.0
+  IRIS_IOS_BUNDLE_ID: ${{ vars.IRIS_IOS_BUNDLE_ID || 'fi.siriusbusiness.irischat' }}
+
+jobs:
+  release:
+    name: Upload and submit tagged IPA
+    runs-on: macos-15
+    timeout-minutes: 120
+    environment: ios-app-store-release
+    steps:
+      - name: Validate release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+(\.[0-9]+){2,3}$ ]]; then
+            echo "::error::Use a stable numeric release tag such as v2026.7.23."
+            exit 2
+          fi
+
+          release_json="$(gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease,url)"
+          if [[ "$(jq -r '.isDraft' <<< "$release_json")" != "false" ]]; then
+            echo "::error::$RELEASE_TAG is still a draft release."
+            exit 1
+          fi
+          if [[ "$(jq -r '.isPrerelease' <<< "$release_json")" != "false" ]]; then
+            echo "::error::$RELEASE_TAG is a prerelease and cannot be submitted to the production App Store."
+            exit 1
+          fi
+
+          {
+            echo "tag=$RELEASE_TAG"
+            echo "notes_version=${RELEASE_TAG#v}"
+            echo "release_url=$(jq -r '.url' <<< "$release_json")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out tagged release metadata
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          path: source
+          fetch-depth: 1
+
+      - name: Download exact release IPA
+        id: ipa
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          artifact_dir="$RUNNER_TEMP/app-store-release"
+          ipa_name="iris-chat-${RELEASE_TAG}-ios.ipa"
+          mkdir -p "$artifact_dir"
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ipa_name" \
+            --dir "$artifact_dir"
+          ipa_path="$artifact_dir/$ipa_name"
+          test -f "$ipa_path"
+
+          inspect_dir="$RUNNER_TEMP/app-store-inspect"
+          mkdir -p "$inspect_dir"
+          unzip -q "$ipa_path" -d "$inspect_dir"
+          app_count="$(find "$inspect_dir/Payload" -maxdepth 1 -type d -name '*.app' | wc -l | tr -d ' ')"
+          if [[ "$app_count" -ne 1 ]]; then
+            echo "::error::Expected exactly one iOS app in $ipa_name; found $app_count."
+            exit 1
+          fi
+
+          app_path="$(find "$inspect_dir/Payload" -maxdepth 1 -type d -name '*.app' -print -quit)"
+          info_plist="$app_path/Info.plist"
+          bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info_plist")"
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info_plist")"
+          build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info_plist")"
+          if [[ "$bundle_id" != "$IRIS_IOS_BUNDLE_ID" ]]; then
+            echo "::error::IPA bundle ID $bundle_id does not match $IRIS_IOS_BUNDLE_ID."
+            exit 1
+          fi
+          if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+            echo "::error::IPA has unsupported App Store version: $version."
+            exit 1
+          fi
+          if [[ ! "$build" =~ ^[0-9]+$ ]]; then
+            echo "::error::IPA has unsupported build number: $build."
+            exit 1
+          fi
+
+          {
+            echo "path=$ipa_path"
+            echo "name=$ipa_name"
+            echo "bundle_id=$bundle_id"
+            echo "version=$version"
+            echo "build=$build"
+            echo "sha256=$(shasum -a 256 "$ipa_path" | awk '{print $1}')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Prepare App Store release notes
+        id: notes
+        env:
+          NOTES_VERSION: ${{ steps.release.outputs.notes_version }}
+        run: |
+          set -Eeuo pipefail
+          notes_path="$RUNNER_TEMP/app-store-release-notes.txt"
+          python3 - "$NOTES_VERSION" "$notes_path" <<'PY'
+          from pathlib import Path
+          import sys
+
+          version, output = sys.argv[1:]
+          source = Path("source/ZAPSTORE_RELEASE_NOTES.md").read_text(encoding="utf-8")
+          heading = f"# Iris Chat {version}"
+          lines = source.splitlines()
+          try:
+              start = lines.index(heading) + 1
+          except ValueError as exc:
+              raise SystemExit(f"release notes are missing {heading!r}") from exc
+
+          selected = []
+          for line in lines[start:]:
+              if line.startswith("# "):
+                  break
+              selected.append(line)
+          notes = "\n".join(selected).strip()
+          if not notes:
+              raise SystemExit(f"release notes below {heading!r} are empty")
+          if len(notes) > 4000:
+              raise SystemExit("App Store release notes exceed 4000 characters")
+          Path(output).write_text(notes + "\n", encoding="utf-8")
+          PY
+          echo "path=$notes_path" >> "$GITHUB_OUTPUT"
+
+      - name: Configure App Store Connect authentication
+        env:
+          ASC_PRIVATE_KEY_P8: ${{ secrets.ASC_PRIVATE_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -Eeuo pipefail
+          for name in ASC_PRIVATE_KEY_P8 ASC_KEY_ID ASC_ISSUER_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required App Store Connect secret: $name"
+              exit 1
+            fi
+          done
+
+          key_path="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
+          ASC_KEY_PATH="$key_path" python3 <<'PY'
+          import os
+          from pathlib import Path
+
+          raw_key = os.environ["ASC_PRIVATE_KEY_P8"]
+          if "\\n" in raw_key and "\n" not in raw_key:
+              raw_key = raw_key.replace("\\n", "\n")
+          if not raw_key.endswith("\n"):
+              raw_key += "\n"
+          Path(os.environ["ASC_KEY_PATH"]).write_text(raw_key, encoding="utf-8")
+          PY
+          chmod 600 "$key_path"
+          {
+            echo "IRIS_ASC_AUTH_KEY_PATH=$key_path"
+            echo "IRIS_ASC_AUTH_KEY_ID=$ASC_KEY_ID"
+            echo "IRIS_ASC_AUTH_KEY_ISSUER_ID=$ASC_ISSUER_ID"
+          } >> "$GITHUB_ENV"
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Install fastlane
+        run: |
+          set -Eeuo pipefail
+          gem install fastlane --version "$FASTLANE_VERSION" --no-document
+          fastlane --version
+
+      - name: Upload and submit App Store build
+        env:
+          IPA_PATH: ${{ steps.ipa.outputs.path }}
+          APP_VERSION: ${{ steps.ipa.outputs.version }}
+          BUILD_NUMBER: ${{ steps.ipa.outputs.build }}
+          RELEASE_NOTES_PATH: ${{ steps.notes.outputs.path }}
+          UPLOAD_BINARY: ${{ inputs.upload_binary }}
+          SUBMIT_FOR_REVIEW: ${{ inputs.submit_for_review }}
+          RELEASE_MODE: ${{ inputs.release_mode }}
+        run: |
+          set -Eeuo pipefail
+          work_dir="$RUNNER_TEMP/app-store-fastlane"
+          mkdir -p "$work_dir/fastlane"
+          cat > "$work_dir/fastlane/Fastfile" <<'RUBY'
+          default_platform(:ios)
+
+          platform :ios do
+            lane :release do
+              api_key = app_store_connect_api_key(
+                key_id: ENV.fetch("IRIS_ASC_AUTH_KEY_ID"),
+                issuer_id: ENV.fetch("IRIS_ASC_AUTH_KEY_ISSUER_ID"),
+                key_filepath: ENV.fetch("IRIS_ASC_AUTH_KEY_PATH"),
+                duration: 1200,
+                in_house: false
+              )
+
+              release_mode = ENV.fetch("RELEASE_MODE")
+              upload_to_app_store(
+                api_key: api_key,
+                app_identifier: ENV.fetch("IRIS_IOS_BUNDLE_ID"),
+                ipa: ENV.fetch("IPA_PATH"),
+                app_version: ENV.fetch("APP_VERSION"),
+                build_number: ENV.fetch("BUILD_NUMBER"),
+                release_notes: {
+                  "en-US" => File.read(ENV.fetch("RELEASE_NOTES_PATH")).strip
+                },
+                skip_binary_upload: ENV.fetch("UPLOAD_BINARY") != "true",
+                skip_screenshots: true,
+                submit_for_review: ENV.fetch("SUBMIT_FOR_REVIEW") == "true",
+                automatic_release: release_mode != "manual",
+                phased_release: release_mode == "phased",
+                precheck_include_in_app_purchases: false,
+                submission_information: {
+                  export_compliance_uses_encryption: false
+                },
+                force: true
+              )
+            end
+          end
+          RUBY
+          cd "$work_dir"
+          fastlane ios release
+
+      - name: Write release summary
+        env:
+          RELEASE_URL: ${{ steps.release.outputs.release_url }}
+          IPA_NAME: ${{ steps.ipa.outputs.name }}
+          IPA_SHA256: ${{ steps.ipa.outputs.sha256 }}
+          APP_VERSION: ${{ steps.ipa.outputs.version }}
+          BUILD_NUMBER: ${{ steps.ipa.outputs.build }}
+          UPLOAD_BINARY: ${{ inputs.upload_binary }}
+          SUBMIT_FOR_REVIEW: ${{ inputs.submit_for_review }}
+          RELEASE_MODE: ${{ inputs.release_mode }}
+        run: |
+          {
+            echo "## iOS App Store release"
+            echo
+            echo "- source release: [$RELEASE_URL]($RELEASE_URL)"
+            echo "- IPA: \`$IPA_NAME\`"
+            echo "- SHA-256: \`$IPA_SHA256\`"
+            echo "- version: \`$APP_VERSION\`"
+            echo "- build: \`$BUILD_NUMBER\`"
+            echo "- binary upload: \`$UPLOAD_BINARY\`"
+            echo "- submitted for review: \`$SUBMIT_FOR_REVIEW\`"
+            echo "- release mode after approval: \`$RELEASE_MODE\`"
+          } >> "$GITHUB_STEP_SUMMARY"
