@@ -7,7 +7,7 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 ## Unreleased
 
-## 2026.7.23.1
+## 2026.7.27
 
 - Messages you send to yourself now reach every linked device instead of
   waiting on the sending device, and previously stuck messages recover after

@@ -1,4 +1,4 @@
-# Iris Chat 2026.7.23.1
+# Iris Chat 2026.7.27
 
 - Messages you send to yourself now reach every linked device instead of waiting on the sending device.
 - Messages stuck in that old queued state recover automatically after updating.
