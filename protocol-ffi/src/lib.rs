@@ -50,6 +50,8 @@ pub struct PubSubEvent {
     pub filter_json: Option<String>,
     pub event_json: Option<String>,
     pub sender_pubkey_hex: Option<String>,
+    pub sender_device_pubkey_hex: Option<String>,
+    pub conversation_owner_pubkey_hex: Option<String>,
     pub content: Option<String>,
     pub event_id: Option<String>,
 }
@@ -304,6 +306,29 @@ impl SessionManagerHandle {
         Ok(())
     }
 
+    pub fn process_out_of_band_response(
+        &self,
+        event_json: String,
+        expected_owner_pubkey_hex: String,
+    ) -> Result<(), NdrError> {
+        let event: Event = serde_json::from_str(&event_json)?;
+        if event.kind.as_u16() as u32 != INVITE_RESPONSE_KIND
+            || parse_invite_response_event(&event).is_err()
+        {
+            return Err(NdrError::InvalidEvent(
+                "out-of-band response must be a valid invite response event".to_string(),
+            ));
+        }
+        let expected_owner = parse_pubkey(&expected_owner_pubkey_hex)?;
+        let mut inner = self.lock_inner()?;
+        let retry = inner
+            .engine_mut()?
+            .observe_invite_response_event_for_expected_owner(&event, expected_owner)?;
+        inner.enqueue_retry_batch(retry)?;
+        inner.sync_message_subscription()?;
+        Ok(())
+    }
+
     pub fn drain_events(&self) -> Result<Vec<PubSubEvent>, NdrError> {
         let mut inner = self.lock_inner()?;
         let events: Vec<_> = inner.events.drain(..).collect();
@@ -554,6 +579,8 @@ impl SessionManagerInner {
                     filter_json: None,
                     event_json: Some(serde_json::to_string(&publish.event)?),
                     sender_pubkey_hex: None,
+                    sender_device_pubkey_hex: None,
+                    conversation_owner_pubkey_hex: None,
                     content: None,
                     event_id: publish.inner_event_id,
                 });
@@ -576,6 +603,8 @@ impl SessionManagerInner {
             filter_json: None,
             event_json: None,
             sender_pubkey_hex: Some(message.sender.to_hex()),
+            sender_device_pubkey_hex: message.sender_device.map(|pubkey| pubkey.to_hex()),
+            conversation_owner_pubkey_hex: message.conversation_owner.map(|pubkey| pubkey.to_hex()),
             content: Some(message.content),
             event_id: message.event_id,
         });
@@ -588,6 +617,8 @@ impl SessionManagerInner {
             filter_json: Some(serde_json::to_string(&filter)?),
             event_json: None,
             sender_pubkey_hex: None,
+            sender_device_pubkey_hex: None,
+            conversation_owner_pubkey_hex: None,
             content: None,
             event_id: None,
         });
@@ -615,6 +646,8 @@ impl SessionManagerInner {
                 filter_json: None,
                 event_json: None,
                 sender_pubkey_hex: None,
+                sender_device_pubkey_hex: None,
+                conversation_owner_pubkey_hex: None,
                 content: None,
                 event_id: None,
             });
@@ -633,6 +666,8 @@ impl SessionManagerInner {
             filter_json: Some(serde_json::to_string(&filter)?),
             event_json: None,
             sender_pubkey_hex: None,
+            sender_device_pubkey_hex: None,
+            conversation_owner_pubkey_hex: None,
             content: None,
             event_id: None,
         });
@@ -658,6 +693,8 @@ fn publish_startup_state(
             filter_json: None,
             event_json: Some(serde_json::to_string(&signed)?),
             sender_pubkey_hex: None,
+            sender_device_pubkey_hex: None,
+            conversation_owner_pubkey_hex: None,
             content: None,
             event_id: None,
         });
@@ -674,6 +711,8 @@ fn publish_startup_state(
             filter_json: None,
             event_json: Some(serde_json::to_string(&signed)?),
             sender_pubkey_hex: None,
+            sender_device_pubkey_hex: None,
+            conversation_owner_pubkey_hex: None,
             content: None,
             event_id: None,
         });
@@ -865,6 +904,179 @@ mod tests {
             .find(|event| event.kind == "decrypted_message")
             .expect("decrypted message");
         assert!(decrypted.content.expect("content").contains("hello"));
+    }
+
+    #[test]
+    fn oob_invite_response_is_transactionally_bound_to_expected_owner() {
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let unexpected_keys = Keys::generate();
+        let alice = manager(&alice_keys);
+        let bob = manager(&bob_keys);
+
+        alice.init().expect("alice init");
+        bob.init().expect("bob init");
+
+        let alice_invite = invite_events(alice.drain_events().expect("alice startup drain"))
+            .into_iter()
+            .next()
+            .expect("alice invite");
+        let _ = bob.drain_events().expect("bob startup drain");
+        bob.accept_invite_from_event_json(alice_invite, Some(alice_keys.public_key().to_hex()))
+            .expect("bob accepts alice invite");
+        let bob_response = publish_events(
+            bob.drain_events().expect("bob response drain"),
+            INVITE_RESPONSE_KIND,
+        )
+        .into_iter()
+        .next()
+        .expect("bob response");
+
+        alice
+            .process_out_of_band_response(
+                bob_response.clone(),
+                unexpected_keys.public_key().to_hex(),
+            )
+            .expect_err("wrong authenticated owner must be rejected");
+        assert!(alice
+            .get_active_session_state(bob_keys.public_key().to_hex())
+            .expect("bob state after rejection")
+            .is_none());
+        assert!(alice
+            .get_active_session_state(unexpected_keys.public_key().to_hex())
+            .expect("unexpected state after rejection")
+            .is_none());
+
+        alice
+            .process_out_of_band_response(bob_response, bob_keys.public_key().to_hex())
+            .expect("the same response must remain usable after rollback");
+        assert!(alice
+            .get_active_session_state(bob_keys.public_key().to_hex())
+            .expect("bob state after acceptance")
+            .is_some());
+    }
+
+    #[test]
+    fn oob_invite_response_uses_claimed_account_owner_for_multi_device_peer() {
+        let alice_keys = Keys::generate();
+        let bob_owner_keys = Keys::generate();
+        let bob_device_keys = Keys::generate();
+        let alice = manager(&alice_keys);
+        let bob_device = manager_with_owner(&bob_device_keys, bob_owner_keys.public_key());
+
+        alice.init().expect("alice init");
+        bob_device.init().expect("bob device init");
+        let alice_invite = invite_events(alice.drain_events().expect("alice startup drain"))
+            .into_iter()
+            .next()
+            .expect("alice invite");
+        let _ = bob_device.drain_events().expect("bob device startup drain");
+        bob_device
+            .accept_invite_from_event_json(alice_invite, Some(alice_keys.public_key().to_hex()))
+            .expect("bob device accepts alice invite");
+        let response = publish_events(
+            bob_device
+                .drain_events()
+                .expect("bob device response drain"),
+            INVITE_RESPONSE_KIND,
+        )
+        .into_iter()
+        .next()
+        .expect("bob device response");
+        let sessions_before = alice.get_total_sessions();
+
+        alice
+            .process_out_of_band_response(response.clone(), bob_device_keys.public_key().to_hex())
+            .expect_err("device key must not substitute for the claimed account owner");
+        assert_eq!(alice.get_total_sessions(), sessions_before);
+
+        alice
+            .process_out_of_band_response(response, bob_owner_keys.public_key().to_hex())
+            .expect("claimed account owner is the authenticated peer");
+        assert!(alice.get_total_sessions() > sessions_before);
+    }
+
+    #[test]
+    fn decrypted_event_exposes_verified_account_and_device_attribution() {
+        let alice_keys = Keys::generate();
+        let bob_owner_keys = Keys::generate();
+        let bob_device_keys = Keys::generate();
+        let alice = manager(&alice_keys);
+        let bob_device = manager_with_owner(&bob_device_keys, bob_owner_keys.public_key());
+
+        alice.init().expect("alice init");
+        bob_device.init().expect("bob device init");
+        let bob_invite =
+            invite_events(bob_device.drain_events().expect("bob device startup drain"))
+                .into_iter()
+                .next()
+                .expect("bob device invite");
+        let _ = alice.drain_events().expect("alice startup drain");
+
+        let roster_created_at = now_secs();
+        let bob_app_keys_event = AppKeys::new(vec![DeviceEntry::new(
+            bob_device_keys.public_key(),
+            roster_created_at,
+        )])
+        .get_event_at(bob_owner_keys.public_key(), roster_created_at)
+        .sign_with_keys(&bob_owner_keys)
+        .expect("signed bob AppKeys");
+        alice
+            .process_event(serde_json::to_string(&bob_app_keys_event).expect("AppKeys JSON"))
+            .expect("alice processes bob AppKeys");
+        let _ = alice.drain_events().expect("alice roster drain");
+
+        alice
+            .accept_invite_from_event_json(bob_invite, Some(bob_owner_keys.public_key().to_hex()))
+            .expect("alice accepts verified bob device");
+        let alice_accept_events = alice.drain_events().expect("alice accept drain");
+        for response in publish_events(alice_accept_events.clone(), INVITE_RESPONSE_KIND) {
+            bob_device
+                .process_out_of_band_response(response, alice_keys.public_key().to_hex())
+                .expect("bob device processes alice response");
+        }
+        for bootstrap in publish_events(alice_accept_events, MESSAGE_EVENT_KIND) {
+            bob_device
+                .process_event(bootstrap)
+                .expect("bob device processes alice bootstrap");
+        }
+        let _ = bob_device.drain_events().expect("bob bootstrap drain");
+
+        bob_device
+            .send_text(
+                alice_keys.public_key().to_hex(),
+                "hello from a child device".to_string(),
+                None,
+            )
+            .expect("bob device sends");
+        for message in publish_events(
+            bob_device.drain_events().expect("bob send drain"),
+            MESSAGE_EVENT_KIND,
+        ) {
+            alice
+                .process_event(message)
+                .expect("alice processes bob message");
+        }
+        let decrypted = alice
+            .drain_events()
+            .expect("alice decrypted drain")
+            .into_iter()
+            .find(|event| event.kind == "decrypted_message")
+            .expect("decrypted event");
+
+        assert_eq!(
+            decrypted.sender_pubkey_hex,
+            Some(bob_owner_keys.public_key().to_hex())
+        );
+        assert_eq!(
+            decrypted.sender_device_pubkey_hex,
+            Some(bob_device_keys.public_key().to_hex())
+        );
+        assert_ne!(
+            decrypted.sender_pubkey_hex,
+            decrypted.sender_device_pubkey_hex
+        );
+        assert_eq!(decrypted.conversation_owner_pubkey_hex, None);
     }
 
     #[test]

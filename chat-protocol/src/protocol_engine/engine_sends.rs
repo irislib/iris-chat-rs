@@ -142,6 +142,22 @@ impl ProtocolEngine {
         &mut self,
         event: &Event,
     ) -> anyhow::Result<ProtocolRetryBatch> {
+        self.observe_invite_response_event_inner(event, None)
+    }
+
+    pub fn observe_invite_response_event_for_expected_owner(
+        &mut self,
+        event: &Event,
+        expected_owner: PublicKey,
+    ) -> anyhow::Result<ProtocolRetryBatch> {
+        self.observe_invite_response_event_inner(event, Some(ndr_owner(expected_owner)))
+    }
+
+    fn observe_invite_response_event_inner(
+        &mut self,
+        event: &Event,
+        expected_owner: Option<NdrOwnerPubkey>,
+    ) -> anyhow::Result<ProtocolRetryBatch> {
         let Some(local_invite_recipient) = self
             .session_manager
             .snapshot()
@@ -155,10 +171,7 @@ impl ProtocolEngine {
         if envelope.recipient != local_invite_recipient {
             return Ok(ProtocolRetryBatch::default());
         }
-        let session_checkpoint = self.session_manager.clone();
-        let pending_inbound_checkpoint = self.pending_inbound.clone();
-        let pending_group_fanouts_checkpoint = self.pending_group_fanouts.clone();
-        let pending_group_pairwise_checkpoint = self.pending_group_pairwise_payloads.clone();
+        let checkpoint = self.state_checkpoint();
         let mut rng = OsRng;
         let mut ctx = ProtocolContext::new(NdrUnixSeconds(event.created_at.as_secs()), &mut rng);
         let processed = match self
@@ -171,6 +184,19 @@ impl ProtocolEngine {
             }
             Err(error) => return Err(error.into()),
         };
+        if let (Some(expected_owner), Some(processed)) = (expected_owner, processed.as_ref()) {
+            let actual_owner = processed
+                .claimed_owner_pubkey
+                .unwrap_or(processed.owner_pubkey);
+            if actual_owner != expected_owner {
+                self.restore_checkpoint(checkpoint);
+                return Err(anyhow::anyhow!(
+                    "invite response owner {} does not match expected authenticated owner {}",
+                    actual_owner.to_hex(),
+                    expected_owner.to_hex()
+                ));
+            }
+        }
         self.invalidate_known_message_author_cache();
         if let Some(processed) = processed.as_ref() {
             self.wake_pending_protocol_for_owner(
@@ -180,11 +206,7 @@ impl ProtocolEngine {
             );
         }
         if let Err(error) = self.persist() {
-            self.session_manager = session_checkpoint;
-            self.pending_inbound = pending_inbound_checkpoint;
-            self.pending_group_fanouts = pending_group_fanouts_checkpoint;
-            self.pending_group_pairwise_payloads = pending_group_pairwise_checkpoint;
-            self.invalidate_known_message_author_cache();
+            self.restore_checkpoint(checkpoint);
             return Err(error);
         }
         self.retry_pending_protocol(ctx.now)
