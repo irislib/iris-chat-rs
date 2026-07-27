@@ -7,6 +7,10 @@ metadata is mirrored in `ZAPSTORE_RELEASE_NOTES.md`.
 
 ## Unreleased
 
+## 2026.7.27.1
+
+- Rebuilt the iOS release with Xcode 26 for current App Store compatibility.
+
 ## 2026.7.27
 
 - Messages you send to yourself now reach every linked device instead of

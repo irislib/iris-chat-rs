@@ -1,3 +1,7 @@
+# Iris Chat 2026.7.27.1
+
+- Updated Apple compatibility for App Store delivery.
+
 # Iris Chat 2026.7.27
 
 - Messages you send to yourself now reach every linked device instead of waiting on the sending device.

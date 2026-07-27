@@ -195,7 +195,7 @@ jobs:
   ios:
     name: iOS archive and IPA
     needs: metadata
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 120
     environment: ios-build
     env: *build_metadata

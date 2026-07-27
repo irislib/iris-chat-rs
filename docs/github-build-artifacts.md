@@ -83,7 +83,7 @@ Required environment secrets:
 
 ### iOS
 
-Runs on `macos-15` using the existing archive/export implementation in
+Runs on `macos-26` using the existing archive/export implementation in
 `scripts/ios-release`. It imports a reusable distribution identity and three
 App Store profiles, verifies the signed app, and stores the IPA and zipped
 xcarchive. It never invokes the upload or TestFlight commands and never asks
