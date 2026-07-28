@@ -10,8 +10,8 @@ static HTTP host.
 
 Required:
   --version <version>              Release version, for example: v0.1.19
-  --release-base-url <url>         Asset base URL containing iris-<target>.tar.gz files
-  --assets-dir <dir>               Directory containing iris-<target>.tar.gz files
+  --release-base-url <url>         Immutable Hashtree asset base URL
+  --assets-dir <dir>               Directory containing iris-<tag>-<target>.tar.gz files
   --output-dir <dir>               Output directory for the bare tap repository
 
 Optional:
@@ -25,9 +25,6 @@ Optional:
 The generated formula installs the iris command line app.
 EOF
 }
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 VERSION=""
 RELEASE_BASE_URL=""
@@ -68,7 +65,7 @@ escape_ruby_string() {
 
 checksum_for_target() {
   local target="$1"
-  local file="$ASSETS_DIR/iris-${target}.tar.gz"
+  local file="$ASSETS_DIR/iris-${VERSION}-${target}.tar.gz"
 
   if [[ ! -f "$file" ]]; then
     echo "Missing release archive: $file" >&2
@@ -109,10 +106,10 @@ class ${class_name} < Formula
 
   on_macos do
     if Hardware::CPU.arm?
-      url "${release_base_url_escaped}/iris-aarch64-apple-darwin.tar.gz"
+      url "${release_base_url_escaped}/iris-${VERSION}-aarch64-apple-darwin.tar.gz"
       sha256 "${sha_macos_arm}"
     else
-      url "${release_base_url_escaped}/iris-x86_64-apple-darwin.tar.gz"
+      url "${release_base_url_escaped}/iris-${VERSION}-x86_64-apple-darwin.tar.gz"
       sha256 "${sha_macos_x86}"
     end
   end
@@ -121,7 +118,7 @@ class ${class_name} < Formula
     if Hardware::CPU.arm?
       odie "Linux ARM64 Homebrew install is not available yet; use the release install script instead."
     else
-      url "${release_base_url_escaped}/iris-x86_64-unknown-linux-gnu.tar.gz"
+      url "${release_base_url_escaped}/iris-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "${sha_linux_x86}"
     end
   end

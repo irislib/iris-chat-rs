@@ -8,88 +8,60 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
-    def test_app_store_release_uses_the_exact_tagged_ipa(self) -> None:
-        workflow = (ROOT / ".github/workflows/ios-app-store-release.yml").read_text()
+    def test_release_builds_manifest_and_attests_every_file(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        self.assertIn("scripts/release-manifest.py create", workflow)
+        self.assertIn("subject-path: artifacts/*", workflow)
+        self.assertIn("git cat-file -t", workflow)
+        self.assertIn("git merge-base --is-ancestor HEAD origin/main", workflow)
+        self.assertIn("gh release verify-asset", workflow)
+        self.assertIn("--json isImmutable", workflow)
+        self.assertIn("if: steps.existing.outputs.exists != 'true'", workflow)
+        self.assertIn("--channel github", workflow)
+        self.assertIn("--notes RELEASE_NOTES.md", workflow)
+        self.assertNotIn("CHANGELOG.md", workflow)
+        self.assertNotIn("ZAPSTORE_RELEASE_NOTES.md", workflow)
 
-        self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn('ipa_name="iris-chat-${RELEASE_TAG}-ios.ipa"', workflow)
-        self.assertIn('gh release download "$RELEASE_TAG"', workflow)
-        self.assertIn("app_store_connect_api_key(", workflow)
-        self.assertIn("submit_for_review:", workflow)
-        self.assertIn('release_options[:ipa] = ENV.fetch("IPA_PATH")', workflow)
-        self.assertIn(
-            'release_options[:build_number] = ENV.fetch("BUILD_NUMBER")',
-            workflow,
-        )
-        self.assertIn(
-            'skip_app_version_update: ENV.fetch("REUSE_APP_STORE_VERSION") == "true"',
-            workflow,
-        )
-        self.assertIn("environment: ios-app-store-release", workflow)
-        self.assertNotIn("./scripts/ios-release archive", workflow)
-
-    def test_ios_ipa_is_flattened_for_release_assembly(self) -> None:
+    def test_build_workflow_uploads_only_canonical_names(self) -> None:
         workflow = (ROOT / ".github/workflows/build-artifacts.yml").read_text()
-        self.assertIn('ipa_output="dist/ios/iris-chat-v${IRIS_APP_VERSION_NAME}-ios.ipa"', workflow)
-        self.assertIn('cp "$ipa" "$ipa_output"', workflow)
-        self.assertIn("${{ env.APP_DIR }}/dist/ios/*.ipa", workflow)
-        self.assertNotIn("${{ env.APP_DIR }}/dist/ios/**/*.ipa", workflow)
+        self.assertIn("iris-chat-v${IRIS_APP_VERSION_NAME}-android-arm64.apk", workflow)
+        self.assertIn("iris-v${IRIS_APP_VERSION_NAME}-${target}.tar.gz", workflow)
+        upload_paths = "\n".join(
+            line for line in workflow.splitlines() if "dist/android/" in line
+        )
+        self.assertNotIn("dist/android/*.apk", upload_paths)
+        self.assertNotIn("latest", upload_paths)
+        self.assertIn("runs-on: macos-26", workflow)
 
-    def test_release_verifier_requires_flat_assets(self) -> None:
-        workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        self.assertIn('compgen -G "artifacts/$pattern"', workflow)
-        self.assertIn("'*.ipa'", workflow)
-
-    def test_github_and_self_publish_share_release_notes_renderer(self) -> None:
-        workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        local_release = (ROOT / "scripts/release").read_text()
-        renderer = "scripts/render-release-notes.py"
-
-        self.assertIn(renderer, workflow)
-        self.assertIn(renderer, local_release)
-        self.assertIn("--asset-base-url", workflow)
-        self.assertIn("--verification-line", workflow)
-        self.assertIn("--install-url", local_release)
-
-    def test_local_release_handles_an_empty_skipped_platform_list(self) -> None:
-        local_release = (ROOT / "scripts/release").read_text()
-
+    def test_one_apple_workflow_reuses_exact_tagged_ipa(self) -> None:
+        workflow = (ROOT / ".github/workflows/ios-distribution.yml").read_text()
+        self.assertIn("- testflight", workflow)
+        self.assertIn("- app-store", workflow)
+        self.assertIn('ipa_name="iris-chat-${RELEASE_TAG}-ios.ipa"', workflow)
+        self.assertIn("gh attestation verify", workflow)
+        self.assertIn("gh release verify-asset", workflow)
+        self.assertIn("--json isDraft,isImmutable,isPrerelease,url", workflow)
+        self.assertIn("--commit \"$(git -C source rev-parse HEAD)\"", workflow)
+        self.assertIn('expected_version="$(apple_marketing_version', workflow)
+        self.assertIn('expected_build="$(semantic_version_code', workflow)
+        self.assertIn("existing_build", workflow)
+        self.assertIn("distribute_only", workflow)
         self.assertIn(
-            'for line in ${SKIPPED_LINES[@]+"${SKIPPED_LINES[@]}"}; do',
-            local_release,
+            "IRIS_TESTFLIGHT_GROUPS must name at least one internal group",
+            workflow,
         )
-        self.assertIn(
-            'for built in ${BUILT_STEPS[@]+"${BUILT_STEPS[@]}"}; do',
-            local_release,
-        )
+        self.assertIn("get_edit_app_store_version", workflow)
+        self.assertIn("completed_states", workflow)
+        self.assertIn("attached_build = exact_version.build&.version", workflow)
+        self.assertIn("submit_for_review: true", workflow)
+        self.assertNotIn("./scripts/ios-release archive", workflow)
+        self.assertFalse((ROOT / ".github/workflows/ios-testflight-upload.yml").exists())
+        self.assertFalse((ROOT / ".github/workflows/android-release-apk.yml").exists())
 
-    def test_local_release_can_resume_an_exact_staged_build(self) -> None:
-        local_release = (ROOT / "scripts/release").read_text()
-
-        self.assertIn("--resume-staged", local_release)
-        self.assertIn('load_staged_release "$EXPECTED_COMMIT"', local_release)
-        self.assertIn('"$ROOT/scripts/validate-staged-release.py"', local_release)
-        self.assertIn('COMMIT="$EXPECTED_COMMIT"', local_release)
-
-    def test_only_cli_archives_are_marked_executable(self) -> None:
-        local_release = (ROOT / "scripts/release").read_text()
-
-        self.assertIn(
-            "iris-aarch64-*.tar.gz|iris-x86_64-*.tar.gz)",
-            local_release,
-        )
-        self.assertNotIn(
-            "case \"$name\" in\n        iris-*.tar.gz)",
-            local_release,
-        )
-
-    def test_zapstore_reuses_the_staged_signed_apk(self) -> None:
-        local_release = (ROOT / "scripts/release").read_text()
-
-        self.assertIn(
-            'ZAPSTORE_APK_PATH="$STAGE_DIR/assets/iris-chat-${TAG}-android-arm64.apk"',
-            local_release,
-        )
+    def test_only_supported_operator_entrypoint_is_active(self) -> None:
+        self.assertTrue((ROOT / "scripts/distribute").exists())
+        self.assertFalse((ROOT / "scripts/release").exists())
+        self.assertTrue((ROOT / "scripts/legacy/release/local-build-and-publish").exists())
 
 
 if __name__ == "__main__":

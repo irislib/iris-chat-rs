@@ -1,0 +1,318 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/distribution_common.sh"
+
+CHANNEL="${1:-}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+TAG=""
+CHECK_ONLY=0
+DOWNLOAD_DIR=""
+RELEASE_URL=""
+PUBLISHED_AT=""
+
+usage() {
+  cat <<'EOF'
+usage: ./scripts/distribute <hashtree|homebrew|zapstore> --tag <vYYYY.M.D[.N]> [--check]
+
+Promote exact, attested assets from an existing stable GitHub Release.
+The command never builds artifacts and never chooses a tag implicitly.
+
+Options:
+  --tag <tag>  Required immutable GitHub release tag.
+  --check      Validate the release, assets, and local signer without publishing.
+  -h, --help   Show this help.
+
+Local signer paths:
+  IRIS_HASHTREE_NSEC_PATH  ~/.config/iris-chat/htree-nsec
+  IRIS_HASHTREE_DATA_DIR   ~/.config/iris-chat/htree-release-data
+  IRIS_ZAPSTORE_NSEC_PATH  ~/.config/iris-chat/zapstore-nsec
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tag)
+      TAG="${2:-}"
+      shift 2
+      ;;
+    --check)
+      CHECK_ONLY=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "$CHANNEL" in
+  hashtree|homebrew|zapstore) ;;
+  -h|--help|help|"")
+    usage
+    exit 0
+    ;;
+  *)
+    echo "Unsupported distribution channel: $CHANNEL" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
+
+if [[ ! "$TAG" =~ ^v[0-9]{4}\.[1-9][0-9]?\.[1-9][0-9]?(\.[1-9][0-9]?)?$ ]]; then
+  echo "--tag must be an explicit release-date tag such as v2026.7.28." >&2
+  exit 2
+fi
+
+require_command gh
+require_command python3
+require_command jq
+"$ROOT/scripts/release-manifest.py" validate-tag --tag "$TAG"
+
+cleanup() {
+  if [[ -n "$DOWNLOAD_DIR" && -d "$DOWNLOAD_DIR" ]]; then
+    rm -rf "$DOWNLOAD_DIR"
+  fi
+}
+trap cleanup EXIT
+
+release_preflight() {
+  local release_json manifest_name expected_assets actual_assets
+  release_json="$(gh release view "$TAG" \
+    --repo "$IRIS_GITHUB_REPOSITORY" \
+    --json assets,isDraft,isImmutable,isPrerelease,publishedAt,tagName,url)"
+  if [[ "$(jq -r '.tagName' <<<"$release_json")" != "$TAG" ]]; then
+    echo "GitHub returned a different release tag." >&2
+    exit 1
+  fi
+  if [[ "$(jq -r '.isDraft' <<<"$release_json")" != "false" ]]; then
+    echo "$TAG is still a draft GitHub Release." >&2
+    exit 1
+  fi
+  if [[ "$(jq -r '.isPrerelease' <<<"$release_json")" != "false" ]]; then
+    echo "$TAG is a prerelease; stable distribution is refused." >&2
+    exit 1
+  fi
+  if [[ "$(jq -r '.isImmutable' <<<"$release_json")" != "true" ]]; then
+    echo "$TAG is not an immutable GitHub Release." >&2
+    exit 1
+  fi
+  gh release verify "$TAG" \
+    --repo "$IRIS_GITHUB_REPOSITORY" >/dev/null
+
+  manifest_name="iris-chat-${TAG}-manifest.json"
+  expected_assets="$(
+    {
+      all_asset_names
+      printf '%s\n' "$manifest_name"
+    } | jq -Rsc 'split("\n")[:-1] | sort'
+  )"
+  actual_assets="$(jq -c '[.assets[].name] | sort' <<<"$release_json")"
+  if [[ "$actual_assets" != "$expected_assets" ]]; then
+    echo "$TAG does not contain the exact canonical GitHub Release asset set." >&2
+    exit 1
+  fi
+
+  RELEASE_URL="$(jq -r '.url' <<<"$release_json")"
+  PUBLISHED_AT="$(jq -r '.publishedAt' <<<"$release_json")"
+  DOWNLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/iris-distribute.XXXXXX")"
+  gh release download "$TAG" \
+    --repo "$IRIS_GITHUB_REPOSITORY" \
+    --pattern "$manifest_name" \
+    --dir "$DOWNLOAD_DIR"
+  gh attestation verify "$DOWNLOAD_DIR/$manifest_name" \
+    --repo "$IRIS_GITHUB_REPOSITORY" >/dev/null
+  gh release verify-asset "$TAG" "$DOWNLOAD_DIR/$manifest_name" \
+    --repo "$IRIS_GITHUB_REPOSITORY" >/dev/null
+}
+
+download_asset() {
+  local name="$1"
+  gh release download "$TAG" \
+    --repo "$IRIS_GITHUB_REPOSITORY" \
+    --pattern "$name" \
+    --dir "$DOWNLOAD_DIR"
+  gh attestation verify "$DOWNLOAD_DIR/$name" \
+    --repo "$IRIS_GITHUB_REPOSITORY" >/dev/null
+  gh release verify-asset "$TAG" "$DOWNLOAD_DIR/$name" \
+    --repo "$IRIS_GITHUB_REPOSITORY" >/dev/null
+}
+
+verify_downloads() {
+  local manifest_name="iris-chat-${TAG}-manifest.json"
+  local args=(
+    verify
+    --tag "$TAG"
+    --manifest "$DOWNLOAD_DIR/$manifest_name"
+    --asset-dir "$DOWNLOAD_DIR"
+  )
+  local name
+  for name in "$@"; do
+    args+=(--require-name "$name")
+  done
+  "$ROOT/scripts/release-manifest.py" "${args[@]}"
+}
+
+all_asset_names() {
+  python3 - "$TAG" <<'PY'
+import sys
+tag = sys.argv[1]
+names = [
+    f"iris-chat-{tag}-android-arm64.apk",
+    f"iris-chat-{tag}-android-arm64.aab",
+    f"iris-chat-{tag}-ios.ipa",
+    f"iris-chat-{tag}-ios.xcarchive.zip",
+    f"iris-chat-{tag}-macos-arm64.dmg",
+    f"iris-chat-{tag}-macos-arm64.app.tar.gz",
+    f"iris-chat-{tag}-windows-x64-setup.exe",
+    f"iris-chat-{tag}-windows-x64.zip",
+    f"iris-chat-{tag}-linux-x64.deb",
+    f"iris-chat-{tag}-linux-x64.tar.gz",
+    f"iris-{tag}-aarch64-apple-darwin.tar.gz",
+    f"iris-{tag}-x86_64-apple-darwin.tar.gz",
+    f"iris-{tag}-x86_64-unknown-linux-gnu.tar.gz",
+]
+print(*names, sep="\n")
+PY
+}
+
+write_cli_installer() {
+  local output="$1"
+  local base_url="$2"
+  local tag="$3"
+  sed \
+    -e "s|@BASE_URL@|$base_url|g" \
+    -e "s|@RELEASE_TAG@|$tag|g" \
+    "$ROOT/packaging/homebrew/install-from-release.sh.in" > "$output"
+  chmod +x "$output"
+}
+
+publish_hashtree() {
+  local assets=()
+  local name stage_dir add_output cid
+  require_hashtree_identity
+  while IFS= read -r name; do
+    assets+=("$name")
+    download_asset "$name"
+  done < <(all_asset_names)
+  verify_downloads "${assets[@]}"
+  if [[ "$CHECK_ONLY" -eq 1 ]]; then
+    echo "Hashtree preflight passed for $TAG ($IRIS_HASHTREE_PUBLISHER_NPUB)."
+    return
+  fi
+
+  gh release view "$TAG" \
+    --repo "$IRIS_GITHUB_REPOSITORY" \
+    --json body \
+    --jq .body > "$DOWNLOAD_DIR/notes.md"
+  stage_dir="$DOWNLOAD_DIR/htree/$TAG"
+  "$ROOT/scripts/release-manifest.py" stage-hashtree \
+    --tag "$TAG" \
+    --manifest "$DOWNLOAD_DIR/iris-chat-${TAG}-manifest.json" \
+    --asset-dir "$DOWNLOAD_DIR" \
+    --notes "$DOWNLOAD_DIR/notes.md" \
+    --out-dir "$stage_dir" \
+    --published-at "$PUBLISHED_AT"
+  write_cli_installer "$stage_dir/install.sh" "$(hashtree_gateway_base_url "$TAG")" "$TAG"
+
+  add_output="$(HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" htree add "$stage_dir")"
+  cid="$(awk '/^[[:space:]]*(url|cid):[[:space:]]/ { print $2; exit }' <<<"$add_output")"
+  if [[ -z "$cid" ]]; then
+    echo "Could not read the staged Hashtree CID." >&2
+    exit 1
+  fi
+  HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" \
+    htree release publish "$IRIS_HASHTREE_RELEASE_TREE" "$TAG" "$cid"
+  echo "Published $TAG to Hashtree: $(hashtree_gateway_base_url "$TAG")"
+}
+
+publish_homebrew() {
+  local assets=(
+    "iris-${TAG}-aarch64-apple-darwin.tar.gz"
+    "iris-${TAG}-x86_64-apple-darwin.tar.gz"
+    "iris-${TAG}-x86_64-unknown-linux-gnu.tar.gz"
+  )
+  local name release_json
+  require_hashtree_identity
+  require_command curl
+  release_json="$DOWNLOAD_DIR/hashtree-release.json"
+  curl -fsSL "$(hashtree_gateway_base_url "$TAG")/release.json" -o "$release_json"
+  if [[ "$(jq -r '.tag' "$release_json")" != "$TAG" ]]; then
+    echo "Hashtree $TAG must be published before Homebrew." >&2
+    exit 1
+  fi
+  for name in "${assets[@]}"; do
+    download_asset "$name"
+  done
+  verify_downloads "${assets[@]}"
+  if [[ "$CHECK_ONLY" -eq 1 ]]; then
+    echo "Homebrew preflight passed for $TAG ($IRIS_HASHTREE_PUBLISHER_NPUB)."
+    return
+  fi
+  HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" \
+    "$ROOT/packaging/homebrew/publish_tap.sh" \
+      --version "$TAG" \
+      --release-base-url "$(hashtree_gateway_base_url "$TAG")/assets" \
+      --assets-dir "$DOWNLOAD_DIR" \
+      --npub "$IRIS_HASHTREE_PUBLISHER_NPUB"
+}
+
+publish_zapstore() {
+  local apk_name="iris-chat-${TAG}-android-arm64.apk"
+  local config notes nsec
+  require_command base64
+  require_command sed
+  require_zapstore_identity
+  download_asset "$apk_name"
+  verify_downloads "$apk_name"
+
+  notes="$DOWNLOAD_DIR/zapstore-notes.md"
+  gh api "repos/$IRIS_GITHUB_REPOSITORY/contents/RELEASE_NOTES.md?ref=$TAG" \
+    --jq .content |
+    base64 --decode > "$DOWNLOAD_DIR/RELEASE_NOTES.md"
+  "$ROOT/scripts/render-release-notes.py" \
+    --channel zapstore \
+    --tag "$TAG" \
+    --notes "$DOWNLOAD_DIR/RELEASE_NOTES.md" \
+    --out "$notes"
+  config="$DOWNLOAD_DIR/zapstore.yaml"
+  sed \
+    -e "s|^pubkey: .*|pubkey: $IRIS_ZAPSTORE_PUBLISHER_NPUB|" \
+    -e "s|^release_source: .*|release_source: $DOWNLOAD_DIR/$apk_name|" \
+    -e "s|^release_notes: .*|release_notes: $notes|" \
+    "$ROOT/zapstore.yaml" > "$config"
+
+  if [[ "$CHECK_ONLY" -eq 1 ]]; then
+    zsp publish --check "$config"
+    echo "Zapstore preflight passed for $TAG ($IRIS_ZAPSTORE_PUBLISHER_NPUB)."
+    return
+  fi
+  nsec="$(read_nsec "$IRIS_ZAPSTORE_NSEC_PATH")"
+  SIGN_WITH="$nsec" zsp publish "$config" \
+    --channel main \
+    --quiet \
+    --skip-preview \
+    --overwrite-release
+  unset nsec
+  echo "Published $TAG to Zapstore."
+}
+
+release_preflight
+case "$CHANNEL" in
+  hashtree) publish_hashtree ;;
+  homebrew) publish_homebrew ;;
+  zapstore) publish_zapstore ;;
+esac
+
+echo "Source GitHub Release: $RELEASE_URL"

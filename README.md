@@ -88,22 +88,8 @@ just windows-build
 just linux-release
 ```
 
-Release helpers:
-
-```bash
-just release
-just release-publish
-./scripts/android-release
-./scripts/ios-release
-just macos-dmg
-just windows-installer
-just linux-release
-```
-
-`just release-publish` stages release artifacts under `dist/release/`
-and publishes the release tree to hashtree. It runs the release gate first,
-publishes a new `iris-chat` crate version when needed, and sends iOS builds to
-internal and public TestFlight unless skipped.
+Releases are built once in GitHub Actions and promoted unchanged to every
+distribution channel. See the [release and distribution playbook](RELEASE.md).
 
 ## Command Line
 
@@ -118,13 +104,6 @@ Or install a prebuilt macOS/Linux binary directly:
 
 ```bash
 curl -fsSL https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/releases%2Firis-chat-rs/latest/install.sh | sh
-```
-
-Or build it from crates.io with Cargo:
-
-```bash
-cargo install iris-chat
-iris --help
 ```
 
 The `iris` command is useful for humans, agents, scripts, and local devices
@@ -148,7 +127,6 @@ device messages off a remote server when the devices are close enough.
 ## More
 
 - [Release guide](RELEASE.md)
-- [Zapstore release](docs/release-zapstore.md)
 - [Android beta release](BETA_RELEASE.md)
 - [Architecture](ARCHITECTURE.md)
 - [UI/UX flows](UI_UX_FLOWS.md)

@@ -4,7 +4,7 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-COMMON = ROOT / "scripts/release_common.sh"
+COMMON = ROOT / "scripts/build_common.sh"
 
 
 def version_code(version: str) -> subprocess.CompletedProcess[str]:
@@ -23,7 +23,7 @@ def version_code(version: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-class ReleaseVersionCodeTests(unittest.TestCase):
+class BuildVersionCodeTests(unittest.TestCase):
     def assert_code(self, version: str, expected: int) -> None:
         result = version_code(version)
         self.assertEqual(result.returncode, 0, result.stderr)

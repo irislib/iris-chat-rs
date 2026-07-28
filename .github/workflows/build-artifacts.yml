@@ -82,7 +82,7 @@ jobs:
           REQUESTED_REF: ${{ inputs.ref }}
         run: |
           set -Eeuo pipefail
-          source scripts/release_common.sh
+          source scripts/build_common.sh
           commit="$(git rev-parse HEAD)"
           requested_tag="${REQUESTED_REF#refs/tags/}"
           if [[ "$requested_tag" =~ ^v([0-9]+(\.[0-9]+){2,3}([-+][0-9A-Za-z.-]+)?)$ ]]; then
@@ -182,13 +182,15 @@ jobs:
           build_tools="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}/build-tools/36.0.0"
           "$build_tools/apksigner" verify --verbose --print-certs "$apk"
           jarsigner -verify "$aab" 2>&1 | grep '^jar verified' >/dev/null
+          mv "$apk" "dist/android/iris-chat-v${IRIS_APP_VERSION_NAME}-android-arm64.apk"
+          mv "$aab" "dist/android/iris-chat-v${IRIS_APP_VERSION_NAME}-android-arm64.aab"
       - name: Upload Android build
         uses: actions/upload-artifact@v7
         with:
           name: iris-android-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
           path: |
-            ${{ env.APP_DIR }}/dist/android/*.apk
-            ${{ env.APP_DIR }}/dist/android/*.aab
+            ${{ env.APP_DIR }}/dist/android/iris-chat-v${{ needs.metadata.outputs.version_name }}-android-arm64.apk
+            ${{ env.APP_DIR }}/dist/android/iris-chat-v${{ needs.metadata.outputs.version_name }}-android-arm64.aab
           if-no-files-found: error
           retention-days: ${{ inputs.artifact_retention_days }}
 
@@ -282,9 +284,11 @@ jobs:
           verify_profile() {
             local profile="$1"
             local expected_app_id="$2"
-            local expected_app_group="group.$IOS_BUNDLE_ID"
-            local decoded_profile="$signing_dir/$(basename "$profile").plist"
+            local expected_app_group
+            local decoded_profile
             local actual_uuid actual_app_id actual_app_groups
+            expected_app_group="group.$IOS_BUNDLE_ID"
+            decoded_profile="$signing_dir/$(basename "$profile").plist"
             security cms -D -i "$profile" > "$decoded_profile"
             actual_uuid="$(plutil -extract UUID raw -o - "$decoded_profile")"
             actual_app_id="$(plutil -extract Entitlements.application-identifier raw -o - "$decoded_profile")"
@@ -321,7 +325,6 @@ jobs:
             echo "IRIS_IOS_SHARE_PROVISIONING_PROFILE_UUID=$IOS_SHARE_PROFILE_UUID"
             echo "IRIS_IOS_EXPORT_METHOD=app-store-connect"
             echo "IRIS_IOS_ALLOW_PROVISIONING_UPDATES=false"
-            echo "IRIS_IOS_ATTACH_INTERNAL_AFTER_UPLOAD=false"
             echo "IRIS_IOS_KEYCHAIN_PATH=$keychain"
             echo "IRIS_IOS_APP_PROFILE_PATH=$app_profile"
             echo "IRIS_IOS_NOTIFICATION_PROFILE_PATH=$notification_profile"
@@ -651,10 +654,11 @@ jobs:
               file "$extracted/iris/iris"
               ;;
           esac
+          mv "$archive" "dist/cli/iris-v${IRIS_APP_VERSION_NAME}-${target}.tar.gz"
       - name: Upload CLI build
         uses: actions/upload-artifact@v7
         with:
           name: iris-${{ matrix.platform }}-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
-          path: ${{ env.APP_DIR }}/dist/cli/iris-${{ matrix.target }}.tar.gz
+          path: ${{ env.APP_DIR }}/dist/cli/iris-v${{ needs.metadata.outputs.version_name }}-${{ matrix.target }}.tar.gz
           if-no-files-found: error
           retention-days: ${{ inputs.artifact_retention_days }}

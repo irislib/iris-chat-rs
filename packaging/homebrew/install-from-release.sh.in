@@ -1,0 +1,38 @@
+#!/bin/sh
+set -eu
+
+BASE_URL="@BASE_URL@"
+RELEASE_TAG="@RELEASE_TAG@"
+ASSET_BASE_URL="${BASE_URL}/assets"
+
+die() {
+  printf 'iris-install: error: %s\n' "$*" >&2
+  exit 1
+}
+
+cleanup() {
+  if [ -n "${temp_dir:-}" ] && [ -d "$temp_dir" ]; then
+    rm -rf "$temp_dir"
+  fi
+}
+trap cleanup EXIT HUP INT TERM
+
+case "$(uname -m)" in
+  arm64|aarch64) architecture=aarch64 ;;
+  x86_64|amd64) architecture=x86_64 ;;
+  *) die "unsupported architecture: $(uname -m)" ;;
+esac
+case "$(uname -s)" in
+  Darwin) platform=apple-darwin ;;
+  Linux) platform=unknown-linux-gnu ;;
+  *) die "unsupported operating system: $(uname -s)" ;;
+esac
+
+archive="iris-${RELEASE_TAG}-${architecture}-${platform}.tar.gz"
+temp_dir="$(mktemp -d 2>/dev/null || mktemp -d -t iris-install)"
+curl -fL "${ASSET_BASE_URL}/${archive}" -o "${temp_dir}/${archive}"
+tar -tzf "${temp_dir}/${archive}" >/dev/null 2>&1 ||
+  die "downloaded file is not a valid gzip archive"
+tar -xzf "${temp_dir}/${archive}" -C "$temp_dir"
+[ -x "$temp_dir/iris/install.sh" ] || die "packaged installer not found"
+"$temp_dir/iris/install.sh" "$@"

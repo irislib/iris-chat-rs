@@ -17,8 +17,6 @@ info:
     @echo
     @echo "Build"
     @echo "  just build"
-    @echo "  just release"
-    @echo "  just release-publish"
     @echo
     @echo "Bindings and native builds"
     @echo "  just gen-kotlin"
@@ -47,8 +45,6 @@ info:
     @echo "  just windows-installer"
     @echo "  just windows-zip"
     @echo "  just linux-release"
-    @echo "  just release"
-    @echo "  just release-publish"
     @echo
     @echo "Checks"
     @echo "  just doctor-ios"
@@ -164,12 +160,6 @@ windows-zip:
 
 linux-release:
     ./scripts/linux-release
-
-release:
-    ./scripts/release
-
-release-publish:
-    ./scripts/release --publish
 
 android-rust:
     ./scripts/android-build android-rust

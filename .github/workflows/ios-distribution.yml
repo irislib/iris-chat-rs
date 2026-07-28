@@ -1,0 +1,394 @@
+name: iOS Distribution
+
+run-name: iOS ${{ inputs.target }} ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published stable release tag whose exact IPA should be distributed."
+        required: true
+        type: string
+      target:
+        description: "Apple distribution target."
+        required: true
+        default: testflight
+        type: choice
+        options:
+          - testflight
+          - app-store
+      release_mode:
+        description: "For App Store submissions, how to release after approval."
+        required: true
+        default: automatic
+        type: choice
+        options:
+          - automatic
+          - manual
+          - phased
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-distribution-${{ inputs.target }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  FASTLANE_VERSION: 2.237.0
+  IRIS_IOS_BUNDLE_ID: ${{ vars.IRIS_IOS_BUNDLE_ID || 'fi.siriusbusiness.irischat' }}
+
+jobs:
+  release:
+    name: Distribute tagged IPA
+    runs-on: macos-15
+    timeout-minutes: 120
+    environment: ios-app-store-release
+    steps:
+      - name: Validate release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]{4}\.[1-9][0-9]?\.[1-9][0-9]?(\.[1-9][0-9]?)?$ ]]; then
+            echo "::error::Use a release-date tag such as v2026.7.28."
+            exit 2
+          fi
+
+          release_json="$(gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isImmutable,isPrerelease,url)"
+          if [[ "$(jq -r '.isDraft' <<< "$release_json")" != "false" ]]; then
+            echo "::error::$RELEASE_TAG is still a draft release."
+            exit 1
+          fi
+          if [[ "$(jq -r '.isPrerelease' <<< "$release_json")" != "false" ]]; then
+            echo "::error::$RELEASE_TAG is a prerelease and cannot be distributed to Apple."
+            exit 1
+          fi
+          if [[ "$(jq -r '.isImmutable' <<< "$release_json")" != "true" ]]; then
+            echo "::error::$RELEASE_TAG is not an immutable GitHub Release."
+            exit 1
+          fi
+          gh release verify "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" >/dev/null
+
+          {
+            echo "tag=$RELEASE_TAG"
+            echo "release_url=$(jq -r '.url' <<< "$release_json")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out tagged release metadata
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          path: source
+          fetch-depth: 1
+
+      - name: Download and verify exact release IPA
+        id: ipa
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          artifact_dir="$RUNNER_TEMP/ios-distribution"
+          ipa_name="iris-chat-${RELEASE_TAG}-ios.ipa"
+          manifest_name="iris-chat-${RELEASE_TAG}-manifest.json"
+          mkdir -p "$artifact_dir"
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ipa_name" \
+            --pattern "$manifest_name" \
+            --dir "$artifact_dir"
+          ipa_path="$artifact_dir/$ipa_name"
+          manifest_path="$artifact_dir/$manifest_name"
+          test -f "$ipa_path"
+          test -f "$manifest_path"
+
+          gh attestation verify "$ipa_path" --repo "$GITHUB_REPOSITORY"
+          gh attestation verify "$manifest_path" --repo "$GITHUB_REPOSITORY"
+          gh release verify-asset "$RELEASE_TAG" "$ipa_path" \
+            --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh release verify-asset "$RELEASE_TAG" "$manifest_path" \
+            --repo "$GITHUB_REPOSITORY" >/dev/null
+          source/scripts/release-manifest.py verify \
+            --tag "$RELEASE_TAG" \
+            --commit "$(git -C source rev-parse HEAD)" \
+            --manifest "$manifest_path" \
+            --asset-dir "$artifact_dir" \
+            --require-name "$ipa_name"
+
+          inspect_dir="$RUNNER_TEMP/app-store-inspect"
+          mkdir -p "$inspect_dir"
+          unzip -q "$ipa_path" -d "$inspect_dir"
+          app_count="$(find "$inspect_dir/Payload" -maxdepth 1 -type d -name '*.app' | wc -l | tr -d ' ')"
+          if [[ "$app_count" -ne 1 ]]; then
+            echo "::error::Expected exactly one iOS app in $ipa_name; found $app_count."
+            exit 1
+          fi
+
+          app_path="$(find "$inspect_dir/Payload" -maxdepth 1 -type d -name '*.app' -print -quit)"
+          info_plist="$app_path/Info.plist"
+          bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info_plist")"
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info_plist")"
+          build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info_plist")"
+          source "source/scripts/build_common.sh"
+          expected_version="$(apple_marketing_version "${RELEASE_TAG#v}")"
+          expected_build="$(semantic_version_code "${RELEASE_TAG#v}")"
+          if [[ "$bundle_id" != "$IRIS_IOS_BUNDLE_ID" ]]; then
+            echo "::error::IPA bundle ID $bundle_id does not match $IRIS_IOS_BUNDLE_ID."
+            exit 1
+          fi
+          if [[ "$version" != "$expected_version" ]]; then
+            echo "::error::IPA version $version does not match release version $expected_version."
+            exit 1
+          fi
+          if [[ "$build" != "$expected_build" ]]; then
+            echo "::error::IPA build $build does not match release build $expected_build."
+            exit 1
+          fi
+
+          {
+            echo "path=$ipa_path"
+            echo "name=$ipa_name"
+            echo "bundle_id=$bundle_id"
+            echo "version=$version"
+            echo "build=$build"
+            echo "sha256=$(shasum -a 256 "$ipa_path" | awk '{print $1}')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Prepare Apple release notes
+        id: notes
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          notes_path="$RUNNER_TEMP/apple-release-notes.txt"
+          source/scripts/render-release-notes.py \
+            --channel apple \
+            --tag "$RELEASE_TAG" \
+            --notes source/RELEASE_NOTES.md \
+            --out "$notes_path"
+          echo "path=$notes_path" >> "$GITHUB_OUTPUT"
+
+      - name: Configure App Store Connect authentication
+        env:
+          ASC_PRIVATE_KEY_P8: ${{ secrets.ASC_PRIVATE_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -Eeuo pipefail
+          for name in ASC_PRIVATE_KEY_P8 ASC_KEY_ID ASC_ISSUER_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required App Store Connect secret: $name"
+              exit 1
+            fi
+          done
+
+          key_path="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
+          ASC_KEY_PATH="$key_path" python3 <<'PY'
+          import os
+          from pathlib import Path
+
+          raw_key = os.environ["ASC_PRIVATE_KEY_P8"]
+          if "\\n" in raw_key and "\n" not in raw_key:
+              raw_key = raw_key.replace("\\n", "\n")
+          if not raw_key.endswith("\n"):
+              raw_key += "\n"
+          Path(os.environ["ASC_KEY_PATH"]).write_text(raw_key, encoding="utf-8")
+          PY
+          chmod 600 "$key_path"
+          {
+            echo "IRIS_ASC_AUTH_KEY_PATH=$key_path"
+            echo "IRIS_ASC_AUTH_KEY_ID=$ASC_KEY_ID"
+            echo "IRIS_ASC_AUTH_KEY_ISSUER_ID=$ASC_ISSUER_ID"
+          } >> "$GITHUB_ENV"
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Install fastlane
+        run: |
+          set -Eeuo pipefail
+          gem install fastlane --version "$FASTLANE_VERSION" --no-document
+          fastlane --version
+
+      - name: Distribute Apple build
+        env:
+          IPA_PATH: ${{ steps.ipa.outputs.path }}
+          APP_VERSION: ${{ steps.ipa.outputs.version }}
+          BUILD_NUMBER: ${{ steps.ipa.outputs.build }}
+          RELEASE_NOTES_PATH: ${{ steps.notes.outputs.path }}
+          DISTRIBUTION_TARGET: ${{ inputs.target }}
+          RELEASE_MODE: ${{ inputs.release_mode }}
+          IRIS_TESTFLIGHT_GROUPS: ${{ vars.IRIS_TESTFLIGHT_GROUPS }}
+        run: |
+          set -Eeuo pipefail
+          work_dir="$RUNNER_TEMP/ios-distribution-fastlane"
+          mkdir -p "$work_dir/fastlane"
+          cat > "$work_dir/fastlane/Fastfile" <<'RUBY'
+          default_platform(:ios)
+
+          platform :ios do
+            lane :distribute do
+              api_key = app_store_connect_api_key(
+                key_id: ENV.fetch("IRIS_ASC_AUTH_KEY_ID"),
+                issuer_id: ENV.fetch("IRIS_ASC_AUTH_KEY_ISSUER_ID"),
+                key_filepath: ENV.fetch("IRIS_ASC_AUTH_KEY_PATH"),
+                duration: 1200,
+                in_house: false
+              )
+
+              token = Spaceship::ConnectAPI::Token.create(
+                key_id: ENV.fetch("IRIS_ASC_AUTH_KEY_ID"),
+                issuer_id: ENV.fetch("IRIS_ASC_AUTH_KEY_ISSUER_ID"),
+                filepath: ENV.fetch("IRIS_ASC_AUTH_KEY_PATH")
+              )
+              client = Spaceship::ConnectAPI::Client.new(token: token)
+              app = Spaceship::ConnectAPI::App.find(
+                ENV.fetch("IRIS_IOS_BUNDLE_ID"),
+                client: client
+              )
+              UI.user_error!("App not found in App Store Connect") unless app
+
+              app_version = ENV.fetch("APP_VERSION")
+              build_number = ENV.fetch("BUILD_NUMBER")
+              existing_build = Spaceship::ConnectAPI::Build.all(
+                client: client,
+                app_id: app.id,
+                version: app_version,
+                build_number: build_number,
+                platform: Spaceship::ConnectAPI::Platform::IOS
+              ).first
+
+              if ENV.fetch("DISTRIBUTION_TARGET") == "testflight"
+                groups = ENV.fetch("IRIS_TESTFLIGHT_GROUPS", "")
+                  .split(",")
+                  .map(&:strip)
+                  .reject(&:empty?)
+                UI.user_error!(
+                  "IRIS_TESTFLIGHT_GROUPS must name at least one internal group"
+                ) if groups.empty?
+                testflight_options = {
+                  api_key: api_key,
+                  app_identifier: ENV.fetch("IRIS_IOS_BUNDLE_ID"),
+                  app_version: app_version,
+                  build_number: build_number,
+                  changelog: File.read(ENV.fetch("RELEASE_NOTES_PATH")).strip,
+                  groups: groups,
+                  distribute_external: false,
+                  skip_waiting_for_build_processing: false,
+                  uses_non_exempt_encryption: false
+                }
+                if existing_build
+                  testflight_options[:distribute_only] = true
+                else
+                  testflight_options[:ipa] = ENV.fetch("IPA_PATH")
+                end
+                upload_to_testflight(**testflight_options)
+                next
+              end
+
+              exact_versions = app.get_app_store_versions(
+                client: client,
+                filter: {
+                  versionString: app_version,
+                  platform: Spaceship::ConnectAPI::Platform::IOS
+                }
+              )
+              exact_version = exact_versions.find do |version|
+                version.version_string == app_version
+              end
+              completed_states = [
+                Spaceship::ConnectAPI::AppStoreVersion::AppVersionState::IN_REVIEW,
+                Spaceship::ConnectAPI::AppStoreVersion::AppVersionState::WAITING_FOR_REVIEW,
+                Spaceship::ConnectAPI::AppStoreVersion::AppVersionState::PENDING_APPLE_RELEASE,
+                Spaceship::ConnectAPI::AppStoreVersion::AppVersionState::PENDING_DEVELOPER_RELEASE,
+                Spaceship::ConnectAPI::AppStoreVersion::AppVersionState::PROCESSING_FOR_DISTRIBUTION,
+                Spaceship::ConnectAPI::AppStoreVersion::AppVersionState::READY_FOR_DISTRIBUTION
+              ]
+              if exact_version && completed_states.include?(exact_version.app_version_state)
+                attached_build = exact_version.build&.version
+                if attached_build != build_number
+                  UI.user_error!(
+                    "App Store version #{app_version} is already " \
+                    "#{exact_version.app_version_state} with build " \
+                    "#{attached_build || '<none>'}, not #{build_number}"
+                  )
+                end
+                UI.success(
+                  "App Store version #{app_version} (#{build_number}) is already " \
+                  "submitted or released"
+                )
+                next
+              end
+
+              edit_version = app.get_edit_app_store_version(
+                client: client,
+                platform: Spaceship::ConnectAPI::Platform::IOS
+              )
+              if edit_version && edit_version.version_string != app_version
+                UI.user_error!(
+                  "Another editable App Store version exists: " \
+                  "#{edit_version.version_string}"
+                )
+              end
+              existing_version = !edit_version.nil?
+              release_mode = ENV.fetch("RELEASE_MODE")
+              release_options = {
+                api_key: api_key,
+                app_identifier: ENV.fetch("IRIS_IOS_BUNDLE_ID"),
+                app_version: app_version,
+                release_notes: {
+                  "en-US" => File.read(ENV.fetch("RELEASE_NOTES_PATH")).strip
+                },
+                skip_screenshots: true,
+                skip_app_version_update: existing_version,
+                submit_for_review: true,
+                automatic_release: release_mode != "manual",
+                phased_release: release_mode == "phased",
+                precheck_include_in_app_purchases: false,
+                submission_information: {
+                  export_compliance_uses_encryption: false
+                },
+                force: true
+              }
+              if existing_build
+                release_options[:skip_binary_upload] = true
+                release_options[:build_number] = build_number
+              else
+                release_options[:ipa] = ENV.fetch("IPA_PATH")
+              end
+              upload_to_app_store(**release_options)
+            end
+          end
+          RUBY
+          cd "$work_dir"
+          fastlane ios distribute
+
+      - name: Write release summary
+        env:
+          RELEASE_URL: ${{ steps.release.outputs.release_url }}
+          IPA_NAME: ${{ steps.ipa.outputs.name }}
+          IPA_SHA256: ${{ steps.ipa.outputs.sha256 }}
+          APP_VERSION: ${{ steps.ipa.outputs.version }}
+          BUILD_NUMBER: ${{ steps.ipa.outputs.build }}
+          DISTRIBUTION_TARGET: ${{ inputs.target }}
+          RELEASE_MODE: ${{ inputs.release_mode }}
+        run: |
+          {
+            echo "## iOS distribution"
+            echo
+            echo "- source release: [$RELEASE_URL]($RELEASE_URL)"
+            echo "- IPA: \`$IPA_NAME\`"
+            echo "- SHA-256: \`$IPA_SHA256\`"
+            echo "- version: \`$APP_VERSION\`"
+            echo "- build: \`$BUILD_NUMBER\`"
+            echo "- target: \`$DISTRIBUTION_TARGET\`"
+            echo "- release mode after approval: \`$RELEASE_MODE\`"
+          } >> "$GITHUB_STEP_SUMMARY"

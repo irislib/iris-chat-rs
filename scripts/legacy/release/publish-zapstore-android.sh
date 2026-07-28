@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
-source "$ROOT/scripts/release_common.sh"
+source "$ROOT/scripts/build_common.sh"
 
 load_release_env "$ROOT"
 

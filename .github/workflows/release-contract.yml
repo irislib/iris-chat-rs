@@ -1,0 +1,54 @@
+name: Release contract
+
+on:
+  pull_request:
+    paths:
+      - "RELEASE_NOTES.md"
+      - "RELEASE.md"
+      - "zapstore.yaml"
+      - "packaging/homebrew/**"
+      - "scripts/distribute"
+      - "scripts/distribution_common.sh"
+      - "scripts/release-manifest.py"
+      - "scripts/render-release-notes.py"
+      - "scripts/test_release_*.py"
+      - "scripts/test_release_publish_guard"
+      - ".github/workflows/build-artifacts.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/ios-distribution.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "RELEASE_NOTES.md"
+      - "RELEASE.md"
+      - "zapstore.yaml"
+      - "packaging/homebrew/**"
+      - "scripts/distribute"
+      - "scripts/distribution_common.sh"
+      - "scripts/release-manifest.py"
+      - "scripts/render-release-notes.py"
+      - "scripts/test_release_*.py"
+      - "scripts/test_release_publish_guard"
+      - ".github/workflows/build-artifacts.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/ios-distribution.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate release system
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate notes, manifests, workflows, and packaging
+        run: |
+          scripts/render-release-notes.py \
+            --channel validate \
+            --notes RELEASE_NOTES.md
+          scripts/test_release_publish_guard
+          scripts/test_homebrew_tap

@@ -25,7 +25,7 @@ make_iris_archive() {
 
   (
     cd "$stage_dir"
-    tar -czf "$assets_dir/iris-${target}.tar.gz" iris
+    tar -czf "$assets_dir/iris-v9.8.7-${target}.tar.gz" iris
   )
   rm -rf "$stage_dir"
 }
@@ -86,10 +86,10 @@ test -f "$TAP_WORK/Formula/iris.rb"
 test -f "$TAP_WORK/Formula/htree.rb"
 grep -F 'class Iris < Formula' "$TAP_WORK/Formula/iris.rb" >/dev/null
 grep -F "version \"9.8.7\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
-grep -F "url \"${RELEASE_BASE_URL}/iris-aarch64-apple-darwin.tar.gz\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
-grep -F "url \"${RELEASE_BASE_URL}/iris-x86_64-apple-darwin.tar.gz\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
-grep -F "url \"${RELEASE_BASE_URL}/iris-x86_64-unknown-linux-gnu.tar.gz\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
-grep -F "sha256 \"$(sha256_file "$ASSETS_DIR/iris-aarch64-apple-darwin.tar.gz")\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
+grep -F "url \"${RELEASE_BASE_URL}/iris-v9.8.7-aarch64-apple-darwin.tar.gz\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
+grep -F "url \"${RELEASE_BASE_URL}/iris-v9.8.7-x86_64-apple-darwin.tar.gz\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
+grep -F "url \"${RELEASE_BASE_URL}/iris-v9.8.7-x86_64-unknown-linux-gnu.tar.gz\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
+grep -F "sha256 \"$(sha256_file "$ASSETS_DIR/iris-v9.8.7-aarch64-apple-darwin.tar.gz")\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
 grep -F 'bin.install "iris" => "iris"' "$TAP_WORK/Formula/iris.rb" >/dev/null
 grep -F 'Linux ARM64 Homebrew install is not available yet' "$TAP_WORK/Formula/iris.rb" >/dev/null
 grep -F 'class Htree < Formula' "$TAP_WORK/Formula/htree.rb" >/dev/null
@@ -109,7 +109,7 @@ git init -q --bare "$PUBLISH_REMOTE" >/dev/null
 git clone -q -b master "$PUBLISH_REMOTE" "$PUBLISH_WORK" >/dev/null
 test -f "$PUBLISH_WORK/Formula/iris.rb"
 test -f "$PUBLISH_WORK/Formula/htree.rb"
-grep -F "sha256 \"$(sha256_file "$ASSETS_DIR/iris-x86_64-unknown-linux-gnu.tar.gz")\"" \
+grep -F "sha256 \"$(sha256_file "$ASSETS_DIR/iris-v9.8.7-x86_64-unknown-linux-gnu.tar.gz")\"" \
   "$PUBLISH_WORK/Formula/iris.rb" >/dev/null
 
 echo "test_homebrew_tap passed"

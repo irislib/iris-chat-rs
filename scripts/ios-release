@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
-source "$ROOT/scripts/release_common.sh"
+source "$ROOT/scripts/build_common.sh"
 
 load_release_env "$ROOT"
 resolve_shared_build_metadata "$ROOT"
@@ -17,11 +17,9 @@ IOS_SIGNING_STYLE="${IRIS_IOS_SIGNING_STYLE:-automatic}"
 IOS_BUNDLE_ID="${IRIS_IOS_BUNDLE_ID:-fi.siriusbusiness.irischat}"
 IOS_DEVELOPMENT_TEAM="${IRIS_IOS_DEVELOPMENT_TEAM:-8G9P8AN75D}"
 IOS_INTERNAL_ONLY="${IRIS_IOS_INTERNAL_ONLY:-false}"
-IOS_ATTACH_INTERNAL_AFTER_UPLOAD="${IRIS_IOS_ATTACH_INTERNAL_AFTER_UPLOAD:-$IOS_INTERNAL_ONLY}"
 IOS_ARCHIVE_BASENAME="${IRIS_IOS_ARCHIVE_BASENAME:-$(release_slug ios)}"
 IOS_ARCHIVE_PATH="${IRIS_IOS_ARCHIVE_PATH:-$IOS_DIST_DIR/${IOS_ARCHIVE_BASENAME}.xcarchive}"
 IOS_EXPORT_PATH="${IRIS_IOS_EXPORT_PATH:-$IOS_DIST_DIR/${IOS_ARCHIVE_BASENAME}}"
-IOS_UPLOAD_LOG_PATH="${IRIS_IOS_UPLOAD_LOG_PATH:-$IOS_DIST_DIR/${IOS_ARCHIVE_BASENAME}-upload}"
 
 AUTH_ARGS=()
 
@@ -35,7 +33,10 @@ run_xcodebuild() {
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/ios-release <print-config|prepare|archive|export|upload|internal|public>
+usage: ./scripts/ios-release <print-config|prepare|archive|export>
+
+This is a GitHub Actions build primitive. Apple uploads use the manually
+dispatched iOS Distribution workflow and its exact tagged GitHub Release IPA.
 EOF
 }
 
@@ -99,9 +100,9 @@ require_manual_signing_inputs() {
   require_var IRIS_IOS_CODE_SIGN_IDENTITY
 }
 
-# For export/upload, prefer manual signing when the inputs are present —
-# archive can use automatic signing fine, but xcodebuild's exportArchive +
-# auth-key combo always tries cloud signing and fails without an Admin key.
+# For export, prefer manual signing when the inputs are present. Archive can use
+# automatic signing, but xcodebuild's exportArchive plus an auth key can force
+# cloud signing and fail without an Admin key.
 prefer_manual_signing_if_inputs_present() {
   if [[ "$IOS_SIGNING_STYLE" == "manual" ]]; then
     return 0
@@ -121,7 +122,6 @@ ios.development.team=${IOS_DEVELOPMENT_TEAM:-<unset>}
 ios.signing.style=$IOS_SIGNING_STYLE
 ios.export.method=$IOS_EXPORT_METHOD
 ios.internal.only=$IOS_INTERNAL_ONLY
-ios.attach.internal.after.upload=$IOS_ATTACH_INTERNAL_AFTER_UPLOAD
 ios.archive.path=$IOS_ARCHIVE_PATH
 ios.export.path=$IOS_EXPORT_PATH
 app.version.name=$IRIS_APP_VERSION_NAME
@@ -293,45 +293,6 @@ export_archive() {
   printf '%s\n' "$ipa_path"
 }
 
-upload_archive() {
-  # Two-step flow: produce a manually-signed .ipa via `export`, then upload via
-  # `xcrun altool`. We avoid xcodebuild's `destination=upload` because that
-  # path forces cloud signing (see configure_auth_args).
-  local ipa_path
-  local -a altool_auth_args
-  ipa_path="$(export_archive)"
-
-  require_var IRIS_ASC_AUTH_KEY_ID
-  require_var IRIS_ASC_AUTH_KEY_ISSUER_ID
-  if [[ -n "${IRIS_ASC_AUTH_KEY_PATH:-}" && ! -f "$IRIS_ASC_AUTH_KEY_PATH" ]]; then
-    echo "ASC API key file not found: $IRIS_ASC_AUTH_KEY_PATH" >&2
-    exit 1
-  fi
-  altool_auth_args=(
-    --apiKey "$IRIS_ASC_AUTH_KEY_ID"
-    --apiIssuer "$IRIS_ASC_AUTH_KEY_ISSUER_ID"
-  )
-  if [[ -n "${IRIS_ASC_AUTH_KEY_PATH:-}" ]]; then
-    local altool_key_dir="$HOME/.appstoreconnect/private_keys"
-    local altool_key_path
-    mkdir -p "$altool_key_dir"
-    altool_key_path="$altool_key_dir/AuthKey_${IRIS_ASC_AUTH_KEY_ID}.p8"
-    copy_file_unless_same_file "$IRIS_ASC_AUTH_KEY_PATH" "$altool_key_path"
-    chmod 600 "$altool_key_path"
-  fi
-
-  ensure_dir "$IOS_UPLOAD_LOG_PATH"
-  xcrun altool --upload-app \
-    --type ios \
-    --file "$ipa_path" \
-    "${altool_auth_args[@]}" \
-    | tee "$IOS_UPLOAD_LOG_PATH/altool-upload.log"
-
-  if bool_is_true "$IOS_ATTACH_INTERNAL_AFTER_UPLOAD"; then
-    "$ROOT/scripts/testflight-internal" put
-  fi
-}
-
 case "${1:-}" in
   print-config)
     print_config
@@ -344,15 +305,6 @@ case "${1:-}" in
     ;;
   export)
     export_archive
-    ;;
-  upload)
-    upload_archive
-    ;;
-  internal)
-    "$ROOT/scripts/testflight-internal" put
-    ;;
-  public)
-    "$ROOT/scripts/testflight-public" put
     ;;
   -h|--help|help)
     usage

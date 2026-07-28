@@ -9,8 +9,8 @@ Generate the Iris Homebrew formula and publish the tap repository.
 
 Required:
   --version <version>              Release version, for example: v0.1.19
-  --release-base-url <url>         Asset base URL containing iris-<target>.tar.gz files
-  --assets-dir <dir>               Directory containing iris-<target>.tar.gz files
+  --release-base-url <url>         Immutable Hashtree asset base URL
+  --assets-dir <dir>               Directory containing iris-<tag>-<target>.tar.gz files
 
 Optional:
   --tap-repo <name>                Published tap repo name (default: homebrew-iris)
@@ -31,9 +31,6 @@ EOF
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CREATE_TAP_SCRIPT="$SCRIPT_DIR/create_tap.sh"
-# shellcheck disable=SC1091
-source "$REPO_DIR/scripts/release_common.sh"
-configure_release_htree_identity
 
 VERSION=""
 RELEASE_BASE_URL=""
@@ -70,10 +67,6 @@ htree_publish_name_from_url() {
   local name="${url#htree://}"
   name="${name#*/}"
   default_htree_publish_name "$name"
-}
-
-current_htree_npub() {
-  htree user 2>/dev/null | grep -oE 'npub1[023456789acdefghjklmnpqrstuvwxyz]+' | head -n 1 || true
 }
 
 while [[ $# -gt 0 ]]; do
@@ -149,8 +142,9 @@ if [[ -z "$PUSH_URL" ]]; then
   PUSH_URL="htree://irischat/${TAP_REPO}"
 fi
 
-if [[ -z "$NPUB" && "$PUSH_URL" == htree://* ]] && command -v htree >/dev/null 2>&1; then
-  NPUB="$(current_htree_npub)"
+if [[ "$PUSH_URL" == htree://* && -z "$NPUB" ]]; then
+  echo "--npub is required for Hashtree Homebrew publication." >&2
+  exit 1
 fi
 
 publish_name=""

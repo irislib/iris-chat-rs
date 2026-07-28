@@ -1,74 +1,120 @@
 #!/usr/bin/env python3
 
-"""Render release notes for both Hashtree and GitHub publication."""
+"""Validate and render channel-specific Iris Chat release notes."""
+
+from __future__ import annotations
 
 import argparse
 import re
 import sys
+from datetime import date
 from pathlib import Path
-from typing import Iterable, List, Optional, Pattern, Sequence, Tuple
+from typing import Iterable, Sequence
 from urllib.parse import quote
 
 
-TAG_RE = re.compile(r"^v(?P<version>\d+(?:\.\d+){2,3}(?:-[0-9A-Za-z.-]+)?)$")
-PatternLabel = Tuple[str, Pattern[str]]
-
-COMMON_DOWNLOADS: Sequence[PatternLabel] = (
-    ("Iris Chat for macOS (Apple Silicon)", re.compile(r"^iris-chat-v.*-macos-arm64\.dmg$")),
-    ("Iris Chat for Windows", re.compile(r"^iris-chat-v.*-windows-x64-setup\.exe$")),
-    (
-        "Iris Chat for Android",
-        re.compile(r"^(?:iris-chat-v.*-android-arm64|IrisChat-release-.*)\.apk$"),
-    ),
-    ("Iris Chat for Debian/Ubuntu (.deb)", re.compile(r"^iris-chat-v.*-linux-x64\.deb$")),
+TAG_RE = re.compile(
+    r"^v(?P<year>\d{4})\.(?P<month>[1-9]\d?)\.(?P<day>[1-9]\d?)"
+    r"(?:\.(?P<corrective>[1-9]\d?))?$"
 )
-
-CLI_DOWNLOADS: Sequence[PatternLabel] = (
-    ("macOS Apple Silicon CLI", re.compile(r"^iris-aarch64-apple-darwin\.tar\.gz$")),
-    ("macOS Intel CLI", re.compile(r"^iris-x86_64-apple-darwin\.tar\.gz$")),
-    ("Linux x64 CLI", re.compile(r"^iris-x86_64-unknown-linux-gnu\.tar\.gz$")),
-    ("Linux ARM64 CLI", re.compile(r"^iris-aarch64-unknown-linux-gnu\.tar\.gz$")),
+RELEASE_HEADING_RE = re.compile(
+    r"^## (v\d{4}\.[1-9]\d?\.[1-9]\d?(?:\.[1-9]\d?)?)$"
 )
-
-ASSET_DESCRIPTIONS: Sequence[PatternLabel] = (
-    ("macOS Apple Silicon updater archive", re.compile(r"^iris-chat-v.*-macos-arm64\.app\.tar\.gz$")),
-    ("macOS Apple Silicon disk image", re.compile(r"^iris-chat-v.*-macos-arm64\.dmg$")),
-    ("Windows x64 installer", re.compile(r"^iris-chat-v.*-windows-x64-setup\.exe$")),
-    ("Windows x64 portable zip", re.compile(r"^iris-chat-v.*-windows-x64\.zip$")),
-    (
-        "Android APK",
-        re.compile(r"^(?:iris-chat-v.*-android-arm64|IrisChat-release-.*)\.apk$"),
-    ),
-    (
-        "Android App Bundle",
-        re.compile(r"^(?:iris-chat-v.*-android-arm64|IrisChat-release-.*)\.aab$"),
-    ),
-    ("Linux x64 Debian package", re.compile(r"^iris-chat-v.*-linux-x64\.deb$")),
-    ("Linux x64 portable tarball", re.compile(r"^iris-chat-v.*-linux-x64\.tar\.gz$")),
-    ("iPhone/iPad IPA", re.compile(r"^(?:iris-chat-v.*-ios|IrisChat)\.ipa$")),
-    ("iOS Xcode archive", re.compile(r"^iris-chat-v.*-ios\.xcarchive\.zip$")),
-    *CLI_DOWNLOADS,
-)
+CHANNEL_HEADING_RE = re.compile(r"^### (GitHub|Apple|Zapstore)$")
+CHANNELS = ("GitHub", "Apple", "Zapstore")
 
 
-def release_section(changelog: str, version: str) -> str:
-    heading = f"## {version}"
-    lines = changelog.splitlines()
+def require_tag(tag: str) -> None:
+    match = TAG_RE.fullmatch(tag)
+    if match is None:
+        raise ValueError(f"unsupported release tag: {tag}")
     try:
-        start = lines.index(heading) + 1
+        date(
+            int(match.group("year")),
+            int(match.group("month")),
+            int(match.group("day")),
+        )
     except ValueError as error:
-        raise ValueError(f"CHANGELOG.md has no release section for {version}") from error
+        raise ValueError(f"unsupported release tag: {tag} ({error})") from error
 
-    end = len(lines)
-    for index in range(start, len(lines)):
-        if lines[index].startswith("## "):
-            end = index
-            break
 
-    body = "\n".join(lines[start:end]).strip()
-    if not body:
-        raise ValueError(f"CHANGELOG.md release section for {version} is empty")
-    return body
+def parse_notes(text: str) -> dict[str, dict[str, str]]:
+    releases: dict[str, dict[str, str]] = {}
+    current_tag: str | None = None
+    current_channel: str | None = None
+    buffer: list[str] = []
+
+    def flush_channel() -> None:
+        nonlocal buffer
+        if current_tag is not None and current_channel is not None:
+            body = "\n".join(buffer).strip()
+            if current_channel in releases[current_tag]:
+                raise ValueError(
+                    f"duplicate {current_channel} section for {current_tag}"
+                )
+            releases[current_tag][current_channel] = body
+        buffer = []
+
+    for line in text.splitlines():
+        release_match = RELEASE_HEADING_RE.fullmatch(line)
+        if release_match:
+            flush_channel()
+            current_tag = release_match.group(1)
+            require_tag(current_tag)
+            current_channel = None
+            if current_tag in releases:
+                raise ValueError(f"duplicate release heading: {current_tag}")
+            releases[current_tag] = {}
+            continue
+
+        channel_match = CHANNEL_HEADING_RE.fullmatch(line)
+        if channel_match and current_tag is not None:
+            flush_channel()
+            next_channel = channel_match.group(1)
+            expected_index = len(releases[current_tag])
+            if expected_index >= len(CHANNELS) or next_channel != CHANNELS[expected_index]:
+                expected = (
+                    CHANNELS[expected_index]
+                    if expected_index < len(CHANNELS)
+                    else "<no additional section>"
+                )
+                raise ValueError(
+                    f"{current_tag} expected ### {expected}, found ### {next_channel}"
+                )
+            current_channel = next_channel
+            continue
+
+        if current_tag is not None and line.startswith("### "):
+            raise ValueError(f"{current_tag} has unsupported section heading: {line}")
+        if current_tag is not None and line.startswith("## "):
+            raise ValueError(f"unsupported release heading: {line}")
+        if current_tag is not None and current_channel is None and line.strip():
+            raise ValueError(f"{current_tag} has content before ### GitHub")
+
+        if current_channel is not None:
+            buffer.append(line)
+
+    flush_channel()
+    return releases
+
+
+def validate_releases(releases: dict[str, dict[str, str]], tag: str | None) -> None:
+    selected = [tag] if tag else list(releases)
+    if tag and tag not in releases:
+        raise ValueError(f"RELEASE_NOTES.md has no {tag} section")
+    if not selected:
+        raise ValueError("RELEASE_NOTES.md has no release sections")
+
+    for release_tag in selected:
+        require_tag(release_tag)
+        sections = releases[release_tag]
+        missing = [channel for channel in CHANNELS if not sections.get(channel)]
+        if missing:
+            raise ValueError(
+                f"{release_tag} has missing or empty section(s): {', '.join(missing)}"
+            )
+        if len(sections["Apple"]) > 4000:
+            raise ValueError(f"{release_tag} Apple notes exceed 4000 characters")
 
 
 def asset_reference(name: str, asset_base_url: str) -> str:
@@ -78,26 +124,20 @@ def asset_reference(name: str, asset_base_url: str) -> str:
     return f"[{name}](assets/{encoded_name})"
 
 
-def first_match(assets: Sequence[str], pattern: Pattern[str]) -> Optional[str]:
-    return next((name for name in assets if pattern.fullmatch(name)), None)
-
-
-def describe_asset(name: str) -> str:
-    for label, pattern in ASSET_DESCRIPTIONS:
-        if pattern.fullmatch(name):
-            return label
-    return name
+def first_match(assets: Sequence[str], pattern: str) -> str | None:
+    compiled = re.compile(pattern)
+    return next((name for name in assets if compiled.fullmatch(name)), None)
 
 
 def append_download_group(
-    lines: List[str],
+    lines: list[str],
     heading: str,
-    choices: Sequence[PatternLabel],
+    choices: Sequence[tuple[str, str]],
     assets: Sequence[str],
     used: set[str],
     asset_base_url: str,
 ) -> None:
-    entries = []
+    entries: list[str] = []
     for label, pattern in choices:
         name = first_match(assets, pattern)
         if name is not None:
@@ -107,108 +147,117 @@ def append_download_group(
         lines.extend(["", heading, "", *entries])
 
 
-def render(
+def render_github(
     tag: str,
     commit: str,
-    changelog: str,
+    changes: str,
     assets: Iterable[str],
-    *,
-    asset_base_url: str = "",
-    install_url: str = "",
-    built_lines: Sequence[str] = (),
-    skipped_lines: Sequence[str] = (),
-    verification_lines: Sequence[str] = (),
+    asset_base_url: str,
 ) -> str:
-    match = TAG_RE.fullmatch(tag)
-    if not match:
-        raise ValueError(f"unsupported release tag: {tag}")
-
-    version = match.group("version")
-    changes = release_section(changelog, version)
+    escaped_tag = re.escape(tag)
     sorted_assets = sorted(set(assets))
     used: set[str] = set()
-    lines = [f"# Iris Chat {tag}", "", "## Downloads"]
+    everyday = (
+        ("Iris Chat for macOS (Apple Silicon)", rf"iris-chat-{escaped_tag}-macos-arm64\.dmg"),
+        ("Iris Chat for Windows", rf"iris-chat-{escaped_tag}-windows-x64-setup\.exe"),
+        ("Iris Chat for Android", rf"iris-chat-{escaped_tag}-android-arm64\.apk"),
+        ("Iris Chat for Debian/Ubuntu", rf"iris-chat-{escaped_tag}-linux-x64\.deb"),
+    )
+    cli = (
+        ("macOS Apple Silicon CLI", rf"iris-{escaped_tag}-aarch64-apple-darwin\.tar\.gz"),
+        ("macOS Intel CLI", rf"iris-{escaped_tag}-x86_64-apple-darwin\.tar\.gz"),
+        ("Linux x64 CLI", rf"iris-{escaped_tag}-x86_64-unknown-linux-gnu\.tar\.gz"),
+    )
 
+    lines = [f"# Iris Chat {tag}", "", "## Downloads"]
     append_download_group(
         lines,
         "### Most People Will Want",
-        COMMON_DOWNLOADS,
+        everyday,
         sorted_assets,
         used,
         asset_base_url,
     )
-
-    cli_lines: List[str] = []
-    if install_url:
-        cli_lines.append(f"- Install script: `curl -fsSL {install_url} | sh`")
-    for label, pattern in CLI_DOWNLOADS:
-        name = first_match(sorted_assets, pattern)
-        if name is not None:
-            used.add(name)
-            cli_lines.append(f"- {label}: {asset_reference(name, asset_base_url)}")
-    if cli_lines:
-        lines.extend(["", "### Command Line", "", *cli_lines])
-
-    other_lines = [
-        f"- {describe_asset(name)}: {asset_reference(name, asset_base_url)}"
+    append_download_group(
+        lines,
+        "### Command Line",
+        cli,
+        sorted_assets,
+        used,
+        asset_base_url,
+    )
+    other = [
+        f"- {asset_reference(name, asset_base_url)}"
         for name in sorted_assets
         if name not in used
     ]
-    if other_lines:
-        lines.extend(["", "### Other Files", "", *other_lines])
+    if other:
+        lines.extend(["", "### Other Files", "", *other])
 
-    lines.extend(["", "## Changes", "", changes, "", "## Release Build", ""])
-    lines.append(f"- Built from commit `{commit}` for release `{tag}`.")
-    lines.extend(f"- {line}" for line in built_lines if line)
-
-    visible_skipped = [line for line in skipped_lines if line]
-    if visible_skipped:
-        lines.extend(["", "## Skipped or Not Built", ""])
-        lines.extend(f"- {line}" for line in visible_skipped)
-
-    visible_verification = [line for line in verification_lines if line]
-    if visible_verification:
-        lines.extend(["", "## Verification", ""])
-        lines.extend(f"- {line}" for line in visible_verification)
-
+    lines.extend(
+        [
+            "",
+            "## Changes",
+            "",
+            changes,
+            "",
+            "## Verification",
+            "",
+            f"- Built from commit `{commit}` for release `{tag}`.",
+            "- GitHub artifact attestations record build provenance for every release file.",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tag", required=True)
-    parser.add_argument("--commit", required=True)
-    parser.add_argument("--asset-dir", required=True, type=Path)
+    parser.add_argument("--notes", type=Path, default=Path("RELEASE_NOTES.md"))
+    parser.add_argument("--tag")
+    parser.add_argument(
+        "--channel", choices=("validate", "github", "apple", "zapstore"), required=True
+    )
+    parser.add_argument("--commit")
+    parser.add_argument("--asset-dir", type=Path)
     parser.add_argument("--asset-base-url", default="")
-    parser.add_argument("--install-url", default="")
-    parser.add_argument("--changelog", required=True, type=Path)
-    parser.add_argument("--built-line", action="append", default=[])
-    parser.add_argument("--skipped-line", action="append", default=[])
-    parser.add_argument("--verification-line", action="append", default=[])
     parser.add_argument("--out", type=Path)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    if not args.asset_dir.is_dir():
-        raise ValueError(f"asset directory does not exist: {args.asset_dir}")
-    assets = [path.name for path in args.asset_dir.iterdir() if path.is_file()]
-    notes = render(
-        args.tag,
-        args.commit,
-        args.changelog.read_text(encoding="utf-8"),
-        assets,
-        asset_base_url=args.asset_base_url,
-        install_url=args.install_url,
-        built_lines=args.built_line,
-        skipped_lines=args.skipped_line,
-        verification_lines=args.verification_line,
-    )
-    if args.out:
-        args.out.write_text(notes, encoding="utf-8")
+    if args.tag:
+        require_tag(args.tag)
+
+    releases = parse_notes(args.notes.read_text(encoding="utf-8"))
+    validate_releases(releases, args.tag)
+    if args.channel == "validate":
+        return 0
+    if not args.tag:
+        raise ValueError("--tag is required when rendering notes")
+
+    section_name = {
+        "github": "GitHub",
+        "apple": "Apple",
+        "zapstore": "Zapstore",
+    }[args.channel]
+    body = releases[args.tag][section_name]
+    if args.channel == "github":
+        if not args.commit or args.asset_dir is None:
+            raise ValueError("--commit and --asset-dir are required for GitHub notes")
+        if not args.asset_dir.is_dir():
+            raise ValueError(f"asset directory does not exist: {args.asset_dir}")
+        assets = [path.name for path in args.asset_dir.iterdir() if path.is_file()]
+        rendered = render_github(
+            args.tag, args.commit, body, assets, args.asset_base_url
+        )
     else:
-        sys.stdout.write(notes)
+        rendered = body + "\n"
+
+    if args.out:
+        args.out.write_text(rendered, encoding="utf-8")
+    else:
+        sys.stdout.write(rendered)
     return 0
 
 

@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
 
-IRIS_RELEASE_OWNER_ALIAS_DEFAULT="irischat"
-IRIS_RELEASE_OWNER_NPUB_DEFAULT="npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap"
-
 release_root() {
   cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
 }
@@ -16,22 +13,6 @@ load_release_env() {
     source "$env_file"
     set +a
   fi
-}
-
-configure_release_htree_identity() {
-  IRIS_RELEASE_OWNER_ALIAS="${IRIS_RELEASE_OWNER_ALIAS:-$IRIS_RELEASE_OWNER_ALIAS_DEFAULT}"
-  IRIS_RELEASE_OWNER_NPUB="${IRIS_RELEASE_OWNER_NPUB:-$IRIS_RELEASE_OWNER_NPUB_DEFAULT}"
-  IRIS_RELEASE_HTREE_CONFIG_DIR="${IRIS_RELEASE_HTREE_CONFIG_DIR:-$HOME/.hashtree/identities/$IRIS_RELEASE_OWNER_ALIAS}"
-  IRIS_RELEASE_HTREE_DATA_DIR="${IRIS_RELEASE_HTREE_DATA_DIR:-$HOME/.hashtree/data}"
-  IRIS_RELEASE_NOSTR_KEY_PATH="${IRIS_RELEASE_NOSTR_KEY_PATH:-$HOME/.keys/$IRIS_RELEASE_OWNER_ALIAS-release.nsec}"
-
-  export IRIS_RELEASE_OWNER_ALIAS
-  export IRIS_RELEASE_OWNER_NPUB
-  export IRIS_RELEASE_HTREE_CONFIG_DIR
-  export IRIS_RELEASE_HTREE_DATA_DIR
-  export IRIS_RELEASE_NOSTR_KEY_PATH
-  export HTREE_CONFIG_DIR="$IRIS_RELEASE_HTREE_CONFIG_DIR"
-  export HTREE_DATA_DIR="$IRIS_RELEASE_HTREE_DATA_DIR"
 }
 
 bool_is_true() {
@@ -219,7 +200,7 @@ select_windows_ssh_host() {
   local timeout="${1:-10}" host
   while IFS= read -r host; do
     [[ -n "$host" ]] || continue
-    if ssh -o BatchMode=yes -o ConnectTimeout="$timeout" "$host" whoami >/dev/null 2>&1; then
+    if ssh -n -o BatchMode=yes -o ConnectTimeout="$timeout" "$host" whoami >/dev/null 2>&1; then
       printf '%s\n' "$host"
       return 0
     fi

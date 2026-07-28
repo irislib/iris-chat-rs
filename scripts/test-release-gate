@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
-source "${ROOT_DIR}/scripts/release_common.sh"
+source "${ROOT_DIR}/scripts/build_common.sh"
 # shellcheck disable=SC1091
 source "${ROOT_DIR}/scripts/parallel_steps.sh"
 
@@ -241,7 +241,7 @@ run_core_package_check() {
       ;;
     1)
       echo "Skipping core cargo package verification because ${protocol_name} ${protocol_version} is not on crates.io yet."
-      echo "The release script publishes ${protocol_name} first, then publishes core."
+      echo "Crate publication is outside the supported app release process."
       ;;
     *)
       return "$lookup_status"
