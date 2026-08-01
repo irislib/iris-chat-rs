@@ -1308,7 +1308,13 @@ fn local_relay_pairing_recovers_after_subscription_disconnect() {
     dispatch_device_approval_for_test(&mut primary, &relay_url, pairing_url);
     assert_eq!(primary.state.toast.as_deref(), Some("Device added"));
 
-    let deadline = Instant::now() + Duration::from_secs(6);
+    let recovery_timeout = Duration::from_secs(
+        PENDING_DEVICE_LINK_RETRY_SECS
+            + PENDING_DEVICE_LINK_CONNECT_TIMEOUT_SECS
+            + PENDING_DEVICE_LINK_FETCH_TIMEOUT_SECS
+            + 4,
+    );
+    let deadline = Instant::now() + recovery_timeout;
     while Instant::now() < deadline && linked.pending_linked_device.is_some() {
         while let Ok(message) = linked_core_rx.try_recv() {
             linked.handle_message(message);
