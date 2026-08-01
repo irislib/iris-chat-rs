@@ -390,6 +390,17 @@ func chatTimelineGeometryMatches(_ lhs: CGFloat, _ rhs: CGFloat) -> Bool {
     return abs(lhs - rhs) < 0.5
 }
 
+func irisNextActiveMessageActionDockId(
+    current: String?,
+    messageId: String,
+    isActive: Bool
+) -> String? {
+    if isActive {
+        return messageId
+    }
+    return current == messageId ? nil : current
+}
+
 struct ChatMessageRow: View, Equatable {
     // Only compare the data SwiftUI actually renders from. Closures captured
     // by the parent are recreated on every parent body call (relay events,
@@ -408,6 +419,7 @@ struct ChatMessageRow: View, Equatable {
             && lhs.showsGroupSenderName == rhs.showsGroupSenderName
             && lhs.showsGroupSenderAvatar == rhs.showsGroupSenderAvatar
             && lhs.swipeOffset == rhs.swipeOffset
+            && lhs.isActionDockActive == rhs.isActionDockActive
     }
 
     @Environment(\.colorScheme) private var colorScheme
@@ -422,6 +434,8 @@ struct ChatMessageRow: View, Equatable {
     let showsGroupSenderAvatar: Bool
     let reactions: [MessageReactionSnapshot]
     let swipeOffset: CGFloat
+    let isActionDockActive: Bool
+    let onActionDockActiveChange: (Bool) -> Void
     let onReply: () -> Void
     let onForward: () -> Void
     let onForwardAttachment: (MessageAttachmentSnapshot) -> Void
@@ -434,14 +448,13 @@ struct ChatMessageRow: View, Equatable {
     let openAttachment: (MessageAttachmentSnapshot) async -> Void
     let onOpenImage: (Data, MessageAttachmentSnapshot) -> Void
 
-    @State private var isHovering = false
+    @State private var isPointerInside = false
     @State private var showReactionPicker = false
     @State private var showActionsSheet = false
     @State private var showOverflowActions = false
-    @State private var hideActionDockTask: DispatchWorkItem?
 
     private var showActionDock: Bool {
-        IrisLayout.usesDesktopChrome && (isHovering || showOverflowActions)
+        IrisLayout.usesDesktopChrome && isActionDockActive
     }
 
     private var postReactionSuggestions: [String] {
@@ -451,7 +464,7 @@ struct ChatMessageRow: View, Equatable {
     @ViewBuilder
     private func actionDock() -> some View {
         ChatMessageActionDock(
-            isOverflowPresented: $showOverflowActions,
+            isOverflowPresented: actionDockOverflowBinding,
             onShowReactionPicker: { showReactionPicker = true },
             onReply: onReply,
             onForward: onForward,
@@ -762,7 +775,6 @@ struct ChatMessageRow: View, Equatable {
             .opacity(showActionDock ? 1 : 0)
             .allowsHitTesting(showActionDock)
             .accessibilityHidden(!showActionDock)
-            .onHover(perform: updateActionDockHover)
             .frame(width: ChatMessageActionDock.dockWidth)
     }
 #else
@@ -770,18 +782,24 @@ struct ChatMessageRow: View, Equatable {
 #endif
 
     private func updateActionDockHover(_ hovering: Bool) {
-        hideActionDockTask?.cancel()
+        isPointerInside = hovering
         if hovering {
-            isHovering = true
+            onActionDockActiveChange(true)
             return
         }
-        let task = DispatchWorkItem {
-            if !showOverflowActions {
-                isHovering = false
-            }
+        if !showOverflowActions {
+            onActionDockActiveChange(false)
         }
-        hideActionDockTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: task)
+    }
+
+    private var actionDockOverflowBinding: Binding<Bool> {
+        Binding(
+            get: { showOverflowActions },
+            set: { isPresented in
+                showOverflowActions = isPresented
+                onActionDockActiveChange(isPresented || isPointerInside)
+            }
+        )
     }
 
     @ViewBuilder

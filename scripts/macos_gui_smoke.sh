@@ -18,7 +18,7 @@ for the macos-utm VM when Xcode's macOS UI-test runner launches suspended.
 
 Checks:
   - Create-account terms controls are absent on macOS.
-  - A seeded outgoing message shows the hover action dock beside the bubble.
+  - Moving between messages leaves exactly one hover action dock visible.
 
 Environment:
   IRIS_MACOS_GUI_SMOKE_APP       Built Iris Chat.app path.
@@ -109,7 +109,7 @@ set_gui_env IRIS_UI_TEST_RUN_ID "$RUN_ID"
 set_gui_env IRIS_UI_TEST_BYPASS_KEYCHAIN 1
 set_gui_env IRIS_DISABLE_NOTIFICATIONS_FOR_AUTOMATION 1
 set_gui_env IRIS_UI_TEST_SEED_PEER "$SEED_PEER"
-set_gui_env IRIS_UI_TEST_SEED_COUNT 1
+set_gui_env IRIS_UI_TEST_SEED_COUNT 2
 
 run_gui_user open -n -a "$APP_PATH"
 
@@ -264,55 +264,80 @@ if (!waitId('chatMessageInput', 30)) {
   throw new Error(`chatMessageInput missing after opening seeded chat:\n${visibleIds()}`);
 }
 
-const message = waitFor((el) => {
-  return attr(el, 'AXRole') === 'AXStaticText' &&
-    attr(el, 'AXValue').startsWith('FIRST_SCROLL_SENTINEL');
-}, 30);
-if (!message) throw new Error(`seed message missing:\n${visibleIds()}`);
+let messages = [];
+const messagesDeadline = Date.now() + 30000;
+while (messages.length < 2 && Date.now() < messagesDeadline) {
+  const byId = {};
+  for (const root of roots()) {
+    const matches = findAll(root, (el) => attr(el, 'AXIdentifier').startsWith('chatMessage-'));
+    for (const match of matches) {
+      const id = attr(match, 'AXIdentifier');
+      const candidateFrame = frame(match);
+      const candidateArea = (candidateFrame.w || 0) * (candidateFrame.h || 0);
+      const existingFrame = byId[id] ? frame(byId[id]) : null;
+      const existingArea = existingFrame ? (existingFrame.w || 0) * (existingFrame.h || 0) : -1;
+      if (candidateArea > existingArea) byId[id] = match;
+    }
+  }
+  messages = Object.values(byId).sort((lhs, rhs) => frame(lhs).y - frame(rhs).y);
+  if (messages.length < 2) delay(0.25);
+}
+if (messages.length < 2) throw new Error(`seed messages missing:\n${visibleIds()}`);
 
-const messageFrame = frame(message);
+const firstMessage = messages[0];
+const lastMessage = messages[messages.length - 1];
+
+const firstFrame = frame(firstMessage);
+const lastFrame = frame(lastMessage);
 [
-  Math.round(messageFrame.x + messageFrame.w / 2),
-  Math.round(messageFrame.y + messageFrame.h / 2),
-  messageFrame.x,
-  messageFrame.y,
-  messageFrame.w,
-  messageFrame.h,
+  Math.round(firstFrame.x + firstFrame.w / 2),
+  Math.round(firstFrame.y + firstFrame.h / 2),
+  Math.round(lastFrame.x + lastFrame.w / 2),
+  Math.round(lastFrame.y + lastFrame.h / 2),
+  attr(lastMessage, 'AXIdentifier'),
 ].join(' ');
 JXA
 )"
 
-mouse_x="$(printf '%s' "$message_coords" | awk '{print $1}')"
-mouse_y="$(printf '%s' "$message_coords" | awk '{print $2}')"
-if [[ -z "$mouse_x" || -z "$mouse_y" ]]; then
+first_mouse_x="$(printf '%s' "$message_coords" | awk '{print $1}')"
+first_mouse_y="$(printf '%s' "$message_coords" | awk '{print $2}')"
+last_mouse_x="$(printf '%s' "$message_coords" | awk '{print $3}')"
+last_mouse_y="$(printf '%s' "$message_coords" | awk '{print $4}')"
+last_message_id="$(printf '%s' "$message_coords" | awk '{print $5}')"
+if [[ -z "$first_mouse_x" || -z "$first_mouse_y" || -z "$last_mouse_x" || -z "$last_mouse_y" || -z "$last_message_id" ]]; then
   echo "Unable to resolve message hover coordinates: $message_coords" >&2
   exit 1
 fi
 
-run_gui_user /usr/bin/swift - "$mouse_x" "$mouse_y" <<'SWIFT'
+run_gui_user /usr/bin/swift - "$first_mouse_x" "$first_mouse_y" "$last_mouse_x" "$last_mouse_y" <<'SWIFT'
 import CoreGraphics
 import Foundation
 
-let x = Double(CommandLine.arguments[1])!
-let y = Double(CommandLine.arguments[2])!
 let source = CGEventSource(stateID: .hidSystemState)
-let event = CGEvent(
-    mouseEventSource: source,
-    mouseType: .mouseMoved,
-    mouseCursorPosition: CGPoint(x: x, y: y),
-    mouseButton: .left
-)
-event?.post(tap: .cghidEventTap)
-Thread.sleep(forTimeInterval: 1.0)
+for index in stride(from: 1, through: 3, by: 2) {
+    let x = Double(CommandLine.arguments[index])!
+    let y = Double(CommandLine.arguments[index + 1])!
+    let event = CGEvent(
+        mouseEventSource: source,
+        mouseType: .mouseMoved,
+        mouseCursorPosition: CGPoint(x: x, y: y),
+        mouseButton: .left
+    )
+    event?.post(tap: .cghidEventTap)
+    Thread.sleep(forTimeInterval: 0.2)
+}
 SWIFT
 
 verification_json="$(
-  IRIS_MACOS_GUI_SMOKE_RESULT_RUN_ID="$RUN_ID" osascript -l JavaScript <<'JXA'
+  IRIS_MACOS_GUI_SMOKE_RESULT_RUN_ID="$RUN_ID" \
+  IRIS_MACOS_GUI_SMOKE_LAST_MESSAGE_ID="$last_message_id" \
+  osascript -l JavaScript <<'JXA'
 ObjC.import('stdlib');
 const se = Application('System Events');
 const proc = se.processes.byName('Iris Chat');
 proc.frontmost = true;
 const runId = ObjC.unwrap($.getenv('IRIS_MACOS_GUI_SMOKE_RESULT_RUN_ID')) || '';
+const lastMessageId = ObjC.unwrap($.getenv('IRIS_MACOS_GUI_SMOKE_LAST_MESSAGE_ID')) || '';
 
 function attr(el, name) {
   try {
@@ -339,21 +364,10 @@ function children(el) {
   }
 }
 
-function find(el, predicate) {
-  if (predicate(el)) return el;
-  for (const child of children(el)) {
-    const found = find(child, predicate);
-    if (found) return found;
-  }
-  return null;
-}
-
-function first(predicate) {
-  for (const root of proc.windows()) {
-    const found = find(root, predicate);
-    if (found) return found;
-  }
-  return null;
+function findAll(el, predicate, out = []) {
+  if (predicate(el)) out.push(el);
+  for (const child of children(el)) findAll(child, predicate, out);
+  return out;
 }
 
 function frame(el) {
@@ -367,29 +381,61 @@ function frame(el) {
   };
 }
 
-const message = first((el) => {
-  return attr(el, 'AXRole') === 'AXStaticText' &&
-    attr(el, 'AXValue').startsWith('FIRST_SCROLL_SENTINEL');
-});
-const more = first((el) => attr(el, 'AXIdentifier') === 'messageMoreButton');
-const info = first((el) => attr(el, 'AXIdentifier') === 'messageInfoButton');
-const react = first((el) => attr(el, 'AXIdentifier') === 'messageReactButton');
+const allElements = [];
+for (const root of proc.windows()) findAll(root, () => true, allElements);
+const message = allElements
+  .filter((el) => attr(el, 'AXIdentifier') === lastMessageId)
+  .sort((lhs, rhs) => {
+    const lhsFrame = frame(lhs);
+    const rhsFrame = frame(rhs);
+    return (rhsFrame.w || 0) * (rhsFrame.h || 0) - (lhsFrame.w || 0) * (lhsFrame.h || 0);
+  })[0];
+const moreButtons = allElements.filter((el) => attr(el, 'AXIdentifier') === 'messageMoreButton');
+const infoButtons = allElements.filter((el) => attr(el, 'AXIdentifier') === 'messageInfoButton');
+const replyButtons = allElements.filter((el) => attr(el, 'AXIdentifier') === 'messageReplyButton');
+const reactButtons = allElements.filter((el) => attr(el, 'AXIdentifier') === 'messageReactButton');
+const more = moreButtons[0];
+const info = infoButtons[0];
+const reply = replyButtons[0];
+const react = reactButtons[0];
 
 if (!message) throw new Error('seed message disappeared before hover verification');
 if (!more) throw new Error('messageMoreButton did not appear after mouse hover');
 if (!info) throw new Error('messageInfoButton did not appear after mouse hover');
+if (!reply) throw new Error('messageReplyButton did not appear after mouse hover');
 if (!react) throw new Error('messageReactButton did not appear after mouse hover');
+if (
+  moreButtons.length !== 1 ||
+  infoButtons.length !== 1 ||
+  replyButtons.length !== 1 ||
+  reactButtons.length !== 1
+) {
+  throw new Error(
+    `expected one message action dock after moving between messages; ` +
+    `react=${reactButtons.length} reply=${replyButtons.length} ` +
+    `info=${infoButtons.length} more=${moreButtons.length}`
+  );
+}
 
 const messageFrame = frame(message);
 const moreFrame = frame(more);
 const infoFrame = frame(info);
+const replyFrame = frame(reply);
 const reactFrame = frame(react);
 const actionGap = messageFrame.x - (moreFrame.x + moreFrame.w);
 
-if (!(actionGap > 0 && actionGap < 90)) {
+// SwiftUI may expose the message identifier on the trailing delivery glyph
+// instead of the bubble container. Account for the 480pt desktop bubble cap
+// while still requiring the action dock to be on the message's left side.
+if (!(actionGap > 0 && actionGap < 540)) {
   throw new Error(`outgoing action dock is not beside the bubble; actionGap=${actionGap}`);
 }
-if (!(reactFrame.x < infoFrame.x && infoFrame.x < moreFrame.x && moreFrame.x < messageFrame.x)) {
+if (!(
+  reactFrame.x < replyFrame.x &&
+  replyFrame.x < infoFrame.x &&
+  infoFrame.x < moreFrame.x &&
+  moreFrame.x < messageFrame.x
+)) {
   throw new Error('outgoing action dock buttons are not laid out to the left of the message');
 }
 
@@ -400,6 +446,7 @@ JSON.stringify({
   termsNoticeVisible: false,
   messageFrame,
   reactFrame,
+  replyFrame,
   infoFrame,
   moreFrame,
   actionGap,

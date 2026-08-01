@@ -144,6 +144,7 @@ struct ChatScreen: View {
     @State private var pendingPrependAnchorMessageId: String?
     @StateObject private var timelineCoordinator = ChatTimelineInteractionCoordinator()
     @State private var activeBubbleSwipe: ActiveMessageBubbleSwipe?
+    @State private var activeMessageActionDockId: String?
     @State private var replyTarget: ChatMessageSnapshot?
     @State private var imageViewerItem: ImageViewerItem?
     @State private var lastTypingSentAt: Date?
@@ -327,6 +328,7 @@ struct ChatScreen: View {
                                     renderedMessageCount = 0
                                     pendingPrependAnchorMessageId = nil
                                     activeBubbleSwipe = nil
+                                    activeMessageActionDockId = nil
                                     timelineCoordinator.bubblePanRejected = false
                                     timelineTopMinY = -.greatestFiniteMagnitude
                                     timelineContentHeight = 0
@@ -736,6 +738,14 @@ struct ChatScreen: View {
             showsGroupSenderAvatar: showsGroupSenderAvatar,
             reactions: message.reactions,
             swipeOffset: activeBubbleSwipe?.messageId == message.id ? activeBubbleSwipe?.offset ?? 0 : 0,
+            isActionDockActive: activeMessageActionDockId == message.id,
+            onActionDockActiveChange: { isActive in
+                activeMessageActionDockId = irisNextActiveMessageActionDockId(
+                    current: activeMessageActionDockId,
+                    messageId: message.id,
+                    isActive: isActive
+                )
+            },
             onReply: {
                 replyTarget = message
                 isComposerFocused = true
