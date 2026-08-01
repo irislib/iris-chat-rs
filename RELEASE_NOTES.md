@@ -2,6 +2,36 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.8.1
+
+### GitHub
+
+- Attachment messages now wait for a confirmed upload and report failures
+  instead of sending an empty message.
+- Queued attachment sends retain their uploaded file details until delivery,
+  including across connection interruptions.
+- Restoring an existing profile now preserves its identity and profile details
+  reliably across iOS and Android.
+- Opening a chat no longer sends a typing indicator before text is entered.
+- iOS and macOS show message hover actions for only one message at a time.
+- Release artifacts are now built once by GitHub and promoted unchanged through
+  the supported distribution channels.
+
+### Apple
+
+- Fixed photo and file messages that could appear empty or fail to reach other devices.
+- Made queued attachments more reliable during connection interruptions.
+- Restoring an existing profile now keeps its identity and profile details reliably.
+- Typing indicators now appear only after someone starts typing.
+- Message actions no longer appear on multiple messages at once on iPhone and Mac.
+
+### Zapstore
+
+- Fixed photo and file messages that could appear empty or fail to reach other devices.
+- Made queued attachments more reliable during connection interruptions.
+- Restoring an existing profile now keeps its identity and profile details reliably.
+- Typing indicators now appear only after someone starts typing.
+
 ## v2026.7.27.1
 
 ### GitHub

@@ -1,4 +1,5 @@
 .gradle/
+__pycache__/
 .kotlin/
 .idea/
 .relay-venv/
