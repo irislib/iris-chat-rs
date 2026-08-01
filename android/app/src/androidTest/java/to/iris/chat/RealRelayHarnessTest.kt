@@ -1328,6 +1328,61 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
     }
 
     @Test
+    fun send_attachment_from_args() {
+        ensureLoggedIn()
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val chatIdArg = optionalArg("chat_id")
+        val caption = requiredArg("caption")
+        val filename = optionalArg("filename") ?: "iris-logo.png"
+        val chat =
+            chatIdArg
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+        val fixtureBytes =
+            instrumentation.targetContext.resources.openRawResource(R.drawable.iris_logo).use {
+                it.readBytes()
+            }
+        val fixtureDir = File(appFilesDir(), "harness-fixtures").also { it.mkdirs() }
+        val fixture = File(fixtureDir, "iris-logo.png").also { it.writeBytes(fixtureBytes) }
+
+        appManager().sendAttachment(chat.chatId, fixture.path, filename, caption)
+        val finalized =
+            waitForState("outgoing attachment", timeoutMs = 120_000) {
+                appManager()
+                    .state
+                    .value
+                    .currentChat
+                    ?.takeIf { current ->
+                        current.chatId.equals(chat.chatId, ignoreCase = true) &&
+                            !appManager().state.value.busy.uploadingAttachment
+                    }
+                    ?.messages
+                    ?.firstOrNull { message ->
+                        message.isOutgoing &&
+                            message.body == caption &&
+                            message.attachments.size == 1 &&
+                            message.attachments[0].filename == filename &&
+                            message.delivery != DeliveryState.QUEUED &&
+                            message.delivery != DeliveryState.PENDING
+                    }
+            }
+        if (finalized.delivery == DeliveryState.FAILED) {
+            fail("Outgoing attachment failed to publish")
+        }
+
+        waitForRelayDrainIfRequested()
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "caption" to caption,
+            "filename" to finalized.attachments[0].filename,
+            "nhash" to finalized.attachments[0].nhash,
+            "attachment_size" to fixtureBytes.size.toString(),
+            "attachment_sha256" to sha256Hex(fixtureBytes),
+            "delivery" to finalized.delivery.name,
+        )
+    }
+
+    @Test
     fun send_nearby_message_from_args() {
         ensureLoggedIn()
         maybeDisableRelays()
@@ -1676,6 +1731,22 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
             "message_ids" to messageIds.joinToString(","),
             "seen" to "true",
         )
+    }
+
+    @Test
+    fun set_read_receipts_from_args() {
+        ensureLoggedIn()
+        val enabled = requiredArg("enabled").toBooleanStrict()
+
+        appManager().dispatch(AppAction.SetReadReceiptsEnabled(enabled))
+        val applied =
+            waitForState("read receipt preference", timeoutMs = 30_000) {
+                enabled.takeIf {
+                    appManager().state.value.preferences.sendReadReceipts == enabled
+                }
+            }
+
+        reportStatus("read_receipts_enabled" to applied.toString())
     }
 
     @Test
@@ -2157,6 +2228,54 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
     }
 
     @Test
+    fun wait_for_attachment_from_args() {
+        ensureLoggedIn()
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val expectedChatId = optionalArg("chat_id")?.takeIf { it.isNotBlank() }
+        val caption = requiredArg("caption")
+        val filename = optionalArg("filename") ?: "iris-logo.png"
+        val direction = optionalArg("direction")?.lowercase() ?: "incoming"
+        val timeoutMs =
+            optionalArg("timeout_ms")?.toLongOrNull()
+                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 120L) * 1_000L)
+        val chat =
+            expectedChatId
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+        val attachment =
+            waitForState("$direction attachment", timeoutMs = timeoutMs) {
+                val current = appManager().state.value.currentChat
+                if (current == null || !current.chatId.equals(chat.chatId, ignoreCase = true)) {
+                    appManager().openChat(chat.chatId)
+                    return@waitForState null
+                }
+                current.messages
+                    .firstOrNull { message ->
+                        message.body == caption &&
+                            messageDirectionMatches(message.isOutgoing, direction) &&
+                            message.attachments.size == 1 &&
+                            message.attachments[0].filename == filename
+                    }
+                    ?.attachments
+                    ?.first()
+            }
+        val downloaded = kotlinx.coroutines.runBlocking { appManager().downloadAttachment(attachment) }
+        if (downloaded == null) {
+            fail("Attachment could not be downloaded")
+            return
+        }
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "caption" to caption,
+            "filename" to attachment.filename,
+            "nhash" to attachment.nhash,
+            "attachment_size" to downloaded.size.toString(),
+            "attachment_sha256" to sha256Hex(downloaded),
+            "download_verified" to "true",
+        )
+    }
+
+    @Test
     fun report_chat_messages_from_args() {
         ensureLoggedIn()
         val peerInput = optionalArg("peer_input").orEmpty()
@@ -2561,5 +2680,9 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
         )
     }
 
-
+    private fun sha256Hex(bytes: ByteArray): String =
+        java.security.MessageDigest
+            .getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
 }

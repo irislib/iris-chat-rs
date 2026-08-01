@@ -91,10 +91,13 @@ impl AppCore {
 
         match Keys::parse(owner_nsec.trim()) {
             Ok(owner_keys) => {
+                let owner_pubkey_hex = owner_keys.public_key().to_hex();
                 if let Err(error) =
                     self.start_primary_session(owner_keys, Keys::generate(), true, false)
                 {
                     self.state.toast = Some(error.to_string());
+                } else {
+                    self.fetch_missing_profile_metadata(&owner_pubkey_hex, "session_restore");
                 }
             }
             Err(_) => {
@@ -155,7 +158,9 @@ impl AppCore {
                 device_keys,
                 true,
                 allow_protocol_restore,
-            )
+            )?;
+            self.fetch_missing_profile_metadata(&owner_pubkey.to_hex(), "session_restore");
+            Ok(())
         })();
 
         if let Err(error) = result {

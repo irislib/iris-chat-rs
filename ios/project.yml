@@ -121,6 +121,8 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
     sources:
       - path: Tests
+      - path: Assets.xcassets/IrisLogo.imageset/iris-logo.png
+        buildPhase: resources
     dependencies:
       - target: IrisChat
 

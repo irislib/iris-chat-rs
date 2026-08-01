@@ -255,6 +255,22 @@ def harness(scenario: Scenario, device_id: str, action: str, **args: str) -> dic
     return scenario.harness(device_id, action, args=args)
 
 
+def verify_attachment_round_trip(
+    label: str,
+    sent: dict[str, str],
+    received: dict[str, str],
+) -> None:
+    if received.get("download_verified") != "true":
+        raise SystemExit(f"{label} attachment was not downloaded successfully")
+    for key in ("filename", "nhash", "attachment_size", "attachment_sha256"):
+        sent_value = sent.get(key)
+        received_value = received.get(key)
+        if not sent_value or sent_value != received_value:
+            raise SystemExit(
+                f"{label} attachment {key} mismatch: sender={sent_value!r}, receiver={received_value!r}"
+            )
+
+
 @dataclass
 class AsyncHarnessProcess:
     device_id: str
@@ -583,6 +599,8 @@ def run_flow(scenario: Scenario, artifact_dir: Path) -> dict[str, Any]:
     group_alice_message = f"f12-group-alice-{flow_stamp}"
     group_bob_message = f"f12-group-bob-{flow_stamp}"
     disappearing_message = f"f12-disappearing-{flow_stamp}"
+    alice_attachment_caption = f"f12-attachment-alice-{flow_stamp}"
+    bob_attachment_caption = f"f12-attachment-bob-{flow_stamp}"
 
     direct_send = send_peer(scenario, "alice1", "bob1", direct_message)
     alice_chat_id = direct_send["chat_id"]
@@ -596,6 +614,57 @@ def run_flow(scenario: Scenario, artifact_dir: Path) -> dict[str, Any]:
     )
     direct_reply_send = send_peer(scenario, "bob1", "alice1", direct_reply)
     direct_reply_receive = wait_peer(scenario, "alice1", "bob1", direct_reply, expected_count=1)
+
+    alice_attachment_sent = harness(
+        scenario,
+        "alice1",
+        "send_attachment_from_args",
+        chat_id=alice_chat_id,
+        caption=alice_attachment_caption,
+        filename="iris-logo.png",
+        wait_for_relay_drain="true",
+        relay_drain_timeout_secs="240",
+    )
+    alice_attachment_received = harness(
+        scenario,
+        "bob1",
+        "wait_for_attachment_from_args",
+        chat_id=bob_chat_id,
+        caption=alice_attachment_caption,
+        filename="iris-logo.png",
+        direction="incoming",
+        timeout_secs="240",
+    )
+    verify_attachment_round_trip(
+        "alice-to-bob",
+        alice_attachment_sent,
+        alice_attachment_received,
+    )
+    bob_attachment_sent = harness(
+        scenario,
+        "bob1",
+        "send_attachment_from_args",
+        chat_id=bob_chat_id,
+        caption=bob_attachment_caption,
+        filename="iris-logo.png",
+        wait_for_relay_drain="true",
+        relay_drain_timeout_secs="240",
+    )
+    bob_attachment_received = harness(
+        scenario,
+        "alice1",
+        "wait_for_attachment_from_args",
+        chat_id=alice_chat_id,
+        caption=bob_attachment_caption,
+        filename="iris-logo.png",
+        direction="incoming",
+        timeout_secs="240",
+    )
+    verify_attachment_round_trip(
+        "bob-to-alice",
+        bob_attachment_sent,
+        bob_attachment_received,
+    )
 
     group = create_alice_bob_group(scenario, f"Mixed App Parity {flow_stamp}")
     send_chat(scenario, "alice1", group["chat_id"], group_alice_message)
@@ -611,6 +680,12 @@ def run_flow(scenario: Scenario, artifact_dir: Path) -> dict[str, Any]:
         receiver_chat_id=alice_chat_id,
     )
 
+    read_receipts_enabled = harness(
+        scenario,
+        "bob1",
+        "set_read_receipts_from_args",
+        enabled="true",
+    )
     seen_marked = harness(
         scenario,
         "bob1",
@@ -746,6 +821,8 @@ def run_flow(scenario: Scenario, artifact_dir: Path) -> dict[str, Any]:
             "group_alice": group_alice_message,
             "group_bob": group_bob_message,
             "disappearing": disappearing_message,
+            "alice_attachment": alice_attachment_caption,
+            "bob_attachment": bob_attachment_caption,
         },
         "proofs": {
             "direct_send": direct_send,
@@ -753,10 +830,15 @@ def run_flow(scenario: Scenario, artifact_dir: Path) -> dict[str, Any]:
             "request_accepted": request_accepted,
             "direct_reply_send": direct_reply_send,
             "direct_reply_receive": direct_reply_receive,
+            "alice_attachment_sent": alice_attachment_sent,
+            "alice_attachment_received": alice_attachment_received,
+            "bob_attachment_sent": bob_attachment_sent,
+            "bob_attachment_received": bob_attachment_received,
             "group_alice_receive": group_alice_receive,
             "group_bob_receive": group_bob_receive,
             "typing_sent": typing,
             "typing_seen": typing_seen,
+            "read_receipts_enabled": read_receipts_enabled,
             "seen_marked": seen_marked,
             "seen_observed": seen_observed,
             "reaction_sent": reaction_sent,

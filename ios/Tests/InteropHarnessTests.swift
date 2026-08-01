@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import SQLite3
 import UserNotifications
@@ -628,6 +629,60 @@ final class InteropHarnessTests: XCTestCase {
             status("chat_id", chatID)
             status("message", message)
             status("delivery", finalizedDelivery)
+        case "send_attachment_from_args":
+            let caption = try requiredEnv("IRIS_IOS_HARNESS_CAPTION", env: env)
+            let filename = env["IRIS_IOS_HARNESS_FILENAME"] ?? "iris-logo.png"
+            let chatID = try await ensureChatOpen(
+                manager: manager,
+                dataDir: dataDir,
+                chatID: env["IRIS_IOS_HARNESS_CHAT_ID"],
+                peerInput: env["IRIS_IOS_HARNESS_PEER_INPUT"]
+            )
+            let fixtureData = try irisLogoFixtureData()
+            let fixtureDir = dataDir.appendingPathComponent("harness-fixtures", isDirectory: true)
+            try FileManager.default.createDirectory(at: fixtureDir, withIntermediateDirectories: true)
+            let fixtureURL = fixtureDir.appendingPathComponent("iris-logo.png")
+            try fixtureData.write(to: fixtureURL, options: .atomic)
+
+            manager.dispatch(
+                .sendAttachment(
+                    chatId: chatID,
+                    filePath: fixtureURL.path,
+                    filename: filename,
+                    caption: caption
+                )
+            )
+            let timeout = harnessTimeout(env: env, defaultSeconds: 120)
+            let finalized: ChatMessageSnapshot = try await waitFor(
+                label: "outgoing attachment \(caption)",
+                timeout: timeout
+            ) {
+                guard !manager.state.busy.uploadingAttachment,
+                      let current = manager.state.currentChat,
+                      self.sameIdentifier(current.chatId, chatID) else {
+                    return nil
+                }
+                return current.messages.first(where: { message in
+                    message.isOutgoing &&
+                        message.body == caption &&
+                        message.attachments.count == 1 &&
+                        message.attachments[0].filename == filename &&
+                        message.delivery != .queued &&
+                        message.delivery != .pending
+                })
+            }
+            if finalized.delivery == .failed {
+                throw HarnessError.unexpected("outgoing attachment failed to publish")
+            }
+
+            try await waitForRelayDrainIfRequested(manager: manager, dataDir: dataDir, env: env)
+            status("chat_id", chatID)
+            status("caption", caption)
+            status("filename", finalized.attachments[0].filename)
+            status("nhash", finalized.attachments[0].nhash)
+            status("attachment_size", String(fixtureData.count))
+            status("attachment_sha256", sha256Hex(fixtureData))
+            status("delivery", String(describing: finalized.delivery))
         case "send_nearby_message_from_args":
             try await maybeDisableRelays(manager: manager, env: env)
             manager.setNearbyEnabled(true)
@@ -902,6 +957,44 @@ final class InteropHarnessTests: XCTestCase {
             status("chat_id", matchedChatID)
             status("message", message)
             status("matching_count", String(matchingCount))
+        case "wait_for_attachment_from_args":
+            let caption = try requiredEnv("IRIS_IOS_HARNESS_CAPTION", env: env)
+            let filename = env["IRIS_IOS_HARNESS_FILENAME"] ?? "iris-logo.png"
+            let direction = (env["IRIS_IOS_HARNESS_DIRECTION"] ?? "incoming").lowercased()
+            let chatID = try await ensureChatOpen(
+                manager: manager,
+                dataDir: dataDir,
+                chatID: env["IRIS_IOS_HARNESS_CHAT_ID"],
+                peerInput: env["IRIS_IOS_HARNESS_PEER_INPUT"]
+            )
+            let timeout = harnessTimeout(env: env, defaultSeconds: 120)
+            let attachment: MessageAttachmentSnapshot = try await waitFor(
+                label: "\(direction) attachment \(caption)",
+                timeout: timeout
+            ) {
+                guard let current = manager.state.currentChat,
+                      self.sameIdentifier(current.chatId, chatID) else {
+                    manager.dispatch(.openChat(chatId: chatID))
+                    return nil
+                }
+                return current.messages.first(where: { message in
+                    message.body == caption &&
+                        self.directionMatches(isOutgoing: message.isOutgoing, direction: direction) &&
+                        message.attachments.count == 1 &&
+                        message.attachments[0].filename == filename
+                })?.attachments.first
+            }
+            guard let downloaded = await manager.downloadAttachment(attachment) else {
+                throw HarnessError.unexpected("attachment could not be downloaded")
+            }
+
+            status("chat_id", chatID)
+            status("caption", caption)
+            status("filename", attachment.filename)
+            status("nhash", attachment.nhash)
+            status("attachment_size", String(downloaded.count))
+            status("attachment_sha256", sha256Hex(downloaded))
+            status("download_verified", "true")
         case "send_typing_from_args":
             let chatID = try await ensureChatOpen(
                 manager: manager,
@@ -988,6 +1081,17 @@ final class InteropHarnessTests: XCTestCase {
             status("message", message)
             status("message_ids", ids.joined(separator: ","))
             status("seen", "true")
+        case "set_read_receipts_from_args":
+            let rawEnabled = try requiredEnv("IRIS_IOS_HARNESS_ENABLED", env: env).lowercased()
+            guard rawEnabled == "true" || rawEnabled == "false" else {
+                throw HarnessError.unexpected("enabled must be true or false")
+            }
+            let enabled = rawEnabled == "true"
+            manager.dispatch(.setReadReceiptsEnabled(enabled: enabled))
+            let _: Bool = try await waitFor(label: "read receipt preference", timeout: 30) {
+                manager.state.preferences.sendReadReceipts == enabled ? true : nil
+            }
+            status("read_receipts_enabled", String(enabled))
         case "wait_for_message_delivery_from_args":
             let message = try requiredEnv("IRIS_IOS_HARNESS_MESSAGE", env: env)
             let expectedDelivery = (env["IRIS_IOS_HARNESS_DELIVERY"] ?? "seen").lowercased()
@@ -1398,4 +1502,14 @@ final class InteropHarnessTests: XCTestCase {
         }
     }
 
+    private func irisLogoFixtureData() throws -> Data {
+        guard let url = Bundle(for: Self.self).url(forResource: "iris-logo", withExtension: "png") else {
+            throw HarnessError.unexpected("Iris logo fixture is missing from the test bundle")
+        }
+        return try Data(contentsOf: url)
+    }
+
+    private func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
 }

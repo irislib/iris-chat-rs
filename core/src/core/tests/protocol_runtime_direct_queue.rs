@@ -64,6 +64,14 @@ fn nsec_restore_sends_without_waiting_for_local_roster_backfill() {
     core.restore_primary_session(&owner_nsec);
     assert!(core.defer_owner_app_keys_publish);
     assert!(!core.app_keys.contains_key(&owner.public_key().to_hex()));
+    assert!(
+        core.debug_log.iter().any(|entry| {
+            entry.category == "profile.metadata.fetch"
+                && entry.detail.contains("reason=session_restore")
+                && entry.detail.contains(&owner.public_key().to_hex())
+        }),
+        "a clean secret-key restore should fetch the local owner's public profile"
+    );
 
     {
         let engine = core.protocol_engine.as_mut().expect("protocol engine");
