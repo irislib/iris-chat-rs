@@ -306,7 +306,7 @@ impl AppCore {
             messages: vec![DeviceSyncMessage {
                 chat_id: message.chat_id.clone(),
                 id: message.id.clone(),
-                body: message.body.clone(),
+                body: message_wire_text(&message.body, &message.attachments),
                 author,
                 created_at: message.created_at_secs,
                 expires_at: message.expires_at_secs,
@@ -535,6 +535,7 @@ impl AppCore {
             }
             let is_outgoing = message.author == local_owner_hex;
             let chat_id = message.chat_id.clone();
+            let (body, attachments) = extract_message_attachments(&message.body);
             if is_outgoing {
                 self.accept_direct_peer(&chat_id);
             }
@@ -546,8 +547,8 @@ impl AppCore {
                     author: message.author.clone(),
                     author_owner_pubkey_hex: Some(message.author),
                     author_picture_url: None,
-                    body: message.body,
-                    attachments: Vec::new(),
+                    body,
+                    attachments,
                     reactions: Vec::new(),
                     reactors: Vec::new(),
                     is_outgoing,

@@ -110,7 +110,7 @@ fn from_snapshot(message: &ChatMessageSnapshot) -> Option<DeviceSyncMessage> {
     Some(DeviceSyncMessage {
         chat_id: message.chat_id.clone(),
         id: message.id.clone(),
-        body: message.body.clone(),
+        body: message_wire_text(&message.body, &message.attachments),
         author: message.author_owner_pubkey_hex.clone()?,
         created_at: message.created_at_secs,
         expires_at: message.expires_at_secs,
@@ -118,10 +118,11 @@ fn from_snapshot(message: &ChatMessageSnapshot) -> Option<DeviceSyncMessage> {
 }
 
 fn from_persisted(message: PersistedMessage) -> DeviceSyncMessage {
+    let body = message_wire_text(&message.body, &message.attachments);
     DeviceSyncMessage {
         chat_id: message.chat_id,
         id: message.id,
-        body: message.body,
+        body,
         author: message.author_owner_pubkey_hex.unwrap_or(message.author),
         created_at: message.created_at_secs,
         expires_at: message.expires_at_secs,

@@ -158,7 +158,12 @@ fn appcore_direct_text_queues_until_subscription_state_makes_peer_ready() {
     }
 
     let chat_id = peer_owner.public_key().to_hex();
-    core.send_direct_message(&chat_id, "queued hello", UnixSeconds(10), None);
+    core.send_direct_message(
+        &chat_id,
+        "queued hello\nnhash1abc123/iris-logo.png",
+        UnixSeconds(10),
+        None,
+    );
 
     let queued_message = core
         .threads
@@ -167,6 +172,9 @@ fn appcore_direct_text_queues_until_subscription_state_makes_peer_ready() {
         .expect("queued message")
         .clone();
     assert_eq!(queued_message.delivery, DeliveryState::Queued);
+    assert_eq!(queued_message.body, "queued hello");
+    assert_eq!(queued_message.attachments.len(), 1);
+    assert_eq!(queued_message.attachments[0].filename, "iris-logo.png");
     assert!(queued_message.delivery_trace.outer_event_ids.is_empty());
     assert!(core.pending_relay_publishes.is_empty());
 
@@ -228,6 +236,7 @@ fn appcore_direct_text_queues_until_subscription_state_makes_peer_ready() {
         "drain should replace the temporary local id with the final rumor id"
     );
     assert_eq!(drained.body, "queued hello");
+    assert_eq!(drained.attachments, queued_message.attachments);
     assert_eq!(drained.created_at_secs, queued_message.created_at_secs);
     assert!(!drained.delivery_trace.outer_event_ids.is_empty());
     assert!(!core.pending_relay_publishes.is_empty());
@@ -264,6 +273,55 @@ fn appcore_ready_direct_text_uses_same_queue_then_drain_path() {
     assert_eq!(message.body, "ready hello");
     assert!(!message.delivery_trace.outer_event_ids.is_empty());
     assert!(!core.pending_relay_publishes.is_empty());
+}
+
+#[test]
+fn appcore_direct_queue_rejects_genuinely_empty_content() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("direct-empty-queue-rejected", &owner, &device);
+
+    {
+        let engine = core.protocol_engine.as_mut().expect("protocol engine");
+        observe_current_device_appkeys_for_test(engine, &owner, &device);
+        engine
+            .ingest_app_keys_snapshot(
+                peer_owner.public_key(),
+                AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 11)]),
+                11,
+            )
+            .expect("peer appkeys");
+        observe_peer_device_invite_for_test(engine, &peer_owner, &peer_device, 12);
+    }
+    core.pending_relay_publishes.clear();
+
+    let chat_id = peer_owner.public_key().to_hex();
+    core.push_outgoing_message_with_id(
+        "empty-queued".to_string(),
+        &chat_id,
+        String::new(),
+        13,
+        None,
+        DeliveryState::Queued,
+    );
+
+    assert!(core.drain_queued_direct_text_messages("test_empty"));
+    let message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| thread.messages.first())
+        .expect("failed empty message");
+    assert_eq!(message.id, "empty-queued");
+    assert_eq!(message.delivery, DeliveryState::Failed);
+    assert!(core.pending_relay_publishes.values().all(|pending| {
+        pending.inner_event_id.as_deref() != Some("empty-queued")
+    }));
+    assert!(core.debug_log.iter().any(|entry| {
+        entry.category == "message.direct.queue.invalid"
+            && entry.detail.contains("empty_content=true")
+    }));
 }
 
 #[test]

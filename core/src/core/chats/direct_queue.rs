@@ -73,6 +73,23 @@ impl AppCore {
             };
         }
 
+        let wire_text = message_wire_text(&message.body, &message.attachments);
+        if wire_text.is_empty() {
+            self.push_debug_log(
+                "message.direct.queue.invalid",
+                format!(
+                    "reason={reason} chat_id={chat_id} message_id={} empty_content=true",
+                    message.id
+                ),
+            );
+            self.update_message_delivery(chat_id, &message.id, DeliveryState::Failed);
+            self.state.toast = Some("Message could not be sent.".to_string());
+            return DirectTextDrainResult {
+                changed: true,
+                blocked: false,
+            };
+        }
+
         let Some(protocol_engine) = self.protocol_engine.as_mut() else {
             return DirectTextDrainResult {
                 changed: false,
@@ -82,7 +99,7 @@ impl AppCore {
         let result = protocol_engine.send_direct_text(
             peer_pubkey,
             chat_id,
-            &message.body,
+            &wire_text,
             message.expires_at_secs,
             unix_now(),
         );
@@ -185,14 +202,19 @@ impl AppCore {
                 );
             }
         }
-        self.push_outgoing_message_with_id(
-            final_message_id,
-            chat_id,
-            queued_message.body.clone(),
-            queued_message.created_at_secs,
-            queued_message.expires_at_secs,
-            DeliveryState::Pending,
-        );
+        let mut final_message = queued_message.clone();
+        final_message.id = final_message_id;
+        final_message.delivery = DeliveryState::Pending;
+        self.threads
+            .entry(chat_id.to_string())
+            .or_insert_with(|| ThreadRecord {
+                chat_id: chat_id.to_string(),
+                unread_count: 0,
+                updated_at_secs: queued_message.created_at_secs,
+                messages: Vec::new(),
+                draft: String::new(),
+            })
+            .insert_message_sorted(final_message);
     }
 }
 

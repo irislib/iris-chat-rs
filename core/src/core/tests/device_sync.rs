@@ -581,7 +581,7 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     core.apply_runtime_text_message(
         sender.public_key(),
         Some(chat_id.clone()),
-        "survives a sibling relay miss".to_string(),
+        "survives a sibling relay miss\nnhash1abc123/iris-logo.png".to_string(),
         100,
         None,
         Some("live-message-id".to_string()),
@@ -603,6 +603,14 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["chatId"], chat_id);
     assert_eq!(messages[0]["id"], "live-message-id");
+    let source_message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| thread.messages.first())
+        .expect("source attachment message");
+    assert_eq!(source_message.body, "survives a sibling relay miss");
+    assert_eq!(source_message.attachments.len(), 1);
+    assert_eq!(source_message.attachments[0].filename, "iris-logo.png");
     assert!(core
         .build_device_sync_packets_for_test(100, true)
         .iter()
@@ -613,7 +621,7 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     core.push_outgoing_message_with_id(
         "live-outgoing-id".to_string(),
         &chat_id,
-        "linked-device reply".to_string(),
+        "nhash1def456/linked-logo.png".to_string(),
         102,
         None,
         DeliveryState::Pending,
@@ -629,6 +637,7 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     assert_eq!(messages[0]["chatId"], chat_id);
     assert_eq!(messages[0]["id"], "live-outgoing-id");
     assert_eq!(messages[0]["author"], owner.public_key().to_hex());
+    let outgoing_record = queued.records[0].clone();
     core.update_message_delivery(&chat_id, "live-outgoing-id", DeliveryState::Failed);
     assert!(!core
         .build_device_sync_packets_for_test(100, true)
@@ -647,12 +656,20 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     linked.batch_depth = 1;
     linked.handle_device_sync_packet(&source, DEVICE_SYNC_PORT, &incoming_record);
     linked.handle_device_sync_packet(&source, DEVICE_SYNC_PORT, &incoming_record);
+    linked.handle_device_sync_packet(&source, DEVICE_SYNC_PORT, &outgoing_record);
     linked.batch_depth = 0;
     let linked_messages = &linked.threads[&chat_id].messages;
-    assert_eq!(linked_messages.len(), 1);
+    assert_eq!(linked_messages.len(), 2);
     assert_eq!(linked_messages[0].id, "live-message-id");
     assert_eq!(linked_messages[0].body, "survives a sibling relay miss");
+    assert_eq!(linked_messages[0].attachments.len(), 1);
+    assert_eq!(linked_messages[0].attachments[0].filename, "iris-logo.png");
     assert!(!linked_messages[0].is_outgoing);
+    assert_eq!(linked_messages[1].id, "live-outgoing-id");
+    assert!(linked_messages[1].body.is_empty());
+    assert_eq!(linked_messages[1].attachments.len(), 1);
+    assert_eq!(linked_messages[1].attachments[0].filename, "linked-logo.png");
+    assert!(linked_messages[1].is_outgoing);
 
     let resync = br#"{"type":"resyncRequired","v":1}"#;
     core.handle_device_sync_packet(

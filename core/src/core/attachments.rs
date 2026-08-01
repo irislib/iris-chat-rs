@@ -84,11 +84,27 @@ pub(super) fn format_attachment_links_message(
     caption: &str,
     attachments: &[(String, String)],
 ) -> String {
-    let caption = caption.trim();
     let file_links = attachments
         .iter()
         .map(|(nhash, filename)| format_file_link(nhash, filename))
         .collect::<Vec<_>>();
+    format_message_with_file_links(caption, file_links)
+}
+
+/// Reconstruct the canonical transport representation of a projected chat
+/// message. `ChatMessageSnapshot::body` intentionally contains only visible
+/// text; attachment links live in the separate `attachments` field and must
+/// be restored before the message crosses a relay or device-sync boundary.
+pub(super) fn message_wire_text(body: &str, attachments: &[MessageAttachmentSnapshot]) -> String {
+    let file_links = attachments
+        .iter()
+        .map(|attachment| format_file_link(&attachment.nhash, &attachment.filename))
+        .collect::<Vec<_>>();
+    format_message_with_file_links(body, file_links)
+}
+
+fn format_message_with_file_links(caption: &str, file_links: Vec<String>) -> String {
+    let caption = caption.trim();
     match (caption.is_empty(), file_links.is_empty()) {
         (true, _) => file_links.join("\n"),
         (_, true) => caption.to_string(),
@@ -351,6 +367,30 @@ mod tests {
                 ],
             ),
             "album\nnhash1abc123/one.png\nnhash1def456/two%20final.png"
+        );
+    }
+
+    #[test]
+    fn projected_attachment_message_round_trips_through_wire_text() {
+        let original = "\u{21A9} Bob: earlier\n\ncaption\nnhash1abc123/photo%201.png\nnhash1def456/m%C3%B6te.txt";
+        let (body, attachments) = extract_message_attachments(original);
+
+        assert_eq!(body, "\u{21A9} Bob: earlier\n\ncaption");
+        assert_eq!(attachments.len(), 2);
+        let wire = message_wire_text(&body, &attachments);
+        assert_eq!(wire, original);
+
+        let reparsed = extract_message_attachments(&wire);
+        assert_eq!(reparsed, (body, attachments));
+    }
+
+    #[test]
+    fn attachment_only_projection_never_serializes_as_empty() {
+        let (_, attachments) = extract_message_attachments("nhash1abc123/iris-logo.png");
+
+        assert_eq!(
+            message_wire_text("", &attachments),
+            "nhash1abc123/iris-logo.png"
         );
     }
 
