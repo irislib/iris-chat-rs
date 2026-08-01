@@ -568,8 +568,8 @@ struct ChatScreen: View {
                                             isUploading: manager.state.busy.uploadingAttachment,
                                             uploadFraction: uploadFraction(manager.state.busy.uploadProgress),
                                             isFocused: $isComposerFocused,
-                                            onDraftChange: {
-                                                sendTypingIfNeeded()
+                                            onUserEdit: { text in
+                                                sendTypingIfNeeded(text: text)
                                             },
                                             onAttach: { urls in
                                                 do {
@@ -1035,9 +1035,9 @@ struct ChatScreen: View {
         lastPersistedDraft = draft
     }
 
-    private func sendTypingIfNeeded() {
+    private func sendTypingIfNeeded(text: String) {
         guard !manager.isUserBlocked(chatId) else { return }
-        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             stopTypingIfNeeded()
             return

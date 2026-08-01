@@ -30,7 +30,7 @@ struct IrisComposerBar: View {
     let isUploading: Bool
     let uploadFraction: Double?
     @FocusState.Binding var isFocused: Bool
-    let onDraftChange: () -> Void
+    let onUserEdit: (String) -> Void
     let onAttach: ([URL]) -> Void
     let onSend: (String) -> Void
 
@@ -148,9 +148,6 @@ struct IrisComposerBar: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .irisOnChange(of: draft) { _ in
-            onDraftChange()
-        }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
             handleDroppedFiles(providers)
         }
@@ -189,7 +186,7 @@ struct IrisComposerBar: View {
                     .allowsHitTesting(false)
             }
             IrisUIKitComposerTextView(
-                text: $draft,
+                text: userEditingDraft,
                 isFocused: $isFocused
             )
         }
@@ -214,7 +211,7 @@ struct IrisComposerBar: View {
                     .allowsHitTesting(false)
             }
             IrisAppKitComposerTextView(
-                text: $draft,
+                text: userEditingDraft,
                 isFocused: $isFocused,
                 onSubmit: submitDraft
             )
@@ -317,11 +314,17 @@ struct IrisComposerBar: View {
     private func insertEmoji(_ emoji: String) {
         #if canImport(AppKit)
         if let text = IrisAppKitComposerTextView.insertTextAtSelection(emoji) {
-            draft = text
+            userEditingDraft.wrappedValue = text
             return
         }
         #endif
-        draft.append(emoji)
+        userEditingDraft.wrappedValue = draft + emoji
+    }
+
+    /// The parent owns draft restoration and clearing. Only mutations that
+    /// enter through the editor are user activity and may emit typing.
+    private var userEditingDraft: Binding<String> {
+        irisComposerUserEditingBinding($draft, onUserEdit: onUserEdit)
     }
 
     private func handleDroppedFiles(_ providers: [NSItemProvider]) -> Bool {
@@ -357,6 +360,20 @@ struct IrisComposerBar: View {
 
         return true
     }
+}
+
+func irisComposerUserEditingBinding(
+    _ draft: Binding<String>,
+    onUserEdit: @escaping (String) -> Void
+) -> Binding<String> {
+    Binding(
+        get: { draft.wrappedValue },
+        set: { newValue in
+            guard draft.wrappedValue != newValue else { return }
+            draft.wrappedValue = newValue
+            onUserEdit(newValue)
+        }
+    )
 }
 
 #if os(iOS)
