@@ -564,14 +564,6 @@ impl Store for UploadingBlossomStore {
             ));
         }
 
-        // Always cache the chunk locally first. If the remote upload fails the
-        // file still exists on this device and can be rendered immediately;
-        // a real sync layer will publish it to peers later.
-        {
-            let mut cache = shared_chunk_cache_write();
-            cache.insert(hash_hex.clone(), data.clone());
-        }
-
         {
             let uploaded = self.uploaded.read().await;
             if uploaded.contains(&hash_hex) {
@@ -580,33 +572,27 @@ impl Store for UploadingBlossomStore {
         }
 
         let chunk_size = data.len() as u64;
-        let upload_result = self.client.upload_if_missing(&data).await;
-        match upload_result {
-            Ok((remote_hash, was_uploaded)) => {
-                if remote_hash != hash_hex {
-                    return Err(StoreError::Other(format!(
-                        "remote hash mismatch: expected {hash_hex}, got {remote_hash}"
-                    )));
-                }
-                let mut uploaded = self.uploaded.write().await;
-                uploaded.insert(hash_hex);
-                if let Some(progress) = &self.progress {
-                    progress.fetch_add(chunk_size, Ordering::Relaxed);
-                }
-                Ok(was_uploaded)
-            }
-            Err(error) => {
-                // Remote unreachable. Treat the chunk as locally stored — the
-                // shared cache above already retains it. We propagate `true`
-                // so HashTree::put_stream completes; a future re-upload pass
-                // can push the cached chunks once the network recovers.
-                eprintln!("blossom upload failed for {hash_hex} ({error}); kept in local cache");
-                if let Some(progress) = &self.progress {
-                    progress.fetch_add(chunk_size, Ordering::Relaxed);
-                }
-                Ok(true)
-            }
+        let remote_hash = self
+            .client
+            .upload(&data)
+            .await
+            .map_err(|error| StoreError::Other(format!("blossom upload failed: {error}")))?;
+        if remote_hash != hash_hex {
+            return Err(StoreError::Other(format!(
+                "remote hash mismatch: expected {hash_hex}, got {remote_hash}"
+            )));
         }
+
+        {
+            let mut cache = shared_chunk_cache_write();
+            cache.insert(hash_hex.clone(), data);
+        }
+        let mut uploaded = self.uploaded.write().await;
+        uploaded.insert(hash_hex);
+        if let Some(progress) = &self.progress {
+            progress.fetch_add(chunk_size, Ordering::Relaxed);
+        }
+        Ok(true)
     }
 
     async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
@@ -706,6 +692,10 @@ mod tests {
         assert_eq!(prepared[1].filename, "second.bin");
     }
 }
+
+#[cfg(test)]
+#[path = "attachment_upload/upload_tests.rs"]
+mod upload_tests;
 
 #[cfg(test)]
 #[path = "attachment_upload/same_host_tests.rs"]
