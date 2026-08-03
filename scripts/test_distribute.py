@@ -45,6 +45,7 @@ class DistributeTests(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.log = self.root / "commands.log"
+        self.zapstore_config = self.root / "generated-zapstore.yaml"
         self.hashtree_nsec = self.root / "htree-nsec"
         self.zapstore_nsec = self.root / "zapstore-nsec"
         self.hashtree_nsec.write_text("hashtree-secret\n")
@@ -140,6 +141,12 @@ class DistributeTests(unittest.TestCase):
             #!/usr/bin/env bash
             set -Eeuo pipefail
             printf 'zsp %s\n' "$*" >> "$FAKE_COMMAND_LOG"
+            for arg in "$@"; do
+              if [[ "$arg" == *.yaml ]]; then
+                cp "$arg" "$FAKE_ZAPSTORE_CONFIG"
+                break
+              fi
+            done
             exit 0
             """,
         )
@@ -203,6 +210,7 @@ class DistributeTests(unittest.TestCase):
                 ).strip(),
                 "FAKE_HASHTREE_NPUB": HASHTREE_NPUB,
                 "FAKE_ZAPSTORE_NPUB": ZAPSTORE_NPUB,
+                "FAKE_ZAPSTORE_CONFIG": str(self.zapstore_config),
                 "FAKE_ACTIVE_HTREE_NPUB": HASHTREE_NPUB,
                 "FAKE_TAG": TAG,
                 "IRIS_HASHTREE_NSEC_PATH": str(self.hashtree_nsec),
@@ -230,6 +238,14 @@ class DistributeTests(unittest.TestCase):
         self.assertNotIn("aarch64-apple-darwin", log)
         self.assertNotIn("zapstore-secret", result.stdout + result.stderr)
         self.assertIn("zsp publish --check", log)
+
+    def test_zapstore_config_uses_absolute_existing_icon(self) -> None:
+        result = self.run_distribution("zapstore", "--check")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = self.zapstore_config.read_text()
+        icon_path = ROOT / "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
+        self.assertTrue(icon_path.is_file())
+        self.assertIn(f"icon: {icon_path}\n", config)
 
     def test_hashtree_check_never_publishes(self) -> None:
         result = self.run_distribution("hashtree", "--check")

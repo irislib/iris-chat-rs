@@ -270,13 +270,18 @@ publish_homebrew() {
 
 publish_zapstore() {
   local apk_name="iris-chat-${TAG}-android-arm64.apk"
-  local config notes nsec
+  local config icon_path notes nsec
   require_command base64
   require_command sed
   require_zapstore_identity
   download_asset "$apk_name"
   verify_downloads "$apk_name"
 
+  icon_path="$ROOT/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
+  if [[ ! -s "$icon_path" ]]; then
+    echo "Zapstore icon is missing or empty: $icon_path" >&2
+    exit 1
+  fi
   notes="$DOWNLOAD_DIR/zapstore-notes.md"
   gh api "repos/$IRIS_GITHUB_REPOSITORY/contents/RELEASE_NOTES.md?ref=$TAG" \
     --jq .content |
@@ -290,6 +295,7 @@ publish_zapstore() {
   sed \
     -e "s|^pubkey: .*|pubkey: $IRIS_ZAPSTORE_PUBLISHER_NPUB|" \
     -e "s|^release_source: .*|release_source: $DOWNLOAD_DIR/$apk_name|" \
+    -e "s|^icon: .*|icon: $icon_path|" \
     -e "s|^release_notes: .*|release_notes: $notes|" \
     "$ROOT/zapstore.yaml" > "$config"
 
