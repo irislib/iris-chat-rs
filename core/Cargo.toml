@@ -60,8 +60,8 @@ nostr-pubsub = "=0.1.13"
 nostr-pubsub-fips = "=0.4.7"
 nostr-pubsub-relay = "=0.1.11"
 nostr-identity = "=0.4.0"
-nostr-double-ratchet = "0.0.164"
-nostr-double-ratchet-pairwise-codec = "0.0.164"
+nostr-double-ratchet = "0.0.166"
+nostr-double-ratchet-pairwise-codec = "0.0.166"
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 rusqlite = { version = "0.31", features = ["bundled"] }
