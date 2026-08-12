@@ -2,6 +2,26 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.8.12
+
+### GitHub
+
+- New Double Ratchet invite responses prove control of their claimed session
+  key before the session is installed, preventing another identity from
+  claiming an observed session key.
+- Zapstore releases now publish the app icon reliably.
+
+### Apple
+
+- Secure chat invites now verify that the person accepting the invite controls
+  the new encryption key before the chat starts.
+
+### Zapstore
+
+- Secure chat invites now verify that the person accepting the invite controls
+  the new encryption key before the chat starts.
+- Fixed the app icon in Zapstore releases.
+
 ## v2026.8.1
 
 ### GitHub
