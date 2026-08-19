@@ -79,6 +79,8 @@ pub(super) struct UserDiscoveryCache {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct DiscoveredUserRecord {
     pub(super) owner_pubkey_hex: String,
+    /// Persisted People order: root follow position unless a complete social
+    /// opinion fetch ranks the same candidates by direct-friend support.
     pub(super) follow_position: u32,
     pub(super) petname: Option<String>,
     pub(super) app_keys_created_at_secs: u64,

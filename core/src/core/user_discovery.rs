@@ -1,4 +1,7 @@
 use super::profile::fallback_profile_name_for_identity;
+use super::user_discovery_social::{
+    apply_follow_order, rank_followed_owners, MAX_SOCIAL_OPINION_AUTHORS,
+};
 use super::*;
 use crate::state::FollowedUserSearchResult;
 use futures_util::{stream, StreamExt};
@@ -12,6 +15,12 @@ const DISCOVERY_RECONNECT_FLOOR: Duration = Duration::from_secs(60);
 const DISCOVERY_AUTHOR_CHUNK: usize = 100;
 const DISCOVERY_CONCURRENT_REQUESTS: usize = 4;
 const MAX_DISCOVERY_FOLLOWS: usize = 5_000;
+const MAX_PEER_FOLLOW_EVENTS_PER_CHUNK: usize = 512;
+const DISCOVERY_EVENT_FUTURE_TOLERANCE_SECS: u64 = 600;
+
+pub(super) fn discovery_event_time_is_acceptable(created_at_secs: u64, now_secs: u64) -> bool {
+    created_at_secs <= now_secs.saturating_add(DISCOVERY_EVENT_FUTURE_TOLERANCE_SECS)
+}
 
 #[derive(Clone, Debug)]
 struct FollowSeed {
@@ -189,6 +198,13 @@ async fn fetch_user_discovery(
             };
         }
     };
+    let root_now_secs = unix_now().get();
+    let follow_events = follow_events
+        .into_iter()
+        .filter(|event| {
+            discovery_event_time_is_acceptable(event.created_at.as_secs(), root_now_secs)
+        })
+        .collect();
     let Some(follow_event) = newest_verified_event(follow_events, Kind::ContactList, local_owner)
     else {
         return UserDiscoveryFetchResult {
@@ -197,7 +213,7 @@ async fn fetch_user_discovery(
             detail: "follow_list_missing=true".to_string(),
         };
     };
-    if follow_head_is_older(&follow_event, &previous) {
+    if follow_head_is_older(&follow_event, &previous, root_now_secs) {
         return UserDiscoveryFetchResult {
             cache: previous,
             metadata_events: Vec::new(),
@@ -218,17 +234,33 @@ async fn fetch_user_discovery(
         .collect::<BTreeMap<_, _>>();
     for follow in &follows {
         if let Some(user) = next_users.get_mut(&follow.owner.to_hex()) {
-            user.follow_position = follow.position;
             user.petname = follow.petname.clone();
         }
     }
 
-    let app_keys_chunks = fetch_author_chunks(
-        &client,
-        Kind::from(APP_KEYS_EVENT_KIND as u16),
-        follows.iter().map(|follow| follow.owner).collect(),
-    )
-    .await;
+    let followed_owners = follows
+        .iter()
+        .map(|follow| follow.owner)
+        .collect::<Vec<_>>();
+    let opinion_authors = followed_owners
+        .iter()
+        .take(MAX_SOCIAL_OPINION_AUTHORS)
+        .copied()
+        .collect::<Vec<_>>();
+    let (app_keys_chunks, peer_follow_chunks) = tokio::join!(
+        fetch_author_chunks(
+            &client,
+            Kind::from(APP_KEYS_EVENT_KIND as u16),
+            followed_owners.clone(),
+            None,
+        ),
+        fetch_author_chunks(
+            &client,
+            Kind::ContactList,
+            opinion_authors.clone(),
+            Some(MAX_PEER_FOLLOW_EVENTS_PER_CHUNK),
+        ),
+    );
     let now_secs = unix_now().get();
     let follow_by_owner = follows
         .iter()
@@ -264,11 +296,15 @@ async fn fetch_user_discovery(
                     let Ok(app_keys_event_json) = serde_json::to_string(&event) else {
                         continue;
                     };
+                    let follow_position = next_users
+                        .get(&owner_hex)
+                        .map(|user| user.follow_position)
+                        .unwrap_or(follow.position);
                     next_users.insert(
                         owner_hex.clone(),
                         DiscoveredUserRecord {
                             owner_pubkey_hex: owner_hex,
-                            follow_position: follow.position,
+                            follow_position,
                             petname: follow.petname.clone(),
                             app_keys_created_at_secs: event.created_at.as_secs(),
                             app_keys_event_id: event.id.to_hex(),
@@ -283,6 +319,38 @@ async fn fetch_user_discovery(
         }
     }
 
+    let mut social_failed_chunks = 0usize;
+    let mut peer_follow_events = Vec::new();
+    for (_, result) in peer_follow_chunks {
+        match result {
+            Ok(events) => peer_follow_events.extend(events),
+            Err(_) => social_failed_chunks += 1,
+        }
+    }
+    let social_order = if social_failed_chunks == 0 {
+        let ranked = rank_followed_owners(
+            local_owner,
+            &follow_event,
+            &followed_owners,
+            &opinion_authors,
+            peer_follow_events,
+            now_secs,
+        );
+        if ranked.is_none() {
+            social_failed_chunks = 1;
+        }
+        ranked
+    } else {
+        None
+    };
+    let follow_event_id = follow_event.id.to_hex();
+    if social_order.is_some()
+        || previous.follow_event_id.as_deref() != Some(follow_event_id.as_str())
+        || !previous.users.keys().eq(next_users.keys())
+    {
+        apply_follow_order(&mut next_users, &followed_owners, social_order.as_deref());
+    }
+
     let metadata_chunks = fetch_author_chunks(
         &client,
         Kind::Metadata,
@@ -290,6 +358,7 @@ async fn fetch_user_discovery(
             .keys()
             .filter_map(|owner| PublicKey::from_hex(owner).ok())
             .collect(),
+        None,
     )
     .await;
     let mut metadata_events = Vec::new();
@@ -311,17 +380,18 @@ async fn fetch_user_discovery(
     let eligible_count = next_users.len();
     UserDiscoveryFetchResult {
         cache: UserDiscoveryCache {
-            follow_event_id: Some(follow_event.id.to_hex()),
+            follow_event_id: Some(follow_event_id),
             follow_created_at_secs: follow_event.created_at.as_secs(),
             users: next_users,
         },
         metadata_events,
         detail: format!(
-            "follows={} eligible={} failed_chunks={} metadata_failed_chunks={}",
+            "follows={} eligible={} failed_chunks={} metadata_failed_chunks={} social_failed_chunks={}",
             follows.len(),
             eligible_count,
             failed_chunks,
-            metadata_failed_chunks
+            metadata_failed_chunks,
+            social_failed_chunks
         ),
     }
 }
@@ -330,6 +400,7 @@ async fn fetch_author_chunks(
     client: &Client,
     kind: Kind,
     authors: Vec<PublicKey>,
+    max_events_per_chunk: Option<usize>,
 ) -> Vec<(Vec<PublicKey>, Result<Vec<Event>, String>)> {
     let chunks = authors
         .chunks(DISCOVERY_AUTHOR_CHUNK)
@@ -339,14 +410,21 @@ async fn fetch_author_chunks(
         .map(|owners| {
             let client = client.clone();
             async move {
+                let mut filter = Filter::new().kind(kind).authors(owners.clone());
+                if let Some(max_events) = max_events_per_chunk {
+                    filter = filter.limit(max_events.saturating_add(1));
+                }
                 let result = client
-                    .fetch_events(
-                        Filter::new().kind(kind).authors(owners.clone()),
-                        DISCOVERY_REQUEST_TIMEOUT,
-                    )
+                    .fetch_events(filter, DISCOVERY_REQUEST_TIMEOUT)
                     .await
-                    .map(|events| events.iter().cloned().collect())
-                    .map_err(|error| error.to_string());
+                    .map(|events| events.iter().cloned().collect::<Vec<_>>())
+                    .map_err(|error| error.to_string())
+                    .and_then(|events| match max_events_per_chunk {
+                        Some(max_events) if events.len() > max_events => {
+                            Err("event limit exceeded".to_string())
+                        }
+                        _ => Ok(events),
+                    });
                 (owners, result)
             }
         })
@@ -362,7 +440,7 @@ fn newest_verified_event(events: Vec<Event>, kind: Kind, author: PublicKey) -> O
         .min_by(compare_replaceable_heads)
 }
 
-fn newest_verified_events_by_author(events: Vec<Event>, kind: Kind) -> Vec<Event> {
+pub(super) fn newest_verified_events_by_author(events: Vec<Event>, kind: Kind) -> Vec<Event> {
     let mut grouped = HashMap::<PublicKey, Vec<Event>>::new();
     for event in events {
         grouped.entry(event.pubkey).or_default().push(event);
@@ -380,7 +458,10 @@ fn compare_replaceable_heads(left: &Event, right: &Event) -> Ordering {
         .then_with(|| left.id.cmp(&right.id))
 }
 
-fn follow_head_is_older(event: &Event, previous: &UserDiscoveryCache) -> bool {
+fn follow_head_is_older(event: &Event, previous: &UserDiscoveryCache, now_secs: u64) -> bool {
+    if !discovery_event_time_is_acceptable(previous.follow_created_at_secs, now_secs) {
+        return false;
+    }
     let timestamp = event.created_at.as_secs();
     if timestamp != previous.follow_created_at_secs {
         return timestamp < previous.follow_created_at_secs;
@@ -760,82 +841,6 @@ mod tests {
     }
 
     #[test]
-    fn local_relay_discovers_app_keys_metadata_and_removes_unfollowed_user() {
-        let relay = crate::local_relay::TestRelay::start();
-        let local_owner = Keys::generate();
-        let followed_owner = Keys::generate();
-        let followed_device = Keys::generate().public_key();
-        let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
-        let follow = follow_event(
-            &local_owner,
-            100,
-            vec![Tag::parse([
-                "p",
-                followed_owner.public_key().to_hex().as_str(),
-                "",
-                "Relay friend",
-            ])
-            .unwrap()],
-        );
-        let app_keys = app_keys_event(&followed_owner, &[followed_device], 100);
-        let metadata = EventBuilder::new(
-            Kind::Metadata,
-            r#"{"name":"relay-alice","display_name":"Relay Alice","about":"Local test"}"#,
-        )
-        .custom_created_at(Timestamp::from(100))
-        .sign_with_keys(&followed_owner)
-        .unwrap();
-        let publisher = Client::new(Keys::generate());
-        let discovery_client = Client::new(Keys::generate());
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-
-        let first = runtime.block_on(async {
-            ensure_session_relays_configured(&publisher, &relay_urls).await;
-            connect_client_with_timeout(&publisher, Duration::from_secs(2)).await;
-            publisher.send_event(&follow).await.unwrap();
-            publisher.send_event(&app_keys).await.unwrap();
-            publisher.send_event(&metadata).await.unwrap();
-            fetch_user_discovery(
-                discovery_client.clone(),
-                relay_urls.clone(),
-                local_owner.public_key(),
-                UserDiscoveryCache::default(),
-            )
-            .await
-        });
-        assert_eq!(first.cache.users.len(), 1);
-        assert_eq!(
-            first
-                .cache
-                .users
-                .get(&followed_owner.public_key().to_hex())
-                .and_then(|user| user.petname.as_deref()),
-            Some("Relay friend")
-        );
-        assert_eq!(first.metadata_events.len(), 1);
-
-        let unfollow = follow_event(&local_owner, 101, Vec::new());
-        let second = runtime.block_on(async {
-            publisher.send_event(&unfollow).await.unwrap();
-            let result = fetch_user_discovery(
-                discovery_client.clone(),
-                relay_urls,
-                local_owner.public_key(),
-                first.cache,
-            )
-            .await;
-            let _ = publisher.shutdown().await;
-            let _ = discovery_client.shutdown().await;
-            result
-        });
-        assert!(second.cache.users.is_empty());
-        assert_eq!(second.cache.follow_event_id, Some(unfollow.id.to_hex()));
-    }
-
-    #[test]
     fn cached_app_keys_are_promoted_before_chat_creation() {
         let temp = TempDir::new().unwrap();
         let local_owner = Keys::generate();
@@ -887,3 +892,7 @@ mod tests {
 #[cfg(test)]
 #[path = "user_discovery_refresh_tests.rs"]
 mod refresh_tests;
+
+#[cfg(test)]
+#[path = "user_discovery_fetch_tests.rs"]
+mod fetch_tests;

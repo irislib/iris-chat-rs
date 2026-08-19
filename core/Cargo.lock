@@ -1995,6 +1995,7 @@ dependencies = [
  "nvpn-fips-endpoint",
  "nvpn-fips-tcp",
  "nvpn-fips-tcp-endpoint",
+ "nostr-social-graph",
  "qrcode",
  "rand 0.8.6",
  "rusqlite",
