@@ -3,8 +3,9 @@ import Foundation
 import UIKit
 import UserNotifications
 
+@MainActor
 final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
-    weak var manager: AppManager?
+    let manager = AppManager()
 
     func application(
         _ application: UIApplication,
@@ -44,7 +45,7 @@ final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
-        manager?.appBackgrounded()
+        manager.appBackgrounded()
     }
 
     func userNotificationCenter(
@@ -52,9 +53,6 @@ final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         MobilePushDeliveryProbe.recordIfArmed()
-        guard let manager else {
-            return [.banner, .sound, .list]
-        }
         return await manager.foregroundPushPresentationOptions(
             content: notification.request.content
         )
@@ -64,7 +62,7 @@ final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        manager?.handlePushNotificationTap(userInfo: response.notification.request.content.userInfo)
+        manager.handlePushNotificationTap(userInfo: response.notification.request.content.userInfo)
     }
 }
 
