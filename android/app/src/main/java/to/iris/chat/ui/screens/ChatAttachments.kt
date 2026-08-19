@@ -3,7 +3,6 @@ package to.iris.chat.ui.screens
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
@@ -278,23 +277,7 @@ private object SelectedImageThumbnailCache {
 }
 
 private fun decodeStagedImageThumbnail(path: String): Bitmap? {
-    val file = File(path)
-    if (!file.exists()) {
-        return null
-    }
-    val bounds =
-        BitmapFactory.Options().apply {
-            inJustDecodeBounds = true
-        }
-    BitmapFactory.decodeFile(path, bounds)
-    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-        return null
-    }
-    val options =
-        BitmapFactory.Options().apply {
-            inSampleSize = chatAttachmentPreviewSampleSize(bounds.outWidth, bounds.outHeight)
-        }
-    return BitmapFactory.decodeFile(path, options)
+    return decodeChatAttachmentImage(path, maxPixelSize = 512)
 }
 
 internal data class PickedAttachment(
@@ -934,32 +917,8 @@ private object ChatAttachmentPreviewBitmapCache {
 
 private suspend fun decodeChatAttachmentPreviewBitmap(data: ByteArray): Bitmap? =
     withContext(Dispatchers.Default) {
-        val bounds =
-            BitmapFactory.Options().apply {
-                inJustDecodeBounds = true
-            }
-        BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-            return@withContext null
-        }
-        val options =
-            BitmapFactory.Options().apply {
-                inSampleSize = chatAttachmentPreviewSampleSize(bounds.outWidth, bounds.outHeight)
-            }
-        BitmapFactory.decodeByteArray(data, 0, data.size, options)
+        decodeChatAttachmentImage(data, maxPixelSize = 512)
     }
-
-private fun chatAttachmentPreviewSampleSize(
-    width: Int,
-    height: Int,
-): Int {
-    val maxPreviewPixels = 512
-    var sampleSize = 1
-    while (width / (sampleSize * 2) >= maxPreviewPixels || height / (sampleSize * 2) >= maxPreviewPixels) {
-        sampleSize *= 2
-    }
-    return sampleSize
-}
 
 private fun openDownloadedAttachment(
     context: Context,
@@ -1040,6 +999,13 @@ internal fun ImageViewerDialog(
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
     val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+    val viewerMaxPixelSize =
+        with(density) {
+            maxOf(
+                configuration.screenWidthDp.dp.toPx(),
+                configuration.screenHeightDp.dp.toPx(),
+            ).toInt().coerceAtLeast(1)
+        }
     val dismissThresholdPx = with(density) { 140.dp.toPx() }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
 
@@ -1047,7 +1013,9 @@ internal fun ImageViewerDialog(
         item.attachments.getOrNull(item.initialIndex)?.let { initial ->
             loadedData[initial.htreeUrl] = item.initialData
             if (!isAnimatedImage(item.initialData, initial.filename)) {
-                BitmapFactory.decodeByteArray(item.initialData, 0, item.initialData.size)?.let { bmp ->
+                withContext(Dispatchers.Default) {
+                    decodeChatAttachmentImage(item.initialData, maxPixelSize = viewerMaxPixelSize)
+                }?.let { bmp ->
                     decodedBitmaps[initial.htreeUrl] = bmp
                 }
             }
@@ -1062,7 +1030,7 @@ internal fun ImageViewerDialog(
             loadedData[attachment.htreeUrl] = data
             if (!isAnimatedImage(data, attachment.filename) && decodedBitmaps[attachment.htreeUrl] == null) {
                 withContext(Dispatchers.Default) {
-                    BitmapFactory.decodeByteArray(data, 0, data.size)
+                    decodeChatAttachmentImage(data, maxPixelSize = viewerMaxPixelSize)
                 }?.let { bmp ->
                     decodedBitmaps[attachment.htreeUrl] = bmp
                 }
