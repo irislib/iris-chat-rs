@@ -104,7 +104,7 @@ impl AppCore {
         self.emit_state();
 
         if std::mem::take(&mut self.user_discovery_runtime.refresh_pending) {
-            self.request_user_discovery_refresh(false);
+            self.request_user_discovery_refresh(true);
         }
     }
 
@@ -883,3 +883,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "user_discovery_refresh_tests.rs"]
+mod refresh_tests;
