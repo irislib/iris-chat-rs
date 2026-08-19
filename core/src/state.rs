@@ -571,8 +571,8 @@ pub struct AppState {
     pub network_status: Option<NetworkStatusSnapshot>,
     pub mobile_push: MobilePushSyncSnapshot,
     pub preferences: PreferencesSnapshot,
-    /// Changes only when followed-user discovery data or its loading state
-    /// changes, so native search caches do not rerun on unrelated state ticks.
+    /// Invalidates native People-search caches when discovery inputs, block
+    /// exclusions, or discovery loading state change.
     pub user_discovery_revision: u64,
     pub user_discovery_syncing: bool,
     pub toast: Option<String>,

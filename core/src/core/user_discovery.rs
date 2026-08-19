@@ -159,7 +159,7 @@ impl AppCore {
         }
     }
 
-    fn bump_user_discovery_revision(&mut self) {
+    pub(super) fn bump_user_discovery_revision(&mut self) {
         self.user_discovery_revision = self.user_discovery_revision.wrapping_add(1).max(1);
     }
 }

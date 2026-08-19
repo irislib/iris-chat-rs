@@ -127,6 +127,7 @@ include!("tests/private_invite_owner_verification.rs");
 include!("tests/private_invite_owner_crash.rs");
 include!("tests/first_contact_receiver.rs");
 include!("tests/direct_messages_group_requests.rs");
+include!("tests/direct_messages_blocking.rs");
 include!("tests/direct_messages_typing.rs");
 include!("tests/direct_messages_runtime_regressions.rs");
 include!("tests/direct_group_sender_key_ack.rs");

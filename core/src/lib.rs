@@ -421,12 +421,19 @@ impl FfiApp {
                     filter_threads_for_search(&state_snapshot.chat_list, trimmed)
                 };
                 let shared_db = self.shared_db_snapshot();
-                let excluded_people = state_snapshot
+                let mut excluded_people = state_snapshot
                     .chat_list
                     .iter()
                     .filter(|chat| chat.kind == ChatKind::Direct)
                     .map(|chat| chat.chat_id.to_ascii_lowercase())
                     .collect::<std::collections::HashSet<_>>();
+                excluded_people.extend(
+                    state_snapshot
+                        .preferences
+                        .blocked_owner_pubkeys
+                        .iter()
+                        .map(|owner| owner.to_ascii_lowercase()),
+                );
                 let query_db = |conn: &rusqlite::Connection| {
                     let messages = crate::core::search_messages_fts(
                         conn,
