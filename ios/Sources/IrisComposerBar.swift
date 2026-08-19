@@ -532,8 +532,8 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
     @FocusState.Binding var isFocused: Bool
     let onSubmit: (String) -> IrisComposerSubmitResult
 
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
+    func makeNSView(context: Context) -> IrisComposerScrollView {
+        let scrollView = IrisComposerScrollView()
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
         scrollView.hasVerticalScroller = false
@@ -559,10 +559,10 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
         textView.isEditable = true
         textView.isSelectable = true
         textView.isHorizontallyResizable = false
-        textView.isVerticallyResizable = true
+        textView.isVerticallyResizable = false
         textView.minSize = NSSize(width: 0, height: Self.lineHeight(for: textView))
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.autoresizingMask = [.width]
+        textView.autoresizingMask = [.width, .height]
         textView.isContinuousSpellCheckingEnabled = true
         textView.isAutomaticSpellingCorrectionEnabled = true
         textView.setAccessibilityIdentifier("chatMessageInput")
@@ -573,10 +573,11 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
         textView.delegate = context.coordinator
 
         scrollView.documentView = textView
+        scrollView.revealSelectionAfterNextLayout(in: textView)
         return scrollView
     }
 
-    func updateNSView(_ nsView: NSScrollView, context: Context) {
+    func updateNSView(_ nsView: IrisComposerScrollView, context: Context) {
         guard let textView = nsView.documentView as? IrisComposerNSTextView else {
             return
         }
@@ -586,9 +587,14 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
         textView.composerCommandDelegate = context.coordinator
         textView.delegate = context.coordinator
 
+        let nativeText = textView.string
+        let nativeSelection = textView.selectedRange()
         context.coordinator.reconcile(textView)
 
-        Self.updateScrollState(in: nsView, textView: textView)
+        nsView.needsLayout = true
+        if textView.string != nativeText || textView.selectedRange() != nativeSelection {
+            nsView.revealSelectionAfterNextLayout(in: textView)
+        }
 
         if isFocused, textView.window?.firstResponder !== textView {
             DispatchQueue.main.async { [weak textView] in
@@ -598,48 +604,19 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
         }
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: IrisComposerScrollView, context: Context) -> CGSize? {
         guard let textView = nsView.documentView as? NSTextView else {
             return nil
         }
-        let width = max(proposal.width ?? nsView.bounds.width, 1)
-        let height = min(
-            max(Self.measuredHeight(for: textView, width: width), Self.lineHeight(for: textView)),
-            Self.maxHeight(for: textView)
+        return Self.fittingSize(
+            for: textView,
+            proposedWidth: proposal.width,
+            actualWidth: nsView.contentView.bounds.width
         )
-        return CGSize(width: width, height: height)
     }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
-    }
-
-    private static func updateScrollState(in scrollView: NSScrollView, textView: NSTextView) {
-        let width = max(scrollView.bounds.width, 1)
-        let contentHeight = measuredHeight(for: textView, width: width)
-        scrollView.hasVerticalScroller = contentHeight > maxHeight(for: textView)
-    }
-
-    private static func measuredHeight(for textView: NSTextView, width: CGFloat) -> CGFloat {
-        guard let layoutManager = textView.layoutManager,
-              let textContainer = textView.textContainer else {
-            return lineHeight(for: textView)
-        }
-        textContainer.containerSize = NSSize(width: max(width, 1), height: CGFloat.greatestFiniteMagnitude)
-        layoutManager.ensureLayout(for: textContainer)
-        return ceil(max(layoutManager.usedRect(for: textContainer).height, lineHeight(for: textView)))
-    }
-
-    private static func lineHeight(for textView: NSTextView) -> CGFloat {
-        let font = textView.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
-        if let layoutManager = textView.layoutManager {
-            return ceil(layoutManager.defaultLineHeight(for: font))
-        }
-        return ceil(font.ascender - font.descender + font.leading)
-    }
-
-    private static func maxHeight(for textView: NSTextView) -> CGFloat {
-        lineHeight(for: textView) * 5
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate, IrisComposerNSTextViewCommandDelegate {
@@ -654,11 +631,15 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
             guard let textView = notification.object as? NSTextView else {
                 return
             }
-
             let nativeText = textView.string
             let shouldPublish = parent.text != nativeText
             lastPublishedNativeText = shouldPublish ? nativeText : nil
-            textView.enclosingScrollView?.needsLayout = true
+
+            if let scrollView = textView.enclosingScrollView as? IrisComposerScrollView {
+                scrollView.revealSelectionAfterNextLayout(in: textView)
+            } else {
+                textView.enclosingScrollView?.needsLayout = true
+            }
 
             if shouldPublish {
                 parent.text = nativeText

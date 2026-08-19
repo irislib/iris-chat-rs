@@ -251,6 +251,51 @@ final class IrisChatUITests: IrisChatUITestCase {
         #endif
     }
 
+    func testMacComposerMultilineViewportGrowsAndCapsAtFiveLines() throws {
+#if os(macOS)
+        let app = launchCleanApp()
+        createAccount(app)
+        openChatWithPeer(app)
+
+        let editor = editableElement(app, "chatMessageInput")
+        let viewport = app.scrollViews.matching(identifier: "chatMessageInput").firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+
+        typeText("line 1", into: editor, app: app)
+        var previousHeight = viewport.frame.height
+        XCTAssertGreaterThan(previousHeight, 0)
+
+        for line in 2...5 {
+            app.typeKey(.return, modifierFlags: .shift)
+            typeText("line \(line)", into: editor, app: app)
+            XCTAssertTrue(
+                waitUntil(timeout: 2) { viewport.frame.height > previousHeight + 1 },
+                "composer did not grow when line \(line) was inserted"
+            )
+            previousHeight = viewport.frame.height
+        }
+
+        app.typeKey(.return, modifierFlags: .shift)
+        typeText("line 6", into: editor, app: app)
+        XCTAssertTrue(
+            waitUntil(timeout: 2) { (editor.value as? String)?.contains("line 6") == true },
+            "sixth line was not committed to the native editor"
+        )
+        let cappedHeight = viewport.frame.height
+        XCTAssertEqual(cappedHeight, previousHeight, accuracy: 1)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        XCTAssertEqual(
+            viewport.frame.height,
+            cappedHeight,
+            accuracy: 1,
+            "composer viewport grew beyond five lines"
+        )
+#else
+        throw XCTSkip("AppKit composer layout is macOS-only")
+#endif
+    }
+
     func testComposerKeepsSequentialTypingOrder() throws {
 #if os(macOS)
         throw XCTSkip("UIKit composer input is iOS-only")
