@@ -956,6 +956,7 @@ final class AppManager: ObservableObject {
     )
     private var iosSideEffectGate = IosStateSideEffectGate()
     private let isUiTestRun: Bool
+    private var pendingPushChatID: String?
 #endif
     private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
@@ -1866,6 +1867,19 @@ final class AppManager: ObservableObject {
               !chatID.isEmpty else {
             return
         }
+        guard state.account != nil || secretStore.load() != nil else {
+            return
+        }
+        pendingPushChatID = chatID
+        openPendingPushChatIfReady()
+    }
+
+    private func openPendingPushChatIfReady() {
+        guard state.account?.authorizationState == .authorized,
+              let chatID = pendingPushChatID else {
+            return
+        }
+        pendingPushChatID = nil
         dispatch(.openChat(chatId: chatID))
     }
 
@@ -1884,16 +1898,19 @@ final class AppManager: ObservableObject {
     }
 
     private func resolvePushNotification(payloadJson: String) -> MobilePushNotificationResolution? {
-        dispatchToRust(.ingestMobilePushPayload(payloadJson: payloadJson), showsToastOnFailure: false)
+        let resolution: MobilePushNotificationResolution
         if let bundle = secretStore.load() {
-            return decryptMobilePushNotificationPayload(
+            resolution = decryptMobilePushNotificationPayload(
                 dataDir: dataDir.path,
                 ownerPubkeyHex: bundle.ownerPubkeyHex,
                 deviceNsec: bundle.deviceNsec,
                 rawPayloadJson: payloadJson
             )
+        } else {
+            resolution = resolveMobilePushNotificationPayload(rawPayloadJson: payloadJson)
         }
-        return resolveMobilePushNotificationPayload(rawPayloadJson: payloadJson)
+        dispatchToRust(.ingestMobilePushPayload(payloadJson: payloadJson), showsToastOnFailure: false)
+        return resolution
     }
 
     private func fallbackForegroundPushPresentationOptions(
@@ -2484,6 +2501,9 @@ final class AppManager: ObservableObject {
         // Logout ownership stays in Rust. The shell clears native secrets and local files only.
         automaticRevocationLogoutInFlight = true
 #if os(iOS)
+        // Account-nil startup snapshots are ambiguous; logout is the deterministic
+        // session boundary for discarding deferred notification navigation.
+        pendingPushChatID = nil
         mobilePushRuntime.unregisterStoredSubscription(state: state, ownerNsec: storedAccountBundle?.ownerNsec ?? secretStore.load()?.ownerNsec)
 #endif
         guard secretStore.clear(), pendingDeviceLinkSecretStore.clear() else {
@@ -2644,6 +2664,9 @@ final class AppManager: ObservableObject {
         if logoutIfCurrentDeviceRevoked(reconciledState) {
             return
         }
+#if os(iOS)
+        openPendingPushChatIfReady()
+#endif
         postDesktopNotifications(from: oldState, to: reconciledState)
         syncCurrentDeviceLabelsIfNeeded(state: reconciledState)
         rememberCurrentChatIfPresent()

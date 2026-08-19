@@ -7,8 +7,10 @@ import UIKit
 struct IrisChatApp: App {
 #if os(iOS)
     @UIApplicationDelegateAdaptor(IrisPushAppDelegate.self) private var appDelegate
-#endif
+    private var manager: AppManager { appDelegate.manager }
+#else
     @StateObject private var manager = AppManager()
+#endif
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -17,9 +19,6 @@ struct IrisChatApp: App {
 #if os(iOS)
                 .background(IOSUserActivityMonitor(manager: manager))
 #endif
-                .onAppear {
-                    appDelegate.manager = manager
-                }
                 .onOpenURL { url in
                     if !manager.handleShareURL(url) {
                         manager.handleChatLink(url)
