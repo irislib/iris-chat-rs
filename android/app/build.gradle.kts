@@ -518,6 +518,7 @@ dependencies {
     implementation(libs.google.mlkit.barcode.scanning)
     implementation(libs.okhttp)
     implementation(libs.zxing.core)
+    implementation(libs.androidx.exifinterface)
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
     implementation("net.java.dev.jna:jna:5.12.0@aar")
