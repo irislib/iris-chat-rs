@@ -304,6 +304,8 @@ jobs:
               exact_version = exact_versions.find do |version|
                 version.version_string == app_version
               end
+              ready_state =
+                Spaceship::ConnectAPI::AppStoreVersion::AppVersionState::READY_FOR_REVIEW
               completed_states = [
                 Spaceship::ConnectAPI::AppStoreVersion::AppVersionState::IN_REVIEW,
                 Spaceship::ConnectAPI::AppStoreVersion::AppVersionState::WAITING_FOR_REVIEW,
@@ -312,18 +314,64 @@ jobs:
                 Spaceship::ConnectAPI::AppStoreVersion::AppVersionState::PROCESSING_FOR_DISTRIBUTION,
                 Spaceship::ConnectAPI::AppStoreVersion::AppVersionState::READY_FOR_DISTRIBUTION
               ]
-              if exact_version && completed_states.include?(exact_version.app_version_state)
+              if exact_version &&
+                 (completed_states.include?(exact_version.app_version_state) ||
+                  exact_version.app_version_state == ready_state)
                 attached_build = exact_version.build&.version
                 if attached_build != build_number
                   UI.user_error!(
-                    "App Store version #{app_version} is already " \
+                    "App Store version #{app_version} is " \
                     "#{exact_version.app_version_state} with build " \
                     "#{attached_build || '<none>'}, not #{build_number}"
                   )
                 end
+              end
+              if exact_version && completed_states.include?(exact_version.app_version_state)
                 UI.success(
                   "App Store version #{app_version} (#{build_number}) is already " \
                   "submitted or released"
+                )
+                next
+              end
+
+              if exact_version&.app_version_state == ready_state
+                submission = app.get_ready_review_submission(
+                  client: client,
+                  platform: Spaceship::ConnectAPI::Platform::IOS,
+                  includes: "appStoreVersionForReview"
+                )
+                unless submission&.app_store_version_for_review&.id == exact_version.id
+                  UI.user_error!(
+                    "No ready review submission belongs to App Store version " \
+                    "#{app_version}"
+                  )
+                end
+                items = Spaceship::ConnectAPI::ReviewSubmissionItem.all(
+                  client: client,
+                  review_submission_id: submission.id,
+                  includes: "appStoreVersion"
+                )
+                unless items.one? &&
+                       items.first.app_store_version&.id == exact_version.id
+                  UI.user_error!(
+                    "Ready review submission does not contain exactly one item " \
+                    "for App Store version #{app_version}"
+                  )
+                end
+                submitted = submission.submit_for_review(client: client)
+                submitted_states = [
+                  Spaceship::ConnectAPI::ReviewSubmission::ReviewSubmissionState::WAITING_FOR_REVIEW,
+                  Spaceship::ConnectAPI::ReviewSubmission::ReviewSubmissionState::IN_REVIEW
+                ]
+                unless submitted_states.include?(submitted&.state)
+                  UI.user_error!(
+                    "Review submission returned unexpected state " \
+                    "#{submitted&.state || '<none>'}"
+                  )
+                end
+                UI.success(
+                  "Resumed App Store review submission for " \
+                  "#{app_version} (#{build_number})"
                 )
                 next
               end
@@ -338,7 +386,13 @@ jobs:
                   "#{edit_version.version_string}"
                 )
               end
-              existing_version = !edit_version.nil?
+              if exact_version && !edit_version
+                UI.user_error!(
+                  "App Store version #{app_version} is " \
+                  "#{exact_version.app_version_state} and cannot be safely resumed"
+                )
+              end
+              existing_version = !exact_version.nil?
               release_mode = ENV.fetch("RELEASE_MODE")
               release_options = {
                 api_key: api_key,
