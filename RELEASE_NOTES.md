@@ -2,6 +2,28 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.8.19
+
+### GitHub
+
+- iOS notification taps received during profile restoration now wait for
+  authorization and open the intended chat exactly once.
+- Android chat image previews and full-screen images now honor embedded EXIF
+  rotation and reflection metadata while decoding at an appropriate size.
+- The macOS message composer now preserves native edits and cursor state during
+  SwiftUI reconciliation.
+- The macOS message composer now grows and scrolls reliably for multiline text.
+
+### Apple
+
+- Opening a notification while a profile is being restored now reliably opens the intended chat.
+- The Mac message box no longer moves the cursor unexpectedly while editing.
+- The Mac message box now grows and scrolls reliably for longer messages.
+
+### Zapstore
+
+- Photos with embedded camera orientation now display correctly in chats and the full-screen viewer.
+
 ## v2026.8.12
 
 ### GitHub
