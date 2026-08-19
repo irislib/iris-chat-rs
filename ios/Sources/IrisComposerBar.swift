@@ -34,11 +34,15 @@ struct IrisComposerBar: View {
     let onAttach: ([URL]) -> Void
     let onSend: (String) -> Void
 
-    private var canSend: Bool {
+    private func canSend(text: String) -> Bool {
         (
-            !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
             !attachments.isEmpty
         ) && !isSending && !isUploading
+    }
+
+    private var canSend: Bool {
+        canSend(text: draft)
     }
 
     var body: some View {
@@ -298,9 +302,6 @@ struct IrisComposerBar: View {
     #endif
 
     private func submitDraft() {
-        guard canSend else {
-            return
-        }
         #if os(iOS)
         let text = IrisUIKitComposerTextView.currentText ?? draft
         #elseif canImport(AppKit)
@@ -308,13 +309,20 @@ struct IrisComposerBar: View {
         #else
         let text = draft
         #endif
+        _ = submitDraft(text)
+    }
+
+    private func submitDraft(_ text: String) -> IrisComposerSubmitResult {
+        guard canSend(text: text) else {
+            return .rejected
+        }
         onSend(text)
+        return .acceptedAndClear
     }
 
     private func insertEmoji(_ emoji: String) {
         #if canImport(AppKit)
-        if let text = IrisAppKitComposerTextView.insertTextAtSelection(emoji) {
-            userEditingDraft.wrappedValue = text
+        if IrisAppKitComposerTextView.insertTextAtSelection(emoji) != nil {
             return
         }
         #endif
@@ -360,6 +368,11 @@ struct IrisComposerBar: View {
 
         return true
     }
+}
+
+enum IrisComposerSubmitResult: Equatable {
+    case rejected
+    case acceptedAndClear
 }
 
 func irisComposerUserEditingBinding(
@@ -517,7 +530,7 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
 
     @Binding var text: String
     @FocusState.Binding var isFocused: Bool
-    let onSubmit: () -> Void
+    let onSubmit: (String) -> IrisComposerSubmitResult
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -531,8 +544,6 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
 
         let textView = IrisComposerNSTextView()
         Self.activeTextView = textView
-        textView.composerCommandDelegate = context.coordinator
-        textView.delegate = context.coordinator
         textView.drawsBackground = false
         textView.backgroundColor = .clear
         textView.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
@@ -556,6 +567,11 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
         textView.isAutomaticSpellingCorrectionEnabled = true
         textView.setAccessibilityIdentifier("chatMessageInput")
 
+        textView.string = text
+        textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+        textView.composerCommandDelegate = context.coordinator
+        textView.delegate = context.coordinator
+
         scrollView.documentView = textView
         return scrollView
     }
@@ -570,11 +586,7 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
         textView.composerCommandDelegate = context.coordinator
         textView.delegate = context.coordinator
 
-        if textView.string != text, !textView.hasMarkedText() {
-            let selectedRange = textView.selectedRange()
-            textView.string = text
-            Self.restoreSelection(selectedRange, in: textView)
-        }
+        context.coordinator.reconcile(textView)
 
         Self.updateScrollState(in: nsView, textView: textView)
 
@@ -608,13 +620,6 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
         scrollView.hasVerticalScroller = contentHeight > maxHeight(for: textView)
     }
 
-    private static func restoreSelection(_ selectedRange: NSRange, in textView: NSTextView) {
-        let textLength = (textView.string as NSString).length
-        let location = min(selectedRange.location, textLength)
-        let length = min(selectedRange.length, textLength - location)
-        textView.setSelectedRange(NSRange(location: location, length: length))
-    }
-
     private static func measuredHeight(for textView: NSTextView, width: CGFloat) -> CGFloat {
         guard let layoutManager = textView.layoutManager,
               let textContainer = textView.textContainer else {
@@ -639,6 +644,7 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate, IrisComposerNSTextViewCommandDelegate {
         var parent: IrisAppKitComposerTextView
+        var lastPublishedNativeText: String?
 
         init(parent: IrisAppKitComposerTextView) {
             self.parent = parent
@@ -648,10 +654,23 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
             guard let textView = notification.object as? NSTextView else {
                 return
             }
-            guard parent.text != textView.string else {
-                return
+
+            let nativeText = textView.string
+            let shouldPublish = parent.text != nativeText
+            lastPublishedNativeText = shouldPublish ? nativeText : nil
+            textView.enclosingScrollView?.needsLayout = true
+
+            if shouldPublish {
+                parent.text = nativeText
             }
-            parent.text = textView.string
+        }
+
+        func reconcile(_ textView: NSTextView) {
+            irisReconcileComposerText(
+                textView,
+                bindingText: parent.text,
+                lastPublishedNativeText: &lastPublishedNativeText
+            )
         }
 
         func textDidBeginEditing(_ notification: Notification) {
@@ -663,10 +682,18 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
         }
 
         func composerTextViewDidSubmit(_ textView: NSTextView) {
-            if parent.text != textView.string {
-                parent.text = textView.string
+            guard !textView.hasMarkedText() else {
+                return
             }
-            parent.onSubmit()
+
+            guard parent.onSubmit(textView.string) == .acceptedAndClear else {
+                return
+            }
+
+            lastPublishedNativeText = nil
+            textView.string = ""
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
+            textView.enclosingScrollView?.needsLayout = true
         }
     }
 }
@@ -679,7 +706,9 @@ final class IrisComposerNSTextView: NSTextView {
     fileprivate weak var composerCommandDelegate: IrisComposerNSTextViewCommandDelegate?
 
     override func doCommand(by selector: Selector) {
-        if selector == #selector(NSResponder.insertNewline(_:)), !shouldInsertLineBreakForCurrentEvent {
+        if selector == #selector(NSResponder.insertNewline(_:)),
+           !hasMarkedText(),
+           !shouldInsertLineBreakForCurrentEvent {
             composerCommandDelegate?.composerTextViewDidSubmit(self)
             return
         }
