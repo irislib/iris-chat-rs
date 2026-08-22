@@ -18,6 +18,7 @@ struct IrisChatApp: App {
             RootView(manager: manager)
 #if os(iOS)
                 .background(IOSUserActivityMonitor(manager: manager))
+                .task { manager.appStoreUpdates.checkIfNeeded() }
 #endif
                 .onOpenURL { url in
                     if !manager.handleShareURL(url) {
@@ -33,6 +34,9 @@ struct IrisChatApp: App {
                 .irisOnChange(of: scenePhase) { phase in
                     if phase == .active {
                         manager.appForegrounded()
+#if os(iOS)
+                        manager.appStoreUpdates.checkIfNeeded()
+#endif
                     } else if phase == .inactive {
                         manager.appInactive()
                     } else if phase == .background {

@@ -498,8 +498,12 @@ enum IrisNavigationHeaderMetrics {
     static let barHeight: CGFloat = 48
     static let fadeTailHeight: CGFloat = 28
 
-    static func contentTopInset(topSafeArea: CGFloat, isChatHeader: Bool) -> CGFloat {
-        topSafeArea + barHeight + (isChatHeader ? 4 : 6)
+    static func contentTopInset(
+        topSafeArea: CGFloat,
+        isChatHeader: Bool,
+        statusBannersHeight: CGFloat = 0
+    ) -> CGFloat {
+        topSafeArea + barHeight + (isChatHeader ? 4 : 6) + max(0, statusBannersHeight)
     }
 
     static func chromeHeight(topSafeArea: CGFloat, isChatHeader: Bool) -> CGFloat {

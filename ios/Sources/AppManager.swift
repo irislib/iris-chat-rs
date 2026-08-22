@@ -930,7 +930,9 @@ final class AppManager: ObservableObject {
     // ObservableObject so views that only care about toasts or the desktop
     // updater don't re-render on every relay event that publishes `state`.
     let toasts = ToastCenter()
-#if os(macOS)
+#if os(iOS)
+    let appStoreUpdates = AppStoreUpdateController()
+#elseif os(macOS)
     let updates: DesktopUpdateController
 #endif
 

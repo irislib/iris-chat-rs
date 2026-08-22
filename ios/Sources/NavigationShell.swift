@@ -12,6 +12,24 @@ import UIKit
 import PhotosUI
 #endif
 
+struct NavigationStatusBannersHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value += nextValue() }
+}
+
+extension View {
+    func irisReportNavigationStatusBannerHeight() -> some View {
+        background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: NavigationStatusBannersHeightPreferenceKey.self,
+                    value: proxy.size.height
+                )
+            }
+        }
+    }
+}
+
 struct NavigationShell<Content: View>: View {
     let title: String
     let subtitle: String?
@@ -26,7 +44,7 @@ struct NavigationShell<Content: View>: View {
     let trailing: AnyView
     let titleAccessoryLeading: AnyView
     let onTitleTap: (() -> Void)?
-    let offlineBanner: AnyView
+    let statusBanners: AnyView
     let content: () -> Content
 
     init(
@@ -43,7 +61,7 @@ struct NavigationShell<Content: View>: View {
         trailing: AnyView = AnyView(EmptyView()),
         titleAccessoryLeading: AnyView = AnyView(EmptyView()),
         onTitleTap: (() -> Void)? = nil,
-        offlineBanner: AnyView = AnyView(EmptyView()),
+        statusBanners: AnyView = AnyView(EmptyView()),
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
@@ -59,11 +77,12 @@ struct NavigationShell<Content: View>: View {
         self.trailing = trailing
         self.titleAccessoryLeading = titleAccessoryLeading
         self.onTitleTap = onTitleTap
-        self.offlineBanner = offlineBanner
+        self.statusBanners = statusBanners
         self.content = content
     }
 
     @Environment(\.irisPalette) private var palette
+    @State private var statusBannersHeight: CGFloat = 0
 
     @ViewBuilder
     var body: some View {
@@ -94,7 +113,8 @@ struct NavigationShell<Content: View>: View {
             let topSafeArea = geometry.safeAreaInsets.top
             let contentTopInset = IrisNavigationHeaderMetrics.contentTopInset(
                 topSafeArea: topSafeArea,
-                isChatHeader: isChatHeader
+                isChatHeader: isChatHeader,
+                statusBannersHeight: statusBannersHeight
             )
             let chromeHeight = IrisNavigationHeaderMetrics.chromeHeight(
                 topSafeArea: topSafeArea,
@@ -136,7 +156,10 @@ struct NavigationShell<Content: View>: View {
                 titleAccessoryLeading: titleAccessoryLeading,
                 onTitleTap: onTitleTap
             )
-            offlineBanner
+            statusBanners
+        }
+        .onPreferenceChange(NavigationStatusBannersHeightPreferenceKey.self) {
+            statusBannersHeight = $0
         }
     }
 }
@@ -448,6 +471,7 @@ struct OfflineStatusBanner: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .accessibilityIdentifier("offlineStatusBanner")
+                    .irisReportNavigationStatusBannerHeight()
                 }
             }
             .clipped()

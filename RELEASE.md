@@ -142,6 +142,8 @@ In GitHub, open **Actions → iOS Distribution → Run workflow**.
   submit it for review.
 - For App Store, choose automatic, manual, or phased release after approval.
   Automatic is the default.
+- Every iOS App Store release must advance the Apple-visible
+  `CFBundleShortVersionString`; changing only the fourth/internal component cannot trigger update discovery.
 
 The workflow verifies the tagged IPA and its attestation before contacting
 App Store Connect. Retrying does not rebuild or upload a duplicate build.

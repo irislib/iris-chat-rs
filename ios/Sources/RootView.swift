@@ -134,7 +134,14 @@ struct RootView: View {
     private func screenChrome(for route: NavigationRoute) -> some View {
         let screen = route.screen
         if case .welcome = screen {
+#if os(iOS)
             WelcomeScreen(manager: manager)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    AppStoreUpdateBanner(updates: manager.appStoreUpdates)
+                }
+#else
+            WelcomeScreen(manager: manager)
+#endif
         } else {
             NavigationShell(
                 title: screenTitle(screen),
@@ -150,7 +157,7 @@ struct RootView: View {
                 trailing: topBarTrailingItem(for: screen),
                 titleAccessoryLeading: chatHeaderTitleAvatar(for: screen),
                 onTitleTap: chatHeaderOnTap(for: screen),
-                offlineBanner: offlineBanner
+                statusBanners: statusBanners
             ) {
                 content(for: screen)
             }
@@ -385,20 +392,21 @@ struct RootView: View {
         return nil
     }
 
-    private var offlineBanner: AnyView {
+    private var statusBanners: AnyView {
 #if os(iOS)
         AnyView(
-            OfflineStatusBanner(
-                networkStatus: manager.state.networkStatus,
-                nearbyService: manager.nearbyIris,
-                bluetoothEnabled: manager.state.preferences.nearbyEnabled &&
-                    manager.state.preferences.nearbyBluetoothEnabled,
-                appSceneIsActive: manager.appSceneIsActive,
-                foregroundedAt: manager.lastForegroundedAt,
-                onTap: {
-                    openSettings(focusedSection: .messageServers)
-                }
-            )
+            VStack(spacing: 0) {
+                OfflineStatusBanner(
+                    networkStatus: manager.state.networkStatus,
+                    nearbyService: manager.nearbyIris,
+                    bluetoothEnabled: manager.state.preferences.nearbyEnabled &&
+                        manager.state.preferences.nearbyBluetoothEnabled,
+                    appSceneIsActive: manager.appSceneIsActive,
+                    foregroundedAt: manager.lastForegroundedAt,
+                    onTap: { openSettings(focusedSection: .messageServers) }
+                )
+                AppStoreUpdateBanner(updates: manager.appStoreUpdates)
+            }
         )
 #else
         AnyView(EmptyView())
