@@ -1,16 +1,20 @@
 use super::{ProfileSearchCandidate, ProfileSearchFetchResult};
+#[path = "profile_search_blossom.rs"]
+mod blossom;
+#[cfg(test)]
 use async_trait::async_trait;
-use hashtree_blossom::{BlossomClient, BlossomStore};
-use hashtree_core::{nhash_decode, Cid, Hash, MemoryStore, Store, StoreError};
+use blossom::BoundedBlossomStore;
+use hashtree_core::{nhash_decode, Cid, MemoryStore, Store};
+#[cfg(test)]
+use hashtree_core::{Hash, StoreError};
 use hashtree_index::{SearchIndex, SearchIndexOptions, SearchOptions, SearchResult};
 use hashtree_resolver::{
     nostr::{NostrResolverConfig, NostrRootResolver},
     RootResolver,
 };
-use nostr::{Keys, PublicKey, RelayUrl};
+use nostr::{PublicKey, RelayUrl};
 use serde::Deserialize;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -59,69 +63,6 @@ struct CandidateBatch {
     dropped: usize,
 }
 
-struct ReadBudgetStore<S> {
-    inner: Arc<S>,
-    reads_left: AtomicUsize,
-    bytes_left: AtomicUsize,
-}
-
-impl<S> ReadBudgetStore<S> {
-    fn new(inner: Arc<S>) -> Self {
-        Self::with_limits(inner, MAX_STORE_READS, MAX_STORE_TOTAL_BYTES)
-    }
-
-    fn with_limits(inner: Arc<S>, reads: usize, bytes: usize) -> Self {
-        Self {
-            inner,
-            reads_left: AtomicUsize::new(reads),
-            bytes_left: AtomicUsize::new(bytes),
-        }
-    }
-
-    fn consume(counter: &AtomicUsize, amount: usize) -> Result<(), StoreError> {
-        counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
-                left.checked_sub(amount)
-            })
-            .map(|_| ())
-            .map_err(|_| StoreError::Other("profile search read budget exceeded".to_string()))
-    }
-}
-
-#[async_trait]
-impl<S: Store> Store for ReadBudgetStore<S> {
-    async fn put(&self, _hash: Hash, _data: Vec<u8>) -> Result<bool, StoreError> {
-        Err(StoreError::Other(
-            "profile search store is read-only".to_string(),
-        ))
-    }
-
-    async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
-        Self::consume(&self.reads_left, 1)?;
-        let data = self.inner.get(hash).await?;
-        if let Some(data) = data.as_ref() {
-            if data.len() > MAX_STORE_BLOB_BYTES {
-                return Err(StoreError::Other(
-                    "profile search blob is too large".to_string(),
-                ));
-            }
-            Self::consume(&self.bytes_left, data.len())?;
-        }
-        Ok(data)
-    }
-
-    async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
-        Self::consume(&self.reads_left, 1)?;
-        self.inner.has(hash).await
-    }
-
-    async fn delete(&self, _hash: &Hash) -> Result<bool, StoreError> {
-        Err(StoreError::Other(
-            "profile search store is read-only".to_string(),
-        ))
-    }
-}
-
 /// Fetch globally indexed Nostr profiles without making the index an authority
 /// for messaging eligibility. AppKeys/NDR resolution remains at the existing
 /// user-selection and chat boundary.
@@ -156,16 +97,17 @@ async fn fetch_profile_candidates_within_deadline(
 
     let snapshot_root = decode_nhash(PROFILE_SEARCH_SNAPSHOT)
         .map_err(|error| format!("invalid built-in profile snapshot: {error}"))?;
-    let store = Arc::new(ReadBudgetStore::new(Arc::new(BlossomStore::new(
-        BlossomClient::new_empty(Keys::generate())
-            .with_read_servers(
-                PROFILE_SEARCH_BLOSSOM_SERVERS
-                    .iter()
-                    .map(|server| (*server).to_string())
-                    .collect(),
-            )
-            .with_timeout(BLOSSOM_TIMEOUT),
-    ))));
+    let blossom_store = BoundedBlossomStore::new(
+        PROFILE_SEARCH_BLOSSOM_SERVERS
+            .iter()
+            .map(|server| (*server).to_string())
+            .collect(),
+        BLOSSOM_TIMEOUT,
+        MAX_STORE_BLOB_BYTES,
+        MAX_STORE_READS,
+        MAX_STORE_TOTAL_BYTES,
+    )?;
+    let store = Arc::new(blossom_store);
 
     let live_root = resolve_live_root(relay_urls).await;
     let (batch, source, live_detail) = match live_root {
@@ -577,38 +519,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_budget_rejects_oversized_store_blobs() {
-        let inner = Arc::new(MemoryStore::new());
-        let hash = [7; 32];
-        inner
-            .put(hash, vec![0; MAX_STORE_BLOB_BYTES + 1])
-            .await
-            .unwrap();
-        let store = ReadBudgetStore::new(inner);
-
-        let error = store.get(&hash).await.unwrap_err();
-        assert!(error.to_string().contains("too large"));
-    }
-
-    #[tokio::test]
-    async fn read_budget_enforces_access_and_aggregate_byte_limits() {
-        let inner = Arc::new(MemoryStore::new());
-        let first = [1; 32];
-        let second = [2; 32];
-        inner.put(first, vec![1, 2]).await.unwrap();
-        inner.put(second, vec![3, 4]).await.unwrap();
-
-        let reads = ReadBudgetStore::with_limits(inner.clone(), 2, 10);
-        assert!(reads.has(&first).await.unwrap());
-        assert!(reads.has(&second).await.unwrap());
-        assert!(reads.has(&first).await.is_err());
-
-        let bytes = ReadBudgetStore::with_limits(inner, 3, 3);
-        assert!(bytes.get(&first).await.unwrap().is_some());
-        assert!(bytes.get(&second).await.is_err());
-    }
-
-    #[tokio::test]
     async fn blocking_traversal_stops_at_its_internal_deadline() {
         let started = Instant::now();
         let error = search_root(
@@ -651,7 +561,6 @@ mod tests {
             .await
             .unwrap();
 
-        let store = Arc::new(ReadBudgetStore::new(store));
         let batch = search_root(
             store,
             &root,

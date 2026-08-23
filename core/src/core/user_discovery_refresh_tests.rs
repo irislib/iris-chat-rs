@@ -59,3 +59,79 @@ fn completed_fetch_starts_one_pending_refresh_despite_reconnect_floor() {
     assert!(!core.profile_search_runtime.in_flight);
     assert!(!core.user_discovery_syncing);
 }
+
+#[test]
+fn restore_adopts_legacy_unowned_cache_without_social_rank() {
+    let temp = TempDir::new().unwrap();
+    let owner = Keys::generate();
+    let friend = Keys::generate().public_key().to_hex();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.app_store
+        .replace_user_discovery(&UserDiscoveryCache {
+            owner_pubkey_hex: None,
+            follow_event_id: Some("legacy-head".to_string()),
+            follow_created_at_secs: 1,
+            users: BTreeMap::from([(
+                friend.clone(),
+                DiscoveredUserRecord {
+                    owner_pubkey_hex: friend,
+                    follow_position: 0,
+                    petname: None,
+                },
+            )]),
+            social_rank_ready: true,
+            social_friend_support: BTreeMap::from([("stale".to_string(), 1)]),
+        })
+        .unwrap();
+
+    core.restore_user_discovery_cache(owner.public_key());
+
+    assert_eq!(
+        core.user_discovery.owner_pubkey_hex,
+        Some(owner.public_key().to_hex())
+    );
+    assert_eq!(core.user_discovery.users.len(), 1);
+    assert!(!core.user_discovery.social_rank_ready);
+    assert!(core.user_discovery.social_friend_support.is_empty());
+    assert_eq!(
+        core.app_store.load_user_discovery().unwrap(),
+        core.user_discovery
+    );
+}
+
+#[test]
+fn restoring_another_account_clears_personalized_ranking() {
+    let temp = TempDir::new().unwrap();
+    let owner = Keys::generate();
+    let other_owner = Keys::generate();
+    let target = Keys::generate().public_key().to_hex();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.app_store
+        .replace_user_discovery(&UserDiscoveryCache {
+            owner_pubkey_hex: Some(owner.public_key().to_hex()),
+            follow_event_id: Some("head".to_string()),
+            follow_created_at_secs: 1,
+            users: BTreeMap::new(),
+            social_rank_ready: true,
+            social_friend_support: BTreeMap::from([(target, 1)]),
+        })
+        .unwrap();
+
+    core.restore_user_discovery_cache(other_owner.public_key());
+
+    assert_eq!(core.user_discovery, UserDiscoveryCache::default());
+    assert_eq!(
+        core.app_store.load_user_discovery().unwrap(),
+        UserDiscoveryCache::default()
+    );
+}

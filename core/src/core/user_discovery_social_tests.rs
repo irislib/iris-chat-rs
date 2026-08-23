@@ -52,7 +52,7 @@ fn direct_follow_opinions_change_order_without_unknown_authors() {
     invalid_newest.content.push_str("tampered");
     let bob_opinion = follow_event(&bob, 200, &[carol.public_key()]);
 
-    let ranked = rank_followed_owners(
+    let ranked = build_verified_social_ranking(
         root.public_key(),
         &root_event,
         &owners,
@@ -60,7 +60,8 @@ fn direct_follow_opinions_change_order_without_unknown_authors() {
         vec![obsolete, newest, invalid_newest, bob_opinion],
         1_000,
     )
-    .unwrap();
+    .unwrap()
+    .followed_owners;
 
     assert_eq!(
         ranked,
@@ -77,7 +78,7 @@ fn future_dated_peer_head_degrades_social_order() {
     let root_event = follow_event(&root, 100, &owners);
     let future = follow_event(&alice, 1_601, &[bob.public_key()]);
 
-    assert!(rank_followed_owners(
+    assert!(build_verified_social_ranking(
         root.public_key(),
         &root_event,
         &owners,
@@ -94,9 +95,34 @@ fn verified_empty_root_is_a_successful_empty_rank() {
     let root_event = follow_event(&root, 100, &[]);
 
     assert_eq!(
-        rank_followed_owners(root.public_key(), &root_event, &[], &[], Vec::new(), 1_000),
+        build_verified_social_ranking(root.public_key(), &root_event, &[], &[], Vec::new(), 1_000,)
+            .map(|ranking| ranking.followed_owners),
         Some(Vec::new())
     );
+}
+
+#[test]
+fn verified_friend_lists_rank_nonfollowed_targets() {
+    let root = Keys::generate();
+    let alice = Keys::generate();
+    let bob = Keys::generate();
+    let global = Keys::generate();
+    let owners = [alice.public_key(), bob.public_key()];
+    let ranking = build_verified_social_ranking(
+        root.public_key(),
+        &follow_event(&root, 100, &owners),
+        &owners,
+        &owners,
+        vec![
+            follow_event(&alice, 101, &[global.public_key()]),
+            follow_event(&bob, 102, &[global.public_key()]),
+        ],
+        1_000,
+    )
+    .unwrap();
+
+    assert_eq!(ranking.friend_support[&global.public_key().to_hex()], 2);
+    assert!(!ranking.followed_owners.contains(&global.public_key()));
 }
 
 #[test]
@@ -165,6 +191,7 @@ fn derived_order_persists_offline_and_degraded_refresh_restores_root() {
         .map(|_| Keys::generate().public_key())
         .collect::<Vec<_>>();
     let mut cache = UserDiscoveryCache {
+        owner_pubkey_hex: Some("root".to_string()),
         follow_event_id: Some("root".to_string()),
         follow_created_at_secs: 100,
         users: owners
@@ -172,6 +199,8 @@ fn derived_order_persists_offline_and_degraded_refresh_restores_root() {
             .enumerate()
             .map(|(position, owner)| (owner.to_hex(), record(*owner, position as u32)))
             .collect(),
+        social_rank_ready: true,
+        social_friend_support: BTreeMap::from([(owners[2].to_hex(), 2)]),
     };
     let social = [owners[2], owners[0], owners[1]];
     apply_follow_order(&mut cache.users, &owners, Some(&social));

@@ -71,9 +71,12 @@ pub(super) struct KnownAppKeyDevice {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct UserDiscoveryCache {
+    pub(super) owner_pubkey_hex: Option<String>,
     pub(super) follow_event_id: Option<String>,
     pub(super) follow_created_at_secs: u64,
     pub(super) users: BTreeMap<String, DiscoveredUserRecord>,
+    pub(super) social_rank_ready: bool,
+    pub(super) social_friend_support: BTreeMap<String, u16>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

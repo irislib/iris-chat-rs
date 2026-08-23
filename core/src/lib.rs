@@ -441,8 +441,12 @@ impl FfiApp {
                         .iter()
                         .map(|owner| owner.to_ascii_lowercase()),
                 );
-                if let Some(account) = state_snapshot.account.as_ref() {
-                    excluded_people.insert(account.public_key_hex.to_ascii_lowercase());
+                let current_owner_hex = state_snapshot
+                    .account
+                    .as_ref()
+                    .map(|account| account.public_key_hex.to_ascii_lowercase());
+                if let Some(owner) = &current_owner_hex {
+                    excluded_people.insert(owner.clone());
                 }
                 let query_db = |conn: &rusqlite::Connection| {
                     let messages = crate::core::search_messages_fts(
@@ -453,11 +457,16 @@ impl FfiApp {
                     )
                     .unwrap_or_default();
                     let people = if scope_chat_id.is_none() {
-                        crate::core::search_people(conn, trimmed, &excluded_people)
-                            .unwrap_or_default()
-                            .into_iter()
-                            .take(limit)
-                            .collect()
+                        crate::core::search_people(
+                            conn,
+                            trimmed,
+                            &excluded_people,
+                            current_owner_hex.as_deref(),
+                        )
+                        .unwrap_or_default()
+                        .into_iter()
+                        .take(limit)
+                        .collect()
                     } else {
                         Vec::new()
                     };

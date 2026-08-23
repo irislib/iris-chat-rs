@@ -1,5 +1,5 @@
 use super::user_discovery_social::{
-    apply_follow_order, rank_followed_owners, MAX_SOCIAL_OPINION_AUTHORS,
+    apply_follow_order, build_verified_social_ranking, MAX_SOCIAL_OPINION_AUTHORS,
 };
 use super::*;
 use futures_util::{stream, StreamExt};
@@ -113,9 +113,30 @@ impl AppCore {
         }
     }
 
-    pub(super) fn restore_user_discovery_cache(&mut self) {
+    pub(super) fn restore_user_discovery_cache(&mut self, owner: PublicKey) {
+        let owner_hex = owner.to_hex();
         match self.app_store.load_user_discovery() {
-            Ok(cache) => self.user_discovery = cache,
+            Ok(cache) if cache.owner_pubkey_hex.as_deref() == Some(owner_hex.as_str()) => {
+                self.user_discovery = cache
+            }
+            Ok(mut cache) if cache.owner_pubkey_hex.is_none() => {
+                cache.owner_pubkey_hex = Some(owner_hex);
+                cache.social_rank_ready = false;
+                cache.social_friend_support.clear();
+                if let Err(error) = self.app_store.replace_user_discovery(&cache) {
+                    self.push_debug_log("user.discovery.persist.error", error.to_string());
+                }
+                self.user_discovery = cache;
+            }
+            Ok(_) => {
+                self.user_discovery = UserDiscoveryCache::default();
+                if let Err(error) = self
+                    .app_store
+                    .replace_user_discovery(&UserDiscoveryCache::default())
+                {
+                    self.push_debug_log("user.discovery.reset.error", error.to_string());
+                }
+            }
             Err(error) => {
                 self.user_discovery = UserDiscoveryCache::default();
                 self.push_debug_log("user.discovery.restore.error", error.to_string());
@@ -146,6 +167,12 @@ async fn fetch_user_discovery(
     local_owner: PublicKey,
     previous: UserDiscoveryCache,
 ) -> UserDiscoveryFetchResult {
+    let local_owner_hex = local_owner.to_hex();
+    let previous = if previous.owner_pubkey_hex.as_deref() == Some(local_owner_hex.as_str()) {
+        previous
+    } else {
+        UserDiscoveryCache::default()
+    };
     ensure_session_relays_configured(&client, &relay_urls).await;
     connect_client_with_timeout(&client, DISCOVERY_REQUEST_TIMEOUT).await;
 
@@ -235,8 +262,8 @@ async fn fetch_user_discovery(
             Err(_) => social_failed_chunks += 1,
         }
     }
-    let social_order = if social_failed_chunks == 0 {
-        let ranked = rank_followed_owners(
+    let social_ranking = if social_failed_chunks == 0 {
+        let ranking = build_verified_social_ranking(
             local_owner,
             &follow_event,
             &followed_owners,
@@ -244,20 +271,34 @@ async fn fetch_user_discovery(
             peer_follow_events,
             now_secs,
         );
-        if ranked.is_none() {
+        if ranking.is_none() {
             social_failed_chunks = 1;
         }
-        ranked
+        ranking
     } else {
         None
     };
     let follow_event_id = follow_event.id.to_hex();
-    if social_order.is_some()
+    if social_ranking.is_some()
         || previous.follow_event_id.as_deref() != Some(follow_event_id.as_str())
         || !previous.users.keys().eq(next_users.keys())
     {
-        apply_follow_order(&mut next_users, &followed_owners, social_order.as_deref());
+        apply_follow_order(
+            &mut next_users,
+            &followed_owners,
+            social_ranking
+                .as_ref()
+                .map(|ranking| ranking.followed_owners.as_slice()),
+        );
     }
+    let (social_rank_ready, social_friend_support) = match social_ranking {
+        Some(ranking) => (!followed_owners.is_empty(), ranking.friend_support),
+        None if previous.follow_event_id.as_deref() == Some(follow_event_id.as_str()) => (
+            previous.social_rank_ready,
+            previous.social_friend_support.clone(),
+        ),
+        None => (false, BTreeMap::new()),
+    };
 
     let metadata_chunks = fetch_author_chunks(
         &client,
@@ -287,9 +328,12 @@ async fn fetch_user_discovery(
 
     UserDiscoveryFetchResult {
         cache: UserDiscoveryCache {
+            owner_pubkey_hex: Some(local_owner_hex),
             follow_event_id: Some(follow_event_id),
             follow_created_at_secs: follow_event.created_at.as_secs(),
             users: next_users,
+            social_rank_ready,
+            social_friend_support,
         },
         metadata_events,
         detail: format!(

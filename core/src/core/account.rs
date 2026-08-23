@@ -604,7 +604,7 @@ impl AppCore {
             None
         };
         if allow_restore {
-            self.restore_user_discovery_cache();
+            self.restore_user_discovery_cache(owner_pubkey);
         } else if let Err(error) = self
             .app_store
             .replace_user_discovery(&UserDiscoveryCache::default())

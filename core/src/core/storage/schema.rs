@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 28;
+const SCHEMA_VERSION: u32 = 29;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -61,8 +61,10 @@ CREATE TABLE IF NOT EXISTS app_keys (
 
 CREATE TABLE IF NOT EXISTS user_discovery_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
+    owner_pubkey_hex TEXT,
     follow_event_id TEXT,
-    follow_created_at_secs INTEGER NOT NULL DEFAULT 0
+    follow_created_at_secs INTEGER NOT NULL DEFAULT 0,
+    social_rank_ready INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS user_discovery_users (
@@ -73,6 +75,13 @@ CREATE TABLE IF NOT EXISTS user_discovery_users (
 
 CREATE INDEX IF NOT EXISTS user_discovery_users_position_idx
     ON user_discovery_users(follow_position, owner_pubkey_hex);
+
+CREATE TABLE IF NOT EXISTS user_discovery_social (
+    account_owner_pubkey_hex TEXT NOT NULL,
+    target_owner_pubkey_hex TEXT NOT NULL,
+    friend_support INTEGER NOT NULL,
+    PRIMARY KEY(account_owner_pubkey_hex, target_owner_pubkey_hex)
+);
 
 CREATE TABLE IF NOT EXISTS profile_search_candidates (
     owner_pubkey_hex TEXT PRIMARY KEY,
@@ -527,6 +536,15 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
                  ON user_discovery_users(follow_position, owner_pubkey_hex);",
         )?;
     }
+    if current < 29 {
+        if !column_exists(&tx, "user_discovery_state", "owner_pubkey_hex")? {
+            tx.execute_batch("ALTER TABLE user_discovery_state ADD COLUMN owner_pubkey_hex TEXT;")?;
+        }
+        if !column_exists(&tx, "user_discovery_state", "social_rank_ready")? {
+            tx.execute_batch("ALTER TABLE user_discovery_state ADD COLUMN social_rank_ready INTEGER NOT NULL DEFAULT 0;")?;
+        }
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS user_discovery_social (account_owner_pubkey_hex TEXT NOT NULL, target_owner_pubkey_hex TEXT NOT NULL, friend_support INTEGER NOT NULL, PRIMARY KEY(account_owner_pubkey_hex, target_owner_pubkey_hex));")?;
+    }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;
     Ok(())
@@ -829,6 +847,7 @@ mod tests {
         assert_eq!(user_version(&conn), SCHEMA_VERSION);
         assert!(connection_table_exists(&conn, "user_discovery_state"));
         assert!(connection_table_exists(&conn, "user_discovery_users"));
+        assert!(connection_table_exists(&conn, "user_discovery_social"));
         assert!(connection_table_exists(&conn, "profile_search_candidates"));
         conn.execute(
             "INSERT INTO user_discovery_state(id, follow_event_id, follow_created_at_secs)

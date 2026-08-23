@@ -473,6 +473,7 @@ const TABLES_TO_CLEAR: &[&str] = &[
     "seen_events",
     "groups",
     "app_keys",
+    "user_discovery_social",
     "user_discovery_users",
     "user_discovery_state",
     "profile_search_candidates",
@@ -483,7 +484,6 @@ const TABLES_TO_CLEAR: &[&str] = &[
     "app_meta",
     "ndr_kv",
 ];
-
 /// View into `AppCore` fields used to drive a single `save_state` call.
 pub(crate) struct SaveSnapshot<'a> {
     pub active_chat_id: Option<&'a str>,
@@ -2702,20 +2702,26 @@ mod tests {
             petname: None,
         };
         let initial = UserDiscoveryCache {
+            owner_pubkey_hex: Some("root-a".to_string()),
             follow_event_id: Some("follow-1".to_string()),
             follow_created_at_secs: 10,
             users: BTreeMap::from([
                 (first_user.owner_pubkey_hex.clone(), first_user),
                 (second_user.owner_pubkey_hex.clone(), second_user.clone()),
             ]),
+            social_rank_ready: true,
+            social_friend_support: BTreeMap::from([("global-a".to_string(), 2)]),
         };
         store.replace_user_discovery(&initial).unwrap();
         assert_eq!(store.load_user_discovery().unwrap(), initial);
 
         let replacement = UserDiscoveryCache {
+            owner_pubkey_hex: Some("root-b".to_string()),
             follow_event_id: Some("follow-2".to_string()),
             follow_created_at_secs: 11,
             users: BTreeMap::from([(second_user.owner_pubkey_hex.clone(), second_user)]),
+            social_rank_ready: true,
+            social_friend_support: BTreeMap::from([("global-b".to_string(), 1)]),
         };
         store.replace_user_discovery(&replacement).unwrap();
         assert_eq!(store.load_user_discovery().unwrap(), replacement);

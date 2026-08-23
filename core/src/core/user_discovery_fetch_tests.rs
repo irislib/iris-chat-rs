@@ -59,6 +59,11 @@ fn relay_fetch_keeps_all_follows_and_preserves_social_order_until_root_changes()
     });
     assert_eq!(first.cache.users.len(), owners.len());
     assert_eq!(positions(&first.cache, &owners), [1, 2, 0]);
+    assert!(first.cache.social_rank_ready);
+    assert_eq!(
+        first.cache.social_friend_support[&carol.public_key().to_hex()],
+        1
+    );
 
     let temp = TempDir::new().unwrap();
     let mut store = AppStore::new(open_database(temp.path()).unwrap());
@@ -67,6 +72,7 @@ fn relay_fetch_keeps_all_follows_and_preserves_social_order_until_root_changes()
         positions(&store.load_user_discovery().unwrap(), &owners),
         [1, 2, 0]
     );
+    let first_social_support = first.cache.social_friend_support.clone();
 
     let second = runtime.block_on(async {
         let future = follow_event(
@@ -86,6 +92,7 @@ fn relay_fetch_keeps_all_follows_and_preserves_social_order_until_root_changes()
     });
     assert_eq!(second.cache.users.len(), owners.len());
     assert_eq!(positions(&second.cache, &owners), [1, 2, 0]);
+    assert_eq!(second.cache.social_friend_support, first_social_support);
     assert!(second.detail.contains("social_failed_chunks=1"));
     store.replace_user_discovery(&second.cache).unwrap();
     assert_eq!(
@@ -124,6 +131,8 @@ fn relay_fetch_keeps_all_follows_and_preserves_social_order_until_root_changes()
     assert_eq!(third.cache.users.len(), changed_owners.len());
     assert_eq!(positions(&third.cache, &changed_owners), [0, 1]);
     assert_eq!(third.cache.follow_event_id, Some(changed_root.id.to_hex()));
+    assert!(!third.cache.social_rank_ready);
+    assert!(third.cache.social_friend_support.is_empty());
     assert!(third.detail.contains("social_failed_chunks=1"));
 }
 

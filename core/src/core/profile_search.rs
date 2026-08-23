@@ -2,7 +2,7 @@ use super::profile::fallback_profile_name_for_identity;
 use super::*;
 use crate::state::FollowedUserSearchResult;
 use nostr_social_graph::SocialGraph;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::cmp::Reverse;
 use std::sync::OnceLock;
 
@@ -233,6 +233,7 @@ pub(crate) fn search_people(
     conn: &Connection,
     query: &str,
     excluded_owner_hexes: &HashSet<String>,
+    current_owner_hex: Option<&str>,
 ) -> anyhow::Result<Vec<FollowedUserSearchResult>> {
     let normalized_query = query.trim().to_lowercase();
     if normalized_query.is_empty() {
@@ -243,25 +244,49 @@ pub(crate) fn search_people(
         .split_whitespace()
         .map(|term| (term.to_string(), compact_search_text(term)))
         .collect::<Vec<_>>();
+    let personalized_social = match current_owner_hex {
+        Some(owner) => conn
+            .query_row(
+                "SELECT social_rank_ready FROM user_discovery_state
+                 WHERE id = 1 AND owner_pubkey_hex = ?1",
+                [owner],
+                |row| row.get::<_, bool>(0),
+            )
+            .optional()?
+            .unwrap_or(false),
+        None => false,
+    };
     let mut stmt = conn.prepare(
-        "WITH candidate_owners AS (
-             SELECT owner_pubkey_hex FROM user_discovery_users
+        "WITH current_discovery AS (
+             SELECT u.* FROM user_discovery_users u
+             JOIN user_discovery_state d ON d.id = 1
+             WHERE COALESCE(d.owner_pubkey_hex, '') = ?1
+         ), candidate_owners AS (
+             SELECT owner_pubkey_hex FROM current_discovery
              UNION SELECT owner_pubkey_hex FROM profile_search_candidates
              UNION SELECT owner_pubkey_hex FROM owner_profiles
          )
          SELECT c.owner_pubkey_hex, d.follow_position, d.petname,
                 p.name, p.display_name, p.picture, p.about,
                 p.owner_pubkey_hex IS NOT NULL,
-                s.name, s.aliases_json, s.nip05, s.picture
+                s.name, s.aliases_json, s.nip05, s.picture, r.friend_support
          FROM candidate_owners c
-         LEFT JOIN user_discovery_users d
+         LEFT JOIN current_discovery d
            ON d.owner_pubkey_hex = c.owner_pubkey_hex
          LEFT JOIN owner_profiles p
            ON p.owner_pubkey_hex = c.owner_pubkey_hex
          LEFT JOIN profile_search_candidates s
-           ON s.owner_pubkey_hex = c.owner_pubkey_hex",
+           ON s.owner_pubkey_hex = c.owner_pubkey_hex
+         LEFT JOIN user_discovery_social r
+           ON r.account_owner_pubkey_hex = ?1
+          AND r.target_owner_pubkey_hex = c.owner_pubkey_hex
+          AND EXISTS (
+              SELECT 1 FROM user_discovery_state sr
+              WHERE sr.id = 1 AND sr.owner_pubkey_hex = ?1
+                AND sr.social_rank_ready = 1
+          )",
     )?;
-    let rows = stmt.query_map([], |row| {
+    let rows = stmt.query_map([current_owner_hex.unwrap_or_default()], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, Option<i64>>(1)?.map(|value| value as u32),
@@ -275,6 +300,7 @@ pub(crate) fn search_people(
             row.get::<_, Option<String>>(9)?,
             row.get::<_, Option<String>>(10)?,
             row.get::<_, Option<String>>(11)?,
+            row.get::<_, Option<u16>>(12)?.map(usize::from),
         ))
     })?;
 
@@ -293,6 +319,7 @@ pub(crate) fn search_people(
             aliases_json,
             nip05,
             indexed_picture,
+            personalized_friend_support,
         ) = row?;
         if excluded_owner_hexes.contains(&owner_hex) {
             continue;
@@ -387,10 +414,12 @@ pub(crate) fn search_people(
         } else {
             3u8
         };
-        let (social_distance, friend_support) = default_social_rank(&owner_hex);
+        let (social_source, social_distance, friend_support) =
+            social_rank(&owner_hex, personalized_social, personalized_friend_support);
         matches.push((
             text_rank,
             follow_position.unwrap_or(u32::MAX),
+            social_source,
             social_distance,
             friend_support,
             owner_hex.clone(),
@@ -411,11 +440,24 @@ pub(crate) fn search_people(
             .then_with(|| left.2.cmp(&right.2))
             .then_with(|| left.3.cmp(&right.3))
             .then_with(|| left.4.cmp(&right.4))
+            .then_with(|| left.5.cmp(&right.5))
     });
     Ok(matches
         .into_iter()
-        .map(|(_, _, _, _, _, row)| row)
+        .map(|(_, _, _, _, _, _, row)| row)
         .collect())
+}
+
+fn social_rank(
+    owner: &str,
+    personalized_social: bool,
+    personalized_friend_support: Option<usize>,
+) -> (u8, u32, Reverse<usize>) {
+    if let Some(support) = personalized_friend_support.filter(|support| *support > 0) {
+        return (0, 2, Reverse(support));
+    }
+    let (distance, support) = default_social_rank(owner);
+    (u8::from(personalized_social), distance, support)
 }
 
 fn default_social_rank(owner: &str) -> (u32, Reverse<usize>) {
@@ -502,10 +544,21 @@ mod tests {
     fn people_search_connection() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
-            "CREATE TABLE user_discovery_users (
+            "CREATE TABLE user_discovery_state (
+                 id INTEGER PRIMARY KEY,
+                 owner_pubkey_hex TEXT,
+                 social_rank_ready INTEGER NOT NULL
+             );
+             CREATE TABLE user_discovery_users (
                  owner_pubkey_hex TEXT PRIMARY KEY,
                  follow_position INTEGER NOT NULL,
                  petname TEXT
+             );
+             CREATE TABLE user_discovery_social (
+                 account_owner_pubkey_hex TEXT NOT NULL,
+                 target_owner_pubkey_hex TEXT NOT NULL,
+                 friend_support INTEGER NOT NULL,
+                 PRIMARY KEY(account_owner_pubkey_hex, target_owner_pubkey_hex)
              );
              CREATE TABLE owner_profiles (
                  owner_pubkey_hex TEXT PRIMARY KEY,
@@ -542,7 +595,7 @@ mod tests {
         )
         .unwrap();
 
-        let rows = search_people(&conn, "sirius", &HashSet::new()).unwrap();
+        let rows = search_people(&conn, "sirius", &HashSet::new(), None).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].owner_pubkey_hex, global);
         assert_eq!(rows[0].display_label, "Sirius");
@@ -559,7 +612,7 @@ mod tests {
         )
         .unwrap();
 
-        let rows = search_people(&conn, "JohnDoe", &HashSet::new()).unwrap();
+        let rows = search_people(&conn, "JohnDoe", &HashSet::new(), None).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].owner_pubkey_hex, owner);
     }
@@ -570,6 +623,12 @@ mod tests {
         let first = Keys::generate().public_key().to_hex();
         let second = Keys::generate().public_key().to_hex();
         let global = Keys::generate().public_key().to_hex();
+        let root = Keys::generate().public_key().to_hex();
+        conn.execute(
+            "INSERT INTO user_discovery_state VALUES (1, ?1, 0)",
+            [&root],
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO user_discovery_users VALUES (?1, 1, 'Alex Three')",
             [&second],
@@ -587,7 +646,7 @@ mod tests {
         )
         .unwrap();
 
-        let owners = search_people(&conn, "alex", &HashSet::new())
+        let owners = search_people(&conn, "alex", &HashSet::new(), Some(&root))
             .unwrap()
             .into_iter()
             .map(|row| row.owner_pubkey_hex)
@@ -596,10 +655,16 @@ mod tests {
     }
 
     #[test]
-    fn default_graph_ranks_known_global_profiles_without_filtering_unknowns() {
+    fn default_graph_fills_personalized_gaps_without_filtering_unknowns() {
         prewarm_default_social_graph();
         let conn = people_search_connection();
+        let root = Keys::generate().public_key().to_hex();
         let unknown = Keys::generate().public_key().to_hex();
+        conn.execute(
+            "INSERT INTO user_discovery_state VALUES (1, ?1, 1)",
+            [&root],
+        )
+        .unwrap();
         for owner in [GIGI_HEX, &unknown] {
             conn.execute(
                 "INSERT INTO profile_search_candidates VALUES
@@ -609,7 +674,7 @@ mod tests {
             .unwrap();
         }
 
-        let owners = search_people(&conn, "alex", &HashSet::new())
+        let owners = search_people(&conn, "alex", &HashSet::new(), Some(&root))
             .unwrap()
             .into_iter()
             .map(|row| row.owner_pubkey_hex)
@@ -618,6 +683,98 @@ mod tests {
         let (distance, Reverse(friend_support)) = default_social_rank(GIGI_HEX);
         assert!(distance < 1_000);
         assert!(friend_support > 0);
+    }
+
+    #[test]
+    fn personalized_global_rank_restores_and_is_account_scoped() {
+        let temp = TempDir::new().unwrap();
+        let mut store = AppStore::new(open_database(temp.path()).unwrap());
+        let root = Keys::generate().public_key().to_hex();
+        let other_root = Keys::generate().public_key().to_hex();
+        let friend = Keys::generate().public_key().to_hex();
+        let mut globals = [
+            Keys::generate().public_key().to_hex(),
+            Keys::generate().public_key().to_hex(),
+        ];
+        globals.sort();
+        let unsupported = globals[0].clone();
+        let supported = globals[1].clone();
+        let cache = UserDiscoveryCache {
+            owner_pubkey_hex: Some(root.clone()),
+            follow_event_id: Some("verified-head".to_string()),
+            follow_created_at_secs: 10,
+            users: BTreeMap::from([(
+                friend.clone(),
+                DiscoveredUserRecord {
+                    owner_pubkey_hex: friend.clone(),
+                    follow_position: 0,
+                    petname: None,
+                },
+            )]),
+            social_rank_ready: true,
+            social_friend_support: BTreeMap::from([(supported.clone(), 2)]),
+        };
+        store.replace_user_discovery(&cache).unwrap();
+        store
+            .upsert_profile_search_candidates(&[
+                ProfileSearchCandidate {
+                    owner_pubkey_hex: unsupported.clone(),
+                    name: "Alex".to_string(),
+                    aliases: Vec::new(),
+                    nip05: None,
+                    picture: None,
+                    created_at_secs: 1,
+                },
+                ProfileSearchCandidate {
+                    owner_pubkey_hex: supported.clone(),
+                    name: "Alex".to_string(),
+                    aliases: Vec::new(),
+                    nip05: None,
+                    picture: None,
+                    created_at_secs: 1,
+                },
+            ])
+            .unwrap();
+
+        assert_eq!(store.load_user_discovery().unwrap(), cache);
+        {
+            let owners_for = |owner: &str| {
+                let shared = store.shared();
+                let conn = shared.lock().unwrap();
+                search_people(&conn, "alex", &HashSet::new(), Some(owner))
+                    .unwrap()
+                    .into_iter()
+                    .map(|row| row.owner_pubkey_hex)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                owners_for(&root),
+                vec![supported.clone(), unsupported.clone()]
+            );
+            assert_eq!(
+                owners_for(&other_root),
+                vec![unsupported.clone(), supported]
+            );
+            let shared = store.shared();
+            let conn = shared.lock().unwrap();
+            assert!(
+                search_people(&conn, &friend, &HashSet::new(), Some(&other_root))
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+
+        store
+            .replace_user_discovery(&UserDiscoveryCache::default())
+            .unwrap();
+        let shared = store.shared();
+        let conn = shared.lock().unwrap();
+        let owners = search_people(&conn, "alex", &HashSet::new(), Some(&root))
+            .unwrap()
+            .into_iter()
+            .map(|row| row.owner_pubkey_hex)
+            .collect::<Vec<_>>();
+        assert_eq!(owners, vec![unsupported, globals[1].clone()]);
     }
 
     #[test]
@@ -637,10 +794,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(search_people(&conn, "old sirius", &HashSet::new())
+        assert!(search_people(&conn, "old sirius", &HashSet::new(), None)
             .unwrap()
             .is_empty());
-        let rows = search_people(&conn, "current", &HashSet::new()).unwrap();
+        let rows = search_people(&conn, "current", &HashSet::new(), None).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].profile_label.as_deref(), Some("Current"));
         assert!(rows[0].picture_url.is_none());
