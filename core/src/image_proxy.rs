@@ -103,7 +103,7 @@ fn decode_hex(value: &str) -> Option<Vec<u8>> {
         return None;
     }
     let mut bytes = Vec::with_capacity(normalized.len() / 2);
-    for pair in normalized.as_bytes().chunks_exact(2) {
+    for pair in normalized.as_bytes().chunks(2) {
         let [first, second] = <[u8; 2]>::try_from(pair).ok()?;
         let high = hex_value(first)?;
         let low = hex_value(second)?;
