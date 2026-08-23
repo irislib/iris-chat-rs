@@ -216,7 +216,7 @@ write_formula "$work_repo/Formula/${FORMULA_NAME}.rb" "$class_name"
   cd "$work_repo"
   git add "Formula/${FORMULA_NAME}.rb"
   if ! git diff --cached --quiet; then
-    git -c user.name='Codex' -c user.email='codex@example.com' \
+    git -c user.name='Agent' -c user.email='agent@local' \
       commit -m "Update ${FORMULA_NAME} formula to ${VERSION}" >/dev/null
   fi
 )
