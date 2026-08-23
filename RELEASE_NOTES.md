@@ -2,6 +2,30 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.8.23.1
+
+### GitHub
+
+- Updated image-proxy hex decoding for Rust 1.98 release validation without
+  changing its behavior.
+- Added an iOS App Store update controller with regional lookups, verified Apple
+  links, cached checks, and per-version dismissal.
+- Added an adaptive update banner across iOS screens, with status-banner layout
+  that keeps navigation and chat content unobscured.
+- App Store distribution retries now safely resume the exact ready-for-review
+  submission without recreating its version or re-uploading its build.
+
+### Apple
+
+- Iris Chat now lets you know when a newer version is available and opens the
+  App Store when you choose Update.
+- Update and connection notices now stay neatly above your chats without
+  covering content.
+
+### Zapstore
+
+- This release has no Android-facing changes.
+
 ## v2026.8.23
 
 ### GitHub
