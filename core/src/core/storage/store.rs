@@ -16,6 +16,8 @@ use std::hash::{Hash, Hasher};
 
 #[path = "store_preferences.rs"]
 mod store_preferences;
+#[path = "store_profile_search.rs"]
+mod store_profile_search;
 #[path = "store_user_discovery.rs"]
 mod store_user_discovery;
 
@@ -473,6 +475,7 @@ const TABLES_TO_CLEAR: &[&str] = &[
     "app_keys",
     "user_discovery_users",
     "user_discovery_state",
+    "profile_search_candidates",
     "owner_profiles",
     "chat_message_ttls",
     "pending_relay_publishes",
@@ -2692,17 +2695,11 @@ mod tests {
             owner_pubkey_hex: "owner-a".to_string(),
             follow_position: 0,
             petname: Some("Alice".to_string()),
-            app_keys_created_at_secs: 9,
-            app_keys_event_id: "appkeys-a".to_string(),
-            app_keys_event_json: "{\"id\":\"a\"}".to_string(),
         };
         let second_user = DiscoveredUserRecord {
             owner_pubkey_hex: "owner-b".to_string(),
             follow_position: 1,
             petname: None,
-            app_keys_created_at_secs: 8,
-            app_keys_event_id: "appkeys-b".to_string(),
-            app_keys_event_json: "{\"id\":\"b\"}".to_string(),
         };
         let initial = UserDiscoveryCache {
             follow_event_id: Some("follow-1".to_string()),

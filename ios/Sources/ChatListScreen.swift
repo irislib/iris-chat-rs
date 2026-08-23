@@ -191,6 +191,9 @@ struct GroupedSearchSession {
         using search: (String, UInt32) -> SearchResultSnapshot
     ) {
         guard let request else {
+            if entry != nil {
+                _ = search("", 0)
+            }
             entry = nil
             return
         }

@@ -95,6 +95,8 @@ mod payloads;
 mod persistence;
 mod profile;
 mod profile_helpers;
+mod profile_search;
+mod profile_search_remote;
 mod projection;
 mod protocol;
 mod protocol_filters;
@@ -141,16 +143,18 @@ pub(crate) use mobile_push::{
     decrypt_mobile_push_notification, mobile_push_stored_subscription_id_key,
     resolve_mobile_push_notification, resolve_mobile_push_server_url,
 };
+pub(crate) use model::ProfileSearchFetchResult;
 pub(crate) use model::ProtocolSubscriptionPlan;
 pub(crate) use model::UserDiscoveryFetchResult;
 use model::*;
 use payloads::*;
 use profile_helpers::*;
+pub(crate) use profile_search::prewarm_default_social_graph;
+pub(crate) use profile_search::search_people;
 use protocol_filters::*;
 use publish_helpers::*;
 use storage::{open_database, AppStore, DataDirLock, SqliteStorageAdapter};
 pub(crate) use storage::{search_messages_fts, PersistedMessageSearchHit, SharedConnection};
-pub(crate) use user_discovery::search_followed_users;
 
 pub(crate) fn chat_snapshot_from_state_and_db(
     state: &AppState,
@@ -494,6 +498,7 @@ pub struct AppCore {
     app_keys: BTreeMap<String, KnownAppKeys>,
     user_discovery: UserDiscoveryCache,
     user_discovery_runtime: UserDiscoveryRuntime,
+    profile_search_runtime: ProfileSearchRuntime,
     user_discovery_revision: u64,
     user_discovery_syncing: bool,
     groups: BTreeMap<String, GroupSnapshot>,

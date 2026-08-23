@@ -1,9 +1,13 @@
-use rusqlite::Connection;
+use super::super::account_app_keys::known_app_keys_from_ndr;
+use super::super::identity::unix_now;
+use nostr::{Event, PublicKey};
+use nostr_double_ratchet::AppKeys;
+use rusqlite::{params, Connection, Transaction};
 
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 27;
+const SCHEMA_VERSION: u32 = 28;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -64,14 +68,24 @@ CREATE TABLE IF NOT EXISTS user_discovery_state (
 CREATE TABLE IF NOT EXISTS user_discovery_users (
     owner_pubkey_hex TEXT PRIMARY KEY,
     follow_position INTEGER NOT NULL,
-    petname TEXT,
-    app_keys_created_at_secs INTEGER NOT NULL,
-    app_keys_event_id TEXT NOT NULL,
-    app_keys_event_json TEXT NOT NULL
+    petname TEXT
 );
 
 CREATE INDEX IF NOT EXISTS user_discovery_users_position_idx
     ON user_discovery_users(follow_position, owner_pubkey_hex);
+
+CREATE TABLE IF NOT EXISTS profile_search_candidates (
+    owner_pubkey_hex TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    aliases_json TEXT NOT NULL DEFAULT '[]',
+    nip05 TEXT,
+    picture TEXT,
+    created_at_secs INTEGER NOT NULL DEFAULT 0,
+    cached_at_secs INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS profile_search_candidates_cached_idx
+    ON profile_search_candidates(cached_at_secs, owner_pubkey_hex);
 
 CREATE TABLE IF NOT EXISTS groups (
     group_id TEXT PRIMARY KEY,
@@ -493,8 +507,79 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
                  ON user_discovery_users(follow_position, owner_pubkey_hex);",
         )?;
     }
+    if current < 28 {
+        if column_exists(&tx, "user_discovery_users", "app_keys_event_json")? {
+            migrate_discovery_app_keys(&tx)?;
+        }
+        tx.execute_batch(
+            "DROP INDEX IF EXISTS user_discovery_users_position_idx;
+             ALTER TABLE user_discovery_users RENAME TO user_discovery_users_v27;
+             CREATE TABLE user_discovery_users (
+                 owner_pubkey_hex TEXT PRIMARY KEY,
+                 follow_position INTEGER NOT NULL,
+                 petname TEXT
+             );
+             INSERT INTO user_discovery_users(owner_pubkey_hex, follow_position, petname)
+             SELECT owner_pubkey_hex, follow_position, petname
+             FROM user_discovery_users_v27;
+             DROP TABLE user_discovery_users_v27;
+             CREATE INDEX user_discovery_users_position_idx
+                 ON user_discovery_users(follow_position, owner_pubkey_hex);",
+        )?;
+    }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;
+    Ok(())
+}
+
+fn migrate_discovery_app_keys(tx: &Transaction<'_>) -> anyhow::Result<()> {
+    let cached_events = {
+        let mut stmt = tx.prepare(
+            "SELECT owner_pubkey_hex, app_keys_event_json
+             FROM user_discovery_users",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    let now_secs = unix_now().get();
+    for (owner_hex, event_json) in cached_events {
+        let (Ok(owner), Ok(event)) = (
+            PublicKey::from_hex(&owner_hex),
+            serde_json::from_str::<Event>(&event_json),
+        ) else {
+            continue;
+        };
+        if event.pubkey != owner
+            || event.created_at.as_secs() > now_secs.saturating_add(600)
+            || event.verify().is_err()
+        {
+            continue;
+        }
+        let Ok(app_keys) = AppKeys::from_event(&event) else {
+            continue;
+        };
+        if app_keys.get_all_devices().is_empty() {
+            continue;
+        }
+        let known = known_app_keys_from_ndr(owner, &app_keys, event.created_at.as_secs());
+        tx.execute(
+            "INSERT INTO app_keys(owner_pubkey_hex, created_at_secs, devices_json)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(owner_pubkey_hex) DO UPDATE SET
+                 created_at_secs = excluded.created_at_secs,
+                 devices_json = excluded.devices_json
+             WHERE excluded.created_at_secs > app_keys.created_at_secs",
+            params![
+                known.owner_pubkey_hex,
+                known.created_at_secs as i64,
+                serde_json::to_string(&known.devices)?,
+            ],
+        )?;
+    }
     Ok(())
 }
 
@@ -516,6 +601,8 @@ fn column_exists(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nostr::Keys;
+    use nostr_double_ratchet::DeviceEntry;
 
     #[test]
     fn migrates_v25_pending_relay_publish_target_columns_removed() {
@@ -733,7 +820,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_v26_to_v27_user_discovery_cache() {
+    fn migrates_v26_to_current_user_discovery_cache() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA user_version = 26;").unwrap();
 
@@ -742,6 +829,7 @@ mod tests {
         assert_eq!(user_version(&conn), SCHEMA_VERSION);
         assert!(connection_table_exists(&conn, "user_discovery_state"));
         assert!(connection_table_exists(&conn, "user_discovery_users"));
+        assert!(connection_table_exists(&conn, "profile_search_candidates"));
         conn.execute(
             "INSERT INTO user_discovery_state(id, follow_event_id, follow_created_at_secs)
              VALUES (1, 'head', 42)",
@@ -749,13 +837,116 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO user_discovery_users(
-                 owner_pubkey_hex, follow_position, petname,
-                 app_keys_created_at_secs, app_keys_event_id, app_keys_event_json
-             ) VALUES ('owner', 3, 'Friend', 41, 'appkeys', '{}')",
+            "INSERT INTO user_discovery_users(owner_pubkey_hex, follow_position, petname)
+             VALUES ('owner', 3, 'Friend')",
             [],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn migrates_v27_discovery_users_without_losing_social_fields() {
+        let owner = Keys::generate();
+        let device = Keys::generate().public_key();
+        let app_keys_event = AppKeys::new(vec![DeviceEntry::new(device, 41)])
+            .get_event_at(owner.public_key(), 41)
+            .sign_with_keys(&owner)
+            .unwrap();
+        let owner_hex = owner.public_key().to_hex();
+        let invalid_owner = Keys::generate();
+        let mut invalid_event = AppKeys::new(vec![DeviceEntry::new(device, 42)])
+            .get_event_at(invalid_owner.public_key(), 42)
+            .sign_with_keys(&invalid_owner)
+            .unwrap();
+        invalid_event.content.push('x');
+        let invalid_owner_hex = invalid_owner.public_key().to_hex();
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE user_discovery_users (
+                 owner_pubkey_hex TEXT PRIMARY KEY,
+                 follow_position INTEGER NOT NULL,
+                 petname TEXT,
+                 app_keys_created_at_secs INTEGER NOT NULL,
+                 app_keys_event_id TEXT NOT NULL,
+                 app_keys_event_json TEXT NOT NULL
+             );
+             PRAGMA user_version = 27;",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO user_discovery_users
+             VALUES (?1, 4, NULL, 42, ?2, ?3)",
+            params![
+                invalid_owner_hex,
+                invalid_event.id.to_hex(),
+                serde_json::to_string(&invalid_event).unwrap()
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO user_discovery_users
+             VALUES (?1, 3, 'Friend', 41, ?2, ?3)",
+            params![
+                owner_hex,
+                app_keys_event.id.to_hex(),
+                serde_json::to_string(&app_keys_event).unwrap()
+            ],
+        )
+        .unwrap();
+
+        ensure_schema(&mut conn).unwrap();
+
+        assert_eq!(user_version(&conn), SCHEMA_VERSION);
+        let preserved: (String, i64, Option<String>) = conn
+            .query_row(
+                "SELECT owner_pubkey_hex, follow_position, petname
+                 FROM user_discovery_users
+                 WHERE owner_pubkey_hex = ?1",
+                [&owner_hex],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            preserved,
+            (owner_hex.clone(), 3, Some("Friend".to_string()))
+        );
+        let migrated_roster: (i64, String) = conn
+            .query_row(
+                "SELECT created_at_secs, devices_json FROM app_keys
+                 WHERE owner_pubkey_hex = ?1",
+                [&owner_hex],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(migrated_roster.0, 41);
+        assert!(migrated_roster.1.contains(&device.to_hex()));
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM app_keys WHERE owner_pubkey_hex = ?1",
+                [&invalid_owner_hex],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM user_discovery_users", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            2
+        );
+        for removed in [
+            "app_keys_created_at_secs",
+            "app_keys_event_id",
+            "app_keys_event_json",
+        ] {
+            assert!(!connection_column_exists(
+                &conn,
+                "user_discovery_users",
+                removed
+            ));
+        }
     }
 
     fn user_version(conn: &Connection) -> u32 {

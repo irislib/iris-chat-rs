@@ -115,11 +115,14 @@ fun ChatListScreen(
     var messageSearchLimit by remember(trimmedQuery) { mutableStateOf(InitialMessageSearchLimit) }
     var searchResults by remember { mutableStateOf<SearchResultSnapshot?>(null) }
 
-    // Keep Rust/SQLite work out of composition. Search is refreshed only for
-    // user-driven inputs: the query itself and explicit "view more" requests.
+    // Keep Rust/SQLite work out of composition. The empty call cancels any
+    // debounced or in-flight global lookup when search closes.
     LaunchedEffect(trimmedQuery, messageSearchLimit, appState.userDiscoveryRevision) {
         searchResults =
             if (trimmedQuery.isEmpty()) {
+                if (searchResults != null) {
+                    appManager.search("", limit = 0u)
+                }
                 null
             } else {
                 appManager.search(trimmedQuery, limit = messageSearchLimit)

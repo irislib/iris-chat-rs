@@ -23,9 +23,6 @@ fn record(owner: PublicKey, position: u32) -> DiscoveredUserRecord {
         owner_pubkey_hex: owner.to_hex(),
         follow_position: position,
         petname: None,
-        app_keys_created_at_secs: 1,
-        app_keys_event_id: format!("event-{position}"),
-        app_keys_event_json: "{}".to_string(),
     }
 }
 

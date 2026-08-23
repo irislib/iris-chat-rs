@@ -84,10 +84,8 @@ fn ffi_search_restores_followed_people_from_sqlite() {
     )
     .unwrap();
     conn.execute(
-        "INSERT INTO user_discovery_users(
-             owner_pubkey_hex, follow_position, petname,
-             app_keys_created_at_secs, app_keys_event_id, app_keys_event_json
-         ) VALUES (?1, 0, 'Ally', 9, 'appkeys-head', '{}')",
+        "INSERT INTO user_discovery_users(owner_pubkey_hex, follow_position, petname)
+         VALUES (?1, 0, 'Ally')",
         [&owner],
     )
     .unwrap();
@@ -126,6 +124,41 @@ fn ffi_search_restores_followed_people_from_sqlite() {
 }
 
 #[test]
+fn ffi_search_restores_global_people_without_app_keys_or_follows() {
+    let dir = TempDir::new().unwrap();
+    FfiApp::new(
+        dir.path().to_string_lossy().to_string(),
+        String::new(),
+        "test".to_string(),
+    )
+    .shutdown();
+
+    let owner = Keys::generate().public_key().to_hex();
+    let conn = Connection::open(dir.path().join("core.sqlite3")).unwrap();
+    conn.execute(
+        "INSERT INTO profile_search_candidates(
+             owner_pubkey_hex, name, aliases_json, nip05, picture,
+             created_at_secs, cached_at_secs
+         ) VALUES (?1, 'Sirius', '[\"Sirius Business\"]', 'sirius@iris.to',
+                   NULL, 1, 1)",
+        [&owner],
+    )
+    .unwrap();
+    drop(conn);
+
+    let app = FfiApp::new(
+        dir.path().to_string_lossy().to_string(),
+        String::new(),
+        "test".to_string(),
+    );
+    let result = app.search("sirius business".to_string(), None, 20);
+    assert_eq!(result.people.len(), 1);
+    assert_eq!(result.people[0].owner_pubkey_hex, owner);
+    assert_eq!(result.people[0].display_label, "Sirius");
+    app.shutdown();
+}
+
+#[test]
 fn blocked_direct_chat_does_not_reappear_in_people() {
     let alice = TempDir::new().unwrap();
     let app = FfiApp::new(
@@ -144,9 +177,8 @@ fn blocked_direct_chat_does_not_reappear_in_people() {
     let conn = Connection::open(alice.path().join("core.sqlite3")).unwrap();
     conn.execute(
         "INSERT OR REPLACE INTO user_discovery_users(
-             owner_pubkey_hex, follow_position, petname,
-             app_keys_created_at_secs, app_keys_event_id, app_keys_event_json
-         ) VALUES (?1, 0, 'Blocked Regression', 1, 'appkeys', '{}')",
+             owner_pubkey_hex, follow_position, petname
+         ) VALUES (?1, 0, 'Blocked Regression')",
         [&bob_owner],
     )
     .unwrap();

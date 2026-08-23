@@ -127,6 +127,18 @@ pub(crate) enum InternalEvent {
         token: u64,
         result: crate::core::UserDiscoveryFetchResult,
     },
+    ProfileSearchRequested {
+        query: String,
+    },
+    ProfileSearchDebounceElapsed {
+        token: u64,
+        query: String,
+    },
+    ProfileSearchFetchFinished {
+        token: u64,
+        query: String,
+        result: Result<crate::core::ProfileSearchFetchResult, String>,
+    },
     RelayStatusChanged {
         relay_url: String,
         status: RelayStatus,

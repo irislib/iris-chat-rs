@@ -49,6 +49,7 @@ hashtree-blossom = { version = "=0.2.82", default-features = false, features = [
 hashtree-config = "=0.2.83"
 hashtree-core = "=0.2.86"
 hashtree-fips-transport = "=0.4.12"
+hashtree-index = "=0.2.82"
 hashtree-network = "=0.2.87"
 hashtree-resolver = { version = "=0.2.82", features = ["nostr"] }
 hashtree-updater = { version = "=0.2.82", features = ["secure-nostr-blossom"] }

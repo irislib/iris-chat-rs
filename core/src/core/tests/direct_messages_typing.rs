@@ -16,6 +16,16 @@ fn opening_uncached_direct_chat_starts_targeted_profile_fetch() {
     });
 
     let peer_hex = peer.public_key().to_hex();
+    assert!(core.threads.contains_key(&peer_hex));
+    assert!(
+        !core.app_keys.contains_key(&peer_hex),
+        "opening a discovered user must not synthesize peer AppKeys"
+    );
+    assert!(
+        core.compute_protocol_subscription_plan()
+            .is_some_and(|plan| plan.roster_authors.contains(&peer_hex)),
+        "opening a discovered user should subscribe to owner-signed peer AppKeys"
+    );
     assert!(
         core.debug_log.iter().any(|entry| {
             entry.category == "profile.metadata.fetch"

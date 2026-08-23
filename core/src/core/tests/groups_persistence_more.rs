@@ -311,9 +311,30 @@ fn suspend_gate_drops_internal_events_until_foregrounded() {
     send_debug_log(&mut core, "before-suspend");
     assert_eq!(log_count(&core), 1, "DebugLog must land before suspend");
 
+    core.user_discovery_runtime.token = 4;
+    core.user_discovery_runtime.in_flight = true;
+    core.user_discovery_runtime.refresh_pending = true;
+    core.user_discovery_runtime.last_started_at = Some(Instant::now());
+    core.profile_search_runtime.token = 8;
+    core.profile_search_runtime.query = "sirius".to_string();
+    core.profile_search_runtime.in_flight = true;
+    core.profile_search_runtime.pending =
+        Some(PendingProfileSearch::Query("gigi".to_string()));
+    core.user_discovery_syncing = true;
+
     // Engage the gate via the real CoreMsg path that iOS uses.
     let (reply_tx, _reply_rx) = flume::bounded(1);
     core.handle_message(CoreMsg::PrepareForSuspend(reply_tx));
+
+    assert_eq!(core.user_discovery_runtime.token, 5);
+    assert!(!core.user_discovery_runtime.in_flight);
+    assert!(!core.user_discovery_runtime.refresh_pending);
+    assert!(core.user_discovery_runtime.last_started_at.is_none());
+    assert_eq!(core.profile_search_runtime.token, 9);
+    assert!(core.profile_search_runtime.query.is_empty());
+    assert!(!core.profile_search_runtime.in_flight);
+    assert!(core.profile_search_runtime.pending.is_none());
+    assert!(!core.user_discovery_syncing);
 
     // While suspended, internal events must be dropped — the gate is
     // what keeps SQLite from being written while iOS is killing us.

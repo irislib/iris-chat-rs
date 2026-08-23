@@ -48,5 +48,14 @@ fn completed_fetch_starts_one_pending_refresh_despite_reconnect_floor() {
         },
     );
     assert_eq!(core.user_discovery_runtime.token, 8);
+    core.profile_search_runtime.token = 12;
+    core.profile_search_runtime.query = "alice".to_string();
+    core.profile_search_runtime.in_flight = true;
     core.reset_user_discovery_runtime();
+    assert_eq!(core.user_discovery_runtime.token, 9);
+    assert!(!core.user_discovery_runtime.in_flight);
+    assert_eq!(core.profile_search_runtime.token, 13);
+    assert!(core.profile_search_runtime.query.is_empty());
+    assert!(!core.profile_search_runtime.in_flight);
+    assert!(!core.user_discovery_syncing);
 }

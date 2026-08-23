@@ -472,9 +472,9 @@ pub struct MessageSearchHit {
     pub created_at_secs: u64,
 }
 
-/// A followed person who has a current Iris device snapshot and can be
-/// offered as a new direct-chat target. All protocol parsing and display
-/// fallback decisions happen in Rust; shells only render these fields.
+/// A person discovered from local profiles, the account's social graph, or the
+/// global profile index. Chat capability is resolved only after selection;
+/// shells only render these fields.
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct FollowedUserSearchResult {
     pub owner_pubkey_hex: String,

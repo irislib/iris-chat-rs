@@ -83,9 +83,6 @@ pub(super) struct DiscoveredUserRecord {
     /// opinion fetch ranks the same candidates by direct-friend support.
     pub(super) follow_position: u32,
     pub(super) petname: Option<String>,
-    pub(super) app_keys_created_at_secs: u64,
-    pub(super) app_keys_event_id: String,
-    pub(super) app_keys_event_json: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -94,6 +91,38 @@ pub(super) struct UserDiscoveryRuntime {
     pub(super) in_flight: bool,
     pub(super) refresh_pending: bool,
     pub(super) last_started_at: Option<Instant>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ProfileSearchCandidate {
+    pub(super) owner_pubkey_hex: String,
+    pub(super) name: String,
+    pub(super) aliases: Vec<String>,
+    pub(super) nip05: Option<String>,
+    pub(super) picture: Option<String>,
+    pub(super) created_at_secs: u64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum PendingProfileSearch {
+    Query(String),
+    Cancel,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct ProfileSearchRuntime {
+    pub(super) token: u64,
+    pub(super) query: String,
+    pub(super) debounce_pending: bool,
+    pub(super) in_flight: bool,
+    pub(super) pending: Option<PendingProfileSearch>,
+    pub(super) recent_attempts: VecDeque<(String, Instant)>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ProfileSearchFetchResult {
+    pub(super) candidates: Vec<ProfileSearchCandidate>,
+    pub(super) detail: String,
 }
 
 #[derive(Debug)]

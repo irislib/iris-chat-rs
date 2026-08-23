@@ -25,8 +25,7 @@ impl AppStore {
             .unwrap_or((None, 0));
         let mut users = BTreeMap::new();
         let mut stmt = conn.prepare(
-            "SELECT owner_pubkey_hex, follow_position, petname,
-                    app_keys_created_at_secs, app_keys_event_id, app_keys_event_json
+            "SELECT owner_pubkey_hex, follow_position, petname
              FROM user_discovery_users
              ORDER BY follow_position, owner_pubkey_hex",
         )?;
@@ -35,9 +34,6 @@ impl AppStore {
                 owner_pubkey_hex: row.get(0)?,
                 follow_position: row.get::<_, i64>(1)? as u32,
                 petname: row.get(2)?,
-                app_keys_created_at_secs: row.get::<_, i64>(3)? as u64,
-                app_keys_event_id: row.get(4)?,
-                app_keys_event_json: row.get(5)?,
             })
         })?;
         for row in rows {
@@ -70,19 +66,14 @@ impl AppStore {
         )?;
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO user_discovery_users(
-                     owner_pubkey_hex, follow_position, petname,
-                     app_keys_created_at_secs, app_keys_event_id, app_keys_event_json
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO user_discovery_users(owner_pubkey_hex, follow_position, petname)
+                 VALUES (?1, ?2, ?3)",
             )?;
             for user in cache.users.values() {
                 stmt.execute(params![
                     user.owner_pubkey_hex,
                     user.follow_position as i64,
                     user.petname,
-                    user.app_keys_created_at_secs as i64,
-                    user.app_keys_event_id,
-                    user.app_keys_event_json,
                 ])?;
             }
         }

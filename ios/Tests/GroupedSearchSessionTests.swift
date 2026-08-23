@@ -56,9 +56,10 @@ final class GroupedSearchSessionTests: XCTestCase {
         XCTAssertEqual(session.snapshot(for: refreshed)?.people.count, 2)
 
         session.refresh(nil, using: search)
+        XCTAssertEqual(calls.map { $0.0 }, ["needle", "needle", ""])
         XCTAssertNil(session.snapshot(for: refreshed))
         session.refresh(refreshed, using: search)
-        XCTAssertEqual(calls.count, 3)
+        XCTAssertEqual(calls.count, 4)
     }
 
     func testQueryChangeResetsExpansionAndMessageLimit() throws {

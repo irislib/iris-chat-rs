@@ -1,6 +1,5 @@
 use super::*;
 use nostr::{EventBuilder, Keys, Tag, Timestamp};
-use nostr_double_ratchet::DeviceEntry;
 use tempfile::TempDir;
 
 const CLEARLY_FUTURE_OFFSET_SECS: u64 = 60 * 60;
@@ -13,16 +12,6 @@ fn follow_event(keys: &Keys, created_at: u64, followed: &[PublicKey]) -> Event {
         .unwrap()
 }
 
-fn app_keys_event(keys: &Keys, created_at: u64) -> Event {
-    AppKeys::new(vec![DeviceEntry::new(
-        Keys::generate().public_key(),
-        created_at,
-    )])
-    .get_event_at(keys.public_key(), created_at)
-    .sign_with_keys(keys)
-    .unwrap()
-}
-
 fn positions(cache: &UserDiscoveryCache, owners: &[&Keys]) -> Vec<u32> {
     owners
         .iter()
@@ -31,7 +20,7 @@ fn positions(cache: &UserDiscoveryCache, owners: &[&Keys]) -> Vec<u32> {
 }
 
 #[test]
-fn relay_fetch_persists_social_order_and_preserves_it_until_root_changes() {
+fn relay_fetch_keeps_all_follows_and_preserves_social_order_until_root_changes() {
     let relay = crate::local_relay::TestRelay::start();
     let root = Keys::generate();
     let alice = Keys::generate();
@@ -47,10 +36,6 @@ fn relay_fetch_persists_social_order_and_preserves_it_until_root_changes() {
             .collect::<Vec<_>>(),
     );
     let alice_follows_carol = follow_event(&alice, 100, &[carol.public_key()]);
-    let app_keys = owners
-        .iter()
-        .map(|owner| app_keys_event(owner, 100))
-        .collect::<Vec<_>>();
     let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
     let publisher = Client::new(Keys::generate());
     let discovery_client = Client::new(Keys::generate());
@@ -64,9 +49,6 @@ fn relay_fetch_persists_social_order_and_preserves_it_until_root_changes() {
         connect_client_with_timeout(&publisher, Duration::from_secs(2)).await;
         publisher.send_event(&root_follow).await.unwrap();
         publisher.send_event(&alice_follows_carol).await.unwrap();
-        for event in &app_keys {
-            publisher.send_event(event).await.unwrap();
-        }
         fetch_user_discovery(
             discovery_client.clone(),
             relay_urls.clone(),
@@ -150,7 +132,6 @@ fn local_relay_ignores_future_root_and_preserves_metadata_and_unfollow() {
     let relay = crate::local_relay::TestRelay::start();
     let local_owner = Keys::generate();
     let followed_owner = Keys::generate();
-    let followed_device = Keys::generate().public_key();
     let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
     let follow = EventBuilder::new(Kind::ContactList, "")
         .tags([Tag::parse([
@@ -162,10 +143,6 @@ fn local_relay_ignores_future_root_and_preserves_metadata_and_unfollow() {
         .unwrap()])
         .custom_created_at(Timestamp::from(100))
         .sign_with_keys(&local_owner)
-        .unwrap();
-    let app_keys = AppKeys::new(vec![DeviceEntry::new(followed_device, 100)])
-        .get_event_at(followed_owner.public_key(), 100)
-        .sign_with_keys(&followed_owner)
         .unwrap();
     let metadata = EventBuilder::new(
         Kind::Metadata,
@@ -185,7 +162,6 @@ fn local_relay_ignores_future_root_and_preserves_metadata_and_unfollow() {
         ensure_session_relays_configured(&publisher, &relay_urls).await;
         connect_client_with_timeout(&publisher, Duration::from_secs(2)).await;
         publisher.send_event(&follow).await.unwrap();
-        publisher.send_event(&app_keys).await.unwrap();
         publisher.send_event(&metadata).await.unwrap();
         fetch_user_discovery(
             discovery_client.clone(),
@@ -228,7 +204,7 @@ fn local_relay_ignores_future_root_and_preserves_metadata_and_unfollow() {
     });
     assert_eq!(
         second.detail,
-        "follows=1 eligible=1 failed_chunks=0 metadata_failed_chunks=0 social_failed_chunks=0"
+        "follows=1 metadata_failed_chunks=0 social_failed_chunks=0"
     );
     assert_eq!(second.cache.users.len(), 1);
     assert_eq!(second.cache.follow_event_id, Some(follow.id.to_hex()));
