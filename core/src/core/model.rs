@@ -69,6 +69,27 @@ pub(super) struct KnownAppKeyDevice {
     pub(super) label_updated_at_secs: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DirectChatCapabilityCheckState {
+    Checking,
+    Unavailable,
+    CheckFailed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct DirectChatCapabilityCheck {
+    pub(super) token: u64,
+    pub(super) owner_pubkey_hex: String,
+    pub(super) state: DirectChatCapabilityCheckState,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct DirectChatCapabilityRuntime {
+    pub(super) generation: u64,
+    pub(super) next_token: u64,
+    pub(super) current: Option<DirectChatCapabilityCheck>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct UserDiscoveryCache {
     pub(super) owner_pubkey_hex: Option<String>,

@@ -87,6 +87,7 @@ impl AppCore {
             owner_profiles: BTreeMap::new(),
             profile_metadata_fetch_inflight: HashSet::new(),
             app_keys: BTreeMap::new(),
+            direct_chat_capability_runtime: DirectChatCapabilityRuntime::default(),
             user_discovery: UserDiscoveryCache::default(),
             user_discovery_runtime: UserDiscoveryRuntime::default(),
             profile_search_runtime: ProfileSearchRuntime::default(),
@@ -176,6 +177,9 @@ impl AppCore {
                 InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
                 InternalEvent::ProfileMetadataFetchFinished { .. } => {
                     "ProfileMetadataFetchFinished"
+                }
+                InternalEvent::DirectChatCapabilityFetchFinished { .. } => {
+                    "DirectChatCapabilityFetchFinished"
                 }
                 InternalEvent::UserDiscoveryFetchFinished { .. } => "UserDiscoveryFetchFinished",
                 InternalEvent::ProfileSearchRequested { .. } => "ProfileSearchRequested",
@@ -443,6 +447,9 @@ impl AppCore {
             AppAction::CreatePublicInvite => self.create_public_invite(),
             AppAction::AcceptInvite { invite_input } => self.accept_invite(&invite_input),
             AppAction::OpenChat { chat_id } => self.open_chat(&chat_id),
+            AppAction::RetryDirectChatCapability { chat_id } => {
+                self.retry_direct_chat_capability(&chat_id)
+            }
             AppAction::SendMessage { chat_id, text } => self.send_message(&chat_id, &text, None),
             AppAction::SendDisappearingMessage {
                 chat_id,
@@ -729,6 +736,17 @@ impl AppCore {
                 }
                 self.exit_batch();
             }
+            InternalEvent::DirectChatCapabilityFetchFinished {
+                generation,
+                token,
+                owner_pubkey_hex,
+                result,
+            } => self.handle_direct_chat_capability_fetch_finished(
+                generation,
+                token,
+                &owner_pubkey_hex,
+                result,
+            ),
             InternalEvent::UserDiscoveryFetchFinished { token, result } => {
                 self.handle_user_discovery_fetch_finished(token, result);
             }

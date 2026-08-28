@@ -64,11 +64,13 @@ public partial class ChatView : UserControl
         var chatChanged = _focusedChatId != chat.chatId;
         var userBlocked = chat.kind == ChatKind.Direct && App.CurrentManager.IsUserBlocked(chat.chatId);
         var messageRequest = chat.kind == ChatKind.Direct && chat.isRequest && !userBlocked;
+        var directCapability = chat.kind == ChatKind.Direct ? chat.directChatCapability : null;
+        var capabilityBlocked = directCapability != null && directCapability != DirectChatCapabilityState.Available;
         if (chatChanged)
         {
             _focusedChatId = chat.chatId;
             _renderedMessageSignature = null;
-            if (!userBlocked && !messageRequest)
+            if (!userBlocked && !messageRequest && !capabilityBlocked)
             {
                 Dispatcher.BeginInvoke(new Action(() => Composer.FocusInput()));
             }
@@ -108,7 +110,24 @@ public partial class ChatView : UserControl
         BlockedPanel.Visibility = userBlocked ? Visibility.Visible : Visibility.Collapsed;
         MessageRequestPanel.Visibility = messageRequest ? Visibility.Visible : Visibility.Collapsed;
         MessageRequestText.Text = $"Message request from {chat.displayName}";
-        Composer.Visibility = userBlocked || messageRequest ? Visibility.Collapsed : Visibility.Visible;
+        var showCapability = !userBlocked && !messageRequest && capabilityBlocked;
+        DirectCapabilityPanel.Visibility = showCapability ? Visibility.Visible : Visibility.Collapsed;
+        DirectCapabilityProgress.Visibility = directCapability == DirectChatCapabilityState.Checking
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        DirectCapabilityRetryButton.Visibility = directCapability == DirectChatCapabilityState.Checking
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        DirectCapabilityText.Text = directCapability switch
+        {
+            DirectChatCapabilityState.Checking => "Checking whether this person can receive messages…",
+            DirectChatCapabilityState.Unavailable => "This person can’t receive Iris messages yet.",
+            DirectChatCapabilityState.CheckFailed => "Couldn’t check messaging availability.",
+            _ => string.Empty,
+        };
+        Composer.Visibility = userBlocked || messageRequest || capabilityBlocked
+            ? Visibility.Collapsed
+            : Visibility.Visible;
 
         // Typing indicator
         if (!userBlocked && !messageRequest && chat.typingIndicators != null && chat.typingIndicators.Length > 0)
@@ -194,6 +213,15 @@ public partial class ChatView : UserControl
         var files = PlatformFilePicker.PickFiles("Attach files", multiselect: true);
         if (files == null || files.Length == 0) return;
         Composer.AddAttachments(files);
+    }
+
+    private void OnDirectCapabilityRetry(object sender, RoutedEventArgs e)
+    {
+        var chatId = App.CurrentManager.CurrentChat?.chatId;
+        if (!string.IsNullOrEmpty(chatId))
+        {
+            App.CurrentManager.RetryDirectChatCapability(chatId);
+        }
     }
 
     private void OnTyping()

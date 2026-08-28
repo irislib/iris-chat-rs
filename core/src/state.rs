@@ -327,6 +327,17 @@ pub struct ChatParticipantSnapshot {
     pub is_local_owner: bool,
 }
 
+/// Capability of the selected direct-chat peer. Profile search results are
+/// locators only; the composer unlocks after current owner-signed evidence is
+/// resolved. Group chats expose `None`.
+#[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
+pub enum DirectChatCapabilityState {
+    Checking,
+    Available,
+    Unavailable,
+    CheckFailed,
+}
+
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct CurrentChatSnapshot {
     pub chat_id: String,
@@ -350,6 +361,7 @@ pub struct CurrentChatSnapshot {
     /// Mirrors `ChatThreadSnapshot::is_request`. Chat screens replace
     /// the composer with an Accept / Delete / Block gate when set.
     pub is_request: bool,
+    pub direct_chat_capability: Option<DirectChatCapabilityState>,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]

@@ -414,6 +414,7 @@ impl AppCore {
         self.owner_profiles.clear();
         self.profile_metadata_fetch_inflight.clear();
         self.app_keys.clear();
+        self.reset_direct_chat_capability_runtime();
         self.reset_user_discovery_runtime();
         self.groups.clear();
         self.chat_message_ttl_seconds.clear();
@@ -773,6 +774,7 @@ impl AppCore {
             relay_urls,
             authorization_state,
         });
+        self.reset_direct_chat_capability_runtime();
         self.prune_orphaned_pending_private_invite_responses();
         self.refresh_local_authorization_state();
         self.reconcile_device_sync();

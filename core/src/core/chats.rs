@@ -60,6 +60,7 @@ impl AppCore {
         self.screen_stack = vec![Screen::Chat {
             chat_id: chat_id.clone(),
         }];
+        self.request_direct_chat_capability_check(&chat_id, false);
         self.republish_local_identity_artifacts();
         self.request_protocol_subscription_refresh();
         self.fetch_recent_protocol_state();
@@ -288,6 +289,9 @@ impl AppCore {
         self.screen_stack = vec![Screen::Chat {
             chat_id: chat_id.clone(),
         }];
+        if !is_group_chat_id(&chat_id) {
+            self.request_direct_chat_capability_check(&chat_id, false);
+        }
         self.rebuild_state();
         self.emit_state();
 

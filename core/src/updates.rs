@@ -123,6 +123,12 @@ pub(crate) enum InternalEvent {
         events: Vec<Event>,
         error: Option<String>,
     },
+    DirectChatCapabilityFetchFinished {
+        generation: u64,
+        token: u64,
+        owner_pubkey_hex: String,
+        result: Result<Vec<Event>, String>,
+    },
     UserDiscoveryFetchFinished {
         token: u64,
         result: crate::core::UserDiscoveryFetchResult,

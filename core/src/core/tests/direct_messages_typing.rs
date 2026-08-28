@@ -21,6 +21,11 @@ fn opening_uncached_direct_chat_starts_targeted_profile_fetch() {
         !core.app_keys.contains_key(&peer_hex),
         "opening a discovered user must not synthesize peer AppKeys"
     );
+    assert_eq!(
+        core.direct_chat_capability_state(&peer_hex),
+        DirectChatCapabilityState::Checking,
+        "the composer stays gated while exact owner-signed AppKeys are fetched"
+    );
     assert!(
         core.compute_protocol_subscription_plan()
             .is_some_and(|plan| plan.roster_authors.contains(&peer_hex)),

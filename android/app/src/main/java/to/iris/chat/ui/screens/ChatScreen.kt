@@ -93,6 +93,7 @@ import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatMessageSnapshot
+import to.iris.chat.rust.DirectChatCapabilityState
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.DeliveryState
 import to.iris.chat.rust.OutgoingAttachment
@@ -488,6 +489,9 @@ fun ChatScreen(
         val visibleMessages = chat.messages
         val composerBlocked = chat.kind == ChatKind.DIRECT && isUserBlocked(preferences, chat.chatId)
         val isMessageRequest = chat.kind == ChatKind.DIRECT && chat.isRequest && !composerBlocked
+        val directCapability = chat.directChatCapability.takeIf { chat.kind == ChatKind.DIRECT }
+        val capabilityBlocked =
+            directCapability != null && directCapability != DirectChatCapabilityState.AVAILABLE
         var scrollDateHeaderVisible by remember(chatId) { mutableStateOf(false) }
         var scrollDateHeaderLabel by remember(chatId) { mutableStateOf<String?>(null) }
 
@@ -655,7 +659,7 @@ fun ChatScreen(
                     }
                 }
 
-                if (!composerBlocked && !isMessageRequest) {
+                if (!composerBlocked && !isMessageRequest && !capabilityBlocked) {
                     replyTarget?.let { reply ->
                         ReplyComposerStrip(
                             message = reply,
@@ -684,6 +688,14 @@ fun ChatScreen(
                             onAccept = {
                                 appManager.dispatch(AppAction.SetMessageRequestAccepted(chat.chatId))
                                 composerFocusRequester.requestFocus()
+                            },
+                        )
+                    }
+                    capabilityBlocked -> {
+                        DirectChatCapabilityBar(
+                            state = directCapability!!,
+                            onRetry = {
+                                appManager.dispatch(AppAction.RetryDirectChatCapability(chat.chatId))
                             },
                         )
                     }
