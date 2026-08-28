@@ -98,9 +98,7 @@ pub(super) fn capability_bar(
         row.append(&spinner);
     }
     let message = match state {
-        DirectChatCapabilityState::Checking => {
-            "Checking whether this person can receive messages…"
-        }
+        DirectChatCapabilityState::Checking => "Checking whether this person can receive messages…",
         DirectChatCapabilityState::Unavailable => "This person can’t receive Iris messages yet.",
         DirectChatCapabilityState::CheckFailed => "Couldn’t check messaging availability.",
         DirectChatCapabilityState::Available => "",
