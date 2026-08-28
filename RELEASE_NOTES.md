@@ -2,6 +2,31 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.8.28
+
+### GitHub
+
+- People search now finds Iris users beyond existing chats and follows, with
+  bounded remote profile discovery and friend-supported ranking.
+- Search results remain useful offline, exclude blocked people, and refresh
+  safely when account, connection, or profile information changes.
+- New direct chats now wait for a verified compatible device before messaging
+  is enabled, with clear unavailable and retry states on every platform.
+
+### Apple
+
+- People search can now find more Iris users and prioritizes people connected
+  to your friends.
+- New chats check for a compatible device before messaging is enabled and offer
+  a clear retry when the check cannot complete.
+
+### Zapstore
+
+- People search can now find more Iris users and prioritizes people connected
+  to your friends.
+- New chats check for a compatible device before messaging is enabled and offer
+  a clear retry when the check cannot complete.
+
 ## v2026.8.23.1
 
 ### GitHub
