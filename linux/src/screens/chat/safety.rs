@@ -2,7 +2,10 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::gio;
-use iris_chat_core::{peer_input_to_npub, AppAction, CurrentChatSnapshot, PreferencesSnapshot};
+use iris_chat_core::{
+    peer_input_to_npub, AppAction, CurrentChatSnapshot, DirectChatCapabilityState,
+    PreferencesSnapshot,
+};
 
 use crate::app_manager::AppManager;
 
@@ -73,6 +76,55 @@ pub(super) fn blocked_bar(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) 
 
     outer.append(&actions);
     outer.upcast()
+}
+
+pub(super) fn capability_bar(
+    chat: &CurrentChatSnapshot,
+    state: &DirectChatCapabilityState,
+    manager: &Rc<AppManager>,
+) -> gtk::Widget {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    row.add_css_class("card");
+    row.set_margin_top(8);
+    row.set_margin_bottom(8);
+    row.set_margin_start(12);
+    row.set_margin_end(12);
+    row.set_hexpand(true);
+
+    if matches!(state, DirectChatCapabilityState::Checking) {
+        let spinner = gtk::Spinner::new();
+        spinner.start();
+        spinner.set_margin_start(12);
+        row.append(&spinner);
+    }
+    let message = match state {
+        DirectChatCapabilityState::Checking => "Checking whether this person can receive messages…",
+        DirectChatCapabilityState::Unavailable => "This person can’t receive Iris messages yet.",
+        DirectChatCapabilityState::CheckFailed => "Couldn’t check messaging availability.",
+        DirectChatCapabilityState::Available => "",
+    };
+    let label = gtk::Label::new(Some(message));
+    label.set_wrap(true);
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    label.set_margin_top(12);
+    label.set_margin_bottom(12);
+    label.set_margin_start(12);
+    row.append(&label);
+
+    if !matches!(state, DirectChatCapabilityState::Checking) {
+        let retry = gtk::Button::with_label("Check again");
+        retry.set_margin_end(12);
+        let manager = manager.clone();
+        let chat_id = chat.chat_id.clone();
+        retry.connect_clicked(move |_| {
+            manager.dispatch(AppAction::RetryDirectChatCapability {
+                chat_id: chat_id.clone(),
+            });
+        });
+        row.append(&retry);
+    }
+    row.upcast()
 }
 
 pub(super) fn message_request_bar(

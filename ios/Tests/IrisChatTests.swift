@@ -219,7 +219,8 @@ final class MockRustApp: RustAppClient {
             messages: [],
             typingIndicators: [],
             draft: thread?.draft ?? "",
-            isRequest: thread?.isRequest ?? false
+            isRequest: thread?.isRequest ?? false,
+            directChatCapability: groupId == nil ? .available : nil
         )
     }
 
@@ -519,7 +520,8 @@ private func makeCurrentChat(
         messages: messages,
         typingIndicators: [],
         draft: "",
-        isRequest: false
+        isRequest: false,
+        directChatCapability: kind == .direct ? .available : nil
     )
 }
 

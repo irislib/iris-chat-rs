@@ -527,8 +527,10 @@ struct ChatScreen: View {
                             .safeAreaInset(edge: .bottom, spacing: 0) {
                                 let composerBlocked = chat.kind == .direct && manager.isUserBlocked(chat.chatId)
                                 let isRequest = chat.isRequest && acceptedRequestChatId != chat.chatId
+                                let capability = chat.kind == .direct ? chat.directChatCapability : nil
+                                let capabilityBlocked = capability != nil && capability != .available
                                 VStack(spacing: 0) {
-                                    if let replyTarget, !composerBlocked, !isRequest {
+                                    if let replyTarget, !composerBlocked, !isRequest, !capabilityBlocked {
                                         IrisReplyComposerStrip(message: replyTarget) {
                                             self.replyTarget = nil
                                         }
@@ -561,6 +563,10 @@ struct ChatScreen: View {
                                                 )
                                             }
                                         )
+                                    } else if let capability, capability != .available {
+                                        IrisDirectChatCapabilityBar(state: capability) {
+                                            manager.dispatch(.retryDirectChatCapability(chatId: chat.chatId))
+                                        }
                                     } else {
                                         IrisComposerBar(
                                             draft: $draft,

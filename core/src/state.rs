@@ -327,6 +327,17 @@ pub struct ChatParticipantSnapshot {
     pub is_local_owner: bool,
 }
 
+/// Capability of the selected direct-chat peer. Profile search results are
+/// locators only; the composer unlocks after current owner-signed evidence is
+/// resolved. Group chats expose `None`.
+#[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
+pub enum DirectChatCapabilityState {
+    Checking,
+    Available,
+    Unavailable,
+    CheckFailed,
+}
+
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct CurrentChatSnapshot {
     pub chat_id: String,
@@ -350,6 +361,7 @@ pub struct CurrentChatSnapshot {
     /// Mirrors `ChatThreadSnapshot::is_request`. Chat screens replace
     /// the composer with an Accept / Delete / Block gate when set.
     pub is_request: bool,
+    pub direct_chat_capability: Option<DirectChatCapabilityState>,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
@@ -472,9 +484,9 @@ pub struct MessageSearchHit {
     pub created_at_secs: u64,
 }
 
-/// A followed person who has a current Iris device snapshot and can be
-/// offered as a new direct-chat target. All protocol parsing and display
-/// fallback decisions happen in Rust; shells only render these fields.
+/// A person discovered from local profiles, the account's social graph, or the
+/// global profile index. Chat capability is resolved only after selection;
+/// shells only render these fields.
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct FollowedUserSearchResult {
     pub owner_pubkey_hex: String,
@@ -571,8 +583,8 @@ pub struct AppState {
     pub network_status: Option<NetworkStatusSnapshot>,
     pub mobile_push: MobilePushSyncSnapshot,
     pub preferences: PreferencesSnapshot,
-    /// Changes only when followed-user discovery data or its loading state
-    /// changes, so native search caches do not rerun on unrelated state ticks.
+    /// Invalidates native People-search caches when discovery inputs, block
+    /// exclusions, or discovery loading state change.
     pub user_discovery_revision: u64,
     pub user_discovery_syncing: bool,
     pub toast: Option<String>,

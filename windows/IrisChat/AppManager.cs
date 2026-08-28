@@ -389,6 +389,13 @@ public sealed partial class AppManager : INotifyPropertyChanged
         );
     }
 
+    public void RetryDirectChatCapability(string chatId)
+    {
+        var trimmed = chatId.Trim();
+        if (string.IsNullOrEmpty(trimmed)) return;
+        DispatchToRust(new AppAction.RetryDirectChatCapability(trimmed));
+    }
+
     public void SendMessage(string chatId, string text)
     {
         var c = chatId.Trim();

@@ -16,6 +16,7 @@ import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -32,6 +33,7 @@ import java.util.Locale
 import to.iris.chat.BuildConfig
 import to.iris.chat.core.AppManager
 import to.iris.chat.rust.AppAction
+import to.iris.chat.rust.DirectChatCapabilityState
 import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.peerInputToNpub
 import to.iris.chat.ui.components.IrisClipboard
@@ -150,6 +152,54 @@ fun BlockedComposerBar(
                         ),
                 ) {
                     Text("Unblock")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DirectChatCapabilityBar(
+    state: DirectChatCapabilityState,
+    onRetry: () -> Unit,
+) {
+    Surface(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .testTag("directChatCapabilityBar"),
+        color = IrisTheme.palette.panelRaised,
+        tonalElevation = 2.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (state == DirectChatCapabilityState.CHECKING) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
+            Text(
+                text =
+                    when (state) {
+                        DirectChatCapabilityState.CHECKING ->
+                            "Checking whether this person can receive messages…"
+                        DirectChatCapabilityState.UNAVAILABLE ->
+                            "This person can’t receive Iris messages yet."
+                        DirectChatCapabilityState.CHECK_FAILED ->
+                            "Couldn’t check messaging availability."
+                        DirectChatCapabilityState.AVAILABLE -> ""
+                    },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            if (state != DirectChatCapabilityState.CHECKING) {
+                TextButton(
+                    onClick = onRetry,
+                    modifier = Modifier.testTag("directChatCapabilityRetryButton"),
+                ) {
+                    Text("Check again")
                 }
             }
         }

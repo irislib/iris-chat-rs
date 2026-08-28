@@ -248,17 +248,13 @@ struct DesktopChatSidebar: View {
     let onOpenNearby: () -> Void
     let onOpenNearbyPeerProfile: (String) -> Void
     @State private var searchText = ""
+    @State private var search = GroupedSearchSession()
 
-    private var filteredChats: [ChatThreadSnapshot] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else {
-            return manager.state.chatList
-        }
-        return manager.state.chatList.filter { chat in
-            chat.displayName.lowercased().contains(query)
-                || (chat.lastMessagePreview?.lowercased().contains(query) ?? false)
-                || (chat.subtitle?.lowercased().contains(query) ?? false)
-        }
+    private var searchRequest: GroupedSearchSession.Request? {
+        search.request(
+            for: searchText,
+            discoveryRevision: manager.state.userDiscoveryRevision
+        )
     }
 
     private var selectedChatId: String? {
@@ -283,58 +279,56 @@ struct DesktopChatSidebar: View {
         VStack(spacing: 0) {
             sidebarHeader
 
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(palette.muted)
-                TextField("Search", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(.body, design: .rounded))
-                    .foregroundStyle(palette.textPrimary)
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 38)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(palette.panelAlt)
-            )
-            .padding(.horizontal, 14)
-            .padding(.bottom, 8)
+            ChatListSearchField(text: $searchText)
 
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    let preferences = manager.state.preferences
+                    if let request = searchRequest {
+                        if let results = search.snapshot(for: request) {
+                            SearchResultsList(
+                                manager: manager,
+                                results: results,
+                                relativeNow: relativeNow,
+                                expandedSections: search.expandedSections,
+                                messageLimit: search.messageLimit,
+                                onShortcutNavigate: { searchText = "" },
+                                onViewMore: { search.viewMore($0) }
+                            )
+                        }
+                    } else {
+                        let preferences = manager.state.preferences
 
-                    DesktopSidebarActionRow(
-                        title: "New chat",
-                        subtitle: nil,
-                        systemImage: "message.fill",
-                        selected: newChatSelected
-                    ) {
-                        manager.dispatch(.pushScreen(screen: .newChat))
-                    }
-                    .accessibilityIdentifier("desktopNewChatRow")
+                        DesktopSidebarActionRow(
+                            title: "New chat",
+                            subtitle: nil,
+                            systemImage: "message.fill",
+                            selected: newChatSelected
+                        ) {
+                            manager.dispatch(.pushScreen(screen: .newChat))
+                        }
+                        .accessibilityIdentifier("desktopNewChatRow")
 
-                    #if os(macOS)
-                    DesktopNearbyIrisRow(
-                        manager: manager,
-                        service: manager.nearbyIris,
-                        onOpen: onOpenNearby,
-                        onOpenPeerProfile: onOpenNearbyPeerProfile
-                    )
-                        .accessibilityIdentifier("desktopNearbyRow")
-                    #endif
-
-                    ForEach(filteredChats, id: \.chatId) { chat in
-                        DesktopSidebarChatRow(
+                        #if os(macOS)
+                        DesktopNearbyIrisRow(
                             manager: manager,
-                            chat: chat,
-                            timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow),
-                            selected: selectedChatId == chat.chatId,
-                            preferences: preferences
+                            service: manager.nearbyIris,
+                            onOpen: onOpenNearby,
+                            onOpenPeerProfile: onOpenNearbyPeerProfile
                         )
-                        .equatable()
-                        .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
+                        .accessibilityIdentifier("desktopNearbyRow")
+                        #endif
+
+                        ForEach(manager.state.chatList, id: \.chatId) { chat in
+                            DesktopSidebarChatRow(
+                                manager: manager,
+                                chat: chat,
+                                timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow),
+                                selected: selectedChatId == chat.chatId,
+                                preferences: preferences
+                            )
+                            .equatable()
+                            .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
+                        }
                     }
                 }
                 .padding(.horizontal, 8)
@@ -342,6 +336,22 @@ struct DesktopChatSidebar: View {
             }
         }
         .background(palette.panel)
+        .irisOnChange(of: searchText) { _ in
+            search.queryChanged(searchText)
+            autoProceedIfShortcut()
+        }
+        .task(id: searchRequest) {
+            search.refresh(searchRequest) { query, limit in
+                manager.search(query, limit: limit)
+            }
+        }
+    }
+
+    private func autoProceedIfShortcut() {
+        guard let query = searchRequest?.query,
+              let shortcut = classifyChatInput(input: query) else { return }
+        searchText = ""
+        manager.dispatch(chatInputShortcutAction(shortcut))
     }
 
     private var sidebarHeader: some View {
