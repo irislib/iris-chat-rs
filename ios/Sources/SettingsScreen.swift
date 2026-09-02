@@ -293,6 +293,27 @@ struct SettingsScreen: View {
                 )
             }
 
+        case .general:
+            #if os(macOS)
+            IrisSectionCard {
+                CardHeader(title: "General")
+
+                Toggle(
+                    "Start at login",
+                    isOn: Binding(
+                        get: { manager.state.preferences.startupAtLoginEnabled },
+                        set: { enabled in
+                            manager.setStartupAtLoginEnabled(enabled)
+                        }
+                    )
+                )
+                .irisControlTint()
+                .accessibilityIdentifier("myProfileStartupAtLoginToggle")
+            }
+            #else
+            EmptyView()
+            #endif
+
         case .devices:
             DeviceRosterContent(
                 manager: manager,
@@ -340,19 +361,6 @@ struct SettingsScreen: View {
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileAcceptUnknownMessagesToggle")
 
-                if PlatformStartupAtLogin.isSupported {
-                    Toggle(
-                        "Open at login",
-                        isOn: Binding(
-                            get: { manager.state.preferences.startupAtLoginEnabled },
-                            set: { enabled in
-                                manager.setStartupAtLoginEnabled(enabled)
-                            }
-                        )
-                    )
-                    .irisControlTint()
-                    .accessibilityIdentifier("myProfileStartupAtLoginToggle")
-                }
             }
 
         case .notifications:

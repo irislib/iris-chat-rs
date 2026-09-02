@@ -39,6 +39,16 @@
                         Padding="8"
                         Margin="0,0,0,14">
                     <StackPanel>
+                        <Button Style="{StaticResource GhostButton}" Tag="General" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="General" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
                         <Button Style="{StaticResource GhostButton}" Tag="Notifications" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -268,6 +278,22 @@
                     <views:DeviceRosterView />
                 </Border>
 
+                <Border x:Name="GeneralPage"
+                        Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="20">
+                    <StackPanel>
+                        <TextBlock Text="General"
+                                   Style="{StaticResource SectionTitleText}"
+                                   Margin="0,0,0,12" />
+                        <CheckBox x:Name="StartupToggle"
+                                  AutomationProperties.AutomationId="startupAtLoginToggle"
+                                  Content="Start at login"
+                                  Checked="OnStartupChanged"
+                                  Unchecked="OnStartupChanged" />
+                    </StackPanel>
+                </Border>
+
                 <Border x:Name="MessagingPage"
                         Background="{StaticResource Panel}"
                         CornerRadius="{StaticResource SectionRadius}"
@@ -282,8 +308,6 @@
                                   Checked="OnTypingChanged" Unchecked="OnTypingChanged" />
                         <CheckBox x:Name="ReceiptsToggle" Content="Received / seen" Margin="0,0,0,8"
                                   Checked="OnReceiptsChanged" Unchecked="OnReceiptsChanged" />
-                        <CheckBox x:Name="StartupToggle" Content="Open at login"
-                                  Checked="OnStartupChanged" Unchecked="OnStartupChanged" />
                     </StackPanel>
                 </Border>
 

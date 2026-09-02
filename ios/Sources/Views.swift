@@ -367,6 +367,7 @@ let irisOpenSettingsNotification = Notification.Name("fi.siriusbusiness.irischat
 
 enum SettingsPage: String, CaseIterable, Identifiable {
     case profile
+    case general
     case devices
     case messaging
     case notifications
@@ -385,6 +386,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .profile: return "Profile"
+        case .general: return "General"
         case .devices: return "Devices"
         case .messaging: return "Messaging"
         case .notifications: return "Notifications"
@@ -403,6 +405,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .profile: return "person.crop.circle.fill"
+        case .general: return "gearshape.fill"
         case .devices: return "laptopcomputer.and.iphone"
         case .messaging: return "bubble.left.and.bubble.right.fill"
         case .notifications: return "bell.fill"
@@ -421,6 +424,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var accessibilityID: String {
         switch self {
         case .profile: return "settingsProfileRow"
+        case .general: return "settingsGeneralRow"
         case .devices: return "settingsDevicesRow"
         case .messaging: return "settingsMessagingRow"
         case .notifications: return "settingsNotificationsRow"
@@ -437,13 +441,18 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     }
 
     static var primaryMenuPages: [SettingsPage] {
-        [
+        var pages: [SettingsPage] = []
+        #if os(macOS)
+        pages.append(.general)
+        #endif
+        pages.append(contentsOf: [
             .notifications,
             .messaging,
             .nearby,
             .devices,
             .security,
-        ]
+        ])
+        return pages
     }
 
     static var infoMenuPages: [SettingsPage] {

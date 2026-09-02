@@ -815,6 +815,23 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
         assertNoDispatchFailureToast(app)
     }
 
+    func testDesktopSettingsShowsStartAtLogin() throws {
+#if os(macOS)
+        let app = launchCleanApp()
+        createAccount(app)
+
+        element(app, "chatListProfileButton").tap()
+        XCTAssertTrue(element(app, "settingsScreen").waitForExistence(timeout: 10))
+        openSettingsPage(app, "settingsGeneralRow")
+        XCTAssertTrue(
+            element(app, "myProfileStartupAtLoginToggle").waitForExistence(timeout: 5),
+            "General settings should expose Start at login on macOS"
+        )
+#else
+        throw XCTSkip("Start at login is available on desktop platforms")
+#endif
+    }
+
     func testDesktopNearbyModalDismissesFromCloseButtonAndOutsideClick() throws {
 #if os(macOS)
         let app = launchCleanApp()

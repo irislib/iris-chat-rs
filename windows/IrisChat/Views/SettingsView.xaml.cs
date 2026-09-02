@@ -121,6 +121,7 @@ public partial class SettingsView : UserControl
         {
             ProfilePage,
             DevicesPage,
+            GeneralPage,
             MessagingPage,
             NotificationsPage,
             MediaPage,
@@ -140,6 +141,7 @@ public partial class SettingsView : UserControl
         var selected = _selectedPage switch
         {
             "Devices" => DevicesPage,
+            "General" => GeneralPage,
             "Messaging" => MessagingPage,
             "Notifications" => NotificationsPage,
             "Media" => MediaPage,

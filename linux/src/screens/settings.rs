@@ -20,6 +20,7 @@ fn iris_chat_profile_url(npub: &str) -> String {
 #[derive(Clone, Copy)]
 enum SettingsPage {
     Profile,
+    General,
     Devices,
     Messaging,
     Notifications,
@@ -36,6 +37,7 @@ impl SettingsPage {
     fn id(self) -> &'static str {
         match self {
             Self::Profile => "profile",
+            Self::General => "general",
             Self::Devices => "devices",
             Self::Messaging => "messaging",
             Self::Notifications => "notifications",
@@ -52,6 +54,7 @@ impl SettingsPage {
     fn title(self) -> &'static str {
         match self {
             Self::Profile => "Profile",
+            Self::General => "General",
             Self::Devices => "Devices",
             Self::Messaging => "Messaging",
             Self::Notifications => "Notifications",
@@ -68,6 +71,7 @@ impl SettingsPage {
     fn icon_name(self) -> &'static str {
         match self {
             Self::Profile => "avatar-default-symbolic",
+            Self::General => "preferences-system-symbolic",
             Self::Devices => "computer-symbolic",
             Self::Messaging => "mail-message-new-symbolic",
             Self::Notifications => "preferences-system-notifications-symbolic",
@@ -104,6 +108,10 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         Some(SettingsPage::Devices.id()),
     );
 
+    stack.add_named(
+        &settings_detail_page(vec![general_group(&state.preferences, manager)]),
+        Some(SettingsPage::General.id()),
+    );
     stack.add_named(
         &settings_detail_page(vec![messaging_group(&state.preferences, manager)]),
         Some(SettingsPage::Messaging.id()),
@@ -211,6 +219,7 @@ fn settings_menu(state: &AppState, stack: &gtk::Stack) -> adw::PreferencesPage {
 
     let primary = adw::PreferencesGroup::new();
     for settings_page in [
+        SettingsPage::General,
         SettingsPage::Notifications,
         SettingsPage::Messaging,
         SettingsPage::Nearby,
@@ -762,8 +771,14 @@ fn messaging_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw
     }
     group.add(&receipts);
 
+    group
+}
+
+fn general_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder().title("General").build();
+
     if startup::is_supported() {
-        let startup_row = adw::SwitchRow::builder().title("Open at login").build();
+        let startup_row = adw::SwitchRow::builder().title("Start at login").build();
         startup_row.set_active(prefs.startup_at_login_enabled);
         {
             let manager = manager.clone();
