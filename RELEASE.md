@@ -41,7 +41,7 @@ Optional path overrides are `IRIS_HASHTREE_NSEC_PATH`,
 Local distribution requires an authenticated GitHub CLI with `release verify`
 support, plus `jq`, `python3`, and the channel tools:
 
-- Hashtree: `htree` and `nak`
+- Hashtree: `htree`, `nak`, and `curl`
 - Homebrew: `htree`, `nak`, `curl`, and `git`
 - Zapstore: `zsp`, `nak`, `base64`, and `sed`
 
@@ -163,8 +163,9 @@ App Store Connect. Retrying does not rebuild or upload a duplicate build.
   assets, with no `latest` aliases. `gh release verify v2026.7.28
   --repo irislib/iris-chat-rs` must succeed and the release page must say
   **Immutable**.
-- Hashtree: open the exact tag URL printed by the distributor and confirm
-  `release.json` reports the requested tag.
+- Hashtree: the distributor refreshes the gateway's cached root and verifies
+  the public `release.json` tag and commit against the GitHub manifest before
+  reporting success. A failed readback can be retried with the same tag.
 - Homebrew: update the tap and run `brew info iris`; its formula URL must
   contain the immutable release tag.
 - Zapstore: confirm the version and publisher in Zapstore.

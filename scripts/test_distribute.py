@@ -170,13 +170,22 @@ class DistributeTests(unittest.TestCase):
             set -Eeuo pipefail
             printf 'curl %s\n' "$*" >> "$FAKE_COMMAND_LOG"
             output=""
+            url=""
             while [[ $# -gt 0 ]]; do
               case "$1" in
                 -o) output="$2"; shift 2 ;;
+                https://*) url="$1"; shift ;;
                 *) shift ;;
               esac
             done
-            printf '{"tag":"%s"}\n' "$FAKE_TAG" > "$output"
+            if [[ "$url" == *"/api/nostr/resolve/"* ]]; then
+              [[ "${FAKE_REFRESH_FAIL:-0}" != "1" ]] || exit 22
+              printf '%s\n' '{"hash":"refreshed-root"}' > "$output"
+            else
+              [[ "${FAKE_READBACK_FAIL:-0}" != "1" ]] || exit 22
+              printf '{"tag":"%s","commit":"%s"}\n' \
+                "${FAKE_PUBLIC_TAG:-$FAKE_TAG}" "${FAKE_PUBLIC_COMMIT:-abc123}" > "$output"
+            fi
             """,
         )
         self.write_stub(
@@ -282,6 +291,7 @@ class DistributeTests(unittest.TestCase):
         self.assertIn(f"iris-{TAG}-x86_64-unknown-linux-gnu.tar.gz", log)
         self.assertNotIn("htree add", log)
         self.assertNotIn("htree release publish", log)
+        self.assertNotIn("curl", log)
 
     def test_homebrew_check_downloads_only_cli_archives(self) -> None:
         result = self.run_distribution("homebrew", "--check")
@@ -389,7 +399,35 @@ class DistributeTests(unittest.TestCase):
         log = self.log.read_text()
         command = f"htree release publish releases/iris-chat-rs {TAG} fake-cid"
         self.assertEqual(log.count(command), 2)
+        refresh = f"https://upload.iris.to/api/nostr/resolve/{HASHTREE_NPUB}/releases%2Firis-chat-rs?refresh=1"
+        readback = f"https://upload.iris.to/{HASHTREE_NPUB}/releases%2Firis-chat-rs/{TAG}/release.json"
+        self.assertLess(log.index(command), log.index(refresh))
+        self.assertLess(log.index(refresh), log.index(readback))
+        self.assertEqual(log.count(refresh), 2)
+        for line in log.splitlines():
+            if line.startswith("curl "):
+                self.assertIn("--connect-timeout 10", line)
+                self.assertIn("--max-time 30", line)
         self.assertNotIn("latest", log)
+
+    def test_hashtree_publish_rejects_stale_or_mismatched_public_metadata(self) -> None:
+        for field, value in (("FAKE_PUBLIC_TAG", "v2026.7.1"), ("FAKE_PUBLIC_COMMIT", "other")):
+            with self.subTest(field=field):
+                env = self.environment()
+                env[field] = value
+                result = self.run_distribution("hashtree", env=env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("gateway readback does not match", result.stderr)
+                self.assertNotIn(f"Published {TAG} to Hashtree:", result.stdout)
+
+    def test_hashtree_publish_propagates_refresh_and_readback_failures(self) -> None:
+        for field in ("FAKE_REFRESH_FAIL", "FAKE_READBACK_FAIL"):
+            with self.subTest(field=field):
+                env = self.environment()
+                env[field] = "1"
+                result = self.run_distribution("hashtree", env=env)
+                self.assertEqual(result.returncode, 22)
+                self.assertNotIn(f"Published {TAG} to Hashtree:", result.stdout)
 
     def test_homebrew_publish_is_retryable(self) -> None:
         first = self.run_distribution("homebrew")

@@ -199,6 +199,23 @@ write_cli_installer() {
   chmod +x "$output"
 }
 
+verify_hashtree_publication() {
+  local public_release="$DOWNLOAD_DIR/hashtree-release.json"
+  local tree_path="${IRIS_HASHTREE_RELEASE_TREE//\//%2F}"
+  # Mutable reads can serve a cached root while refreshing in the background.
+  curl -fsS --connect-timeout 10 --max-time 30 \
+    "https://upload.iris.to/api/nostr/resolve/${IRIS_HASHTREE_PUBLISHER_NPUB}/${tree_path}?refresh=1" \
+    -o /dev/null
+  curl -fsS --connect-timeout 10 --max-time 30 \
+    "$(hashtree_gateway_base_url "$TAG")/release.json" -o "$public_release"
+  if ! jq -e --slurpfile manifest "$DOWNLOAD_DIR/iris-chat-${TAG}-manifest.json" \
+    '.tag == $manifest[0].tag and .commit == $manifest[0].commit' \
+    "$public_release" >/dev/null; then
+    echo "Hashtree gateway readback does not match the verified release $TAG." >&2
+    return 1
+  fi
+}
+
 publish_hashtree() {
   local assets=()
   local name stage_dir add_output cid
@@ -212,6 +229,7 @@ publish_hashtree() {
     echo "Hashtree preflight passed for $TAG ($IRIS_HASHTREE_PUBLISHER_NPUB)."
     return
   fi
+  require_command curl
 
   gh release view "$TAG" \
     --repo "$IRIS_GITHUB_REPOSITORY" \
@@ -239,6 +257,7 @@ publish_hashtree() {
   HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
   HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" \
     htree release publish "$IRIS_HASHTREE_RELEASE_TREE" "$TAG" "$cid"
+  verify_hashtree_publication
   echo "Published $TAG to Hashtree: $(hashtree_gateway_base_url "$TAG")"
 }
 
