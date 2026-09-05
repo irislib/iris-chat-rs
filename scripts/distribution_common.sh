@@ -7,6 +7,7 @@ IRIS_HASHTREE_PUBLISHER_NPUB="npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa5
 IRIS_ZAPSTORE_PUBLISHER_NPUB="npub1wyvg2agqh7sq0y6pga3rayr45uhr0fg5ucz4yjg36rmv4t8yrvrsslkwpm"
 IRIS_HASHTREE_RELEASE_TREE="releases/iris-chat-rs"
 
+IRIS_HASHTREE_CONFIG_DIR="${IRIS_HASHTREE_CONFIG_DIR:-$HOME/.config/iris-chat/htree-release-config}"
 IRIS_HASHTREE_DATA_DIR="${IRIS_HASHTREE_DATA_DIR:-$HOME/.config/iris-chat/htree-release-data}"
 IRIS_HASHTREE_NSEC_PATH="${IRIS_HASHTREE_NSEC_PATH:-$HOME/.config/iris-chat/htree-nsec}"
 IRIS_ZAPSTORE_NSEC_PATH="${IRIS_ZAPSTORE_NSEC_PATH:-$HOME/.config/iris-chat/zapstore-nsec}"
@@ -60,12 +61,13 @@ require_hashtree_identity() {
   require_command htree
   require_signer "Hashtree" "$IRIS_HASHTREE_NSEC_PATH" "$IRIS_HASHTREE_PUBLISHER_NPUB"
   active="$(
+    HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
     HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" htree user 2>/dev/null |
       grep -oE 'npub1[023456789acdefghjklmnpqrstuvwxyz]+' |
       head -n 1
   )"
   if [[ "$active" != "$IRIS_HASHTREE_PUBLISHER_NPUB" ]]; then
-    echo "Active Hashtree identity mismatch in $IRIS_HASHTREE_DATA_DIR." >&2
+    echo "Active Hashtree identity mismatch in $IRIS_HASHTREE_CONFIG_DIR." >&2
     echo "Expected: $IRIS_HASHTREE_PUBLISHER_NPUB" >&2
     echo "Actual:   ${active:-<none>}" >&2
     return 1

@@ -26,16 +26,17 @@ Public identities are fixed in the repository and checked before publication:
 
 | Purpose | Expected public key | Local state |
 |---|---|---|
-| Hashtree releases and Homebrew | `npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap` | `~/.config/iris-chat/htree-nsec` and `~/.config/iris-chat/htree-release-data` |
+| Hashtree releases and Homebrew | `npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap` | `~/.config/iris-chat/htree-nsec` |
 | Zapstore | `npub1wyvg2agqh7sq0y6pga3rayr45uhr0fg5ucz4yjg36rmv4t8yrvrsslkwpm` | `~/.config/iris-chat/zapstore-nsec` |
 
 The files must contain the matching secret keys and be readable only by their
 owner. The distributor derives each public key before publishing. Hashtree
-also verifies the active user in its dedicated data directory. There is no
-shared signer variable and no browser-signing fallback.
+also verifies the active user in its dedicated configuration directory. There
+is no shared signer variable and no browser-signing fallback.
 
 Optional path overrides are `IRIS_HASHTREE_NSEC_PATH`,
-`IRIS_HASHTREE_DATA_DIR`, and `IRIS_ZAPSTORE_NSEC_PATH`.
+`IRIS_HASHTREE_CONFIG_DIR`, `IRIS_HASHTREE_DATA_DIR`, and
+`IRIS_ZAPSTORE_NSEC_PATH`.
 
 Local distribution requires an authenticated GitHub CLI with `release verify`
 support, plus `jq`, `python3`, and the channel tools:
@@ -44,10 +45,18 @@ support, plus `jq`, `python3`, and the channel tools:
 - Homebrew: `htree`, `nak`, `curl`, and `git`
 - Zapstore: `zsp`, `nak`, `base64`, and `sed`
 
-Initialize the dedicated Hashtree data directory once with the same Hashtree
-identity stored in `IRIS_HASHTREE_NSEC_PATH`. Confirm it before publishing:
+Hashtree uses `~/.config/iris-chat/htree-release-config` for configuration and
+`~/.config/iris-chat/htree-release-data` for stored content. Provision the
+configuration directory's `keys` file with the same identity stored in
+`IRIS_HASHTREE_NSEC_PATH`, using directory mode `0700` and file mode `0600`.
+The distributor scopes both directories to its Hashtree and Homebrew commands,
+regardless of inherited `HTREE_CONFIG_DIR` or `HTREE_DATA_DIR` settings.
+
+Identity comes from `HTREE_CONFIG_DIR/keys`; setting only `HTREE_DATA_DIR` does
+not isolate it. Confirm the dedicated identity before publishing:
 
 ```bash
+HTREE_CONFIG_DIR="${IRIS_HASHTREE_CONFIG_DIR:-$HOME/.config/iris-chat/htree-release-config}" \
 HTREE_DATA_DIR="${IRIS_HASHTREE_DATA_DIR:-$HOME/.config/iris-chat/htree-release-data}" htree user
 ```
 

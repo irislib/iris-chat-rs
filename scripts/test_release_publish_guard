@@ -12,7 +12,7 @@ if "$ROOT_DIR/scripts/distribute" hashtree >/dev/null 2>&1; then
 fi
 
 if rg -n \
-  'IRIS_RELEASE_NOSTR_KEY_PATH|HTREE_CONFIG_DIR|IrisChat-release-latest|scripts/release --publish' \
+  'IRIS_RELEASE_NOSTR_KEY_PATH|IrisChat-release-latest|scripts/release --publish' \
   "$ROOT_DIR/scripts/distribute" \
   "$ROOT_DIR/scripts/distribution_common.sh" \
   "$ROOT_DIR/RELEASE.md"; then

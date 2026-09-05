@@ -16,11 +16,11 @@ class ReleaseIdentityTests(unittest.TestCase):
         self.assertIn(HASHTREE_NPUB, common)
         self.assertIn(ZAPSTORE_NPUB, common)
         self.assertIn("IRIS_HASHTREE_NSEC_PATH", common)
+        self.assertIn("IRIS_HASHTREE_CONFIG_DIR", common)
         self.assertIn("IRIS_ZAPSTORE_NSEC_PATH", common)
         self.assertIn("require_hashtree_identity", distributor)
         self.assertIn("require_zapstore_identity", distributor)
         self.assertNotIn("IRIS_RELEASE_NOSTR_KEY_PATH", common + distributor)
-        self.assertNotIn("HTREE_CONFIG_DIR", common + distributor)
 
     def test_zapstore_config_names_the_dedicated_publisher(self) -> None:
         config = (ROOT / "zapstore.yaml").read_text()

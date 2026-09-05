@@ -50,6 +50,10 @@ class DistributeTests(unittest.TestCase):
         self.zapstore_nsec = self.root / "zapstore-nsec"
         self.hashtree_nsec.write_text("hashtree-secret\n")
         self.zapstore_nsec.write_text("zapstore-secret\n")
+        self.hashtree_config = self.root / "release profile"
+        self.global_config = self.root / "unrelated profile"
+        self.global_config.mkdir()
+        (self.global_config / "keys").write_text("unrelated identity\n")
         self.notes = (
             "# Iris Chat Release Notes\n\n"
             f"## {TAG}\n\n"
@@ -128,6 +132,15 @@ class DistributeTests(unittest.TestCase):
             #!/usr/bin/env bash
             set -Eeuo pipefail
             printf 'htree %s\n' "$*" >> "$FAKE_COMMAND_LOG"
+            if [[ "${HTREE_CONFIG_DIR:-}" != "$FAKE_EXPECTED_HTREE_CONFIG_DIR" ||
+                  "${HTREE_DATA_DIR:-}" != "$IRIS_HASHTREE_DATA_DIR" ]]; then
+              echo "htree did not receive the isolated release profile" >&2
+              exit 27
+            fi
+            if [[ "$1" == "user" && $# -ne 1 ]]; then
+              echo "publishing must not switch identities" >&2
+              exit 28
+            fi
             case "$1" in
               user) printf '%s\n' "$FAKE_ACTIVE_HTREE_NPUB" ;;
               add) printf '%s\n' 'cid: fake-cid' ;;
@@ -212,8 +225,12 @@ class DistributeTests(unittest.TestCase):
                 "FAKE_ZAPSTORE_NPUB": ZAPSTORE_NPUB,
                 "FAKE_ZAPSTORE_CONFIG": str(self.zapstore_config),
                 "FAKE_ACTIVE_HTREE_NPUB": HASHTREE_NPUB,
+                "FAKE_EXPECTED_HTREE_CONFIG_DIR": str(self.hashtree_config),
                 "FAKE_TAG": TAG,
+                "HTREE_CONFIG_DIR": str(self.global_config),
+                "HTREE_DATA_DIR": str(self.root / "unrelated data"),
                 "IRIS_HASHTREE_NSEC_PATH": str(self.hashtree_nsec),
+                "IRIS_HASHTREE_CONFIG_DIR": str(self.hashtree_config),
                 "IRIS_HASHTREE_DATA_DIR": str(self.root / "htree-data"),
                 "IRIS_ZAPSTORE_NSEC_PATH": str(self.zapstore_nsec),
             }
@@ -223,12 +240,23 @@ class DistributeTests(unittest.TestCase):
     def run_distribution(
         self, channel: str, *extra: str, env=None
     ) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
+        result = subprocess.run(
             [str(DISTRIBUTE), channel, "--tag", TAG, *extra],
             env=env or self.environment(),
             capture_output=True,
             text=True,
         )
+        self.assertEqual((self.global_config / "keys").read_text(), "unrelated identity\n")
+        return result
+
+    def test_default_hashtree_profile_ignores_inherited_global_config(self) -> None:
+        env = self.environment()
+        del env["IRIS_HASHTREE_CONFIG_DIR"]
+        env["FAKE_EXPECTED_HTREE_CONFIG_DIR"] = str(
+            Path.home() / ".config/iris-chat/htree-release-config"
+        )
+        result = self.run_distribution("hashtree", "--check", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_zapstore_check_downloads_only_manifest_and_apk(self) -> None:
         result = self.run_distribution("zapstore", "--check")

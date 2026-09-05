@@ -28,10 +28,11 @@ Options:
   --check      Validate the release, assets, and local signer without publishing.
   -h, --help   Show this help.
 
-Local signer paths:
-  IRIS_HASHTREE_NSEC_PATH  ~/.config/iris-chat/htree-nsec
-  IRIS_HASHTREE_DATA_DIR   ~/.config/iris-chat/htree-release-data
-  IRIS_ZAPSTORE_NSEC_PATH  ~/.config/iris-chat/zapstore-nsec
+Local publishing paths:
+  IRIS_HASHTREE_NSEC_PATH   ~/.config/iris-chat/htree-nsec
+  IRIS_HASHTREE_CONFIG_DIR  ~/.config/iris-chat/htree-release-config
+  IRIS_HASHTREE_DATA_DIR    ~/.config/iris-chat/htree-release-data
+  IRIS_ZAPSTORE_NSEC_PATH   ~/.config/iris-chat/zapstore-nsec
 EOF
 }
 
@@ -226,12 +227,16 @@ publish_hashtree() {
     --published-at "$PUBLISHED_AT"
   write_cli_installer "$stage_dir/install.sh" "$(hashtree_gateway_base_url "$TAG")" "$TAG"
 
-  add_output="$(HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" htree add "$stage_dir")"
+  add_output="$(
+    HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
+    HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" htree add "$stage_dir"
+  )"
   cid="$(awk '/^[[:space:]]*(url|cid):[[:space:]]/ { print $2; exit }' <<<"$add_output")"
   if [[ -z "$cid" ]]; then
     echo "Could not read the staged Hashtree CID." >&2
     exit 1
   fi
+  HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
   HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" \
     htree release publish "$IRIS_HASHTREE_RELEASE_TREE" "$TAG" "$cid"
   echo "Published $TAG to Hashtree: $(hashtree_gateway_base_url "$TAG")"
@@ -260,6 +265,7 @@ publish_homebrew() {
     echo "Homebrew preflight passed for $TAG ($IRIS_HASHTREE_PUBLISHER_NPUB)."
     return
   fi
+  HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
   HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" \
     "$ROOT/packaging/homebrew/publish_tap.sh" \
       --version "$TAG" \
