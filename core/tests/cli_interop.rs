@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::{io::BufRead, io::BufReader};
 
@@ -52,38 +52,8 @@ fn dispatch_and_wait_state(
     wait_for_app_state(app, label, timeout, predicate)
 }
 
-fn iris_binary() -> &'static PathBuf {
-    static BIN: OnceLock<PathBuf> = OnceLock::new();
-    BIN.get_or_init(|| {
-        if let Some(path) = option_env!("CARGO_BIN_EXE_iris") {
-            let path = PathBuf::from(path);
-            if path.exists() {
-                return path;
-            }
-        }
-
-        let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        fallback.push("target");
-        fallback.push("debug");
-        fallback.push("iris");
-        #[cfg(windows)]
-        fallback.set_extension("exe");
-        if fallback.exists() {
-            return fallback;
-        }
-
-        let status = Command::new("cargo")
-            .args(["build", "--bin", "iris"])
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .status()
-            .expect("build iris binary");
-        assert!(status.success(), "cargo build --bin iris failed");
-        fallback
-    })
-}
-
 fn run_iris(data_dir: &Path, args: &[&str]) -> Value {
-    let output = Command::new(iris_binary())
+    let output = Command::new(env!("CARGO_BIN_EXE_iris"))
         .arg("--json")
         .arg("--data-dir")
         .arg(data_dir)
@@ -106,7 +76,7 @@ fn run_iris(data_dir: &Path, args: &[&str]) -> Value {
 }
 
 fn run_iris_capture(data_dir: &Path, args: &[&str]) -> String {
-    let output = Command::new(iris_binary())
+    let output = Command::new(env!("CARGO_BIN_EXE_iris"))
         .arg("--json")
         .arg("--data-dir")
         .arg(data_dir)
@@ -181,7 +151,7 @@ fn state_contains_group(value: &Value, group_id: &str) -> bool {
 }
 
 fn start_iris(data_dir: &Path, args: &[&str]) -> std::process::Child {
-    Command::new(iris_binary())
+    Command::new(env!("CARGO_BIN_EXE_iris"))
         .arg("--json")
         .arg("--data-dir")
         .arg(data_dir)

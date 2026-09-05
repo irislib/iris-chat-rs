@@ -1,6 +1,5 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use std::{io::BufRead, io::BufReader, process::Stdio};
 
@@ -8,38 +7,8 @@ use iris_chat_core::FfiApp;
 use serde_json::Value;
 use tempfile::TempDir;
 
-fn iris_binary() -> &'static PathBuf {
-    static BIN: OnceLock<PathBuf> = OnceLock::new();
-    BIN.get_or_init(|| {
-        if let Some(path) = option_env!("CARGO_BIN_EXE_iris") {
-            let path = PathBuf::from(path);
-            if path.exists() {
-                return path;
-            }
-        }
-
-        let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        fallback.push("target");
-        fallback.push("debug");
-        fallback.push("iris");
-        #[cfg(windows)]
-        fallback.set_extension("exe");
-        if fallback.exists() {
-            return fallback;
-        }
-
-        let status = Command::new("cargo")
-            .args(["build", "--bin", "iris"])
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .status()
-            .expect("build iris binary");
-        assert!(status.success(), "cargo build --bin iris failed");
-        fallback
-    })
-}
-
 fn run_iris(data_dir: &Path, args: &[&str]) -> Value {
-    let output = Command::new(iris_binary())
+    let output = Command::new(env!("CARGO_BIN_EXE_iris"))
         .arg("--json")
         .arg("--data-dir")
         .arg(data_dir)
@@ -60,7 +29,7 @@ fn run_iris(data_dir: &Path, args: &[&str]) -> Value {
 }
 
 fn run_iris_error(data_dir: &Path, args: &[&str]) -> Value {
-    let output = Command::new(iris_binary())
+    let output = Command::new(env!("CARGO_BIN_EXE_iris"))
         .arg("--json")
         .arg("--data-dir")
         .arg(data_dir)
@@ -81,7 +50,7 @@ fn run_iris_error(data_dir: &Path, args: &[&str]) -> Value {
 }
 
 fn start_iris(data_dir: &Path, args: &[&str]) -> std::process::Child {
-    Command::new(iris_binary())
+    Command::new(env!("CARGO_BIN_EXE_iris"))
         .arg("--json")
         .arg("--data-dir")
         .arg(data_dir)
@@ -107,7 +76,7 @@ fn read_json_line(reader: &mut BufReader<std::process::ChildStdout>) -> Value {
 
 #[test]
 fn help_groups_top_level_commands() {
-    let output = Command::new(iris_binary())
+    let output = Command::new(env!("CARGO_BIN_EXE_iris"))
         .arg("--help")
         .output()
         .expect("run iris help");
@@ -145,7 +114,7 @@ fn whoami_does_not_emit_perf_logs_by_default() {
     let dir = TempDir::new().unwrap();
     run_iris(dir.path(), &["account", "create", "--name", "Alice"]);
 
-    let output = Command::new(iris_binary())
+    let output = Command::new(env!("CARGO_BIN_EXE_iris"))
         .env_remove("IRIS_PERF_LOG")
         .arg("--data-dir")
         .arg(dir.path())
