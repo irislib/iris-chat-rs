@@ -146,6 +146,7 @@ pub(super) struct ProfileSearchRuntime {
 #[derive(Debug)]
 pub(crate) struct ProfileSearchFetchResult {
     pub(super) candidates: Vec<ProfileSearchCandidate>,
+    pub(super) app_keys_events: Vec<Event>,
     pub(super) detail: String,
 }
 

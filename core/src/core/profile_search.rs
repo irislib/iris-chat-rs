@@ -1,4 +1,5 @@
 use super::profile::fallback_profile_name_for_identity;
+use super::profile_search_capability::{fetch_search_app_keys, MAX_SEARCH_CAPABILITY_CANDIDATES};
 use super::*;
 use crate::state::FollowedUserSearchResult;
 use nostr_social_graph::SocialGraph;
@@ -105,6 +106,34 @@ impl AppCore {
             })
             .unwrap_or_default();
 
+        let client = self.logged_in.as_ref().unwrap().client.clone();
+        let local_owner = self
+            .logged_in
+            .as_ref()
+            .map(|session| session.owner_pubkey.to_hex());
+        let mut excluded = self
+            .preferences
+            .blocked_owner_pubkeys
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>();
+        if let Some(owner) = &local_owner {
+            excluded.insert(owner.clone());
+        }
+        let local_candidates = self
+            .app_store
+            .shared()
+            .lock()
+            .ok()
+            .and_then(|conn| {
+                search_people_candidates(&conn, query, &excluded, local_owner.as_deref()).ok()
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .take(MAX_SEARCH_CAPABILITY_CANDIDATES)
+            .filter_map(|person| PublicKey::parse(&person.owner_pubkey_hex).ok())
+            .collect::<Vec<_>>();
+
         self.profile_search_runtime.debounce_pending = false;
         self.profile_search_runtime.in_flight = true;
         self.refresh_people_syncing();
@@ -112,8 +141,27 @@ impl AppCore {
         let query = query.to_string();
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
-            let result =
-                super::profile_search_remote::fetch_profile_candidates(&query, &relay_urls).await;
+            let (result, mut app_keys_events) = tokio::join!(
+                super::profile_search_remote::fetch_profile_candidates(&query, &relay_urls),
+                fetch_search_app_keys(&client, local_candidates.clone()),
+            );
+            // An unavailable index must not stop verification of locally known people.
+            let mut result = result.unwrap_or_else(|error| ProfileSearchFetchResult {
+                candidates: Vec::new(),
+                app_keys_events: Vec::new(),
+                detail: error,
+            });
+            let remote_owners = result
+                .candidates
+                .iter()
+                .filter(|person| !excluded.contains(&person.owner_pubkey_hex))
+                .filter_map(|person| PublicKey::parse(&person.owner_pubkey_hex).ok())
+                .filter(|owner| !local_candidates.contains(owner))
+                .take(MAX_SEARCH_CAPABILITY_CANDIDATES)
+                .collect();
+            app_keys_events.extend(fetch_search_app_keys(&client, remote_owners).await);
+            result.app_keys_events = app_keys_events;
+            let result = Ok(result);
             let _ = tx.send(CoreMsg::Internal(Box::new(
                 InternalEvent::ProfileSearchFetchFinished {
                     token,
@@ -152,6 +200,9 @@ impl AppCore {
 
         let detail = match result {
             Ok(result) => {
+                for event in result.app_keys_events {
+                    self.handle_relay_event(event);
+                }
                 match self
                     .app_store
                     .upsert_profile_search_candidates(&result.candidates)
@@ -229,7 +280,36 @@ fn remember_profile_search_attempt(runtime: &mut ProfileSearchRuntime, query: &s
     }
 }
 
+/// Public People results require a device list verified by the protocol layer.
+/// Reading the persisted cache keeps verified results available offline.
 pub(crate) fn search_people(
+    conn: &Connection,
+    query: &str,
+    excluded_owner_hexes: &HashSet<String>,
+    current_owner_hex: Option<&str>,
+) -> anyhow::Result<Vec<FollowedUserSearchResult>> {
+    let mut stmt = conn.prepare("SELECT owner_pubkey_hex, devices_json FROM app_keys")?;
+    let records = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut supported = HashSet::new();
+    for record in records {
+        let (owner, json) = record?;
+        if serde_json::from_str::<Vec<KnownAppKeyDevice>>(&json)
+            .is_ok_and(|devices| !devices.is_empty())
+        {
+            supported.insert(owner);
+        }
+    }
+    Ok(
+        search_people_candidates(conn, query, excluded_owner_hexes, current_owner_hex)?
+            .into_iter()
+            .filter(|person| supported.contains(&person.owner_pubkey_hex))
+            .collect(),
+    )
+}
+
+fn search_people_candidates(
     conn: &Connection,
     query: &str,
     excluded_owner_hexes: &HashSet<String>,
@@ -582,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn people_search_includes_global_profiles_without_app_keys() {
+    fn candidate_search_includes_profiles_pending_verification() {
         let conn = people_search_connection();
         let global = Keys::generate().public_key().to_hex();
         conn.execute(
@@ -595,7 +675,7 @@ mod tests {
         )
         .unwrap();
 
-        let rows = search_people(&conn, "sirius", &HashSet::new(), None).unwrap();
+        let rows = search_people_candidates(&conn, "sirius", &HashSet::new(), None).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].owner_pubkey_hex, global);
         assert_eq!(rows[0].display_label, "Sirius");
@@ -612,7 +692,7 @@ mod tests {
         )
         .unwrap();
 
-        let rows = search_people(&conn, "JohnDoe", &HashSet::new(), None).unwrap();
+        let rows = search_people_candidates(&conn, "JohnDoe", &HashSet::new(), None).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].owner_pubkey_hex, owner);
     }
@@ -646,7 +726,7 @@ mod tests {
         )
         .unwrap();
 
-        let owners = search_people(&conn, "alex", &HashSet::new(), Some(&root))
+        let owners = search_people_candidates(&conn, "alex", &HashSet::new(), Some(&root))
             .unwrap()
             .into_iter()
             .map(|row| row.owner_pubkey_hex)
@@ -674,7 +754,7 @@ mod tests {
             .unwrap();
         }
 
-        let owners = search_people(&conn, "alex", &HashSet::new(), Some(&root))
+        let owners = search_people_candidates(&conn, "alex", &HashSet::new(), Some(&root))
             .unwrap()
             .into_iter()
             .map(|row| row.owner_pubkey_hex)
@@ -741,7 +821,7 @@ mod tests {
             let owners_for = |owner: &str| {
                 let shared = store.shared();
                 let conn = shared.lock().unwrap();
-                search_people(&conn, "alex", &HashSet::new(), Some(owner))
+                search_people_candidates(&conn, "alex", &HashSet::new(), Some(owner))
                     .unwrap()
                     .into_iter()
                     .map(|row| row.owner_pubkey_hex)
@@ -758,7 +838,7 @@ mod tests {
             let shared = store.shared();
             let conn = shared.lock().unwrap();
             assert!(
-                search_people(&conn, &friend, &HashSet::new(), Some(&other_root))
+                search_people_candidates(&conn, &friend, &HashSet::new(), Some(&other_root))
                     .unwrap()
                     .is_empty()
             );
@@ -769,7 +849,7 @@ mod tests {
             .unwrap();
         let shared = store.shared();
         let conn = shared.lock().unwrap();
-        let owners = search_people(&conn, "alex", &HashSet::new(), Some(&root))
+        let owners = search_people_candidates(&conn, "alex", &HashSet::new(), Some(&root))
             .unwrap()
             .into_iter()
             .map(|row| row.owner_pubkey_hex)
@@ -794,13 +874,69 @@ mod tests {
         )
         .unwrap();
 
-        assert!(search_people(&conn, "old sirius", &HashSet::new(), None)
-            .unwrap()
-            .is_empty());
-        let rows = search_people(&conn, "current", &HashSet::new(), None).unwrap();
+        assert!(
+            search_people_candidates(&conn, "old sirius", &HashSet::new(), None)
+                .unwrap()
+                .is_empty()
+        );
+        let rows = search_people_candidates(&conn, "current", &HashSet::new(), None).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].profile_label.as_deref(), Some("Current"));
         assert!(rows[0].picture_url.is_none());
+    }
+
+    #[test]
+    fn verified_search_completion_shows_people_and_revocation_hides_them() {
+        let (_temp, mut core) = test_core();
+        log_in(&mut core);
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let now = unix_now().get();
+        let candidate = ProfileSearchCandidate {
+            owner_pubkey_hex: owner.public_key().to_hex(),
+            name: "Alice".to_string(),
+            aliases: Vec::new(),
+            nip05: None,
+            picture: None,
+            created_at_secs: now,
+        };
+        core.app_store
+            .upsert_profile_search_candidates(&[candidate.clone()])
+            .unwrap();
+        let search = |core: &AppCore| {
+            search_people(
+                &core.app_store.shared().lock().unwrap(),
+                "alice",
+                &HashSet::new(),
+                None,
+            )
+            .unwrap()
+        };
+        assert!(search(&core).is_empty());
+        for (token, devices, count) in [
+            (1, vec![DeviceEntry::new(device.public_key(), now)], 1),
+            (2, Vec::new(), 0),
+        ] {
+            let event = AppKeys::new(devices)
+                .get_event_at(owner.public_key(), now + token)
+                .sign_with_keys(&owner)
+                .unwrap();
+            core.profile_search_runtime.token = token;
+            core.profile_search_runtime.query = "alice".to_string();
+            core.profile_search_runtime.in_flight = true;
+            let previous_revision = core.user_discovery_revision;
+            core.handle_profile_search_fetch_finished(
+                token,
+                "alice",
+                Ok(ProfileSearchFetchResult {
+                    candidates: vec![candidate.clone()],
+                    app_keys_events: vec![event],
+                    detail: String::new(),
+                }),
+            );
+            assert_eq!(search(&core).len(), count);
+            assert!(core.user_discovery_revision > previous_revision);
+        }
     }
 
     #[test]
@@ -822,6 +958,7 @@ mod tests {
             6,
             "stale",
             Ok(ProfileSearchFetchResult {
+                app_keys_events: Vec::new(),
                 candidates: vec![candidate],
                 detail: "stale".to_string(),
             }),
@@ -863,6 +1000,7 @@ mod tests {
             9,
             "alice",
             Ok(ProfileSearchFetchResult {
+                app_keys_events: Vec::new(),
                 candidates: Vec::new(),
                 detail: "superseded".to_string(),
             }),
@@ -915,6 +1053,7 @@ mod tests {
             4,
             "sirius",
             Ok(ProfileSearchFetchResult {
+                app_keys_events: Vec::new(),
                 candidates: vec![ProfileSearchCandidate {
                     owner_pubkey_hex: Keys::generate().public_key().to_hex(),
                     name: "Discarded".to_string(),

@@ -64,8 +64,7 @@ struct CandidateBatch {
 }
 
 /// Fetch globally indexed Nostr profiles without making the index an authority
-/// for messaging eligibility. AppKeys/NDR resolution remains at the existing
-/// user-selection and chat boundary.
+/// for messaging eligibility. The caller verifies AppKeys before showing results.
 pub(super) async fn fetch_profile_candidates(
     query: &str,
     relay_urls: &[String],
@@ -86,6 +85,7 @@ async fn fetch_profile_candidates_within_deadline(
 ) -> Result<ProfileSearchFetchResult, String> {
     let Some(query) = normalize_profile_search_query(query)? else {
         return Ok(ProfileSearchFetchResult {
+            app_keys_events: Vec::new(),
             candidates: Vec::new(),
             detail: "source=none reason=query-too-short".to_string(),
         });
@@ -172,6 +172,7 @@ async fn fetch_profile_candidates_within_deadline(
     );
 
     Ok(ProfileSearchFetchResult {
+        app_keys_events: Vec::new(),
         candidates: batch.candidates,
         detail,
     })
