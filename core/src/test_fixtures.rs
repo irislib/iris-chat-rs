@@ -60,6 +60,10 @@ pub fn build_large_test_app_state(
         typing_indicators: Vec::new(),
         draft: current_thread.draft.clone(),
         is_request: current_thread.is_request,
+        direct_chat_capability: match current_thread.kind {
+            ChatKind::Direct => Some(crate::DirectChatCapabilityState::Available),
+            ChatKind::Group => None,
+        },
     };
 
     AppState {

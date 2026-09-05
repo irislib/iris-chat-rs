@@ -51,6 +51,9 @@ pub enum AppAction {
     OpenChat {
         chat_id: String,
     },
+    RetryDirectChatCapability {
+        chat_id: String,
+    },
     SendMessage {
         chat_id: String,
         text: String,

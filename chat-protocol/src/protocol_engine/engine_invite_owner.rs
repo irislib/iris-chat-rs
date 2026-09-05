@@ -9,7 +9,7 @@ impl ProtocolEngine {
         event: &Event,
         app_keys: &AppKeys,
     ) -> bool {
-        if !invite_owner_app_keys_event_is_valid(event.pubkey, event, unix_now().get()) {
+        if !app_keys_event_is_acceptable_for_owner(event.pubkey, event, unix_now().get()) {
             return false;
         }
         let previous = self.invite_owner_app_keys_evidence.get(&owner).cloned();
@@ -181,7 +181,7 @@ fn sanitize_invite_owner_persisted_state(state: &mut ProtocolEnginePersistedStat
         match evidence {
             ProtocolAppKeysEvidence::Verified(event) => {
                 public_owner(*owner).is_ok_and(|owner| {
-                    invite_owner_app_keys_event_is_valid(owner, event, unix_now().get())
+                    app_keys_event_is_acceptable_for_owner(owner, event, unix_now().get())
                 })
             }
             ProtocolAppKeysEvidence::Ambiguous { .. } => true,
@@ -210,7 +210,13 @@ fn sanitize_invite_owner_persisted_state(state: &mut ProtocolEnginePersistedStat
     }
 }
 
-fn invite_owner_app_keys_event_is_valid(owner: PublicKey, event: &Event, now_secs: u64) -> bool {
+/// Verifies the exact signed AppKeys evidence accepted for direct-chat setup.
+/// Profile indexes and reconstructed device lists must never substitute for it.
+pub fn app_keys_event_is_acceptable_for_owner(
+    owner: PublicKey,
+    event: &Event,
+    now_secs: u64,
+) -> bool {
     let device_tags = event
         .tags
         .iter()

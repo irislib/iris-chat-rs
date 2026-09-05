@@ -7,7 +7,7 @@ use gtk::glib;
 use iris_chat_core::{
     peer_input_to_npub, proxied_image_url, AppAction, AppState, ChatKind, ChatMessageKind,
     ChatMessageSnapshot, ChatThreadSnapshot, CurrentChatSnapshot, DeliveryState,
-    MessageAttachmentSnapshot, MessageReactionSnapshot, MessageReactor,
+    DirectChatCapabilityState, MessageAttachmentSnapshot, MessageReactionSnapshot, MessageReactor,
     MessageRecipientDeliverySnapshot, PreferencesSnapshot,
 };
 
@@ -21,7 +21,7 @@ mod safety;
 
 use chat_links::{install_link_actions, linkified_text};
 use safety::{
-    blocked_bar, is_user_blocked, message_request_bar, present_block_user_dialog,
+    blocked_bar, capability_bar, is_user_blocked, message_request_bar, present_block_user_dialog,
     present_report_user_dialog,
 };
 
@@ -68,6 +68,12 @@ pub fn render(chat_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk:
         container.append(&blocked_bar(chat, manager));
     } else if matches!(chat.kind, ChatKind::Direct) && chat.is_request {
         container.append(&message_request_bar(chat, manager));
+    } else if let Some(capability) = chat
+        .direct_chat_capability
+        .as_ref()
+        .filter(|capability| !matches!(capability, DirectChatCapabilityState::Available))
+    {
+        container.append(&capability_bar(chat, capability, manager));
     } else {
         container.append(&composer::composer(chat, state, manager));
     }

@@ -1563,6 +1563,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashtree-index"
+version = "0.2.82"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3c3a9fa768fe573e8d605e1a12ada8d98ea4418339e9aaa8db9829f8dc94bed"
+dependencies = [
+ "futures",
+ "hashtree-core",
+ "hex",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "hashtree-network"
 version = "0.2.87"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1978,6 +1990,7 @@ dependencies = [
  "hashtree-config",
  "hashtree-core",
  "hashtree-fips-transport",
+ "hashtree-index",
  "hashtree-network",
  "hashtree-resolver",
  "hashtree-updater",
@@ -1995,8 +2008,10 @@ dependencies = [
  "nvpn-fips-endpoint",
  "nvpn-fips-tcp",
  "nvpn-fips-tcp-endpoint",
+ "nostr-social-graph",
  "qrcode",
  "rand 0.8.6",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",

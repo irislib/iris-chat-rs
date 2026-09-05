@@ -19,23 +19,8 @@ struct ChatListScreen: View {
     let onOpenNearby: () -> Void
     let onOpenNearbyPeerProfile: (String) -> Void
     @State private var searchText: String = ""
-    // Cached search response so we only call into the Rust core when
-    // the query string itself changes. Previously the body grabbed a
-    // fresh `manager.search(...)` snapshot on every SwiftUI body
-    // re-eval, which fires on every state push (incoming relay
-    // event, typing indicator, message delivery flip, …). On a busy
-    // chat that turned into hundreds of FFI calls / SQLite-mutex
-    // acquires per second and was visible on iPhone as a warming
-    // device. The .task below now refreshes the cache once per
-    // searchText edit.
-    @State private var cachedSearchResults: SearchResultSnapshot?
-    @State private var expandedSearchSections: Set<ChatListSearchSection> = []
-    @State private var searchMessageLimit: UInt32 = 50
-    @State private var lastExpansionQuery: String = ""
+    @State private var search = GroupedSearchSession()
     @State private var relativeNow = Date()
-
-    private static let initialMessageSearchLimit: UInt32 = 50
-    private static let messageSearchLimitStep: UInt32 = 50
 
     init(
         manager: AppManager,
@@ -47,17 +32,29 @@ struct ChatListScreen: View {
         self.onOpenNearbyPeerProfile = onOpenNearbyPeerProfile
     }
 
-    private var trimmedQuery: String {
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    private var searchRequest: GroupedSearchSession.Request? {
+        search.request(
+            for: searchText,
+            discoveryRevision: manager.state.userDiscoveryRevision
+        )
     }
 
-    private var searchActive: Bool { !trimmedQuery.isEmpty }
-
-    private var searchRequestToken: String {
-        "\(trimmedQuery)|\(searchMessageLimit)|\(manager.state.userDiscoveryRevision)"
-    }
+    private var searchActive: Bool { searchRequest != nil }
 
     var body: some View {
+        content
+            .irisOnChange(of: searchText) { _ in
+                search.queryChanged(searchText)
+                autoProceedIfShortcut()
+            }
+            .onReceive(chatListRelativeTimeTicker) { relativeNow = $0 }
+            .task(id: searchRequest) {
+                search.refresh(searchRequest) { manager.search($0, limit: $1) }
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
 #if os(iOS)
         ChatListTableView(
             searchText: $searchText,
@@ -68,45 +65,30 @@ struct ChatListScreen: View {
             palette: palette,
             topContentInset: navigationHeaderTopInset,
             isSearchActive: searchActive,
-            cachedSearchResults: cachedSearchResults,
-            expandedSearchSections: expandedSearchSections,
-            messageLimit: searchMessageLimit,
+            cachedSearchResults: search.snapshot(for: searchRequest),
+            expandedSearchSections: search.expandedSections,
+            messageLimit: search.messageLimit,
             onOpenNearby: onOpenNearby,
             onOpenNearbyPeerProfile: onOpenNearbyPeerProfile,
             onShortcutNavigate: { searchText = "" },
-            onViewMoreSearchResults: viewMoreSearchResults
+            onViewMoreSearchResults: { search.viewMore($0) }
         )
         .background(palette.background)
-        .irisOnChange(of: searchText) { _ in
-            resetSearchExpansionIfNeeded()
-            autoProceedIfShortcut()
-        }
-        .onReceive(chatListRelativeTimeTicker) { date in
-            relativeNow = date
-        }
-        .task(id: searchRequestToken) {
-            // Refresh the search cache once per query change. Body
-            // re-runs on every state push otherwise — the cache turns
-            // an O(state-push) FTS5 query into an O(keystroke) one.
-            cachedSearchResults = trimmedQuery.isEmpty
-                ? nil
-                : manager.search(trimmedQuery, limit: searchMessageLimit)
-        }
 #else
         ScrollView {
             LazyVStack(spacing: 0) {
                 ChatListSearchField(text: $searchText)
 
                 if searchActive {
-                    if let results = cachedSearchResults {
+                    if let results = search.snapshot(for: searchRequest) {
                         SearchResultsList(
                             manager: manager,
                             results: results,
                             relativeNow: relativeNow,
-                            expandedSections: expandedSearchSections,
-                            messageLimit: searchMessageLimit,
+                            expandedSections: search.expandedSections,
+                            messageLimit: search.messageLimit,
                             onShortcutNavigate: { searchText = "" },
-                            onViewMore: viewMoreSearchResults
+                            onViewMore: { search.viewMore($0) }
                         )
                     }
                 } else {
@@ -144,41 +126,7 @@ struct ChatListScreen: View {
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .background(palette.background)
-        .irisOnChange(of: searchText) { _ in
-            resetSearchExpansionIfNeeded()
-            autoProceedIfShortcut()
-        }
-        .onReceive(chatListRelativeTimeTicker) { date in
-            relativeNow = date
-        }
-        .task(id: searchRequestToken) {
-            // Refresh the search cache once per query change. Body
-            // re-runs on every state push otherwise — the cache turns
-            // an O(state-push) FTS5 query into an O(keystroke) one.
-            cachedSearchResults = trimmedQuery.isEmpty
-                ? nil
-                : manager.search(trimmedQuery, limit: searchMessageLimit)
-        }
 #endif
-    }
-
-    private func resetSearchExpansionIfNeeded() {
-        let query = trimmedQuery
-        guard query != lastExpansionQuery else {
-            return
-        }
-        lastExpansionQuery = query
-        expandedSearchSections.removeAll()
-        searchMessageLimit = Self.initialMessageSearchLimit
-    }
-
-    private func viewMoreSearchResults(_ section: ChatListSearchSection) {
-        if section == .messages, expandedSearchSections.contains(section) {
-            let nextLimit = searchMessageLimit.addingReportingOverflow(Self.messageSearchLimitStep)
-            searchMessageLimit = nextLimit.overflow ? UInt32.max : nextLimit.partialValue
-        } else {
-            expandedSearchSections.insert(section)
-        }
     }
 
     /// Mirrors NewChatScreen's auto-proceed: when the user pastes a
@@ -187,17 +135,10 @@ struct ChatListScreen: View {
     /// Partial input never classifies, so this is safe to call on
     /// every keystroke.
     private func autoProceedIfShortcut() {
-        let trimmed = trimmedQuery
-        guard !trimmed.isEmpty,
-              let shortcut = classifyChatInput(input: trimmed) else { return }
-        switch shortcut {
-        case let .directPeer(peerInput, _, _, _):
-            searchText = ""
-            manager.dispatch(.createChat(peerInput: peerInput))
-        case let .invite(inviteInput, _):
-            searchText = ""
-            manager.dispatch(.acceptInvite(inviteInput: inviteInput))
-        }
+        guard let query = searchRequest?.query,
+              let shortcut = classifyChatInput(input: query) else { return }
+        searchText = ""
+        manager.dispatch(chatInputShortcutAction(shortcut))
     }
 }
 
@@ -206,6 +147,68 @@ enum ChatListSearchSection: String, Hashable {
     case contacts
     case groups
     case messages
+}
+
+/// Per-view, request-keyed cache for grouped Rust search.
+struct GroupedSearchSession {
+    struct Request: Hashable {
+        let query: String
+        let messageLimit: UInt32
+        let discoveryRevision: UInt64
+    }
+
+    private struct Entry {
+        let request: Request
+        let snapshot: SearchResultSnapshot
+    }
+
+    private var entry: Entry?
+    private(set) var expandedSections: Set<ChatListSearchSection> = []
+    private(set) var messageLimit: UInt32 = 50
+
+    init() {}
+
+    func request(for text: String, discoveryRevision: UInt64) -> Request? {
+        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return nil }
+        return Request(query: query, messageLimit: messageLimit, discoveryRevision: discoveryRevision)
+    }
+
+    func snapshot(for request: Request?) -> SearchResultSnapshot? {
+        guard let request, entry?.request == request else { return nil }
+        return entry?.snapshot
+    }
+
+    mutating func queryChanged(_ text: String) {
+        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query != entry?.request.query else { return }
+        expandedSections.removeAll()
+        messageLimit = 50
+    }
+
+    mutating func refresh(
+        _ request: Request?,
+        using search: (String, UInt32) -> SearchResultSnapshot
+    ) {
+        guard let request else {
+            if entry != nil {
+                _ = search("", 0)
+            }
+            entry = nil
+            return
+        }
+        guard entry?.request != request else { return }
+        entry = Entry(request: request, snapshot: search(request.query, request.messageLimit))
+    }
+
+    mutating func viewMore(_ section: ChatListSearchSection) {
+        if section == .messages, expandedSections.contains(section) {
+            let next = messageLimit.addingReportingOverflow(50)
+            messageLimit = next.overflow ? UInt32.max : next.partialValue
+        } else {
+            expandedSections.insert(section)
+        }
+    }
 }
 
 /// Always-visible search field at the top of the chat list. Drives the
@@ -606,24 +609,15 @@ struct ChatInputShortcutRow: View {
                 systemImage: "person.crop.circle.badge.plus",
                 title: "Start chat",
                 subtitle: display,
-                action: peerAction(shortcut)
+                action: chatInputShortcutAction(shortcut)
             )
         case let .invite(_, display):
             return Descriptor(
                 systemImage: "envelope.open",
                 title: "Accept invite",
                 subtitle: display,
-                action: peerAction(shortcut)
+                action: chatInputShortcutAction(shortcut)
             )
-        }
-    }
-
-    private func peerAction(_ shortcut: ChatInputShortcut) -> AppAction {
-        switch shortcut {
-        case let .directPeer(peerInput, _, _, _):
-            return .createChat(peerInput: peerInput)
-        case let .invite(inviteInput, _):
-            return .acceptInvite(inviteInput: inviteInput)
         }
     }
 
@@ -632,6 +626,15 @@ struct ChatInputShortcutRow: View {
         let title: String
         let subtitle: String
         let action: AppAction
+    }
+}
+
+func chatInputShortcutAction(_ shortcut: ChatInputShortcut) -> AppAction {
+    switch shortcut {
+    case let .directPeer(peerInput, _, _, _):
+        return .createChat(peerInput: peerInput)
+    case let .invite(inviteInput, _):
+        return .acceptInvite(inviteInput: inviteInput)
     }
 }
 

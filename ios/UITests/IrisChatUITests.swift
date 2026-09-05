@@ -717,6 +717,43 @@ final class IrisChatTimelineUITests: IrisChatUITestCase {
         )
     }
 
+    func testDesktopSidebarGroupedSearchOpensHistoricalMessage() throws {
+#if os(macOS)
+        let app = launchCleanApp(seedPeer: validPeerNpub, seedCount: 120)
+
+        submitWelcomeName(app)
+        XCTAssertTrue(waitForChatList(app, timeout: 60), "seed helper never returned to the chat list")
+
+        let searchField = editableElement(app, "chatListSearchField")
+        XCTAssertTrue(searchField.waitForExistence(timeout: 10))
+        typeText("FIRST_SCROLL_SENTINEL", into: searchField, app: app)
+
+        let searchHit = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'messageHit-'")
+        ).firstMatch
+        XCTAssertTrue(
+            searchHit.waitForExistence(timeout: 15),
+            "desktop sidebar did not render the Rust message-search result"
+        )
+        searchHit.tap()
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
+
+        let timeline = element(app, "chatTimeline")
+        XCTAssertTrue(timeline.waitForExistence(timeout: 10))
+        let historicalMessage = timeline.staticTexts.matching(
+            NSPredicate(
+                format: "label BEGINSWITH 'FIRST_SCROLL_SENTINEL' OR value BEGINSWITH 'FIRST_SCROLL_SENTINEL'"
+            )
+        ).firstMatch
+        XCTAssertTrue(
+            historicalMessage.waitForExistence(timeout: 15),
+            "desktop search hit did not open the historical message"
+        )
+#else
+        throw XCTSkip("Desktop sidebar is macOS-only")
+#endif
+    }
+
     func testReturnKeyKeepsMobileDraftUnsent() throws {
 #if os(macOS)
         throw XCTSkip("Return key sends on macOS; this checks the mobile keyboard behavior")

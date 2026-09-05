@@ -117,6 +117,7 @@ extension IrisChatUITestCase {
         app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = runId
         app.launchEnvironment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] = "1"
         app.launchEnvironment["IRIS_DISABLE_NOTIFICATIONS"] = "1"
+        app.launchEnvironment["IRIS_DEMO_RELAYS"] = "ws://127.0.0.1:9"
         if let qrValue {
             app.launchEnvironment["IRIS_QR_TEST_VALUE"] = qrValue
         }

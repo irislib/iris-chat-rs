@@ -123,9 +123,27 @@ pub(crate) enum InternalEvent {
         events: Vec<Event>,
         error: Option<String>,
     },
+    DirectChatCapabilityFetchFinished {
+        generation: u64,
+        token: u64,
+        owner_pubkey_hex: String,
+        result: Result<Vec<Event>, String>,
+    },
     UserDiscoveryFetchFinished {
         token: u64,
         result: crate::core::UserDiscoveryFetchResult,
+    },
+    ProfileSearchRequested {
+        query: String,
+    },
+    ProfileSearchDebounceElapsed {
+        token: u64,
+        query: String,
+    },
+    ProfileSearchFetchFinished {
+        token: u64,
+        query: String,
+        result: Result<crate::core::ProfileSearchFetchResult, String>,
     },
     RelayStatusChanged {
         relay_url: String,

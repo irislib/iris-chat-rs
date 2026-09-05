@@ -71,7 +71,7 @@ impl ProtocolEngine {
             )
         };
         let exact_source_is_valid = source_event.is_some_and(|event| {
-            invite_owner_app_keys_event_is_valid(owner_pubkey, event, now.get())
+            app_keys_event_is_acceptable_for_owner(owner_pubkey, event, now.get())
         });
         let exact_evidence_changed = if exact_source_is_valid {
             let event = source_event.expect("validated AppKeys source event");

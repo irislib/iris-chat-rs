@@ -324,7 +324,8 @@ extension ScreenshotFixture {
             messages: messages,
             typingIndicators: [],
             draft: "",
-            isRequest: false
+            isRequest: false,
+            directChatCapability: thread.kind == .direct ? .available : nil
         )
     }
 

@@ -300,6 +300,7 @@ impl AppCore {
                 .blocked_owner_pubkeys
                 .retain(|hex| hex != &normalized);
         }
+        self.bump_user_discovery_revision();
         self.request_protocol_subscription_refresh();
         self.mark_mobile_push_dirty();
         self.rebuild_persist_and_emit_state();

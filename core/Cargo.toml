@@ -49,6 +49,7 @@ hashtree-blossom = { version = "=0.2.82", default-features = false, features = [
 hashtree-config = "=0.2.83"
 hashtree-core = "=0.2.86"
 hashtree-fips-transport = "=0.4.12"
+hashtree-index = "=0.2.82"
 hashtree-network = "=0.2.87"
 hashtree-resolver = { version = "=0.2.82", features = ["nostr"] }
 hashtree-updater = { version = "=0.2.82", features = ["secure-nostr-blossom"] }
@@ -59,11 +60,13 @@ nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"]
 nostr-pubsub = "=0.1.13"
 nostr-pubsub-fips = "=0.4.8"
 nostr-pubsub-relay = "=0.1.11"
+nostr-social-graph = "=0.1.4"
 nostr-identity = "=0.4.0"
 nostr-double-ratchet = "0.0.166"
 nostr-double-ratchet-pairwise-codec = "0.0.166"
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

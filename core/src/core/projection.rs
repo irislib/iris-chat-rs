@@ -1,3 +1,4 @@
+use super::chat_typing::typing_indicator_is_active;
 use super::*;
 use crate::state::{ChatKind, ChatMessageKind, MutualGroupsSnapshot};
 
@@ -411,7 +412,7 @@ impl AppCore {
                 );
                 CurrentChatSnapshot {
                     chat_id: thread.chat_id.clone(),
-                    kind: current_chat_kind,
+                    kind: current_chat_kind.clone(),
                     display_name: group_snapshot
                         .as_ref()
                         .map(|group| group.name.clone())
@@ -459,6 +460,8 @@ impl AppCore {
                     typing_indicators: self.typing_indicator_snapshots(&thread.chat_id),
                     draft: thread.draft.clone(),
                     is_request,
+                    direct_chat_capability: self
+                        .chat_capability(&thread.chat_id, &current_chat_kind),
                 }
             });
 
@@ -1035,19 +1038,4 @@ pub(crate) fn relay_connection_status(status: RelayStatus) -> &'static str {
         RelayStatus::Disconnected | RelayStatus::Terminated => "offline",
         RelayStatus::Banned => "blocked",
     }
-}
-
-fn typing_indicator_is_active(
-    indicator: &TypingIndicatorRecord,
-    now: u64,
-    latest_message_secs_by_chat: &BTreeMap<String, u64>,
-) -> bool {
-    if indicator.expires_at_secs <= now {
-        return false;
-    }
-    let latest_message_secs = latest_message_secs_by_chat
-        .get(&indicator.chat_id)
-        .copied()
-        .unwrap_or(0);
-    indicator.last_event_secs > latest_message_secs
 }
