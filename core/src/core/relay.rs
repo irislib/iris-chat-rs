@@ -612,6 +612,7 @@ impl AppCore {
         let app_keys_changed = current.as_ref() != Some(&known);
         if app_keys_changed {
             self.app_keys.insert(owner_hex, known);
+            self.bump_user_discovery_revision();
         }
         self.reconcile_device_sync();
         if should_publish_backfilled_owner_app_keys {

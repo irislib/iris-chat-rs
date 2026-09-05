@@ -97,6 +97,7 @@ fn ffi_search_restores_followed_people_from_sqlite() {
         [&owner],
     )
     .unwrap();
+    seed_messaging_support(&conn, &owner);
     drop(conn);
 
     let app = FfiApp::new(
@@ -124,7 +125,7 @@ fn ffi_search_restores_followed_people_from_sqlite() {
 }
 
 #[test]
-fn ffi_search_restores_global_people_without_app_keys_or_follows() {
+fn ffi_search_hides_global_people_without_messaging_support() {
     let dir = TempDir::new().unwrap();
     FfiApp::new(
         dir.path().to_string_lossy().to_string(),
@@ -152,9 +153,10 @@ fn ffi_search_restores_global_people_without_app_keys_or_follows() {
         "test".to_string(),
     );
     let result = app.search("sirius business".to_string(), None, 20);
-    assert_eq!(result.people.len(), 1);
-    assert_eq!(result.people[0].owner_pubkey_hex, owner);
-    assert_eq!(result.people[0].display_label, "Sirius");
+    assert!(
+        result.people.is_empty(),
+        "unknown profiles must stay hidden"
+    );
     app.shutdown();
 }
 
@@ -182,6 +184,8 @@ fn blocked_direct_chat_does_not_reappear_in_people() {
         [&bob_owner],
     )
     .unwrap();
+    seed_messaging_support(&conn, &bob_owner);
+    conn.execute("INSERT INTO profile_search_candidates VALUES (?1, 'Blocked Regression', '[]', NULL, NULL, 1, 1)", [&bob_owner]).unwrap();
     drop(conn);
 
     assert!(app
@@ -518,5 +522,54 @@ fn ensure_account(temp: &TempDir, name: &str) -> String {
             return npub;
         }
         std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn seed_messaging_support(conn: &Connection, owner: &str) {
+    let devices = serde_json::json!([{
+        "identity_pubkey_hex": Keys::generate().public_key().to_hex(),
+        "created_at_secs": 1
+    }]);
+    conn.execute("INSERT OR REPLACE INTO app_keys(owner_pubkey_hex, created_at_secs, devices_json) VALUES (?1, 1, ?2)", rusqlite::params![owner, devices.to_string()]).unwrap();
+}
+
+#[test]
+fn ffi_people_search_filters_before_limit_and_restores_only_supported_people_offline() {
+    let dir = TempDir::new().unwrap();
+    FfiApp::new(
+        dir.path().to_string_lossy().to_string(),
+        String::new(),
+        "test".to_string(),
+    )
+    .shutdown();
+    let supported = Keys::generate().public_key().to_hex();
+    let unknown = Keys::generate().public_key().to_hex();
+    let revoked = Keys::generate().public_key().to_hex();
+    let conn = Connection::open(dir.path().join("core.sqlite3")).unwrap();
+    for (owner, name) in [
+        (&unknown, "Alice A"),
+        (&revoked, "Alice B"),
+        (&supported, "Alice Z"),
+    ] {
+        conn.execute(
+            "INSERT INTO profile_search_candidates VALUES (?1, ?2, '[]', NULL, NULL, 1, 1)",
+            [owner, &name.to_string()],
+        )
+        .unwrap();
+    }
+    seed_messaging_support(&conn, &supported);
+    conn.execute("INSERT INTO app_keys VALUES (?1, 2, '[]')", [&revoked])
+        .unwrap();
+    drop(conn);
+    for _ in 0..2 {
+        let app = FfiApp::new(
+            dir.path().to_string_lossy().to_string(),
+            String::new(),
+            "test".to_string(),
+        );
+        let results = app.search("alice".to_string(), None, 1);
+        assert_eq!(results.people.len(), 1);
+        assert_eq!(results.people[0].owner_pubkey_hex, supported);
+        app.shutdown();
     }
 }

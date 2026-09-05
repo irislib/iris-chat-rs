@@ -97,6 +97,7 @@ mod persistence;
 mod profile;
 mod profile_helpers;
 mod profile_search;
+mod profile_search_capability;
 mod profile_search_remote;
 mod projection;
 mod protocol;
