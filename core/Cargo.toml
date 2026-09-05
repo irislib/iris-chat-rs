@@ -47,11 +47,11 @@ fips-tcp = { package = "nvpn-fips-tcp", version = "=0.2.1" }
 fips-tcp-endpoint = { package = "nvpn-fips-tcp-endpoint", version = "=0.2.1" }
 hashtree-blossom = { version = "=0.2.82", default-features = false, features = ["store"] }
 hashtree-config = "=0.2.83"
-hashtree-core = "=0.2.86"
+hashtree-core = "=0.2.89"
 hashtree-fips-transport = "=0.4.12"
-hashtree-index = "=0.2.82"
+hashtree-index = "=0.2.84"
 hashtree-network = "=0.2.87"
-hashtree-resolver = { version = "=0.2.82", features = ["nostr"] }
+hashtree-resolver = { version = "=0.2.83", features = ["nostr"] }
 hashtree-updater = { version = "=0.2.82", features = ["secure-nostr-blossom"] }
 hmac = "0.12"
 iris-chat-protocol = { version = "=0.1.9", path = "../chat-protocol" }
