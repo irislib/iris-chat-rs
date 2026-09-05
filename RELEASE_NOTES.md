@@ -2,6 +2,24 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.5
+
+### GitHub
+
+- Fixed duplicate rows and unstable previews in the protocol library's
+  direct-message listing when messages share a timestamp.
+- Moved Start at login into General settings on macOS, Windows, and Linux.
+- Expanded the fast Rust gate to cover protocol and FFI tests, reused build
+  artifacts across crates, and removed redundant CLI test builds.
+
+### Apple
+
+- Start at login now appears under General settings on Mac.
+
+### Zapstore
+
+- This release has no Android-facing changes.
+
 ## v2026.8.28
 
 ### GitHub
