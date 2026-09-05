@@ -69,21 +69,44 @@ pub(super) struct KnownAppKeyDevice {
     pub(super) label_updated_at_secs: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DirectChatCapabilityCheckState {
+    Checking,
+    Unavailable,
+    CheckFailed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct DirectChatCapabilityCheck {
+    pub(super) token: u64,
+    pub(super) owner_pubkey_hex: String,
+    pub(super) state: DirectChatCapabilityCheckState,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct DirectChatCapabilityRuntime {
+    pub(super) generation: u64,
+    pub(super) next_token: u64,
+    pub(super) current: Option<DirectChatCapabilityCheck>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct UserDiscoveryCache {
+    pub(super) owner_pubkey_hex: Option<String>,
     pub(super) follow_event_id: Option<String>,
     pub(super) follow_created_at_secs: u64,
     pub(super) users: BTreeMap<String, DiscoveredUserRecord>,
+    pub(super) social_rank_ready: bool,
+    pub(super) social_friend_support: BTreeMap<String, u16>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct DiscoveredUserRecord {
     pub(super) owner_pubkey_hex: String,
+    /// Persisted People order: root follow position unless a complete social
+    /// opinion fetch ranks the same candidates by direct-friend support.
     pub(super) follow_position: u32,
     pub(super) petname: Option<String>,
-    pub(super) app_keys_created_at_secs: u64,
-    pub(super) app_keys_event_id: String,
-    pub(super) app_keys_event_json: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -92,6 +115,38 @@ pub(super) struct UserDiscoveryRuntime {
     pub(super) in_flight: bool,
     pub(super) refresh_pending: bool,
     pub(super) last_started_at: Option<Instant>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ProfileSearchCandidate {
+    pub(super) owner_pubkey_hex: String,
+    pub(super) name: String,
+    pub(super) aliases: Vec<String>,
+    pub(super) nip05: Option<String>,
+    pub(super) picture: Option<String>,
+    pub(super) created_at_secs: u64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum PendingProfileSearch {
+    Query(String),
+    Cancel,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct ProfileSearchRuntime {
+    pub(super) token: u64,
+    pub(super) query: String,
+    pub(super) debounce_pending: bool,
+    pub(super) in_flight: bool,
+    pub(super) pending: Option<PendingProfileSearch>,
+    pub(super) recent_attempts: VecDeque<(String, Instant)>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ProfileSearchFetchResult {
+    pub(super) candidates: Vec<ProfileSearchCandidate>,
+    pub(super) detail: String,
 }
 
 #[derive(Debug)]

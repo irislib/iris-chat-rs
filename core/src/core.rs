@@ -2,8 +2,8 @@ use crate::actions::AppAction;
 use crate::state::{
     AccountSnapshot, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot,
     ChatParticipantSnapshot, ChatThreadSnapshot, CurrentChatSnapshot, DeliveryState,
-    DeviceAuthorizationState, DeviceEntrySnapshot, DeviceRosterSnapshot, GroupDetailsSnapshot,
-    GroupMemberSnapshot, LinkDeviceSnapshot, MessageAttachmentSnapshot,
+    DeviceAuthorizationState, DeviceEntrySnapshot, DeviceRosterSnapshot, DirectChatCapabilityState,
+    GroupDetailsSnapshot, GroupMemberSnapshot, LinkDeviceSnapshot, MessageAttachmentSnapshot,
     MessageDeliveryTraceSnapshot, MessageReactionSnapshot, MessageReactor,
     MessageRecipientDeliverySnapshot, MobilePushNotificationResolution,
     MobilePushSubscriptionRequest, MobilePushSyncSnapshot, NetworkStatusSnapshot,
@@ -82,6 +82,7 @@ mod config;
 mod device_approval;
 mod device_sync;
 mod device_sync_tcp;
+mod direct_chat_capability;
 mod fips_nearby;
 mod groups;
 mod identity;
@@ -95,6 +96,8 @@ mod payloads;
 mod persistence;
 mod profile;
 mod profile_helpers;
+mod profile_search;
+mod profile_search_remote;
 mod projection;
 mod protocol;
 mod protocol_filters;
@@ -110,6 +113,7 @@ mod support;
 mod tests;
 mod update_pubsub;
 mod user_discovery;
+mod user_discovery_social;
 
 pub(super) const APPCORE_PROTOCOL_LABEL: &str = "appcore-protocol";
 pub(super) const LOCAL_INVITE_PUBLISH_LABEL: &str = "invite";
@@ -140,16 +144,18 @@ pub(crate) use mobile_push::{
     decrypt_mobile_push_notification, mobile_push_stored_subscription_id_key,
     resolve_mobile_push_notification, resolve_mobile_push_server_url,
 };
+pub(crate) use model::ProfileSearchFetchResult;
 pub(crate) use model::ProtocolSubscriptionPlan;
 pub(crate) use model::UserDiscoveryFetchResult;
 use model::*;
 use payloads::*;
 use profile_helpers::*;
+pub(crate) use profile_search::prewarm_default_social_graph;
+pub(crate) use profile_search::search_people;
 use protocol_filters::*;
 use publish_helpers::*;
 use storage::{open_database, AppStore, DataDirLock, SqliteStorageAdapter};
 pub(crate) use storage::{search_messages_fts, PersistedMessageSearchHit, SharedConnection};
-pub(crate) use user_discovery::search_followed_users;
 
 pub(crate) fn chat_snapshot_from_state_and_db(
     state: &AppState,
@@ -266,6 +272,14 @@ fn build_chat_snapshot_with_messages(
             )
         })
         .collect();
+    let direct_chat_capability = state
+        .current_chat
+        .as_ref()
+        .filter(|chat| chat.chat_id == chat_id)
+        .and_then(|chat| chat.direct_chat_capability.clone())
+        .or_else(|| {
+            matches!(kind, ChatKind::Direct).then_some(DirectChatCapabilityState::Checking)
+        });
     Some(CurrentChatSnapshot {
         chat_id: chat_id.to_string(),
         kind,
@@ -290,6 +304,7 @@ fn build_chat_snapshot_with_messages(
             .map(|thread| thread.draft.clone())
             .unwrap_or_default(),
         is_request: thread.map(|thread| thread.is_request).unwrap_or(false),
+        direct_chat_capability,
     })
 }
 
@@ -491,8 +506,10 @@ pub struct AppCore {
     owner_profiles: BTreeMap<String, OwnerProfileRecord>,
     profile_metadata_fetch_inflight: HashSet<String>,
     app_keys: BTreeMap<String, KnownAppKeys>,
+    direct_chat_capability_runtime: DirectChatCapabilityRuntime,
     user_discovery: UserDiscoveryCache,
     user_discovery_runtime: UserDiscoveryRuntime,
+    profile_search_runtime: ProfileSearchRuntime,
     user_discovery_revision: u64,
     user_discovery_syncing: bool,
     groups: BTreeMap<String, GroupSnapshot>,

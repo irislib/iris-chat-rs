@@ -2,6 +2,21 @@ use super::*;
 
 const TYPING_INDICATOR_TTL_SECS: u64 = 10;
 
+pub(super) fn typing_indicator_is_active(
+    indicator: &TypingIndicatorRecord,
+    now: u64,
+    latest_message_secs_by_chat: &BTreeMap<String, u64>,
+) -> bool {
+    if indicator.expires_at_secs <= now {
+        return false;
+    }
+    let latest_message_secs = latest_message_secs_by_chat
+        .get(&indicator.chat_id)
+        .copied()
+        .unwrap_or(0);
+    indicator.last_event_secs > latest_message_secs
+}
+
 impl AppCore {
     pub(super) fn send_typing(&mut self, chat_id: &str) {
         if !self.preferences.send_typing_indicators {

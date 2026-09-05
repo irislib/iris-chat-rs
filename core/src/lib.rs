@@ -389,9 +389,9 @@ impl FfiApp {
         )
     }
 
-    /// Grouped Signal-style search: matches followed people plus the
-    /// in-memory contact/group list, and runs the SQLite FTS5 index for
-    /// the messages section. Optional
+    /// Grouped Signal-style search: matches known and globally indexed people,
+    /// plus the in-memory contact/group list, and runs the SQLite FTS5 index
+    /// for the messages section. Optional
     /// `scope_chat_id` restricts message hits to a single thread (the
     /// "search in this chat" pill in the desktop sidebar). Returns an
     /// empty snapshot for empty / whitespace queries.
@@ -407,6 +407,13 @@ impl FfiApp {
             SearchResultSnapshot::empty(query.clone(), scope_chat_id.clone()),
             || {
                 let trimmed = query.trim();
+                if scope_chat_id.is_none() {
+                    let _ = self.background_tx.send(CoreMsg::Internal(Box::new(
+                        InternalEvent::ProfileSearchRequested {
+                            query: trimmed.to_string(),
+                        },
+                    )));
+                }
                 if trimmed.is_empty() {
                     return SearchResultSnapshot::empty(query.clone(), scope_chat_id.clone());
                 }
@@ -421,12 +428,26 @@ impl FfiApp {
                     filter_threads_for_search(&state_snapshot.chat_list, trimmed)
                 };
                 let shared_db = self.shared_db_snapshot();
-                let excluded_people = state_snapshot
+                let mut excluded_people = state_snapshot
                     .chat_list
                     .iter()
                     .filter(|chat| chat.kind == ChatKind::Direct)
                     .map(|chat| chat.chat_id.to_ascii_lowercase())
                     .collect::<std::collections::HashSet<_>>();
+                excluded_people.extend(
+                    state_snapshot
+                        .preferences
+                        .blocked_owner_pubkeys
+                        .iter()
+                        .map(|owner| owner.to_ascii_lowercase()),
+                );
+                let current_owner_hex = state_snapshot
+                    .account
+                    .as_ref()
+                    .map(|account| account.public_key_hex.to_ascii_lowercase());
+                if let Some(owner) = &current_owner_hex {
+                    excluded_people.insert(owner.clone());
+                }
                 let query_db = |conn: &rusqlite::Connection| {
                     let messages = crate::core::search_messages_fts(
                         conn,
@@ -436,8 +457,16 @@ impl FfiApp {
                     )
                     .unwrap_or_default();
                     let people = if scope_chat_id.is_none() {
-                        crate::core::search_followed_users(conn, trimmed, &excluded_people)
-                            .unwrap_or_default()
+                        crate::core::search_people(
+                            conn,
+                            trimmed,
+                            &excluded_people,
+                            current_owner_hex.as_deref(),
+                        )
+                        .unwrap_or_default()
+                        .into_iter()
+                        .take(limit)
+                        .collect()
                     } else {
                         Vec::new()
                     };
@@ -892,6 +921,7 @@ fn spawn_core_supervisor(
     thread::Builder::new()
         .name("iris-core".to_string())
         .spawn(move || {
+            crate::core::prewarm_default_social_graph();
             let mut core_slot = Some(core);
             // User actions and synchronous shell requests must not sit behind
             // relay/nearby backlog. The core keeps internal work on a

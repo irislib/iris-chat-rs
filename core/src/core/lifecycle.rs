@@ -87,8 +87,10 @@ impl AppCore {
             owner_profiles: BTreeMap::new(),
             profile_metadata_fetch_inflight: HashSet::new(),
             app_keys: BTreeMap::new(),
+            direct_chat_capability_runtime: DirectChatCapabilityRuntime::default(),
             user_discovery: UserDiscoveryCache::default(),
             user_discovery_runtime: UserDiscoveryRuntime::default(),
+            profile_search_runtime: ProfileSearchRuntime::default(),
             user_discovery_revision: 0,
             user_discovery_syncing: false,
             groups: BTreeMap::new(),
@@ -176,7 +178,15 @@ impl AppCore {
                 InternalEvent::ProfileMetadataFetchFinished { .. } => {
                     "ProfileMetadataFetchFinished"
                 }
+                InternalEvent::DirectChatCapabilityFetchFinished { .. } => {
+                    "DirectChatCapabilityFetchFinished"
+                }
                 InternalEvent::UserDiscoveryFetchFinished { .. } => "UserDiscoveryFetchFinished",
+                InternalEvent::ProfileSearchRequested { .. } => "ProfileSearchRequested",
+                InternalEvent::ProfileSearchDebounceElapsed { .. } => {
+                    "ProfileSearchDebounceElapsed"
+                }
+                InternalEvent::ProfileSearchFetchFinished { .. } => "ProfileSearchFetchFinished",
                 InternalEvent::FetchTrackedPeerCatchUp { .. } => "FetchTrackedPeerCatchUp",
                 InternalEvent::ProtocolSubscriptionLivenessCheck { .. } => {
                     "ProtocolSubscriptionLivenessCheck"
@@ -358,6 +368,7 @@ impl AppCore {
         self.relay_status_by_url.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.relay_transport_runtime = RelayTransportRuntime::default();
+        self.cancel_people_fetches_for_suspend();
         self.profile_metadata_fetch_inflight.clear();
         self.pending_relay_publish_inflight.clear();
         self.relay_connected_count = 0;
@@ -436,6 +447,9 @@ impl AppCore {
             AppAction::CreatePublicInvite => self.create_public_invite(),
             AppAction::AcceptInvite { invite_input } => self.accept_invite(&invite_input),
             AppAction::OpenChat { chat_id } => self.open_chat(&chat_id),
+            AppAction::RetryDirectChatCapability { chat_id } => {
+                self.retry_direct_chat_capability(&chat_id)
+            }
             AppAction::SendMessage { chat_id, text } => self.send_message(&chat_id, &text, None),
             AppAction::SendDisappearingMessage {
                 chat_id,
@@ -722,8 +736,32 @@ impl AppCore {
                 }
                 self.exit_batch();
             }
+            InternalEvent::DirectChatCapabilityFetchFinished {
+                generation,
+                token,
+                owner_pubkey_hex,
+                result,
+            } => self.handle_direct_chat_capability_fetch_finished(
+                generation,
+                token,
+                &owner_pubkey_hex,
+                result,
+            ),
             InternalEvent::UserDiscoveryFetchFinished { token, result } => {
                 self.handle_user_discovery_fetch_finished(token, result);
+            }
+            InternalEvent::ProfileSearchRequested { query } => {
+                self.request_profile_search(&query);
+            }
+            InternalEvent::ProfileSearchDebounceElapsed { token, query } => {
+                self.handle_profile_search_debounce_elapsed(token, &query);
+            }
+            InternalEvent::ProfileSearchFetchFinished {
+                token,
+                query,
+                result,
+            } => {
+                self.handle_profile_search_fetch_finished(token, &query, result);
             }
             InternalEvent::RelayStatusChanged {
                 relay_url,

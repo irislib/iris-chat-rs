@@ -883,7 +883,7 @@ class AppManagerContractTest {
             messages = messages,
             typingIndicators = emptyList(),
             draft = "",
-            isRequest = false,
+            isRequest = false, directChatCapability = if (kind == ChatKind.DIRECT) to.iris.chat.rust.DirectChatCapabilityState.AVAILABLE else null,
         )
 
     private fun makeMessage(
@@ -1052,7 +1052,7 @@ private class MockRustAppClient(
             messages = emptyList(),
             typingIndicators = emptyList(),
             draft = thread?.draft.orEmpty(),
-            isRequest = thread?.isRequest ?: false,
+            isRequest = thread?.isRequest ?: false, directChatCapability = if (groupId == null) to.iris.chat.rust.DirectChatCapabilityState.AVAILABLE else null,
         )
     }
 
