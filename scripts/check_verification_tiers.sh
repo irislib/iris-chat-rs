@@ -26,7 +26,8 @@ require_executable scripts/mobile_push_server_e2e.sh
 require_contains justfile "verify-fast:"
 require_contains justfile "verify-full:"
 require_contains justfile "verify-health:"
-require_contains scripts/verify.sh 'cargo clippy --manifest-path core/Cargo.toml --all-targets -- -D warnings'
+require_contains scripts/verify.sh 'for crate in core chat-protocol protocol-ffi; do'
+require_contains scripts/verify.sh 'cargo clippy --manifest-path "$crate/Cargo.toml" --locked --all-targets -- -D warnings'
 require_contains scripts/verify_full_native.sh "--on-device"
 require_contains scripts/verify_full_native.sh "--no-native-contract"
 require_contains scripts/test-all-platforms "--skip-rust"

@@ -7,8 +7,11 @@ physical-device confidence.
 
 Run `just verify-fast` for each coherent change. It runs the native-lab unit
 tests, Rust formatting, strict all-target Clippy, static contracts, and Rust
-tests. Android compilation, iOS tests, simulators, phones, VMs, and GUI sessions
-are intentionally deferred.
+tests for `core`, `chat-protocol`, and `protocol-ffi`. The Rust runner uses
+nextest when installed and also runs documentation tests; otherwise it uses
+`cargo test`. The crates share `core/target` to reuse builds, unless
+`CARGO_TARGET_DIR` is set. Android compilation, iOS tests, simulators, phones,
+VMs, and GUI sessions are intentionally deferred.
 
 ## Full tier
 

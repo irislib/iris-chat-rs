@@ -11,6 +11,7 @@ cd "$ROOT"
 if [[ "${CARGO_TARGET_DIR:-}" == "$HOME/.cache/cargo-target" ]]; then
   unset CARGO_TARGET_DIR
 fi
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/core/target}"
 if command -v sccache >/dev/null 2>&1; then
   export SCCACHE_BASEDIRS="${SCCACHE_BASEDIRS:-$ROOT}"
 fi
@@ -32,8 +33,10 @@ EOF
 
 run_fast() {
   python3 scripts/test_native_lab.py
-  cargo fmt --manifest-path core/Cargo.toml --check
-  cargo clippy --manifest-path core/Cargo.toml --all-targets -- -D warnings
+  for crate in core chat-protocol protocol-ffi; do
+    cargo fmt --manifest-path "$crate/Cargo.toml" --check
+    cargo clippy --manifest-path "$crate/Cargo.toml" --locked --all-targets -- -D warnings
+  done
   scripts/test_fast.sh --core-only
 }
 
