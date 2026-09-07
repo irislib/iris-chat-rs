@@ -71,17 +71,21 @@ final class MobilePushTokenCenter {
     static let shared = MobilePushTokenCenter()
 
     private var apnsToken: String?
-    private var waiters: [CheckedContinuation<String?, Never>] = []
+    private struct Waiter {
+        let continuation: CheckedContinuation<String?, Never>
+        let timeout: Task<Void, Never>
+    }
+    private var waiters: [UUID: Waiter] = [:]
 
     func setApnsToken(_ token: String?) {
         let normalized = token?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         apnsToken = normalized
-        guard let normalized else {
-            return
-        }
         let pending = waiters
         waiters.removeAll()
-        pending.forEach { $0.resume(returning: normalized) }
+        for waiter in pending.values {
+            waiter.timeout.cancel()
+            waiter.continuation.resume(returning: normalized)
+        }
     }
 
     func currentApnsToken() -> String? {
@@ -89,23 +93,38 @@ final class MobilePushTokenCenter {
     }
 
     func waitForApnsToken(timeoutNanoseconds: UInt64) async -> String? {
+        guard !Task.isCancelled else { return nil }
         if let apnsToken {
             return apnsToken
         }
-        return await withTaskGroup(of: String?.self) { group in
-            group.addTask { @MainActor in
-                await withCheckedContinuation { continuation in
-                    self.waiters.append(continuation)
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: nil)
+                    return
                 }
+                let timeout = Task { [weak self] in
+                    do {
+                        try await Task.sleep(nanoseconds: timeoutNanoseconds)
+                    } catch {
+                        return
+                    }
+                    self?.finishWaiting(id: id, token: nil)
+                }
+                waiters[id] = Waiter(continuation: continuation, timeout: timeout)
             }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
-                return nil
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.finishWaiting(id: id, token: nil)
             }
-            let result = await group.next() ?? nil
-            group.cancelAll()
-            return result
         }
+    }
+
+    private func finishWaiting(id: UUID, token: String?) {
+        guard let waiter = waiters.removeValue(forKey: id) else { return }
+        waiter.timeout.cancel()
+        waiter.continuation.resume(returning: token)
     }
 }
 
