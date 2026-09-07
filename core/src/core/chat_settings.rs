@@ -449,6 +449,14 @@ impl AppCore {
         self.rebuild_persist_and_emit_state();
     }
 
+    pub(super) fn set_image_proxy_fallback_enabled(&mut self, enabled: bool) {
+        if self.preferences.image_proxy_fallback_enabled == enabled {
+            return;
+        }
+        self.preferences.image_proxy_fallback_enabled = enabled;
+        self.rebuild_persist_and_emit_state();
+    }
+
     pub(super) fn set_image_proxy_url(&mut self, url: &str) {
         let normalized = normalized_setting(url, crate::image_proxy::DEFAULT_IMAGE_PROXY_URL);
         if self.preferences.image_proxy_url == normalized {
@@ -501,6 +509,7 @@ impl AppCore {
 
     pub(super) fn reset_image_proxy_settings(&mut self) {
         self.preferences.image_proxy_enabled = true;
+        self.preferences.image_proxy_fallback_enabled = false;
         self.preferences.image_proxy_url = crate::image_proxy::DEFAULT_IMAGE_PROXY_URL.to_string();
         self.preferences.image_proxy_key_hex =
             crate::image_proxy::DEFAULT_IMAGE_PROXY_KEY_HEX.to_string();

@@ -1429,8 +1429,21 @@ pub fn proxied_image_url(
     height: Option<u32>,
     square: bool,
 ) -> String {
-    ffi_or("proxied_image_url", original_src.clone(), || {
+    ffi_or("proxied_image_url", String::new(), || {
         image_proxy::proxied_image_url(&original_src, &preferences, width, height, square)
+    })
+}
+
+#[uniffi::export]
+pub fn image_load_urls(
+    original_src: String,
+    preferences: PreferencesSnapshot,
+    width: Option<u32>,
+    height: Option<u32>,
+    square: bool,
+) -> Vec<String> {
+    ffi_or("image_load_urls", Vec::new(), || {
+        image_proxy::image_load_urls(&original_src, &preferences, width, height, square)
     })
 }
 

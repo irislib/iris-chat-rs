@@ -12,6 +12,31 @@ pub const DEFAULT_IMAGE_PROXY_SALT_HEX: &str =
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Ordered image sources. Loaders may try the next source only after the
+/// previous request or image decoding fails. An empty list means do not load.
+pub fn image_load_urls(
+    original_src: &str,
+    preferences: &PreferencesSnapshot,
+    width: Option<u32>,
+    height: Option<u32>,
+    square: bool,
+) -> Vec<String> {
+    let original = original_src.trim();
+    let primary = proxied_image_url(original, preferences, width, height, square);
+    if primary.is_empty() {
+        return Vec::new();
+    }
+    let allow_fallback = preferences.image_proxy_enabled
+        && preferences.image_proxy_fallback_enabled
+        && primary != original
+        && Url::parse(original).is_ok_and(|url| is_http_url(&url));
+    let mut urls = vec![primary];
+    if allow_fallback {
+        urls.push(original.to_string());
+    }
+    urls
+}
+
 pub fn proxied_image_url(
     original_src: &str,
     preferences: &PreferencesSnapshot,
@@ -28,7 +53,7 @@ pub fn proxied_image_url(
     }
 
     let Ok(source_url) = Url::parse(input) else {
-        return original_src.to_string();
+        return String::new();
     };
     if !is_http_url(&source_url) {
         return original_src.to_string();
@@ -36,10 +61,10 @@ pub fn proxied_image_url(
 
     let proxy_base = resolved_proxy_url(preferences);
     let Ok(proxy_url) = Url::parse(&proxy_base) else {
-        return original_src.to_string();
+        return proxy_failure_fallback(original_src, preferences);
     };
     if !is_http_url(&proxy_url) {
-        return original_src.to_string();
+        return proxy_failure_fallback(original_src, preferences);
     }
     // A string prefix also matches attacker-controlled hosts and userinfo.
     // Only URLs within the configured proxy's origin and path are already proxied.
@@ -67,10 +92,18 @@ pub fn proxied_image_url(
     let encoded_source = URL_SAFE_NO_PAD.encode(input.as_bytes());
     let path = format!("/{}/{}", options.join("/"), encoded_source);
     let Some(signature) = sign_path(&path, preferences) else {
-        return original_src.to_string();
+        return proxy_failure_fallback(original_src, preferences);
     };
 
     format!("{}/{}{}", proxy_base.trim_end_matches('/'), signature, path)
+}
+
+fn proxy_failure_fallback(original_src: &str, preferences: &PreferencesSnapshot) -> String {
+    if preferences.image_proxy_fallback_enabled {
+        original_src.to_string()
+    } else {
+        String::new()
+    }
 }
 
 fn resolved_proxy_url(preferences: &PreferencesSnapshot) -> String {
@@ -244,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_key_or_salt_returns_original_url() {
+    fn invalid_key_or_salt_requires_opt_in_to_load_original_url() {
         let mut preferences = preferences();
         preferences.image_proxy_key_hex = "not-hex".to_string();
         preferences.image_proxy_salt_hex = "also-not-hex".to_string();
@@ -252,7 +285,69 @@ mod tests {
 
         assert_eq!(
             proxied_image_url(input, &preferences, None, None, false),
-            input
+            ""
         );
+        assert!(image_load_urls(input, &preferences, None, None, false).is_empty());
+        preferences.image_proxy_fallback_enabled = true;
+        assert_eq!(
+            image_load_urls(input, &preferences, None, None, false),
+            vec![input]
+        );
+    }
+
+    #[test]
+    fn image_load_candidates_require_explicit_fallback_opt_in() {
+        let mut preferences = preferences();
+        let input = "https://example.com/avatar.jpg";
+        let proxy = proxied_image_url(input, &preferences, Some(64), Some(64), true);
+        assert!(!preferences.image_proxy_fallback_enabled);
+        assert_ne!(proxy, input);
+        assert_eq!(
+            image_load_urls(input, &preferences, Some(64), Some(64), true),
+            vec![proxy.clone()]
+        );
+        preferences.image_proxy_fallback_enabled = true;
+        assert_eq!(
+            image_load_urls(input, &preferences, Some(64), Some(64), true),
+            vec![proxy, input.to_string()]
+        );
+        preferences.image_proxy_enabled = false;
+        assert_eq!(
+            image_load_urls(input, &preferences, None, None, false),
+            vec![input]
+        );
+    }
+
+    #[test]
+    fn invalid_proxy_configuration_fails_closed_unless_fallback_is_enabled() {
+        for proxy in ["not a URL", "file:///private/proxy", "https://"] {
+            let mut preferences = preferences();
+            preferences.image_proxy_url = proxy.to_string();
+            let input = "https://example.com/avatar.jpg";
+            assert!(image_load_urls(input, &preferences, None, None, false).is_empty());
+            preferences.image_proxy_fallback_enabled = true;
+            assert_eq!(
+                image_load_urls(input, &preferences, None, None, false),
+                vec![input]
+            );
+        }
+    }
+
+    #[test]
+    fn image_load_candidates_do_not_duplicate_sources_or_proxy_local_images() {
+        let mut preferences = preferences();
+        preferences.image_proxy_fallback_enabled = true;
+        for input in [
+            "https://imgproxy.iris.to/signature/dpr:2/source",
+            "data:image/png;base64,abc",
+            "file:///tmp/avatar.jpg",
+            "htree://nhash1abc123/photo.png",
+        ] {
+            assert_eq!(
+                image_load_urls(input, &preferences, None, None, false),
+                vec![input]
+            );
+        }
+        assert!(image_load_urls("  ", &preferences, None, None, false).is_empty());
     }
 }

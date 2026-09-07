@@ -79,7 +79,8 @@ import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.Screen
-import to.iris.chat.rust.proxiedImageUrl
+import to.iris.chat.ui.components.imageLoadRequest
+import to.iris.chat.ui.components.LocalImagePreferences
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.IrisOfflineBannerState
@@ -219,7 +220,10 @@ fun NdrApp(
         appManager.navigateBack()
     }
 
-    CompositionLocalProvider(LocalIrisOfflineBannerState provides offlineBannerState) {
+    CompositionLocalProvider(
+        LocalIrisOfflineBannerState provides offlineBannerState,
+        LocalImagePreferences provides preferences,
+    ) {
         Box(
             modifier =
                 Modifier
@@ -916,7 +920,7 @@ private fun ShareTargetRow(
         chat.pictureUrl
             ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
             ?.let { url ->
-                proxiedImageUrl(
+                imageLoadRequest(
                     originalSrc = url,
                     preferences = preferences,
                     width = 80u,
@@ -941,7 +945,7 @@ private fun ShareTargetRow(
         IrisAvatar(
             label = chat.displayName,
             size = 40.dp,
-            imageUrl = avatarUrl,
+            imageRequest = avatarUrl,
             imageData = avatarData,
         )
         Text(

@@ -137,3 +137,4 @@ include!("tests/groups_sender_key_retry.rs");
 include!("tests/groups_persistence_helpers.rs");
 include!("tests/groups_persistence_more.rs");
 include!("tests/device_sync.rs");
+include!("tests/image_proxy_preferences.rs");

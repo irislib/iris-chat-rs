@@ -37,8 +37,8 @@ func irisCanOpenProfilePicture(_ rawURL: String?) -> Bool {
 }
 
 private enum IrisAvatarProxyURLCache {
-    private static let cache: NSCache<NSString, NSString> = {
-        let cache = NSCache<NSString, NSString>()
+    private static let cache: NSCache<NSString, NSArray> = {
+        let cache = NSCache<NSString, NSArray>()
         cache.countLimit = 1_000
         return cache
     }()
@@ -49,20 +49,20 @@ private enum IrisAvatarProxyURLCache {
         return "\(pixelSize)|\(hasher.finalize())|\(originalSrc)" as NSString
     }
 
-    static func value(for key: NSString) -> String? {
-        cache.object(forKey: key).map(String.init)
+    static func value(for key: NSString) -> [String]? {
+        cache.object(forKey: key) as? [String]
     }
 
-    static func store(_ value: String, for key: NSString) {
-        cache.setObject(value as NSString, forKey: key)
+    static func store(_ value: [String], for key: NSString) {
+        cache.setObject(value as NSArray, forKey: key)
     }
 }
 
-func irisHttpAvatarURL(
+func irisHttpAvatarURLs(
     _ rawURL: String?,
     preferences: PreferencesSnapshot,
     pixelSize: CGFloat
-) -> String? {
+) -> [String]? {
     guard let rawURL else { return nil }
     let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
     guard trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") else {
@@ -77,25 +77,25 @@ func irisHttpAvatarURL(
     if let cached = IrisAvatarProxyURLCache.value(for: cacheKey) {
         return cached
     }
-    let proxied = proxiedImageUrl(
+    let urls = imageLoadUrls(
         originalSrc: trimmed,
         preferences: preferences,
         width: dim,
         height: dim,
         square: true
     )
-    IrisAvatarProxyURLCache.store(proxied, for: cacheKey)
-    return proxied
+    IrisAvatarProxyURLCache.store(urls, for: cacheKey)
+    return urls
 }
 
 enum IrisAvatarImageSource: Equatable {
     case hashtree(String)
-    case http(String)
+    case http([String], originalURL: String, allowOriginalRedirects: Bool)
 
     var cacheKey: String {
         switch self {
         case .hashtree(let nhash): return "htree:\(nhash)"
-        case .http(let url): return "http:\(url)"
+        case .http(let urls, _, let redirects): return "http:\(redirects)|\(urls.joined(separator: "\u{1F}"))"
         }
     }
 }
@@ -147,6 +147,65 @@ func makeIrisAvatarImage(data: Data, maxPixelSize: Int) -> PlatformImage? {
     #endif
 }
 
+func loadIrisHttpAvatarImage(
+    urls: [String],
+    originalURL: String,
+    allowOriginalRedirects: Bool = false,
+    maxPixelSize: Int,
+    session: URLSession = .shared
+) async -> PlatformImage? {
+    for urlString in urls {
+        guard !Task.isCancelled else { return nil }
+        guard let url = URL(string: urlString) else { continue }
+        do {
+            let redirectDelegate = allowOriginalRedirects && urlString == originalURL
+                ? nil : IrisImageProxyRedirectDelegate(origin: url)
+            let (data, response) = try await session.data(for: URLRequest(url: url), delegate: redirectDelegate)
+            guard !Task.isCancelled else { return nil }
+            guard let response = response as? HTTPURLResponse,
+                  (200..<300).contains(response.statusCode),
+                  let image = makeIrisAvatarImage(data: data, maxPixelSize: maxPixelSize) else {
+                continue
+            }
+            return image
+        } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                return nil
+            }
+        }
+    }
+    return nil
+}
+
+private final class IrisImageProxyRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let origin: URL
+    private var redirectCount = 0
+
+    init(origin: URL) { self.origin = origin }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard redirectCount < 5, let target = request.url,
+              target.scheme?.lowercased() == origin.scheme?.lowercased(),
+              target.host?.lowercased() == origin.host?.lowercased(),
+              effectivePort(target) == effectivePort(origin) else {
+            completionHandler(nil)
+            return
+        }
+        redirectCount += 1
+        completionHandler(request)
+    }
+
+    private func effectivePort(_ url: URL) -> Int? {
+        url.port ?? (url.scheme?.lowercased() == "https" ? 443 : 80)
+    }
+}
+
 func irisAvatarImageCost(_ image: PlatformImage) -> Int {
     #if os(iOS)
     let width = max(1, Int(image.size.width * image.scale))
@@ -166,14 +225,20 @@ func irisAvatarImageSource(
     preferences: PreferencesSnapshot?,
     pixelSize: CGFloat
 ) -> IrisAvatarImageSource? {
+    guard let pictureUrl else { return nil }
     if let nhash = irisHtreeNhash(from: pictureUrl) {
         return .hashtree(nhash)
     }
     guard let preferences,
-          let httpURL = irisHttpAvatarURL(pictureUrl, preferences: preferences, pixelSize: pixelSize) else {
+          let httpURLs = irisHttpAvatarURLs(pictureUrl, preferences: preferences, pixelSize: pixelSize),
+          !httpURLs.isEmpty else {
         return nil
     }
-    return .http(httpURL)
+    return .http(
+        httpURLs,
+        originalURL: pictureUrl.trimmingCharacters(in: .whitespacesAndNewlines),
+        allowOriginalRedirects: !preferences.imageProxyEnabled || preferences.imageProxyFallbackEnabled
+    )
 }
 
 struct IrisAvatar: View {
@@ -263,32 +328,24 @@ struct IrisAvatar: View {
             return
         }
 
-        let loaded: Data?
+        let image: PlatformImage?
+        let maxPixelSize = Int(ceil(size * 3))
         switch source {
         case .hashtree(let nhash):
-            guard let manager else {
-                avatarImage = nil
-                return
-            }
-            loaded = await manager.resolveHashtreePictureBytes(nhash: nhash)
-        case .http(let urlString):
-            guard let url = URL(string: urlString) else {
-                avatarImage = nil
-                return
-            }
-            if let response = try? await URLSession.shared.data(from: url) {
-                loaded = response.0
+            if let manager, let data = await manager.resolveHashtreePictureBytes(nhash: nhash) {
+                image = makeIrisAvatarImage(data: data, maxPixelSize: maxPixelSize)
             } else {
-                loaded = nil
+                image = nil
             }
+        case .http(let urls, let originalURL, let allowOriginalRedirects):
+            image = await loadIrisHttpAvatarImage(
+                urls: urls, originalURL: originalURL,
+                allowOriginalRedirects: allowOriginalRedirects, maxPixelSize: maxPixelSize
+            )
         }
 
-        guard imageSourceKey == key else { return }
-        guard let loaded, !loaded.isEmpty else {
-            avatarImage = nil
-            return
-        }
-        guard let image = makeIrisAvatarImage(data: loaded, maxPixelSize: Int(ceil(size * 3))) else {
+        guard !Task.isCancelled, imageSourceKey == key else { return }
+        guard let image else {
             avatarImage = nil
             return
         }

@@ -72,6 +72,8 @@ public partial class SettingsView : UserControl
         NearbyLanToggle.Visibility = Visibility.Visible;
         NearbyLanToggle.IsEnabled = prefs.nearbyEnabled;
         ImageProxyToggle.IsChecked = prefs.imageProxyEnabled;
+        ImageProxyFallbackToggle.IsChecked = prefs.imageProxyFallbackEnabled;
+        ImageProxyFallbackToggle.IsEnabled = prefs.imageProxyEnabled;
         AutoCheckUpdatesToggle.IsChecked = App.CurrentManager.AutoCheckUpdates;
         AutoInstallUpdatesToggle.IsChecked = App.CurrentManager.AutoInstallUpdates;
         StartupToggle.Visibility = PlatformStartupAtLogin.IsSupported ? Visibility.Visible : Visibility.Collapsed;
@@ -256,6 +258,12 @@ public partial class SettingsView : UserControl
     {
         if (_suppressToggleDispatch) return;
         App.CurrentManager.SetImageProxyEnabled(ImageProxyToggle.IsChecked == true);
+    }
+
+    private void OnImageProxyFallbackChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggleDispatch) return;
+        App.CurrentManager.SetImageProxyFallbackEnabled(ImageProxyFallbackToggle.IsChecked == true);
     }
 
     private void OnImageProxyUrlCommitted(object sender, RoutedEventArgs e) =>

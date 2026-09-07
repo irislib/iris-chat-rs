@@ -334,6 +334,14 @@
                                    Margin="0,0,0,12" />
                         <CheckBox x:Name="ImageProxyToggle" Content="Image proxy" Margin="0,0,0,12"
                                   Checked="OnImageProxyChanged" Unchecked="OnImageProxyChanged" />
+                        <CheckBox x:Name="ImageProxyFallbackToggle" Margin="0,0,0,12"
+                                  Checked="OnImageProxyFallbackChanged" Unchecked="OnImageProxyFallbackChanged">
+                            <StackPanel>
+                                <TextBlock Text="Load original images if the proxy fails" TextWrapping="Wrap" />
+                                <TextBlock Text="Image hosts may see your IP address."
+                                           Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                            </StackPanel>
+                        </CheckBox>
                         <TextBlock Text="Proxy URL" Style="{StaticResource MutedText}" Margin="0,0,0,4" />
                         <TextBox x:Name="ImageProxyUrlInput" LostFocus="OnImageProxyUrlCommitted" Margin="0,0,0,10" />
                         <TextBlock Text="Proxy key" Style="{StaticResource MutedText}" Margin="0,0,0,4" />

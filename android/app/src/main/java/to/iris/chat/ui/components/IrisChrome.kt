@@ -110,7 +110,6 @@ import kotlinx.coroutines.withContext
 import to.iris.chat.rust.DeliveryState
 import to.iris.chat.ui.theme.IrisTheme
 import to.iris.chat.ui.theme.Sky500
-import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.concurrent.ConcurrentHashMap
 import java.util.Date
@@ -333,6 +332,7 @@ fun IrisAvatar(
     size: Dp = 40.dp,
     emphasize: Boolean = false,
     imageUrl: String? = null,
+    imageRequest: ImageLoadRequest? = null,
     imageData: ByteArray? = null,
 ) {
     val palette = IrisTheme.palette
@@ -362,35 +362,23 @@ fun IrisAvatar(
             }
             value = bitmap
         }
+    val preferences = LocalImagePreferences.current
+    val request = imageRequest ?: imageUrl?.let { url ->
+        preferences?.let { imageLoadRequest(url, it, (targetPx / 2).toUInt(), (targetPx / 2).toUInt(), true) }
+    }
     val avatarBitmap =
-        produceState(
-            initialValue =
-                imageUrl
-                    ?.trim()
-                    ?.let { IrisAvatarBitmapCache.get(IrisAvatarBitmapCache.urlKey(it, targetPx)) },
-            imageUrl,
-            targetPx,
-        ) {
-            val url = imageUrl?.trim().orEmpty()
-            if (!url.startsWith("https://") && !url.startsWith("http://")) {
-                value = null
-                return@produceState
+        produceState<Bitmap?>(initialValue = null, request, targetPx) {
+            value = null
+            if (request == null) return@produceState
+            value = withContext(Dispatchers.IO) {
+                loadHttpImage(
+                    request,
+                    cached = { url -> IrisAvatarBitmapCache.get(IrisAvatarBitmapCache.urlKey(url, targetPx)) },
+                    store = { url, bitmap ->
+                        IrisAvatarBitmapCache.put(IrisAvatarBitmapCache.urlKey(url, targetPx), bitmap)
+                    },
+                ) { data -> decodeAvatarBitmap(data, targetPx) }
             }
-            val key = IrisAvatarBitmapCache.urlKey(url, targetPx)
-            IrisAvatarBitmapCache.get(key)?.let { cached ->
-                value = cached
-                return@produceState
-            }
-            val bitmap =
-                withContext(Dispatchers.IO) {
-                    runCatching {
-                        URL(url).openStream().use { decodeAvatarBitmap(it.readBytes(), targetPx) }
-                    }.getOrNull()
-                }
-            if (bitmap != null) {
-                IrisAvatarBitmapCache.put(key, bitmap)
-            }
-            value = bitmap
         }
     Box(
         modifier =
@@ -537,6 +525,9 @@ fun IrisMenuRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    enabled: Boolean = true,
+    titleMaxLines: Int = 1,
+    subtitleMaxLines: Int = 1,
     icon: ImageVector? = null,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null,
@@ -548,6 +539,7 @@ fun IrisMenuRow(
             modifier
                 .fillMaxWidth()
                 .clickable(
+                    enabled = enabled,
                     interactionSource = interactionSource,
                     indication = null,
                     onClick = {
@@ -579,7 +571,7 @@ fun IrisMenuRow(
                 text = title,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
+                maxLines = titleMaxLines,
                 overflow = TextOverflow.Ellipsis,
             )
             if (!subtitle.isNullOrBlank()) {
@@ -587,7 +579,7 @@ fun IrisMenuRow(
                     text = subtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = IrisTheme.palette.muted,
-                    maxLines = 1,
+                    maxLines = subtitleMaxLines,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -616,11 +608,17 @@ fun IrisToggleRow(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    enabled: Boolean = true,
+    titleMaxLines: Int = 1,
+    subtitleMaxLines: Int = 1,
 ) {
     val haptics = rememberIrisHapticFeedback()
     IrisMenuRow(
         title = title,
         subtitle = subtitle,
+        enabled = enabled,
+        titleMaxLines = titleMaxLines,
+        subtitleMaxLines = subtitleMaxLines,
         onClick = { onCheckedChange(!checked) },
         modifier =
             modifier.semantics {
@@ -629,6 +627,7 @@ fun IrisToggleRow(
         trailing = {
             Switch(
                 checked = checked,
+                enabled = enabled,
                 onCheckedChange = { value ->
                     haptics.press()
                     onCheckedChange(value)
@@ -771,6 +770,7 @@ fun IrisChatListRow(
     preview: String?,
     timeLabel: String?,
     imageUrl: String? = null,
+    imageRequest: ImageLoadRequest? = null,
     imageData: ByteArray? = null,
     leadingContent: (@Composable () -> Unit)? = null,
     previewLeading: (@Composable () -> Unit)? = null,
@@ -817,7 +817,7 @@ fun IrisChatListRow(
         if (leadingContent != null) {
             leadingContent()
         } else {
-            IrisAvatar(label = title, size = 48.dp, imageUrl = imageUrl, imageData = imageData)
+            IrisAvatar(label = title, size = 48.dp, imageUrl = imageUrl, imageRequest = imageRequest, imageData = imageData)
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(

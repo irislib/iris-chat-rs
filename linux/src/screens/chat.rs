@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 use adw::prelude::*;
 use gtk::glib;
 use iris_chat_core::{
-    peer_input_to_npub, proxied_image_url, AppAction, AppState, ChatKind, ChatMessageKind,
+    image_load_urls, peer_input_to_npub, AppAction, AppState, ChatKind, ChatMessageKind,
     ChatMessageSnapshot, ChatThreadSnapshot, CurrentChatSnapshot, DeliveryState,
     DirectChatCapabilityState, MessageAttachmentSnapshot, MessageReactionSnapshot, MessageReactor,
     MessageRecipientDeliverySnapshot, PreferencesSnapshot,
@@ -2423,14 +2423,14 @@ fn image_bubble_sized(
     picture.add_css_class("card");
     picture.set_cursor_from_name(Some("pointer"));
 
-    let url = proxied_image_url(
+    let urls = image_load_urls(
         attachment.htree_url.clone(),
         prefs.clone(),
         Some(((width * 2).max(220)) as u32),
         Some(((height * 2).max(220)) as u32),
         false,
     );
-    image_cache::fetch_into_picture(&picture, &url);
+    image_cache::fetch_into_picture(&picture, &attachment.htree_url, &urls, prefs);
 
     let popover = build_attachment_popover(attachment, manager);
     popover.set_parent(&picture);
@@ -2530,36 +2530,41 @@ fn present_image_viewer(
 
     let load_current = Rc::new(move |idx: usize| {
         if let Some(attachment) = album_for_state.get(idx) {
-            let url = proxied_image_url(
+            let urls = image_load_urls(
                 attachment.htree_url.clone(),
                 prefs_for_state.clone(),
                 None,
                 None,
                 false,
             );
-            image_cache::fetch_into_picture(&picture_for_state, &url);
+            image_cache::fetch_into_picture(
+                &picture_for_state,
+                &attachment.htree_url,
+                &urls,
+                &prefs_for_state,
+            );
         }
         if idx > 0 {
             if let Some(neighbor) = album_for_state.get(idx - 1) {
-                let url = proxied_image_url(
+                let urls = image_load_urls(
                     neighbor.htree_url.clone(),
                     prefs_for_state.clone(),
                     None,
                     None,
                     false,
                 );
-                image_cache::prefetch(&url);
+                image_cache::prefetch(&neighbor.htree_url, &urls, &prefs_for_state);
             }
         }
         if let Some(neighbor) = album_for_state.get(idx + 1) {
-            let url = proxied_image_url(
+            let urls = image_load_urls(
                 neighbor.htree_url.clone(),
                 prefs_for_state.clone(),
                 None,
                 None,
                 false,
             );
-            image_cache::prefetch(&url);
+            image_cache::prefetch(&neighbor.htree_url, &urls, &prefs_for_state);
         }
     });
 

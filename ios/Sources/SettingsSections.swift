@@ -251,6 +251,18 @@ struct ImageProxySettingsSection: View {
             .irisControlTint()
             .accessibilityIdentifier("myProfileImageProxyToggle")
 
+        Toggle(isOn: imageProxyFallbackEnabled) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Load original images if the proxy fails")
+                Text("Image hosts may see your IP address.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .irisControlTint()
+        .disabled(!manager.state.preferences.imageProxyEnabled)
+        .accessibilityIdentifier("myProfileImageProxyFallbackToggle")
+
         imageProxyTextField(
             title: "Proxy URL",
             text: imageProxyUrl,
@@ -282,6 +294,13 @@ struct ImageProxySettingsSection: View {
         Binding(
             get: { manager.state.preferences.imageProxyEnabled },
             set: { enabled in manager.dispatch(.setImageProxyEnabled(enabled: enabled)) }
+        )
+    }
+
+    private var imageProxyFallbackEnabled: Binding<Bool> {
+        Binding(
+            get: { manager.state.preferences.imageProxyFallbackEnabled },
+            set: { enabled in manager.dispatch(.setImageProxyFallbackEnabled(enabled: enabled)) }
         )
     }
 

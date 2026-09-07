@@ -175,6 +175,7 @@ pub(super) fn apply_persisted_preferences(
     preferences.nearby_mailbag_enabled = persisted.nearby_mailbag_enabled;
     preferences.nostr_relay_urls = normalize_nostr_relay_urls(&persisted.nostr_relay_urls);
     preferences.image_proxy_enabled = persisted.image_proxy_enabled;
+    preferences.image_proxy_fallback_enabled = persisted.image_proxy_fallback_enabled;
     preferences.image_proxy_url = persisted.image_proxy_url.clone();
     preferences.image_proxy_key_hex = persisted.image_proxy_key_hex.clone();
     preferences.image_proxy_salt_hex = persisted.image_proxy_salt_hex.clone();

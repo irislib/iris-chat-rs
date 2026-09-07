@@ -82,7 +82,7 @@ import to.iris.chat.rust.MessageSearchHit
 import to.iris.chat.rust.Screen
 import to.iris.chat.rust.SearchResultSnapshot
 import to.iris.chat.rust.classifyChatInput
-import to.iris.chat.rust.proxiedImageUrl
+import to.iris.chat.ui.components.imageLoadRequest
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisChatListRow
 import to.iris.chat.ui.components.IrisIcons
@@ -176,11 +176,11 @@ fun ChatListScreen(
                                 label = account.displayName,
                                 emphasize = true,
                                 size = 32.dp,
-                                imageUrl =
+                                imageRequest =
                                     account.pictureUrl
                                         ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
                                         ?.let { url ->
-                                            proxiedImageUrl(
+                                            imageLoadRequest(
                                                 originalSrc = url,
                                                 preferences = appState.preferences,
                                                 width = 88u,
@@ -805,7 +805,7 @@ private fun ChatListConversationRow(
         chat.pictureUrl
             ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
             ?.let { url ->
-                proxiedImageUrl(
+                imageLoadRequest(
                     originalSrc = url,
                     preferences = appState.preferences,
                     width = 84u,
@@ -839,7 +839,7 @@ private fun ChatListConversationRow(
                 isPinned = chat.isPinned,
                 preview = chat.chatListPreview(),
                 timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), System.currentTimeMillis()),
-                imageUrl = avatarUrl,
+                imageRequest = avatarUrl,
                 imageData = avatarData,
                 unreadCount = chat.unreadCount.toLong(),
                 lastMessageMine = chat.lastMessageIsOutgoing == true,
@@ -1139,7 +1139,7 @@ private fun MessageSearchHitRow(
         hit.chatPictureUrl
             ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
             ?.let { url ->
-                proxiedImageUrl(
+                imageLoadRequest(
                     originalSrc = url,
                     preferences = appState.preferences,
                     width = 84u,
@@ -1153,7 +1153,7 @@ private fun MessageSearchHitRow(
         isPinned = false,
         preview = hit.body,
         timeLabel = formatRelativeTime(hit.createdAtSecs.toLong(), System.currentTimeMillis()),
-        imageUrl = avatarUrl,
+        imageRequest = avatarUrl,
         imageData = avatarData,
         unreadCount = 0L,
         lastMessageMine = false,

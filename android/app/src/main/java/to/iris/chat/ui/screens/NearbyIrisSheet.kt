@@ -32,7 +32,7 @@ import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.ChatKind
-import to.iris.chat.rust.proxiedImageUrl
+import to.iris.chat.ui.components.imageLoadRequest
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisChatListRow
 import to.iris.chat.ui.components.IrisDivider
@@ -438,7 +438,7 @@ private fun NearbyPeerRow(
         peer.pictureUrl
             ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
             ?.let { url ->
-                proxiedImageUrl(
+                imageLoadRequest(
                     originalSrc = url,
                     preferences = appState.preferences,
                     width = 84u,
@@ -459,7 +459,7 @@ private fun NearbyPeerRow(
             IrisAvatar(
                 label = displayName,
                 size = 42.dp,
-                imageUrl = avatarUrl,
+                imageRequest = avatarUrl,
                 imageData = avatarData,
             )
         },

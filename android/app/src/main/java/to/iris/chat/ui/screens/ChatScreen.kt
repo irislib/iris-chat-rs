@@ -99,7 +99,7 @@ import to.iris.chat.rust.DeliveryState
 import to.iris.chat.rust.OutgoingAttachment
 import to.iris.chat.rust.Screen
 import to.iris.chat.rust.SearchResultSnapshot
-import to.iris.chat.rust.proxiedImageUrl
+import to.iris.chat.ui.components.imageLoadRequest
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.IrisSearchViewMoreRow
@@ -431,13 +431,13 @@ fun ChatScreen(
                                 label = chat.displayName,
                                 size = 36.dp,
                                 emphasize = false,
-                                imageUrl =
+                                imageRequest =
                                     chat.pictureUrl
                                         ?.takeIf {
                                             it.startsWith("http://") || it.startsWith("https://")
                                         }
                                         ?.let { url ->
-                                            proxiedImageUrl(
+                                            imageLoadRequest(
                                                 originalSrc = url,
                                                 preferences = preferences,
                                                 width = 72u,

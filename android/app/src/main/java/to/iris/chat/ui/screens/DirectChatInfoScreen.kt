@@ -53,7 +53,7 @@ import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.PeerProfileDebugSnapshot
 import to.iris.chat.rust.Screen
 import to.iris.chat.rust.peerInputToNpub
-import to.iris.chat.rust.proxiedImageUrl
+import to.iris.chat.ui.components.imageLoadRequest
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisDivider
 import to.iris.chat.ui.components.IrisIcons
@@ -91,7 +91,7 @@ fun DirectChatInfoScreen(
         chat.pictureUrl
             ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
             ?.let { url ->
-                proxiedImageUrl(
+                imageLoadRequest(
                     originalSrc = url,
                     preferences = preferences,
                     width = 192u,
@@ -160,7 +160,7 @@ fun DirectChatInfoScreen(
                             label = chat.displayName,
                             size = 72.dp,
                             emphasize = true,
-                            imageUrl = proxiedAvatarUrl,
+                            imageRequest = proxiedAvatarUrl,
                             imageData = avatarBytes,
                         )
                         Column(

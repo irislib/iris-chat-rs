@@ -174,6 +174,9 @@ pub enum AppAction {
     SetImageProxyEnabled {
         enabled: bool,
     },
+    SetImageProxyFallbackEnabled {
+        enabled: bool,
+    },
     SetImageProxyUrl {
         url: String,
     },

@@ -346,6 +346,25 @@ fn media_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::Pr
     }
     group.add(&enabled);
 
+    let fallback = adw::SwitchRow::builder()
+        .title("Load original images if the proxy fails")
+        .subtitle("Image hosts may see your IP address.")
+        .build();
+    fallback.set_active(prefs.image_proxy_fallback_enabled);
+    enabled
+        .bind_property("active", &fallback, "sensitive")
+        .sync_create()
+        .build();
+    {
+        let manager = manager.clone();
+        fallback.connect_active_notify(move |row| {
+            manager.dispatch(AppAction::SetImageProxyFallbackEnabled {
+                enabled: row.is_active(),
+            });
+        });
+    }
+    group.add(&fallback);
+
     let url = adw::EntryRow::builder().title("Proxy URL").build();
     url.set_text(&prefs.image_proxy_url);
     let manager_for_apply = manager.clone();

@@ -498,6 +498,8 @@ pub(super) struct PersistedPreferences {
     pub(super) nostr_relay_urls: Vec<String>,
     #[serde(default = "default_true")]
     pub(super) image_proxy_enabled: bool,
+    #[serde(default)]
+    pub(super) image_proxy_fallback_enabled: bool,
     #[serde(default = "default_image_proxy_url")]
     pub(super) image_proxy_url: String,
     #[serde(default = "default_image_proxy_key_hex")]
@@ -537,6 +539,7 @@ impl Default for PersistedPreferences {
             nearby_mailbag_enabled: defaults.nearby_mailbag_enabled,
             nostr_relay_urls: defaults.nostr_relay_urls,
             image_proxy_enabled: defaults.image_proxy_enabled,
+            image_proxy_fallback_enabled: defaults.image_proxy_fallback_enabled,
             image_proxy_url: defaults.image_proxy_url,
             image_proxy_key_hex: defaults.image_proxy_key_hex,
             image_proxy_salt_hex: defaults.image_proxy_salt_hex,

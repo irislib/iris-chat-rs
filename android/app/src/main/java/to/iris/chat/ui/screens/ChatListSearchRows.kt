@@ -15,7 +15,8 @@ import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.FollowedUserSearchResult
-import to.iris.chat.rust.proxiedImageUrl
+import to.iris.chat.ui.components.ImageLoadRequest
+import to.iris.chat.ui.components.imageLoadRequest
 import to.iris.chat.ui.components.IrisChatListRow
 import to.iris.chat.ui.components.formatRelativeTime
 import to.iris.chat.ui.theme.IrisTheme
@@ -46,7 +47,7 @@ internal fun SearchChatRow(
         isPinned = chat.isPinned,
         preview = chat.chatListPreview(),
         timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), System.currentTimeMillis()),
-        imageUrl = proxiedAvatarUrl(chat.pictureUrl, appState),
+        imageRequest = proxiedAvatarUrl(chat.pictureUrl, appState),
         imageData = avatarData,
         unreadCount = chat.unreadCount.toLong(),
         lastMessageMine = chat.lastMessageIsOutgoing == true,
@@ -70,7 +71,7 @@ internal fun FollowedPersonSearchRow(
         title = person.displayLabel,
         preview = preview,
         timeLabel = null,
-        imageUrl = proxiedAvatarUrl(person.pictureUrl, appState),
+        imageRequest = proxiedAvatarUrl(person.pictureUrl, appState),
         imageData = avatarData,
         unreadCount = 0,
         lastMessageMine = false,
@@ -80,11 +81,11 @@ internal fun FollowedPersonSearchRow(
     )
 }
 
-private fun proxiedAvatarUrl(pictureUrl: String?, appState: AppState): String? =
+private fun proxiedAvatarUrl(pictureUrl: String?, appState: AppState): ImageLoadRequest? =
     pictureUrl
         ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
         ?.let { url ->
-            proxiedImageUrl(
+            imageLoadRequest(
                 originalSrc = url,
                 preferences = appState.preferences,
                 width = 84u,

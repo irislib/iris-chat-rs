@@ -2,7 +2,6 @@ package to.iris.chat.ui.screens
 
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -44,7 +43,6 @@ import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -52,18 +50,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -75,7 +69,8 @@ import to.iris.chat.rust.NetworkStatusSnapshot
 import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.isValidPeerInput
 import to.iris.chat.rust.normalizePeerInput
-import to.iris.chat.rust.proxiedImageUrl
+import to.iris.chat.ui.components.ImageLoadRequest
+import to.iris.chat.ui.components.imageLoadRequest
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.IrisInlineAction
@@ -213,7 +208,7 @@ fun MyProfileSheet(
     val avatarBytes by rememberNhashImageData(appManager, pictureUrl)
     val proxiedAvatarUrl =
         trimmedPictureUrl.takeIf { isHttpPictureUrl }?.let { url ->
-            proxiedImageUrl(
+            imageLoadRequest(
                 originalSrc = url,
                 preferences = preferences,
                 width = 108u,
@@ -223,7 +218,7 @@ fun MyProfileSheet(
         }
     val proxiedProfilePictureUrl =
         trimmedPictureUrl.takeIf { isHttpPictureUrl }?.let { url ->
-            proxiedImageUrl(
+            imageLoadRequest(
                 originalSrc = url,
                 preferences = preferences,
                 width = 1024u,
@@ -291,7 +286,7 @@ fun MyProfileSheet(
                 if (selectedPage == null) {
                     SettingsProfileMenuRow(
                         displayName = displayName,
-                        imageUrl = proxiedAvatarUrl,
+                        imageRequest = proxiedAvatarUrl,
                         imageData = avatarBytes,
                         onClick = { selectedPage = SettingsPage.Profile },
                         onQrClick = { showProfileQr = true },
@@ -322,7 +317,7 @@ fun MyProfileSheet(
                                 onProfileAboutChange = { profileAbout = it },
                                 savedAbout = about.orEmpty(),
                                 canManageDevices = canManageDevices,
-                                imageUrl = proxiedAvatarUrl,
+                                imageRequest = proxiedAvatarUrl,
                                 imageData = avatarBytes,
                                 canOpenPicture = isHttpPictureUrl || (isHashtreePictureUrl && avatarBytes != null),
                                 profilePictureInteractionSource = profilePictureInteractionSource,
@@ -435,6 +430,18 @@ fun MyProfileSheet(
                                         appManager.dispatch(AppAction.SetImageProxyEnabled(enabled))
                                     },
                                     tag = "myProfileImageProxySwitch",
+                                )
+                                IrisToggleRow(
+                                    title = "Load original images if the proxy fails",
+                                    subtitle = "Image hosts may see your IP address.",
+                                    checked = preferences.imageProxyFallbackEnabled,
+                                    enabled = imageProxyEnabled,
+                                    titleMaxLines = 3,
+                                    subtitleMaxLines = 2,
+                                    onCheckedChange = { enabled ->
+                                        appManager.dispatch(AppAction.SetImageProxyFallbackEnabled(enabled))
+                                    },
+                                    modifier = Modifier.testTag("myProfileImageProxyFallbackSwitch"),
                                 )
                                 TextField(
                                     value = imageProxyUrl,
@@ -844,7 +851,7 @@ fun MyProfileSheet(
 
     if (showProfilePicture && trimmedPictureUrl.isNotEmpty()) {
         ProfilePictureDialog(
-            imageUrl = if (isHttpPictureUrl) proxiedProfilePictureUrl ?: trimmedPictureUrl else null,
+            imageRequest = proxiedProfilePictureUrl,
             imageData = if (isHashtreePictureUrl) avatarBytes else null,
             onDismiss = { showProfilePicture = false },
         )
@@ -946,7 +953,7 @@ private fun ProfileSettingsPage(
     onProfileAboutChange: (String) -> Unit,
     savedAbout: String,
     canManageDevices: Boolean,
-    imageUrl: String?,
+    imageRequest: ImageLoadRequest?,
     imageData: ByteArray?,
     canOpenPicture: Boolean,
     profilePictureInteractionSource: MutableInteractionSource,
@@ -970,7 +977,7 @@ private fun ProfileSettingsPage(
     ) {
         ProfileHero(
             displayName = displayName,
-            imageUrl = imageUrl,
+            imageRequest = imageRequest,
             imageData = imageData,
             canManageDevices = canManageDevices,
             canOpenPicture = canOpenPicture,
@@ -1019,7 +1026,7 @@ private fun ProfileSettingsPage(
 @Composable
 private fun ProfileHero(
     displayName: String,
-    imageUrl: String?,
+    imageRequest: ImageLoadRequest?,
     imageData: ByteArray?,
     canManageDevices: Boolean,
     canOpenPicture: Boolean,
@@ -1039,7 +1046,7 @@ private fun ProfileHero(
             label = displayName.ifBlank { "Profile" },
             size = 96.dp,
             emphasize = false,
-            imageUrl = imageUrl,
+            imageRequest = imageRequest,
             imageData = imageData,
             modifier =
                 Modifier
@@ -1494,7 +1501,7 @@ private fun ProfileQrIconAction(
 @Composable
 private fun SettingsProfileMenuRow(
     displayName: String,
-    imageUrl: String?,
+    imageRequest: ImageLoadRequest?,
     imageData: ByteArray?,
     onClick: () -> Unit,
     onQrClick: () -> Unit,
@@ -1523,7 +1530,7 @@ private fun SettingsProfileMenuRow(
                 label = displayName.ifBlank { "Profile" },
                 size = 80.dp,
                 emphasize = true,
-                imageUrl = imageUrl,
+                imageRequest = imageRequest,
                 imageData = imageData,
             )
             Column(
@@ -1705,75 +1712,3 @@ private fun relayConnectionStatus(
         ?.relayConnections
         ?.firstOrNull { it.url == relayUrl }
         ?.status
-
-@Composable
-private fun ProfilePictureDialog(
-    imageUrl: String?,
-    imageData: ByteArray?,
-    onDismiss: () -> Unit,
-) {
-    val haptics = rememberIrisHapticFeedback()
-    val dismissInteractionSource = remember { MutableInteractionSource() }
-    val dataBitmap =
-        remember(imageData) {
-            imageData?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-        }
-    val urlBitmap by produceState<android.graphics.Bitmap?>(initialValue = null, imageUrl) {
-        val url = imageUrl
-        value =
-            if (url == null) {
-                null
-            } else {
-                withContext(Dispatchers.IO) {
-                    runCatching {
-                        URL(url).openStream().use { stream ->
-                            BitmapFactory.decodeStream(stream)
-                        }
-                    }.getOrNull()
-                }
-            }
-    }
-    val resolvedBitmap = dataBitmap ?: urlBitmap
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Box(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.92f))
-                    .clickable(
-                        interactionSource = dismissInteractionSource,
-                        indication = null,
-                    ) {
-                        haptics.press()
-                        onDismiss()
-                    }
-                    .testTag("myProfilePictureViewer"),
-            contentAlignment = Alignment.Center,
-        ) {
-            resolvedBitmap?.let { loadedBitmap ->
-                Image(
-                    bitmap = loadedBitmap.asImageBitmap(),
-                    contentDescription = "Profile picture",
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .padding(18.dp),
-                    contentScale = ContentScale.Fit,
-                )
-            } ?: CircularProgressIndicator(color = Color.White)
-            IconButton(
-                onClick = onDismiss,
-                modifier = Modifier.align(Alignment.TopEnd),
-            ) {
-                Icon(
-                    imageVector = IrisIcons.Close,
-                    contentDescription = "Close profile picture",
-                    tint = Color.White,
-                )
-            }
-        }
-    }
-}

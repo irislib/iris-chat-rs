@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -7,6 +9,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using IrisChat.Bindings;
 
 namespace IrisChat.Chrome;
 
@@ -14,8 +17,12 @@ public partial class Avatar : UserControl
 {
     private static readonly ConcurrentDictionary<string, ImageSource> ImageCache = new();
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
+    private static readonly HttpClient ProxyHttp = new(new HttpClientHandler { AllowAutoRedirect = false })
+        { Timeout = TimeSpan.FromSeconds(15) };
     private const int AvatarDecodePixelWidth = 160;
     private string? _loadingKey;
+    private int _loadVersion;
+    private AppManager? _preferencesManager;
 
     public static readonly DependencyProperty LabelProperty =
         DependencyProperty.Register(nameof(Label), typeof(string), typeof(Avatar),
@@ -52,6 +59,30 @@ public partial class Avatar : UserControl
         InitializeComponent();
         UpdateLabel();
         UpdateSize();
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
+    }
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        _preferencesManager = Application.Current is App app ? app.Manager : null;
+        if (_preferencesManager != null)
+            _preferencesManager.PropertyChanged += OnPreferencesChanged;
+        UpdateImage();
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        if (_preferencesManager != null)
+            _preferencesManager.PropertyChanged -= OnPreferencesChanged;
+        _preferencesManager = null;
+        _loadingKey = null;
+        _loadVersion++;
+    }
+
+    private void OnPreferencesChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(AppManager.Preferences)) UpdateImage();
     }
 
     private static void OnLabelChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) =>
@@ -82,61 +113,60 @@ public partial class Avatar : UserControl
     private async void UpdateImage()
     {
         var url = PictureUrl?.Trim();
-        if (string.IsNullOrEmpty(url))
-        {
-            _loadingKey = null;
-            ImageHost.Visibility = Visibility.Collapsed;
-            return;
-        }
-
-        var key = CacheKey(url);
+        var urls = string.IsNullOrEmpty(url) ? Array.Empty<string>() : ImageUrls(url);
+        var preferences = Application.Current is App app ? app.Manager?.Preferences : null;
+        var allowOriginalRedirects = preferences != null &&
+            (!preferences.imageProxyEnabled || preferences.imageProxyFallbackEnabled);
+        var key = $"{allowOriginalRedirects}\n{string.Join("\n", urls)}";
+        if (_loadingKey == key) return;
         _loadingKey = key;
-        if (ImageCache.TryGetValue(key, out var cached))
-        {
-            ImageBrush.ImageSource = cached;
-            ImageHost.Visibility = Visibility.Visible;
-            return;
-        }
-
+        var version = ++_loadVersion;
         ImageHost.Visibility = Visibility.Collapsed;
 
-        try
+        // Cache by the URL actually loaded. A cached original must never skip
+        // the proxy when the user's current settings require it.
+        foreach (var candidate in urls)
         {
-            var data = await LoadImageBytesAsync(url);
-
-            if (_loadingKey != key) return;
-
-            if (data == null || data.Length == 0)
+            if (_loadVersion != version) return;
+            var cacheKey = CacheKey(candidate);
+            if (ImageCache.TryGetValue(cacheKey, out var cached))
             {
-                ImageHost.Visibility = Visibility.Collapsed;
+                ImageBrush.ImageSource = cached;
+                ImageHost.Visibility = Visibility.Visible;
                 return;
             }
-
-            var bmp = await Task.Run(() => DecodeAvatarImage(data));
-            if (bmp == null)
+            try
             {
-                if (_loadingKey == key)
-                {
-                    ImageHost.Visibility = Visibility.Collapsed;
-                }
+                var data = await LoadImageBytesAsync(candidate, candidate != url || !allowOriginalRedirects);
+                if (_loadVersion != version) return;
+                if (data == null || data.Length == 0) continue;
+                var bmp = await Task.Run(() => DecodeAvatarImage(data));
+                if (_loadVersion != version) return;
+                if (bmp == null) continue;
+                ImageCache[cacheKey] = bmp;
+                ImageBrush.ImageSource = bmp;
+                ImageHost.Visibility = Visibility.Visible;
                 return;
             }
-            if (_loadingKey != key) return;
-
-            ImageCache[key] = bmp;
-            ImageBrush.ImageSource = bmp;
-            ImageHost.Visibility = Visibility.Visible;
-        }
-        catch
-        {
-            if (_loadingKey == key)
+            catch
             {
-                ImageHost.Visibility = Visibility.Collapsed;
+                // Only the shared policy can add an original URL to retry.
             }
         }
     }
 
-    private static async Task<byte[]?> LoadImageBytesAsync(string url)
+    private static IReadOnlyList<string> ImageUrls(string url)
+    {
+        if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            return new[] { url };
+        return Application.Current is App app && app.Manager != null
+            ? Native.ImageLoadUrls(url, app.Manager.Preferences,
+                AvatarDecodePixelWidth, AvatarDecodePixelWidth, true)
+            : Array.Empty<string>();
+    }
+
+    private static async Task<byte[]?> LoadImageBytesAsync(string url, bool isProxy)
     {
         if (TryParseNhash(url, out var nhash))
         {
@@ -147,9 +177,33 @@ public partial class Avatar : UserControl
         if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
             url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
-            return await Http.GetByteArrayAsync(url);
+            return isProxy ? await LoadProxyImageBytesAsync(url) : await Http.GetByteArrayAsync(url);
         }
         return File.Exists(url) ? await File.ReadAllBytesAsync(url) : null;
+    }
+
+    private static async Task<byte[]?> LoadProxyImageBytesAsync(string url)
+    {
+        var origin = new Uri(url);
+        var current = origin;
+        for (var redirects = 0; redirects < 10; redirects++)
+        {
+            using var response = await ProxyHttp.GetAsync(current);
+            var status = (int)response.StatusCode;
+            if (status is 301 or 302 or 303 or 307 or 308)
+            {
+                var location = response.Headers.Location;
+                if (location == null) return null;
+                var next = location.IsAbsoluteUri ? location : new Uri(current, location);
+                if (next.Scheme != origin.Scheme || next.IdnHost != origin.IdnHost || next.Port != origin.Port)
+                    return null;
+                current = next;
+                continue;
+            }
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadAsByteArrayAsync();
+        }
+        return null;
     }
 
     private static BitmapImage? DecodeAvatarImage(byte[] data)
