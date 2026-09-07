@@ -1753,7 +1753,7 @@ fn mobile_push_decrypts_compacted_apns_event_payload() {
 }
 
 #[test]
-fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
+fn mobile_push_payload_ingest_rejects_invalid_events_before_session_restore() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();
     let bob_storage =
@@ -1777,6 +1777,14 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
         temp_dir.path().to_string_lossy().to_string(),
         Arc::new(RwLock::new(AppState::empty())),
     );
+    // A push with stripped signed tags must not reserve the genuine event's ID
+    // while startup is still restoring the account and protocol state.
+    let mut corrupted_payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    corrupted_payload["event"]["tags"] = serde_json::json!([]);
+    core.handle_action(AppAction::IngestMobilePushPayload {
+        payload_json: corrupted_payload.to_string(),
+    });
+    assert!(core.pending_mobile_push_events.is_empty());
     core.handle_action(AppAction::IngestMobilePushPayload {
         payload_json: payload.clone(),
     });

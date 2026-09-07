@@ -149,7 +149,10 @@ fn mobile_push_event_from_payload(raw_payload_json: &str) -> Option<Event> {
             continue;
         };
         if let Ok(event) = serde_json::from_str::<Event>(&event_json) {
-            return Some(event);
+            // Validate before startup buffering can reserve this event's ID.
+            if event.verify().is_ok() {
+                return Some(event);
+            }
         }
     }
     None
