@@ -5,6 +5,7 @@ import XCTest
 #if os(macOS)
 @testable import IrisChatMac
 #else
+import UIKit
 @testable import IrisChat
 #endif
 
@@ -332,6 +333,7 @@ extension InteropHarnessTests {
 
     func reportMobilePushServerSnapshot(manager: AppManager) async throws {
 #if os(iOS)
+        status("notifications_enabled", String(manager.state.preferences.desktopNotificationsEnabled))
         guard let ownerNsec = manager.exportOwnerNsec() else {
             throw HarnessError.unexpected("owner nsec unavailable")
         }
@@ -349,6 +351,7 @@ extension InteropHarnessTests {
         }
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = request.method
+        urlRequest.timeoutInterval = 10
         urlRequest.setValue("application/json", forHTTPHeaderField: "accept")
         urlRequest.setValue(request.authorizationHeader, forHTTPHeaderField: "authorization")
         let expectedAuthors = Set(manager.state.mobilePush.messageAuthorPubkeys)
@@ -359,6 +362,7 @@ extension InteropHarnessTests {
         if let token = MobilePushTokenCenter.shared.currentApnsToken() {
             currentToken = token
         } else {
+            UIApplication.shared.registerForRemoteNotifications()
             currentToken = await MobilePushTokenCenter.shared.waitForApnsToken(
                 timeoutNanoseconds: 15_000_000_000
             )

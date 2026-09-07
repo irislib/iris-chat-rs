@@ -414,14 +414,15 @@ final class InteropHarnessTests: XCTestCase {
         case "report_mobile_push_server_snapshot":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             try await reportMobilePushServerSnapshot(manager: manager)
-        case "disable_mobile_push_and_wait":
+        case "enable_mobile_push_and_wait", "disable_mobile_push_and_wait":
             _ = try await ensureLoggedIn(manager: manager, env: env)
-            manager.dispatch(.setDesktopNotificationsEnabled(enabled: false))
-            _ = try await waitFor(label: "mobile push disabled", timeout: 15) {
-                manager.state.preferences.desktopNotificationsEnabled ? nil : true
+            let enabled = action == "enable_mobile_push_and_wait"
+            manager.dispatch(.setDesktopNotificationsEnabled(enabled: enabled))
+            _ = try await waitFor(label: "mobile push preference", timeout: 15) {
+                manager.state.preferences.desktopNotificationsEnabled == enabled ? true : nil
             }
             try await Task.sleep(nanoseconds: 3_000_000_000)
-            status("mobile_push_disabled", "true")
+            status(enabled ? "mobile_push_enabled" : "mobile_push_disabled", "true")
         case "report_notification_authorization":
             let settings = await UNUserNotificationCenter.current().notificationSettings()
             let authorization = String(describing: settings.authorizationStatus)
@@ -463,7 +464,7 @@ final class InteropHarnessTests: XCTestCase {
             let delivered = try await waitForNoVisibleDeliveredNotifications(timeout: timeout)
             status("visible_notification_count", String(delivered.count))
             status("delivered_notifications", summarizeDeliveredNotifications(delivered))
-        case "wait_for_visible_delivered_notification":
+        case "wait_for_visible_delivered_notification", "open_delivered_notification":
             let expectedBody = env["IRIS_IOS_HARNESS_EXPECTED_BODY"] ?? ""
             let timeout = TimeInterval(Double(env["IRIS_IOS_HARNESS_TIMEOUT_SECS"] ?? "") ?? 30)
             let notification = try await waitForVisibleDeliveredNotification(
@@ -473,6 +474,18 @@ final class InteropHarnessTests: XCTestCase {
             status("notification_title", notification.request.content.title)
             status("notification_body", notification.request.content.body)
             status("notification_id", notification.request.identifier)
+            if action == "open_delivered_notification" {
+                _ = try await ensureLoggedIn(manager: manager, env: env)
+                manager.handlePushNotificationTap(userInfo: notification.request.content.userInfo)
+                let chat = try await waitFor(label: "message opened from push", timeout: timeout) {
+                    guard let chat = manager.state.currentChat,
+                          chat.messages.contains(where: { !$0.isOutgoing && $0.body == expectedBody }) else {
+                        return nil as CurrentChatSnapshot?
+                    }
+                    return chat
+                }
+                status("opened_chat_id", chat.chatId)
+            }
         case "wait_for_peer_roster_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("IRIS_IOS_HARNESS_PEER_INPUT", env: env))
