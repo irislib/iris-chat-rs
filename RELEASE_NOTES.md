@@ -2,6 +2,23 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.8
+
+### GitHub
+
+- Updated encrypted-message dependencies to reject malformed and oversized
+  payloads before they can disrupt message processing.
+- Updated relay event verification and authentication queue limits, and
+  included dependency soundness fixes.
+
+### Apple
+
+- Improved protection against malformed messages and unreliable message servers.
+
+### Zapstore
+
+- Improved protection against malformed messages and unreliable message servers.
+
 ## v2026.9.7
 
 ### GitHub
