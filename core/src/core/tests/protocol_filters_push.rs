@@ -1688,7 +1688,7 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
 }
 
 #[test]
-fn mobile_push_decrypts_compacted_apns_event_payload() {
+fn mobile_push_decrypts_signed_apns_event_payload() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -1699,14 +1699,14 @@ fn mobile_push_decrypts_compacted_apns_event_payload() {
         bob_keys.public_key().to_hex(),
     )) as Arc<dyn StorageAdapter>;
     let mut bob_engine = test_protocol_engine_with_storage(&bob_keys, &bob_keys, bob_storage);
-    let message = "compacted apns preview";
+    let message = "signed apns preview";
     let message_event =
         appcore_direct_message_event_for_test(&mut bob_engine, &alice_keys, message, 200);
     for (key, event_payload) in [
-        ("event", compact_event_payload_for_apns_test(&message_event)),
+        ("event", serde_json::to_value(&message_event).expect("signed event")),
         (
             "outer_event",
-            compact_event_payload_for_apns_test(&message_event),
+            serde_json::to_value(&message_event).expect("signed event"),
         ),
         (
             "outer_event_json",

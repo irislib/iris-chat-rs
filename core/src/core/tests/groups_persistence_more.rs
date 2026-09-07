@@ -825,26 +825,6 @@ fn serializable_key_pair_for_test(keys: &Keys) -> nostr_double_ratchet::Serializ
     }
 }
 
-fn compact_event_payload_for_apns_test(event: &Event) -> serde_json::Value {
-    let mut value = serde_json::to_value(event).expect("event json");
-    if let Some(object) = value.as_object_mut() {
-        let header_tags = object
-            .get("tags")
-            .and_then(|tags| tags.as_array())
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|tag| {
-                tag.as_array()
-                    .and_then(|items| items.first())
-                    .and_then(|name| name.as_str())
-                    == Some("header")
-            })
-            .collect();
-        object.insert("tags".to_string(), serde_json::Value::Array(header_tags));
-    }
-    value
-}
 
 /// End-to-end round-trip: upload a real image to the hashtree network and
 /// verify the same bytes can be read back via the same path the iOS shell
