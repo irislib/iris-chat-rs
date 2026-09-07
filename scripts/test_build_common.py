@@ -48,5 +48,39 @@ class BuildVersionCodeTests(unittest.TestCase):
                 self.assertNotEqual(version_code(version).returncode, 0)
 
 
+class AppleMarketingVersionTests(unittest.TestCase):
+    def marketing_version(self, version: str) -> str:
+        result = subprocess.run(
+            ["bash", "-c", 'source "$1"; apple_marketing_version "$2"',
+             "bash", str(COMMON), version],
+            check=True, capture_output=True, text=True,
+        )
+        return result.stdout.strip()
+
+    def test_historical_release_versions_stay_unchanged(self) -> None:
+        for version, expected in [
+            ("0.1.0", "0.1.0"),
+            ("2026.7.28.1", "2026.7.28"),
+            ("2026.9.8", "2026.9.8"),
+        ]:
+            with self.subTest(version=version):
+                self.assertEqual(self.marketing_version(version), expected)
+
+    def test_corrective_releases_advance_the_apple_visible_version(self) -> None:
+        versions = [
+            ("2026.9.8", "2026.9.8"),
+            ("2026.9.8.1", "2026.9.801"),
+            ("2026.9.8.99", "2026.9.899"),
+            ("2026.9.9", "2026.9.900"),
+            ("2026.10.1", "2026.10.100"),
+            ("2027.1.1", "2027.1.100"),
+        ]
+        actual = [self.marketing_version(version) for version, _ in versions]
+        self.assertEqual(actual, [expected for _, expected in versions])
+        components = [tuple(map(int, value.split("."))) for value in actual]
+        self.assertTrue(all(len(value) == 3 for value in components))
+        self.assertTrue(all(a < b for a, b in zip(components, components[1:])))
+
+
 if __name__ == "__main__":
     unittest.main()

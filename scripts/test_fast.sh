@@ -55,6 +55,8 @@ parallel_step_start "release gate receipt harness" \
   "${ROOT_DIR}/scripts/test-release-gate-receipt.sh"
 parallel_step_start "release workflow contract" \
   python3 "${ROOT_DIR}/scripts/test_release_workflow.py"
+parallel_step_start "release version numbering" \
+  python3 "${ROOT_DIR}/scripts/test_build_common.py"
 
 run_step "Rust panic/unwrap lint" "${ROOT_DIR}/scripts/check-rust-panics" || lint_status=$?
 parallel_step_wait || static_status=$?

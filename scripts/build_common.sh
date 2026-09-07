@@ -81,15 +81,20 @@ semantic_version_code() {
   printf '%d\n' "$code"
 }
 
-# Apple's CFBundleShortVersionString accepts at most three integer components.
-# The optional fourth ".build" segment we use to keep zapstore versions unique
-# has to be stripped before handing the version to Xcode.
+# Apple accepts three components. Starting at 2026.9.8.1, pack the day and
+# same-day revision together so every release advances its visible version.
+# Preserve historical mappings so existing immutable IPAs still verify.
 apple_marketing_version() {
   local version="$1"
-  local core
+  local core code
   local a b c rest
   core="${version%%[-+]*}"
   IFS=. read -r a b c rest <<< "$core"
+  code="$(semantic_version_code "$version" || true)"
+  if [[ -n "$code" ]] && (( code >= 2026090801 )); then
+    printf '%d.%d.%d\n' "$((10#$a))" "$((10#$b))" "$((10#$c * 100 + 10#${rest:-0}))"
+    return
+  fi
   if [[ -n "${rest:-}" ]]; then
     printf '%s.%s.%s\n' "${a:-0}" "${b:-0}" "${c:-0}"
     return

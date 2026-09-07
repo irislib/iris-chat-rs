@@ -153,6 +153,9 @@ In GitHub, open **Actions → iOS Distribution → Run workflow**.
   Automatic is the default.
 - Every iOS App Store release must advance the Apple-visible
   `CFBundleShortVersionString`; changing only the fourth/internal component cannot trigger update discovery.
+  Starting with `v2026.9.8.1`, Apple's third component is `day * 100 + revision`:
+  `v2026.9.8.1` becomes `2026.9.801` and `v2026.9.9` becomes `2026.9.900`.
+  Older tags keep their original Apple versions for immutable artifact verification.
 
 The workflow verifies the tagged IPA and its attestation before contacting
 App Store Connect. Retrying does not rebuild or upload a duplicate build.
