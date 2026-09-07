@@ -2,6 +2,26 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.8.1
+
+### GitHub
+
+- Back off persistent UDP receive failures so networking workers cannot spin continuously after a socket error.
+- Verify mobile push events before buffering them during account restore, preventing malformed pushes from blocking genuine message delivery.
+- Make APNs token waits finish on timeout, cancellation, and registration failure.
+- Add physical iPhone coverage for decrypted push previews and opening the received message.
+- Advance App Store versions for same-day corrective releases.
+
+### Apple
+
+- Fixed a networking issue that could cause excessive battery use.
+- Improved message delivery when opening a notification.
+
+### Zapstore
+
+- Fixed a networking issue that could cause excessive battery use.
+- Improved message delivery when opening a notification.
+
 ## v2026.9.8
 
 ### GitHub
