@@ -1603,9 +1603,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-updater"
-version = "0.2.82"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d39eba883217a73aad51697204f42e6c3161326fe4ccf2c298d3aa4980e9984"
+checksum = "e0153f9c43ba08f3e66531fc91113f54974bd20f559d90528414ab17ce2eb951"
 dependencies = [
  "flate2",
  "hashtree-blossom",
@@ -1616,6 +1616,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tar",
+ "tempfile",
  "thiserror 1.0.69",
 ]
 
