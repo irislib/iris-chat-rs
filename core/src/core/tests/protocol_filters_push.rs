@@ -2703,3 +2703,31 @@ fn unknown_direct_messages_default_to_allowed() {
     assert!(PersistedPreferences::default().accept_unknown_direct_messages);
     assert!(AppState::empty().preferences.accept_unknown_direct_messages);
 }
+
+#[test]
+fn mobile_push_rejects_forged_metadata_without_poisoning_event_deduplication() {
+    let local = Keys::generate();
+    let peer = Keys::generate();
+    let (mut core, _updates, _temp) =
+        logged_in_test_core_with_updates("push-forged-metadata", &local, &local);
+    let valid = EventBuilder::new(Kind::Metadata, r#"{"name":"Trusted peer"}"#)
+        .sign_with_keys(&peer)
+        .unwrap();
+    let mut forged = valid.clone();
+    forged.content = r#"{"name":"Forged peer"}"#.to_string();
+    core.ingest_mobile_push_payload(&serde_json::json!({"event": forged}).to_string());
+    assert!(!core
+        .owner_profiles
+        .contains_key(&peer.public_key().to_hex()));
+    assert!(!core.has_seen_event(&valid.id.to_string()));
+    assert!(!core
+        .event_transport_channels
+        .contains_key(&valid.id.to_string()));
+
+    core.ingest_mobile_push_payload(&serde_json::json!({"event": valid}).to_string());
+    assert_eq!(
+        core.owner_profile_name(&peer.public_key().to_hex())
+            .as_deref(),
+        Some("Trusted peer")
+    );
+}

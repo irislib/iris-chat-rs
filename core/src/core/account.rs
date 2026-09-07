@@ -2,6 +2,7 @@ use super::account_app_keys::{
     known_app_keys_to_ndr, next_app_keys_created_at, next_removed_app_keys_created_at,
     normalize_device_label,
 };
+use super::account_pending_link::validate_link_authorization;
 use super::invites::{load_pending_private_invite_responses, load_private_chat_invites};
 use super::persistence::apply_persisted_preferences;
 use super::*;
@@ -350,6 +351,7 @@ impl AppCore {
         device_keys: Keys,
         app_keys_event: Event,
     ) -> anyhow::Result<()> {
+        validate_link_authorization(&app_keys_event, owner_pubkey, &device_keys, &peer_device_id)?;
         self.enter_batch();
         let result = (|| {
             // Keep the secure restore record until the complete account bundle is emitted. If

@@ -20,6 +20,7 @@ pub(super) struct PendingLinkedDeviceState {
 }
 
 pub(super) struct PendingLinkInviteResponse {
+    pub(super) owner_pubkey: PublicKey,
     pub(super) peer_device_id: String,
     pub(super) session_state: SessionState,
 }

@@ -7,6 +7,11 @@ impl AppCore {
     }
 
     pub(super) fn handle_relay_event_with_channel(&mut self, event: Event, channel: &str) {
+        // Push payloads and other transports also enter here; do not rely on a
+        // relay client having authenticated the event before touching any state.
+        if event.verify().is_err() {
+            return;
+        }
         let event_id = event.id.to_string();
         let kind = event.kind.as_u16() as u32;
         let is_app_keys_protocol_event = kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event);
@@ -385,6 +390,15 @@ impl AppCore {
                     Ok(Some(owner)) => owner,
                     _ => return false,
                 };
+                if pending.pending_response.as_ref().is_some_and(|response| {
+                    !account_pending_link::link_approver_is_authorized(
+                        &event,
+                        response.owner_pubkey,
+                        &response.peer_device_id,
+                    )
+                }) {
+                    return false;
+                }
                 pending.authorized_app_keys_event = Some(event.clone());
                 (
                     owner,
@@ -446,23 +460,37 @@ impl AppCore {
             }
         };
 
+        let owner_pubkey = match (response.owner_public_key, response.invitee_owner_pubkey) {
+            (Some(owner), Some(claim)) if owner.to_bytes() == claim.to_bytes() => owner,
+            (None, None) => response.invitee_identity,
+            _ => return false,
+        };
         let mut pending_response = Some(PendingLinkInviteResponse {
-            peer_device_id: response
-                .device_id
-                .clone()
-                .unwrap_or_else(|| response.invitee_identity.to_hex()),
+            owner_pubkey,
+            // Use the cryptographically authenticated response identity. The
+            // optional device-id claim cannot select the approver.
+            peer_device_id: response.invitee_identity.to_hex(),
             session_state: response.session.state,
         });
         let owner_and_device = {
             let Some(pending) = self.pending_linked_device.as_mut() else {
                 return false;
             };
-            if let Some(app_keys_event) = pending.authorized_app_keys_event.clone() {
+            if let Some(app_keys_event) =
+                pending.authorized_app_keys_event.clone().filter(|event| {
+                    account_pending_link::link_approver_is_authorized(
+                        event,
+                        owner_pubkey,
+                        &response.invitee_identity.to_hex(),
+                    )
+                })
+            {
                 resolve_app_keys_owner_for_device(&app_keys_event, pending.device_keys.public_key())
                     .ok()
                     .flatten()
                     .map(|owner_pubkey| (owner_pubkey, pending.device_keys.clone(), app_keys_event))
             } else {
+                pending.authorized_app_keys_event = None;
                 pending.pending_response = pending_response.take();
                 None
             }

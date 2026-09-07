@@ -2,6 +2,8 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -76,20 +78,42 @@ fn write_secret<T: Serialize>(path: &Path, value: &T) {
         Ok(v) => v,
         Err(_) => return,
     };
-    let tmp = path.with_extension("json.tmp");
-    let mut opts = fs::OpenOptions::new();
-    opts.create(true).truncate(true).write(true).mode(0o600);
-    let Ok(mut file) = opts.open(&tmp) else {
+    let Some((tmp, mut file)) = create_secret_temp_file(path) else {
         return;
     };
-    if file.write_all(&json).is_err() {
-        return;
-    }
-    if file.sync_all().is_err() {
-        return;
-    }
+    let written = file.write_all(&json).and_then(|()| file.sync_all());
     drop(file);
-    let _ = fs::rename(&tmp, path);
+    if written.is_err() || fs::rename(&tmp, path).is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+}
+
+fn create_secret_temp_file(path: &Path) -> Option<(PathBuf, fs::File)> {
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    for _ in 0..8 {
+        let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+        let tmp = path.with_extension(format!(
+            "json.{}.{timestamp}.{sequence}.tmp",
+            std::process::id()
+        ));
+        // Exclusive creation never follows a preexisting symlink and never
+        // inherits the permissions of an old temporary file.
+        match fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&tmp)
+        {
+            Ok(file) => return Some((tmp, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        }
+    }
+    None
 }
 
 fn remove_secret(path: &Path) -> bool {
@@ -106,7 +130,7 @@ fn remove_secret(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::os::unix::fs::{symlink, PermissionsExt};
 
     fn temp_dir() -> PathBuf {
         let nanos = SystemTime::now()
@@ -131,5 +155,51 @@ mod tests {
         assert!(store.load().is_none());
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn secret_save_does_not_follow_a_preexisting_temporary_symlink() {
+        let dir = temp_dir();
+        let store = FileSecretStore::new(&dir);
+        let victim = dir.join("unrelated-file");
+        fs::write(&victim, b"keep this file").unwrap();
+        symlink(&victim, dir.join("account.json.tmp")).unwrap();
+
+        store.save(&StoredAccountBundle {
+            owner_nsec: Some("private owner key".into()),
+            owner_pubkey_hex: "owner".into(),
+            device_nsec: "private device key".into(),
+        });
+
+        assert_eq!(fs::read(&victim).unwrap(), b"keep this file");
+        assert!(store.load().is_some());
+        assert!(!fs::symlink_metadata(&store.path).unwrap().is_symlink());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn secret_save_does_not_reuse_a_world_readable_temporary_file() {
+        let dir = temp_dir();
+        let store = FileSecretStore::new(&dir);
+        let stale = dir.join("pending-device-link.json.tmp");
+        fs::write(&stale, b"unrelated data").unwrap();
+        fs::set_permissions(&stale, fs::Permissions::from_mode(0o644)).unwrap();
+
+        store.save_pending_device_link(&StoredPendingDeviceLink {
+            device_nsec: "private device key".into(),
+            approval_bootstrap_json: "private bootstrap".into(),
+        });
+
+        assert_eq!(fs::read(&stale).unwrap(), b"unrelated data");
+        assert_eq!(
+            fs::metadata(&store.pending_link_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert!(store.load_pending_device_link().is_some());
+        fs::remove_dir_all(dir).unwrap();
     }
 }

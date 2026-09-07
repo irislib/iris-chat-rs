@@ -128,13 +128,10 @@ fn find_file_links(text: &str) -> Vec<FileLinkMatch> {
         let nhash_start = i + relative;
         let mut match_start = nhash_start;
 
-        if nhash_start >= "htree://".len()
-            && &text[nhash_start - "htree://".len()..nhash_start] == "htree://"
-        {
+        let prefix = &text[..nhash_start];
+        if prefix.ends_with("htree://") {
             match_start = nhash_start - "htree://".len();
-        } else if nhash_start >= "nhash://".len()
-            && &text[nhash_start - "nhash://".len()..nhash_start] == "nhash://"
-        {
+        } else if prefix.ends_with("nhash://") {
             match_start = nhash_start - "nhash://".len();
         }
 
@@ -332,6 +329,19 @@ mod tests {
         assert!(attachments[0].is_video);
         assert!(attachments[1].is_audio);
         assert_eq!(attachments[0].htree_url, "htree://nhash1abc123/clip.mp4");
+    }
+
+    #[test]
+    fn attachment_links_after_multibyte_text_do_not_panic() {
+        for prefix in ["🙂🙂", "你好世", "ééééé", "hello 🙂"] {
+            for wrapper in ["", "htree://", "nhash://"] {
+                let text = format!("{prefix}{wrapper}nhash1abc123/photo.png");
+                let (body, attachments) = extract_message_attachments(&text);
+                assert_eq!(body, prefix);
+                assert_eq!(attachments.len(), 1);
+                assert_eq!(attachments[0].filename, "photo.png");
+            }
+        }
     }
 
     #[test]

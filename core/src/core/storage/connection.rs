@@ -23,7 +23,7 @@ pub(crate) struct DataDirLock;
 #[cfg(not(target_os = "ios"))]
 impl DataDirLock {
     pub(crate) fn acquire(data_dir: &Path) -> anyhow::Result<Self> {
-        std::fs::create_dir_all(data_dir)?;
+        ensure_private_data_dir(data_dir)?;
         let path = data_dir.join(CORE_LOCK_DB_FILENAME);
         let conn = Connection::open(&path)?;
         conn.busy_timeout(Duration::from_millis(250))?;
@@ -55,7 +55,7 @@ impl DataDirLock {
         // (RunningBoard 0xdead10cc). The app has one foreground core process,
         // while the notification extension uses overlay storage and does not
         // own the live ratchet writer, so there is no long-lived OS lock here.
-        std::fs::create_dir_all(data_dir)?;
+        ensure_private_data_dir(data_dir)?;
         Ok(Self)
     }
 }
@@ -70,12 +70,30 @@ fn is_lock_busy(error: &rusqlite::Error) -> bool {
 }
 
 pub(crate) fn open_database(data_dir: &Path) -> anyhow::Result<SharedConnection> {
-    std::fs::create_dir_all(data_dir)?;
+    ensure_private_data_dir(data_dir)?;
     let path = data_dir.join(CORE_DB_FILENAME);
     let mut conn = Connection::open(&path)?;
     apply_pragmas(&conn)?;
     schema::ensure_schema(&mut conn)?;
     Ok(Arc::new(Mutex::new(conn)))
+}
+
+fn ensure_private_data_dir(data_dir: &Path) -> anyhow::Result<()> {
+    // The database, SQLite sidecars, and notification caches contain decrypted
+    // messages and session keys. Secure their directory before opening any file.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(data_dir)?;
+        // Also repair directories created by older versions with the process umask.
+        std::fs::set_permissions(data_dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(data_dir)?;
+    Ok(())
 }
 
 fn apply_pragmas(conn: &Connection) -> anyhow::Result<()> {
@@ -100,4 +118,39 @@ fn apply_pragmas(conn: &Connection) -> anyhow::Result<()> {
     // most recent checkpoint; on mobile DELETE mode avoids long-lived locks.
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn assert_private_directory(path: &Path) {
+        assert_eq!(
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+
+    #[test]
+    fn database_directory_is_private_on_creation_and_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let data_dir = root.path().join("account");
+        drop(open_database(&data_dir).unwrap());
+        assert_private_directory(&data_dir);
+
+        std::fs::set_permissions(&data_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        drop(open_database(&data_dir).unwrap());
+        assert_private_directory(&data_dir);
+    }
+
+    #[test]
+    fn acquiring_data_lock_secures_existing_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let data_dir = root.path().join("account");
+        std::fs::create_dir(&data_dir).unwrap();
+        std::fs::set_permissions(&data_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let _lock = DataDirLock::acquire(&data_dir).unwrap();
+        assert_private_directory(&data_dir);
+    }
 }

@@ -1,6 +1,7 @@
 use super::SharedConnection;
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -99,9 +100,27 @@ pub struct FileStorageAdapter {
 }
 
 impl FileStorageAdapter {
+    /// Opens a dedicated directory for secret session state. On Unix, access
+    /// to this directory is restricted to the current user, including on reopen.
     pub fn new(base_path: PathBuf) -> StorageResult<Self> {
-        fs::create_dir_all(&base_path)
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder
+            .create(&base_path)
             .map_err(|err| storage_io_error("failed to create storage directory", err))?;
+        // Existing installations may contain session keys in readable files.
+        // Restrict their enclosing directory before loading any state.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&base_path, fs::Permissions::from_mode(0o700))
+                .map_err(|err| storage_io_error("failed to protect storage directory", err))?;
+        }
         Ok(Self { base_path })
     }
 
@@ -128,15 +147,25 @@ impl StorageAdapter for FileStorageAdapter {
     fn put(&self, key: &str, value: String) -> StorageResult<()> {
         let path = self.key_to_path(key);
 
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|err| {
-                storage_io_error("failed to create storage parent directory", err)
-            })?;
-        }
-
         let tmp_path = path.with_extension(format!("json.{}.tmp", rand::random::<u128>()));
-        fs::write(&tmp_path, value)
-            .map_err(|err| storage_io_error("failed to write storage temp file", err))?;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        // Set the mode at creation: chmod after writing would expose secrets
+        // briefly, and exclusive creation also refuses existing symlinks.
+        let mut file = options
+            .open(&tmp_path)
+            .map_err(|err| storage_io_error("failed to create storage temp file", err))?;
+        if let Err(err) = file.write_all(value.as_bytes()) {
+            drop(file);
+            let _ = fs::remove_file(&tmp_path);
+            return Err(storage_io_error("failed to write storage temp file", err));
+        }
+        drop(file);
 
         #[cfg(windows)]
         {
@@ -491,6 +520,62 @@ mod tests {
 
         adapter.del("test-key").unwrap();
         assert!(adapter.get("test-key").unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_storage_keeps_session_secrets_private_when_created_and_replaced() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let storage_dir = temp_dir.path().join("protocol");
+        let adapter = FileStorageAdapter::new(storage_dir.clone()).unwrap();
+        assert_eq!(
+            fs::metadata(&storage_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+
+        adapter.put("session", "secret".to_string()).unwrap();
+        let session_path = storage_dir.join("session.json");
+        assert_eq!(
+            fs::metadata(&session_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        // Upgrading an old file must not preserve its permissive mode.
+        fs::set_permissions(&session_path, fs::Permissions::from_mode(0o644)).unwrap();
+        adapter.put("session", "new secret".to_string()).unwrap();
+        assert_eq!(
+            fs::metadata(&session_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            adapter.get("session").unwrap().as_deref(),
+            Some("new secret")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_storage_protects_existing_session_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let storage_dir = temp_dir.path().join("protocol");
+        fs::create_dir(&storage_dir).unwrap();
+        fs::set_permissions(&storage_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(storage_dir.join("session.json"), "legacy secret").unwrap();
+
+        let adapter = FileStorageAdapter::new(storage_dir.clone()).unwrap();
+
+        assert_eq!(
+            fs::metadata(&storage_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            adapter.get("session").unwrap().as_deref(),
+            Some("legacy secret")
+        );
     }
 
     #[test]

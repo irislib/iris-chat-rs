@@ -84,3 +84,34 @@ impl AppCore {
         self.emit_state();
     }
 }
+
+pub(super) fn validate_link_authorization(
+    event: &Event,
+    owner: PublicKey,
+    device: &Keys,
+    peer_device_id: &str,
+) -> anyhow::Result<()> {
+    if !link_approver_is_authorized(event, owner, peer_device_id)
+        || resolve_app_keys_owner_for_device(event, device.public_key())? != Some(owner)
+    {
+        anyhow::bail!("Link authorization is incomplete.");
+    }
+    Ok(())
+}
+
+pub(super) fn link_approver_is_authorized(
+    event: &Event,
+    owner: PublicKey,
+    peer_device_id: &str,
+) -> bool {
+    if event.pubkey != owner {
+        return false;
+    }
+    let Ok(peer_device) = PublicKey::from_hex(peer_device_id) else {
+        return false;
+    };
+    let Ok(app_keys) = AppKeys::from_event(event) else {
+        return false;
+    };
+    peer_device == owner || app_keys.get_device(&peer_device).is_some()
+}

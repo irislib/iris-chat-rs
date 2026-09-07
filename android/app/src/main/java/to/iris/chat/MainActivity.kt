@@ -31,7 +31,7 @@ import to.iris.chat.rust.OutgoingAttachment
 import to.iris.chat.rust.isValidPeerInput
 import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.ui.navigation.NdrApp
-import to.iris.chat.ui.screens.copyAttachmentToCache
+import to.iris.chat.ui.screens.copySharedAttachmentToCache
 import to.iris.chat.ui.theme.IrisChatTheme
 
 class MainActivity : ComponentActivity() {
@@ -164,7 +164,7 @@ class MainActivity : ComponentActivity() {
             val attachments =
                 withContext(Dispatchers.IO) {
                     streamUris.mapNotNull { uri ->
-                        copyAttachmentToCache(this@MainActivity, uri)?.let { attachment ->
+                        copySharedAttachmentToCache(this@MainActivity, uri)?.let { attachment ->
                             OutgoingAttachment(
                                 filePath = attachment.path,
                                 filename = attachment.filename,

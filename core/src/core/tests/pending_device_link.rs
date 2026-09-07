@@ -266,3 +266,107 @@ fn completed_pairing_discards_pairing_invite_and_creates_stable_local_invite() {
     assert_ne!(stable_invite.purpose.as_deref(), Some("link"));
     assert_ne!(stable_invite.max_uses, Some(1));
 }
+
+#[test]
+fn pending_linked_device_rejects_unrelated_owner_roster_in_both_arrival_orders() {
+    for roster_first in [false, true] {
+        let owner = Keys::generate();
+        let attacker = Keys::generate();
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let mut core = AppCore::new(
+            flume::unbounded().0,
+            flume::unbounded().0,
+            temp_dir.path().to_string_lossy().to_string(),
+            Arc::new(RwLock::new(AppState::empty())),
+        );
+        core.preferences.nostr_relay_urls.clear();
+        core.start_linked_device("");
+        let pending = core.pending_linked_device.as_ref().expect("pending link");
+        let linked_device = pending.device_keys.public_key();
+        let (_, response) = pending
+            .pairing_invite
+            .accept_with_owner(
+                owner.public_key(),
+                owner.secret_key().to_secret_bytes(),
+                Some(owner.public_key().to_hex()),
+                Some(owner.public_key()),
+            )
+            .expect("owner response");
+        let response = nostr_double_ratchet::invite_response_event(&response).unwrap();
+        let unrelated_roster = signed_app_keys_authorization_event(&attacker, linked_device, 42);
+        if roster_first {
+            core.handle_relay_event(unrelated_roster);
+            core.handle_relay_event(response);
+        } else {
+            core.handle_relay_event(response);
+            core.handle_relay_event(unrelated_roster);
+        }
+        assert!(
+            core.logged_in.is_none(),
+            "unrelated roster cannot choose the account"
+        );
+        assert!(
+            core.pending_linked_device.is_some(),
+            "keep the valid pairing response"
+        );
+
+        core.handle_relay_event(signed_app_keys_authorization_event(
+            &owner,
+            linked_device,
+            43,
+        ));
+        assert_eq!(
+            core.logged_in.as_ref().unwrap().owner_pubkey,
+            owner.public_key()
+        );
+    }
+}
+
+#[test]
+fn pending_linked_device_requires_the_responding_device_in_the_owner_roster() {
+    let owner = Keys::generate();
+    let approver = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nostr_relay_urls.clear();
+    core.start_linked_device("");
+    let pending = core.pending_linked_device.as_ref().expect("pending link");
+    let linked_device = pending.device_keys.public_key();
+    let (_, response) = pending
+        .pairing_invite
+        .accept_with_owner(
+            approver.public_key(),
+            approver.secret_key().to_secret_bytes(),
+            Some(owner.public_key().to_hex()),
+            Some(owner.public_key()),
+        )
+        .expect("response claiming owner identity and device id");
+    core.handle_relay_event(nostr_double_ratchet::invite_response_event(&response).unwrap());
+    core.handle_relay_event(signed_app_keys_authorization_event(
+        &owner,
+        linked_device,
+        42,
+    ));
+    assert!(
+        core.logged_in.is_none(),
+        "the response's authenticated device identity must be authorized"
+    );
+
+    let roster = AppKeys::new(vec![
+        DeviceEntry::new(linked_device, 42),
+        DeviceEntry::new(approver.public_key(), 43),
+    ])
+    .get_event_at(owner.public_key(), 43)
+    .sign_with_keys(&owner)
+    .unwrap();
+    core.handle_relay_event(roster);
+    assert_eq!(
+        core.logged_in.as_ref().unwrap().owner_pubkey,
+        owner.public_key()
+    );
+}

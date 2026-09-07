@@ -358,18 +358,21 @@ internal fun copyAttachmentToCache(
     uri: Uri,
 ): PickedAttachment? {
     val resolver = context.contentResolver
-    val displayName = displayNameForUri(context, uri)
     val outputDir = File(context.cacheDir, "attachments/outgoing").apply { mkdirs() }
-    val outputFile = File(outputDir, "${UUID.randomUUID()}-$displayName")
+    var outputFile: File? = null
 
     return runCatching {
+        val displayName = displayNameForUri(context, uri)
+        val destination = File(outputDir, "${UUID.randomUUID()}-$displayName")
+        outputFile = destination
         resolver.openInputStream(uri)?.use { input ->
-            outputFile.outputStream().use { output ->
+            destination.outputStream().use { output ->
                 input.copyTo(output)
             }
         } ?: return null
-        PickedAttachment(outputFile.absolutePath, displayName)
+        PickedAttachment(destination.absolutePath, displayName)
     }.onFailure { error ->
+        outputFile?.delete()
         Log.w(ChatAttachmentsLogTag, "failed to copy attachment", error)
     }.getOrNull()
 }

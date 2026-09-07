@@ -41,7 +41,16 @@ pub fn proxied_image_url(
     if !is_http_url(&proxy_url) {
         return original_src.to_string();
     }
-    if input.starts_with(&proxy_base) {
+    // A string prefix also matches attacker-controlled hosts and userinfo.
+    // Only URLs within the configured proxy's origin and path are already proxied.
+    let proxy_path = proxy_url.path().trim_end_matches('/');
+    if source_url.origin() == proxy_url.origin()
+        && (source_url.path() == proxy_path
+            || source_url
+                .path()
+                .strip_prefix(proxy_path)
+                .is_some_and(|suffix| suffix.starts_with('/')))
+    {
         return original_src.to_string();
     }
 
@@ -200,6 +209,37 @@ mod tests {
         assert_eq!(
             proxied_image_url(input, &preferences, Some(64), Some(64), true),
             proxied
+        );
+    }
+
+    #[test]
+    fn lookalike_proxy_urls_are_still_proxied() {
+        let preferences = preferences();
+        for input in [
+            "https://imgproxy.iris.to.attacker.example/avatar.jpg",
+            "https://imgproxy.iris.to@attacker.example/avatar.jpg",
+            "https://imgproxy.iris.to:8443/avatar.jpg",
+        ] {
+            let proxied = proxied_image_url(input, &preferences, None, None, false);
+            assert_ne!(proxied, input);
+            assert!(proxied.starts_with("https://imgproxy.iris.to/"));
+            assert!(proxied.ends_with(&URL_SAFE_NO_PAD.encode(input.as_bytes())));
+        }
+    }
+
+    #[test]
+    fn proxy_path_must_match_at_a_segment_boundary() {
+        let mut preferences = preferences();
+        preferences.image_proxy_url = "https://images.example/proxy".to_string();
+        let existing = "https://images.example/proxy/signature/dpr:2/source";
+        assert_eq!(
+            proxied_image_url(existing, &preferences, None, None, false),
+            existing
+        );
+        let input = "https://images.example/proxy-other/avatar.jpg";
+        assert_ne!(
+            proxied_image_url(input, &preferences, None, None, false),
+            input
         );
     }
 
