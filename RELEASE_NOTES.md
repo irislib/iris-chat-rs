@@ -2,6 +2,31 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.7
+
+### GitHub
+
+- Hardened device linking, attachment imports, incoming event validation, and
+  private key storage.
+- Updated Hashtree dependencies, including secure update verification and
+  installation protections against unsafe paths and temporary-file links.
+- People search now shows only users with compatible messaging devices.
+- Added a default-off setting to load original images when the image proxy
+  fails, with a clear warning before enabling it.
+
+### Apple
+
+- Improved security when linking devices, opening attachments, and installing
+  updates.
+- People search now shows users who can receive messages.
+- Added an optional image-loading fallback when the image service is unavailable.
+
+### Zapstore
+
+- Improved security when linking devices and opening shared attachments.
+- People search now shows users who can receive messages.
+- Added an optional image-loading fallback when the image service is unavailable.
+
 ## v2026.9.5
 
 ### GitHub
