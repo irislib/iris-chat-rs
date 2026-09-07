@@ -469,24 +469,16 @@ enum AppPaths {
     static let appGroupIdentifier = "group.fi.siriusbusiness.irischat"
 
     static func appVersion(bundle: Bundle = .main) -> String {
-        // CFBundleShortVersionString gets stripped to 3 parts before reaching
-        // Apple, so reading it alone makes the update comparator think
-        // 2026.5.10.1 is newer than the running 2026.5.10. Reconstruct the
-        // optional 4th .build segment from CFBundleVersion (= the integer
-        // IRIS_APP_VERSION_CODE = major*10000 + minor*1000 + patch*100 + build);
-        // its last two digits are the build segment.
+        // The updater and About panel use the shared release tag, including
+        // its same-day revision, rather than Apple's packed marketing version.
         let short = (bundle.infoDictionary?["CFBundleShortVersionString"] as? String).flatMap {
             $0.isEmpty ? nil : $0
         }
         if let short {
-            if let buildString = bundle.infoDictionary?["CFBundleVersion"] as? String,
-               let code = Int(buildString) {
-                let buildSegment = code % 100
-                if buildSegment > 0 {
-                    return "\(short).\(buildSegment)"
-                }
-            }
-            return short
+            return irisReleaseVersion(
+                marketingVersion: short,
+                buildVersion: bundle.infoDictionary?["CFBundleVersion"] as? String
+            )
         }
         // Local dev builds skip release.env, so MARKETING_VERSION
         // substitutes to empty and the bundle plist carries no version.
@@ -2470,14 +2462,9 @@ final class AppManager: ObservableObject {
     }
 
     func buildSummaryText() -> String {
-        // Use the bundle's marketing version (CFBundleShortVersionString +
-        // .build segment from CFBundleVersion) — the same string Apple shows
-        // in App Store / TestFlight / Finder Get Info — and append the git
-        // short SHA pulled from the Rust core's build_summary("V (SHA)").
-        // The Rust APP_VERSION can silently fall back to CARGO_PKG_VERSION
-        // when a build path bypasses release.env (e.g. Xcode IDE build,
-        // manual cargo invocation), which would otherwise show "0.1.x"
-        // here even though the bundle plist is correct.
+        // Show the shared release tag recovered from bundle metadata and the
+        // core's Git revision. A locally built core may carry its crate version
+        // instead of the app release version.
         let version = AppPaths.appVersion()
         let coreSummary = buildSummary()
         if let openParen = coreSummary.lastIndex(of: "("),
