@@ -1546,9 +1546,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.4.14"
+version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cf47c0702a22c6db68a2f00836c3f6e3f31a767b9e5a46cffa55791919adbd7"
+checksum = "bc5f94c9b52578d48e26e59b8eb897364d0146547c44f6c72584c19fd3a0d012"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -1978,7 +1978,7 @@ checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 
 [[package]]
 name = "iris-chat"
-version = "0.1.44"
+version = "0.1.45"
 dependencies = [
  "anyhow",
  "async-trait",

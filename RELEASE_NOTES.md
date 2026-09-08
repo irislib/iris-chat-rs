@@ -2,6 +2,22 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.8.4
+
+### GitHub
+
+- Update the shared file transport to try additional peers on repeated requests, so a file held beyond the first four peers can be found.
+- Preserve the existing per-request attempt limit and deadlines, and report an incomplete search when peers remain untried.
+- Update iris-chat to 0.1.45 with hashtree-fips-transport 0.4.15.
+
+### Apple
+
+- Improved reliability when retrieving shared files from other devices.
+
+### Zapstore
+
+- Improved reliability when retrieving shared files from other devices.
+
 ## v2026.9.8.3
 
 ### GitHub

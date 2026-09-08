@@ -1,6 +1,6 @@
 [package]
 name = "iris-chat"
-version = "0.1.44"
+version = "0.1.45"
 edition = "2021"
 description = "Iris Chat command line client and shared encrypted chat core"
 license = "MIT"
@@ -48,7 +48,7 @@ fips-tcp-endpoint = { package = "nvpn-fips-tcp-endpoint", version = "=0.2.12" }
 hashtree-blossom = { version = "=0.2.82", default-features = false, features = ["store"] }
 hashtree-config = "=0.2.83"
 hashtree-core = "=0.2.89"
-hashtree-fips-transport = "=0.4.14"
+hashtree-fips-transport = "=0.4.15"
 hashtree-index = "=0.2.84"
 hashtree-network = "=0.2.87"
 hashtree-resolver = { version = "=0.2.83", features = ["nostr"] }
