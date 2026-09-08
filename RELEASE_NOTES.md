@@ -9,6 +9,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Update the shared file transport to try additional peers on repeated requests, so a file held beyond the first four peers can be found.
 - Preserve the existing per-request attempt limit and deadlines, and report an incomplete search when peers remain untried.
 - Update iris-chat to 0.1.45 with hashtree-fips-transport 0.4.15.
+- Publish the matching iris-chat-protocol 0.1.10 package and require it from the CLI, keeping registry builds on the same protocol API and ratchet dependency as the apps.
 
 ### Apple
 

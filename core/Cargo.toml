@@ -54,7 +54,7 @@ hashtree-network = "=0.2.87"
 hashtree-resolver = { version = "=0.2.83", features = ["nostr"] }
 hashtree-updater = { version = "=0.2.83", features = ["secure-nostr-blossom"] }
 hmac = "0.12"
-iris-chat-protocol = { version = "=0.1.9", path = "../chat-protocol" }
+iris-chat-protocol = { version = "=0.1.10", path = "../chat-protocol" }
 nostr = { version = "0.44.7", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
 nostr-pubsub = "=0.1.13"
