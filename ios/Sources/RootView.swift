@@ -398,9 +398,7 @@ struct RootView: View {
             VStack(spacing: 0) {
                 OfflineStatusBanner(
                     networkStatus: manager.state.networkStatus,
-                    nearbyService: manager.nearbyIris,
-                    bluetoothEnabled: manager.state.preferences.nearbyEnabled &&
-                        manager.state.preferences.nearbyBluetoothEnabled,
+                    isLoggedIn: !manager.bootstrapInFlight && manager.state.account != nil,
                     appSceneIsActive: manager.appSceneIsActive,
                     foregroundedAt: manager.lastForegroundedAt,
                     onTap: { openSettings(focusedSection: .messageServers) }

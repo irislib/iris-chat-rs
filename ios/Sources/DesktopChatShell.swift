@@ -12,18 +12,6 @@ import UIKit
 import PhotosUI
 #endif
 
-#if os(iOS) || os(macOS)
-func mobileWifiEnabled(_ service: IrisNearbyService) -> Bool {
-    service.isLanVisible && !mobileWifiBlockingStatuses.contains(service.lanStatus)
-}
-
-let mobileWifiBlockingStatuses: Set<String> = [
-    "No local network access",
-    "Local network unavailable",
-    "Local network failed"
-]
-#endif
-
 struct DesktopChatShell: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager

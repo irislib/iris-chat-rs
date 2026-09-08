@@ -69,7 +69,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.abs
-import kotlin.math.max
 import kotlinx.coroutines.delay
 import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.core.AppContainer
@@ -138,10 +137,6 @@ fun NdrApp(
     var showingNearbyIris by remember { mutableStateOf(false) }
     var offlineNowSecs by remember { mutableStateOf(System.currentTimeMillis() / 1_000L) }
     val shareNearbySnapshot by rememberNearbySnapshotState(container.nearbyIrisService)
-    val nearbySnapshotProvider =
-        remember(container.nearbyIrisService) {
-            { container.nearbyIrisService.snapshot }
-        }
     val openNearbyIris = {
         showingNearbyIris = true
     }
@@ -167,42 +162,19 @@ fun NdrApp(
         Toast.makeText(context, message, Toast.LENGTH_LONG).show()
     }
 
-    val offlineSinceSecs = networkStatus?.allRelaysOfflineSinceSecs?.toLong()
-    val allRelaysOffline =
-        networkStatus?.let { status ->
-            status.relayUrls.isNotEmpty() &&
-                status.connectedRelayCount == 0uL &&
-                offlineSinceSecs != null
-        } == true
-    LaunchedEffect(allRelaysOffline, offlineSinceSecs, foregroundedAtSecs) {
+    val isLoggedIn = bootstrapState is AccountBootstrapState.LoggedIn
+    val offlineDeadlineSecs = offlineBannerDeadlineSecs(networkStatus, isLoggedIn, foregroundedAtSecs)
+    LaunchedEffect(offlineDeadlineSecs) {
         val current = currentTimeSeconds()
         offlineNowSecs = current
-        val deadline =
-            offlineBannerDeadlineSecs(
-                allRelaysOffline = allRelaysOffline,
-                offlineSinceSecs = offlineSinceSecs,
-                foregroundedAtSecs = foregroundedAtSecs,
-            )
-        if (deadline != null && current < deadline) {
-            delay((deadline - current) * 1_000L)
+        if (offlineDeadlineSecs != null && current < offlineDeadlineSecs) {
+            delay((offlineDeadlineSecs - current) * 1_000L)
             offlineNowSecs = currentTimeSeconds()
         }
     }
     val offlineBannerState =
-        if (
-            allRelaysOffline &&
-            offlineSinceSecs != null &&
-            offlineNowSecs.saturatingSubtract(offlineSinceSecs) >= OFFLINE_BANNER_GRACE_SECS &&
-            offlineNowSecs.saturatingSubtract(foregroundedAtSecs) >= OFFLINE_BANNER_GRACE_SECS
-        ) {
-            val nearbySnapshot = nearbySnapshotProvider()
-            val bluetoothState =
-                if (preferences.nearbyEnabled && preferences.nearbyBluetoothEnabled) "on" else "off"
-            val wifiState = if (nearbyWifiEnabled(nearbySnapshot)) "on" else "off"
-            IrisOfflineBannerState("Offline · Bluetooth $bluetoothState · Wi-Fi $wifiState")
-        } else {
-            null
-        }
+        offlineStatusBannerText(networkStatus, isLoggedIn, foregroundedAtSecs, offlineNowSecs)
+            ?.let { IrisOfflineBannerState(it) }
 
     val activeScreen = router.screenStack.lastOrNull() ?: router.defaultScreen
     val activeRoute =
@@ -1158,33 +1130,4 @@ private fun nearbyPeerResolvedName(
     return peer.name.trim().ifEmpty { "Nearby" }
 }
 
-private fun nearbyWifiEnabled(snapshot: IrisNearbyService.Snapshot): Boolean =
-    snapshot.localNetworkVisible &&
-        snapshot.localNetworkStatus in nearbyWifiOnStatuses
-
-private val nearbyWifiOnStatuses =
-    setOf(
-        "Visible",
-        "Connected",
-    )
-
-private fun Long.saturatingSubtract(other: Long): Long =
-    if (this >= other) this - other else 0L
-
 private fun currentTimeSeconds(): Long = System.currentTimeMillis() / 1_000L
-
-private fun offlineBannerDeadlineSecs(
-    allRelaysOffline: Boolean,
-    offlineSinceSecs: Long?,
-    foregroundedAtSecs: Long,
-): Long? {
-    if (!allRelaysOffline || offlineSinceSecs == null) {
-        return null
-    }
-    return max(
-        offlineSinceSecs + OFFLINE_BANNER_GRACE_SECS,
-        foregroundedAtSecs + OFFLINE_BANNER_GRACE_SECS,
-    )
-}
-
-private const val OFFLINE_BANNER_GRACE_SECS = 30L

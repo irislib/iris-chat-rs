@@ -432,8 +432,7 @@ struct OfflineStatusBanner: View {
     @Environment(\.irisPalette) private var palette
 
     let networkStatus: NetworkStatusSnapshot?
-    @ObservedObject var nearbyService: IrisNearbyService
-    let bluetoothEnabled: Bool
+    let isLoggedIn: Bool
     let appSceneIsActive: Bool
     let foregroundedAt: Date
     let onTap: () -> Void
@@ -444,14 +443,9 @@ struct OfflineStatusBanner: View {
         Button(action: onTap) {
             VStack(spacing: 0) {
                 if let text {
-                    // Glass capsule with a small accentAlt offline
-                    // icon — the previous full-width orange bar
-                    // screamed at the user every time a relay
-                    // blipped. Carrying the warning in the icon
-                    // alone keeps the banner readable without
-                    // dominating the screen.
+                    // Keep temporary server outages visible without dominating the screen.
                     HStack(spacing: 6) {
-                        Image(systemName: "wifi.slash")
+                        Image(systemName: "exclamationmark.icloud.fill")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(palette.accentAlt)
                         Text(text)
@@ -487,8 +481,7 @@ struct OfflineStatusBanner: View {
     private func bannerText(at date: Date) -> String? {
         offlineStatusBannerText(
             networkStatus: networkStatus,
-            bluetoothOn: bluetoothEnabled,
-            wifiOn: mobileWifiEnabled(nearbyService),
+            isLoggedIn: isLoggedIn,
             appSceneIsActive: appSceneIsActive,
             foregroundedAt: foregroundedAt,
             now: date
@@ -497,18 +490,17 @@ struct OfflineStatusBanner: View {
 
     private var refreshToken: String {
         [
+            isLoggedIn ? "logged-in" : "logged-out",
             appSceneIsActive ? "active" : "inactive",
             String(networkStatus?.connectedRelayCount ?? 0),
             String(networkStatus?.allRelaysOfflineSinceSecs ?? 0),
             networkStatus?.relayConnections.map { "\($0.url)=\($0.status)" }.joined(separator: ",") ?? "",
             String(foregroundedAt.timeIntervalSince1970),
-            bluetoothEnabled ? "bt-on" : "bt-off",
-            mobileWifiEnabled(nearbyService) ? "wifi-on" : "wifi-off",
         ].joined(separator: "|")
     }
 
     private func nextRefreshDate(at date: Date) -> Date? {
-        guard appSceneIsActive,
+        guard isLoggedIn, appSceneIsActive,
               let status = networkStatus,
               offlineStatusBannerShouldConsiderOffline(status),
               let offlineSince = status.allRelaysOfflineSinceSecs else {
@@ -543,13 +535,12 @@ struct OfflineStatusBanner: View {
 
 func offlineStatusBannerText(
     networkStatus: NetworkStatusSnapshot?,
-    bluetoothOn: Bool,
-    wifiOn: Bool,
+    isLoggedIn: Bool,
     appSceneIsActive: Bool,
     foregroundedAt: Date,
     now date: Date
 ) -> String? {
-    guard appSceneIsActive,
+    guard isLoggedIn, appSceneIsActive,
           let status = networkStatus,
           offlineStatusBannerShouldConsiderOffline(status),
           let offlineSince = status.allRelaysOfflineSinceSecs,
@@ -557,7 +548,7 @@ func offlineStatusBannerText(
           date.timeIntervalSince(foregroundedAt) >= offlineBannerGraceInterval else {
         return nil
     }
-    return "Offline, Bluetooth \(bluetoothOn ? "on" : "off"), Wi-Fi \(wifiOn ? "on" : "off")"
+    return "Can’t reach message servers"
 }
 
 private func offlineStatusBannerShouldConsiderOffline(_ status: NetworkStatusSnapshot) -> Bool {
