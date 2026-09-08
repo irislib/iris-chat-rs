@@ -2,7 +2,7 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
-## v2026.9.8.1
+## v2026.9.8.2
 
 ### GitHub
 
