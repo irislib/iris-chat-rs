@@ -129,7 +129,10 @@ build_release_artifacts() {
   ensure_local_properties
   (
     cd "$ANDROID_DIR"
-    ./gradlew :app:bundleRelease :app:assembleSelfHosted
+    # The two release variants can exceed the default 2 GiB heap during dexing.
+    ./gradlew --max-workers=2 \
+      '-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8' \
+      :app:bundleRelease :app:assembleSelfHosted
   )
 
   copy_artifact "$(latest_artifact bundle/release aab)" release aab
