@@ -894,6 +894,51 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
 #endif
     }
 
+    func testTappingNearbyPreviewPeerOpensChat() throws {
+#if os(macOS)
+        throw XCTSkip("Mobile nearby preview regression")
+#else
+        let app = launchNearbyFixtureApp(firstPeerOwnerHex: "fx-chat-1")
+        XCTAssertTrue(waitForChatList(app, timeout: 30))
+        let peer = element(app, "nearbyPreviewPeer-fx-near-1")
+        XCTAssertTrue(peer.waitForExistence(timeout: 10))
+        XCTAssertTrue(peer.isHittable)
+        let preview = XCTAttachment(screenshot: app.screenshot())
+        preview.name = "nearby-preview-before-tap"
+        preview.lifetime = .keepAlways
+        add(preview)
+        peer.tap()
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10),
+                      "tapping the nearby user icon in the chat list should open their chat")
+        assertNoDispatchFailureToast(app)
+        let chat = XCTAttachment(screenshot: app.screenshot())
+        chat.name = "nearby-preview-opened-chat"
+        chat.lifetime = .keepAlways
+        add(chat)
+#endif
+    }
+
+    func testTappingUnknownNearbyPreviewPeerOpensProfile() throws {
+#if os(macOS)
+        throw XCTSkip("Mobile nearby preview regression")
+#else
+        let peerHex = String(repeating: "ab", count: 32)
+        let app = launchNearbyFixtureApp(firstPeerOwnerHex: peerHex)
+        XCTAssertTrue(waitForChatList(app, timeout: 30))
+        let peer = element(app, "nearbyPreviewPeer-fx-near-1")
+        XCTAssertTrue(peer.waitForExistence(timeout: 10))
+        XCTAssertTrue(peer.isHittable)
+        peer.tap()
+        XCTAssertTrue(element(app, "directChatCopyUserIdButton").waitForExistence(timeout: 10),
+                      "a nearby user without an existing chat should open their profile")
+        assertNoDispatchFailureToast(app)
+        let profile = XCTAttachment(screenshot: app.screenshot())
+        profile.name = "nearby-preview-opened-profile"
+        profile.lifetime = .keepAlways
+        add(profile)
+#endif
+    }
+
     /// Regression: tapping a nearby peer must navigate into a chat with
     /// them, not just create a chat-list row. The previous implementation
     /// dispatched `.createChat`, which has no optimistic-navigation path,

@@ -692,6 +692,165 @@ mod tests {
     }
 
     #[test]
+    fn relay_identity_updates_refresh_an_existing_nearby_link() {
+        let (_alice_dir, alice, alice_owner, alice_device) = test_peer_bootstrap();
+        let bob_dir = tempfile::TempDir::new().unwrap();
+        let (updates_tx, updates_rx) = flume::unbounded();
+        let mut bob = AppCore::new(
+            updates_tx,
+            flume::unbounded().0,
+            bob_dir.path().to_string_lossy().to_string(),
+            Arc::new(RwLock::new(AppState::empty())),
+        );
+        bob.create_account("Bob");
+        bob.handle_internal(InternalEvent::FipsNearbyPeersChanged(vec![
+            crate::updates::FipsNearbyLinkSnapshot {
+                device_pubkey_hex: alice_device.clone(),
+                transport_type: "BLE".to_string(),
+            },
+        ]));
+        while updates_rx.try_recv().is_ok() {}
+
+        let app_keys = alice
+            .local_fips_nearby_bootstrap_payloads()
+            .into_iter()
+            .filter_map(|payload| FipsNearbyPacket::decode(&payload))
+            .filter_map(|packet| match packet {
+                FipsNearbyPacket::Event { event_json, .. } => {
+                    serde_json::from_str::<Event>(&event_json).ok()
+                }
+                _ => None,
+            })
+            .find(is_app_keys_event)
+            .unwrap();
+        bob.handle_relay_event(app_keys);
+        let identified = updates_rx
+            .try_iter()
+            .filter_map(|update| match update {
+                AppUpdate::NearbyPeersChanged { snapshot, .. } => Some(snapshot),
+                _ => None,
+            })
+            .last()
+            .expect("relay device list must refresh the nearby user ID");
+        assert_eq!(
+            identified.peers[0].owner_pubkey_hex.as_deref(),
+            Some(alice_owner.to_hex().as_str())
+        );
+
+        let metadata = EventBuilder::new(
+            Kind::Metadata,
+            serde_json::json!({
+                "name": "Alice", "picture": "https://example.com/alice.jpg"
+            })
+            .to_string(),
+        )
+        .sign_with_keys(
+            alice
+                .logged_in
+                .as_ref()
+                .unwrap()
+                .owner_keys
+                .as_ref()
+                .unwrap(),
+        )
+        .unwrap();
+        bob.handle_relay_event(metadata);
+        let profiled = updates_rx
+            .try_iter()
+            .filter_map(|update| match update {
+                AppUpdate::NearbyPeersChanged { snapshot, .. } => Some(snapshot),
+                _ => None,
+            })
+            .last()
+            .expect("relay metadata must refresh the nearby name and photo");
+        assert_eq!(profiled.peers[0].id, alice_device);
+        assert_eq!(profiled.peers[0].name, "Alice");
+        assert_eq!(
+            profiled.peers[0].picture_url.as_deref(),
+            Some("https://example.com/alice.jpg")
+        );
+    }
+
+    #[test]
+    fn seen_peer_app_keys_recover_missing_protocol_roster() {
+        let (_alice_dir, alice, alice_owner, alice_device) = test_peer_bootstrap();
+        let bob_dir = tempfile::TempDir::new().unwrap();
+        let mut bob = AppCore::new(
+            flume::unbounded().0,
+            flume::unbounded().0,
+            bob_dir.path().to_string_lossy().to_string(),
+            Arc::new(RwLock::new(AppState::empty())),
+        );
+        bob.create_account("Bob");
+        let payloads = alice.local_fips_nearby_bootstrap_payloads();
+        // The app's event history can outlive the protocol's verified roster
+        // (for example when an older stored roster is quarantined on upgrade).
+        for packet in payloads
+            .iter()
+            .filter_map(|payload| FipsNearbyPacket::decode(payload))
+        {
+            if let FipsNearbyPacket::Event {
+                event_id,
+                event_json,
+                ..
+            } = packet
+            {
+                let event: Event = serde_json::from_str(&event_json).unwrap();
+                if is_app_keys_event(&event) {
+                    bob.app_keys.insert(
+                        alice_owner.to_hex(),
+                        known_app_keys_from_ndr(
+                            alice_owner,
+                            &AppKeys::from_event(&event).unwrap(),
+                            event.created_at.as_secs(),
+                        ),
+                    );
+                    bob.remember_event(event_id);
+                }
+            }
+        }
+        assert_eq!(
+            bob.protocol_engine
+                .as_ref()
+                .unwrap()
+                .direct_send_readiness(alice_owner),
+            DirectSendReadiness::MissingPeerAppKeys
+        );
+        bob.send_direct_message(
+            &alice_owner.to_hex(),
+            "waiting for identity",
+            unix_now(),
+            None,
+        );
+        assert_eq!(
+            bob.threads[&alice_owner.to_hex()].messages[0].delivery,
+            DeliveryState::Queued
+        );
+        for payload in &payloads {
+            bob.handle_fips_nearby_packet(&alice_device, FIPS_NEARBY_PORT, payload);
+        }
+        assert_eq!(
+            bob.protocol_engine
+                .as_ref()
+                .unwrap()
+                .direct_send_readiness(alice_owner),
+            DirectSendReadiness::Ready
+        );
+        assert!(!bob.threads[&alice_owner.to_hex()].messages[0]
+            .delivery_trace
+            .outer_event_ids
+            .is_empty());
+        let applied = bob.debug_event_counters.app_keys_events;
+        for payload in payloads {
+            bob.handle_fips_nearby_packet(&alice_device, FIPS_NEARBY_PORT, &payload);
+        }
+        assert_eq!(
+            bob.debug_event_counters.app_keys_events, applied,
+            "duplicates should be skipped again after the signed roster is recovered"
+        );
+    }
+
+    #[test]
     fn exact_fips_bootstrap_makes_peer_ready_and_drains_queued_direct_message() {
         let (_alice_dir, alice, alice_owner, alice_device) = test_peer_bootstrap();
         let bootstrap_payloads = alice.local_fips_nearby_bootstrap_payloads();

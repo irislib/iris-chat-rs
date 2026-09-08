@@ -27,15 +27,22 @@ impl AppCore {
                 .is_some_and(|engine| engine.is_known_group_sender_event_author(event.pubkey));
         let should_try_group_sender_key_event =
             kind == MESSAGE_EVENT_KIND && (!message_has_header || is_known_group_sender_key_event);
-        let must_reapply_local_app_keys = is_app_keys_protocol_event
+        let already_seen = self.has_seen_event(&event_id);
+        let must_reapply_app_keys = already_seen
+            && is_app_keys_protocol_event
             && self.logged_in.as_ref().is_some_and(|logged_in| {
-                logged_in.owner_pubkey == event.pubkey
-                    && self.protocol_engine.as_ref().is_some_and(|engine| {
-                        engine.direct_send_readiness(logged_in.owner_pubkey)
-                            == DirectSendReadiness::MissingLocalAppKeys
-                    })
+                self.protocol_engine.as_ref().is_some_and(|engine| {
+                    let missing = if logged_in.owner_pubkey == event.pubkey {
+                        DirectSendReadiness::MissingLocalAppKeys
+                    } else {
+                        DirectSendReadiness::MissingPeerAppKeys
+                    };
+                    engine.direct_send_readiness(event.pubkey) == missing
+                })
             });
-        if self.has_seen_event(&event_id) && !must_reapply_local_app_keys {
+        // Event history can survive a protocol reset or roster migration.
+        // Re-ingest signed device lists until the protocol has usable evidence.
+        if already_seen && !must_reapply_app_keys {
             // Only persist + rebuild + emit when the transport-channel
             // set actually grew. Without this guard, every mirrored
             // relay re-delivery of an already-seen event burns a full
@@ -658,6 +665,9 @@ impl AppCore {
         }
         if should_publish_backfilled_owner_app_keys {
             self.publish_local_app_keys();
+        }
+        if app_keys_changed && !self.fips_nearby_links.is_empty() {
+            self.emit_fips_nearby_peers();
         }
         Ok(true)
     }
