@@ -3,10 +3,10 @@ fn configure_test_device_sync_profile(
     owner: &Keys,
     local_device: &Keys,
     sibling_device: &Keys,
-    relay_url: &str,
+    relay_url: Option<&str>,
 ) {
     core.logged_in.as_mut().expect("logged in").relay_urls =
-        relay_urls_from_strings(&[relay_url.to_string()]);
+        relay_urls_from_strings(&relay_url.into_iter().map(str::to_string).collect::<Vec<_>>());
     let owner_hex = owner.public_key().to_hex();
     core.app_keys.insert(
         owner_hex.clone(),
@@ -106,7 +106,8 @@ fn has_device_sync_message(core: &AppCore, chat_id: &str, message_id: &str) -> b
 }
 
 fn wait_for_device_sync_message(
-    sender: &AppCore,
+    sender: &mut AppCore,
+    sender_messages: &flume::Receiver<CoreMsg>,
     receiver: &mut AppCore,
     messages: &flume::Receiver<CoreMsg>,
     link: [(&fips_core::FipsEndpoint, &fips_core::PeerIdentity); 2],
@@ -117,6 +118,9 @@ fn wait_for_device_sync_message(
     let deadline = std::time::Instant::now() + Duration::from_secs(10) + stable_for;
     let mut first_seen = None;
     loop {
+        while let Ok(message) = sender_messages.try_recv() {
+            sender.handle_message(message);
+        }
         while let Ok(message) = messages.try_recv() {
             receiver.handle_message(message);
         }
@@ -141,10 +145,19 @@ fn wait_for_device_sync_message(
 
 #[test]
 fn device_sync_websocket_authenticates_siblings_and_rejects_non_siblings() {
+    device_sync_websocket_scenario(true);
+}
+
+#[test]
+fn device_sync_websocket_without_relays_authenticates_siblings_and_rejects_non_siblings() {
+    device_sync_websocket_scenario(false);
+}
+
+fn device_sync_websocket_scenario(use_relay: bool) {
     const UNAUTHORIZED_PORT: u16 = 47_002;
     const SOURCE_PORT: u16 = 47_000;
-    let relay = crate::local_relay::TestRelay::start();
-    assert!(!relay.url().is_empty(), "test relay should start");
+    let relay = use_relay.then(crate::local_relay::TestRelay::start);
+    let relay_url = relay.as_ref().map(|relay| relay.url());
     let owner = Keys::generate();
     let alice = test_keys_with_compressed_prefix(0x03);
     let bob = test_keys_with_compressed_prefix(0x02);
@@ -152,14 +165,14 @@ fn device_sync_websocket_authenticates_siblings_and_rejects_non_siblings() {
         logged_in_test_core_with_updates("device-sync-relay-alice", &owner, &alice);
     let (mut bob_core, _bob_updates, _bob_temp) =
         logged_in_test_core_with_updates("device-sync-relay-bob", &owner, &bob);
-    let (alice_core_tx, _alice_core_rx) = flume::unbounded();
+    let (alice_core_tx, alice_core_rx) = flume::unbounded();
     alice_core.core_sender = alice_core_tx.clone();
     alice_core.priority_sender = alice_core_tx;
     let (bob_core_tx, bob_core_rx) = flume::unbounded();
     bob_core.core_sender = bob_core_tx.clone();
     bob_core.priority_sender = bob_core_tx;
-    configure_test_device_sync_profile(&mut alice_core, &owner, &alice, &bob, relay.url());
-    configure_test_device_sync_profile(&mut bob_core, &owner, &bob, &alice, relay.url());
+    configure_test_device_sync_profile(&mut alice_core, &owner, &alice, &bob, relay_url);
+    configure_test_device_sync_profile(&mut bob_core, &owner, &bob, &alice, relay_url);
 
     let websocket_addr = reserve_tcp_addr();
     alice_core.reconcile_device_sync_with_websocket_for_test(
@@ -227,7 +240,8 @@ fn device_sync_websocket_authenticates_siblings_and_rejects_non_siblings() {
         None,
     );
     wait_for_device_sync_message(
-        &alice_core,
+        &mut alice_core,
+        &alice_core_rx,
         &mut bob_core,
         &bob_core_rx,
         link,
@@ -245,7 +259,8 @@ fn device_sync_websocket_authenticates_siblings_and_rejects_non_siblings() {
         None,
     );
     wait_for_device_sync_message(
-        &alice_core,
+        &mut alice_core,
+        &alice_core_rx,
         &mut bob_core,
         &bob_core_rx,
         link,
@@ -263,9 +278,14 @@ fn device_sync_websocket_authenticates_siblings_and_rejects_non_siblings() {
         &attacker_owner,
         &attacker,
         &alice,
-        relay.url(),
+        relay_url,
     );
-    attacker_core.reconcile_device_sync();
+    attacker_core.reconcile_device_sync_with_websocket_for_test(
+        fips_core::config::WebSocketConfig {
+            seed_urls: vec![format!("ws://{websocket_addr}/fips")],
+            ..Default::default()
+        },
+    );
     let attacker_endpoint = attacker_core
         .device_sync_endpoint_for_test()
         .expect("attacker FIPS endpoint");

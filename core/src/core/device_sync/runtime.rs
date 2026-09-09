@@ -91,8 +91,7 @@ impl AppCore {
         let host_ble_requested = self.pending_host_ble.is_some() || self.host_ble_attached;
         let (config, device_sync_enabled) = match self.device_sync_config() {
             Some(config) => {
-                let device_sync_enabled =
-                    !config.siblings.is_empty() && !config.relay_urls.is_empty();
+                let device_sync_enabled = !config.siblings.is_empty();
                 (config, device_sync_enabled)
             }
             None if options.same_host_hashtree => {
@@ -595,9 +594,6 @@ impl AppCore {
         if siblings.is_empty() && !ble_requested && !nearby_ip_enabled {
             return None;
         }
-        if relay_urls.is_empty() && !ble_requested && !nearby_ip_enabled {
-            return None;
-        }
         let key = format!(
             "{}:{}:{}:{}:{}:{}",
             owner_hex,
@@ -618,7 +614,8 @@ impl AppCore {
             roster_at,
             secret_hex: logged_in.device_keys.secret_key().to_secret_hex(),
             relay_urls,
-            relay_client: Some(logged_in.client.clone()),
+            relay_client: (!logged_in.relay_urls.is_empty())
+                .then(|| logged_in.client.clone()),
             siblings,
             peers,
             nearby_ip_enabled,
