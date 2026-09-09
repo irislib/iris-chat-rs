@@ -16,6 +16,7 @@ https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz
   send messages.
 - Attachments, profile pictures, notifications, and support bundles.
 - Nearby chat over Wi-Fi/LAN and Bluetooth.
+- Signed chat events and attachment reads over known native FIPS mesh peers.
 - Desktop open-at-login on macOS, Linux, and Windows.
 - Share to iris chat from Android, iOS, and macOS.
 - Search and choose one or more recipients.
@@ -29,6 +30,9 @@ https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz
 - Android, iOS, and macOS are the most active app targets.
 - Linux and Windows are buildable and releaseable, with lighter acceptance
   coverage.
+
+See [native mesh connections](docs/native-mesh.md) for routing scope and explicit
+peer configuration.
 
 ## Repo
 

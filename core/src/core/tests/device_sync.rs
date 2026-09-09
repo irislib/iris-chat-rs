@@ -106,10 +106,8 @@ fn has_device_sync_message(core: &AppCore, chat_id: &str, message_id: &str) -> b
 }
 
 fn wait_for_device_sync_message(
-    sender: &mut AppCore,
-    sender_messages: &flume::Receiver<CoreMsg>,
-    receiver: &mut AppCore,
-    messages: &flume::Receiver<CoreMsg>,
+    (sender, sender_messages): (&mut AppCore, &flume::Receiver<CoreMsg>),
+    (receiver, messages): (&mut AppCore, &flume::Receiver<CoreMsg>),
     link: [(&fips_core::FipsEndpoint, &fips_core::PeerIdentity); 2],
     chat_id: &str,
     message_id: &str,
@@ -240,10 +238,8 @@ fn device_sync_websocket_scenario(use_relay: bool) {
         None,
     );
     wait_for_device_sync_message(
-        &mut alice_core,
-        &alice_core_rx,
-        &mut bob_core,
-        &bob_core_rx,
+        (&mut alice_core, &alice_core_rx),
+        (&mut bob_core, &bob_core_rx),
         link,
         &sync_chat_id,
         "websocket-device-sync-message",
@@ -259,10 +255,8 @@ fn device_sync_websocket_scenario(use_relay: bool) {
         None,
     );
     wait_for_device_sync_message(
-        &mut alice_core,
-        &alice_core_rx,
-        &mut bob_core,
-        &bob_core_rx,
+        (&mut alice_core, &alice_core_rx),
+        (&mut bob_core, &bob_core_rx),
         link,
         &sync_chat_id,
         "stable-websocket-device-sync-message",

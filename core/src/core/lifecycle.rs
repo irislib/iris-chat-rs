@@ -172,6 +172,7 @@ impl AppCore {
             },
             CoreMsg::Internal(event) => match event.as_ref() {
                 InternalEvent::RelayEvent(_) => "RelayEvent",
+                InternalEvent::MeshEvent(_) => "MeshEvent",
                 InternalEvent::FipsNearbyPacket { .. } => "FipsNearbyPacket",
                 InternalEvent::FipsNearbyPeersChanged(_) => "FipsNearbyPeersChanged",
                 InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
@@ -609,6 +610,9 @@ impl AppCore {
         match event {
             InternalEvent::RelayEvent(event) => {
                 self.handle_relay_event_with_channel(event, "message servers");
+            }
+            InternalEvent::MeshEvent(event) => {
+                self.handle_relay_event_with_channel(event, "FIPS mesh");
             }
             InternalEvent::FipsNearbyPacket {
                 source_pubkey_hex,

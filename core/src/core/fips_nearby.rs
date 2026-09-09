@@ -215,6 +215,9 @@ impl AppCore {
         let Some(runtime) = self.device_sync.as_ref() else {
             return;
         };
+        if !runtime.nearby_enabled {
+            return;
+        }
         let endpoint = runtime.endpoint.clone();
         let Some(payload) = encode_fips_nearby_event(event) else {
             return;

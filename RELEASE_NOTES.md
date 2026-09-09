@@ -2,6 +2,27 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.9
+
+### GitHub
+
+- Carry signed Chat protocol events and attachment reads across known native FIPS peers, including routes through peers outside the conversation.
+- Keep mesh subscriptions active across peer changes and retain the existing message encryption, signature checks, and device authorization.
+- Keep linked-device sync available with no message servers configured and recover interrupted shared file reads through updated Hashtree dependencies.
+- Refresh nearby identities and recover missing peer device lists; avoid showing an offline warning before login.
+
+### Apple
+
+- Improved direct device connections and recovery after a connection drops.
+- Improved shared file downloads and nearby contact discovery.
+- Fixed an offline warning appearing before sign-in.
+
+### Zapstore
+
+- Improved direct device connections and recovery after a connection drops.
+- Improved shared file downloads and nearby contact discovery.
+- Fixed an offline warning appearing before sign-in.
+
 ## v2026.9.8.4
 
 ### GitHub

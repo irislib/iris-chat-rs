@@ -28,6 +28,9 @@ pub use actions::AppAction;
 #[cfg(feature = "stack-fixture")]
 #[doc(hidden)]
 pub use core::download_hashtree_attachment;
+#[cfg(feature = "stack-fixture")]
+#[doc(hidden)]
+pub mod stack_mesh_fixture;
 pub use desktop_nearby::*;
 pub use desktop_update::*;
 pub use emoji::*;

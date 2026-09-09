@@ -20,22 +20,35 @@ const DEFAULT_WEBSOCKET_SEED_URLS: &[&str] = &[
     "wss://fips1.iris.to/fips", // lnvps
 ];
 
+#[derive(Default)]
 struct SharedFipsOptions {
     same_host_hashtree: bool,
     rendezvous_addr: Option<SocketAddrV4>,
     standalone_route: Option<Arc<dyn BlobRoute>>,
     additional_peers: Vec<PeerConfig>,
     websocket: Option<WebSocketConfig>,
+    routed_peers: Vec<FipsPeerIdentity>,
+    udp_bind_addr: Option<String>,
 }
 
 impl AppCore {
     pub(in crate::core) fn reconcile_device_sync(&mut self) {
+        let (additional_peers, routed_peers) = match super::settings::configured_peer_hints() {
+            Ok(peers) => peers,
+            Err(error) => {
+                self.push_debug_log("fips.config.error", error);
+                return;
+            }
+        };
         self.reconcile_shared_fips(SharedFipsOptions {
             same_host_hashtree: same_host_hashtree_enabled(),
-            rendezvous_addr: None,
-            standalone_route: None,
-            additional_peers: Vec::new(),
+            additional_peers,
+            routed_peers,
+            udp_bind_addr: std::env::var("IRIS_CHAT_FIPS_UDP_BIND_ADDR")
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
             websocket: configured_websocket_seeds(),
+            ..SharedFipsOptions::default()
         });
     }
 
@@ -50,6 +63,7 @@ impl AppCore {
             standalone_route: None,
             additional_peers: Vec::new(),
             websocket: Some(websocket),
+            ..SharedFipsOptions::default()
         });
     }
 
@@ -66,6 +80,7 @@ impl AppCore {
             standalone_route: Some(standalone_route),
             additional_peers,
             websocket: None,
+            ..SharedFipsOptions::default()
         });
     }
 
@@ -89,7 +104,7 @@ impl AppCore {
 
     fn reconcile_shared_fips(&mut self, options: SharedFipsOptions) {
         let host_ble_requested = self.pending_host_ble.is_some() || self.host_ble_attached;
-        let (config, device_sync_enabled) = match self.device_sync_config() {
+        let (mut config, device_sync_enabled) = match self.device_sync_config() {
             Some(config) => {
                 let device_sync_enabled = !config.siblings.is_empty();
                 (config, device_sync_enabled)
@@ -106,6 +121,11 @@ impl AppCore {
                 return;
             }
         };
+        for peer in &options.routed_peers {
+            if !config.peers.contains(peer) {
+                config.peers.push(*peer);
+            }
+        }
         let nearby_enabled = host_ble_requested || config.nearby_ip_enabled;
         let discovery_scope = if nearby_enabled {
             super::super::fips_nearby::FIPS_NEARBY_SCOPE.to_string()
@@ -113,8 +133,14 @@ impl AppCore {
             format!("{DEVICE_SYNC_SCOPE_PREFIX}{}", config.owner_hex)
         };
         let runtime_key = format!(
-            "{}:same-host={}:nearby={}:ble={}",
-            config.key, options.same_host_hashtree, nearby_enabled, host_ble_requested
+            "{}:same-host={}:nearby={}:ble={}:routed={:?}:static={:?}:udp={:?}",
+            config.key,
+            options.same_host_hashtree,
+            nearby_enabled,
+            host_ble_requested,
+            options.routed_peers,
+            options.additional_peers,
+            options.udp_bind_addr
         );
         let refreshed_bootstrap = self
             .host_ble_attached
@@ -123,6 +149,17 @@ impl AppCore {
             if let Some(runtime) = self.device_sync.as_mut() {
                 runtime.key = runtime_key;
                 runtime.siblings = config.siblings.clone();
+                if let Some(pubsub) = &runtime.pubsub {
+                    if let Err(error) = pubsub.set_routed_peers(super::settings::routed_peer_ids(
+                        &config.siblings,
+                        &config.peers,
+                    )) {
+                        crate::perflog!("fips.pubsub.peer_refresh error={error}");
+                    }
+                }
+                if let Some(blobs) = &runtime._attachment_blobs {
+                    blobs.set_peers(config.peers.clone());
+                }
                 if let Ok(mut payloads) = runtime.nearby_bootstrap_payloads.write() {
                     *payloads = refreshed_bootstrap.unwrap_or_default();
                 }
@@ -135,6 +172,7 @@ impl AppCore {
                         ..PeerConfig::default()
                     })
                     .collect::<Vec<_>>();
+                peer_config.extend(options.additional_peers);
                 if let Some(recent_peers) = &runtime.recent_peers {
                     if let Ok(recent_peers) = recent_peers.read() {
                         recent_peers.merge_into(&mut peer_config);
@@ -219,6 +257,15 @@ impl AppCore {
             fips_config.node.discovery.nostr.advertise = false;
         }
         configure_fips_lan(&mut fips_config, config.nearby_ip_enabled);
+        if let Some(bind_addr) = options.udp_bind_addr {
+            fips_config.transports.udp = TransportInstances::Single(UdpConfig {
+                bind_addr: Some(bind_addr),
+                advertise_on_nostr: Some(false),
+                public: Some(false),
+                accept_connections: Some(true),
+                ..UdpConfig::default()
+            });
+        }
         let rendezvous_addr = match (options.same_host_hashtree, options.rendezvous_addr) {
             (_, Some(address)) => Some(address),
             (true, None) => match configured_local_rendezvous_addr() {
@@ -308,7 +355,7 @@ impl AppCore {
         } else {
             None
         };
-        let (tcp, update_pubsub, update_relay_pubsub, mut tasks) = if device_sync_enabled {
+        let (tcp, mut tasks) = if device_sync_enabled {
             let Some((request, resync_required)) = device_sync_packets else {
                 let _ = self.runtime.block_on(endpoint.shutdown());
                 return;
@@ -329,56 +376,73 @@ impl AppCore {
                     return;
                 }
             };
-            let update_pubsub = match self.runtime.block_on(FipsPubsubClient::start(
-                endpoint.clone(),
-                FipsPubsubClientOptions::default(),
-            )) {
-                Ok(client) => Some(Arc::new(client)),
-                Err(error) => {
-                    self.push_debug_log("update.pubsub.start.error", error.to_string());
-                    None
-                }
-            };
-            let update_relay_pubsub = config.relay_client.clone().and_then(|client| {
-                match self.runtime.block_on(RelayEventBus::with_client(
-                    client,
-                    config.relay_urls.clone(),
-                    Duration::from_secs(8),
-                )) {
-                    Ok(pubsub) => Some(Arc::new(pubsub)),
-                    Err(error) => {
-                        self.push_debug_log("update.pubsub.relay.start.error", error.to_string());
-                        None
-                    }
-                }
-            });
-            let update_filter = match crate::update_announcements::update_announcement_filter() {
-                Ok(filter) => Some(filter),
-                Err(error) => {
-                    self.push_debug_log("update.pubsub.filter.error", error.to_string());
-                    None
-                }
-            };
-            let mut tasks = vec![tcp_task];
-            if let (Some(pubsub), Some(filter)) = (&update_pubsub, &update_filter) {
-                let pubsub = pubsub.clone();
-                let endpoint = endpoint.clone();
-                let filter = filter.clone();
-                tasks.push(self.runtime.spawn(async move {
-                    run_update_announcement_subscription(endpoint, pubsub, filter).await;
-                }));
-            }
-            if let (Some(pubsub), Some(filter)) = (&update_relay_pubsub, &update_filter) {
-                let pubsub = pubsub.clone();
-                let filter = filter.clone();
-                tasks.push(self.runtime.spawn(async move {
-                    run_relay_update_announcement_subscription(pubsub, filter).await;
-                }));
-            }
-            (Some(tcp), update_pubsub, update_relay_pubsub, tasks)
+            (Some(tcp), vec![tcp_task])
         } else {
-            (None, None, None, Vec::new())
+            (None, Vec::new())
         };
+        let update_pubsub = match self.runtime.block_on(FipsPubsubClient::start(
+            endpoint.clone(),
+            FipsPubsubClientOptions {
+                #[cfg(feature = "stack-fixture")]
+                max_connected_peers: crate::stack_mesh_fixture::max_connected_peers(),
+                #[cfg(feature = "stack-fixture")]
+                fanout: nostr_pubsub::DEFAULT_INV_WANT_FANOUT
+                    .min(crate::stack_mesh_fixture::max_connected_peers()),
+                max_replay_events: super::super::mesh_pubsub::MESH_REPLAY_EVENTS,
+                routed_peers: super::settings::routed_peer_ids(&config.siblings, &config.peers),
+                ..FipsPubsubClientOptions::default()
+            },
+        )) {
+            Ok(client) => Some(Arc::new(client)),
+            Err(error) => {
+                self.push_debug_log("update.pubsub.start.error", error.to_string());
+                None
+            }
+        };
+        let update_relay_pubsub = config.relay_client.clone().and_then(|client| {
+            match self.runtime.block_on(RelayEventBus::with_client(
+                client,
+                config.relay_urls.clone(),
+                Duration::from_secs(8),
+            )) {
+                Ok(pubsub) => Some(Arc::new(pubsub)),
+                Err(error) => {
+                    self.push_debug_log("update.pubsub.relay.start.error", error.to_string());
+                    None
+                }
+            }
+        });
+        let update_filter = match crate::update_announcements::update_announcement_filter() {
+            Ok(filter) => Some(filter),
+            Err(error) => {
+                self.push_debug_log("update.pubsub.filter.error", error.to_string());
+                None
+            }
+        };
+        if let (Some(pubsub), Some(filter)) = (&update_pubsub, &update_filter) {
+            let pubsub = pubsub.clone();
+            let filter = filter.clone();
+            tasks.push(self.runtime.spawn(async move {
+                run_update_announcement_subscription(pubsub, filter).await;
+            }));
+        }
+        if let (Some(pubsub), Some(filter)) = (&update_relay_pubsub, &update_filter) {
+            let pubsub = pubsub.clone();
+            let filter = filter.clone();
+            tasks.push(self.runtime.spawn(async move {
+                run_relay_update_announcement_subscription(pubsub, filter).await;
+            }));
+        }
+        #[cfg(feature = "stack-fixture")]
+        if let (Some(pubsub), Some(logged_in)) = (&update_pubsub, &self.logged_in) {
+            crate::stack_mesh_fixture::register(
+                &endpoint,
+                pubsub,
+                logged_in.device_keys.clone(),
+                config.nearby_ip_enabled,
+                config.relay_urls.len(),
+            );
+        }
 
         let attachment_store = if options.same_host_hashtree {
             let result = match options.standalone_route {
@@ -386,11 +450,13 @@ impl AppCore {
                     super::super::attachment_upload::bind_same_host_attachment_store(
                         endpoint.clone(),
                         route,
+                        config.peers.clone(),
                     ),
                 ),
                 None => self.runtime.block_on(
                     super::super::attachment_upload::start_same_host_attachment_reuse(
                         endpoint.clone(),
+                        config.peers.clone(),
                     ),
                 ),
             };
@@ -467,14 +533,18 @@ impl AppCore {
             endpoint,
             tcp,
             siblings: config.siblings,
+            nearby_enabled,
             nearby_bootstrap_payloads,
             nearby_outbox,
             _attachment_blobs: attachment_store,
-            _update_pubsub: update_pubsub,
+            pubsub: update_pubsub,
+            protocol_subscriptions: super::super::mesh_pubsub::MeshProtocolSubscriptions::default(),
             _update_relay_pubsub: update_relay_pubsub,
             recent_peers,
             tasks,
         });
+        self.reconcile_mesh_protocol_subscriptions();
+        self.replay_mesh_outbox();
         if device_sync_enabled {
             self.push_debug_log("device_sync.start", format!("peers={sibling_count}"));
         } else if nearby_enabled {
@@ -519,6 +589,13 @@ impl AppCore {
         }
         self.runtime
             .block_on(shutdown_shared_fips(endpoint, recent_peers));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn device_sync_has_sibling_tcp_for_test(&self) -> bool {
+        self.device_sync
+            .as_ref()
+            .is_some_and(|runtime| runtime.tcp.is_some())
     }
 
     #[cfg(test)]
@@ -591,7 +668,7 @@ impl AppCore {
         let ble_requested = self.pending_host_ble.is_some() || self.host_ble_attached;
         let nearby_ip_enabled =
             self.preferences.nearby_enabled && self.preferences.nearby_lan_enabled;
-        if siblings.is_empty() && !ble_requested && !nearby_ip_enabled {
+        if peers.is_empty() && siblings.is_empty() && !ble_requested && !nearby_ip_enabled {
             return None;
         }
         let key = format!(
@@ -614,8 +691,7 @@ impl AppCore {
             roster_at,
             secret_hex: logged_in.device_keys.secret_key().to_secret_hex(),
             relay_urls,
-            relay_client: (!logged_in.relay_urls.is_empty())
-                .then(|| logged_in.client.clone()),
+            relay_client: (!logged_in.relay_urls.is_empty()).then(|| logged_in.client.clone()),
             siblings,
             peers,
             nearby_ip_enabled,

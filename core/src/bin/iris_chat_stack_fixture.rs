@@ -5,7 +5,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use base64::Engine;
+use iris_chat_core::stack_mesh_fixture::stack_mesh_fixture;
 use iris_chat_core::{download_hashtree_attachment, AppAction, FfiApp};
+use nostr::EventId;
+use nostr_pubsub::Filter;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -50,6 +53,25 @@ fn main() -> Result<()> {
         }
         thread::sleep(Duration::from_millis(25));
     };
+    let mesh = if std::env::var("IRIS_CHAT_FIPS_ROUTED_PEERS").is_ok() {
+        let deadline = Instant::now() + READY_WAIT;
+        loop {
+            if let Some(mesh) = stack_mesh_fixture() {
+                break Some(mesh);
+            }
+            if Instant::now() >= deadline {
+                bail!("Chat shared mesh runtime did not start");
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    } else {
+        stack_mesh_fixture()
+    };
+    let runtime = tokio::runtime::Runtime::new()?;
+    let mut subscription = mesh
+        .as_ref()
+        .map(|mesh| runtime.block_on(mesh.client.subscribe(vec![Filter::new()])))
+        .transpose()?;
     emit(json!({
         "event": "ready",
         "npub": account.device_npub,
@@ -58,14 +80,52 @@ fn main() -> Result<()> {
 
     for line in io::stdin().lock().lines() {
         let line = line.context("read Chat fixture command")?;
+        if let Some(command) = line.strip_prefix("publish ") {
+            let mesh = mesh.as_ref().context("Chat mesh runtime unavailable")?;
+            let (kind, content) = command
+                .split_once(' ')
+                .context("expected publish <kind> <content>")?;
+            emit(runtime.block_on(mesh.publish(kind.parse()?, content))?)?;
+            continue;
+        }
+        if let Some(id) = line.strip_prefix("receive ") {
+            let id = EventId::parse(id.trim())?;
+            let subscription = subscription
+                .as_mut()
+                .context("Chat mesh subscription unavailable")?;
+            let received = runtime.block_on(async {
+                tokio::time::timeout(READY_WAIT, async {
+                    while let Some(delivery) = subscription.recv().await {
+                        if delivery.event.as_event().id == id {
+                            return Some(delivery);
+                        }
+                    }
+                    None
+                })
+                .await
+            });
+            emit(match received {
+                Ok(Some(delivery)) => {
+                    let event = delivery.event.into_event();
+                    json!({"event": "received", "id": event.id.to_string(),
+                        "pubkey": event.pubkey.to_hex(), "kind": event.kind.as_u16(),
+                        "content": event.content, "verified": event.verify().is_ok(),
+                        "origin_peer_id": delivery.source.id.0})
+                }
+                _ => {
+                    json!({"event": "received", "id": id.to_string(), "error": "event receive timed out or stopped"})
+                }
+            })?;
+            continue;
+        }
         let mut parts = line.split_whitespace();
         match (parts.next(), parts.next(), parts.next()) {
             (Some("fetch"), Some(nhash), None) => emit(fetch_event(nhash))?,
-            (Some("status"), None, None) => emit(json!({
-                "event": "status",
-                "npub": account.device_npub,
-                "owner_npub": account.npub,
-            }))?,
+            (Some("status"), None, None) => emit(match &mesh {
+                Some(mesh) => runtime.block_on(mesh.status())?,
+                None => json!({"event": "status", "npub": account.device_npub,
+                    "owner_npub": account.npub}),
+            })?,
             (Some("stop"), None, None) => {
                 app.shutdown();
                 emit(json!({ "event": "stopped" }))?;
@@ -73,7 +133,7 @@ fn main() -> Result<()> {
             }
             _ => emit(json!({
                 "event": "error",
-                "error": "expected fetch <nhash>, status, or stop",
+                "error": "expected fetch <nhash>, publish <kind> <content>, receive <id>, status, or stop",
             }))?,
         }
     }

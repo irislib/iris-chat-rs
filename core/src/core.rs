@@ -88,6 +88,7 @@ mod groups;
 mod identity;
 mod invites;
 mod lifecycle;
+mod mesh_pubsub;
 mod message_expiry;
 mod mobile_push;
 mod model;

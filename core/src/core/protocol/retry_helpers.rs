@@ -12,7 +12,14 @@ impl AppCore {
     }
 
     pub(in crate::core) fn schedule_fast_protocol_retry_if_pending(&mut self) {
-        if self.has_pending_protocol_engine_retry_work() || !self.pending_relay_publishes.is_empty()
+        if self.has_pending_protocol_engine_retry_work()
+            || (!self.pending_relay_publishes.is_empty()
+                && self
+                    .logged_in
+                    .as_ref()
+                    .is_some_and(|session| !session.relay_urls.is_empty()))
+            || self.has_mesh_outbox_work()
+            || self.has_mesh_protocol_retry_work()
         {
             self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
                 PROTOCOL_RECONNECT_CHECK_SECS,
@@ -28,5 +35,6 @@ impl AppCore {
             || self.protocol_subscription_runtime.refresh_dirty
             || !self.pending_relay_publishes.is_empty()
             || self.has_pending_protocol_engine_retry_work()
+            || self.has_mesh_protocol_retry_work()
     }
 }

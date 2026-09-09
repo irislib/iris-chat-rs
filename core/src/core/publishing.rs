@@ -9,6 +9,7 @@ const PENDING_RELAY_PUBLISH_IN_PROGRESS: &str = "publish attempt in progress";
 impl AppCore {
     pub(super) fn emit_nearby_published_event(&self, event: &Event) {
         self.publish_fips_nearby(event);
+        self.publish_mesh_event(event);
         if super::fips_nearby::is_fips_nearby_bootstrap_event(event) {
             self.refresh_fips_nearby_bootstrap();
         }
@@ -169,6 +170,7 @@ impl AppCore {
                 Vec::new(),
                 format!("label={label} success=false relays=0 skipped=no_servers"),
             );
+            self.schedule_mesh_outbox_retry();
             return true;
         }
 
@@ -244,6 +246,7 @@ impl AppCore {
     }
 
     pub(super) fn retry_pending_relay_publishes(&mut self, reason: &str) {
+        self.replay_mesh_outbox();
         if self.pending_relay_publishes.is_empty() {
             return;
         }

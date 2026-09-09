@@ -44,6 +44,13 @@ fn shared_chunk_cache_write() -> RwLockWriteGuard<'static, HashMap<String, Vec<u
 pub(super) struct AttachmentBlobRuntime {
     store: Arc<RoutedStore<MemoryStore>>,
     _transport: Arc<TcpBlobTransport<MemoryStore>>,
+    provider: Arc<FipsBlobRoute<MemoryStore>>,
+}
+
+impl AttachmentBlobRuntime {
+    pub(super) fn set_peers(&self, peers: Vec<fips_core::PeerIdentity>) {
+        self.provider.set_explicit_peers(peers);
+    }
 }
 
 fn attachment_blob_store() -> &'static RwLock<Option<Weak<RoutedStore<MemoryStore>>>> {
@@ -62,6 +69,7 @@ fn active_attachment_blob_store() -> Option<Arc<RoutedStore<MemoryStore>>> {
 pub(super) async fn bind_same_host_attachment_store(
     endpoint: Arc<FipsEndpoint>,
     standalone: Arc<dyn BlobRoute>,
+    peers: Vec<fips_core::PeerIdentity>,
 ) -> anyhow::Result<Arc<AttachmentBlobRuntime>> {
     let primary = Arc::new(MemoryStore::new());
     let transport = Arc::new(
@@ -72,14 +80,19 @@ pub(super) async fn bind_same_host_attachment_store(
         )
         .await?,
     );
-    let provider = Arc::new(FipsBlobRoute::discovered(endpoint, transport.clone(), 4)?);
+    let provider = Arc::new(FipsBlobRoute::discovered_and_explicit(
+        endpoint,
+        transport.clone(),
+        peers,
+        4,
+    )?);
     let router = Arc::new(BlobRouter::new(
         vec![
             BlobRouteEntry::new(
                 "attachment-cache",
                 Arc::new(StoreBlobRoute::new(primary.clone())),
             ),
-            BlobRouteEntry::new("same-host-fips", provider),
+            BlobRouteEntry::new("same-host-fips", provider.clone()),
             BlobRouteEntry::new("blossom", standalone),
         ],
         Some(primary.clone()),
@@ -88,6 +101,7 @@ pub(super) async fn bind_same_host_attachment_store(
     let runtime = Arc::new(AttachmentBlobRuntime {
         store: Arc::new(RoutedStore::new(primary, router)),
         _transport: transport,
+        provider,
     });
     *attachment_blob_store()
         .write()
@@ -97,9 +111,10 @@ pub(super) async fn bind_same_host_attachment_store(
 
 pub(super) async fn start_same_host_attachment_reuse(
     endpoint: Arc<FipsEndpoint>,
+    peers: Vec<fips_core::PeerIdentity>,
 ) -> anyhow::Result<Arc<AttachmentBlobRuntime>> {
     let standalone: Arc<dyn BlobRoute> = Arc::new(StoreBlobRoute::new(blossom_read_store()));
-    bind_same_host_attachment_store(endpoint, standalone).await
+    bind_same_host_attachment_store(endpoint, standalone, peers).await
 }
 
 impl AppCore {

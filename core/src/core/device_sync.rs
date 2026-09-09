@@ -15,6 +15,7 @@ mod body;
 mod messages;
 mod recent_peers;
 mod runtime;
+mod settings;
 
 pub(super) const DEVICE_SYNC_PORT: u16 = 7369;
 const DEVICE_SYNC_VERSION: u8 = 1;
@@ -39,10 +40,12 @@ pub(super) struct DeviceSyncRuntime {
     pub(super) endpoint: Arc<FipsEndpoint>,
     tcp: Option<DeviceSyncTcpSender>,
     siblings: Vec<FipsPeerIdentity>,
+    pub(super) nearby_enabled: bool,
     pub(super) nearby_bootstrap_payloads: Arc<RwLock<Vec<Vec<u8>>>>,
     pub(super) nearby_outbox: Arc<RwLock<super::fips_nearby::FipsNearbyOutbox>>,
     _attachment_blobs: Option<Arc<super::attachment_upload::AttachmentBlobRuntime>>,
-    _update_pubsub: Option<Arc<FipsPubsubClient>>,
+    pub(super) pubsub: Option<Arc<FipsPubsubClient>>,
+    pub(super) protocol_subscriptions: super::mesh_pubsub::MeshProtocolSubscriptions,
     _update_relay_pubsub: Option<Arc<RelayEventBus>>,
     recent_peers: Option<Arc<RwLock<DeviceSyncRecentPeers>>>,
     tasks: Vec<JoinHandle<()>>,
@@ -601,10 +604,12 @@ impl AppCore {
             endpoint,
             tcp: Some(tcp),
             siblings,
+            nearby_enabled: false,
             nearby_bootstrap_payloads: Arc::new(RwLock::new(Vec::new())),
             nearby_outbox: Arc::new(RwLock::new(super::fips_nearby::FipsNearbyOutbox::default())),
             _attachment_blobs: None,
-            _update_pubsub: None,
+            pubsub: None,
+            protocol_subscriptions: super::mesh_pubsub::MeshProtocolSubscriptions::default(),
             _update_relay_pubsub: None,
             recent_peers: None,
             tasks: Vec::new(),

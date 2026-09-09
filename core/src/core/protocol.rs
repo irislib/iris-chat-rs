@@ -20,7 +20,7 @@ use self::subscription_helpers::{
 
 const PROTOCOL_SUBSCRIPTION_ID: &str = "ndr-protocol";
 const PROTOCOL_SUBSCRIPTION_APPLY_TIMEOUT_SECS: u64 = 8;
-const PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS: u64 = 30;
+pub(super) const PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS: u64 = 30;
 pub(super) const PROTOCOL_RECONNECT_CHECK_SECS: u64 = 2;
 const RELAY_TRANSPORT_RETRY_BACKOFF_SECS: [u64; 5] = [2, 5, 15, 30, 60];
 const RELAY_CONNECT_STALE_AFTER: Duration = Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS * 4);
@@ -1084,7 +1084,6 @@ impl AppCore {
     pub(super) fn request_protocol_subscription_refresh(&mut self) {
         self.request_protocol_subscription_refresh_inner(false, false);
     }
-
     pub(super) fn request_protocol_subscription_refresh_forced(&mut self) {
         self.request_protocol_subscription_refresh_inner(true, false);
     }
@@ -1098,6 +1097,7 @@ impl AppCore {
         force: bool,
         force_reconnect_if_offline: bool,
     ) {
+        self.reconcile_mesh_protocol_subscriptions();
         if self.logged_in.is_none() {
             self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
             self.relay_transport_runtime = RelayTransportRuntime::default();
@@ -1110,9 +1110,14 @@ impl AppCore {
             .map(|logged_in| logged_in.relay_urls.is_empty())
             .unwrap_or(true)
         {
-            self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
+            // Mesh retries share this timer even when there are no relay subscriptions.
+            self.protocol_subscription_runtime = ProtocolSubscriptionRuntime {
+                liveness_due_at: self.protocol_subscription_runtime.liveness_due_at,
+                ..ProtocolSubscriptionRuntime::default()
+            };
             self.relay_transport_runtime = RelayTransportRuntime::default();
             self.refresh_protocol_sync_busy();
+            self.schedule_fast_protocol_retry_if_pending();
             return;
         }
 
@@ -1433,6 +1438,7 @@ impl AppCore {
         if self.logged_in.is_none() {
             return;
         }
+        self.reconcile_mesh_protocol_subscriptions();
         let has_subscription_work = self.protocol_subscription_runtime.desired_plan.is_some()
             || self.protocol_subscription_runtime.applied_plan.is_some()
             || self.protocol_subscription_runtime.applying_plan.is_some()
@@ -1440,7 +1446,10 @@ impl AppCore {
             || self.protocol_subscription_runtime.refresh_dirty;
         let has_pending_relay_publishes = !self.pending_relay_publishes.is_empty();
         let pending_protocol_retry_needed = self.has_pending_protocol_engine_retry_work();
-        if !has_subscription_work && !has_pending_relay_publishes && !pending_protocol_retry_needed
+        if !has_subscription_work
+            && !has_pending_relay_publishes
+            && !pending_protocol_retry_needed
+            && !self.has_mesh_protocol_retry_work()
         {
             return;
         }
@@ -1463,7 +1472,11 @@ impl AppCore {
             self.retry_pending_relay_publishes("liveness_check");
         }
         self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
-            PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS,
+            if self.has_mesh_outbox_work() || self.has_mesh_protocol_retry_work() {
+                PROTOCOL_RECONNECT_CHECK_SECS
+            } else {
+                PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS
+            },
         ));
     }
 

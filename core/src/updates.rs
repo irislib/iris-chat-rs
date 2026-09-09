@@ -92,6 +92,7 @@ pub(crate) struct CorePerfCountersSnapshot {
 #[derive(Debug)]
 pub(crate) enum InternalEvent {
     RelayEvent(Event),
+    MeshEvent(Event),
     FipsNearbyPacket {
         source_pubkey_hex: String,
         source_port: u16,
