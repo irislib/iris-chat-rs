@@ -386,7 +386,17 @@ impl AppCore {
         let peers = self
             .fips_nearby_links
             .iter()
-            .map(|link| {
+            .filter_map(|link| {
+                let id = link.device_pubkey_hex.clone();
+                let transport = link.transport_type.to_ascii_lowercase();
+                if transport.contains("ble") || transport.contains("bluetooth") {
+                    bluetooth_peer_ids.push(id.clone());
+                } else if transport.contains("udp") || transport.contains("ethernet") {
+                    lan_peer_ids.push(id.clone());
+                } else {
+                    // Transit connections keep the mesh connected, but are not nearby users.
+                    return None;
+                }
                 let owner_pubkey_hex = self.app_keys.iter().find_map(|(owner, app_keys)| {
                     app_keys
                         .devices
@@ -398,13 +408,6 @@ impl AppCore {
                         })
                         .then(|| owner.clone())
                 });
-                let id = link.device_pubkey_hex.clone();
-                let transport = link.transport_type.to_ascii_lowercase();
-                if transport.contains("ble") || transport.contains("bluetooth") {
-                    bluetooth_peer_ids.push(id.clone());
-                } else if transport.contains("udp") || transport.contains("ethernet") {
-                    lan_peer_ids.push(id.clone());
-                }
                 let name = owner_pubkey_hex
                     .as_deref()
                     .map(|owner| self.owner_display_label(owner))
@@ -412,14 +415,14 @@ impl AppCore {
                 let picture_url = owner_pubkey_hex
                     .as_deref()
                     .and_then(|owner| self.owner_picture_url(owner));
-                DesktopNearbyPeerSnapshot {
+                Some(DesktopNearbyPeerSnapshot {
                     id,
                     name,
                     owner_pubkey_hex,
                     picture_url,
                     profile_event_id: None,
                     last_seen_secs: now,
-                }
+                })
             })
             .collect::<Vec<_>>();
         let visible = self.preferences.nearby_enabled
@@ -439,6 +442,87 @@ impl AppCore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nearby_snapshot_excludes_transit_connections() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let (updates_tx, updates_rx) = flume::unbounded();
+        let mut core = AppCore::new(
+            updates_tx,
+            flume::unbounded().0,
+            directory.path().to_string_lossy().to_string(),
+            Arc::new(RwLock::new(AppState::empty())),
+        );
+        let link = |id: &str, transport: &str| crate::updates::FipsNearbyLinkSnapshot {
+            device_pubkey_hex: id.repeat(32),
+            transport_type: transport.to_string(),
+        };
+
+        for links in [
+            vec![link("01", "websocket"), link("02", "WebSocket")],
+            vec![
+                link("01", "websocket"),
+                link("02", "WebSocket"),
+                link("03", "BLE"),
+                link("04", "udp"),
+                link("05", "Ethernet"),
+                link("06", "Bluetooth"),
+                link("07", "webrtc"),
+                link("08", ""),
+            ],
+        ] {
+            let has_local_peers = links.len() > 2;
+            while updates_rx.try_recv().is_ok() {}
+            core.handle_internal(InternalEvent::FipsNearbyPeersChanged(links));
+            let (snapshot, bluetooth_peer_ids, lan_peer_ids) = updates_rx
+                .try_iter()
+                .find_map(|update| match update {
+                    AppUpdate::NearbyPeersChanged {
+                        snapshot,
+                        bluetooth_peer_ids,
+                        lan_peer_ids,
+                    } => Some((snapshot, bluetooth_peer_ids, lan_peer_ids)),
+                    _ => None,
+                })
+                .expect("nearby snapshot");
+
+            let expected_ids = if has_local_peers {
+                vec![
+                    "03".repeat(32),
+                    "04".repeat(32),
+                    "05".repeat(32),
+                    "06".repeat(32),
+                ]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(
+                snapshot
+                    .peers
+                    .iter()
+                    .map(|peer| peer.id.clone())
+                    .collect::<Vec<_>>(),
+                expected_ids,
+                "the chat-list preview must contain only Bluetooth and LAN peers"
+            );
+            assert_eq!(
+                bluetooth_peer_ids,
+                if has_local_peers {
+                    vec!["03".repeat(32), "06".repeat(32)]
+                } else {
+                    Vec::new()
+                }
+            );
+            assert_eq!(
+                lan_peer_ids,
+                if has_local_peers {
+                    vec!["04".repeat(32), "05".repeat(32)]
+                } else {
+                    Vec::new()
+                }
+            );
+        }
+    }
 
     fn event_id() -> String {
         "ab".repeat(32)
