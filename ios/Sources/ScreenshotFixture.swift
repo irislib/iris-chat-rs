@@ -207,6 +207,22 @@ struct ScreenshotFixture {
 }
 
 extension ScreenshotFixture {
+    static func configured(environment: [String: String]) -> ScreenshotFixture? {
+        guard enabled(environment: environment) else { return nil }
+        guard let body = environment["IRIS_UI_TEST_MESSAGE_BODY"] else { return .default }
+        let fixture = Self.default
+        var timelines = fixture.timelines
+        timelines["\(chatIdPrefix)1"] = [
+            Message(body: body, isOutgoing: false, ageSecs: 60, delivery: .seen),
+        ]
+        return ScreenshotFixture(
+            ownerDisplayName: fixture.ownerDisplayName,
+            threads: fixture.threads,
+            timelines: timelines,
+            nearbyPeers: fixture.nearbyPeers
+        )
+    }
+
     static func enabled(environment: [String: String]) -> Bool {
         environment["IRIS_UI_TEST_SCREENSHOT_FIXTURE"] == "1"
     }

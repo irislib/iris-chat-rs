@@ -1026,7 +1026,7 @@ final class AppManager: ObservableObject {
             self.pendingTestSeed = PendingTestSeed(peer: peer, count: count, daySplitIndex: daySplitIndex)
         }
 #if os(iOS)
-        self.screenshotFixture = ScreenshotFixture.enabled(environment: environment) ? .default : nil
+        self.screenshotFixture = ScreenshotFixture.configured(environment: environment)
         self.screenshotFixtureReferenceDate = Date()
         self.screenshotFixtureShowsNearbyTransportPeers =
             environment["IRIS_UI_TEST_NEARBY_TAPPABLE_FIRST_PEER_HEX"] != nil

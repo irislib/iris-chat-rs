@@ -822,14 +822,10 @@ struct ChatMessageRow: View, Equatable {
 }
 
 // Caps tall message bubbles behind a Show more/less toggle.
-// Mirrors the Android implementation: lineLimit caps the visible
-// lines, and the toggle only appears when newline count or
-// character count crosses the same thresholds Android uses. The
-// previous ViewThatFits-with-outer-.frame approach worked on
-// paper but in practice SwiftUI ended up promoting the
-// .frame(maxHeight:) proposal into a force — short messages got
-// rendered as half-screen-tall bubbles. Caught by the
-// `single-line bubble height` UI assertion.
+// Only limit lines when the expansion control is available: wrapping
+// can exceed 14 lines below the character/newline thresholds, especially
+// at narrow widths or large text sizes. Keep intrinsic text sizing so
+// ordinary short messages do not grow into oversized bubbles.
 struct TruncatableMessageBody: View {
     let attributed: AttributedString
     let isOutgoing: Bool
@@ -854,7 +850,7 @@ struct TruncatableMessageBody: View {
             Text(attributed)
                 .font(bodyFont)
                 .multilineTextAlignment(.leading)
-                .lineLimit(isExpanded ? nil : collapsedLineLimit)
+                .lineLimit(needsTruncation && !isExpanded ? collapsedLineLimit : nil)
                 .fixedSize(horizontal: false, vertical: true)
                 .irisDesktopTextSelection()
             if needsTruncation {

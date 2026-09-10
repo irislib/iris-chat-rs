@@ -282,16 +282,16 @@ run_ios_ui_test_shard() {
 
   case "$worker_count:$shard" in
     1:1)
-      tests=(IrisChatUITests)
+      tests=(IrisChatUITests MessageBodyUITests)
       ;;
     2:1)
-      tests=(IrisChatUITests IrisChatTimelineUITests)
+      tests=(IrisChatUITests MessageBodyUITests IrisChatTimelineUITests)
       ;;
     2:2)
       tests=(IrisChatComposerUITests IrisChatFlowUITests ScreenshotTests AppStoreReviewUITests FipsBlePhysicalUITests)
       ;;
     3:1)
-      tests=(IrisChatUITests ScreenshotTests AppStoreReviewUITests FipsBlePhysicalUITests)
+      tests=(IrisChatUITests MessageBodyUITests ScreenshotTests AppStoreReviewUITests FipsBlePhysicalUITests)
       ;;
     3:2)
       tests=(IrisChatComposerUITests IrisChatFlowUITests)
@@ -300,7 +300,7 @@ run_ios_ui_test_shard() {
       tests=(IrisChatTimelineUITests)
       ;;
     4:1)
-      tests=(IrisChatUITests)
+      tests=(IrisChatUITests MessageBodyUITests)
       ;;
     4:2)
       tests=(IrisChatComposerUITests)
