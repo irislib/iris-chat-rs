@@ -20,7 +20,15 @@ impl AppCore {
         owner_pubkey: PublicKey,
         reason: &'static str,
     ) -> bool {
-        if is_group_chat_id(&owner_hex) || self.has_cached_profile_metadata(&owner_hex) {
+        // Our own cached profile may have been edited by another client while
+        // Iris was stopped. Restoring a session must still fetch that metadata.
+        let is_local_owner = self
+            .logged_in
+            .as_ref()
+            .is_some_and(|logged_in| logged_in.owner_pubkey == owner_pubkey);
+        if is_group_chat_id(&owner_hex)
+            || (!is_local_owner && self.has_cached_profile_metadata(&owner_hex))
+        {
             return false;
         }
         let Some((client, relay_urls)) = self
@@ -91,6 +99,16 @@ impl AppCore {
         })
     }
 
+    fn next_local_profile_timestamp(&self, owner_hex: &str) -> Timestamp {
+        // An intentional edit must win even within the same second as the
+        // previous profile (or when another client's clock is ahead).
+        let previous = self
+            .owner_profiles
+            .get(owner_hex)
+            .map_or(0, |profile| profile.updated_at_secs);
+        Timestamp::from_secs(unix_now().get().max(previous.saturating_add(1)))
+    }
+
     pub(super) fn set_local_profile_name(&mut self, name: &str) {
         let picture_url = self
             .logged_in
@@ -132,6 +150,9 @@ impl AppCore {
         };
 
         let mut record = record;
+        record.updated_at_secs = self
+            .next_local_profile_timestamp(&local_owner_hex)
+            .as_secs();
         if let Some(existing) = self.owner_profiles.get(&local_owner_hex) {
             record.nickname = existing.nickname.clone();
             record.extra_metadata_json = existing.extra_metadata_json.clone();
@@ -273,10 +294,14 @@ impl AppCore {
             return;
         };
 
+        let created_at = self.next_local_profile_timestamp(&owner_hex);
         self.owner_profiles.remove(&owner_hex);
         self.persist_best_effort();
 
-        match EventBuilder::new(Kind::Metadata, "{}").sign_with_keys(&owner_keys) {
+        match EventBuilder::new(Kind::Metadata, "{}")
+            .custom_created_at(created_at)
+            .sign_with_keys(&owner_keys)
+        {
             Ok(event) => {
                 if self.publish_runtime_event(event, "profile-delete", None) {
                     self.state.toast = Some("Profile deleted".to_string());

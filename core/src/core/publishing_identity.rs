@@ -37,8 +37,11 @@ impl AppCore {
         let mut durable_events: Vec<(&'static str, Event)> = Vec::new();
 
         if let (Some(keys), Some(profile)) = (owner_keys.clone(), local_profile) {
+            // Republishing cached metadata is not an edit. Advancing its timestamp
+            // here can overwrite a newer profile published by another client.
             let mut builder =
-                EventBuilder::new(Kind::Metadata, build_profile_metadata_json(&profile));
+                EventBuilder::new(Kind::Metadata, build_profile_metadata_json(&profile))
+                    .custom_created_at(Timestamp::from_secs(profile.updated_at_secs));
             for tag_values in &profile.extra_tags {
                 if let Ok(tag) = nostr::Tag::parse(tag_values.clone()) {
                     builder = builder.tag(tag);
