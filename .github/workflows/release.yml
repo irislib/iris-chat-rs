@@ -106,7 +106,8 @@ jobs:
     with:
       lab_rev: cec9501659b9cf08f9600e3f14987cad6ca1e7d3
       chat_rev: ${{ needs.verify.outputs.sha }}
-      htree_version: 0.2.147
+      drive_rev: 7cb74966ddaecf90fb91b8f36a44ecc4bbda7b02
+      htree_version: 0.2.148
 
   build:
     name: Build release artifacts

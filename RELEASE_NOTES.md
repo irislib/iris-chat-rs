@@ -2,6 +2,27 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.10.1
+
+### GitHub
+
+- Limit repeated pubsub connection attempts to unavailable services while preserving immediate initial connections, established traffic, and queued-event recovery.
+- Recover session key rotation in Tree routing mode after topology changes clear routing coordinates, using bounded discovery while existing traffic continues.
+- Size FIPS crypto work buffers for the active packet batch and avoid copying peer identities during mesh selection while keeping trust decisions fresh.
+- Adopt the corrected FIPS and Hashtree dependency closure across every native platform, with release gates for relayless recovery, CPU use, and bandwidth.
+
+### Apple
+
+- Reduced unnecessary background connection work when another device is temporarily unavailable.
+- Reduced temporary memory use during small network updates.
+- Improved connection reliability as the network changes.
+
+### Zapstore
+
+- Reduced unnecessary background connection work when another device is temporarily unavailable.
+- Reduced temporary memory use during small network updates.
+- Improved connection reliability as the network changes.
+
 ## v2026.9.10
 
 ### GitHub
