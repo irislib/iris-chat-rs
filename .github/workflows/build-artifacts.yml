@@ -17,6 +17,10 @@ on:
         required: false
         default: false
         type: boolean
+    outputs:
+      artifact_suffix:
+        description: Exact version and source suffix shared by the build artifacts
+        value: ${{ jobs.metadata.outputs.version_name }}-${{ jobs.metadata.outputs.short_sha }}
   workflow_dispatch:
     inputs:
       ref:

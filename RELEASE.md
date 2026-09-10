@@ -92,6 +92,10 @@ just verify-fast
 ```
 
 The hosted release workflow runs the authoritative release gate.
+It also runs the pinned Iris Stack process gate against the exact tagged Chat
+commit and known-good public Drive/Hashtree versions. Relayless recovery, CPU,
+and bandwidth checks must pass before GitHub release publication; their receipt
+remains a workflow artifact and is excluded from the app release files.
 
 ## 2. Tag the Latest `main`
 

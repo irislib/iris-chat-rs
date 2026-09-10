@@ -27,6 +27,8 @@ jobs:
     name: Verify release inputs and core gate
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    outputs:
+      sha: ${{ steps.release_commit.outputs.sha }}
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v7
@@ -35,6 +37,7 @@ jobs:
           fetch-depth: 0
 
       - name: Validate tag and release notes
+        id: release_commit
         run: |
           set -Eeuo pipefail
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]{4}\.[1-9][0-9]?\.[1-9][0-9]?(\.[1-9][0-9]?)?$ ]]; then
@@ -69,6 +72,7 @@ jobs:
             echo "::error::The tag cannot be converted to a shared app version code"
             exit 1
           }
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust and native dependencies
         run: |
@@ -95,6 +99,14 @@ jobs:
           scripts/test_release_publish_guard
           scripts/test_homebrew_tap
 
+  mesh-resource:
+    name: Relayless recovery and resource budgets
+    needs: verify
+    uses: irislib/iris-stack/.github/workflows/product-lab.yml@c6035a6343c569d480f407d7f47fc755cb825b64
+    with:
+      lab_rev: c6035a6343c569d480f407d7f47fc755cb825b64
+      chat_rev: ${{ needs.verify.outputs.sha }}
+
   build:
     name: Build release artifacts
     needs: verify
@@ -110,6 +122,7 @@ jobs:
     needs:
       - verify
       - build
+      - mesh-resource
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -125,6 +138,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v8
         with:
+          pattern: iris-*-${{ needs.build.outputs.artifact_suffix }}
           path: artifacts
           merge-multiple: true
 

@@ -8,6 +8,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_resource_gate_binds_tag_commit_and_blocks_publication(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        pin = "c6035a6343c569d480f407d7f47fc755cb825b64"
+        self.assertIn(f"irislib/iris-stack/.github/workflows/product-lab.yml@{pin}", workflow)
+        self.assertIn(f"lab_rev: {pin}", workflow)
+        self.assertIn("chat_rev: ${{ needs.verify.outputs.sha }}", workflow)
+        release = workflow.split("\n  release:\n", 1)[1]
+        self.assertIn("      - mesh-resource\n", release.split("    runs-on:", 1)[0])
+        self.assertIn("pattern: iris-*-${{ needs.build.outputs.artifact_suffix }}", release)
+        builds = (ROOT / ".github/workflows/build-artifacts.yml").read_text()
+        self.assertIn("value: ${{ jobs.metadata.outputs.version_name }}-${{ jobs.metadata.outputs.short_sha }}", builds)
+
     def test_release_builds_manifest_and_attests_every_file(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         self.assertIn("scripts/release-manifest.py create", workflow)
