@@ -380,19 +380,22 @@ impl AppCore {
         } else {
             (None, Vec::new())
         };
-        let update_pubsub = match self.runtime.block_on(FipsPubsubClient::start(
-            endpoint.clone(),
-            FipsPubsubClientOptions {
-                #[cfg(feature = "stack-fixture")]
-                max_connected_peers: crate::stack_mesh_fixture::max_connected_peers(),
-                #[cfg(feature = "stack-fixture")]
-                fanout: nostr_pubsub::DEFAULT_INV_WANT_FANOUT
-                    .min(crate::stack_mesh_fixture::max_connected_peers()),
-                max_replay_events: super::super::mesh_pubsub::MESH_REPLAY_EVENTS,
-                routed_peers: super::settings::routed_peer_ids(&config.siblings, &config.peers),
-                ..FipsPubsubClientOptions::default()
-            },
-        )) {
+        let update_pubsub = match self
+            .runtime
+            .block_on(FipsPubsubClient::start_with_reputation(
+                endpoint.clone(),
+                FipsPubsubClientOptions {
+                    #[cfg(feature = "stack-fixture")]
+                    max_connected_peers: crate::stack_mesh_fixture::max_connected_peers(),
+                    #[cfg(feature = "stack-fixture")]
+                    fanout: nostr_pubsub::DEFAULT_INV_WANT_FANOUT
+                        .min(crate::stack_mesh_fixture::max_connected_peers()),
+                    max_replay_events: super::super::mesh_pubsub::MESH_REPLAY_EVENTS,
+                    routed_peers: super::settings::routed_peer_ids(&config.siblings, &config.peers),
+                    ..FipsPubsubClientOptions::default()
+                },
+                super::settings::pubsub_policy_options(),
+            )) {
             Ok(client) => Some(Arc::new(client)),
             Err(error) => {
                 self.push_debug_log("update.pubsub.start.error", error.to_string());
@@ -555,40 +558,32 @@ impl AppCore {
     }
 
     pub(in crate::core) fn stop_device_sync(&mut self) {
-        self.host_ble_attached = false;
-        let Some(runtime) = self.device_sync.take() else {
-            return;
-        };
-        let DeviceSyncRuntime {
-            endpoint,
-            recent_peers,
-            tasks,
-            ..
-        } = runtime;
-        for task in tasks {
-            task.abort();
+        if let Some(shutdown) = self.take_device_sync_shutdown() {
+            self.runtime.spawn(shutdown);
         }
-        self.runtime.spawn(async move {
-            shutdown_shared_fips(endpoint, recent_peers).await;
-        });
     }
 
     pub(in crate::core) fn stop_device_sync_now(&mut self) {
+        if let Some(shutdown) = self.take_device_sync_shutdown() {
+            self.runtime.block_on(shutdown);
+        }
+    }
+
+    fn take_device_sync_shutdown(
+        &mut self,
+    ) -> Option<impl std::future::Future<Output = ()> + Send + 'static> {
         self.host_ble_attached = false;
-        let Some(runtime) = self.device_sync.take() else {
-            return;
-        };
         let DeviceSyncRuntime {
             endpoint,
+            pubsub,
             recent_peers,
             tasks,
             ..
-        } = runtime;
+        } = self.device_sync.take()?;
         for task in tasks {
             task.abort();
         }
-        self.runtime
-            .block_on(shutdown_shared_fips(endpoint, recent_peers));
+        Some(shutdown_shared_fips(endpoint, pubsub, recent_peers))
     }
 
     #[cfg(test)]
@@ -845,8 +840,12 @@ async fn run_recent_peer_observer(
 
 async fn shutdown_shared_fips(
     endpoint: Arc<FipsEndpoint>,
+    pubsub: Option<Arc<FipsPubsubClient>>,
     recent_peers: Option<Arc<RwLock<DeviceSyncRecentPeers>>>,
 ) {
+    if let Some(pubsub) = pubsub {
+        pubsub.shutdown_shared().await;
+    }
     if let (Some(recent_peers), Ok(peers)) = (recent_peers, endpoint.peers().await) {
         if let Ok(mut recent_peers) = recent_peers.write() {
             if let Err(error) = recent_peers.observe_and_flush(&peers, crate::perflog::now_ms()) {

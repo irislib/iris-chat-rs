@@ -1,0 +1,588 @@
+use super::*;
+
+#[test]
+fn nearby_snapshot_excludes_transit_connections() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let (updates_tx, updates_rx) = flume::unbounded();
+    let mut core = AppCore::new(
+        updates_tx,
+        flume::unbounded().0,
+        directory.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let link = |id: &str, transport: &str| crate::updates::FipsNearbyLinkSnapshot {
+        device_pubkey_hex: id.repeat(32),
+        transport_type: transport.to_string(),
+    };
+
+    for links in [
+        vec![link("01", "websocket"), link("02", "WebSocket")],
+        vec![
+            link("01", "websocket"),
+            link("02", "WebSocket"),
+            link("03", "BLE"),
+            link("04", "udp"),
+            link("05", "Ethernet"),
+            link("06", "Bluetooth"),
+            link("07", "webrtc"),
+            link("08", ""),
+        ],
+    ] {
+        let has_local_peers = links.len() > 2;
+        while updates_rx.try_recv().is_ok() {}
+        core.handle_internal(InternalEvent::FipsNearbyPeersChanged(links));
+        let (snapshot, bluetooth_peer_ids, lan_peer_ids) = updates_rx
+            .try_iter()
+            .find_map(|update| match update {
+                AppUpdate::NearbyPeersChanged {
+                    snapshot,
+                    bluetooth_peer_ids,
+                    lan_peer_ids,
+                } => Some((snapshot, bluetooth_peer_ids, lan_peer_ids)),
+                _ => None,
+            })
+            .expect("nearby snapshot");
+
+        let expected_ids = if has_local_peers {
+            vec![
+                "03".repeat(32),
+                "04".repeat(32),
+                "05".repeat(32),
+                "06".repeat(32),
+            ]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(
+            snapshot
+                .peers
+                .iter()
+                .map(|peer| peer.id.clone())
+                .collect::<Vec<_>>(),
+            expected_ids,
+            "the chat-list preview must contain only Bluetooth and LAN peers"
+        );
+        assert_eq!(
+            bluetooth_peer_ids,
+            if has_local_peers {
+                vec!["03".repeat(32), "06".repeat(32)]
+            } else {
+                Vec::new()
+            }
+        );
+        assert_eq!(
+            lan_peer_ids,
+            if has_local_peers {
+                vec!["04".repeat(32), "05".repeat(32)]
+            } else {
+                Vec::new()
+            }
+        );
+    }
+}
+
+fn event_id() -> String {
+    "ab".repeat(32)
+}
+
+#[test]
+fn event_and_receipt_round_trip() {
+    for packet in [
+        FipsNearbyPacket::event(event_id(), "{\"kind\":14}".to_string()).unwrap(),
+        FipsNearbyPacket::receipt(event_id()).unwrap(),
+    ] {
+        assert_eq!(
+            FipsNearbyPacket::decode(&packet.encode().unwrap()),
+            Some(packet)
+        );
+    }
+}
+
+#[test]
+fn nearby_outbox_replays_on_a_new_link_and_forgets_receipted_events() {
+    let mut outbox = FipsNearbyOutbox::default();
+    let event_id = event_id();
+    let payload = b"queued nearby event".to_vec();
+
+    outbox.insert(event_id.clone(), payload.clone());
+    assert_eq!(
+        outbox.pending_for_link("peer", 7),
+        vec![(event_id.clone(), payload.clone())]
+    );
+
+    outbox.mark_sent_on_link("peer", 7, std::slice::from_ref(&event_id));
+    assert!(outbox.pending_for_link("peer", 7).is_empty());
+    assert_eq!(
+        outbox.pending_for_link("peer", 8),
+        vec![(event_id.clone(), payload)]
+    );
+
+    outbox.forget(&event_id);
+    assert!(outbox.pending_for_link("peer", 8).is_empty());
+}
+
+#[test]
+fn rejects_wrong_version_invalid_id_and_oversized_packet() {
+    let wrong_version = serde_json::json!({
+        "type": "receipt",
+        "v": 2,
+        "eventId": event_id(),
+    });
+    assert!(FipsNearbyPacket::decode(&serde_json::to_vec(&wrong_version).unwrap()).is_none());
+    assert!(FipsNearbyPacket::receipt("not-an-event-id".to_string()).is_none());
+    assert!(FipsNearbyPacket::decode(&vec![b'x'; FIPS_NEARBY_MAX_PACKET_BYTES + 1]).is_none());
+}
+
+#[test]
+fn host_ble_attachment_is_single_owner_and_can_be_replaced_after_detach() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let (first_io, _first_adapter) = core
+        .runtime
+        .block_on(async { HostBleIo::channel("mobile", "first", 8) })
+        .unwrap();
+    let (duplicate_io, _duplicate_adapter) = core
+        .runtime
+        .block_on(async { HostBleIo::channel("mobile", "duplicate", 8) })
+        .unwrap();
+
+    assert!(core
+        .attach_host_ble(HostBleAttachment::new(first_io))
+        .is_ok());
+    assert!(core
+        .attach_host_ble(HostBleAttachment::new(duplicate_io))
+        .is_err());
+
+    core.detach_host_ble();
+    assert!(core.pending_host_ble.is_none());
+    assert!(!core.host_ble_attached);
+
+    let (replacement_io, _replacement_adapter) = core
+        .runtime
+        .block_on(async { HostBleIo::channel("mobile", "replacement", 8) })
+        .unwrap();
+    assert!(core
+        .attach_host_ble(HostBleAttachment::new(replacement_io))
+        .is_ok());
+}
+
+#[test]
+fn host_ble_starts_without_configured_relays() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.create_account("Offline BLE");
+    core.preferences.nostr_relay_urls.clear();
+    core.logged_in.as_mut().unwrap().relay_urls.clear();
+    let (io, adapter) = core
+        .runtime
+        .block_on(async { HostBleIo::channel("mobile", "offline", 8) })
+        .unwrap();
+    core.attach_host_ble(HostBleAttachment::new(io)).unwrap();
+
+    core.reconcile_device_sync();
+
+    let command = core.runtime.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(1), adapter.next_command())
+            .await
+            .ok()
+            .flatten()
+    });
+    assert!(
+        matches!(
+            command,
+            Some(fips_core::transport::ble::host::HostBleCommand::Listen { .. })
+        ),
+        "command={command:?} log={:?}",
+        core.debug_log
+    );
+    assert!(core.host_ble_attached);
+    let retained_pubsub = core
+        .device_sync
+        .as_ref()
+        .unwrap()
+        .pubsub
+        .as_ref()
+        .unwrap()
+        .clone();
+    core.stop_device_sync_now();
+    assert_eq!(
+        retained_pubsub.active_subscription_count().unwrap(),
+        0,
+        "stopping Chat must close pubsub even when another owner retains it"
+    );
+    assert!(core
+        .runtime
+        .block_on(retained_pubsub.subscribe(vec![nostr::Filter::new()]))
+        .is_err());
+}
+
+#[test]
+fn app_keys_event_received_over_fips_installs_peer_roster() {
+    let alice_dir = tempfile::TempDir::new().unwrap();
+    let mut alice = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        alice_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    alice.create_account("Alice");
+    let alice_login = alice.logged_in.as_ref().unwrap();
+    let alice_owner = alice_login.owner_pubkey.to_hex();
+    let alice_device = alice_login.device_keys.public_key().to_hex();
+    let app_keys_event = alice
+        .pending_relay_publishes
+        .values()
+        .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
+        .find(is_app_keys_event)
+        .expect("created account AppKeys event");
+    let payload = FipsNearbyPacket::event(
+        app_keys_event.id.to_string(),
+        serde_json::to_string(&app_keys_event).unwrap(),
+    )
+    .unwrap()
+    .encode()
+    .unwrap();
+
+    let bob_dir = tempfile::TempDir::new().unwrap();
+    let (bob_updates_tx, bob_updates_rx) = flume::unbounded();
+    let mut bob = AppCore::new(
+        bob_updates_tx,
+        flume::unbounded().0,
+        bob_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    bob.create_account("Bob");
+    bob.fips_nearby_links = vec![crate::updates::FipsNearbyLinkSnapshot {
+        device_pubkey_hex: alice_device.clone(),
+        transport_type: "UDP".to_string(),
+    }];
+    while bob_updates_rx.try_recv().is_ok() {}
+    bob.handle_fips_nearby_packet(&alice_device, FIPS_NEARBY_PORT, &payload);
+
+    assert_eq!(bob.debug_event_counters.app_keys_events, 1);
+    let roster = bob.app_keys.get(&alice_owner).expect("Alice roster");
+    assert!(roster
+        .devices
+        .iter()
+        .any(|device| device.identity_pubkey_hex == alice_device));
+    let peer_update = bob_updates_rx
+        .try_iter()
+        .find_map(|update| match update {
+            AppUpdate::NearbyPeersChanged {
+                snapshot,
+                lan_peer_ids,
+                ..
+            } => Some((snapshot, lan_peer_ids)),
+            _ => None,
+        })
+        .expect("FIPS peer projection update");
+    assert_eq!(peer_update.0.peers.len(), 1);
+    assert_eq!(
+        peer_update.0.peers[0].owner_pubkey_hex.as_deref(),
+        Some(alice_owner.as_str())
+    );
+    assert_eq!(peer_update.1, vec![alice_device]);
+}
+
+fn assert_fips_bootstrap_drains_queued_message(
+    alice_owner: PublicKey,
+    alice_device: &str,
+    bootstrap_payloads: Vec<Vec<u8>>,
+) {
+    let bob_dir = tempfile::TempDir::new().unwrap();
+    let mut bob = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        bob_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    bob.create_account("Bob");
+    let chat_id = alice_owner.to_hex();
+    bob.send_direct_message(&chat_id, "queued over FIPS", UnixSeconds(10), None);
+
+    let queued = bob
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| thread.messages.first())
+        .expect("queued direct message");
+    assert_eq!(queued.delivery, DeliveryState::Queued);
+    assert!(queued.delivery_trace.outer_event_ids.is_empty());
+
+    for payload in bootstrap_payloads {
+        bob.handle_fips_nearby_packet(alice_device, FIPS_NEARBY_PORT, &payload);
+    }
+
+    assert_eq!(
+        bob.protocol_engine
+            .as_ref()
+            .expect("Bob protocol engine")
+            .direct_send_readiness(alice_owner),
+        DirectSendReadiness::Ready
+    );
+    let drained = bob
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| thread.messages.first())
+        .expect("drained direct message");
+    assert_ne!(drained.delivery, DeliveryState::Queued);
+    assert!(!drained.delivery_trace.outer_event_ids.is_empty());
+}
+
+fn test_peer_bootstrap() -> (tempfile::TempDir, AppCore, PublicKey, String) {
+    let alice_dir = tempfile::TempDir::new().unwrap();
+    let mut alice = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        alice_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    alice.create_account("Alice");
+    let alice_login = alice.logged_in.as_ref().unwrap();
+    let alice_owner = alice_login.owner_pubkey;
+    let alice_device = alice_login.device_keys.public_key().to_hex();
+    (alice_dir, alice, alice_owner, alice_device)
+}
+
+#[test]
+fn relay_identity_updates_refresh_an_existing_nearby_link() {
+    let (_alice_dir, alice, alice_owner, alice_device) = test_peer_bootstrap();
+    let bob_dir = tempfile::TempDir::new().unwrap();
+    let (updates_tx, updates_rx) = flume::unbounded();
+    let mut bob = AppCore::new(
+        updates_tx,
+        flume::unbounded().0,
+        bob_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    bob.create_account("Bob");
+    bob.handle_internal(InternalEvent::FipsNearbyPeersChanged(vec![
+        crate::updates::FipsNearbyLinkSnapshot {
+            device_pubkey_hex: alice_device.clone(),
+            transport_type: "BLE".to_string(),
+        },
+    ]));
+    while updates_rx.try_recv().is_ok() {}
+
+    let app_keys = alice
+        .local_fips_nearby_bootstrap_payloads()
+        .into_iter()
+        .filter_map(|payload| FipsNearbyPacket::decode(&payload))
+        .filter_map(|packet| match packet {
+            FipsNearbyPacket::Event { event_json, .. } => {
+                serde_json::from_str::<Event>(&event_json).ok()
+            }
+            _ => None,
+        })
+        .find(is_app_keys_event)
+        .unwrap();
+    bob.handle_relay_event(app_keys);
+    let identified = updates_rx
+        .try_iter()
+        .filter_map(|update| match update {
+            AppUpdate::NearbyPeersChanged { snapshot, .. } => Some(snapshot),
+            _ => None,
+        })
+        .last()
+        .expect("relay device list must refresh the nearby user ID");
+    assert_eq!(
+        identified.peers[0].owner_pubkey_hex.as_deref(),
+        Some(alice_owner.to_hex().as_str())
+    );
+
+    let metadata = EventBuilder::new(
+        Kind::Metadata,
+        serde_json::json!({
+            "name": "Alice", "picture": "https://example.com/alice.jpg"
+        })
+        .to_string(),
+    )
+    .sign_with_keys(
+        alice
+            .logged_in
+            .as_ref()
+            .unwrap()
+            .owner_keys
+            .as_ref()
+            .unwrap(),
+    )
+    .unwrap();
+    bob.handle_relay_event(metadata);
+    let profiled = updates_rx
+        .try_iter()
+        .filter_map(|update| match update {
+            AppUpdate::NearbyPeersChanged { snapshot, .. } => Some(snapshot),
+            _ => None,
+        })
+        .last()
+        .expect("relay metadata must refresh the nearby name and photo");
+    assert_eq!(profiled.peers[0].id, alice_device);
+    assert_eq!(profiled.peers[0].name, "Alice");
+    assert_eq!(
+        profiled.peers[0].picture_url.as_deref(),
+        Some("https://example.com/alice.jpg")
+    );
+}
+
+#[test]
+fn seen_peer_app_keys_recover_missing_protocol_roster() {
+    let (_alice_dir, alice, alice_owner, alice_device) = test_peer_bootstrap();
+    let bob_dir = tempfile::TempDir::new().unwrap();
+    let mut bob = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        bob_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    bob.create_account("Bob");
+    let payloads = alice.local_fips_nearby_bootstrap_payloads();
+    // The app's event history can outlive the protocol's verified roster
+    // (for example when an older stored roster is quarantined on upgrade).
+    for packet in payloads
+        .iter()
+        .filter_map(|payload| FipsNearbyPacket::decode(payload))
+    {
+        if let FipsNearbyPacket::Event {
+            event_id,
+            event_json,
+            ..
+        } = packet
+        {
+            let event: Event = serde_json::from_str(&event_json).unwrap();
+            if is_app_keys_event(&event) {
+                bob.app_keys.insert(
+                    alice_owner.to_hex(),
+                    known_app_keys_from_ndr(
+                        alice_owner,
+                        &AppKeys::from_event(&event).unwrap(),
+                        event.created_at.as_secs(),
+                    ),
+                );
+                bob.remember_event(event_id);
+            }
+        }
+    }
+    assert_eq!(
+        bob.protocol_engine
+            .as_ref()
+            .unwrap()
+            .direct_send_readiness(alice_owner),
+        DirectSendReadiness::MissingPeerAppKeys
+    );
+    bob.send_direct_message(
+        &alice_owner.to_hex(),
+        "waiting for identity",
+        unix_now(),
+        None,
+    );
+    assert_eq!(
+        bob.threads[&alice_owner.to_hex()].messages[0].delivery,
+        DeliveryState::Queued
+    );
+    for payload in &payloads {
+        bob.handle_fips_nearby_packet(&alice_device, FIPS_NEARBY_PORT, payload);
+    }
+    assert_eq!(
+        bob.protocol_engine
+            .as_ref()
+            .unwrap()
+            .direct_send_readiness(alice_owner),
+        DirectSendReadiness::Ready
+    );
+    assert!(!bob.threads[&alice_owner.to_hex()].messages[0]
+        .delivery_trace
+        .outer_event_ids
+        .is_empty());
+    let applied = bob.debug_event_counters.app_keys_events;
+    for payload in payloads {
+        bob.handle_fips_nearby_packet(&alice_device, FIPS_NEARBY_PORT, &payload);
+    }
+    assert_eq!(
+        bob.debug_event_counters.app_keys_events, applied,
+        "duplicates should be skipped again after the signed roster is recovered"
+    );
+}
+
+#[test]
+fn exact_fips_bootstrap_makes_peer_ready_and_drains_queued_direct_message() {
+    let (_alice_dir, alice, alice_owner, alice_device) = test_peer_bootstrap();
+    let bootstrap_payloads = alice.local_fips_nearby_bootstrap_payloads();
+    assert_fips_bootstrap_drains_queued_message(alice_owner, &alice_device, bootstrap_payloads);
+}
+
+#[test]
+fn reordered_fips_bootstrap_makes_peer_ready_and_drains_queued_direct_message() {
+    let (_alice_dir, alice, alice_owner, alice_device) = test_peer_bootstrap();
+    let mut bootstrap_payloads = alice.local_fips_nearby_bootstrap_payloads();
+    bootstrap_payloads.reverse();
+    assert_fips_bootstrap_drains_queued_message(alice_owner, &alice_device, bootstrap_payloads);
+}
+
+#[test]
+fn restored_primary_offline_fips_bootstrap_makes_peer_ready_and_drains_queued_message() {
+    let alice_dir = tempfile::TempDir::new().unwrap();
+    let mut alice = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        alice_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let alice_owner_keys = Keys::generate();
+    let alice_owner = alice_owner_keys.public_key();
+    let alice_device_keys = Keys::generate();
+    let alice_device = alice_device_keys.public_key().to_hex();
+    alice.preferences.nostr_relay_urls.clear();
+    alice
+        .start_primary_session(alice_owner_keys, alice_device_keys, true, false)
+        .expect("restored primary session");
+    assert!(alice.defer_owner_app_keys_publish);
+
+    assert_fips_bootstrap_drains_queued_message(
+        alice_owner,
+        &alice_device,
+        alice.local_fips_nearby_bootstrap_payloads(),
+    );
+}
+
+#[test]
+fn local_identity_bootstrap_survives_successful_relay_publish() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.create_account("Alice");
+
+    // A successful internet relay publish removes these events from the
+    // retry queue before a BLE peer may have connected.
+    core.pending_relay_publishes.clear();
+
+    let events = core
+        .local_fips_nearby_bootstrap_payloads()
+        .into_iter()
+        .filter_map(|payload| FipsNearbyPacket::decode(&payload))
+        .filter_map(|packet| match packet {
+            FipsNearbyPacket::Event { event_json, .. } => {
+                serde_json::from_str::<Event>(&event_json).ok()
+            }
+            FipsNearbyPacket::Receipt { .. } => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(events.iter().any(is_app_keys_event));
+    assert!(events
+        .iter()
+        .any(|event| event.kind.as_u16() as u32 == INVITE_EVENT_KIND));
+    assert!(events.iter().all(|event| event.verify().is_ok()));
+}

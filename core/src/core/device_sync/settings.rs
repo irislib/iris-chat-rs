@@ -1,5 +1,25 @@
 use fips_core::{config::PeerConfig, PeerIdentity};
 
+pub(super) fn pubsub_policy_options() -> nostr_pubsub_fips::FipsPubsubPolicyOptions {
+    policy_options(
+        &std::env::var_os("IRIS_CHAT_FIPS_TRUSTED_RATERS")
+            .unwrap_or_default()
+            .to_string_lossy(),
+    )
+}
+
+fn policy_options(raters: &str) -> nostr_pubsub_fips::FipsPubsubPolicyOptions {
+    let mut options = nostr_pubsub_fips::FipsPubsubPolicyOptions::default();
+    // The shared adapter validates public keys and bounds this explicit list.
+    options.reputation.trusted_raters = raters
+        .split([',', ';'])
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_owned)
+        .collect();
+    options
+}
+
 pub(super) fn routed_peer_ids(siblings: &[PeerIdentity], peers: &[PeerIdentity]) -> Vec<String> {
     let limit = nostr_pubsub_fips::FipsPubsubClientOptions::default()
         .max_connected_peers
@@ -62,6 +82,25 @@ fn parse_peer_hints(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn machine_trust_entrypoints_are_explicit_and_empty_by_default() {
+        assert!(policy_options("").reputation.trusted_raters.is_empty());
+        let public_key = nostr::Keys::generate().public_key().to_hex();
+        assert_eq!(
+            policy_options(&format!(" {public_key}, ;{public_key} "))
+                .reputation
+                .trusted_raters,
+            std::collections::BTreeSet::from([public_key]),
+        );
+        assert!(
+            policy_options("invalid-public-key")
+                .reputation
+                .trusted_raters
+                .contains("invalid-public-key"),
+            "invalid explicit configuration must reach the adapter's validator"
+        );
+    }
 
     #[test]
     fn routed_identities_do_not_become_direct_addresses() {

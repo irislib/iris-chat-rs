@@ -2,6 +2,31 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.10
+
+### GitHub
+
+- Reduce idle FIPS session-report traffic while preserving live traffic measurements and recovery after an interrupted route.
+- Apply one bounded reputation projection to mesh peer preference and event admission. Optional configured rating entrypoints default to empty; good service does not automatically authorize a peer to rate others.
+- Keep local peer observations useful when rating publication fails, and manage the shared rating exchange inside the pubsub adapter.
+- Stop shared pubsub tasks when the app stops device connections, even when another component retains the client.
+- Require relayless signed-event and verified-blob recovery, CPU limits, and bandwidth limits against the exact tagged source before release publication.
+- Preserve profile update freshness across restart and exclude mesh servers from nearby user previews.
+
+### Apple
+
+- Reduced background network traffic between connected devices.
+- Stopped background connection work reliably when device connections are turned off.
+- Improved how the app chooses available device connections.
+- Fixed stale profile updates after restarting the app and improved Nearby discovery.
+
+### Zapstore
+
+- Reduced background network traffic between connected devices.
+- Stopped background connection work reliably when device connections are turned off.
+- Improved how the app chooses available device connections.
+- Fixed stale profile updates after restarting the app and improved Nearby discovery.
+
 ## v2026.9.9
 
 ### GitHub
