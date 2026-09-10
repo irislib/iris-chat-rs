@@ -475,6 +475,7 @@ final class InteropHarnessTests: XCTestCase {
             status("notification_body", notification.request.content.body)
             status("notification_id", notification.request.identifier)
             if action == "open_delivered_notification" {
+#if os(iOS)
                 _ = try await ensureLoggedIn(manager: manager, env: env)
                 manager.handlePushNotificationTap(userInfo: notification.request.content.userInfo)
                 let chat = try await waitFor(label: "message opened from push", timeout: timeout) {
@@ -485,6 +486,9 @@ final class InteropHarnessTests: XCTestCase {
                     return chat
                 }
                 status("opened_chat_id", chat.chatId)
+#else
+                throw HarnessError.unexpected("Opening mobile push notifications is only supported on iOS")
+#endif
             }
         case "wait_for_peer_roster_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
