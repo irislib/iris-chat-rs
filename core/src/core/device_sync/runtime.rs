@@ -716,9 +716,17 @@ async fn run_fips_nearby_link_monitor(
     outbox: Arc<RwLock<super::super::fips_nearby::FipsNearbyOutbox>>,
     core_sender: Sender<CoreMsg>,
 ) {
-    let mut initialized_links = BTreeMap::<String, u64>::new();
+    let mut initialized_links = BTreeMap::<String, (u64, u64)>::new();
+    let mut current_bootstrap = Vec::new();
+    let mut bootstrap_revision = 0_u64;
     let mut reported_links = Vec::new();
     loop {
+        if let Ok(payloads) = bootstrap_payloads.read() {
+            if *payloads != current_bootstrap {
+                current_bootstrap = payloads.clone();
+                bootstrap_revision = bootstrap_revision.wrapping_add(1);
+            }
+        }
         let peers = match endpoint.peers().await {
             Ok(peers) => peers,
             Err(_) => return,
@@ -749,13 +757,11 @@ async fn run_fips_nearby_link_monitor(
             let Ok(identity) = FipsPeerIdentity::from_npub(&peer.npub) else {
                 continue;
             };
-            let initialized = if initialized_links.get(&peer.npub) == Some(&peer.link_id) {
+            let initialization = (peer.link_id, bootstrap_revision);
+            let initialized = if initialized_links.get(&peer.npub) == Some(&initialization) {
                 true
             } else {
-                let payloads = bootstrap_payloads
-                    .read()
-                    .map(|payloads| payloads.clone())
-                    .unwrap_or_default();
+                let payloads = current_bootstrap.clone();
                 let sent = if payloads.is_empty() {
                     true
                 } else {
@@ -775,7 +781,7 @@ async fn run_fips_nearby_link_monitor(
                         .is_ok()
                 };
                 if sent {
-                    initialized_links.insert(peer.npub.clone(), peer.link_id);
+                    initialized_links.insert(peer.npub.clone(), initialization);
                 }
                 sent
             };

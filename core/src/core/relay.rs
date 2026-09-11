@@ -12,6 +12,9 @@ impl AppCore {
         if event.verify().is_err() {
             return;
         }
+        // Backfill signed identity records on upgrade even when the event was
+        // already seen. Linked devices need the original signatures offline.
+        self.cache_local_fips_identity(&event);
         let event_id = event.id.to_string();
         let kind = event.kind.as_u16() as u32;
         let is_app_keys_protocol_event = kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event);
@@ -631,6 +634,7 @@ impl AppCore {
         } else {
             ProtocolRetryBatch::default()
         };
+        self.cache_local_fips_identity(event);
 
         let mut known =
             known_app_keys_from_ndr(event.pubkey, &effective_app_keys, effective_created_at);

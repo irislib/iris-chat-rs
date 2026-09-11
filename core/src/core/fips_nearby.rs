@@ -259,6 +259,19 @@ impl AppCore {
 
     pub(super) fn local_fips_nearby_bootstrap_payloads(&self) -> Vec<Vec<u8>> {
         let (background, mut durable) = self.build_local_identity_artifacts();
+        if self
+            .logged_in
+            .as_ref()
+            .is_some_and(|login| login.owner_keys.is_none())
+        {
+            // Linked devices cannot recreate owner signatures. Forward the original
+            // signed records so a new peer can resolve our device, name and picture.
+            for kind in [Kind::Metadata, Kind::Custom(APP_KEYS_EVENT_KIND as u16)] {
+                if let Some(event) = self.cached_local_fips_identity(kind) {
+                    durable.push(("linked-identity-nearby", event));
+                }
+            }
+        }
         if let Some(event) = self.deferred_owner_app_keys_for_fips_nearby() {
             durable.insert(0, ("app-keys-nearby", event));
         }
@@ -269,6 +282,65 @@ impl AppCore {
             .filter(is_fips_nearby_bootstrap_event)
             .filter_map(|event| encode_fips_nearby_event(&event))
             .collect()
+    }
+
+    fn local_fips_identity_storage(&self) -> Option<SqliteStorageAdapter> {
+        let login = self.logged_in.as_ref()?;
+        Some(SqliteStorageAdapter::new(
+            self.app_store.shared(),
+            login.owner_pubkey.to_hex(),
+            login.device_keys.public_key().to_hex(),
+        ))
+    }
+
+    fn cached_local_fips_identity(&self, kind: Kind) -> Option<Event> {
+        let login = self.logged_in.as_ref()?;
+        let key = format!("appcore/nearby-identity-v1/{}", kind.as_u16());
+        let json = self.local_fips_identity_storage()?.get(&key).ok()??;
+        let event: Event = serde_json::from_str(&json).ok()?;
+        (event.pubkey == login.owner_pubkey && event.kind == kind && event.verify().is_ok())
+            .then_some(event)
+    }
+
+    pub(super) fn cache_local_fips_identity(&mut self, event: &Event) {
+        if !self
+            .logged_in
+            .as_ref()
+            .is_some_and(|login| login.owner_pubkey == event.pubkey)
+            || !(event.kind == Kind::Metadata || is_app_keys_event(event))
+            || event.verify().is_err()
+        {
+            return;
+        }
+        if event.kind == Kind::Metadata {
+            if !serde_json::from_str::<serde_json::Value>(&event.content)
+                .is_ok_and(|value| value.is_object())
+            {
+                return;
+            }
+        } else if !app_keys_event_is_acceptable_for_owner(event.pubkey, event, unix_now().get()) {
+            return;
+        }
+        if self
+            .cached_local_fips_identity(event.kind)
+            .is_some_and(|current| {
+                current.created_at > event.created_at
+                    || (current.created_at == event.created_at && current.id <= event.id)
+            })
+        {
+            return;
+        }
+        let Some(storage) = self.local_fips_identity_storage() else {
+            return;
+        };
+        let key = format!("appcore/nearby-identity-v1/{}", event.kind.as_u16());
+        let result = serde_json::to_string(event)
+            .map_err(anyhow::Error::from)
+            .and_then(|json| storage.put(&key, json).map_err(anyhow::Error::from));
+        match result {
+            Ok(()) => self.refresh_fips_nearby_bootstrap(),
+            Err(error) => self.push_debug_log("fips_nearby.identity_cache", error.to_string()),
+        }
     }
 
     fn deferred_owner_app_keys_for_fips_nearby(&self) -> Option<Event> {

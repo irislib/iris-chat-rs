@@ -387,6 +387,7 @@ impl AppCore {
     }
 
     pub(super) fn apply_profile_metadata_event(&mut self, event: &Event) -> bool {
+        self.cache_local_fips_identity(event);
         let owner_hex = event.pubkey.to_hex();
         let extra_tags: Vec<Vec<String>> = event
             .tags

@@ -434,6 +434,127 @@ fn test_peer_bootstrap() -> (tempfile::TempDir, AppCore, PublicKey, String) {
 }
 
 #[test]
+fn linked_device_forwards_signed_identity_after_restart() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let roster = AppKeys::new(vec![DeviceEntry::new(device.public_key(), 1)])
+        .get_encrypted_event_at(&owner, 1)
+        .unwrap()
+        .sign_with_keys(&owner)
+        .unwrap();
+    let metadata = EventBuilder::new(
+        Kind::Metadata,
+        serde_json::json!({"name": "Linked Alice", "picture": "https://example.com/alice.png"})
+            .to_string(),
+    )
+    .custom_created_at(Timestamp::from_secs(1))
+    .sign_with_keys(&owner)
+    .unwrap();
+    let make_core = || {
+        AppCore::new(
+            flume::unbounded().0,
+            flume::unbounded().0,
+            directory.path().to_string_lossy().to_string(),
+            Arc::new(RwLock::new(AppState::empty())),
+        )
+    };
+    let mut linked = make_core();
+    linked.preferences.nostr_relay_urls.clear();
+    linked
+        .start_session(owner.public_key(), None, device.clone(), false, false)
+        .unwrap();
+    linked.handle_relay_event(roster.clone());
+    // Profile searches and device linking also ingest records directly.
+    assert!(linked.apply_profile_metadata_event(&metadata));
+    linked.remember_event(metadata.id.to_hex());
+    // An upgraded app may already have seen these records before caching was added.
+    let storage = linked.local_fips_identity_storage().unwrap();
+    storage.del("appcore/nearby-identity-v1/0").unwrap();
+    linked.handle_relay_event(metadata.clone());
+    let older_metadata = EventBuilder::new(Kind::Metadata, "{\"name\":\"Old Alice\"}")
+        .custom_created_at(Timestamp::from_secs(0))
+        .sign_with_keys(&owner)
+        .unwrap();
+    linked.handle_relay_event(older_metadata);
+    linked.pending_relay_publishes.clear();
+    linked.persist_best_effort();
+    drop(linked);
+
+    let mut linked = make_core();
+    linked.preferences.nostr_relay_urls.clear();
+    linked
+        .start_session(owner.public_key(), None, device.clone(), true, true)
+        .unwrap();
+    assert!(linked.logged_in.as_ref().unwrap().owner_keys.is_none());
+    let payloads = linked.local_fips_nearby_bootstrap_payloads();
+    let events = payloads
+        .iter()
+        .filter_map(|payload| match FipsNearbyPacket::decode(payload)? {
+            FipsNearbyPacket::Event { event_json, .. } => {
+                serde_json::from_str::<Event>(&event_json).ok()
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        events.iter().any(|event| event.id == roster.id),
+        "linked device must forward the owner's signed device list"
+    );
+    assert!(
+        events.iter().any(|event| event.id == metadata.id),
+        "linked device must forward the owner's signed profile"
+    );
+    assert!(events.iter().all(|event| event.verify().is_ok()));
+
+    let receiver_dir = tempfile::TempDir::new().unwrap();
+    let (updates_tx, updates_rx) = flume::unbounded();
+    let mut receiver = AppCore::new(
+        updates_tx,
+        flume::unbounded().0,
+        receiver_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    receiver.preferences.nostr_relay_urls.clear();
+    receiver.create_account("Receiver");
+    receiver.handle_internal(InternalEvent::FipsNearbyPeersChanged(vec![
+        crate::updates::FipsNearbyLinkSnapshot {
+            device_pubkey_hex: device.public_key().to_hex(),
+            transport_type: "UDP".to_string(),
+        },
+    ]));
+    for payload in &payloads {
+        receiver.handle_fips_nearby_packet(
+            &device.public_key().to_hex(),
+            FIPS_NEARBY_PORT,
+            payload,
+        );
+    }
+    let snapshot = updates_rx
+        .try_iter()
+        .filter_map(|update| match update {
+            AppUpdate::NearbyPeersChanged { snapshot, .. } => Some(snapshot),
+            _ => None,
+        })
+        .last()
+        .unwrap();
+    assert_eq!(snapshot.peers[0].name, "Linked Alice");
+    assert_eq!(
+        snapshot.peers[0].picture_url.as_deref(),
+        Some("https://example.com/alice.png")
+    );
+    assert_eq!(
+        snapshot.peers[0].owner_pubkey_hex,
+        Some(owner.public_key().to_hex())
+    );
+    assert_fips_bootstrap_drains_queued_message(
+        owner.public_key(),
+        &device.public_key().to_hex(),
+        payloads,
+    );
+}
+
+#[test]
 fn relay_identity_updates_refresh_an_existing_nearby_link() {
     let (_alice_dir, alice, alice_owner, alice_device) = test_peer_bootstrap();
     let bob_dir = tempfile::TempDir::new().unwrap();
