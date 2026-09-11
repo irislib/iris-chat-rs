@@ -381,12 +381,34 @@ impl AppCore {
 
     pub(super) fn emit_fips_nearby_peers(&self) {
         let now = unix_now().get();
+        let local_device = self
+            .logged_in
+            .as_ref()
+            .map(|login| login.device_keys.public_key().to_hex());
+        let own_devices = self
+            .logged_in
+            .as_ref()
+            .and_then(|login| self.app_keys.get(&login.owner_pubkey.to_hex()));
         let mut bluetooth_peer_ids = Vec::new();
         let mut lan_peer_ids = Vec::new();
         let peers = self
             .fips_nearby_links
             .iter()
             .filter_map(|link| {
+                if local_device
+                    .as_ref()
+                    .is_some_and(|device| device.eq_ignore_ascii_case(&link.device_pubkey_hex))
+                    || own_devices.is_some_and(|keys| {
+                        keys.devices.iter().any(|device| {
+                            device
+                                .identity_pubkey_hex
+                                .eq_ignore_ascii_case(&link.device_pubkey_hex)
+                        })
+                    })
+                {
+                    // Keep our device links for sync, but don't present them as other people.
+                    return None;
+                }
                 let id = link.device_pubkey_hex.clone();
                 let transport = link.transport_type.to_ascii_lowercase();
                 if transport.contains("ble") || transport.contains("bluetooth") {

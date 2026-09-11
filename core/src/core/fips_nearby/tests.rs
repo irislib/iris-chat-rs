@@ -1,6 +1,86 @@
 use super::*;
 
 #[test]
+fn nearby_snapshot_excludes_self_before_and_after_device_list_arrives() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let (updates_tx, updates_rx) = flume::unbounded();
+    let mut core = AppCore::new(
+        updates_tx,
+        flume::unbounded().0,
+        directory.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.create_account("Me");
+    let login = core.logged_in.as_ref().unwrap();
+    let owner = login.owner_keys.as_ref().unwrap().clone();
+    let local_device = login.device_keys.public_key();
+    let sibling_device = Keys::generate().public_key();
+    let other_device = Keys::generate().public_key().to_hex();
+    let sibling_id = sibling_device.to_hex().to_ascii_uppercase();
+    // A restored account can discover links before its device list arrives.
+    core.app_keys.remove(&owner.public_key().to_hex());
+    let latest_snapshot = || {
+        updates_rx
+            .try_iter()
+            .filter_map(|update| match update {
+                AppUpdate::NearbyPeersChanged {
+                    snapshot,
+                    bluetooth_peer_ids,
+                    lan_peer_ids,
+                } => Some((snapshot, bluetooth_peer_ids, lan_peer_ids)),
+                _ => None,
+            })
+            .last()
+            .expect("nearby snapshot")
+    };
+    let link = |id: String, transport: &str| crate::updates::FipsNearbyLinkSnapshot {
+        device_pubkey_hex: id,
+        transport_type: transport.to_string(),
+    };
+    core.handle_internal(InternalEvent::FipsNearbyPeersChanged(vec![
+        link(local_device.to_hex().to_ascii_uppercase(), "BLE"),
+        link(sibling_id.clone(), "UDP"),
+        link(other_device.clone(), "Bluetooth"),
+    ]));
+    let (snapshot, bluetooth, lan) = latest_snapshot();
+    assert_eq!(
+        snapshot
+            .peers
+            .iter()
+            .map(|peer| &peer.id)
+            .collect::<Vec<_>>(),
+        vec![&sibling_id, &other_device],
+        "the current device must be hidden even before its device list arrives"
+    );
+    assert_eq!(bluetooth, vec![other_device.clone()]);
+    assert_eq!(lan, vec![sibling_id]);
+
+    let created_at = unix_now().get().saturating_add(1);
+    let device_list = AppKeys::new(vec![
+        DeviceEntry::new(local_device, created_at),
+        DeviceEntry::new(sibling_device, created_at),
+    ])
+    .get_event_at(owner.public_key(), created_at)
+    .sign_with_keys(&owner)
+    .unwrap();
+    core.handle_relay_event(device_list);
+    let (snapshot, bluetooth, lan) = latest_snapshot();
+    assert_eq!(snapshot.peers.len(), 1);
+    assert_eq!(snapshot.peers[0].id, other_device);
+    assert_eq!(bluetooth, vec![other_device]);
+    assert!(lan.is_empty(), "linked devices are not other nearby users");
+    assert_eq!(
+        core.fips_nearby_links.len(),
+        3,
+        "keep links for device sync"
+    );
+    assert!(core.app_keys[&owner.public_key().to_hex()]
+        .devices
+        .iter()
+        .any(|device| device.identity_pubkey_hex == sibling_device.to_hex()));
+}
+
+#[test]
 fn nearby_snapshot_excludes_transit_connections() {
     let directory = tempfile::TempDir::new().unwrap();
     let (updates_tx, updates_rx) = flume::unbounded();
