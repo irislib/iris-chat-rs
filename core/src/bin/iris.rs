@@ -229,6 +229,17 @@ enum AccountCommands {
         secret_key: String,
     },
     Bundle,
+    /// Show this profile, or edit only the explicitly supplied fields.
+    Profile {
+        #[arg(long)]
+        name: Option<String>,
+        /// Public http(s) image URL; pass an empty string to remove it.
+        #[arg(long)]
+        picture_url: Option<String>,
+        /// Profile description; pass an empty string to remove it.
+        #[arg(long)]
+        about: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -782,6 +793,38 @@ fn handle_account_command(
             Ok(account_json(&require_account(&state)?))
         }
         AccountCommands::Restore { secret_key } => restore_account(cli, &secret_key),
+        AccountCommands::Profile {
+            name,
+            picture_url,
+            about,
+        } => {
+            let current = require_account(&cli.app.state())?;
+            let editing = name.is_some() || picture_url.is_some() || about.is_some();
+            if editing {
+                let state = cli.dispatch_and_wait(
+                    AppAction::UpdateProfileMetadata {
+                        name: name.unwrap_or(current.display_name),
+                        picture_url: picture_url.or(current.picture_url),
+                        about: about.or(current.about),
+                    },
+                    Duration::from_secs(3),
+                )?;
+                fail_on_toast(&state)?;
+            }
+            let account = require_account(&cli.app.state())?;
+            Ok(json!({
+                "profile": {
+                    "name": account.display_name,
+                    "picture_url": account.picture_url,
+                    "about": account.about,
+                },
+                "edited": editing,
+                // The core persists best-effort and publishes asynchronously;
+                // neither a state revision nor an idle runtime proves delivery.
+                "local_save": if editing { "requested" } else { "not_requested" },
+                "network_publication": "not_verified",
+            }))
+        }
         AccountCommands::Bundle => {
             let bundle = read_account_bundle(data_dir)?.context("No saved account bundle.")?;
             Ok(json!({

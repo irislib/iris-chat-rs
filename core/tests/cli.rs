@@ -406,3 +406,72 @@ fn link_create_outputs_compact_device_approval_bootstrap() {
         Some(bootstrap.device_app_key_npub.as_str())
     );
 }
+
+#[test]
+fn account_profile_preserves_omitted_fields_across_processes() {
+    let dir = TempDir::new().unwrap();
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_iris"))
+            .env("IRIS_DEMO_RELAYS", "")
+            .arg("--json")
+            .arg("--data-dir")
+            .arg(dir.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    run(&["account", "create", "--name", "Alice"]);
+    let extras = r#"{"website":"https://example.com","custom":{"keep":true}}"#;
+    {
+        let db = rusqlite::Connection::open(dir.path().join("core.sqlite3")).unwrap();
+        db.execute(
+            "UPDATE owner_profiles SET extra_metadata_json = ?1",
+            [extras],
+        )
+        .unwrap();
+    }
+    let edited = run(&[
+        "account",
+        "profile",
+        "--picture-url",
+        "https://example.com/avatar.png",
+        "--about",
+        "Hello",
+    ]);
+    assert_eq!(edited["data"]["network_publication"], "not_verified");
+    run(&["account", "profile", "--name", "Alicia"]);
+    let inspected = run(&["account", "profile"]);
+    assert_eq!(inspected["data"]["edited"], false);
+    assert_eq!(inspected["data"]["local_save"], "not_requested");
+    assert_eq!(inspected["data"]["profile"]["name"], "Alicia");
+    assert_eq!(
+        inspected["data"]["profile"]["picture_url"],
+        "https://example.com/avatar.png"
+    );
+    assert_eq!(inspected["data"]["profile"]["about"], "Hello");
+    run(&["account", "profile", "--about", ""]);
+    let cleared = run(&["account", "profile"]);
+    assert!(cleared["data"]["profile"]["about"].is_null());
+    assert_eq!(
+        cleared["data"]["profile"]["picture_url"],
+        "https://example.com/avatar.png"
+    );
+    let db = rusqlite::Connection::open(dir.path().join("core.sqlite3")).unwrap();
+    let retained: String = db
+        .query_row(
+            "SELECT extra_metadata_json FROM owner_profiles LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&retained).unwrap(),
+        serde_json::from_str::<Value>(extras).unwrap()
+    );
+}
