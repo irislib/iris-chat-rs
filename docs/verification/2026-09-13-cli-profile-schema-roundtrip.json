@@ -1,0 +1,196 @@
+{
+  "checked_at_utc": "2026-09-12T22:46:30.354298+00:00",
+  "source_commit": "da4240a6556944d9fe38f603010605608c71c44d",
+  "network": "IRIS_DEMO_RELAYS empty; sandbox-exec denies network* for every CLI invocation",
+  "binaries": {
+    "old": {
+      "version": "iris 2026.7.14",
+      "sha256": "efde99ab1986091f46271b41578b0aaf0f9e68405b46b974f94184f66287d704"
+    },
+    "new": {
+      "version": "iris 0.1.45",
+      "sha256": "616bc2f505fb77e8eb8f9486ac462dc6f7c6d310454f3164bd2c7f763500d4c7"
+    }
+  },
+  "steps": [
+    {
+      "step": "old_relay_setting_check",
+      "exit_code": 0,
+      "message_servers": []
+    },
+    {
+      "step": "new_relay_setting_check",
+      "exit_code": 0,
+      "message_servers": []
+    },
+    {
+      "step": "old_create",
+      "exit_code": 0
+    },
+    {
+      "step": "old_seeded_profile",
+      "schema_version": 26,
+      "integrity_check": "ok",
+      "profile": {
+        "name": "Synthetic Profile",
+        "display_name": "Synthetic Profile",
+        "picture": "https://example.com/before.png",
+        "about": "Synthetic about",
+        "extra_metadata_json": {
+          "website": "https://example.com",
+          "custom": {
+            "keep": true
+          }
+        },
+        "extra_tags_json": [
+          [
+            "client",
+            "synthetic"
+          ]
+        ],
+        "updated_at_secs": 1789253190
+      },
+      "message_servers": []
+    },
+    {
+      "step": "new_edit_avatar",
+      "exit_code": 0,
+      "profile": {
+        "about": "Synthetic about",
+        "name": "Synthetic Profile",
+        "picture_url": "https://example.com/after.png"
+      },
+      "local_save": "requested",
+      "network_publication": "not_verified"
+    },
+    {
+      "step": "new_migrated_profile",
+      "schema_version": 30,
+      "integrity_check": "ok",
+      "profile": {
+        "name": "Synthetic Profile",
+        "display_name": "Synthetic Profile",
+        "picture": "https://example.com/after.png",
+        "about": "Synthetic about",
+        "extra_metadata_json": {
+          "website": "https://example.com",
+          "custom": {
+            "keep": true
+          }
+        },
+        "extra_tags_json": [
+          [
+            "client",
+            "synthetic"
+          ]
+        ],
+        "updated_at_secs": 1789253200
+      },
+      "message_servers": []
+    },
+    {
+      "step": "new_reopen",
+      "exit_code": 0,
+      "profile": {
+        "about": "Synthetic about",
+        "name": "Synthetic Profile",
+        "picture_url": "https://example.com/after.png"
+      },
+      "local_save": "not_requested",
+      "network_publication": "not_verified"
+    },
+    {
+      "step": "new_reopen_persisted",
+      "schema_version": 30,
+      "integrity_check": "ok",
+      "profile": {
+        "name": "Synthetic Profile",
+        "display_name": "Synthetic Profile",
+        "picture": "https://example.com/after.png",
+        "about": "Synthetic about",
+        "extra_metadata_json": {
+          "website": "https://example.com",
+          "custom": {
+            "keep": true
+          }
+        },
+        "extra_tags_json": [
+          [
+            "client",
+            "synthetic"
+          ]
+        ],
+        "updated_at_secs": 1789253200
+      },
+      "message_servers": []
+    },
+    {
+      "step": "old_startup",
+      "exit_code": 0
+    },
+    {
+      "step": "old_after_new",
+      "schema_version": 30,
+      "integrity_check": "ok",
+      "profile": {
+        "name": "Synthetic Profile",
+        "display_name": "Synthetic Profile",
+        "picture": "https://example.com/after.png",
+        "about": "Synthetic about",
+        "extra_metadata_json": {
+          "website": "https://example.com",
+          "custom": {
+            "keep": true
+          }
+        },
+        "extra_tags_json": [
+          [
+            "client",
+            "synthetic"
+          ]
+        ],
+        "updated_at_secs": 1789253200
+      },
+      "message_servers": []
+    },
+    {
+      "step": "new_inspect_after_old",
+      "exit_code": 0,
+      "profile": {
+        "about": "Synthetic about",
+        "name": "Synthetic Profile",
+        "picture_url": "https://example.com/after.png"
+      },
+      "local_save": "not_requested",
+      "network_publication": "not_verified"
+    },
+    {
+      "step": "final_persisted_profile",
+      "schema_version": 30,
+      "integrity_check": "ok",
+      "profile": {
+        "name": "Synthetic Profile",
+        "display_name": "Synthetic Profile",
+        "picture": "https://example.com/after.png",
+        "about": "Synthetic about",
+        "extra_metadata_json": {
+          "website": "https://example.com",
+          "custom": {
+            "keep": true
+          }
+        },
+        "extra_tags_json": [
+          [
+            "client",
+            "synthetic"
+          ]
+        ],
+        "updated_at_secs": 1789253200
+      },
+      "message_servers": []
+    }
+  ],
+  "outcome": "pass",
+  "harness_note": "Initial comparison treated JSON whitespace as data; comparison now decodes extra metadata and tags before equality checks.",
+  "scope": "Synthetic owner account only; no chats, linked devices, relay publication, queued delivery or live database. No general downgrade guarantee."
+}
