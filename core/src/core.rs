@@ -156,6 +156,7 @@ pub(crate) use profile_search::prewarm_default_social_graph;
 pub(crate) use profile_search::search_people;
 use protocol_filters::*;
 use publish_helpers::*;
+pub use storage::validate_account_storage;
 use storage::{open_database, AppStore, DataDirLock, SqliteStorageAdapter};
 pub(crate) use storage::{search_messages_fts, PersistedMessageSearchHit, SharedConnection};
 

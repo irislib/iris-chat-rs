@@ -538,6 +538,7 @@ impl AppCore {
         allow_protocol_restore: bool,
         emit_account_bundle: bool,
     ) -> anyhow::Result<()> {
+        self.app_store.bind_account(owner_pubkey)?;
         self.push_debug_log(
             "session.start",
             format!(

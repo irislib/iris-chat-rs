@@ -4,11 +4,13 @@
 // notification-preview path) and shared with `SqliteStorageAdapter`,
 // which implements the `nostr_double_ratchet::StorageAdapter` trait.
 
+mod account;
 mod connection;
 mod schema;
 mod store;
 mod store_pending_relay;
 
+pub use account::validate_account_storage;
 pub(crate) use connection::{open_database, DataDirLock, CORE_DB_FILENAME};
 pub(crate) use iris_chat_protocol::{SharedConnection, SqliteStorageAdapter};
 pub(crate) use store::{

@@ -5,8 +5,15 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension};
 use serde_json::{json, Value};
 
-pub(crate) fn latest_message_keys(data_dir: &Path, chat: Option<&str>) -> Result<HashSet<String>> {
+use super::{print_stream_envelope, read_account_bundle};
+
+pub(crate) fn latest_message_keys(
+    data_dir: &Path,
+    chat: Option<&str>,
+    owner: &str,
+) -> Result<HashSet<String>> {
     let conn = open_existing_db(data_dir)?;
+    iris_chat_core::validate_account_storage(&conn, owner)?;
     let mut seen = HashSet::new();
     match chat {
         Some(chat_id) => {
@@ -43,8 +50,10 @@ pub(crate) fn new_message_rows(
     data_dir: &Path,
     chat: Option<&str>,
     seen: &HashSet<String>,
+    owner: &str,
 ) -> Result<Vec<Value>> {
     let conn = open_existing_db(data_dir)?;
+    iris_chat_core::validate_account_storage(&conn, owner)?;
     let sql = match chat {
         Some(_) => {
             "SELECT chat_id, id, body, is_outgoing, created_at_secs, delivery
@@ -85,6 +94,25 @@ pub(crate) fn new_message_rows(
         }
     }
     Ok(messages)
+}
+
+pub(crate) fn stream_new_messages(
+    data_dir: &Path,
+    chat: Option<&str>,
+    seen: &mut HashSet<String>,
+    owner: &str,
+) -> Result<()> {
+    let messages = new_message_rows(data_dir, chat, seen, owner)?;
+    for message in messages {
+        if let (Some(chat_id), Some(id)) = (
+            message.get("chat_id").and_then(Value::as_str),
+            message.get("id").and_then(Value::as_str),
+        ) {
+            seen.insert(format!("{chat_id}\0{id}"));
+        }
+        print_stream_envelope("message", message)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn latest_outgoing_message_row(
@@ -140,7 +168,22 @@ fn push_unseen_message(message: Value, seen: &HashSet<String>, messages: &mut Ve
     }
 }
 
-fn open_existing_db(data_dir: &Path) -> Result<Connection> {
-    let path = data_dir.join("core.sqlite3");
-    Connection::open(path).context("Open Iris chat database")
+pub(crate) fn open_existing_db(data_dir: &Path) -> Result<Connection> {
+    let bundle = read_account_bundle(data_dir)?
+        .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?;
+    if let Some(secret) = &bundle.owner_nsec {
+        anyhow::ensure!(
+            nostr::Keys::parse(secret)?.public_key().to_hex() == bundle.owner_pubkey_hex,
+            "Saved secret key does not match this account."
+        );
+    }
+    let conn = Connection::open_with_flags(
+        data_dir.join("core.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .context("Open Iris chat database")?;
+    // Keep the ownership check and message queries in the same read snapshot.
+    conn.execute_batch("BEGIN DEFERRED TRANSACTION")?;
+    iris_chat_core::validate_account_storage(&conn, &bundle.owner_pubkey_hex)?;
+    Ok(conn)
 }

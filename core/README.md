@@ -23,6 +23,19 @@ iris listen
 
 Use `--json` for scripts and agents.
 
+Use a separate `--data-dir` for each account, including bots. A data folder is
+bound to one account; restoring another key there is rejected without deleting
+its history or replacing its saved credentials. Devices of the same account
+can continue using that account's folder. Older folders are adopted only when
+their stored identity is unambiguous. If a folder contains multiple identities
+or history with no identifiable account, keep it for recovery and use a new
+folder for the bot:
+
+```sh
+iris --data-dir /path/to/bot-chat restore <bot-secret-key>
+iris --data-dir /path/to/bot-chat listen
+```
+
 Set `IRIS_CHAT_SAME_HOST_HASHTREE=1` to let the logged-in Chat FIPS endpoint
 discover authenticated `hashtree.blob/1` providers over fixed loopback UDP.
 Chat's local cache, one composite FIPS provider route, and its configured

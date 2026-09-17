@@ -163,6 +163,143 @@ fn account_create_persists_and_restores_for_next_process() {
 }
 
 #[test]
+fn account_storage_rejects_other_keys_without_changing_history_or_credentials() {
+    use nostr::{Keys, ToBech32};
+
+    let dir = TempDir::new().unwrap();
+    run_iris(dir.path(), &["relay", "set"]);
+    let alice = run_iris(dir.path(), &["account", "create", "--name", "Alice"]);
+    let peer = Keys::generate().public_key().to_hex();
+    run_iris(dir.path(), &["send", &peer, "Alice private history"]);
+    let bundle_path = dir.path().join("cli-account.json");
+    let original_bundle = std::fs::read(&bundle_path).unwrap();
+    let other_secret = Keys::generate().secret_key().to_bech32().unwrap();
+
+    for args in [
+        vec!["restore", other_secret.as_str()],
+        vec!["account", "create", "--name", "Bot"],
+    ] {
+        let error = run_iris_error(dir.path(), &args);
+        assert!(error["error"]
+            .as_str()
+            .unwrap()
+            .contains("different account"));
+        assert_eq!(std::fs::read(&bundle_path).unwrap(), original_bundle);
+        let whoami = run_iris(dir.path(), &["whoami"]);
+        assert_eq!(whoami["data"]["user_id"], alice["data"]["user_id"]);
+        let read = run_iris(dir.path(), &["read", &peer]);
+        assert_eq!(read["data"]["messages"][0]["body"], "Alice private history");
+    }
+
+    // A fresh device for the same account must still retain its history.
+    let bundle: Value = serde_json::from_slice(&original_bundle).unwrap();
+    let restored = run_iris(
+        dir.path(),
+        &["restore", bundle["owner_nsec"].as_str().unwrap()],
+    );
+    assert_eq!(restored["data"]["user_id"], alice["data"]["user_id"]);
+    let read = run_iris(dir.path(), &["read", &peer]);
+    assert_eq!(read["data"]["messages"][0]["body"], "Alice private history");
+}
+
+#[test]
+fn account_storage_checks_replaced_cli_credentials_even_for_direct_database_reads() {
+    use nostr::{Keys, ToBech32};
+
+    let dir = TempDir::new().unwrap();
+    run_iris(dir.path(), &["relay", "set"]);
+    run_iris(dir.path(), &["account", "create", "--name", "Alice"]);
+    let peer = Keys::generate().public_key().to_hex();
+    run_iris(dir.path(), &["send", &peer, "Alice private history"]);
+    let bundle_path = dir.path().join("cli-account.json");
+    let original_bundle = std::fs::read(&bundle_path).unwrap();
+    let bot = Keys::generate();
+    let device = Keys::generate();
+    std::fs::write(
+        &bundle_path,
+        serde_json::to_vec(&serde_json::json!({
+            "owner_nsec": bot.secret_key().to_bech32().unwrap(),
+            "owner_pubkey_hex": bot.public_key().to_hex(),
+            "device_nsec": device.secret_key().to_bech32().unwrap(),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    for args in [
+        vec!["whoami"],
+        vec!["read", peer.as_str()],
+        vec!["search", "private"],
+        vec!["tail"],
+        vec!["tail", "--follow"],
+    ] {
+        let error = run_iris_error(dir.path(), &args);
+        assert!(error["error"]
+            .as_str()
+            .unwrap()
+            .contains("different account"));
+        assert!(!error.to_string().contains("Alice private history"));
+    }
+
+    std::fs::write(&bundle_path, original_bundle).unwrap();
+    let read = run_iris(dir.path(), &["read", &peer]);
+    assert_eq!(read["data"]["messages"][0]["body"], "Alice private history");
+}
+
+#[test]
+fn account_storage_follow_keeps_the_account_it_started_with() {
+    use nostr::{Keys, ToBech32};
+
+    let dir = TempDir::new().unwrap();
+    run_iris(dir.path(), &["relay", "set"]);
+    run_iris(dir.path(), &["account", "create", "--name", "Alice"]);
+    let mut child = start_iris(dir.path(), &["tail", "--follow", "--interval-ms", "1000"]);
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    assert_eq!(read_json_line(&mut reader)["data"]["ready"], true);
+
+    // Simulate the folder being reassigned between polls. Both the new account
+    // bundle and database agree, but this reader still belongs to Alice.
+    let bot = Keys::generate();
+    let device = Keys::generate();
+    std::fs::write(
+        dir.path().join("cli-account.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "owner_nsec": bot.secret_key().to_bech32().unwrap(),
+            "owner_pubkey_hex": bot.public_key().to_hex(),
+            "device_nsec": device.secret_key().to_bech32().unwrap(),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let conn = rusqlite::Connection::open(dir.path().join("core.sqlite3")).unwrap();
+    conn.execute(
+        "UPDATE app_meta SET value = ?1 WHERE key = 'account_owner_pubkey_hex'",
+        [bot.public_key().to_hex()],
+    )
+    .unwrap();
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(!status
+        .expect("reader must stop on account change")
+        .success());
+    let error = read_json_line(&mut reader);
+    assert!(error["error"]
+        .as_str()
+        .unwrap()
+        .contains("different account"));
+}
+
+#[test]
 fn direct_chat_send_read_search_and_tail_work_offline() {
     let alice = TempDir::new().unwrap();
     let bob = TempDir::new().unwrap();

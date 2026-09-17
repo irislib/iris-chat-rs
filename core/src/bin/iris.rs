@@ -15,14 +15,15 @@ use iris_chat_core::{
     DesktopNearbySnapshot, DeviceAuthorizationState, FfiApp, FfiDesktopNearby,
     GroupDetailsSnapshot,
 };
-use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::{json, Value};
 
 mod iris_message_rows;
 mod iris_updater;
 mod iris_wait_helpers;
-use iris_message_rows::{latest_message_keys, latest_outgoing_message_row, new_message_rows};
+use iris_message_rows::{
+    latest_message_keys, latest_outgoing_message_row, open_existing_db, stream_new_messages,
+};
 use iris_updater::{run_iris_update, UpdateCommands};
 use iris_wait_helpers::{
     has_delivery_blocking_protocol_work, has_pending_relay_transport_publishes,
@@ -1494,7 +1495,7 @@ fn listen(data_dir: &Path, chat: Option<&str>, interval_ms: u64, nearby_lan: boo
     let cli = CliApp::open(data_dir)?;
     let state = cli.app.state();
     fail_on_toast(&state)?;
-    require_account(&state)?;
+    let owner = require_account(&state)?.public_key_hex;
     let chat_filter = normalize_chat_filter(&state, chat);
     if let Some(chat_id) = chat_filter.as_ref() {
         cli.dispatch_and_wait(
@@ -1505,7 +1506,7 @@ fn listen(data_dir: &Path, chat: Option<&str>, interval_ms: u64, nearby_lan: boo
         )?;
         fail_on_toast(&cli.app.state())?;
     }
-    let mut seen = latest_message_keys(data_dir, chat_filter.as_deref())?;
+    let mut seen = latest_message_keys(data_dir, chat_filter.as_deref(), &owner)?;
     let _nearby = if nearby_lan {
         let service = FfiDesktopNearby::new(cli.app.clone(), Box::new(CliNearbyObserver));
         let name = state
@@ -1535,7 +1536,7 @@ fn listen(data_dir: &Path, chat: Option<&str>, interval_ms: u64, nearby_lan: boo
     )?;
     loop {
         thread::sleep(interval);
-        stream_new_messages(data_dir, chat_filter.as_deref(), &mut seen)?;
+        stream_new_messages(data_dir, chat_filter.as_deref(), &mut seen, &owner)?;
     }
 }
 
@@ -1546,33 +1547,18 @@ fn follow_messages(
     command: &str,
 ) -> Result<()> {
     let interval = Duration::from_millis(interval_ms.max(100));
-    let mut seen = latest_message_keys(data_dir, chat)?;
+    let owner = read_account_bundle(data_dir)?
+        .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?
+        .owner_pubkey_hex;
+    let mut seen = latest_message_keys(data_dir, chat, &owner)?;
     print_stream_envelope(
         command,
         json!({ "ready": true, "chat": chat, "network": false }),
     )?;
     loop {
         thread::sleep(interval);
-        stream_new_messages(data_dir, chat, &mut seen)?;
+        stream_new_messages(data_dir, chat, &mut seen, &owner)?;
     }
-}
-
-fn stream_new_messages(
-    data_dir: &Path,
-    chat: Option<&str>,
-    seen: &mut std::collections::HashSet<String>,
-) -> Result<()> {
-    let messages = new_message_rows(data_dir, chat, seen)?;
-    for message in messages {
-        if let (Some(chat_id), Some(id)) = (
-            message.get("chat_id").and_then(Value::as_str),
-            message.get("id").and_then(Value::as_str),
-        ) {
-            seen.insert(format!("{chat_id}\0{id}"));
-        }
-        print_stream_envelope("message", message)?;
-    }
-    Ok(())
 }
 
 fn print_stream_envelope(command: &str, data: Value) -> Result<()> {
@@ -1960,11 +1946,6 @@ fn authorization_state(state: &DeviceAuthorizationState) -> &'static str {
         DeviceAuthorizationState::AwaitingApproval => "awaiting_approval",
         DeviceAuthorizationState::Revoked => "revoked",
     }
-}
-
-fn open_existing_db(data_dir: &Path) -> Result<Connection> {
-    let path = data_dir.join("core.sqlite3");
-    Connection::open(path).context("Open Iris chat database")
 }
 
 fn account_bundle_path(data_dir: &Path) -> PathBuf {

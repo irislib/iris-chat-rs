@@ -28,6 +28,7 @@ pub use actions::AppAction;
 #[cfg(feature = "stack-fixture")]
 #[doc(hidden)]
 pub use core::download_hashtree_attachment;
+pub use core::validate_account_storage;
 #[cfg(feature = "stack-fixture")]
 #[doc(hidden)]
 pub mod stack_mesh_fixture;
