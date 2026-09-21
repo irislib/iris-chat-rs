@@ -1235,11 +1235,32 @@ final class AppManager: ObservableObject {
                 showNearbyTransportPeers: screenshotFixtureShowsNearbyTransportPeers
             )
 #if os(macOS) && DEBUG
-            // Export the app's own view for marketing captures, without window-sharing chrome.
+            // Export the native window, including its AppKit title bar and controls.
             if let path = ProcessInfo.processInfo.environment["IRIS_UI_TEST_SCREENSHOT_OUTPUT"] {
+                if let window = NSApp.windows.first(where: { $0.title == "Iris Chat" }) {
+                    window.setContentSize(NSSize(width: 980, height: 700))
+                }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                     guard let window = NSApp.windows.first(where: { $0.title == "Iris Chat" }),
-                          let view = window.contentView,
+                          let content = window.contentView else { return }
+                    // A native off-screen window keeps the real frame while excluding
+                    // the system's screen-sharing indicator from the marketing image.
+                    let captureWindow = NSWindow(
+                        contentRect: NSRect(origin: .zero, size: content.bounds.size),
+                        styleMask: window.styleMask, backing: .buffered, defer: false
+                    )
+                    captureWindow.title = window.title
+                    captureWindow.appearance = window.effectiveAppearance
+                    captureWindow.titlebarAppearsTransparent = window.titlebarAppearsTransparent
+                    captureWindow.isReleasedWhenClosed = false
+                    captureWindow.contentView = content
+                    captureWindow.displayIfNeeded()
+                    defer {
+                        captureWindow.contentView = nil
+                        window.contentView = content
+                        captureWindow.close()
+                    }
+                    guard let view = captureWindow.contentView?.superview,
                           let bitmap = NSBitmapImageRep(
                             bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width * 2),
                             pixelsHigh: Int(view.bounds.height * 2), bitsPerSample: 8,
