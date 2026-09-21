@@ -10,6 +10,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+import native_lab
 
 
 ROOT = Path(__file__).resolve().parent
@@ -17,6 +20,33 @@ LAB = ROOT / "native_lab.py"
 
 
 class NativeLabTests(unittest.TestCase):
+    def test_physical_ios_selection_uses_structured_device_properties(self) -> None:
+        def device(identifier, udid, name, reality, state):
+            return {
+                "identifier": identifier,
+                "properties": {
+                    "hardware": {"udid": udid, "reality": reality, "platform": "iOS"},
+                    "connection": {"state": state},
+                    "state": {"name": name},
+                },
+            }
+
+        payload = json.dumps({"result": {"devices": [
+            device("sim-id", "sim-udid", "Simulator", "simulated", "connected"),
+            device("offline-id", "offline-udid", "Offline phone", "physical", "disconnected"),
+            device("phone-id", "phone-udid", "Test phone", "physical", "connected"),
+        ]}})
+        with mock.patch.object(native_lab.platform, "system", return_value="Darwin"), \
+             mock.patch.object(native_lab.shutil, "which", return_value="/usr/bin/xcrun"), \
+             mock.patch.object(native_lab, "run_probe", return_value=(True, payload)) as probe:
+            for selector in ("auto", "phone-udid", "phone-id", "Test phone"):
+                result = native_lab.check_health(f"ios-device:{selector}")
+                self.assertTrue(result["available"], result)
+                self.assertEqual(result["allocation"], "phone-udid")
+            self.assertFalse(native_lab.check_health("ios-device:sim-udid")["available"])
+            self.assertFalse(native_lab.check_health("ios-device:offline-udid")["available"])
+            self.assertIn("--json-output", probe.call_args.args[0])
+
     def run_lab(self, *args: str) -> subprocess.CompletedProcess:
         environment = os.environ.copy()
         environment["IRIS_NATIVE_LAB_STATE_DIR"] = self.state_dir
