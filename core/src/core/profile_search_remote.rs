@@ -19,12 +19,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const PROFILE_SEARCH_REF: &str =
-    "npub1dhuna75xx06lj4v4gkf9klgklrem9ez82h9u9zpxd77usm73pcdqctllwf/profile-search";
+    "npub1yscmnnadrmvape0mvgzfx9uyl267klnhzy8znsr6ysl8wtxngpqsnx6dm0/profile-search";
+// Public Iris Social snapshot announced by the index owner on 2026-07-28.
 const PROFILE_SEARCH_SNAPSHOT: &str =
-    "nhash1qqsdspyk9j47vfde5w6lgjqftp2uuzw6wqptkwyuvlg8w7lh7dn370c9yr8hastd4k5cf49de7nfvtqu0t3v8mqn339fywyz4hafp66pspfx78z5lgs";
-const PROFILE_SEARCH_RELAY: &str = "wss://hashtree.iris.to/ws";
-const PROFILE_SEARCH_BLOSSOM_SERVERS: &[&str] =
-    &["https://hashtree.iris.to", "https://cdn.iris.to"];
+    "nhash1qqs2l0cus9gusd9q7njwhqva5card6vgasr2yahwpswccrtelvlnlcs9yrtr0lv032mslyg375sapxlzjtutvje6veznpj2sp89jzzknxxy96zg93n4";
+const PROFILE_SEARCH_RELAY: &str = "wss://relay.damus.io";
+const PROFILE_SEARCH_BLOSSOM_SERVERS: &[&str] = &["https://cdn.iris.to"];
 
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(3);
 const ROOT_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
