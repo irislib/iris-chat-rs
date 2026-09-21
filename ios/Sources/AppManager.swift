@@ -977,7 +977,7 @@ final class AppManager: ObservableObject {
     private var pendingTestSeedRetryTask: Task<Void, Never>?
     private var uiTestSeedCount: Int?
     private var uiTestSeedDaySplitIndex: Int?
-#if os(iOS)
+#if os(iOS) || os(macOS)
     private let screenshotFixture: ScreenshotFixture?
     private let screenshotFixtureReferenceDate: Date
     private let screenshotFixtureShowsNearbyTransportPeers: Bool
@@ -1025,7 +1025,7 @@ final class AppManager: ObservableObject {
             self.uiTestSeedDaySplitIndex = daySplitIndex
             self.pendingTestSeed = PendingTestSeed(peer: peer, count: count, daySplitIndex: daySplitIndex)
         }
-#if os(iOS)
+#if os(iOS) || os(macOS)
         self.screenshotFixture = ScreenshotFixture.configured(environment: environment)
         self.screenshotFixtureReferenceDate = Date()
         self.screenshotFixtureShowsNearbyTransportPeers =
@@ -1126,7 +1126,7 @@ final class AppManager: ObservableObject {
         }
 #endif
 #endif
-#if os(iOS)
+#if os(iOS) || os(macOS)
         if let fixture = screenshotFixture {
             // Env-only escape hatch: makes the first fixture nearby
             // peer tappable for the e2e test that exercises
@@ -1205,7 +1205,7 @@ final class AppManager: ObservableObject {
             showToast("User is blocked")
             return
         }
-#if os(iOS)
+#if os(iOS) || os(macOS)
         if interceptScreenshotFixtureAction(action) {
             return
         }
@@ -1216,7 +1216,7 @@ final class AppManager: ObservableObject {
         dispatchToRust(action)
     }
 
-#if os(iOS)
+#if os(iOS) || os(macOS)
     /// Routes UI taps that target a fixture chat (or write to one) past the
     /// Rust core, which has no record of these synthetic chats and would
     /// surface a dispatch-failed toast. The screen stack is still updated
@@ -1234,6 +1234,24 @@ final class AppManager: ObservableObject {
                 referenceDate: screenshotFixtureReferenceDate,
                 showNearbyTransportPeers: screenshotFixtureShowsNearbyTransportPeers
             )
+#if os(macOS) && DEBUG
+            // Export the app's own view for marketing captures, without window-sharing chrome.
+            if let path = ProcessInfo.processInfo.environment["IRIS_UI_TEST_SCREENSHOT_OUTPUT"] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    guard let window = NSApp.windows.first(where: { $0.title == "Iris Chat" }),
+                          let view = window.contentView,
+                          let bitmap = NSBitmapImageRep(
+                            bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width * 2),
+                            pixelsHigh: Int(view.bounds.height * 2), bitsPerSample: 8,
+                            samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+                          ) else { return }
+                    bitmap.size = view.bounds.size
+                    view.cacheDisplay(in: view.bounds, to: bitmap)
+                    try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+                }
+            }
+#endif
             return true
         case .sendMessage(let chatId, _),
              .sendDisappearingMessage(let chatId, _, _),
@@ -2618,7 +2636,7 @@ final class AppManager: ObservableObject {
             _ = createdAtSecs
             _ = eventJson
         case .nearbyPeersChanged(let snapshot, let bluetoothPeerIds, let lanPeerIds):
-#if os(iOS)
+#if os(iOS) || os(macOS)
             guard screenshotFixture == nil else {
                 return
             }
@@ -2646,8 +2664,8 @@ final class AppManager: ObservableObject {
         )
 #if os(iOS)
         reconciledState = stateByApplyingUiTestSeedDaySplit(reconciledState)
-        reconciledState = stateByApplyingScreenshotFixture(reconciledState)
 #endif
+        reconciledState = stateByApplyingScreenshotFixture(reconciledState)
         lastRevApplied = nextState.rev
         state = reconciledState
         if logoutIfCurrentDeviceRevoked(reconciledState) {
@@ -2746,7 +2764,7 @@ final class AppManager: ObservableObject {
         }
     }
 
-#if os(iOS)
+#if os(iOS) || os(macOS)
     private func stateByApplyingScreenshotFixture(_ source: AppState) -> AppState {
         guard let fixture = screenshotFixture else { return source }
         // Rust has no record of fixture chats, so every Rust-driven state
@@ -2770,6 +2788,9 @@ final class AppManager: ObservableObject {
         )
     }
 
+#endif
+
+#if os(iOS)
     private func stateByApplyingUiTestSeedDaySplit(_ source: AppState) -> AppState {
         guard isUiTestRun,
               let splitIndex = uiTestSeedDaySplitIndex,

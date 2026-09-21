@@ -1,6 +1,6 @@
 import XCTest
 
-#if os(iOS)
+#if os(iOS) || os(macOS)
 /// Drives the app through the screens we publish to the App Store and
 /// saves each one as an `XCTAttachment` named `screenshot-<slug>`. The
 /// host script (`scripts/screenshot_ios.sh`) extracts the named PNGs from
@@ -15,6 +15,7 @@ final class ScreenshotTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    #if os(iOS)
     func testCaptureAppStoreScreenshots() {
         // Welcome chooser — taken before any account exists so the
         // fixture override doesn't kick in yet.
@@ -79,15 +80,44 @@ final class ScreenshotTests: XCTestCase {
         }
     }
 
+    #endif
+
+    func testCaptureMarketingScreenshots() {
+        let app = launchFixtureApp(createAccount: true, marketing: true)
+        XCTAssertTrue(waitForChatList(app, timeout: 30))
+        XCTAssertTrue(app.descendants(matching: .any)["chatRow-fx-chat-1"].waitForExistence(timeout: 10))
+        sleep(2)
+        #if os(iOS)
+        capture(app, named: "marketing-chat-list")
+        #else
+        openFixtureChat(app, index: 0)
+        XCTAssertTrue(app.descendants(matching: .any)["chatMessage-fx-chat-1-msg-6"].waitForExistence(timeout: 10))
+        sleep(2)
+        let attachment = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        attachment.name = "screenshot-marketing-desktop"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        #endif
+    }
+
     // MARK: - Helpers
 
-    private func launchFixtureApp(createAccount: Bool) -> XCUIApplication {
+    private func launchFixtureApp(createAccount: Bool, marketing: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
         app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = "screenshot-\(UUID().uuidString)"
         app.launchEnvironment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] = "1"
         app.launchEnvironment["IRIS_DISABLE_NOTIFICATIONS"] = "1"
         app.launchEnvironment["IRIS_UI_TEST_SCREENSHOT_FIXTURE"] = "1"
+        if marketing {
+            app.launchEnvironment["IRIS_UI_TEST_SCREENSHOT_STYLE"] = "marketing"
+            let bundle = Bundle(for: Self.self)
+            let url = bundle.url(forResource: "ScreenshotAvatars", withExtension: "jpg", subdirectory: "Fixtures")
+                ?? bundle.url(forResource: "ScreenshotAvatars", withExtension: "jpg")
+            let data = url.flatMap { try? Data(contentsOf: $0) }
+            XCTAssertNotNil(data, "The marketing portraits must be bundled with the UI tests")
+            app.launchEnvironment["IRIS_UI_TEST_SCREENSHOT_AVATARS"] = data?.base64EncodedString()
+        }
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
         if createAccount {

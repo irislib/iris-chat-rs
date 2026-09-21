@@ -1,5 +1,6 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import Foundation
+import ImageIO
 
 /// Curated state used to paint App Store screenshots. Activated by the
 /// `IRIS_UI_TEST_SCREENSHOT_FIXTURE=1` launch environment variable.
@@ -73,6 +74,84 @@ struct ScreenshotFixture {
             self.delivery = delivery
             self.reactions = reactions
             self.groupAuthorName = groupAuthorName
+        }
+    }
+
+    /// Fictional website demo content, separate from the regression-test fixture.
+    static let marketing = ScreenshotFixture(
+        ownerDisplayName: "Chad Bennett",
+        threads: [
+            Thread(chatId: "fx-chat-1", kind: .direct, displayName: "Brooke Taylor", subtitle: nil,
+                   lastMessagePreview: "See you by the lake ☀️", lastMessageAgeSecs: 60 * 2,
+                   lastMessageIsOutgoing: false, unreadCount: 2, memberCount: 2, isPinned: true, isMuted: false),
+            Thread(chatId: "fx-chat-2", kind: .group, displayName: "Weekend crew 🌲", subtitle: "5 members",
+                   lastMessagePreview: "Blake: I'll bring the coffee", lastMessageAgeSecs: 60 * 12,
+                   lastMessageIsOutgoing: false, unreadCount: 3, memberCount: 5, isPinned: true, isMuted: false),
+            Thread(chatId: "fx-chat-3", kind: .direct, displayName: "Blake Archer", subtitle: nil,
+                   lastMessagePreview: "Found a great trail for Saturday", lastMessageAgeSecs: 60 * 28,
+                   lastMessageIsOutgoing: false, unreadCount: 0, memberCount: 2, isPinned: false, isMuted: false),
+            Thread(chatId: "fx-chat-4", kind: .direct, displayName: "Heather Wells", subtitle: nil,
+                   lastMessagePreview: "That sunset was unreal", lastMessageAgeSecs: 60 * 54,
+                   lastMessageIsOutgoing: false, unreadCount: 0, memberCount: 2, isPinned: false, isMuted: false),
+            Thread(chatId: "fx-chat-5", kind: .group, displayName: "Sunday run", subtitle: "8 members",
+                   lastMessagePreview: "Owen: Same time next week?", lastMessageAgeSecs: 60 * 60 * 3,
+                   lastMessageIsOutgoing: false, unreadCount: 0, memberCount: 8, isPinned: false, isMuted: false),
+            Thread(chatId: "fx-chat-6", kind: .direct, displayName: "Owen Reed", subtitle: nil,
+                   lastMessagePreview: "Saved you a seat 🍿", lastMessageAgeSecs: 60 * 60 * 7,
+                   lastMessageIsOutgoing: false, unreadCount: 0, memberCount: 2, isPinned: false, isMuted: false),
+            Thread(chatId: "fx-chat-7", kind: .direct, displayName: "Mum", subtitle: nil,
+                   lastMessagePreview: "Sunday lunch at ours? ❤️", lastMessageAgeSecs: 60 * 60 * 24,
+                   lastMessageIsOutgoing: false, unreadCount: 0, memberCount: 2, isPinned: false, isMuted: false),
+        ],
+        timelines: [
+            "fx-chat-1": [
+                Message(body: "Fancy a walk by the lake?", isOutgoing: false, ageSecs: 60 * 18, delivery: .seen),
+                Message(body: "Absolutely. Taking the scenic route 🌲", isOutgoing: true, ageSecs: 60 * 17, delivery: .seen),
+                Message(body: "My signal's gone. Did this get through?", isOutgoing: false, ageSecs: 60 * 9, delivery: .seen),
+                Message(body: "Loud and clear — you're nearby!", isOutgoing: true, ageSecs: 60 * 8, delivery: .seen),
+                Message(body: "Off the grid, still in touch. Love it.", isOutgoing: false, ageSecs: 60 * 6, delivery: .seen,
+                        reactions: [MessageReactionSnapshot(emoji: "❤️", count: 1, reactedByMe: true)]),
+                Message(body: "I've got the picnic. You bring the good company.", isOutgoing: true, ageSecs: 60 * 4, delivery: .seen),
+                Message(body: "See you by the lake ☀️", isOutgoing: false, ageSecs: 60 * 2, delivery: .seen),
+            ],
+            "fx-chat-2": [
+                Message(body: "Cabin booked. Friday can't come soon enough.", isOutgoing: false, ageSecs: 60 * 40, delivery: .seen, groupAuthorName: "Heather"),
+                Message(body: "Hiking boots and absolutely no plans.", isOutgoing: true, ageSecs: 60 * 25, delivery: .seen),
+                Message(body: "I'll bring the coffee", isOutgoing: false, ageSecs: 60 * 12, delivery: .seen,
+                        reactions: [MessageReactionSnapshot(emoji: "☕️", count: 3, reactedByMe: true)], groupAuthorName: "Blake"),
+            ],
+        ],
+        nearbyPeers: [
+            NearbyPeer(id: "fx-near-1", name: "Brooke Taylor", transport: .bluetooth),
+            NearbyPeer(id: "fx-near-2", name: "Blake Archer", transport: .bluetooth),
+        ]
+    )
+
+    private static let avatarNames = ["Chad Bennett", "Brooke Taylor", "Blake Archer", "Heather Wells"]
+
+    private static func avatarURL(for name: String) -> String? {
+        guard let index = avatarNames.firstIndex(of: name) else { return nil }
+        return "htree://screenshot-avatar-\(index)"
+    }
+
+    /// Populate only the in-memory image cache; demo portraits never need a network request.
+    private func prepareAvatars(environment: [String: String]) {
+        guard ownerDisplayName == Self.marketing.ownerDisplayName,
+              let encoded = environment["IRIS_UI_TEST_SCREENSHOT_AVATARS"],
+              let data = Data(base64Encoded: encoded),
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let sheet = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
+        let width = sheet.width / 2
+        let height = sheet.height / 2
+        for index in Self.avatarNames.indices {
+            let rect = CGRect(x: (index % 2) * width, y: (index / 2) * height, width: width, height: height)
+            guard let cropped = sheet.cropping(to: rect) else { continue }
+            #if os(iOS)
+            let image = PlatformImage(cgImage: cropped)
+            #else
+            let image = PlatformImage(cgImage: cropped, size: CGSize(width: width, height: height))
+            #endif
+            IrisAvatarImageCache.store(image, for: "htree:screenshot-avatar-\(index)")
         }
     }
 
@@ -209,8 +288,9 @@ struct ScreenshotFixture {
 extension ScreenshotFixture {
     static func configured(environment: [String: String]) -> ScreenshotFixture? {
         guard enabled(environment: environment) else { return nil }
-        guard let body = environment["IRIS_UI_TEST_MESSAGE_BODY"] else { return .default }
-        let fixture = Self.default
+        let fixture = environment["IRIS_UI_TEST_SCREENSHOT_STYLE"] == "marketing" ? Self.marketing : Self.default
+        fixture.prepareAvatars(environment: environment)
+        guard let body = environment["IRIS_UI_TEST_MESSAGE_BODY"] else { return fixture }
         var timelines = fixture.timelines
         timelines["\(chatIdPrefix)1"] = [
             Message(body: body, isOutgoing: false, ageSecs: 60, delivery: .seen),
@@ -246,7 +326,7 @@ extension ScreenshotFixture {
         // Override account display name / picture for the chrome avatar.
         var overriddenAccount = account
         overriddenAccount.displayName = ownerDisplayName
-        overriddenAccount.pictureUrl = nil
+        overriddenAccount.pictureUrl = Self.avatarURL(for: ownerDisplayName)
         next.account = overriddenAccount
 
         // Force the Nearby row visible in the chat list — the row only
@@ -292,7 +372,7 @@ extension ScreenshotFixture {
             nickname: nil,
             profileName: nil,
             subtitle: thread.subtitle,
-            pictureUrl: nil,
+            pictureUrl: Self.avatarURL(for: thread.displayName),
             about: nil,
             memberCount: thread.memberCount,
             lastMessagePreview: thread.lastMessagePreview,
@@ -330,7 +410,7 @@ extension ScreenshotFixture {
             nickname: nil,
             profileName: nil,
             subtitle: thread.subtitle,
-            pictureUrl: nil,
+            pictureUrl: Self.avatarURL(for: thread.displayName),
             about: nil,
             groupId: thread.kind == .group ? thread.chatId : nil,
             memberCount: thread.memberCount,
@@ -421,7 +501,7 @@ extension ScreenshotFixture {
                 id: peer.id,
                 name: peer.name,
                 ownerPubkeyHex: index == 0 ? firstPeerOwnerHex : nil,
-                pictureURL: nil,
+                pictureURL: Self.avatarURL(for: peer.name),
                 profileEventID: nil,
                 bluetoothRSSI: peer.transport == .bluetooth ? -45 - index : nil,
                 lastSeen: now
