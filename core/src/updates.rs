@@ -146,6 +146,11 @@ pub(crate) enum InternalEvent {
         query: String,
         result: Result<crate::core::ProfileSearchFetchResult, String>,
     },
+    ProfileSearchCapabilitiesReady {
+        token: u64,
+        query: String,
+        events: Vec<Event>,
+    },
     RelayStatusChanged {
         relay_url: String,
         status: RelayStatus,

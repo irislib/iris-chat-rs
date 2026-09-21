@@ -62,6 +62,14 @@ impl AppStore {
             users,
             social_rank_ready,
             social_friend_support,
+            social_graph: conn
+                .query_row(
+                    "SELECT social_graph FROM user_discovery_state WHERE id = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten(),
         })
     }
 
@@ -80,13 +88,14 @@ impl AppStore {
         tx.execute(
             "INSERT INTO user_discovery_state(
                  id, owner_pubkey_hex, follow_event_id, follow_created_at_secs,
-                 social_rank_ready
-             ) VALUES (1, ?1, ?2, ?3, ?4)",
+                 social_rank_ready, social_graph
+             ) VALUES (1, ?1, ?2, ?3, ?4, ?5)",
             params![
                 cache.owner_pubkey_hex,
                 cache.follow_event_id,
                 cache.follow_created_at_secs as i64,
                 cache.social_rank_ready,
+                cache.social_graph,
             ],
         )?;
         {

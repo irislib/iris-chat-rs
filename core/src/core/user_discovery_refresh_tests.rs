@@ -86,6 +86,7 @@ fn restore_adopts_legacy_unowned_cache_without_social_rank() {
             )]),
             social_rank_ready: true,
             social_friend_support: BTreeMap::from([("stale".to_string(), 1)]),
+            social_graph: Some(vec![1, 2, 3]),
         })
         .unwrap();
 
@@ -124,6 +125,7 @@ fn restoring_another_account_clears_personalized_ranking() {
             users: BTreeMap::new(),
             social_rank_ready: true,
             social_friend_support: BTreeMap::from([(target, 1)]),
+            social_graph: Some(vec![1, 2, 3]),
         })
         .unwrap();
 

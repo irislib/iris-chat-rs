@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use hashtree_core::{sha256, to_hex, Hash, Store, StoreError};
 use reqwest::StatusCode;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::sync::RwLock;
 
@@ -14,7 +15,36 @@ pub(super) struct BoundedBlossomStore {
     servers: Vec<String>,
     max_blob_bytes: usize,
     budget: ReadBudget,
-    cache: RwLock<HashMap<Hash, Vec<u8>>>,
+    cache: Arc<RwLock<BlobCache>>,
+}
+
+const MAX_CACHED_BYTES: usize = 32 * 1024 * 1024;
+static SHARED_CACHE: OnceLock<Arc<RwLock<BlobCache>>> = OnceLock::new();
+
+#[derive(Default)]
+struct BlobCache {
+    entries: HashMap<Hash, Vec<u8>>,
+    order: VecDeque<Hash>,
+    bytes: usize,
+}
+
+impl BlobCache {
+    fn insert(&mut self, hash: Hash, data: Vec<u8>) {
+        if self.entries.contains_key(&hash) || data.len() > MAX_CACHED_BYTES {
+            return;
+        }
+        while self.bytes + data.len() > MAX_CACHED_BYTES {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(removed) = self.entries.remove(&oldest) {
+                self.bytes -= removed.len();
+            }
+        }
+        self.bytes += data.len();
+        self.order.push_back(hash);
+        self.entries.insert(hash, data);
+    }
 }
 
 struct ReadBudget {
@@ -92,8 +122,15 @@ impl BoundedBlossomStore {
             servers,
             max_blob_bytes,
             budget: ReadBudget::new(max_reads, max_total_bytes),
-            cache: RwLock::new(HashMap::new()),
+            cache: Arc::new(RwLock::new(BlobCache::default())),
         })
+    }
+
+    pub(super) fn with_shared_cache(mut self) -> Self {
+        self.cache = SHARED_CACHE
+            .get_or_init(|| Arc::new(RwLock::new(BlobCache::default())))
+            .clone();
+        self
     }
 
     async fn fetch_from_server(
@@ -164,7 +201,12 @@ impl Store for BoundedBlossomStore {
         }
         {
             let cache = self.cache.read().await;
-            if let Some(data) = cache.get(hash) {
+            if let Some(data) = cache.entries.get(hash) {
+                if data.len() > self.max_blob_bytes {
+                    return Err(StoreError::Other(
+                        "cached profile blob exceeds byte limit".to_string(),
+                    ));
+                }
                 if !self.budget.consume_bytes(data.len()) {
                     return Err(StoreError::Other(
                         "profile search byte budget exceeded".to_string(),
@@ -204,7 +246,7 @@ impl Store for BoundedBlossomStore {
                 "profile search read budget exceeded".to_string(),
             ));
         }
-        if self.cache.read().await.contains_key(hash) {
+        if self.cache.read().await.entries.contains_key(hash) {
             return Ok(true);
         }
         let hash = to_hex(hash);
@@ -368,5 +410,26 @@ mod tests {
             .to_string()
             .contains("byte budget exceeded"));
         assert_requested(server, &hash);
+    }
+
+    #[tokio::test]
+    async fn separate_searches_reuse_verified_blobs_with_independent_budgets() {
+        let body = b"shared cross-query profile blob";
+        let hash = sha256(body);
+        let (url, server) = serve_chunked_blob(vec![body.to_vec()]);
+        let first = test_store(vec![url], body.len(), 1, body.len()).with_shared_cache();
+        assert_eq!(
+            first.get(&hash).await.unwrap().as_deref(),
+            Some(body.as_slice())
+        );
+        assert_requested(server, &hash);
+        let second = test_store(Vec::new(), body.len(), 1, body.len()).with_shared_cache();
+        assert_eq!(
+            second.get(&hash).await.unwrap().as_deref(),
+            Some(body.as_slice())
+        );
+        assert!(second.get(&hash).await.is_err());
+        let limited = test_store(Vec::new(), body.len() - 1, 1, body.len()).with_shared_cache();
+        assert!(limited.get(&hash).await.is_err());
     }
 }

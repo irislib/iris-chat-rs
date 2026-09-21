@@ -15,6 +15,8 @@ const MAX_RECENT_PROFILE_SEARCHES: usize = 32;
 const DEFAULT_SOCIAL_GRAPH_ROOT: &str =
     "4523be58d395b1b196a9b8c82b038b6895cb02b683d0c253a955068dba1facd0";
 static DEFAULT_SOCIAL_GRAPH: OnceLock<Option<SocialGraph>> = OnceLock::new();
+#[path = "profile_search_graph.rs"]
+mod graph;
 
 impl AppCore {
     pub(super) fn request_profile_search(&mut self, query: &str) {
@@ -24,17 +26,7 @@ impl AppCore {
         let query = match super::profile_search_remote::normalize_profile_search_query(query) {
             Ok(Some(query)) => query,
             Ok(None) | Err(_) => {
-                if self.profile_search_runtime.in_flight {
-                    self.profile_search_runtime.pending = Some(PendingProfileSearch::Cancel);
-                } else {
-                    if self.profile_search_runtime.debounce_pending {
-                        self.profile_search_runtime.token =
-                            self.profile_search_runtime.token.wrapping_add(1).max(1);
-                    }
-                    self.profile_search_runtime.debounce_pending = false;
-                    self.profile_search_runtime.query.clear();
-                    self.profile_search_runtime.pending = None;
-                }
+                self.abort_profile_search();
                 self.refresh_people_syncing_and_emit_if_changed();
                 return;
             }
@@ -47,9 +39,10 @@ impl AppCore {
                 now.saturating_duration_since(*attempted_at) < PROFILE_SEARCH_RETRY_FLOOR
             });
         if self.profile_search_runtime.in_flight {
-            self.profile_search_runtime.pending = (self.profile_search_runtime.query != query)
-                .then_some(PendingProfileSearch::Query(query));
-            return;
+            if self.profile_search_runtime.query == query {
+                return;
+            }
+            self.abort_profile_search();
         }
         if self.profile_search_runtime.debounce_pending {
             if self.profile_search_runtime.query == query {
@@ -132,10 +125,20 @@ impl AppCore {
 
         let query = query.to_string();
         let tx = self.core_sender.clone();
-        self.runtime.spawn(async move {
+        let task = self.runtime.spawn(async move {
             let (result, mut app_keys_events) = tokio::join!(
                 super::profile_search_remote::fetch_profile_candidates(&query, &relay_urls),
-                fetch_search_app_keys(&client, local_candidates.clone()),
+                async {
+                    let events = fetch_search_app_keys(&client, local_candidates.clone()).await;
+                    let _ = tx.send(CoreMsg::Internal(Box::new(
+                        InternalEvent::ProfileSearchCapabilitiesReady {
+                            token,
+                            query: query.clone(),
+                            events: events.clone(),
+                        },
+                    )));
+                    events
+                },
             );
             // An unavailable index must not stop verification of locally known people.
             let mut result = result.unwrap_or_else(|error| ProfileSearchFetchResult {
@@ -162,6 +165,40 @@ impl AppCore {
                 },
             )));
         });
+        self.profile_search_runtime.fetch_task = Some(task.abort_handle());
+    }
+
+    fn abort_profile_search(&mut self) {
+        if let Some(task) = self.profile_search_runtime.fetch_task.take() {
+            task.abort();
+        }
+        self.profile_search_runtime.token =
+            self.profile_search_runtime.token.wrapping_add(1).max(1);
+        self.profile_search_runtime.query.clear();
+        self.profile_search_runtime.debounce_pending = false;
+        self.profile_search_runtime.in_flight = false;
+    }
+
+    pub(super) fn handle_profile_search_capabilities_ready(
+        &mut self,
+        token: u64,
+        query: &str,
+        events: Vec<Event>,
+    ) {
+        if token != self.profile_search_runtime.token
+            || query != self.profile_search_runtime.query
+            || !self.profile_search_runtime.in_flight
+        {
+            return;
+        }
+        self.enter_batch();
+        for event in events {
+            self.handle_relay_event(event);
+        }
+        self.exit_batch();
+        self.bump_user_discovery_revision();
+        self.rebuild_state();
+        self.emit_state();
     }
 
     pub(super) fn handle_profile_search_fetch_finished(
@@ -177,17 +214,7 @@ impl AppCore {
             return;
         }
         self.profile_search_runtime.in_flight = false;
-        if let Some(pending) = self.profile_search_runtime.pending.take() {
-            match pending {
-                PendingProfileSearch::Query(query) => self.request_profile_search(&query),
-                PendingProfileSearch::Cancel => self.profile_search_runtime.query.clear(),
-            }
-            self.refresh_people_syncing();
-            self.bump_user_discovery_revision();
-            self.rebuild_state();
-            self.emit_state();
-            return;
-        }
+        self.profile_search_runtime.fetch_task = None;
         remember_profile_search_attempt(&mut self.profile_search_runtime, query);
 
         let detail = match result {
@@ -234,11 +261,13 @@ impl AppCore {
     }
 
     pub(super) fn cancel_people_fetches_for_suspend(&mut self) {
+        if let Some(task) = self.profile_search_runtime.fetch_task.take() {
+            task.abort();
+        }
         let discovery_was_active =
             self.user_discovery_runtime.in_flight || self.user_discovery_runtime.refresh_pending;
-        let search_was_active = self.profile_search_runtime.in_flight
-            || self.profile_search_runtime.debounce_pending
-            || self.profile_search_runtime.pending.is_some();
+        let search_was_active =
+            self.profile_search_runtime.in_flight || self.profile_search_runtime.debounce_pending;
 
         self.user_discovery_runtime.token =
             self.user_discovery_runtime.token.wrapping_add(1).max(1);
@@ -251,7 +280,6 @@ impl AppCore {
         self.profile_search_runtime.query.clear();
         self.profile_search_runtime.debounce_pending = false;
         self.profile_search_runtime.in_flight = false;
-        self.profile_search_runtime.pending = None;
 
         self.refresh_people_syncing();
         if discovery_was_active || search_was_active {
@@ -312,6 +340,8 @@ fn search_people_candidates(
         return Ok(Vec::new());
     }
     let compact_query = compact_search_text(&normalized_query);
+    let explicit_owner = PublicKey::parse(query.trim()).ok().map(|key| key.to_hex());
+    let personal_graph = graph::load_people_graph(conn, current_owner_hex)?;
     let terms = normalized_query
         .split_whitespace()
         .map(|term| (term.to_string(), compact_search_text(term)))
@@ -459,6 +489,12 @@ fn search_people_candidates(
             continue;
         }
 
+        if explicit_owner.as_deref() != Some(owner_hex.as_str())
+            && graph::graph_hides_person(&owner_hex, personal_graph.as_deref())
+        {
+            continue;
+        }
+
         let labels = [
             petname.as_deref(),
             profile_name.as_deref(),
@@ -486,8 +522,12 @@ fn search_people_candidates(
         } else {
             3u8
         };
-        let (social_source, social_distance, friend_support) =
-            social_rank(&owner_hex, personalized_social, personalized_friend_support);
+        let (social_source, social_distance, friend_support) = social_rank(
+            &owner_hex,
+            personalized_social,
+            personalized_friend_support,
+            personal_graph.as_deref(),
+        );
         matches.push((
             text_rank,
             follow_position.unwrap_or(u32::MAX),
@@ -524,9 +564,21 @@ fn social_rank(
     owner: &str,
     personalized_social: bool,
     personalized_friend_support: Option<usize>,
+    personal_graph: Option<&SocialGraph>,
 ) -> (u8, u32, Reverse<usize>) {
     if let Some(support) = personalized_friend_support.filter(|support| *support > 0) {
         return (0, 2, Reverse(support));
+    }
+    if let Some(graph) = personal_graph {
+        let distance = graph.get_follow_distance(owner);
+        if distance < 1_000 {
+            let support = graph
+                .get_followers_by_user(owner)
+                .into_iter()
+                .filter(|follower| graph.is_following(graph.get_root(), follower))
+                .count();
+            return (0, distance, Reverse(support));
+        }
     }
     let (distance, support) = default_social_rank(owner);
     (u8::from(personalized_social), distance, support)

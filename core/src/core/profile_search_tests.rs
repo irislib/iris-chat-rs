@@ -35,7 +35,8 @@ fn people_search_connection() -> Connection {
         "CREATE TABLE user_discovery_state (
              id INTEGER PRIMARY KEY,
              owner_pubkey_hex TEXT,
-             social_rank_ready INTEGER NOT NULL
+             social_rank_ready INTEGER NOT NULL,
+             social_graph BLOB
          );
          CREATE TABLE user_discovery_users (
              owner_pubkey_hex TEXT PRIMARY KEY,
@@ -113,7 +114,7 @@ fn equally_relevant_direct_follows_keep_social_order_before_global_hits() {
     let global = Keys::generate().public_key().to_hex();
     let root = Keys::generate().public_key().to_hex();
     conn.execute(
-        "INSERT INTO user_discovery_state VALUES (1, ?1, 0)",
+        "INSERT INTO user_discovery_state(id, owner_pubkey_hex, social_rank_ready) VALUES (1, ?1, 0)",
         [&root],
     )
     .unwrap();
@@ -149,7 +150,7 @@ fn default_graph_fills_personalized_gaps_without_filtering_unknowns() {
     let root = Keys::generate().public_key().to_hex();
     let unknown = Keys::generate().public_key().to_hex();
     conn.execute(
-        "INSERT INTO user_discovery_state VALUES (1, ?1, 1)",
+        "INSERT INTO user_discovery_state(id, owner_pubkey_hex, social_rank_ready) VALUES (1, ?1, 1)",
         [&root],
     )
     .unwrap();
@@ -201,6 +202,7 @@ fn personalized_global_rank_restores_and_is_account_scoped() {
         )]),
         social_rank_ready: true,
         social_friend_support: BTreeMap::from([(supported.clone(), 2)]),
+        social_graph: None,
     };
     store.replace_user_discovery(&cache).unwrap();
     store
@@ -388,21 +390,22 @@ fn stale_profile_search_completion_cannot_mutate_the_cache() {
 }
 
 #[test]
-fn in_flight_profile_search_keeps_only_the_latest_query() {
+fn newer_profile_search_starts_without_waiting_for_the_previous_fetch() {
     let (_temp, mut core) = test_core();
     log_in(&mut core);
     core.profile_search_runtime.token = 9;
     core.profile_search_runtime.query = "alice".to_string();
     core.profile_search_runtime.in_flight = true;
+    let old_task = core.runtime.spawn(std::future::pending::<()>());
+    core.profile_search_runtime.fetch_task = Some(old_task.abort_handle());
 
     core.request_profile_search("sirius");
-    assert_eq!(
-        core.profile_search_runtime.pending,
-        Some(PendingProfileSearch::Query("sirius".to_string()))
-    );
-    core.request_profile_search("alice");
-    assert!(core.profile_search_runtime.pending.is_none());
+    assert_eq!(core.profile_search_runtime.query, "sirius");
+    assert!(core.profile_search_runtime.debounce_pending);
+    assert!(!core.profile_search_runtime.in_flight);
+    assert!(core.runtime.block_on(old_task).unwrap_err().is_cancelled());
     core.request_profile_search("gigi");
+    let latest_token = core.profile_search_runtime.token;
 
     core.handle_profile_search_fetch_finished(
         9,
@@ -414,12 +417,50 @@ fn in_flight_profile_search_keeps_only_the_latest_query() {
         }),
     );
 
-    assert_eq!(core.profile_search_runtime.token, 10);
+    assert_eq!(core.profile_search_runtime.token, latest_token);
     assert_eq!(core.profile_search_runtime.query, "gigi");
     assert!(core.profile_search_runtime.debounce_pending);
     assert!(!core.profile_search_runtime.in_flight);
-    assert!(core.profile_search_runtime.pending.is_none());
     assert!(core.user_discovery_syncing);
+}
+
+#[test]
+fn local_people_are_shown_before_the_remote_index_finishes() {
+    let (_temp, mut core) = test_core();
+    log_in(&mut core);
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let now = unix_now().get();
+    core.app_store
+        .upsert_profile_search_candidates(&[ProfileSearchCandidate {
+            owner_pubkey_hex: owner.public_key().to_hex(),
+            name: "Alice".to_string(),
+            aliases: Vec::new(),
+            nip05: None,
+            picture: None,
+            created_at_secs: now,
+        }])
+        .unwrap();
+    core.profile_search_runtime.token = 1;
+    core.profile_search_runtime.query = "alice".to_string();
+    core.profile_search_runtime.in_flight = true;
+    let event = AppKeys::new(vec![DeviceEntry::new(device.public_key(), now)])
+        .get_event_at(owner.public_key(), now)
+        .sign_with_keys(&owner)
+        .unwrap();
+    core.handle_profile_search_capabilities_ready(1, "alice", vec![event]);
+    assert!(core.profile_search_runtime.in_flight);
+    assert_eq!(
+        search_people(
+            &core.app_store.shared().lock().unwrap(),
+            "alice",
+            &HashSet::new(),
+            None
+        )
+        .unwrap()
+        .len(),
+        1
+    );
 }
 
 #[test]
@@ -452,10 +493,8 @@ fn clearing_an_in_flight_query_discards_its_result() {
     core.profile_search_runtime.in_flight = true;
     core.user_discovery_syncing = true;
     core.request_profile_search("");
-    assert_eq!(
-        core.profile_search_runtime.pending,
-        Some(PendingProfileSearch::Cancel)
-    );
+    assert!(!core.profile_search_runtime.in_flight);
+    assert!(!core.user_discovery_syncing);
 
     core.handle_profile_search_fetch_finished(
         4,
@@ -490,4 +529,93 @@ fn clearing_an_in_flight_query_discards_its_result() {
     assert!(!core.profile_search_runtime.in_flight);
     assert!(!core.user_discovery_syncing);
     assert!(!core.state.user_discovery_syncing);
+}
+
+#[test]
+fn people_search_filters_closest_mute_opinions_but_keeps_ties_unknowns_and_explicit_ids() {
+    let conn = people_search_connection();
+    let root = Keys::generate().public_key().to_hex();
+    let friends = (0..3)
+        .map(|_| Keys::generate().public_key().to_hex())
+        .collect::<Vec<_>>();
+    let hidden = Keys::generate().public_key().to_hex();
+    let tied = Keys::generate().public_key().to_hex();
+    let directly_muted = Keys::generate().public_key().to_hex();
+    let directly_followed = Keys::generate().public_key().to_hex();
+    let unknown = Keys::generate().public_key().to_hex();
+    let mut graph = SocialGraph::new(&root);
+    let mut apply = |author: &str, kind: u32, targets: Vec<String>| {
+        graph.handle_event(
+            &nostr_social_graph::NostrEvent {
+                pubkey: author.to_string(),
+                kind,
+                created_at: 1,
+                content: String::new(),
+                tags: targets
+                    .into_iter()
+                    .map(|target| vec!["p".to_string(), target])
+                    .collect(),
+                id: String::new(),
+                sig: String::new(),
+            },
+            true,
+            1.0,
+        );
+    };
+    apply(
+        &root,
+        3,
+        friends
+            .iter()
+            .cloned()
+            .chain([directly_muted.clone(), directly_followed.clone()])
+            .collect(),
+    );
+    apply(&friends[0], 3, vec![hidden.clone(), tied.clone()]);
+    apply(&friends[1], 10_000, vec![hidden.clone(), tied.clone()]);
+    apply(
+        &friends[2],
+        10_000,
+        vec![hidden.clone(), directly_followed.clone()],
+    );
+    apply(&root, 10_000, vec![directly_muted.clone()]);
+    conn.execute("INSERT INTO user_discovery_state(id, owner_pubkey_hex, social_rank_ready, social_graph) VALUES (1, ?1, 1, ?2)", rusqlite::params![root, graph.to_binary().unwrap()]).unwrap();
+    for owner in [
+        &hidden,
+        &tied,
+        &directly_muted,
+        &unknown,
+        &directly_followed,
+    ] {
+        conn.execute(
+            "INSERT INTO profile_search_candidates VALUES (?1, 'Alex', '[]', NULL, NULL, 1, 1)",
+            [owner],
+        )
+        .unwrap();
+    }
+    let results = search_people_candidates(&conn, "alex", &HashSet::new(), Some(&root)).unwrap();
+    let owners = results
+        .into_iter()
+        .map(|result| result.owner_pubkey_hex)
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        owners,
+        [tied, unknown, directly_followed]
+            .into_iter()
+            .collect::<HashSet<_>>()
+    );
+    assert_eq!(
+        search_people_candidates(&conn, &hidden, &HashSet::new(), Some(&root))
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(search_people_candidates(
+        &conn,
+        &hidden,
+        &[hidden.clone()].into_iter().collect(),
+        Some(&root)
+    )
+    .unwrap()
+    .is_empty());
 }

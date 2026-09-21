@@ -201,6 +201,7 @@ fn derived_order_persists_offline_and_degraded_refresh_restores_root() {
             .collect(),
         social_rank_ready: true,
         social_friend_support: BTreeMap::from([(owners[2].to_hex(), 2)]),
+        social_graph: None,
     };
     let social = [owners[2], owners[0], owners[1]];
     apply_follow_order(&mut cache.users, &owners, Some(&social));

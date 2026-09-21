@@ -15,7 +15,7 @@ use hashtree_resolver::{
 use nostr::{PublicKey, RelayUrl};
 use serde::Deserialize;
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const PROFILE_SEARCH_REF: &str =
@@ -27,6 +27,13 @@ const PROFILE_SEARCH_BLOSSOM_SERVERS: &[&str] =
     &["https://hashtree.iris.to", "https://cdn.iris.to"];
 
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(3);
+const ROOT_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+#[derive(Default)]
+struct RootCache {
+    root: Option<Cid>,
+    last_attempt: Option<Instant>,
+}
+static LIVE_ROOT: OnceLock<Mutex<RootCache>> = OnceLock::new();
 const BLOSSOM_TIMEOUT: Duration = Duration::from_secs(4);
 const OVERALL_TIMEOUT: Duration = Duration::from_secs(12);
 const MAX_RESOLVER_RELAYS: usize = 12;
@@ -106,64 +113,37 @@ async fn fetch_profile_candidates_within_deadline(
         MAX_STORE_BLOB_BYTES,
         MAX_STORE_READS,
         MAX_STORE_TOTAL_BYTES,
-    )?;
+    )?
+    .with_shared_cache();
     let store = Arc::new(blossom_store);
 
-    let live_root = resolve_live_root(relay_urls).await;
-    let (batch, source, live_detail) = match live_root {
-        Ok(Some(root)) if root != snapshot_root => {
-            match search_root(store.clone(), &root, &query, now_secs, deadline).await {
-                Ok(batch) => (batch, "live", "resolved".to_string()),
-                Err(live_error) => {
-                    match search_root(store.clone(), &snapshot_root, &query, now_secs, deadline)
-                        .await
-                    {
-                        Ok(batch) => (
-                            batch,
-                            "snapshot",
-                            format!("live-search-error={}", compact_detail(&live_error)),
-                        ),
-                        Err(snapshot_error) => {
-                            return Err(format!(
-                                "live profile search failed: {}; snapshot fallback failed: {}",
-                                compact_detail(&live_error),
-                                compact_detail(&snapshot_error)
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        Ok(Some(_)) => (
-            search_root(store.clone(), &snapshot_root, &query, now_secs, deadline)
-                .await
-                .map_err(|error| {
-                    format!("resolved profile snapshot could not be searched: {error}")
-                })?,
-            "live",
-            "resolved-snapshot".to_string(),
-        ),
-        Ok(None) => (
-            search_root(store.clone(), &snapshot_root, &query, now_secs, deadline)
-                .await
-                .map_err(|error| format!("profile snapshot search failed: {error}"))?,
-            "snapshot",
-            "not-found".to_string(),
-        ),
-        Err(error) => (
-            search_root(store, &snapshot_root, &query, now_secs, deadline)
-                .await
-                .map_err(|snapshot_error| {
-                    format!(
-                        "profile root resolution failed: {}; snapshot fallback failed: {}",
-                        compact_detail(&error),
-                        compact_detail(&snapshot_error)
-                    )
-                })?,
-            "snapshot",
-            format!("resolve-error={}", compact_detail(&error)),
-        ),
-    };
+    let root = cached_or_refresh_live_root(relay_urls).unwrap_or_else(|| snapshot_root.clone());
+    let (batch, source, live_detail) =
+        match search_root(store.clone(), &root, &query, now_secs, deadline).await {
+            Ok(batch) => (
+                batch,
+                if root == snapshot_root {
+                    "snapshot"
+                } else {
+                    "cached-live"
+                },
+                "refreshing-in-background".to_string(),
+            ),
+            Err(error) if root != snapshot_root => (
+                search_root(store, &snapshot_root, &query, now_secs, deadline)
+                    .await
+                    .map_err(|fallback| {
+                        format!(
+                            "cached profile search failed: {}; snapshot fallback failed: {}",
+                            compact_detail(&error),
+                            compact_detail(&fallback)
+                        )
+                    })?,
+                "snapshot",
+                format!("cached-search-error={}", compact_detail(&error)),
+            ),
+            Err(error) => return Err(error),
+        };
 
     let detail = format!(
         "source={source} candidates={} dropped={} live={live_detail}",
@@ -176,6 +156,34 @@ async fn fetch_profile_candidates_within_deadline(
         candidates: batch.candidates,
         detail,
     })
+}
+
+fn cached_or_refresh_live_root(relay_urls: &[String]) -> Option<Cid> {
+    let mut cache = LIVE_ROOT
+        .get_or_init(|| Mutex::new(RootCache::default()))
+        .lock()
+        .ok()?;
+    let root = cache.root.clone();
+    if cache
+        .last_attempt
+        .is_some_and(|attempt| attempt.elapsed() < ROOT_REFRESH_INTERVAL)
+    {
+        return root;
+    }
+    cache.last_attempt = Some(Instant::now());
+    let relay_urls = relay_urls.to_vec();
+    // Immutable cached index blocks and the pinned root serve the current query;
+    // relay discovery must never delay every keystroke by its full timeout.
+    tokio::spawn(async move {
+        if let Ok(Some(root)) = resolve_live_root(&relay_urls).await {
+            if let Some(cache) = LIVE_ROOT.get() {
+                if let Ok(mut cache) = cache.lock() {
+                    cache.root = Some(root);
+                }
+            }
+        }
+    });
+    root
 }
 
 async fn resolve_live_root(relay_urls: &[String]) -> Result<Option<Cid>, String> {

@@ -20,6 +20,54 @@ fn positions(cache: &UserDiscoveryCache, owners: &[&Keys]) -> Vec<u32> {
 }
 
 #[test]
+fn relay_people_graph_fetches_mutes_and_restores_them_offline() {
+    let relay = crate::local_relay::TestRelay::start();
+    let owner = Keys::generate();
+    let friend = Keys::generate();
+    let target = Keys::generate();
+    let client = Client::new(Keys::generate());
+    let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let cache = runtime.block_on(async {
+        ensure_session_relays_configured(&client, &relay_urls).await;
+        connect_client_with_timeout(&client, Duration::from_secs(2)).await;
+        client
+            .send_event(&follow_event(&owner, 1, &[friend.public_key()]))
+            .await
+            .unwrap();
+        let muted = EventBuilder::new(Kind::from(10_000), "")
+            .tags([Tag::public_key(target.public_key())])
+            .custom_created_at(Timestamp::from(2))
+            .sign_with_keys(&friend)
+            .unwrap();
+        client.send_event(&muted).await.unwrap();
+        let result = fetch_user_discovery(
+            client.clone(),
+            relay_urls,
+            owner.public_key(),
+            UserDiscoveryCache::default(),
+        )
+        .await;
+        client.disconnect().await;
+        result.cache
+    });
+    let temp = TempDir::new().unwrap();
+    let mut store = AppStore::new(open_database(temp.path()).unwrap());
+    store.replace_user_discovery(&cache).unwrap();
+    let restored = store.load_user_discovery().unwrap();
+    assert_eq!(restored, cache);
+    let graph = nostr_social_graph::SocialGraph::from_binary(
+        &owner.public_key().to_hex(),
+        restored.social_graph.as_deref().unwrap(),
+    )
+    .unwrap();
+    assert!(graph.is_overmuted(&target.public_key().to_hex(), 1.0));
+}
+
+#[test]
 fn relay_fetch_keeps_all_follows_and_preserves_social_order_until_root_changes() {
     let relay = crate::local_relay::TestRelay::start();
     let root = Keys::generate();

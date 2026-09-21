@@ -123,6 +123,7 @@ impl AppCore {
                 cache.owner_pubkey_hex = Some(owner_hex);
                 cache.social_rank_ready = false;
                 cache.social_friend_support.clear();
+                cache.social_graph = None;
                 if let Err(error) = self.app_store.replace_user_discovery(&cache) {
                     self.push_debug_log("user.discovery.persist.error", error.to_string());
                 }
@@ -145,6 +146,9 @@ impl AppCore {
     }
 
     pub(super) fn reset_user_discovery_runtime(&mut self) {
+        if let Some(task) = self.profile_search_runtime.fetch_task.take() {
+            task.abort();
+        }
         let invalidated_discovery_token = self.user_discovery_runtime.token.wrapping_add(1).max(1);
         let invalidated_search_token = self.profile_search_runtime.token.wrapping_add(1).max(1);
         self.user_discovery = UserDiscoveryCache::default();
@@ -178,7 +182,9 @@ async fn fetch_user_discovery(
 
     let follow_events = match client
         .fetch_events(
-            Filter::new().kind(Kind::ContactList).author(local_owner),
+            Filter::new()
+                .kinds([Kind::ContactList, Kind::from(10_000)])
+                .author(local_owner),
             DISCOVERY_REQUEST_TIMEOUT,
         )
         .await
@@ -193,6 +199,11 @@ async fn fetch_user_discovery(
         }
     };
     let root_now_secs = unix_now().get();
+    let root_mutes = follow_events
+        .iter()
+        .filter(|event| event.kind == Kind::from(10_000))
+        .cloned()
+        .collect::<Vec<_>>();
     let follow_events = follow_events
         .into_iter()
         .filter(|event| {
@@ -201,15 +212,36 @@ async fn fetch_user_discovery(
         .collect();
     let Some(follow_event) = newest_verified_event(follow_events, Kind::ContactList, local_owner)
     else {
+        let mut cache = previous;
+        cache.owner_pubkey_hex = Some(local_owner_hex);
+        cache.social_graph = super::user_discovery_graph::update_people_graph(
+            local_owner,
+            None,
+            &[],
+            &[],
+            root_mutes,
+            cache.social_graph.as_deref(),
+            root_now_secs,
+        );
         return UserDiscoveryFetchResult {
-            cache: previous,
+            cache,
             metadata_events: Vec::new(),
             detail: "follow_list_missing=true".to_string(),
         };
     };
     if follow_head_is_older(&follow_event, &previous, root_now_secs) {
+        let mut cache = previous;
+        cache.social_graph = super::user_discovery_graph::update_people_graph(
+            local_owner,
+            None,
+            &[],
+            &[],
+            root_mutes,
+            cache.social_graph.as_deref(),
+            root_now_secs,
+        );
         return UserDiscoveryFetchResult {
-            cache: previous,
+            cache,
             metadata_events: Vec::new(),
             detail: "follow_list_stale=true".to_string(),
         };
@@ -245,13 +277,25 @@ async fn fetch_user_discovery(
         .take(MAX_SOCIAL_OPINION_AUTHORS)
         .copied()
         .collect::<Vec<_>>();
-    let peer_follow_chunks = fetch_author_chunks(
-        &client,
-        Kind::ContactList,
-        opinion_authors.clone(),
-        Some(MAX_PEER_FOLLOW_EVENTS_PER_CHUNK),
-    )
-    .await;
+    let (peer_follow_chunks, mute_chunks, metadata_chunks) = tokio::join!(
+        fetch_author_chunks(
+            &client,
+            Kind::ContactList,
+            opinion_authors.clone(),
+            Some(MAX_PEER_FOLLOW_EVENTS_PER_CHUNK),
+        ),
+        fetch_author_chunks(
+            &client,
+            Kind::from(10_000),
+            opinion_authors
+                .iter()
+                .copied()
+                .chain([local_owner])
+                .collect(),
+            Some(MAX_PEER_FOLLOW_EVENTS_PER_CHUNK),
+        ),
+        fetch_author_chunks(&client, Kind::Metadata, followed_owners.clone(), None)
+    );
     let now_secs = unix_now().get();
 
     let mut social_failed_chunks = 0usize;
@@ -262,6 +306,21 @@ async fn fetch_user_discovery(
             Err(_) => social_failed_chunks += 1,
         }
     }
+    let mut mute_events = root_mutes;
+    for (_, result) in mute_chunks {
+        if let Ok(events) = result {
+            mute_events.extend(events);
+        }
+    }
+    let social_graph = super::user_discovery_graph::update_people_graph(
+        local_owner,
+        Some(&follow_event),
+        &opinion_authors,
+        &peer_follow_events,
+        mute_events,
+        previous.social_graph.as_deref(),
+        now_secs,
+    );
     let social_ranking = if social_failed_chunks == 0 {
         let ranking = build_verified_social_ranking(
             local_owner,
@@ -300,16 +359,6 @@ async fn fetch_user_discovery(
         None => (false, BTreeMap::new()),
     };
 
-    let metadata_chunks = fetch_author_chunks(
-        &client,
-        Kind::Metadata,
-        next_users
-            .keys()
-            .filter_map(|owner| PublicKey::from_hex(owner).ok())
-            .collect(),
-        None,
-    )
-    .await;
     let mut metadata_events = Vec::new();
     let mut metadata_failed_chunks = 0usize;
     for (owners, result) in metadata_chunks {
@@ -334,6 +383,7 @@ async fn fetch_user_discovery(
             users: next_users,
             social_rank_ready,
             social_friend_support,
+            social_graph,
         },
         metadata_events,
         detail: format!(
