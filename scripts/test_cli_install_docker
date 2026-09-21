@@ -12,19 +12,21 @@ load_release_env "$ROOT"
 
 IMAGE="${IRIS_CLI_INSTALL_TEST_IMAGE:-$(docker_cli_runtime_image)}"
 PLATFORM="${IRIS_CLI_INSTALL_TEST_PLATFORM:-$(docker_default_platform)}"
-INSTALL_URL="${IRIS_CLI_INSTALL_URL:-https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/releases%2Firis-chat-rs/latest/install.sh}"
+INSTALL_URL="${IRIS_CLI_INSTALL_URL:-https://cdn.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/releases%2Firis-chat-rs/latest/install.sh}"
+ARCHIVE=""
 
 usage() {
   cat <<EOF
 usage: ./scripts/test_cli_install_docker [options]
 
-Installs the public iris CLI release in a fresh Docker container and verifies
-that the installed binary starts.
+Installs the public iris CLI release or a candidate archive in a fresh Docker
+container and verifies both system and regular-user installations.
 
 Options:
   --image <image>       Docker image (default: ${IMAGE})
   --platform <platform> Docker platform (default: ${PLATFORM})
   --install-url <url>   Install script URL (default: latest htree release)
+  --archive <path>      Test a built archive before publication
   -h, --help            Show this help
 
 Environment:
@@ -41,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     --image) IMAGE="$2"; shift ;;
     --platform) PLATFORM="$2"; shift ;;
     --install-url) INSTALL_URL="$2"; shift ;;
+    --archive) ARCHIVE="$2"; shift ;;
     -h|--help|help) usage; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -52,10 +55,14 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-docker run \
-  --rm \
-  --platform "$PLATFORM" \
-  -e INSTALL_URL="$INSTALL_URL" \
+docker_args=(--rm --platform "$PLATFORM" -e INSTALL_URL="$INSTALL_URL")
+if [[ -n "$ARCHIVE" ]]; then
+  [[ -f "$ARCHIVE" ]] || { echo "Archive not found: $ARCHIVE" >&2; exit 1; }
+  ARCHIVE="$(cd "$(dirname "$ARCHIVE")" && pwd)/$(basename "$ARCHIVE")"
+  docker_args+=(-v "$ARCHIVE:/tmp/iris-cli.tar.gz:ro")
+fi
+
+docker run "${docker_args[@]}" \
   "$IMAGE" \
   sh -lc '
     set -eu
@@ -64,10 +71,30 @@ docker run \
     apt-get update
     apt-get install -y --no-install-recommends ca-certificates curl tar
 
-    curl -fsSL "$INSTALL_URL" | sh -s -- /usr/local/bin
+    if [ -f /tmp/iris-cli.tar.gz ]; then
+      mkdir /tmp/iris-cli-candidate
+      tar -xzf /tmp/iris-cli.tar.gz -C /tmp/iris-cli-candidate
+      /tmp/iris-cli-candidate/iris/install.sh
+    else
+      curl -fsSL "$INSTALL_URL" | sh
+    fi
 
     command -v iris
     iris --version
     iris --help >/tmp/iris-help.txt
     test -s /tmp/iris-help.txt
+
+    useradd --create-home --shell /bin/sh iris-install-test
+    runuser -u iris-install-test -- sh -c '\''
+      set -eu
+      if [ -f /tmp/iris-cli.tar.gz ]; then
+        /tmp/iris-cli-candidate/iris/install.sh
+      else
+        curl -fsSL "$INSTALL_URL" | sh
+      fi
+      test -x "$HOME/.local/bin/iris"
+      "$HOME/.local/bin/iris" --version
+      "$HOME/.local/bin/iris" --help >"$HOME/iris-help.txt"
+      test -s "$HOME/iris-help.txt"
+    '\''
   '

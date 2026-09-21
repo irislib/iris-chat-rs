@@ -644,7 +644,7 @@ jobs:
           set -Eeuo pipefail
           target="${{ matrix.target }}"
           archive="dist/cli/iris-${target}.tar.gz"
-          ./scripts/cli-release "$target"
+          IRIS_CLI_LINUX_DOCKER_BUILD=1 ./scripts/cli-release "$target"
           tar -tzf "$archive" | grep '^iris/iris$' >/dev/null
           tar -tzf "$archive" | grep '^iris/install.sh$' >/dev/null
           extracted="$(mktemp -d)"
@@ -658,6 +658,9 @@ jobs:
               file "$extracted/iris/iris"
               ;;
           esac
+          if [[ "$target" == "x86_64-unknown-linux-gnu" ]]; then
+            ./scripts/test_cli_install_docker --archive "$archive"
+          fi
           mv "$archive" "dist/cli/iris-v${IRIS_APP_VERSION_NAME}-${target}.tar.gz"
       - name: Upload CLI build
         uses: actions/upload-artifact@v7

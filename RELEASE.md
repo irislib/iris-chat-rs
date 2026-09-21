@@ -20,6 +20,12 @@ exact, attested files from an immutable GitHub Release.
 The release builds Android arm64, iOS, macOS arm64, Windows x64, Linux x64,
 and CLI archives for macOS arm64/x64 and Linux x64.
 
+The Linux CLI is built in Debian 12 so it does not inherit the hosted runner's
+newer glibc requirement. Before uploading it, the build workflow installs the
+exact archive in a fresh Debian 12 container as root and as a regular user,
+then runs `iris --version` and `iris --help` for both installations. Test the
+public website installer with `./scripts/test_cli_install_docker`.
+
 ## Publisher Identities
 
 Public identities are fixed in the repository and checked before publication:
@@ -92,7 +98,18 @@ just verify-fast
 ```
 
 The hosted release workflow runs the authoritative release gate.
-It also runs the pinned Iris Stack process gate against the exact tagged Chat
+
+Bluetooth changes also require a physical iPhone/Android check before release.
+`--on-device` checks LAN visibility; it does not exercise Bluetooth, and the
+opt-in `FipsBlePhysicalUITests` skip without `IRIS_FIPS_PHYSICAL_PEER_NPUB`.
+Use isolated test accounts, enable the receiving test account's read receipts,
+disable its message servers and IP networking, and leave Bluetooth enabled.
+Require the exact message, a return receipt, and the `FIPS nearby` transport
+trace; restore the original network settings afterward. Keep the device logs
+and test result locally with the tested commit. A simulator pass is not a
+physical Bluetooth result.
+
+The hosted workflow also runs the pinned Iris Stack process gate against the exact tagged Chat
 commit and known-good public Drive/Hashtree versions. Relayless recovery, CPU,
 and bandwidth checks, including two 65-second idle windows covering periodic
 maintenance, must pass before GitHub release publication; their receipt
