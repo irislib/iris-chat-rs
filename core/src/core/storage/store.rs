@@ -2568,6 +2568,7 @@ mod tests {
             ]),
             social_rank_ready: true,
             social_friend_support: BTreeMap::from([("global-a".to_string(), 2)]),
+            social_graph: None,
         };
         store.replace_user_discovery(&initial).unwrap();
         assert_eq!(store.load_user_discovery().unwrap(), initial);
@@ -2579,6 +2580,7 @@ mod tests {
             users: BTreeMap::from([(second_user.owner_pubkey_hex.clone(), second_user)]),
             social_rank_ready: true,
             social_friend_support: BTreeMap::from([("global-b".to_string(), 1)]),
+            social_graph: None,
         };
         store.replace_user_discovery(&replacement).unwrap();
         assert_eq!(store.load_user_discovery().unwrap(), replacement);

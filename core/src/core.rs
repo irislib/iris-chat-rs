@@ -115,6 +115,7 @@ mod support;
 mod tests;
 mod update_pubsub;
 mod user_discovery;
+mod user_discovery_graph;
 mod user_discovery_social;
 
 pub(super) const APPCORE_PROTOCOL_LABEL: &str = "appcore-protocol";

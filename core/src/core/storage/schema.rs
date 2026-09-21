@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 30;
+const SCHEMA_VERSION: u32 = 31;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS user_discovery_state (
     owner_pubkey_hex TEXT,
     follow_event_id TEXT,
     follow_created_at_secs INTEGER NOT NULL DEFAULT 0,
-    social_rank_ready INTEGER NOT NULL DEFAULT 0
+    social_rank_ready INTEGER NOT NULL DEFAULT 0,
+    social_graph BLOB
 );
 
 CREATE TABLE IF NOT EXISTS user_discovery_users (
@@ -548,6 +549,9 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
     }
     if current < 30 && !column_exists(&tx, "preferences", "image_proxy_fallback_enabled")? {
         tx.execute_batch("ALTER TABLE preferences ADD COLUMN image_proxy_fallback_enabled INTEGER NOT NULL DEFAULT 0;")?;
+    }
+    if current < 31 && !column_exists(&tx, "user_discovery_state", "social_graph")? {
+        tx.execute_batch("ALTER TABLE user_discovery_state ADD COLUMN social_graph BLOB;")?;
     }
 
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;

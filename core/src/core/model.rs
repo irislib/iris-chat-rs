@@ -99,6 +99,8 @@ pub(super) struct UserDiscoveryCache {
     pub(super) users: BTreeMap<String, DiscoveredUserRecord>,
     pub(super) social_rank_ready: bool,
     pub(super) social_friend_support: BTreeMap<String, u16>,
+    #[serde(default)]
+    pub(super) social_graph: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -128,20 +130,14 @@ pub(super) struct ProfileSearchCandidate {
     pub(super) created_at_secs: u64,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum PendingProfileSearch {
-    Query(String),
-    Cancel,
-}
-
 #[derive(Debug, Default)]
 pub(super) struct ProfileSearchRuntime {
     pub(super) token: u64,
     pub(super) query: String,
     pub(super) debounce_pending: bool,
     pub(super) in_flight: bool,
-    pub(super) pending: Option<PendingProfileSearch>,
     pub(super) recent_attempts: VecDeque<(String, Instant)>,
+    pub(super) fetch_task: Option<tokio::task::AbortHandle>,
 }
 
 #[derive(Debug)]

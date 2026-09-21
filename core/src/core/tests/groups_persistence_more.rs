@@ -318,8 +318,8 @@ fn suspend_gate_drops_internal_events_until_foregrounded() {
     core.profile_search_runtime.token = 8;
     core.profile_search_runtime.query = "sirius".to_string();
     core.profile_search_runtime.in_flight = true;
-    core.profile_search_runtime.pending =
-        Some(PendingProfileSearch::Query("gigi".to_string()));
+    let search_task = core.runtime.spawn(std::future::pending::<()>());
+    core.profile_search_runtime.fetch_task = Some(search_task.abort_handle());
     core.user_discovery_syncing = true;
 
     // Engage the gate via the real CoreMsg path that iOS uses.
@@ -333,7 +333,8 @@ fn suspend_gate_drops_internal_events_until_foregrounded() {
     assert_eq!(core.profile_search_runtime.token, 9);
     assert!(core.profile_search_runtime.query.is_empty());
     assert!(!core.profile_search_runtime.in_flight);
-    assert!(core.profile_search_runtime.pending.is_none());
+    assert!(core.profile_search_runtime.fetch_task.is_none());
+    assert!(core.runtime.block_on(search_task).unwrap_err().is_cancelled());
     assert!(!core.user_discovery_syncing);
 
     // While suspended, internal events must be dropped — the gate is

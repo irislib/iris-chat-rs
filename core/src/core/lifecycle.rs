@@ -188,6 +188,9 @@ impl AppCore {
                     "ProfileSearchDebounceElapsed"
                 }
                 InternalEvent::ProfileSearchFetchFinished { .. } => "ProfileSearchFetchFinished",
+                InternalEvent::ProfileSearchCapabilitiesReady { .. } => {
+                    "ProfileSearchCapabilitiesReady"
+                }
                 InternalEvent::FetchTrackedPeerCatchUp { .. } => "FetchTrackedPeerCatchUp",
                 InternalEvent::ProtocolSubscriptionLivenessCheck { .. } => {
                     "ProtocolSubscriptionLivenessCheck"
@@ -769,6 +772,13 @@ impl AppCore {
                 result,
             } => {
                 self.handle_profile_search_fetch_finished(token, &query, result);
+            }
+            InternalEvent::ProfileSearchCapabilitiesReady {
+                token,
+                query,
+                events,
+            } => {
+                self.handle_profile_search_capabilities_ready(token, &query, events);
             }
             InternalEvent::RelayStatusChanged {
                 relay_url,
