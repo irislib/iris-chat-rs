@@ -303,10 +303,10 @@ impl AppCore {
     }
 
     pub(super) fn cache_local_fips_identity(&mut self, event: &Event) {
-        if !self
+        if self
             .logged_in
             .as_ref()
-            .is_some_and(|login| login.owner_pubkey == event.pubkey)
+            .is_none_or(|login| login.owner_pubkey != event.pubkey)
             || !(event.kind == Kind::Metadata || is_app_keys_event(event))
             || event.verify().is_err()
         {

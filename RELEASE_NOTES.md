@@ -2,6 +2,30 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.22
+
+### GitHub
+
+- Bind local chat storage to its account and reject attempts to open it with a different identity, protecting existing history from mixed-account writes.
+- Restore people search using the active Iris Social index, improve social filtering and ranking, and keep repeated searches responsive.
+- Hide your own linked devices from Nearby and forward signed identities between linked devices so nearby contacts can be identified reliably.
+- Keep wrapped messages readable on iOS when expanding and collapsing message text.
+- Add CLI profile inspection and partial profile updates that preserve fields you did not edit.
+- Build Linux CLI releases for Debian 12 compatibility and test the installer as both a regular user and root before publishing.
+
+### Apple
+
+- Improved protection against opening one account's chat history with a different account.
+- Restored people search and improved search results and responsiveness.
+- Improved nearby contact identification and hidden your own linked devices from Nearby.
+- Fixed readability of wrapped messages on iOS.
+
+### Zapstore
+
+- Improved protection against opening one account's chat history with a different account.
+- Restored people search and improved search results and responsiveness.
+- Improved nearby contact identification and hidden your own linked devices from Nearby.
+
 ## v2026.9.10.1
 
 ### GitHub

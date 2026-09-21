@@ -92,13 +92,11 @@ fn owner_device_approves_bootstrap_and_publishes_app_keys_snapshot() {
 
 #[test]
 fn create_account_publishes_app_keys_snapshot() {
+    let data_dir = tempfile::tempdir().expect("test data directory");
     let mut core = AppCore::new(
         flume::unbounded().0,
         flume::unbounded().0,
-        std::env::temp_dir()
-            .join("iris-chat-rs-test-create-account-appkeys")
-            .to_string_lossy()
-            .to_string(),
+        data_dir.path().to_string_lossy().into_owned(),
         Arc::new(RwLock::new(AppState::empty())),
     );
 
@@ -126,6 +124,7 @@ fn create_account_publishes_app_keys_snapshot() {
 
 #[test]
 fn account_bootstrap_app_keys_snapshot_installs_peer_device_roster() {
+    let bob_data_dir = tempfile::tempdir().expect("test data directory");
     let alice_owner = Keys::generate();
     let alice_device = Keys::generate();
     let mut alice = logged_in_test_core(
@@ -136,10 +135,7 @@ fn account_bootstrap_app_keys_snapshot_installs_peer_device_roster() {
     let mut bob = AppCore::new(
         flume::unbounded().0,
         flume::unbounded().0,
-        std::env::temp_dir()
-            .join("iris-chat-rs-test-bob-bootstrap-appkeys")
-            .to_string_lossy()
-            .to_string(),
+        bob_data_dir.path().to_string_lossy().into_owned(),
         Arc::new(RwLock::new(AppState::empty())),
     );
 
