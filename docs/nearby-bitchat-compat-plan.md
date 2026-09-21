@@ -31,6 +31,17 @@ connection with successful reads and writes and zero message servers; the
 Android harness received the exact probe message and marked it Seen. Network
 settings were restored after the test.
 
+Rechecked on 2026-09-21 with an iPhone 12 Pro and Pixel 10 Pro using isolated
+test accounts. With Android in airplane mode, Wi-Fi off, Bluetooth on, no IP
+default route, and zero message servers, the exact iPhone probe arrived and
+was marked Seen. The iPhone received the return receipt and verified the
+`FIPS nearby` message transport trace. Both physical tests passed and the
+original Android radio settings were restored. The receiving fixture now
+explicitly enables read receipts, which fresh accounts leave disabled.
+This check covers delivery and the return receipt, not reconnect or burst
+traffic. The opt-in physical test is separate from the release gate's LAN
+visibility check.
+
 The remainder of this document is historical design context, not the current
 implementation plan.
 

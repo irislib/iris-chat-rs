@@ -1792,6 +1792,12 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
     }
 
     private fun acceptAndMarkIncomingMessageSeen(expectedMessage: String, timeoutMs: Long): String {
+        // Fresh accounts keep read receipts private by default. This physical
+        // test explicitly verifies the return receipt, so opt its account in.
+        appManager().dispatch(AppAction.SetReadReceiptsEnabled(true))
+        waitForState("physical peer read receipts enabled", timeoutMs = 30_000) {
+            true.takeIf { appManager().state.value.preferences.sendReadReceipts }
+        }
 
         val chatId =
             waitForState("incoming message", timeoutMs = timeoutMs) {
