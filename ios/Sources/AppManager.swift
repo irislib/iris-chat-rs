@@ -1145,6 +1145,23 @@ final class AppManager: ObservableObject {
         if pendingTestSeed != nil {
             schedulePendingTestSeedRetry()
         }
+#if os(macOS) && DEBUG
+        if screenshotFixture != nil,
+           AppPaths.testRunId(environment: environment) != nil,
+           environment["IRIS_UI_TEST_SCREENSHOT_OUTPUT"] != nil {
+            Task { @MainActor [weak self] in
+                for _ in 0..<600 {
+                    guard let self else { return }
+                    if self.state.account != nil, !self.bootstrapInFlight {
+                        self.dispatch(.openChat(chatId: "fx-chat-1"))
+                        return
+                    }
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                NSLog("Marketing screenshot timed out waiting for isolated fixture window")
+            }
+        }
+#endif
     }
 
     var activeScreen: Screen {
@@ -1235,41 +1252,40 @@ final class AppManager: ObservableObject {
                 showNearbyTransportPeers: screenshotFixtureShowsNearbyTransportPeers
             )
 #if os(macOS) && DEBUG
-            // Export the native window, including its AppKit title bar and controls.
-            if let path = ProcessInfo.processInfo.environment["IRIS_UI_TEST_SCREENSHOT_OUTPUT"] {
-                if let window = NSApp.windows.first(where: { $0.title == "Iris Chat" }) {
-                    window.setContentSize(NSSize(width: 980, height: 700))
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                    guard let window = NSApp.windows.first(where: { $0.title == "Iris Chat" }),
-                          let content = window.contentView else { return }
-                    // A native off-screen window keeps the real frame while excluding
-                    // the system's screen-sharing indicator from the marketing image.
-                    let captureWindow = NSWindow(
-                        contentRect: NSRect(origin: .zero, size: content.bounds.size),
-                        styleMask: window.styleMask, backing: .buffered, defer: false
-                    )
-                    captureWindow.title = window.title
-                    captureWindow.appearance = window.effectiveAppearance
-                    captureWindow.titlebarAppearsTransparent = window.titlebarAppearsTransparent
-                    captureWindow.isReleasedWhenClosed = false
-                    captureWindow.contentView = content
-                    captureWindow.displayIfNeeded()
-                    defer {
-                        captureWindow.contentView = nil
-                        window.contentView = content
+            // Capture only a native window hosting this isolated fixture state.
+            // WindowServer supplies the rounded alpha mask and window shadow.
+            let environment = ProcessInfo.processInfo.environment
+            if AppPaths.testRunId(environment: environment) != nil,
+               let path = environment["IRIS_UI_TEST_SCREENSHOT_OUTPUT"] {
+                let captureWindow = NSWindow(
+                    contentRect: NSRect(x: 0, y: 0, width: 980, height: 700),
+                    styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                    backing: .buffered, defer: false
+                )
+                captureWindow.title = "Iris Chat"
+                captureWindow.appearance = NSAppearance(named: .darkAqua)
+                captureWindow.isReleasedWhenClosed = false
+                captureWindow.contentView = NSHostingView(
+                    rootView: RootView(manager: self).frame(minWidth: 980, minHeight: 640)
+                )
+                captureWindow.setFrameOrigin(NSPoint(x: -10000, y: -10000))
+                captureWindow.orderFront(nil)
+                captureWindow.displayIfNeeded()
+                let windowID = captureWindow.windowNumber
+                DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                    let capture = Process()
+                    capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                    capture.arguments = ["-x", "-l", String(windowID), "-t", "png", path]
+                    do {
+                        try capture.run()
+                        capture.waitUntilExit()
+                        NSLog("Marketing window capture exited %d", capture.terminationStatus)
+                    } catch {
+                        NSLog("Marketing window capture failed: %@", String(describing: error))
+                    }
+                    DispatchQueue.main.async {
                         captureWindow.close()
                     }
-                    guard let view = captureWindow.contentView?.superview,
-                          let bitmap = NSBitmapImageRep(
-                            bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width * 2),
-                            pixelsHigh: Int(view.bounds.height * 2), bitsPerSample: 8,
-                            samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
-                          ) else { return }
-                    bitmap.size = view.bounds.size
-                    view.cacheDisplay(in: view.bounds, to: bitmap)
-                    try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
                 }
             }
 #endif
