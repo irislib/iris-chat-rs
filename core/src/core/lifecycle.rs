@@ -373,6 +373,7 @@ impl AppCore {
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.relay_transport_runtime = RelayTransportRuntime::default();
         self.cancel_people_fetches_for_suspend();
+        self.reset_direct_chat_capability_runtime();
         self.profile_metadata_fetch_inflight.clear();
         self.pending_relay_publish_inflight.clear();
         self.relay_connected_count = 0;

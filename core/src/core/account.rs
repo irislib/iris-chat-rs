@@ -60,7 +60,7 @@ impl AppCore {
         self.schedule_session_connect();
         self.request_protocol_subscription_refresh_forced_reconnect_if_offline();
         let _fetching_recent_protocol_state = self.fetch_recent_protocol_state();
-        self.fetch_recent_messages_for_tracked_peers();
+        self.refresh_foreground_chats();
         self.retry_protocol_engine_pending_work("app_foreground");
         self.retry_pending_relay_publishes("app_foreground");
         self.prune_pending_private_invite_responses();

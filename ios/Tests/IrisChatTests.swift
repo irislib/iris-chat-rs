@@ -50,6 +50,8 @@ final class MockRustApp: RustAppClient {
     var pagesBefore: [String: CurrentChatSnapshot] = [:]
     var pagesAround: [String: CurrentChatSnapshot] = [:]
     var chatSnapshotGate: DispatchSemaphore?
+    var chatSnapshotOverride: CurrentChatSnapshot?
+    var onSearch: (() -> Void)?
     private var dispatchedActionsStorage: [AppAction] = []
     private let dispatchedActionsLock = NSLock()
     private var chatSnapshotCallCountStorage = 0
@@ -170,6 +172,7 @@ final class MockRustApp: RustAppClient {
     }
 
     func search(query: String, scopeChatId: String?, limit: UInt32) -> SearchResultSnapshot {
+        onSearch?()
         var result = buildLargeTestSearchResult(
             query: query,
             personCount: 11,
@@ -194,6 +197,7 @@ final class MockRustApp: RustAppClient {
             chatSnapshotGate = nil
             gate.wait()
         }
+        if let snapshot = chatSnapshotOverride { return snapshot }
         let trimmed = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, currentState.account != nil else { return nil }
         if currentState.currentChat?.chatId == trimmed {

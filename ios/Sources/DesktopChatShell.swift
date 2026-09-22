@@ -329,9 +329,11 @@ struct DesktopChatSidebar: View {
             autoProceedIfShortcut()
         }
         .task(id: searchRequest) {
-            search.refresh(searchRequest) { query, limit in
-                manager.search(query, limit: limit)
-            }
+            let request = searchRequest
+            guard search.needsRefresh(request) else { return }
+            let result = await manager.search(request?.query ?? "", limit: request?.messageLimit ?? 0)
+            guard !Task.isCancelled, request == searchRequest else { return }
+            search.refresh(request) { _, _ in result }
         }
     }
 

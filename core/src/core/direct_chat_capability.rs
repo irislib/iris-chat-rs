@@ -15,6 +15,17 @@ pub(super) enum CurrentAppKeysResolution {
 }
 
 impl AppCore {
+    pub(super) fn refresh_foreground_chats(&mut self) {
+        self.fetch_recent_messages_for_tracked_peers();
+        if let Some(chat_id) = self
+            .active_chat_id
+            .clone()
+            .filter(|id| !is_group_chat_id(id))
+        {
+            self.request_direct_chat_capability_check(&chat_id, false);
+        }
+    }
+
     pub(super) fn chat_capability(
         &self,
         chat_id: &str,
@@ -33,9 +44,6 @@ impl AppCore {
             .as_ref()
             .filter(|check| check.owner_pubkey_hex == owner_pubkey_hex)
             .map(|check| check.state);
-        if runtime_state == Some(DirectChatCapabilityCheckState::Checking) {
-            return DirectChatCapabilityState::Checking;
-        }
         if self
             .app_keys
             .get(owner_pubkey_hex)
@@ -50,7 +58,7 @@ impl AppCore {
             Some(DirectChatCapabilityCheckState::Unavailable) => {
                 DirectChatCapabilityState::Unavailable
             }
-            Some(DirectChatCapabilityCheckState::Checking) => unreachable!(),
+            Some(DirectChatCapabilityCheckState::Checking) => DirectChatCapabilityState::Checking,
             None if self.app_keys.contains_key(owner_pubkey_hex) => {
                 DirectChatCapabilityState::Unavailable
             }
@@ -186,7 +194,9 @@ impl AppCore {
                 CurrentAppKeysResolution::Found { event, has_devices } => {
                     if let Some(check) = self.direct_chat_capability_runtime.current.as_mut() {
                         check.state = if has_devices {
-                            DirectChatCapabilityCheckState::Checking
+                            // The fetch is finished. If ingestion fails, expose retry
+                            // instead of waiting for a completion that already arrived.
+                            DirectChatCapabilityCheckState::CheckFailed
                         } else {
                             DirectChatCapabilityCheckState::Unavailable
                         };
@@ -198,6 +208,11 @@ impl AppCore {
                         .is_some_and(|known| !known.devices.is_empty())
                     {
                         self.direct_chat_capability_runtime.current = None;
+                    } else if self.app_keys.contains_key(owner_pubkey_hex) {
+                        // A newer cached revocation can supersede the fetched list.
+                        if let Some(check) = self.direct_chat_capability_runtime.current.as_mut() {
+                            check.state = DirectChatCapabilityCheckState::Unavailable;
+                        }
                     }
                 }
                 CurrentAppKeysResolution::Missing | CurrentAppKeysResolution::Ambiguous => {

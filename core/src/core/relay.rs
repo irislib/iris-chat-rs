@@ -33,18 +33,20 @@ impl AppCore {
         let already_seen = self.has_seen_event(&event_id);
         let must_reapply_app_keys = already_seen
             && is_app_keys_protocol_event
-            && self.logged_in.as_ref().is_some_and(|logged_in| {
-                self.protocol_engine.as_ref().is_some_and(|engine| {
-                    let missing = if logged_in.owner_pubkey == event.pubkey {
-                        DirectSendReadiness::MissingLocalAppKeys
-                    } else {
-                        DirectSendReadiness::MissingPeerAppKeys
-                    };
-                    engine.direct_send_readiness(event.pubkey) == missing
-                })
-            });
+            && (!self.app_keys.contains_key(&event.pubkey.to_hex())
+                || self.logged_in.as_ref().is_some_and(|logged_in| {
+                    self.protocol_engine.as_ref().is_some_and(|engine| {
+                        let missing = if logged_in.owner_pubkey == event.pubkey {
+                            DirectSendReadiness::MissingLocalAppKeys
+                        } else {
+                            DirectSendReadiness::MissingPeerAppKeys
+                        };
+                        engine.direct_send_readiness(event.pubkey) == missing
+                    })
+                }));
         // Event history can survive a protocol reset or roster migration.
-        // Re-ingest signed device lists until the protocol has usable evidence.
+        // Re-ingest signed device lists until both the app cache and protocol
+        // have usable evidence.
         if already_seen && !must_reapply_app_keys {
             // Only persist + rebuild + emit when the transport-channel
             // set actually grew. Without this guard, every mirrored

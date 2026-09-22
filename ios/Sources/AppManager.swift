@@ -436,6 +436,10 @@ private final class ChatPageLoadRunner: @unchecked Sendable {
         self.rust = rust
     }
 
+    func search(query: String, scopeChatId: String?, limit: UInt32) -> SearchResultSnapshot {
+        rust.search(query: query, scopeChatId: scopeChatId, limit: limit)
+    }
+
     func latest(chatId: String, limit: UInt32) -> CurrentChatSnapshot? {
         rust.chatSnapshot(chatId: chatId, limit: limit)
     }
@@ -885,6 +889,7 @@ final class AppManager: ObservableObject {
     private static let chatAroundAfterLimit: UInt32 = 40
     private static let chatSnapshotCacheLimit = 12
     private static let chatPageQueue = DispatchQueue(label: "fi.siriusbusiness.irischat.chat-pages", qos: .userInitiated)
+    private static let searchQueue = DispatchQueue(label: "fi.siriusbusiness.irischat.search", qos: .userInitiated)
     private static let optimisticNavigationDispatchQueue = DispatchQueue(
         label: "fi.siriusbusiness.irischat.optimistic-navigation-dispatch",
         qos: .userInitiated
@@ -1354,6 +1359,11 @@ final class AppManager: ObservableObject {
 
     private func handleOptimisticNavigation(_ action: AppAction) -> Bool {
         switch action {
+        case .createChat(let peerInput):
+            let chatId = peerInputToHex(input: peerInput)
+            guard state.account != nil, !chatId.isEmpty else { return false }
+            navigateOptimistically(to: [.chat(chatId: chatId)], action: action)
+            return true
         case .navigateBack:
             navigateBack()
             return true
@@ -1484,11 +1494,15 @@ final class AppManager: ObservableObject {
     }
 
     /// Run a grouped contacts / groups / messages search against the
-    /// Rust core. Safe to call on every keystroke — the FTS index
-    /// query is sub-millisecond and re-uses the core's open SQLite
-    /// connection without going through the action queue.
-    func search(_ query: String, scopeChatId: String? = nil, limit: UInt32 = 50) -> SearchResultSnapshot {
-        rust.search(query: query, scopeChatId: scopeChatId, limit: limit)
+    /// Rust core. Database reads can wait behind writes during chat setup,
+    /// so keep them off the rendering thread and the chat-page queue.
+    func search(_ query: String, scopeChatId: String? = nil, limit: UInt32 = 50) async -> SearchResultSnapshot {
+        let runner = ChatPageLoadRunner(rust: rust)
+        return await withCheckedContinuation { continuation in
+            Self.searchQueue.async {
+                continuation.resume(returning: runner.search(query: query, scopeChatId: scopeChatId, limit: limit))
+            }
+        }
     }
 
     private func loadInitialChatPageForActiveChat(in stack: [Screen]) {
@@ -1517,7 +1531,6 @@ final class AppManager: ObservableObject {
                 guard let self else { return }
                 self.initialChatPageLoads.remove(trimmedChat)
                 guard let page else { return }
-                self.rememberChatSnapshot(page)
                 if page.messages.count < Int(pageSize) {
                     self.exhaustedOlderChatPages.insert(trimmedChat)
                 } else {
@@ -1527,11 +1540,12 @@ final class AppManager: ObservableObject {
                     return
                 }
                 var nextState = self.state
-                nextState.currentChat = self.mergedChatSnapshot(
+                nextState.currentChat = self.mergedLoadedChatPage(
                     existing: self.state.currentChat,
                     page: page
                 )
                 self.state = nextState
+                self.rememberChatSnapshot(nextState.currentChat)
             }
         }
     }
@@ -2969,7 +2983,7 @@ final class AppManager: ObservableObject {
     private func mergeCurrentChatSnapshot(_ page: CurrentChatSnapshot) {
         guard state.currentChat?.chatId == page.chatId else { return }
         var nextState = state
-        nextState.currentChat = mergedChatSnapshot(existing: state.currentChat, page: page)
+        nextState.currentChat = mergedLoadedChatPage(existing: state.currentChat, page: page)
         state = nextState
         rememberChatSnapshot(nextState.currentChat)
     }
@@ -2990,6 +3004,14 @@ final class AppManager: ObservableObject {
             merged.draft = existing.draft
         }
         return merged
+    }
+
+    private func mergedLoadedChatPage(existing: CurrentChatSnapshot?, page: CurrentChatSnapshot) -> CurrentChatSnapshot {
+        guard var current = existing, current.chatId == page.chatId else { return page }
+        // A page read can finish after a newer core update. Only merge history;
+        // never roll back capability, request acceptance, or other live metadata.
+        current.messages = mergedChatMessages(existing: current.messages, page: page.messages)
+        return current
     }
 
     private func mergedChatMessages(

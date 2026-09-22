@@ -211,3 +211,109 @@ fn direct_capability_completion_is_latest_chat_wins() {
         DirectChatCapabilityState::Checking
     );
 }
+
+#[test]
+fn direct_capability_unlocks_when_subscription_finds_devices_during_check() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("direct-capability-subscription", &owner, &device);
+    prime_capability_check(&mut core, peer.public_key());
+
+    core.handle_relay_event(app_keys_event(&peer, &[&peer_device], unix_now().get()));
+
+    assert_eq!(
+        core.direct_chat_capability_state(&peer.public_key().to_hex()),
+        DirectChatCapabilityState::Available,
+        "verified devices arriving through a subscription must unlock the composer"
+    );
+}
+
+#[test]
+fn direct_capability_completion_with_stale_devices_finishes_unavailable() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("direct-capability-stale-devices", &owner, &device);
+    let now = unix_now().get();
+    core.handle_relay_event(app_keys_event(&peer, &[], now));
+    let (generation, token) = prime_capability_check(&mut core, peer.public_key());
+
+    core.handle_direct_chat_capability_fetch_finished(
+        generation,
+        token,
+        &peer.public_key().to_hex(),
+        Ok(vec![app_keys_event(&peer, &[&peer_device], now - 1)]),
+    );
+
+    assert_eq!(
+        core.direct_chat_capability_state(&peer.public_key().to_hex()),
+        DirectChatCapabilityState::Unavailable,
+        "a completed lookup must not keep checking or revive revoked devices"
+    );
+}
+
+#[test]
+fn direct_capability_completion_restores_seen_devices_missing_from_app_cache() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("direct-capability-seen-devices", &owner, &device);
+    let event = app_keys_event(&peer, &[&peer_device], unix_now().get());
+    core.handle_relay_event(event.clone());
+    core.app_keys.remove(&peer.public_key().to_hex());
+    let (generation, token) = prime_capability_check(&mut core, peer.public_key());
+
+    core.handle_direct_chat_capability_fetch_finished(
+        generation,
+        token,
+        &peer.public_key().to_hex(),
+        Ok(vec![event]),
+    );
+
+    assert_eq!(
+        core.direct_chat_capability_state(&peer.public_key().to_hex()),
+        DirectChatCapabilityState::Available,
+        "event deduplication must not prevent rebuilding the device cache"
+    );
+}
+
+#[test]
+fn direct_capability_resumes_after_completion_was_dropped_while_suspended() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("direct-capability-suspend", &owner, &device);
+    let peer_hex = peer.public_key().to_hex();
+    core.ensure_thread_record(&peer_hex, unix_now().get());
+    core.active_chat_id = Some(peer_hex.clone());
+    core.screen_stack = vec![Screen::Chat { chat_id: peer_hex.clone() }];
+    let (generation, token) = prime_capability_check(&mut core, peer.public_key());
+
+    core.prepare_for_suspend();
+    core.handle_internal(InternalEvent::DirectChatCapabilityFetchFinished {
+        generation,
+        token,
+        owner_pubkey_hex: peer_hex.clone(),
+        result: Ok(vec![app_keys_event(&peer, &[&peer_device], unix_now().get())]),
+    });
+    assert!(!core.app_keys.contains_key(&peer_hex));
+    core.handle_app_foregrounded();
+
+    assert_eq!(
+        core.direct_chat_capability_state(&peer_hex),
+        DirectChatCapabilityState::CheckFailed,
+        "resuming without message servers must expose retry, not wait on a dropped completion"
+    );
+    core.handle_direct_chat_capability_fetch_finished(
+        generation,
+        token,
+        &peer_hex,
+        Ok(vec![app_keys_event(&peer, &[&peer_device], unix_now().get())]),
+    );
+    assert!(!core.app_keys.contains_key(&peer_hex), "pre-suspend results must remain invalidated");
+}

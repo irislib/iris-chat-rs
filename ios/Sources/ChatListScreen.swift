@@ -49,7 +49,11 @@ struct ChatListScreen: View {
             }
             .onReceive(chatListRelativeTimeTicker) { relativeNow = $0 }
             .task(id: searchRequest) {
-                search.refresh(searchRequest) { manager.search($0, limit: $1) }
+                let request = searchRequest
+                guard search.needsRefresh(request) else { return }
+                let result = await manager.search(request?.query ?? "", limit: request?.messageLimit ?? 0)
+                guard !Task.isCancelled, request == searchRequest else { return }
+                search.refresh(request) { _, _ in result }
             }
     }
 
@@ -199,6 +203,10 @@ struct GroupedSearchSession {
         }
         guard entry?.request != request else { return }
         entry = Entry(request: request, snapshot: search(request.query, request.messageLimit))
+    }
+
+    func needsRefresh(_ request: Request?) -> Bool {
+        entry?.request != request
     }
 
     mutating func viewMore(_ section: ChatListSearchSection) {
@@ -867,9 +875,11 @@ struct InChatSearchSheet: View {
         }
         .task(id: searchRequestToken) {
             let trimmed = trimmedQuery
-            cachedResults = trimmed.isEmpty
+            let result = trimmed.isEmpty
                 ? nil
-                : manager.search(trimmed, scopeChatId: target.chatId, limit: messageSearchLimit)
+                : await manager.search(trimmed, scopeChatId: target.chatId, limit: messageSearchLimit)
+            guard !Task.isCancelled else { return }
+            cachedResults = result
         }
     }
 
