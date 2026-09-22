@@ -148,6 +148,11 @@ impl ProtocolEngine {
     }
 
     fn wake_pending_protocol_for_owner(&mut self, owner: NdrOwnerPubkey) {
+        if owner == self.local_owner {
+            for pending in &mut self.pending_local_sibling_sends {
+                pending.next_retry_at_secs = 0;
+            }
+        }
         for pending in &mut self.pending_group_fanouts {
             if matches!(
                 &pending.fanout,

@@ -37,6 +37,7 @@ impl ProtocolEngine {
                 .clone(),
             pending_inbound: self.pending_inbound.clone(),
             pending_group_fanouts: self.pending_group_fanouts.clone(),
+            pending_local_sibling_sends: self.pending_local_sibling_sends.clone(),
             pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),
             pending_group_sender_key_messages: self.pending_group_sender_key_messages.clone(),
             pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),

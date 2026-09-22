@@ -351,6 +351,7 @@ impl ProtocolEngine {
             NdrUnixSeconds(now.get()),
         );
         self.invalidate_known_message_author_cache();
+        self.wake_pending_protocol_for_owner(ndr_owner(peer_pubkey));
         self.persist()?;
         self.retry_pending_protocol(NdrUnixSeconds(now.get()))
     }
@@ -670,13 +671,46 @@ impl ProtocolEngine {
         let payload = serde_json::to_vec(&rumor)?;
         let sibling_payload = local_sibling_payload(conversation_owner, &payload)?;
         self.with_state_checkpoint(|engine| {
-            engine.send_local_sibling_payload_inner(
-                chat_id,
-                sibling_payload,
-                Some(message_id.clone()),
+            let existing = engine
+                .pending_local_sibling_sends
+                .iter()
+                .position(|pending| {
+                    pending.message_id == message_id && pending.chat_id == chat_id
+                })
+                .map(|index| engine.pending_local_sibling_sends.remove(index));
+            let mut pending = existing.unwrap_or_else(|| ProtocolPendingLocalSiblingSend {
+                chat_id: chat_id.to_string(),
+                payload: sibling_payload,
+                message_id: message_id.clone(),
+                completed_devices: BTreeSet::new(),
+                created_at_secs: now.get(),
+                next_retry_at_secs: now.get(),
+            });
+            let sessions = engine.session_manager.clone();
+            let (effects, complete) = match engine.prepare_pending_local_sibling_send(
+                &mut pending,
+                NdrUnixSeconds(now.get()),
+            ) {
+                Ok(result) => result,
+                Err(_) => {
+                    engine.session_manager = sessions;
+                    (Vec::new(), false)
+                }
+            };
+            if !complete {
+                engine.pending_local_sibling_sends.push(pending);
+            }
+            engine.persist()?;
+            Ok(ProtocolDirectSendResult {
                 message_id,
-                now,
-            )
+                event_ids: effects
+                    .iter()
+                    .map(|effect| match effect {
+                        ProtocolEffect::Publish(publish) => publish.event.id.to_string(),
+                    })
+                    .collect(),
+                effects,
+            })
         })
     }
 

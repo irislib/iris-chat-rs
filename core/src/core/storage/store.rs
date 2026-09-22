@@ -1,5 +1,5 @@
 use super::super::{
-    KnownAppKeyDevice, KnownAppKeys, OwnerProfileRecord, PersistedAuthorizationState,
+    ChatReadState, KnownAppKeyDevice, KnownAppKeys, OwnerProfileRecord, PersistedAuthorizationState,
     PersistedDeliveryState, PersistedMessage, PersistedPreferences, PersistedState,
     PersistedThread, ThreadRecord, PERSISTED_STATE_VERSION,
 };
@@ -16,6 +16,9 @@ use std::hash::{Hash, Hasher};
 
 #[path = "store_chat_deletions.rs"]
 mod store_chat_deletions;
+
+#[path = "store_chat_read_states.rs"]
+mod store_chat_read_states;
 
 #[path = "store_preferences.rs"]
 mod store_preferences;

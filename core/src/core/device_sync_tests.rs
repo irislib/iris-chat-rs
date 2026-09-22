@@ -8,6 +8,7 @@ fn chunks_are_bounded_additive_camel_case_snapshots() {
         chats: vec![DeviceSyncChat {
             id: "a".repeat(64),
             updated_at: 41,
+            read_state: None,
         }],
         app_keys: vec![DeviceSyncAppKeys {
             owner_pubkey: "a".repeat(64),

@@ -16,6 +16,7 @@ impl AppCore {
     pub(super) fn load_persisted(&mut self) -> anyhow::Result<Option<PersistedState>> {
         self.app_store.delete_expired_messages(unix_now().get())?;
         self.chat_deletions = self.app_store.load_chat_deletions()?;
+        self.chat_read_states = self.app_store.load_chat_read_states()?;
         self.app_store.load_state()
     }
 

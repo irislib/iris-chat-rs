@@ -40,6 +40,8 @@ struct ProtocolEnginePersistedState {
     #[serde(default)]
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
     #[serde(default)]
+    pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
+    #[serde(default)]
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     #[serde(default)]
     pending_group_sender_key_messages:
@@ -391,6 +393,7 @@ pub struct ProtocolEngine {
     group_manager: GroupEventManager,
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
+    pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
@@ -427,6 +430,7 @@ struct ProtocolEngineCheckpoint {
     group_manager: GroupEventManager,
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
+    pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
@@ -440,4 +444,14 @@ struct ProtocolEngineCheckpoint {
     processed_private_invite_response_ids: Vec<String>,
     local_app_keys_observed: bool,
     subscription_generation: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ProtocolPendingLocalSiblingSend {
+    chat_id: String,
+    payload: Vec<u8>,
+    message_id: String,
+    completed_devices: BTreeSet<NdrDevicePubkey>,
+    created_at_secs: u64,
+    next_retry_at_secs: u64,
 }

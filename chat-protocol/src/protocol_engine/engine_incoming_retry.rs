@@ -1,9 +1,13 @@
 impl ProtocolEngine {
     pub fn has_due_pending_retry_work(&self, now: NdrUnixSeconds) -> bool {
         let now_secs = now.get();
-        self.pending_inbound
+        self.pending_local_sibling_sends
             .iter()
             .any(|pending| pending.next_retry_at_secs <= now_secs)
+            || self
+                .pending_inbound
+                .iter()
+                .any(|pending| pending.next_retry_at_secs <= now_secs)
             || self
                 .pending_group_fanouts
                 .iter()
@@ -339,10 +343,11 @@ impl ProtocolEngine {
             .cloned()
             .map(ProtocolDecryptedMessage::from)
             .collect::<Vec<_>>();
+        let sibling_effects = self.retry_pending_local_sibling_sends(now)?;
         let batch = ProtocolRetryBatch {
             group_result,
             direct_messages,
-            effects: Vec::new(),
+            effects: sibling_effects,
         };
         if !batch.is_empty() {
             self.subscription_generation = self.subscription_generation.wrapping_add(1);

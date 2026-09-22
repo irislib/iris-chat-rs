@@ -39,6 +39,18 @@ pub(super) struct ThreadRecord {
 }
 
 impl ThreadRecord {
+    pub(super) fn unread_message_ids(&self) -> HashSet<String> {
+        self.messages
+            .iter()
+            .rev()
+            .filter(|message| {
+                !message.is_outgoing && !matches!(message.delivery, DeliveryState::Seen)
+            })
+            .take(usize::try_from(self.unread_count).unwrap_or(usize::MAX))
+            .map(|message| message.id.clone())
+            .collect()
+    }
+
     pub(super) fn insert_message_sorted(&mut self, message: ChatMessageSnapshot) {
         let position = self
             .messages
@@ -49,6 +61,16 @@ impl ThreadRecord {
 
 fn message_order_key(message: &ChatMessageSnapshot) -> u64 {
     message.created_at_secs
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ChatReadState {
+    pub(super) updated_at_ms: u64,
+    pub(super) device_id: String,
+    pub(super) seen_through_secs: u64,
+    // Messages sharing the boundary second may arrive in either order.
+    pub(super) seen_at_boundary: std::collections::BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]

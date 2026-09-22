@@ -575,6 +575,9 @@ impl AppCore {
                     "seen" => DeliveryState::Seen,
                     _ => DeliveryState::Received,
                 };
+                if is_outgoing && matches!(delivery, DeliveryState::Seen) {
+                    self.apply_own_read_state_tag(chat_id, &runtime_rumor.tags);
+                }
                 self.apply_receipt_to_messages(
                     chat_id,
                     &message_ids_from_tags(runtime_rumor.tags.iter()),

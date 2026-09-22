@@ -61,6 +61,7 @@ impl AppCore {
             chat_id: chat_id.clone(),
         }];
         self.request_direct_chat_capability_check(&chat_id, false);
+        self.sync_open_chat_read_state(&chat_id);
         self.republish_local_identity_artifacts();
         self.request_protocol_subscription_refresh();
         self.fetch_recent_protocol_state();
@@ -211,6 +212,28 @@ impl AppCore {
                 indicator,
             );
         }
+        if let Some(read_state) = self.chat_read_states.get(from_chat_id).cloned() {
+            let changed = self.apply_chat_read_state(to_chat_id, read_state.clone());
+            let already_merged = self.chat_read_states.get(to_chat_id).is_some_and(|target| {
+                (target.updated_at_ms, &target.device_id)
+                    >= (read_state.updated_at_ms, &read_state.device_id)
+                    && (target.seen_through_secs > read_state.seen_through_secs
+                        || (target.seen_through_secs == read_state.seen_through_secs
+                            && read_state
+                                .seen_at_boundary
+                                .is_subset(&target.seen_at_boundary)))
+            });
+            if changed || already_merged {
+                match self.app_store.remove_chat_read_state(from_chat_id) {
+                    Ok(()) => {
+                        self.chat_read_states.remove(from_chat_id);
+                    }
+                    Err(error) => {
+                        self.push_debug_log("storage.chat_read_alias.error", error.to_string())
+                    }
+                }
+            }
+        }
         self.mark_mobile_push_dirty();
     }
 
@@ -318,6 +341,7 @@ impl AppCore {
         // page so the UI could paint without a "Loading chat…" flash;
         // the finalize only needs to handle the rest (republish
         // identity, subscriptions, persist, schedule peer catch-up).
+        self.sync_open_chat_read_state(chat_id);
         self.republish_local_identity_artifacts();
         self.persist_best_effort();
         self.request_protocol_subscription_refresh();
@@ -437,10 +461,11 @@ impl AppCore {
         }
         if let Some(latest) = thread.messages.last() {
             self.typing_floor_secs
-                .entry(chat_id)
+                .entry(chat_id.clone())
                 .and_modify(|floor| *floor = (*floor).max(latest.created_at_secs))
                 .or_insert(latest.created_at_secs);
         }
+        self.apply_read_state_to_thread(&chat_id);
         changed
     }
 
@@ -1019,7 +1044,9 @@ impl AppCore {
                 .map(|owner| self.owner_display_label(owner))
                 .unwrap_or_else(|| self.owner_display_label(chat_id))
         });
-        let should_count_unread = !self.is_chat_visible(chat_id);
+        let already_seen =
+            self.message_was_seen_on_own_device(chat_id, created_at_secs, &message_id);
+        let should_count_unread = !already_seen && !self.is_chat_visible(chat_id);
         let (body, attachments) = extract_message_attachments(&body);
         let mut delivery_trace = delivery_trace_for_source_event(source_event_id.as_deref());
         if let Some(channel) = source_event_id
@@ -1042,7 +1069,11 @@ impl AppCore {
             is_outgoing: false,
             created_at_secs,
             expires_at_secs,
-            delivery: DeliveryState::Received,
+            delivery: if already_seen {
+                DeliveryState::Seen
+            } else {
+                DeliveryState::Received
+            },
             recipient_deliveries: Vec::new(),
             delivery_trace,
             source_event_id,
@@ -1392,6 +1423,9 @@ impl AppCore {
                     "seen" => DeliveryState::Seen,
                     _ => DeliveryState::Received,
                 };
+                if is_outgoing && matches!(delivery, DeliveryState::Seen) {
+                    self.apply_own_read_state_tag(&chat_id, &runtime_rumor.tags);
+                }
                 self.apply_receipt_to_messages(
                     &chat_id,
                     &message_ids_from_tags(runtime_rumor.tags.iter()),

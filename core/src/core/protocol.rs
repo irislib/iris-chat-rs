@@ -76,7 +76,9 @@ impl AppCore {
             unsigned,
             unix_now(),
         );
-        self.handle_protocol_direct_send_result(chat_id, reason, result)
+        let sent = self.handle_protocol_direct_send_result(chat_id, reason, result);
+        self.schedule_fast_protocol_retry_if_pending();
+        sent
     }
 
     fn handle_protocol_direct_send_result(

@@ -24,6 +24,7 @@ impl ProtocolEngine {
             group_manager: GroupEventManager::new(local_owner),
             pending_inbound: Vec::new(),
             pending_group_fanouts: Vec::new(),
+            pending_local_sibling_sends: Vec::new(),
             pending_group_pairwise_payloads: Vec::new(),
             pending_group_sender_key_messages: Vec::new(),
             pending_group_sender_key_repairs: Vec::new(),
@@ -111,6 +112,7 @@ impl ProtocolEngine {
             group_manager,
             pending_inbound: state.pending_inbound,
             pending_group_fanouts: state.pending_group_fanouts,
+            pending_local_sibling_sends: state.pending_local_sibling_sends,
             pending_group_pairwise_payloads: state.pending_group_pairwise_payloads,
             pending_group_sender_key_messages: state.pending_group_sender_key_messages,
             pending_group_sender_key_repairs: state.pending_group_sender_key_repairs,
@@ -366,6 +368,7 @@ impl ProtocolEngine {
         !self.pending_decrypted_deliveries.is_empty()
             || !self.pending_inbound.is_empty()
             || !self.pending_group_fanouts.is_empty()
+            || !self.pending_local_sibling_sends.is_empty()
             || !self.pending_group_pairwise_payloads.is_empty()
             || self.has_pending_group_sender_key_retry_work()
             || !self.pending_group_sender_key_repairs.is_empty()
@@ -906,6 +909,7 @@ impl ProtocolEngine {
             group_manager: self.group_manager.clone(),
             pending_inbound: self.pending_inbound.clone(),
             pending_group_fanouts: self.pending_group_fanouts.clone(),
+            pending_local_sibling_sends: self.pending_local_sibling_sends.clone(),
             pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),
             pending_group_sender_key_messages: self.pending_group_sender_key_messages.clone(),
             pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),
@@ -928,6 +932,7 @@ impl ProtocolEngine {
         self.group_manager = checkpoint.group_manager;
         self.pending_inbound = checkpoint.pending_inbound;
         self.pending_group_fanouts = checkpoint.pending_group_fanouts;
+        self.pending_local_sibling_sends = checkpoint.pending_local_sibling_sends;
         self.pending_group_pairwise_payloads = checkpoint.pending_group_pairwise_payloads;
         self.pending_group_sender_key_messages = checkpoint.pending_group_sender_key_messages;
         self.pending_group_sender_key_repairs = checkpoint.pending_group_sender_key_repairs;

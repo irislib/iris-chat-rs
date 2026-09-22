@@ -7,22 +7,34 @@ impl AppCore {
         let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
             return;
         };
-        let Some(thread) = self.threads.get_mut(&normalized_chat_id) else {
+        let Some(thread) = self.threads.get(&normalized_chat_id) else {
             return;
         };
-
-        let next_unread = if unread {
-            thread.unread_count.max(1)
-        } else {
-            0
-        };
-        if thread.unread_count == next_unread {
+        if unread {
+            let thread = self
+                .threads
+                .get_mut(&normalized_chat_id)
+                .expect("existing thread");
+            thread.unread_count = thread.unread_count.max(1);
+            self.persist_best_effort();
+            self.rebuild_state();
+            self.emit_state();
             return;
         }
-        thread.unread_count = next_unread;
+        let message_ids = thread
+            .messages
+            .iter()
+            .filter(|message| !message.is_outgoing)
+            .map(|message| message.id.clone())
+            .collect::<Vec<_>>();
+        if !self.record_local_chat_read_state(&normalized_chat_id, &message_ids, true) {
+            return;
+        }
+        self.send_seen_updates(&normalized_chat_id, message_ids);
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
+        self.broadcast_device_sync_snapshot();
     }
 
     pub(super) fn mark_messages_seen(&mut self, chat_id: &str, message_ids: &[String]) {
@@ -32,45 +44,56 @@ impl AppCore {
         let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
             return;
         };
-        let Some(thread) = self.threads.get_mut(&normalized_chat_id) else {
+        let Some(thread) = self.threads.get(&normalized_chat_id) else {
             return;
         };
+        let receipt_ids = thread
+            .messages
+            .iter()
+            .filter(|message| !message.is_outgoing && message_ids.contains(&message.id))
+            .map(|message| message.id.clone())
+            .collect::<Vec<_>>();
+        if receipt_ids.is_empty()
+            || !self.record_local_chat_read_state(&normalized_chat_id, &receipt_ids, false)
+        {
+            return;
+        }
+        self.send_seen_updates(&normalized_chat_id, receipt_ids);
+        self.persist_best_effort();
+        self.rebuild_state();
+        self.emit_state();
+        self.broadcast_device_sync_snapshot();
+    }
 
-        let mut changed = false;
-        let mut receipt_ids = Vec::new();
-        for message in &mut thread.messages {
-            if message.is_outgoing || !message_ids.iter().any(|id| id == &message.id) {
-                continue;
+    pub(super) fn sync_open_chat_read_state(&mut self, chat_id: &str) {
+        let Some(thread) = self.threads.get(chat_id) else {
+            return;
+        };
+        let ids = thread
+            .messages
+            .iter()
+            .filter(|message| !message.is_outgoing)
+            .map(|message| message.id.clone())
+            .collect::<Vec<_>>();
+        if self.record_local_chat_read_state(chat_id, &ids, true) {
+            self.send_seen_updates(chat_id, ids);
+            self.broadcast_device_sync_snapshot();
+        }
+    }
+
+    fn send_seen_updates(&mut self, chat_id: &str, mut receipt_ids: Vec<String>) {
+        if receipt_ids.is_empty() {
+            if let Some(state) = self.chat_read_states.get(chat_id) {
+                receipt_ids.extend(state.seen_at_boundary.iter().cloned());
             }
-            if should_advance_delivery(&message.delivery, &DeliveryState::Seen) {
-                message.delivery = DeliveryState::Seen;
-                changed = true;
-            }
-            receipt_ids.push(message.id.clone());
         }
         if receipt_ids.is_empty() {
             return;
         }
-
-        if thread.unread_count != 0 {
-            thread.unread_count = 0;
-            changed = true;
-        }
-        self.cancel_pending_delivered_receipts(&normalized_chat_id, &receipt_ids);
-        self.send_seen_receipt_to_local_siblings(&normalized_chat_id, receipt_ids.clone());
-        if self.preferences.send_read_receipts
-            && !self.thread_is_message_request(&normalized_chat_id)
-        {
-            // Don't emit seen receipts for an unaccepted message
-            // request — the sender shouldn't get "read" feedback
-            // until the recipient has opted in by tapping Accept.
-            self.send_receipt(&normalized_chat_id, "seen", receipt_ids);
-        }
-
-        if changed {
-            self.persist_best_effort();
-            self.rebuild_state();
-            self.emit_state();
+        self.cancel_pending_delivered_receipts(chat_id, &receipt_ids);
+        self.send_seen_receipt_to_local_siblings(chat_id, receipt_ids.clone());
+        if self.preferences.send_read_receipts && !self.thread_is_message_request(chat_id) {
+            self.send_receipt(chat_id, "seen", receipt_ids);
         }
     }
 
@@ -89,11 +112,20 @@ impl AppCore {
         } else {
             return;
         };
-        let Some(unsigned) =
+        let Some(mut unsigned) =
             receipt_unsigned_event(owner_pubkey, "seen", message_ids, group_id.as_deref())
         else {
             return;
         };
+        if let Some(state) = self.chat_read_states.get(chat_id) {
+            if let Ok(encoded) = serde_json::to_string(state) {
+                if let Ok(tag) = nostr::Tag::parse(["iris-read-state", &encoded]) {
+                    unsigned.tags.push(tag);
+                    unsigned.id = None;
+                    unsigned.ensure_id();
+                }
+            }
+        }
         self.send_protocol_engine_unsigned_event_to_local_siblings(
             conversation_owner,
             chat_id,
@@ -371,7 +403,9 @@ impl AppCore {
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;
         };
+        let unread_ids = thread.unread_message_ids();
         let mut changed = false;
+        let mut newly_seen_incoming = 0u64;
         for message in &mut thread.messages {
             if !message_ids.iter().any(|id| id == &message.id) {
                 continue;
@@ -380,6 +414,9 @@ impl AppCore {
                 continue;
             }
             if should_advance_delivery(&message.delivery, &delivery) {
+                if !message.is_outgoing && matches!(delivery, DeliveryState::Seen) {
+                    newly_seen_incoming += u64::from(unread_ids.contains(&message.id));
+                }
                 message.delivery = delivery.clone();
                 changed = true;
             }
@@ -412,8 +449,10 @@ impl AppCore {
             }
         }
         if is_from_local_owner && matches!(delivery, DeliveryState::Seen) {
-            thread.unread_count = 0;
-            changed = true;
+            // An older receipt must not clear newer, unread messages.
+            let next_unread = thread.unread_count.saturating_sub(newly_seen_incoming);
+            changed |= thread.unread_count != next_unread;
+            thread.unread_count = next_unread;
         }
         if changed {
             self.persist_best_effort();

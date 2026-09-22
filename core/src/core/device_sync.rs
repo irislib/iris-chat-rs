@@ -91,6 +91,8 @@ enum DeviceSyncPacket {
 struct DeviceSyncChat {
     id: String,
     updated_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    read_state: Option<ChatReadState>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -375,13 +377,38 @@ impl AppCore {
         roster_at: u64,
         include_messages: bool,
     ) -> DeviceSyncSnapshot {
-        let chats = self
+        let chat_ids = self
             .threads
-            .values()
-            .filter(|thread| PublicKey::from_hex(&thread.chat_id).is_ok())
-            .map(|thread| DeviceSyncChat {
-                id: thread.chat_id.clone(),
-                updated_at: thread.updated_at_secs,
+            .keys()
+            .chain(self.chat_read_states.keys())
+            .filter(|id| valid_device_sync_chat_id(id))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let chats = chat_ids
+            .into_iter()
+            .filter_map(|id| {
+                let read_state = self.chat_read_states.get(&id).cloned().filter(|state| {
+                    !self
+                        .chat_deletions
+                        .get(&id)
+                        .is_some_and(|deleted| state.updated_at_ms / 1000 <= *deleted)
+                });
+                let thread = self.threads.get(&id);
+                if thread.is_none() && read_state.is_none() {
+                    return None;
+                }
+                Some(DeviceSyncChat {
+                    updated_at: thread.map_or_else(
+                        || {
+                            read_state
+                                .as_ref()
+                                .map_or(0, |state| state.seen_through_secs)
+                        },
+                        |thread| thread.updated_at_secs,
+                    ),
+                    id,
+                    read_state,
+                })
             })
             .collect::<Vec<_>>();
         let direct_chat_ids = chats
@@ -530,7 +557,7 @@ impl AppCore {
             changed = true;
         }
 
-        for chat in snapshot.chats {
+        for chat in &snapshot.chats {
             if PublicKey::from_hex(&chat.id).is_ok()
                 && !self.threads.contains_key(&chat.id)
                 && !self.chat_activity_is_deleted(&chat.id, chat.updated_at)
@@ -554,6 +581,13 @@ impl AppCore {
             if installed {
                 self.apply_group_roster_snapshot(group.clone(), group.updated_at.get());
                 changed = true;
+            }
+        }
+        for chat in snapshot.chats {
+            if valid_device_sync_chat_id(&chat.id) {
+                if let Some(read_state) = chat.read_state {
+                    changed |= self.apply_chat_read_state(&chat.id, read_state);
+                }
             }
         }
         let now = unix_now().get();
@@ -580,11 +614,17 @@ impl AppCore {
             let is_outgoing = message.author == local_owner_hex;
             let chat_id = message.chat_id.clone();
             let (body, attachments) = extract_message_attachments(&message.body);
+            let already_seen = !is_outgoing
+                && self.message_was_seen_on_own_device(&chat_id, message.created_at, &message.id);
+            let count_unread = !is_outgoing && !already_seen && !self.is_chat_visible(&chat_id);
             if is_outgoing {
                 self.accept_direct_peer(&chat_id);
             }
             let thread = self.ensure_thread_record(&chat_id, message.created_at);
             thread.updated_at_secs = thread.updated_at_secs.max(message.created_at);
+            if count_unread {
+                thread.unread_count = thread.unread_count.saturating_add(1);
+            }
             thread.insert_message_sorted(ChatMessageSnapshot {
                 id: message.id,
                 chat_id: chat_id.clone(),
@@ -601,6 +641,8 @@ impl AppCore {
                 expires_at_secs: message.expires_at,
                 delivery: if is_outgoing {
                     DeliveryState::Sent
+                } else if already_seen {
+                    DeliveryState::Seen
                 } else {
                     DeliveryState::Received
                 },

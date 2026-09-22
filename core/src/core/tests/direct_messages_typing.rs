@@ -678,8 +678,8 @@ fn mark_seen_syncs_to_local_siblings_when_sender_receipts_are_disabled() {
     assert_eq!(core.threads.get(&chat_id).unwrap().unread_count, 0);
     assert_eq!(
         protocol_send_log_count(&core, "receipt.self_sync"),
-        0,
-        "best-effort local sibling seen sync should not queue retry work"
+        1,
+        "own-device seen sync must accept durable work even before a sibling is ready"
     );
     assert_eq!(
         protocol_send_log_count(&core, "receipt"),
@@ -720,8 +720,8 @@ fn mark_seen_syncs_message_requests_to_local_siblings_without_peer_receipt() {
     assert_eq!(core.threads.get(&chat_id).unwrap().unread_count, 0);
     assert_eq!(
         protocol_send_log_count(&core, "receipt.self_sync"),
-        0,
-        "best-effort local sibling seen sync should not queue retry work"
+        1,
+        "own-device seen sync must accept durable work even before a sibling is ready"
     );
     assert_eq!(
         protocol_send_log_count(&core, "receipt"),

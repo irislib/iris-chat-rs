@@ -75,6 +75,7 @@ mod registration_recovery;
 pub use attachment_upload::download_hashtree_attachment;
 mod attachments;
 mod chat_deletions;
+mod chat_read_state;
 mod chat_reactions;
 mod chat_receipts;
 mod chat_settings;
@@ -507,6 +508,7 @@ pub struct AppCore {
     pending_outgoing_invite_acceptance: Option<invites::PendingOutgoingInviteAcceptance>,
     threads: BTreeMap<String, ThreadRecord>,
     chat_deletions: BTreeMap<String, u64>,
+    chat_read_states: BTreeMap<String, ChatReadState>,
     active_chat_id: Option<String>,
     screen_stack: Vec<Screen>,
     next_message_id: u64,
