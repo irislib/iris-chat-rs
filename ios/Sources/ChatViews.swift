@@ -123,7 +123,7 @@ struct ChatScreen: View {
     @ObservedObject var manager: AppManager
     let chatId: String
 
-    @State private var draft = ""
+    @State private var composerState = IrisComposerState()
     @State private var selectedAttachments: [StagedAttachment] = []
     @State private var isNearBottom = true
     @State private var shouldFollowLatest = true
@@ -147,12 +147,8 @@ struct ChatScreen: View {
     @State private var activeMessageActionDockId: String?
     @State private var replyTarget: ChatMessageSnapshot?
     @State private var imageViewerItem: ImageViewerItem?
-    @State private var lastTypingSentAt: Date?
-    @State private var sentTypingIndicator = false
     @State private var messageInfoSelection: MessageInfoSelection?
     @State private var reactorsSelection: MessageReactorsSelection?
-    @State private var lastPersistedDraft: String?
-    @State private var draftFlushWork: DispatchWorkItem?
     /// Session-scoped acceptance for message-request chats. While
     /// `chat.isRequest` is still true at the model layer (Rust),
     /// tapping Accept just hides the gate locally so the user can
@@ -333,8 +329,8 @@ struct ChatScreen: View {
                                     timelineTopMinY = -.greatestFiniteMagnitude
                                     timelineContentHeight = 0
                                     timelineDaySeparatorFrames = [:]
-                                    lastTypingSentAt = nil
-                                    sentTypingIndicator = false
+                                    composerState.lastTypingSentAt = nil
+                                    composerState.sentTypingIndicator = false
                                 }
                                 .onPreferenceChange(ChatTimelineViewportMinYPreferenceKey.self) { value in
                                     if !chatTimelineGeometryMatches(timelineViewportMinY, value) {
@@ -569,7 +565,7 @@ struct ChatScreen: View {
                                         }
                                     } else {
                                         IrisComposerBar(
-                                            draft: $draft,
+                                            composerState: composerState,
                                             attachments: $selectedAttachments,
                                             placeholder: "Message",
                                             isSending: manager.state.busy.sendingMessage,
@@ -578,6 +574,11 @@ struct ChatScreen: View {
                                             isFocused: $isComposerFocused,
                                             onUserEdit: { text in
                                                 sendTypingIfNeeded(text: text)
+                                            },
+                                            onDraftChange: {
+                                                composerState.scheduleSave { text in
+                                                    manager.dispatch(.setChatDraft(chatId: chatId, text: text))
+                                                }
                                             },
                                             onAttach: { urls in
                                                 do {
@@ -598,12 +599,12 @@ struct ChatScreen: View {
                                             let outgoingText = replyEncodedMessage(reply: replyTarget, text: text)
                                             replyTarget = nil
                                             if selectedAttachments.isEmpty {
-                                                draft = ""
+                                                composerState.text = ""
                                                 manager.dispatch(.sendMessage(chatId: chatId, text: outgoingText))
                                             } else {
                                                 let attachments = selectedAttachments
                                                 selectedAttachments = []
-                                                draft = ""
+                                                composerState.text = ""
                                                 manager.sendAttachments(chatId: chatId, attachments: attachments, caption: outgoingText)
                                             }
                                         }
@@ -672,9 +673,6 @@ struct ChatScreen: View {
         }
         .task(id: persistedDraftToken) {
             seedDraftFromPersistedState(replaceExisting: false)
-        }
-        .irisOnChange(of: draft) { newValue in
-            scheduleDraftFlush(text: newValue)
         }
         .task(id: seenReceiptToken(for: chat)) {
             guard let chat else { return }
@@ -1019,36 +1017,13 @@ struct ChatScreen: View {
     }
 
     private func seedDraftFromPersistedState(replaceExisting: Bool) {
-        let persisted = persistedDraftForCurrentChat()
-        if replaceExisting || draft.isEmpty {
-            lastPersistedDraft = persisted
-            draft = persisted
-            return
-        }
-        if draft == persisted {
-            lastPersistedDraft = persisted
-        }
-    }
-
-    private func scheduleDraftFlush(text: String) {
-        draftFlushWork?.cancel()
-        if lastPersistedDraft == text {
-            return
-        }
-        let work = DispatchWorkItem {
-            manager.dispatch(.setChatDraft(chatId: chatId, text: text))
-            lastPersistedDraft = text
-        }
-        draftFlushWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        composerState.restore(persistedDraftForCurrentChat(), replaceExisting: replaceExisting)
     }
 
     private func flushDraftImmediately() {
-        draftFlushWork?.cancel()
-        draftFlushWork = nil
-        guard lastPersistedDraft != draft else { return }
-        manager.dispatch(.setChatDraft(chatId: chatId, text: draft))
-        lastPersistedDraft = draft
+        composerState.flush { text in
+            manager.dispatch(.setChatDraft(chatId: chatId, text: text))
+        }
     }
 
     private func sendTypingIfNeeded(text: String) {
@@ -1059,18 +1034,18 @@ struct ChatScreen: View {
             return
         }
         let now = Date()
-        if let lastTypingSentAt, now.timeIntervalSince(lastTypingSentAt) < 3 {
+        if let lastTypingSentAt = composerState.lastTypingSentAt, now.timeIntervalSince(lastTypingSentAt) < 3 {
             return
         }
-        lastTypingSentAt = now
-        sentTypingIndicator = true
+        composerState.lastTypingSentAt = now
+        composerState.sentTypingIndicator = true
         manager.dispatch(.sendTyping(chatId: chatId))
     }
 
     private func stopTypingIfNeeded() {
-        guard sentTypingIndicator else { return }
-        sentTypingIndicator = false
-        lastTypingSentAt = nil
+        guard composerState.sentTypingIndicator else { return }
+        composerState.sentTypingIndicator = false
+        composerState.lastTypingSentAt = nil
         manager.dispatch(.stopTyping(chatId: chatId))
     }
 

@@ -15,7 +15,7 @@ import PhotosUI
 struct IrisComposerBar: View {
     @Environment(\.irisPalette) private var palette
 
-    @Binding var draft: String
+    @ObservedObject var composerState: IrisComposerState
     @Binding var attachments: [StagedAttachment]
     @State private var showingAttachmentPicker = false
     @State private var showingEmojiPicker = false
@@ -31,8 +31,11 @@ struct IrisComposerBar: View {
     let uploadFraction: Double?
     @FocusState.Binding var isFocused: Bool
     let onUserEdit: (String) -> Void
+    let onDraftChange: () -> Void
     let onAttach: ([URL]) -> Void
     let onSend: (String) -> Void
+
+    private var draft: String { composerState.text }
 
     private func canSend(text: String) -> Bool {
         (
@@ -143,6 +146,7 @@ struct IrisComposerBar: View {
         .padding(.vertical, 6)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chatComposerBar")
+        .irisOnChange(of: draft) { _ in onDraftChange() }
         .overlay {
             if isDropTargeted {
                 RoundedRectangle(cornerRadius: IrisLayout.inputCornerRadius + 8, style: .continuous)
@@ -332,7 +336,7 @@ struct IrisComposerBar: View {
     /// The parent owns draft restoration and clearing. Only mutations that
     /// enter through the editor are user activity and may emit typing.
     private var userEditingDraft: Binding<String> {
-        irisComposerUserEditingBinding($draft, onUserEdit: onUserEdit)
+        irisComposerUserEditingBinding($composerState.text, onUserEdit: onUserEdit)
     }
 
     private func handleDroppedFiles(_ providers: [NSItemProvider]) -> Bool {
