@@ -7,6 +7,44 @@ import XCTest
 
 final class ChatReadResponsivenessTests: XCTestCase {
     @MainActor
+    func testBackToChatListDoesNotWaitForBusyNavigationDispatch() async {
+        var state = buildLargeTestAppState(directChatCount: 100, groupChatCount: 0, messagesInCurrentChat: 80)
+        state.router.screenStack = []
+        let rust = MockRustApp(state: state)
+        let opening = expectation(description: "chat dispatch started")
+        let returned = expectation(description: "back dispatch completed")
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        rust.onDispatch = { action in
+            switch action {
+            case .openChat:
+                XCTAssertFalse(Thread.isMainThread)
+                opening.fulfill()
+                XCTAssertEqual(gate.wait(timeout: .now() + 3), .success)
+            case .updateScreenStack(let stack) where stack.isEmpty:
+                XCTAssertFalse(Thread.isMainThread)
+                returned.fulfill()
+            default:
+                break
+            }
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(), desktopNotifications: NoopDesktopNotificationPoster(), dataDir: directory, environment: [:])
+        manager.dispatch(.openChat(chatId: state.chatList[0].chatId))
+        await fulfillment(of: [opening], timeout: 2)
+
+        manager.navigateBack()
+        XCTAssertEqual(manager.activeScreen, .chatList)
+        XCTAssertNil(manager.state.currentChat)
+        await Task.yield()
+        XCTAssertEqual(manager.activeScreen, .chatList)
+
+        gate.signal()
+        await fulfillment(of: [returned], timeout: 2)
+    }
+
+    @MainActor
     func testCreateChatRoutesImmediatelyAndDispatchesOffMainThread() async {
         let peer = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
         var state = buildLargeTestAppState(directChatCount: 1, groupChatCount: 0, messagesInCurrentChat: 0)
