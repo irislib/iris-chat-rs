@@ -2,6 +2,23 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.22.1
+
+### GitHub
+
+- Fix signed update checks for installed calendar revision versions such as `2026.9.10.1`.
+- Generate update metadata with supported installation kinds and retain compatibility with older readers when publishing same-day revisions.
+- Require the exact released executable to resolve both CLI and native-app updates before Hashtree promotion succeeds, and preserve the underlying error when a check fails.
+
+### Apple
+
+- Fixed update checks for releases with a same-day revision number.
+- Improved error details when an update cannot be checked.
+
+### Zapstore
+
+- Improved compatibility and verification of release metadata used by desktop and command-line updates.
+
 ## v2026.9.22
 
 ### GitHub

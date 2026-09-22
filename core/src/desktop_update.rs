@@ -86,7 +86,7 @@ impl IrisDesktopUpdateResult {
     }
 
     fn from_error(error: anyhow::Error) -> Self {
-        Self::error(error.to_string())
+        Self::error(format!("{error:#}"))
     }
 }
 
@@ -608,7 +608,19 @@ mod tests {
     #[test]
     fn date_versions_skip_dev_placeholders() {
         assert!(version_is_newer("v2026.5.18.6", "2026.5.18.5"));
+        assert!(version_is_newer("v2026.9.22.1", "2026.9.22"));
+        assert!(version_is_newer("v2026.9.22.10", "2026.9.22.2"));
+        assert!(!version_is_newer("v2026.9.22.1", "2026.9.22.1"));
         assert!(!version_is_newer("v2026.5.18.6", "0.1.30"));
+    }
+
+    #[test]
+    fn update_failure_keeps_the_underlying_cause() {
+        let error = anyhow!("unknown asset kind: aab").context("failed to resolve signed release");
+        assert_eq!(
+            IrisDesktopUpdateResult::from_error(error).error.as_deref(),
+            Some("failed to resolve signed release: unknown asset kind: aab")
+        );
     }
 
     #[test]

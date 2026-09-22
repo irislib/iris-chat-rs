@@ -176,7 +176,16 @@ def stage_hashtree(
         source = asset_dir / entry["name"]
         shutil.copy2(source, output_assets / entry["name"])
         staged = dict(entry)
+        # The attested inventory describes file formats; the updater's `kind`
+        # describes how to install them. Keep the immutable inventory intact
+        # and translate only this generated discovery document.
+        staged["kind"] = {
+            "updater": "app-bundle",
+            "installer": "nsis",
+            "deb": "deb",
+        }.get(entry["kind"], "archive")
         if entry["platform"] == "cli":
+            staged["kind"] = "binary-archive"
             staged["executable"] = "iris/iris"
         staged_assets.append(staged)
     manifest_name = manifest_path.name
@@ -187,7 +196,7 @@ def stage_hashtree(
             "path": f"assets/{manifest_name}",
             "platform": "metadata",
             "architecture": "none",
-            "kind": "manifest",
+            "kind": "binary",
             "size": manifest_path.stat().st_size,
             "sha256": sha256(manifest_path),
         }
@@ -197,7 +206,11 @@ def stage_hashtree(
         "id": tag,
         "title": tag,
         "tag": tag,
-        "version": manifest["version"],
+        # Older desktop updaters require SemVer here, but compare the display
+        # tag themselves. Retain the date revision in build metadata so they
+        # can discover corrective releases without rejecting the document.
+        "version": "+".join(manifest["version"].rsplit(".", 1))
+        if manifest["version"].count(".") == 3 else manifest["version"],
         "commit": manifest["commit"],
         "created_at": timestamp,
         "published_at": timestamp,

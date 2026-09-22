@@ -214,11 +214,13 @@ verify_hashtree_publication() {
     echo "Hashtree gateway readback does not match the verified release $TAG." >&2
     return 1
   fi
+  python3 "$ROOT/scripts/check-release-updater.py" \
+    --cli "$DOWNLOAD_DIR/updater-check/iris/iris" --tag "$TAG"
 }
 
 publish_hashtree() {
   local assets=()
-  local name stage_dir add_output cid
+  local name stage_dir add_output cid cli_target
   require_hashtree_identity
   while IFS= read -r name; do
     assets+=("$name")
@@ -230,6 +232,16 @@ publish_hashtree() {
     return
   fi
   require_command curl
+  require_command tar
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) cli_target=aarch64-apple-darwin ;;
+    Darwin-x86_64) cli_target=x86_64-apple-darwin ;;
+    Linux-x86_64) cli_target=x86_64-unknown-linux-gnu ;;
+    *) echo "No released CLI for signed update verification on this host." >&2; return 1 ;;
+  esac
+  mkdir "$DOWNLOAD_DIR/updater-check"
+  tar -xzf "$DOWNLOAD_DIR/iris-${TAG}-${cli_target}.tar.gz" \
+    -C "$DOWNLOAD_DIR/updater-check" iris/iris
 
   gh release view "$TAG" \
     --repo "$IRIS_GITHUB_REPOSITORY" \

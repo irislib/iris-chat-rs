@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
 import json
+import io
 import os
 import subprocess
+import tarfile
 import tempfile
 import textwrap
 import unittest
@@ -25,6 +27,28 @@ class DistributeTests(unittest.TestCase):
         self.release.mkdir()
         for name in names(TAG):
             (self.release / name).write_bytes(name.encode())
+        # A real archive with an executable exercises extraction and the public
+        # updater gate; only the network-facing command result is simulated.
+        cli = textwrap.dedent(r"""
+            #!/usr/bin/env python3
+            import json, os, sys
+            with open(os.environ['FAKE_COMMAND_LOG'], 'a') as log:
+                log.write('signed-updater ' + ' '.join(sys.argv[1:]) + '\n')
+            assert not any(key.startswith('IRIS_UPDATE_') for key in os.environ)
+            if os.environ.get('FAKE_SIGNED_UPDATE_FAIL') == '1':
+                sys.exit('manifest is invalid: unknown asset kind: aab')
+            tag = os.environ.get('FAKE_SIGNED_TAG', os.environ['FAKE_TAG'])
+            prefix = 'iris-chat-' if '--app' in sys.argv else 'iris-'
+            print(json.dumps({'tag': tag, 'source': 'hashtree-nostr-blossom',
+                              'verified': os.environ.get('FAKE_UNVERIFIED') != '1',
+                              'asset': prefix + tag + '-fixture.tar.gz'}))
+        """).lstrip().encode()
+        for name in names(TAG):
+            if name.startswith("iris-v"):
+                with tarfile.open(self.release / name, "w:gz") as archive:
+                    entry = tarfile.TarInfo("iris/iris")
+                    entry.mode, entry.size = 0o755, len(cli)
+                    archive.addfile(entry, io.BytesIO(cli))
         self.manifest = self.release / f"iris-chat-{TAG}-manifest.json"
         subprocess.run(
             [
@@ -404,11 +428,33 @@ class DistributeTests(unittest.TestCase):
         self.assertLess(log.index(command), log.index(refresh))
         self.assertLess(log.index(refresh), log.index(readback))
         self.assertEqual(log.count(refresh), 2)
+        self.assertEqual(log.count("signed-updater "), 4)
+        self.assertLess(log.index(readback), log.index("signed-updater "))
         for line in log.splitlines():
             if line.startswith("curl "):
                 self.assertIn("--connect-timeout 10", line)
                 self.assertIn("--max-time 30", line)
         self.assertNotIn("latest", log)
+
+    def test_hashtree_publish_requires_the_signed_updater_to_accept_the_release(self) -> None:
+        for field, value in (("FAKE_SIGNED_UPDATE_FAIL", "1"),
+                             ("FAKE_SIGNED_TAG", "v2026.7.1"),
+                             ("FAKE_UNVERIFIED", "1")):
+            with self.subTest(field=field):
+                env = self.environment()
+                env[field] = value
+                result = self.run_distribution("hashtree", env=env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("signed updater", result.stderr)
+                self.assertNotIn(f"Published {TAG} to Hashtree:", result.stdout)
+
+    def test_signed_updater_uses_shipped_settings(self) -> None:
+        env = self.environment()
+        env["IRIS_UPDATE_MANIFEST_URL"] = "https://example.invalid/unsigned.json"
+        env["IRIS_UPDATE_HTREE_REF"] = "htree://other/releases/latest"
+        env["IRIS_UPDATE_RELAYS"] = "wss://example.invalid"
+        result = self.run_distribution("hashtree", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_hashtree_publish_rejects_stale_or_mismatched_public_metadata(self) -> None:
         for field, value in (("FAKE_PUBLIC_TAG", "v2026.7.1"), ("FAKE_PUBLIC_COMMIT", "other")):

@@ -433,12 +433,12 @@ fn main() {
                 "{}",
                 serde_json::to_string(&ErrorEnvelope {
                     status: "error",
-                    error: error.to_string(),
+                    error: format!("{error:#}"),
                 })
                 .unwrap()
             );
         } else {
-            eprintln!("{}", error);
+            eprintln!("{error:#}");
         }
         std::process::exit(1);
     }

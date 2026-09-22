@@ -51,8 +51,8 @@ hashtree-core = "=0.2.89"
 hashtree-fips-transport = "=0.4.19"
 hashtree-index = "=0.2.84"
 hashtree-network = "=0.2.88"
-hashtree-resolver = { version = "=0.2.84", features = ["nostr"] }
-hashtree-updater = { version = "=0.2.85", features = ["secure-nostr-blossom"] }
+hashtree-resolver = { version = "=0.2.85", features = ["nostr"] }
+hashtree-updater = { version = "=0.2.86", features = ["secure-nostr-blossom"] }
 hmac = "0.12"
 iris-chat-protocol = { version = "=0.1.10", path = "../chat-protocol" }
 nostr = { version = "0.44.7", default-features = false, features = ["std", "nip44"] }

@@ -158,6 +158,12 @@ until the exact Hashtree tag exists. Commands are safe to retry with the same
 tag and bytes; they never select a tag, workflow run, or local build
 implicitly.
 
+Hashtree promotion also runs the attested CLI from that release with a fresh
+data directory and the shipped update settings. Both CLI and native-app checks
+must resolve the requested tag through signed discovery. An HTTP gateway
+readback alone cannot pass promotion. Generated update metadata is tested
+against the app's actual updater library, including same-day revision tags.
+
 ## 4. Publish to Apple
 
 In GitHub, open **Actions → iOS Distribution → Run workflow**.
