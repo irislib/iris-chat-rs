@@ -1,15 +1,12 @@
 import Foundation
 
 // Discovery can fail before FIPS receives a peer candidate and can apply its
-// connection backoff. Bound those GATT retries separately and cache successes.
+// connection backoff. Bound those GATT retries separately and report each
+// successful discovery once. Re-emitting unchanged ads makes FIPS reopen links
+// it deliberately closed after selecting another transport.
 struct AppleBleBootstrapDiscovery {
-    enum Action: Equatable {
-        case read
-        case cached(Data)
-    }
-
     private var pending: Set<UUID> = []
-    private var bootstraps: [UUID: Data] = [:]
+    private var resolved: Set<UUID> = []
     private struct Failure {
         let delay: TimeInterval
         let retryAt: TimeInterval
@@ -37,31 +34,29 @@ struct AppleBleBootstrapDiscovery {
         refresh: Bool = false,
         canRead: Bool = true,
         now: TimeInterval = ProcessInfo.processInfo.systemUptime
-    ) -> Action? {
+    ) -> Bool {
         if refresh {
-            bootstraps.removeValue(forKey: identifier)
+            resolved.remove(identifier)
         }
-        guard !pending.contains(identifier) else { return nil }
-        if let bootstrap = bootstraps[identifier] {
-            return .cached(bootstrap)
-        }
+        guard !pending.contains(identifier) else { return false }
+        guard !resolved.contains(identifier) else { return false }
         guard canRead else {
             if failures[identifier] == nil {
                 failures[identifier] = Failure(delay: 0, retryAt: 0)
             }
-            return nil
+            return false
         }
-        if let failure = failures[identifier], now < failure.retryAt { return nil }
-        guard pending.count < 64 else { return nil }
+        if let failure = failures[identifier], now < failure.retryAt { return false }
+        guard pending.count < 64 else { return false }
         pending.insert(identifier)
-        return .read
+        return true
     }
 
     @discardableResult
-    mutating func complete(_ identifier: UUID, bootstrap: Data) -> Bool {
+    mutating func complete(_ identifier: UUID) -> Bool {
         guard pending.remove(identifier) != nil else { return false }
         failures.removeValue(forKey: identifier)
-        bootstraps[identifier] = bootstrap
+        resolved.insert(identifier)
         return true
     }
 
@@ -73,7 +68,7 @@ struct AppleBleBootstrapDiscovery {
 
     mutating func reset() {
         pending.removeAll()
-        bootstraps.removeAll()
+        resolved.removeAll()
         failures.removeAll()
     }
 }

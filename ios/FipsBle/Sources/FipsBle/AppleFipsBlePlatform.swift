@@ -339,15 +339,9 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
         let identifier = peripheral.identifier
         peripherals[identifier] = peripheral
         peripheral.delegate = self
-        guard let action = bootstrapDiscovery.begin(
+        guard bootstrapDiscovery.begin(
             identifier, refresh: refresh, canRead: canDiscoverBootstrap(identifier)
         ) else { return }
-        if case let .cached(bootstrap) = action {
-            // Keep advertising observations flowing to FIPS's reconnect/backoff
-            // policy without repeating GATT discovery on every observation.
-            emit(.peerDiscovered(peerToken: identifier.uuidString, bootstrap: bootstrap))
-            return
-        }
         if peripheral.state == .connected {
             peripheral.discoverServices([fipsServiceUuid])
         } else {
@@ -571,9 +565,7 @@ extension AppleFipsBlePlatform: CBPeripheralDelegate {
             failDiscovery(peripheral)
             return
         }
-        guard bootstrapDiscovery.complete(
-            peripheral.identifier, bootstrap: value
-        ) else { return }
+        guard bootstrapDiscovery.complete(peripheral.identifier) else { return }
         identifiedServicePeers.insert(peripheral.identifier)
         scheduleBootstrapRetry()
         emit(.peerDiscovered(peerToken: peripheral.identifier.uuidString, bootstrap: value))
