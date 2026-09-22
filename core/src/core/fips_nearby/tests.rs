@@ -36,6 +36,7 @@ fn nearby_snapshot_excludes_self_before_and_after_device_list_arrives() {
     let link = |id: String, transport: &str| crate::updates::FipsNearbyLinkSnapshot {
         device_pubkey_hex: id,
         transport_type: transport.to_string(),
+        transport_addr: Some("192.168.1.25:7000".to_string()),
     };
     core.handle_internal(InternalEvent::FipsNearbyPeersChanged(vec![
         link(local_device.to_hex().to_ascii_uppercase(), "BLE"),
@@ -93,6 +94,7 @@ fn nearby_snapshot_excludes_transit_connections() {
     let link = |id: &str, transport: &str| crate::updates::FipsNearbyLinkSnapshot {
         device_pubkey_hex: id.repeat(32),
         transport_type: transport.to_string(),
+        transport_addr: Some("192.168.1.25:7000".to_string()),
     };
 
     for links in [
@@ -159,6 +161,30 @@ fn nearby_snapshot_excludes_transit_connections() {
             }
         );
     }
+}
+
+#[test]
+fn nearby_snapshot_does_not_treat_internet_udp_contacts_as_local() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let (tx, rx) = flume::unbounded();
+    let mut core = AppCore::new(tx, flume::unbounded().0,
+        directory.path().to_string_lossy().into_owned(), Arc::new(RwLock::new(AppState::empty())));
+    let addresses = [Some("8.8.8.8:7000"), Some("[2606:4700:4700::1111]:7000"),
+        None, Some("unrecognized"), Some("127.0.0.1:7000"),
+        Some("192.168.1.25:7000"), Some("[fe80::abcd%4]:7000")];
+    core.fips_nearby_links = addresses.iter().enumerate().map(|(index, addr)| {
+        crate::updates::FipsNearbyLinkSnapshot {
+            device_pubkey_hex: format!("{index:064x}"),
+            transport_type: "UDP".to_string(),
+            transport_addr: addr.map(str::to_string),
+        }
+    }).collect();
+    core.emit_fips_nearby_peers();
+    let ids = rx.try_iter().find_map(|update| match update {
+        AppUpdate::NearbyPeersChanged { lan_peer_ids, .. } => Some(lan_peer_ids),
+        _ => None,
+    }).unwrap();
+    assert_eq!(ids, vec![format!("{:064x}", 5), format!("{:064x}", 6)]);
 }
 
 fn event_id() -> String {
@@ -345,6 +371,7 @@ fn app_keys_event_received_over_fips_installs_peer_roster() {
     bob.fips_nearby_links = vec![crate::updates::FipsNearbyLinkSnapshot {
         device_pubkey_hex: alice_device.clone(),
         transport_type: "UDP".to_string(),
+        transport_addr: Some("192.168.1.25:7000".to_string()),
     }];
     while bob_updates_rx.try_recv().is_ok() {}
     bob.handle_fips_nearby_packet(&alice_device, FIPS_NEARBY_PORT, &payload);
@@ -521,6 +548,7 @@ fn linked_device_forwards_signed_identity_after_restart() {
         crate::updates::FipsNearbyLinkSnapshot {
             device_pubkey_hex: device.public_key().to_hex(),
             transport_type: "UDP".to_string(),
+            transport_addr: Some("192.168.1.25:7000".to_string()),
         },
     ]));
     for payload in &payloads {
@@ -570,6 +598,7 @@ fn relay_identity_updates_refresh_an_existing_nearby_link() {
         crate::updates::FipsNearbyLinkSnapshot {
             device_pubkey_hex: alice_device.clone(),
             transport_type: "BLE".to_string(),
+            transport_addr: Some("192.168.1.25:7000".to_string()),
         },
     ]));
     while updates_rx.try_recv().is_ok() {}

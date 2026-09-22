@@ -485,7 +485,9 @@ impl AppCore {
                 let transport = link.transport_type.to_ascii_lowercase();
                 if transport.contains("ble") || transport.contains("bluetooth") {
                     bluetooth_peer_ids.push(id.clone());
-                } else if transport.contains("udp") || transport.contains("ethernet") {
+                } else if transport.contains("ethernet")
+                    || (transport == "udp" && is_local_udp_address(link.transport_addr.as_deref()))
+                {
                     lan_peer_ids.push(id.clone());
                 } else {
                     // Transit connections keep the mesh connected, but are not nearby users.
@@ -530,6 +532,16 @@ impl AppCore {
             bluetooth_peer_ids,
             lan_peer_ids,
         });
+    }
+}
+
+fn is_local_udp_address(address: Option<&str>) -> bool {
+    let Some(address) = address.and_then(|value| value.parse::<std::net::SocketAddr>().ok()) else {
+        return false;
+    };
+    match address.ip() {
+        std::net::IpAddr::V4(ip) => ip.is_private() || ip.is_link_local(),
+        std::net::IpAddr::V6(ip) => ip.is_unicast_link_local() || ip.is_unique_local(),
     }
 }
 

@@ -739,6 +739,7 @@ async fn run_fips_nearby_link_monitor(
                 Some(crate::updates::FipsNearbyLinkSnapshot {
                     device_pubkey_hex: identity.pubkey().to_string(),
                     transport_type: peer.transport_type.clone().unwrap_or_default(),
+                    transport_addr: peer.transport_addr.clone(),
                 })
             })
             .collect::<Vec<_>>();

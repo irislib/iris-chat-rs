@@ -52,6 +52,7 @@ pub(crate) fn enqueue_update_for_delivery(
 pub(crate) struct FipsNearbyLinkSnapshot {
     pub(crate) device_pubkey_hex: String,
     pub(crate) transport_type: String,
+    pub(crate) transport_addr: Option<String>,
 }
 
 #[derive(Debug)]
