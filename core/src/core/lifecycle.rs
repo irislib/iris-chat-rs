@@ -109,6 +109,7 @@ impl AppCore {
             protocol_reconnect_token: 0,
             protocol_liveness_token: 0,
             defer_owner_app_keys_publish: false,
+            owner_registration_lookup_generation: None,
             current_device_labels: None,
             protocol_subscription_runtime: ProtocolSubscriptionRuntime::default(),
             relay_transport_runtime: RelayTransportRuntime::default(),
@@ -227,6 +228,7 @@ impl AppCore {
                 }
                 InternalEvent::GroupPictureUploadFinished { .. } => "GroupPictureUploadFinished",
                 InternalEvent::SyncComplete => "SyncComplete",
+                InternalEvent::OwnerRegistrationLookupFinished { .. } => "OwnerRegistrationLookupFinished",
                 InternalEvent::ProtocolAuthorBackfillComplete { .. } => {
                     "ProtocolAuthorBackfillComplete"
                 }
@@ -878,7 +880,11 @@ impl AppCore {
             InternalEvent::GroupPictureUploadFinished { group_id, result } => {
                 self.handle_group_picture_upload_finished(group_id, result);
             }
+            InternalEvent::OwnerRegistrationLookupFinished { generation, owner, device, completed, queried, events } => {
+                self.complete_owner_registration_lookup(generation, owner, device, completed, queried, events);
+            }
             InternalEvent::SyncComplete => {
+                self.recover_deferred_owner_registration();
                 self.protocol_subscription_runtime.protocol_fetch_in_flight = false;
                 self.refresh_protocol_sync_busy();
                 self.rebuild_state();

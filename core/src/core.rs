@@ -68,6 +68,7 @@ use rand::rngs::OsRng;
 
 mod account;
 mod account_app_keys;
+mod registration_recovery;
 mod account_pending_link;
 mod attachment_upload;
 #[cfg(feature = "stack-fixture")]
@@ -542,6 +543,7 @@ pub struct AppCore {
     protocol_reconnect_token: u64,
     protocol_liveness_token: u64,
     defer_owner_app_keys_publish: bool,
+    owner_registration_lookup_generation: Option<u64>,
     current_device_labels: Option<CurrentDeviceLabels>,
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,
     relay_transport_runtime: RelayTransportRuntime,

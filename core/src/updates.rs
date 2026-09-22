@@ -218,6 +218,10 @@ pub(crate) enum InternalEvent {
         result: Result<String, String>,
     },
     SyncComplete,
+    OwnerRegistrationLookupFinished {
+        generation: u64, owner: nostr::PublicKey, device: nostr::PublicKey,
+        completed: usize, queried: usize, events: Vec<Event>,
+    },
     ProtocolAuthorBackfillComplete {
         reason: String,
     },
