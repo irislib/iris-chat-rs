@@ -449,10 +449,14 @@ impl AppCore {
         DeviceSyncSnapshot {
             roster_at,
             chats,
-            deleted_chats: self.chat_deletions.iter().map(|(id, deleted_at)| DeviceSyncChatDeletion {
-                id: id.clone(),
-                deleted_at: *deleted_at,
-            }).collect(),
+            deleted_chats: self
+                .chat_deletions
+                .iter()
+                .map(|(id, deleted_at)| DeviceSyncChatDeletion {
+                    id: id.clone(),
+                    deleted_at: *deleted_at,
+                })
+                .collect(),
             app_keys,
             groups,
             messages,
@@ -473,8 +477,10 @@ impl AppCore {
         };
         let mut changed = false;
         for deletion in snapshot.deleted_chats {
-            if valid_device_sync_chat_id(&deletion.id) && deletion.deleted_at > 0
-                && deletion.deleted_at <= unix_now().get().saturating_add(300) {
+            if valid_device_sync_chat_id(&deletion.id)
+                && deletion.deleted_at > 0
+                && deletion.deleted_at <= unix_now().get().saturating_add(300)
+            {
                 changed |= self.apply_chat_deletion(&deletion.id, deletion.deleted_at);
             }
         }
@@ -525,8 +531,10 @@ impl AppCore {
         }
 
         for chat in snapshot.chats {
-            if PublicKey::from_hex(&chat.id).is_ok() && !self.threads.contains_key(&chat.id)
-                && !self.chat_activity_is_deleted(&chat.id, chat.updated_at) {
+            if PublicKey::from_hex(&chat.id).is_ok()
+                && !self.threads.contains_key(&chat.id)
+                && !self.chat_activity_is_deleted(&chat.id, chat.updated_at)
+            {
                 self.ensure_thread_record(&chat.id, chat.updated_at);
                 changed = true;
             }
@@ -578,28 +586,28 @@ impl AppCore {
             let thread = self.ensure_thread_record(&chat_id, message.created_at);
             thread.updated_at_secs = thread.updated_at_secs.max(message.created_at);
             thread.insert_message_sorted(ChatMessageSnapshot {
-                    id: message.id,
-                    chat_id: chat_id.clone(),
-                    kind: ChatMessageKind::User,
-                    author: message.author.clone(),
-                    author_owner_pubkey_hex: Some(message.author),
-                    author_picture_url: None,
-                    body,
-                    attachments,
-                    reactions: Vec::new(),
-                    reactors: Vec::new(),
-                    is_outgoing,
-                    created_at_secs: message.created_at,
-                    expires_at_secs: message.expires_at,
-                    delivery: if is_outgoing {
-                        DeliveryState::Sent
-                    } else {
-                        DeliveryState::Received
-                    },
-                    recipient_deliveries: Vec::new(),
-                    delivery_trace: MessageDeliveryTraceSnapshot::default(),
-                    source_event_id: None,
-                });
+                id: message.id,
+                chat_id: chat_id.clone(),
+                kind: ChatMessageKind::User,
+                author: message.author.clone(),
+                author_owner_pubkey_hex: Some(message.author),
+                author_picture_url: None,
+                body,
+                attachments,
+                reactions: Vec::new(),
+                reactors: Vec::new(),
+                is_outgoing,
+                created_at_secs: message.created_at,
+                expires_at_secs: message.expires_at,
+                delivery: if is_outgoing {
+                    DeliveryState::Sent
+                } else {
+                    DeliveryState::Received
+                },
+                recipient_deliveries: Vec::new(),
+                delivery_trace: MessageDeliveryTraceSnapshot::default(),
+                source_event_id: None,
+            });
             self.bump_typing_floor(&chat_id, message.created_at);
             if message.expires_at.is_some() {
                 self.schedule_next_message_expiry();
@@ -779,7 +787,10 @@ impl DeviceSyncAppKeys {
 
 fn encode_device_sync_chunks(snapshot: DeviceSyncSnapshot) -> Vec<Vec<u8>> {
     let roster_at = snapshot.roster_at;
-    let items = snapshot.deleted_chats.into_iter().map(DeviceSyncItem::Deletion)
+    let items = snapshot
+        .deleted_chats
+        .into_iter()
+        .map(DeviceSyncItem::Deletion)
         .chain(snapshot.chats.into_iter().map(DeviceSyncItem::Chat))
         .chain(snapshot.app_keys.into_iter().map(DeviceSyncItem::AppKeys))
         .chain(snapshot.groups.into_iter().map(DeviceSyncItem::Group))

@@ -228,7 +228,9 @@ impl AppCore {
                 }
                 InternalEvent::GroupPictureUploadFinished { .. } => "GroupPictureUploadFinished",
                 InternalEvent::SyncComplete => "SyncComplete",
-                InternalEvent::OwnerRegistrationLookupFinished { .. } => "OwnerRegistrationLookupFinished",
+                InternalEvent::OwnerRegistrationLookupFinished { .. } => {
+                    "OwnerRegistrationLookupFinished"
+                }
                 InternalEvent::ProtocolAuthorBackfillComplete { .. } => {
                     "ProtocolAuthorBackfillComplete"
                 }
@@ -880,8 +882,17 @@ impl AppCore {
             InternalEvent::GroupPictureUploadFinished { group_id, result } => {
                 self.handle_group_picture_upload_finished(group_id, result);
             }
-            InternalEvent::OwnerRegistrationLookupFinished { generation, owner, device, completed, queried, events } => {
-                self.complete_owner_registration_lookup(generation, owner, device, completed, queried, events);
+            InternalEvent::OwnerRegistrationLookupFinished {
+                generation,
+                owner,
+                device,
+                completed,
+                queried,
+                events,
+            } => {
+                self.complete_owner_registration_lookup(
+                    generation, owner, device, completed, queried, events,
+                );
             }
             InternalEvent::SyncComplete => {
                 self.recover_deferred_owner_registration();

@@ -594,11 +594,14 @@ impl AppCore {
                 self.state.busy.accepting_invite = false;
             }
             Ok(AcceptInviteDispatch::Pending) => {
-                self.state.toast = Some(if self.defer_owner_app_keys_publish {
-                    "Setting up this device…"
-                } else {
-                    "Verifying the invite owner's device…"
-                }.to_string());
+                self.state.toast = Some(
+                    if self.defer_owner_app_keys_publish {
+                        "Setting up this device…"
+                    } else {
+                        "Verifying the invite owner's device…"
+                    }
+                    .to_string(),
+                );
             }
             Err(error) => {
                 self.state.toast = Some(error.to_string());

@@ -477,7 +477,8 @@ impl AppCore {
             return;
         }
 
-        let now = UnixSeconds(self.chat_activity_after_deletion(&normalized_chat_id, unix_now().get()));
+        let now =
+            UnixSeconds(self.chat_activity_after_deletion(&normalized_chat_id, unix_now().get()));
         self.active_chat_id = Some(normalized_chat_id.clone());
         self.screen_stack = vec![Screen::Chat {
             chat_id: normalized_chat_id.clone(),

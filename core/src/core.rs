@@ -68,18 +68,18 @@ use rand::rngs::OsRng;
 
 mod account;
 mod account_app_keys;
-mod registration_recovery;
 mod account_pending_link;
 mod attachment_upload;
+mod registration_recovery;
 #[cfg(feature = "stack-fixture")]
 pub use attachment_upload::download_hashtree_attachment;
 mod attachments;
+mod chat_deletions;
 mod chat_reactions;
 mod chat_receipts;
 mod chat_settings;
 mod chat_typing;
 mod chats;
-mod chat_deletions;
 mod config;
 mod device_approval;
 mod device_sync;

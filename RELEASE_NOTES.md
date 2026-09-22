@@ -2,6 +2,31 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.22.10
+
+### GitHub
+
+- Carry account-signed device approval inside encrypted chat handshakes, retaining compatibility with existing handshakes and message encryption. Linked devices do not need the account secret key.
+- Recover device registration after account restoration and wait for local approval before sending, preserving existing devices and known revocations.
+- Preserve undelivered messages for retry and recover exact signed registration evidence during upgrades.
+- Sync chat deletions between linked devices and prevent deleted chats from returning through older history.
+- Keep chat navigation, search, image decoding, and composer edits from blocking or repeatedly rebuilding the message timeline.
+- Exclude internet connections from Nearby and size reply quotes to their message bubbles.
+
+### Apple
+
+- Improved message delivery when using an existing account or a linked device.
+- Improved recovery of messages waiting for device verification.
+- Chat deletions now sync between your devices.
+- Improved chat opening, typing, search, and image responsiveness.
+- Fixed incorrect Nearby listings and reply quote widths.
+
+### Zapstore
+
+- Improved message delivery and device verification for existing accounts and linked devices.
+- Improved recovery of pending messages and syncing of chat deletions.
+- Fixed incorrect Nearby listings.
+
 ## v2026.9.22.1
 
 ### GitHub

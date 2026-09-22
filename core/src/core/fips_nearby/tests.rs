@@ -167,23 +167,38 @@ fn nearby_snapshot_excludes_transit_connections() {
 fn nearby_snapshot_does_not_treat_internet_udp_contacts_as_local() {
     let directory = tempfile::TempDir::new().unwrap();
     let (tx, rx) = flume::unbounded();
-    let mut core = AppCore::new(tx, flume::unbounded().0,
-        directory.path().to_string_lossy().into_owned(), Arc::new(RwLock::new(AppState::empty())));
-    let addresses = [Some("8.8.8.8:7000"), Some("[2606:4700:4700::1111]:7000"),
-        None, Some("unrecognized"), Some("127.0.0.1:7000"),
-        Some("192.168.1.25:7000"), Some("[fe80::abcd%4]:7000")];
-    core.fips_nearby_links = addresses.iter().enumerate().map(|(index, addr)| {
-        crate::updates::FipsNearbyLinkSnapshot {
+    let mut core = AppCore::new(
+        tx,
+        flume::unbounded().0,
+        directory.path().to_string_lossy().into_owned(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let addresses = [
+        Some("8.8.8.8:7000"),
+        Some("[2606:4700:4700::1111]:7000"),
+        None,
+        Some("unrecognized"),
+        Some("127.0.0.1:7000"),
+        Some("192.168.1.25:7000"),
+        Some("[fe80::abcd%4]:7000"),
+    ];
+    core.fips_nearby_links = addresses
+        .iter()
+        .enumerate()
+        .map(|(index, addr)| crate::updates::FipsNearbyLinkSnapshot {
             device_pubkey_hex: format!("{index:064x}"),
             transport_type: "UDP".to_string(),
             transport_addr: addr.map(str::to_string),
-        }
-    }).collect();
+        })
+        .collect();
     core.emit_fips_nearby_peers();
-    let ids = rx.try_iter().find_map(|update| match update {
-        AppUpdate::NearbyPeersChanged { lan_peer_ids, .. } => Some(lan_peer_ids),
-        _ => None,
-    }).unwrap();
+    let ids = rx
+        .try_iter()
+        .find_map(|update| match update {
+            AppUpdate::NearbyPeersChanged { lan_peer_ids, .. } => Some(lan_peer_ids),
+            _ => None,
+        })
+        .unwrap();
     assert_eq!(ids, vec![format!("{:064x}", 5), format!("{:064x}", 6)]);
 }
 

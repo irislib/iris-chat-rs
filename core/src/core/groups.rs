@@ -454,7 +454,10 @@ impl AppCore {
         self.mark_mobile_push_dirty();
         match event {
             GroupIncomingEvent::MetadataUpdated(group) => {
-                if self.chat_activity_is_deleted(&group_chat_id(&group.group_id), group.updated_at.get()) {
+                if self.chat_activity_is_deleted(
+                    &group_chat_id(&group.group_id),
+                    group.updated_at.get(),
+                ) {
                     return;
                 }
                 let previous = self.groups.get(&group.group_id).cloned();

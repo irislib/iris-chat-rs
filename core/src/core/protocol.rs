@@ -143,7 +143,8 @@ impl AppCore {
                 decrypted.event_id,
             );
             if let Some(event_id) = event_id {
-                self.pending_decrypted_delivery_acks.insert(event_id.clone());
+                self.pending_decrypted_delivery_acks
+                    .insert(event_id.clone());
                 self.remember_event(event_id);
             }
         }
