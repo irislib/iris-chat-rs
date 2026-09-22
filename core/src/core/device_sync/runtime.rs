@@ -10,6 +10,7 @@ use hashtree_core::BlobRoute;
 use std::collections::BTreeMap;
 use std::net::SocketAddrV4;
 
+mod peer_snapshot;
 const SAME_HOST_HASHTREE_ENV: &str = "IRIS_CHAT_SAME_HOST_HASHTREE";
 const LOCAL_RENDEZVOUS_ADDR_ENV: &str = "IRIS_CHAT_FIPS_LOCAL_RENDEZVOUS_ADDR";
 const WEBSOCKET_SEED_URLS_ENV: &str = "IRIS_FIPS_WEBSOCKET_SEED_URLS";
@@ -727,7 +728,7 @@ async fn run_fips_nearby_link_monitor(
                 bootstrap_revision = bootstrap_revision.wrapping_add(1);
             }
         }
-        let peers = match endpoint.peers().await {
+        let peers = match peer_snapshot::query(|| endpoint.peers()).await {
             Ok(peers) => peers,
             Err(_) => return,
         };
@@ -830,7 +831,7 @@ async fn run_recent_peer_observer(
     recent_peers: Arc<RwLock<DeviceSyncRecentPeers>>,
 ) {
     loop {
-        let peers = match endpoint.peers().await {
+        let peers = match peer_snapshot::query(|| endpoint.peers()).await {
             Ok(peers) => peers,
             Err(_) => return,
         };

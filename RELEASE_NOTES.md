@@ -2,6 +2,31 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.23
+
+### GitHub
+
+- Deliver own-device encrypted traffic as silent background pushes and dismiss only notifications covered by authenticated read progress, preserving newer unread alerts.
+- Sync read progress and unread counts between linked devices, including after reconnecting or restoring history. Marking a chat unread remains local, and read-receipt privacy settings still apply to other people.
+- Keep pending read updates for offline linked devices while delivering immediately to devices that are ready.
+- Avoid repeated Apple Bluetooth discovery and reopening links that already have a working network path.
+- Keep nearby message delivery running after a temporary connection-status timeout.
+- Defer speculative Bluetooth discovery on macOS while Bluetooth audio is active, then resume after playback or calls stop.
+
+### Apple
+
+- Updates from your own devices no longer create message alerts.
+- Read updates can clear matching notifications on your other devices.
+- Reading a chat now updates its unread count on your other devices.
+- Improved syncing when a linked device comes back online.
+- Reduced repeated Bluetooth connections and interruptions to Bluetooth audio on Mac.
+
+### Zapstore
+
+- Read updates clear matching notifications on your other devices without creating new alerts.
+- Reading a chat now updates its unread count on your other devices.
+- Improved syncing when a linked device comes back online.
+
 ## v2026.9.22.11
 
 ### GitHub
