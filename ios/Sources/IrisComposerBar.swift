@@ -419,8 +419,7 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
         textView.returnKeyType = .default
         textView.keyboardDismissMode = .interactive
         textView.autocapitalizationType = .sentences
-        textView.autocorrectionType = .yes
-        textView.spellCheckingType = .yes
+        // Keep the native defaults so the user's keyboard preferences apply.
         textView.accessibilityIdentifier = "chatMessageInput"
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -567,8 +566,7 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
         textView.minSize = NSSize(width: 0, height: Self.lineHeight(for: textView))
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.autoresizingMask = [.width, .height]
-        textView.isContinuousSpellCheckingEnabled = true
-        textView.isAutomaticSpellingCorrectionEnabled = true
+        // Setting spelling options here overrides AppKit's system preferences.
         textView.setAccessibilityIdentifier("chatMessageInput")
 
         textView.string = text

@@ -339,7 +339,6 @@ extension View {
         #if canImport(UIKit)
         self
             .textInputAutocapitalization(.sentences)
-            .autocorrectionDisabled(false)
         #else
         self
         #endif
