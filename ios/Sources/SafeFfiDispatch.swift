@@ -365,6 +365,7 @@ private func fallbackAppState(toast: String?) -> AppState {
         mobilePush: MobilePushSyncSnapshot(
             ownerPubkeyHex: nil,
             messageAuthorPubkeys: [],
+            backgroundMessageAuthorPubkeys: [],
             inviteResponsePubkeys: [],
             sessions: []
         ),

@@ -801,7 +801,7 @@ class AppManagerContractTest {
             publicInvite = null,
             linkDevice = null,
             networkStatus = null,
-            mobilePush = MobilePushSyncSnapshot(null, emptyList(), emptyList(), emptyList()),
+            mobilePush = MobilePushSyncSnapshot(null, emptyList(), emptyList(), emptyList(), emptyList()),
             userDiscoveryRevision = 0u,
             userDiscoverySyncing = false,
             preferences =
@@ -1117,7 +1117,7 @@ private object AppManagerContractDefaults {
             publicInvite = null,
             linkDevice = null,
             networkStatus = null,
-            mobilePush = MobilePushSyncSnapshot(null, emptyList(), emptyList(), emptyList()),
+            mobilePush = MobilePushSyncSnapshot(null, emptyList(), emptyList(), emptyList(), emptyList()),
             userDiscoveryRevision = 0u,
             userDiscoverySyncing = false,
             preferences =

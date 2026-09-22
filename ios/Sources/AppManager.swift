@@ -949,6 +949,7 @@ final class AppManager: ObservableObject {
 #endif
 #if os(iOS)
     private let mobilePushRuntime = MobilePushRuntime()
+    private let readNotificationCleanup = ReadNotificationCleanup()
     private let shareSuggestionDonor = ShareSuggestionDonor()
     private let shareSuggestionsExporter = ShareSuggestionsExporter(
         appGroupIdentifier: AppPaths.appGroupIdentifier
@@ -1868,6 +1869,23 @@ final class AppManager: ObservableObject {
 #endif
 
 #if os(iOS)
+    func receiveBackgroundPush(userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
+        guard let payload = serializedPushPayload(userInfo: userInfo) else { return .noData }
+        let priorRevision = state.rev
+        dispatchToRust(.ingestMobilePushPayload(payloadJson: payload), showsToastOnFailure: false)
+        // Dispatch is queued on the core worker. Keep the background lease alive
+        // while startup/ingestion applies the authenticated read state.
+        for _ in 0..<100 {
+            if state.rev > priorRevision && state.account != nil { break }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            if Task.isCancelled { return .noData }
+        }
+        if let bundle = storedAccountBundle ?? secretStore.load() {
+            await readNotificationCleanup.dismissRead(dataDir: dataDir.path, bundle: bundle)
+        }
+        return state.rev > priorRevision ? .newData : .noData
+    }
+
     func foregroundPushPresentationOptions(
         content: UNNotificationContent
     ) async -> UNNotificationPresentationOptions {
@@ -2643,6 +2661,9 @@ final class AppManager: ObservableObject {
     private func syncIosStateSideEffects(for state: AppState) {
         syncShareSuggestionsIfNeeded(chatList: state.chatList)
         syncMobilePushIfNeeded(state: state)
+        if let bundle = storedAccountBundle {
+            readNotificationCleanup.schedule(dataDir: dataDir.path, bundle: bundle)
+        }
     }
 #endif
 

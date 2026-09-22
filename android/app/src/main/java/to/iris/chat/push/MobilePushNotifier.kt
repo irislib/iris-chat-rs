@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
+import android.os.Bundle
 import android.util.Log
 import androidx.core.content.ContextCompat
 import to.iris.chat.MainActivity
@@ -51,6 +52,7 @@ object MobilePushNotifier {
                 .setContentIntent(pendingIntent)
                 .setAutoCancel(true)
                 .setShowWhen(true)
+                .addExtras(Bundle().apply { putString(PAYLOAD_KEY, resolution.payloadJson) })
                 .build()
         val notificationId = resolution.payloadJson.hashCode() and Int.MAX_VALUE
         runCatching { manager.notify(notificationId, notification) }
@@ -59,6 +61,24 @@ object MobilePushNotifier {
                 Log.w(TAG, "Failed to show push notification", error)
                 PushNotificationProbe.recordNotificationBlocked(context, error.javaClass.simpleName)
             }
+    }
+
+    fun dismissRead(context: Context, dataDir: String, owner: String, device: String) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val candidates = manager.activeNotifications.mapNotNull { notification ->
+            notification.notification.extras.getString(PAYLOAD_KEY)?.let { payload ->
+                notification to payload
+            }
+        }
+        if (candidates.isEmpty()) return
+        val indexes = to.iris.chat.rust.readMobilePushNotificationIndexes(
+            dataDir, owner, device, candidates.map { it.second },
+        )
+        indexes.forEach { index ->
+            candidates.getOrNull(index.toInt())?.first?.let { notification ->
+                manager.cancel(notification.tag, notification.id)
+            }
+        }
     }
 
     private fun ensureChannel(manager: NotificationManager) {
@@ -91,6 +111,7 @@ object MobilePushNotifier {
             PackageManager.PERMISSION_GRANTED
     }
 
+    private const val PAYLOAD_KEY = "iris_push_payload"
     private const val TAG = "IrisPush"
     const val CHANNEL_ID = "iris_chat_message_alerts"
     private val VIBRATION_PATTERN = longArrayOf(0, 220, 90, 220)

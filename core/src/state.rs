@@ -433,6 +433,7 @@ pub struct MobilePushSessionSnapshot {
 pub struct MobilePushSyncSnapshot {
     pub owner_pubkey_hex: Option<String>,
     pub message_author_pubkeys: Vec<String>,
+    pub background_message_author_pubkeys: Vec<String>,
     pub invite_response_pubkeys: Vec<String>,
     pub sessions: Vec<MobilePushSessionSnapshot>,
 }

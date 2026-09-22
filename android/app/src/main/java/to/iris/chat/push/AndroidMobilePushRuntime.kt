@@ -41,6 +41,7 @@ class AndroidMobilePushRuntime(
         val owner = state.mobilePush.ownerPubkeyHex?.trim()?.ifEmpty { null }
         val ownerSecret = ownerNsec?.trim()?.ifEmpty { null }
         val authors = state.mobilePush.messageAuthorPubkeys
+        val backgroundAuthors = state.mobilePush.backgroundMessageAuthorPubkeys
         val inviteResponses = state.mobilePush.inviteResponsePubkeys
         val enabled = state.preferences.desktopNotificationsEnabled
         val serverOverride = userServerOverride(state) ?: buildServerOverride()
@@ -50,6 +51,7 @@ class AndroidMobilePushRuntime(
                 owner.orEmpty(),
                 if (ownerSecret == null) "0" else "1",
                 authors.joinToString(","),
+                backgroundAuthors.joinToString(","),
                 inviteResponses.joinToString(","),
                 serverOverride.orEmpty(),
             ).joinToString("|")
@@ -74,11 +76,11 @@ class AndroidMobilePushRuntime(
         }
         val storedId = currentStoredId(storageKey)
         val existingId = resolveExistingSubscriptionId(ownerSecret, token, storedId, serverOverride)
-        if (existingId != null && updateSubscription(ownerSecret, existingId, token, authors, inviteResponses, storageKey, serverOverride)) {
+        if (existingId != null && updateSubscription(ownerSecret, existingId, token, authors, backgroundAuthors, inviteResponses, storageKey, serverOverride)) {
             lastSyncSignature = signature
             return@withLock true
         }
-        val created = createSubscription(ownerSecret, token, authors, inviteResponses, storageKey, serverOverride)
+        val created = createSubscription(ownerSecret, token, authors, backgroundAuthors, inviteResponses, storageKey, serverOverride)
         if (created) {
             lastSyncSignature = signature
         }
@@ -138,6 +140,7 @@ class AndroidMobilePushRuntime(
         subscriptionId: String,
         pushToken: String,
         authors: List<String>,
+        backgroundAuthors: List<String>,
         inviteResponses: List<String>,
         storageKey: Preferences.Key<String>,
         serverOverride: String?,
@@ -150,6 +153,7 @@ class AndroidMobilePushRuntime(
                 pushToken = pushToken,
                 apnsTopic = null,
                 messageAuthorPubkeys = authors,
+                backgroundMessageAuthorPubkeys = backgroundAuthors,
                 inviteResponsePubkeys = inviteResponses,
                 isRelease = !BuildConfig.DEBUG,
                 serverUrlOverride = serverOverride,
@@ -169,6 +173,7 @@ class AndroidMobilePushRuntime(
         ownerNsec: String,
         pushToken: String,
         authors: List<String>,
+        backgroundAuthors: List<String>,
         inviteResponses: List<String>,
         storageKey: Preferences.Key<String>,
         serverOverride: String?,
@@ -180,6 +185,7 @@ class AndroidMobilePushRuntime(
                 pushToken = pushToken,
                 apnsTopic = null,
                 messageAuthorPubkeys = authors,
+                backgroundMessageAuthorPubkeys = backgroundAuthors,
                 inviteResponsePubkeys = inviteResponses,
                 isRelease = !BuildConfig.DEBUG,
                 serverUrlOverride = serverOverride,

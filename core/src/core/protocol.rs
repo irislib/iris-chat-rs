@@ -1712,6 +1712,13 @@ impl AppCore {
         };
         engine
             .message_author_pubkeys_filtered(|owner| {
+                if self
+                    .logged_in
+                    .as_ref()
+                    .is_some_and(|local| local.owner_pubkey == owner)
+                {
+                    return true;
+                }
                 let hex = owner.to_hex();
                 if blocked.contains(&hex) {
                     return false;

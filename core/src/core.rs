@@ -148,7 +148,8 @@ pub(crate) use mobile_push::{
     build_mobile_push_create_subscription_request, build_mobile_push_delete_subscription_request,
     build_mobile_push_list_subscriptions_request, build_mobile_push_update_subscription_request,
     decrypt_mobile_push_notification, mobile_push_stored_subscription_id_key,
-    resolve_mobile_push_notification, resolve_mobile_push_server_url,
+    read_mobile_push_notification_indexes, resolve_mobile_push_notification,
+    resolve_mobile_push_server_url,
 };
 pub(crate) use model::ProfileSearchFetchResult;
 pub(crate) use model::ProtocolSubscriptionPlan;

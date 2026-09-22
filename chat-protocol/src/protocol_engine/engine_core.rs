@@ -603,6 +603,13 @@ impl ProtocolEngine {
         authors
     }
 
+    pub fn group_sender_event_pubkeys_for_owner(&self, owner: PublicKey) -> Vec<PublicKey> {
+        self.group_manager.snapshot().sender_keys.into_iter()
+            .filter(|record| record.sender_owner == ndr_owner(owner))
+            .filter_map(|record| public_device(record.sender_event_pubkey).ok())
+            .collect()
+    }
+
     pub fn is_known_group_sender_event_author(&self, author: PublicKey) -> bool {
         self.group_manager
             .group_id_for_sender_event_pubkey(ndr_device(author))

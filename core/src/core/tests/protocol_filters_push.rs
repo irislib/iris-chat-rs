@@ -2360,6 +2360,7 @@ fn mobile_push_subscription_body_includes_invite_response_filter() {
         "apns-token".to_string(),
         Some("to.iris.chat".to_string()),
         vec![author.clone()],
+        vec![author.clone()],
         vec![invite_response_pubkey.clone()],
         true,
         None,
@@ -2369,6 +2370,7 @@ fn mobile_push_subscription_body_includes_invite_response_filter() {
         serde_json::from_str(request.body_json.as_deref().expect("body json")).expect("json");
 
     assert_eq!(body["filter"]["authors"][0].as_str(), Some(author.as_str()));
+    assert_eq!(body["background_authors"][0].as_str(), Some(author.as_str()));
     assert_eq!(
         body["filters"][1]["kinds"][0],
         serde_json::json!(INVITE_RESPONSE_KIND)
@@ -2389,6 +2391,7 @@ fn mobile_push_subscription_body_includes_invite_response_filter() {
         "development-apns-token".to_string(),
         Some("to.iris.chat".to_string()),
         vec![author],
+        Vec::new(),
         Vec::new(),
         false,
         Some("https://notifications.iris.to".to_string()),

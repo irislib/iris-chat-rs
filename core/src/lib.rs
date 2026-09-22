@@ -1513,6 +1513,23 @@ pub fn decrypt_mobile_push_notification_payload(
     )
 }
 
+#[uniffi::export]
+pub fn read_mobile_push_notification_indexes(
+    data_dir: String,
+    owner_pubkey_hex: String,
+    device_nsec: String,
+    payloads: Vec<String>,
+) -> Vec<u64> {
+    ffi_or("read_mobile_push_notification_indexes", Vec::new(), || {
+        crate::core::read_mobile_push_notification_indexes(
+            data_dir,
+            owner_pubkey_hex,
+            device_nsec,
+            payloads,
+        )
+    })
+}
+
 pub use crate::core::notifications::NotificationCandidate;
 
 /// Compute the list of chats that should raise a notification given two
@@ -1591,6 +1608,7 @@ pub fn build_mobile_push_create_subscription_request(
     push_token: String,
     apns_topic: Option<String>,
     message_author_pubkeys: Vec<String>,
+    background_message_author_pubkeys: Vec<String>,
     invite_response_pubkeys: Vec<String>,
     is_release: bool,
     server_url_override: Option<String>,
@@ -1605,6 +1623,7 @@ pub fn build_mobile_push_create_subscription_request(
                 push_token,
                 apns_topic,
                 message_author_pubkeys,
+                background_message_author_pubkeys,
                 invite_response_pubkeys,
                 is_release,
                 server_url_override,
@@ -1622,6 +1641,7 @@ pub fn build_mobile_push_update_subscription_request(
     push_token: String,
     apns_topic: Option<String>,
     message_author_pubkeys: Vec<String>,
+    background_message_author_pubkeys: Vec<String>,
     invite_response_pubkeys: Vec<String>,
     is_release: bool,
     server_url_override: Option<String>,
@@ -1637,6 +1657,7 @@ pub fn build_mobile_push_update_subscription_request(
                 push_token,
                 apns_topic,
                 message_author_pubkeys,
+                background_message_author_pubkeys,
                 invite_response_pubkeys,
                 is_release,
                 server_url_override,

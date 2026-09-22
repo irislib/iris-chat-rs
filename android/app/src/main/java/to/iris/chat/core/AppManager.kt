@@ -273,6 +273,7 @@ private data class AndroidMobilePushSyncInput(
     val ownerPubkeyHex: String?,
     val ownerSecretAvailable: Boolean,
     val messageAuthorPubkeys: List<String>,
+    val backgroundMessageAuthorPubkeys: List<String>,
     val inviteResponsePubkeys: List<String>,
     val serverOverride: String,
 )
@@ -306,6 +307,7 @@ class AppManager(
                 produceFile = { appContext.preferencesDataStoreFile(dataStoreName) },
             )
     private val mobilePushRuntime = AndroidMobilePushRuntime(this.dataStore)
+    private val readNotificationCleanup = to.iris.chat.push.ReadNotificationCleanup(applicationScope, ioDispatcher)
     private val selfUpdateManager =
         AndroidSelfUpdateManager(
             context = appContext,
@@ -1743,6 +1745,7 @@ class AppManager(
             ownerPubkeyHex = state.mobilePush.ownerPubkeyHex?.trim()?.ifEmpty { null },
             ownerSecretAvailable = !ownerNsec.isNullOrBlank(),
             messageAuthorPubkeys = state.mobilePush.messageAuthorPubkeys,
+            backgroundMessageAuthorPubkeys = state.mobilePush.backgroundMessageAuthorPubkeys,
             inviteResponsePubkeys = state.mobilePush.inviteResponsePubkeys,
             serverOverride =
                 state.preferences.mobilePushServerUrl
@@ -1894,6 +1897,11 @@ class AppManager(
                 snapshot.preferences.nearbyBluetoothEnabled,
         )
         mutableState.value = snapshot
+        if (snapshot.account != null) readNotificationCleanup.schedule {
+            (cachedAccountBundle ?: loadPersistedBundle())?.let { bundle ->
+                to.iris.chat.push.MobilePushNotifier.dismissRead(appContext, rustDataDir, bundle.ownerPubkeyHex, bundle.deviceNsec)
+            }
+        }
         if (
             snapshot.account?.authorizationState == DeviceAuthorizationState.REVOKED &&
             !automaticRevocationLogoutInFlight

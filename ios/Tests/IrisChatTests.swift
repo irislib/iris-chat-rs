@@ -122,6 +122,7 @@ final class MockRustApp: RustAppClient {
         mobilePush: MobilePushSyncSnapshot(
             ownerPubkeyHex: nil,
             messageAuthorPubkeys: [],
+            backgroundMessageAuthorPubkeys: [],
             inviteResponsePubkeys: [],
             sessions: []
         ),
@@ -358,6 +359,7 @@ func makeAppState(
     mobilePush: MobilePushSyncSnapshot = MobilePushSyncSnapshot(
         ownerPubkeyHex: nil,
         messageAuthorPubkeys: [],
+        backgroundMessageAuthorPubkeys: [],
         inviteResponsePubkeys: [],
         sessions: []
     ),
@@ -843,6 +845,7 @@ final class IrisChatTests: XCTestCase {
         let push = MobilePushSyncSnapshot(
             ownerPubkeyHex: "owner",
             messageAuthorPubkeys: ["author-1"],
+            backgroundMessageAuthorPubkeys: [],
             inviteResponsePubkeys: ["invite-1"],
             sessions: []
         )
@@ -860,6 +863,7 @@ final class IrisChatTests: XCTestCase {
         let push = MobilePushSyncSnapshot(
             ownerPubkeyHex: "owner",
             messageAuthorPubkeys: ["author-1"],
+            backgroundMessageAuthorPubkeys: [],
             inviteResponsePubkeys: [],
             sessions: []
         )

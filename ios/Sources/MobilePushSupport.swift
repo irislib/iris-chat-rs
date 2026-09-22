@@ -44,6 +44,13 @@ final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
         MobilePushTokenCenter.shared.setApnsToken(nil)
     }
 
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any]
+    ) async -> UIBackgroundFetchResult {
+        await manager.receiveBackgroundPush(userInfo: userInfo)
+    }
+
     func applicationDidEnterBackground(_ application: UIApplication) {
         manager.appBackgrounded()
     }
@@ -152,6 +159,7 @@ final class MobilePushRuntime {
         let owner = state.mobilePush.ownerPubkeyHex?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let ownerSecret = ownerNsec?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let authors = state.mobilePush.messageAuthorPubkeys
+        let backgroundAuthors = state.mobilePush.backgroundMessageAuthorPubkeys
         let inviteResponses = state.mobilePush.inviteResponsePubkeys
         let enabled = state.preferences.desktopNotificationsEnabled
         let userServerOverride = state.preferences.mobilePushServerUrl.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
@@ -161,6 +169,7 @@ final class MobilePushRuntime {
             owner ?? "",
             ownerSecret == nil ? "0" : "1",
             authors.joined(separator: ","),
+            backgroundAuthors.joined(separator: ","),
             inviteResponses.joined(separator: ","),
             serverOverride ?? "",
         ].joined(separator: "|")
@@ -175,6 +184,7 @@ final class MobilePushRuntime {
                 enabled: enabled,
                 ownerNsec: ownerSecret,
                 messageAuthorPubkeys: authors,
+                backgroundMessageAuthorPubkeys: backgroundAuthors,
                 inviteResponsePubkeys: inviteResponses,
                 serverOverride: serverOverride
             )
@@ -203,6 +213,7 @@ final class MobilePushRuntime {
         enabled: Bool,
         ownerNsec: String?,
         messageAuthorPubkeys: [String],
+        backgroundMessageAuthorPubkeys: [String],
         inviteResponsePubkeys: [String],
         serverOverride: String?
     ) async {
@@ -231,6 +242,7 @@ final class MobilePushRuntime {
                subscriptionId: existingId,
                pushToken: token,
                messageAuthorPubkeys: messageAuthorPubkeys,
+            backgroundMessageAuthorPubkeys: backgroundMessageAuthorPubkeys,
                inviteResponsePubkeys: inviteResponsePubkeys,
                storageKey: storageKey,
                serverOverride: serverOverride
@@ -242,6 +254,7 @@ final class MobilePushRuntime {
             ownerNsec: ownerNsec,
             pushToken: token,
             messageAuthorPubkeys: messageAuthorPubkeys,
+            backgroundMessageAuthorPubkeys: backgroundMessageAuthorPubkeys,
             inviteResponsePubkeys: inviteResponsePubkeys,
             storageKey: storageKey,
             serverOverride: serverOverride
@@ -324,6 +337,7 @@ final class MobilePushRuntime {
         subscriptionId: String,
         pushToken: String,
         messageAuthorPubkeys: [String],
+        backgroundMessageAuthorPubkeys: [String],
         inviteResponsePubkeys: [String],
         storageKey: String,
         serverOverride: String?
@@ -335,6 +349,7 @@ final class MobilePushRuntime {
             pushToken: pushToken,
             apnsTopic: Bundle.main.bundleIdentifier,
             messageAuthorPubkeys: messageAuthorPubkeys,
+            backgroundMessageAuthorPubkeys: backgroundMessageAuthorPubkeys,
             inviteResponsePubkeys: inviteResponsePubkeys,
             isRelease: isMobilePushReleaseBuild,
             serverUrlOverride: serverOverride
@@ -356,6 +371,7 @@ final class MobilePushRuntime {
         ownerNsec: String,
         pushToken: String,
         messageAuthorPubkeys: [String],
+        backgroundMessageAuthorPubkeys: [String],
         inviteResponsePubkeys: [String],
         storageKey: String,
         serverOverride: String?
@@ -366,6 +382,7 @@ final class MobilePushRuntime {
             pushToken: pushToken,
             apnsTopic: Bundle.main.bundleIdentifier,
             messageAuthorPubkeys: messageAuthorPubkeys,
+            backgroundMessageAuthorPubkeys: backgroundMessageAuthorPubkeys,
             inviteResponsePubkeys: inviteResponsePubkeys,
             isRelease: isMobilePushReleaseBuild,
             serverUrlOverride: serverOverride
