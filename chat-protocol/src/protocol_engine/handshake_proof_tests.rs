@@ -1,4 +1,75 @@
 #[test]
+fn bundled_proof_preserves_released_rust_handshake_parser() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let recipient = Keys::generate();
+    let mut invite = Invite::create_new(recipient.public_key(), None, None).unwrap();
+    let (_, response) = invite
+        .accept_with_owner(
+            device.public_key(),
+            device.secret_key().to_secret_bytes(),
+            None,
+            Some(owner.public_key()),
+        )
+        .unwrap();
+    let proof = signed_app_keys(&owner, &[device.public_key()], 10);
+    let event = invite_response_with_owner_proof(&response, Some(&proof)).unwrap();
+    assert_eq!(event.content, response.content);
+    let envelope = parse_invite_response_event(&event).unwrap();
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
+    // Calls the pinned, released nostr-double-ratchet 0.0.167 implementation,
+    // which has no knowledge of the optional owner-proof extension.
+    let accepted = invite
+        .process_response(
+            &mut ctx,
+            &envelope,
+            recipient.secret_key().to_secret_bytes(),
+        )
+        .unwrap();
+    assert_eq!(accepted.invitee_identity, device.public_key());
+    assert_eq!(accepted.owner_public_key, Some(owner.public_key()));
+}
+
+#[test]
+fn proofless_handshake_keeps_existing_separate_registration_path() {
+    for proof_first in [false, true] {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let recipient_owner = Keys::generate();
+        let recipient_device = Keys::generate();
+        let mut recipient = test_engine(&recipient_owner, &recipient_device);
+        let (_, response) = recipient
+            .local_invite()
+            .unwrap()
+            .accept_with_owner(
+                device.public_key(),
+                device.secret_key().to_secret_bytes(),
+                None,
+                Some(owner.public_key()),
+            )
+            .unwrap();
+        let event = invite_response_event(&response).unwrap();
+        let proof = signed_app_keys(&owner, &[device.public_key()], 10);
+        if proof_first {
+            recipient.ingest_app_keys_event(&proof).unwrap();
+        }
+        recipient.observe_invite_response_event(&event).unwrap();
+        if !proof_first {
+            assert_eq!(
+                recipient.active_session_count_for_owner(owner.public_key()),
+                0
+            );
+            recipient.ingest_app_keys_event(&proof).unwrap();
+        }
+        assert_eq!(
+            recipient.active_session_count_for_owner(owner.public_key()),
+            1
+        );
+    }
+}
+
+#[test]
 fn linked_device_handshake_authorizes_messages_without_separate_roster_delivery() {
     let sender_owner = Keys::generate();
     let sender_device = Keys::generate();
