@@ -2,7 +2,7 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
-## v2026.9.22.10
+## v2026.9.22.11
 
 ### GitHub
 
@@ -12,6 +12,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Sync chat deletions between linked devices and prevent deleted chats from returning through older history.
 - Keep chat navigation, search, image decoding, and composer edits from blocking or repeatedly rebuilding the message timeline.
 - Exclude internet connections from Nearby and size reply quotes to their message bubbles.
+- Respect system autocorrection and spelling preferences in Apple text composers.
 
 ### Apple
 
@@ -20,6 +21,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Chat deletions now sync between your devices.
 - Improved chat opening, typing, search, and image responsiveness.
 - Fixed incorrect Nearby listings and reply quote widths.
+- Iris now respects your system autocorrect settings.
 
 ### Zapstore
 
