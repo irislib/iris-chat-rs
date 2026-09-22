@@ -1151,6 +1151,9 @@ final class AppManager: ObservableObject {
         if pendingTestSeed != nil {
             schedulePendingTestSeedRetry()
         }
+#if DEBUG && os(iOS)
+        captureReceiveDiagnosticsIfRequested(manager: self, dataDir: resolvedDataDir, environment: environment)
+#endif
 #if os(macOS) && DEBUG
         if screenshotFixture != nil,
            AppPaths.testRunId(environment: environment) != nil,

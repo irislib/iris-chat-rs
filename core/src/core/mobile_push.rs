@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+mod diagnostics;
 mod invite_owner;
 use invite_owner::pending_invite_response_owner;
 
