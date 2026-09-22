@@ -1,3 +1,30 @@
+/// Earlier protocol states already retained exact signed owner evidence, but
+/// predated the ratchet library's separate evidence index. Feed those original
+/// events into restoration so valid sessions do not become unauthorized after
+/// an upgrade. Keep existing heads: the library resolves newer revocations and
+/// conflicting signed events instead of trusting cached authorization flags.
+fn restore_signed_peer_evidence_for_session_manager(state: &mut ProtocolEnginePersistedState) {
+    for (owner, evidence) in &state.invite_owner_app_keys_evidence {
+        if *owner == state.session_manager.local_owner_pubkey {
+            continue;
+        }
+        let ProtocolAppKeysEvidence::Verified(event) = evidence else {
+            continue;
+        };
+        if !state
+            .session_manager
+            .verified_peer_app_keys_events
+            .iter()
+            .any(|existing| existing.id == event.id)
+        {
+            state
+                .session_manager
+                .verified_peer_app_keys_events
+                .push(event.as_ref().clone());
+        }
+    }
+}
+
 fn quarantine_unverified_owner_rosters(
     snapshot: &mut SessionManagerSnapshot,
     verified_app_keys_owners: &BTreeSet<NdrOwnerPubkey>,

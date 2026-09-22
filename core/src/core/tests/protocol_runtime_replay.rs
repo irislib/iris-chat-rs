@@ -1,4 +1,158 @@
 #[test]
+fn direct_message_storage_failure_can_be_received_again() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let storage = Arc::new(SwitchableFailStorage::new());
+    let mut core = logged_in_test_core_with_storage(
+        "direct-message-storage-retry",
+        &owner,
+        &device,
+        storage.clone() as Arc<dyn StorageAdapter>,
+    );
+    let event = appcore_direct_message_event_for_test(
+        core.protocol_engine.as_mut().unwrap(),
+        &sender,
+        "message survives retry",
+        200,
+    );
+    let event_id = event.id.to_hex();
+    storage.set_fail_puts(true);
+    core.handle_relay_event(event.clone());
+    assert!(
+        !core.has_seen_event(&event_id),
+        "a failed receive is not a delivered message"
+    );
+    storage.set_fail_puts(false);
+    core.handle_relay_event(event);
+    let thread = core
+        .threads
+        .get(&sender.public_key().to_hex())
+        .expect("received chat");
+    assert_eq!(
+        thread
+            .messages
+            .iter()
+            .filter(|message| message.body == "message survives retry")
+            .count(),
+        1
+    );
+    assert!(core.has_seen_event(&event_id));
+}
+
+#[test]
+fn unrelated_save_preserves_unapplied_decrypted_message_across_restart() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let storage = Arc::new(SwitchableFailStorage::new());
+    let mut core = logged_in_test_core_with_storage(
+        "direct-message-unapplied-restart",
+        &owner,
+        &device,
+        storage.clone(),
+    );
+    let event = appcore_direct_message_event_for_test(
+        core.protocol_engine.as_mut().unwrap(),
+        &sender,
+        "not delivered yet",
+        200,
+    );
+    core.protocol_engine
+        .as_mut()
+        .unwrap()
+        .process_direct_message_event(&event)
+        .expect("durably decrypt")
+        .expect("decrypted delivery");
+    core.persist_best_effort();
+    assert_eq!(
+        core.protocol_engine
+            .as_ref()
+            .unwrap()
+            .pending_decrypted_deliveries_len_for_test(),
+        1
+    );
+    install_test_protocol_engine(&mut core, &owner, &device, storage, None, None);
+    assert!(core
+        .protocol_engine
+        .as_ref()
+        .unwrap()
+        .has_pending_retry_work());
+    core.retry_protocol_engine_pending_work("restart");
+    assert_eq!(
+        core.threads[&sender.public_key().to_hex()]
+            .messages
+            .iter()
+            .filter(|message| message.body == "not delivered yet")
+            .count(),
+        1
+    );
+    assert_eq!(
+        core.protocol_engine
+            .as_ref()
+            .unwrap()
+            .pending_decrypted_deliveries_len_for_test(),
+        0
+    );
+}
+
+#[test]
+fn failed_delivery_ack_preserves_journal_until_successful_save() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let storage = Arc::new(SwitchableFailStorage::new());
+    let mut core = logged_in_test_core_with_storage(
+        "direct-message-ack-failure",
+        &owner,
+        &device,
+        storage.clone(),
+    );
+    let event = appcore_direct_message_event_for_test(
+        core.protocol_engine.as_mut().unwrap(),
+        &sender,
+        "ack retry",
+        200,
+    );
+    core.protocol_engine
+        .as_mut()
+        .unwrap()
+        .process_direct_message_event(&event)
+        .expect("durably decrypt")
+        .expect("decrypted delivery");
+    storage.set_fail_puts(true);
+    core.retry_protocol_engine_pending_work("failed_ack");
+    assert_eq!(
+        core.protocol_engine
+            .as_ref()
+            .unwrap()
+            .pending_decrypted_deliveries_len_for_test(),
+        1
+    );
+    assert!(core
+        .pending_decrypted_delivery_acks
+        .contains(&event.id.to_hex()));
+    storage.set_fail_puts(false);
+    core.retry_protocol_engine_pending_work("retry_ack");
+    assert_eq!(
+        core.threads[&sender.public_key().to_hex()]
+            .messages
+            .iter()
+            .filter(|message| message.body == "ack retry")
+            .count(),
+        1
+    );
+    assert_eq!(
+        core.protocol_engine
+            .as_ref()
+            .unwrap()
+            .pending_decrypted_deliveries_len_for_test(),
+        0
+    );
+    assert!(core.pending_decrypted_delivery_acks.is_empty());
+}
+
+#[test]
 fn invite_response_observation_installs_session_author_state() {
     let owner = Keys::generate();
     let device = Keys::generate();

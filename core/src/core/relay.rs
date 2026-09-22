@@ -338,6 +338,7 @@ impl AppCore {
                             decrypted.event_id,
                         );
                         if let Some(event_id) = event_id {
+                            self.pending_decrypted_delivery_acks.insert(event_id.clone());
                             self.remember_event(event_id);
                         }
                         self.mark_mobile_push_dirty();
@@ -361,7 +362,16 @@ impl AppCore {
                             "appcore.protocol.message.error",
                             format!("event_id={event_id} author={} error={error}", event.pubkey),
                         );
-                        self.remember_event(event_id);
+                        // Saving may fail after the ratchet has already advanced.
+                        // Keep storage failures retryable; malformed input stays deduplicated.
+                        if error
+                            .downcast_ref::<iris_chat_protocol::StorageError>()
+                            .is_some()
+                        {
+                            self.schedule_fast_protocol_retry_if_pending();
+                        } else {
+                            self.remember_event(event_id);
+                        }
                         return;
                     }
                 }
@@ -554,8 +564,11 @@ impl AppCore {
 
     pub(super) fn ack_pending_decrypted_deliveries_after_app_persist(&mut self) {
         if let Some(protocol_engine) = self.protocol_engine.as_mut() {
-            if let Err(error) = protocol_engine.ack_pending_decrypted_deliveries() {
+            if let Err(error) = protocol_engine
+                .ack_decrypted_delivery_ids(&self.pending_decrypted_delivery_acks)
+            {
                 self.push_debug_log("appcore.protocol.decrypted_ack.error", error.to_string());
+                return;
             }
         }
         self.pending_decrypted_delivery_acks.clear();

@@ -2,8 +2,8 @@ impl ProtocolEngine {
     pub fn has_due_pending_retry_work(&self, now: NdrUnixSeconds) -> bool {
         let now_secs = now.get();
         self.pending_inbound
-                .iter()
-                .any(|pending| pending.next_retry_at_secs <= now_secs)
+            .iter()
+            .any(|pending| pending.next_retry_at_secs <= now_secs)
             || self
                 .pending_group_fanouts
                 .iter()
@@ -12,10 +12,9 @@ impl ProtocolEngine {
                 .pending_group_pairwise_payloads
                 .iter()
                 .any(|pending| pending.next_retry_at_secs <= now_secs)
-            || self
-                .pending_group_sender_key_repairs
-                .iter()
-                .any(|pending| Self::pending_group_sender_key_repair_due_at_secs(pending) <= now_secs)
+            || self.pending_group_sender_key_repairs.iter().any(|pending| {
+                Self::pending_group_sender_key_repair_due_at_secs(pending) <= now_secs
+            })
             || !self.pending_decrypted_deliveries.is_empty()
     }
 
@@ -333,13 +332,13 @@ impl ProtocolEngine {
         let group_fanout_result = self.retry_pending_group_fanouts(now)?;
         let mut group_result = group_result;
         group_result.effects.extend(group_fanout_result.effects);
-        let mut direct_messages = self
+        self.retry_pending_inbound_direct_events(now)?;
+        let direct_messages = self
             .pending_decrypted_deliveries
             .iter()
             .cloned()
             .map(ProtocolDecryptedMessage::from)
             .collect::<Vec<_>>();
-        direct_messages.extend(self.retry_pending_inbound_direct_events(now)?);
         let batch = ProtocolRetryBatch {
             group_result,
             direct_messages,
@@ -352,38 +351,72 @@ impl ProtocolEngine {
     }
 
     pub fn ack_pending_decrypted_deliveries(&mut self) -> anyhow::Result<()> {
-        if self.pending_decrypted_deliveries.is_empty() {
+        let ids = self
+            .pending_decrypted_deliveries
+            .iter()
+            .filter_map(|delivery| delivery.event_id.clone())
+            .collect();
+        self.ack_decrypted_delivery_ids(&ids)
+    }
+
+    /// Only acknowledge deliveries that the application has durably applied.
+    /// Other saves must not discard plaintext waiting for its first delivery.
+    pub fn ack_decrypted_delivery_ids(
+        &mut self,
+        event_ids: &HashSet<String>,
+    ) -> anyhow::Result<()> {
+        if !self.pending_decrypted_deliveries.iter().any(|delivery| {
+            delivery
+                .event_id
+                .as_ref()
+                .is_some_and(|id| event_ids.contains(id))
+        }) {
             return Ok(());
         }
-        self.pending_decrypted_deliveries.clear();
-        self.persist()
+        let before = self.pending_decrypted_deliveries.clone();
+        self.pending_decrypted_deliveries.retain(|delivery| {
+            !delivery
+                .event_id
+                .as_ref()
+                .is_some_and(|id| event_ids.contains(id))
+        });
+        if let Err(error) = self.persist() {
+            self.pending_decrypted_deliveries = before;
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn retry_pending_inbound_direct_events(
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<Vec<ProtocolDecryptedMessage>> {
-        if self.pending_inbound.is_empty() {
-            return Ok(Vec::new());
-        }
-        let pending = std::mem::take(&mut self.pending_inbound);
-        let mut still_pending = Vec::new();
+        // Keep the queue installed while decrypting: decryption persists the
+        // ratchet and its delivery journal, including all not-yet-tried events.
+        let pending = self.pending_inbound.clone();
         let mut messages = Vec::new();
-        for mut pending in pending {
+        for pending in pending {
             if pending.next_retry_at_secs > now.get() {
-                still_pending.push(pending);
                 continue;
             }
             match self.decrypt_pending_direct_message_event(&pending)? {
-                Some(message) => messages.push(message),
+                Some(message) => {
+                    self.pending_inbound
+                        .retain(|item| item.event.id != pending.event.id);
+                    messages.push(message);
+                }
                 None => {
-                    pending.next_retry_at_secs =
-                        next_pending_retry_at_secs(pending.created_at_secs, now);
-                    still_pending.push(pending);
+                    if let Some(item) = self
+                        .pending_inbound
+                        .iter_mut()
+                        .find(|item| item.event.id == pending.event.id)
+                    {
+                        item.next_retry_at_secs =
+                            next_pending_retry_at_secs(pending.created_at_secs, now);
+                    }
                 }
             }
         }
-        self.pending_inbound = still_pending;
         Ok(messages)
     }
 
@@ -392,7 +425,7 @@ impl ProtocolEngine {
         pending: &ProtocolPendingInbound,
     ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
         if let Some(envelope) = pending.envelope.as_ref() {
-            return self.decrypt_direct_message_envelope(&pending.event, envelope, false);
+            return self.decrypt_direct_message_envelope(&pending.event, envelope, true);
         }
         self.decrypt_direct_message_event(&pending.event)
     }
@@ -402,7 +435,7 @@ impl ProtocolEngine {
         event: &Event,
     ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
         let envelope = parse_message_event(event)?;
-        self.decrypt_direct_message_envelope(event, &envelope, false)
+        self.decrypt_direct_message_envelope(event, &envelope, true)
     }
 
     fn decrypt_direct_message_envelope(
@@ -411,6 +444,16 @@ impl ProtocolEngine {
         envelope: &MessageEnvelope,
         record_delivery: bool,
     ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
+        if let Some(delivery) = self
+            .pending_decrypted_deliveries
+            .iter()
+            .find(|delivery| delivery.event_id.as_deref() == Some(event.id.to_hex().as_str()))
+            .cloned()
+        {
+            // The ratchet may already have advanced before a previous save failed.
+            self.persist()?;
+            return Ok(Some(delivery.into()));
+        }
         let sender_owner = match self.resolve_message_sender_owner(envelope) {
             ProtocolSenderOwnerResolution::Verified { owner }
             | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => owner,
@@ -709,6 +752,103 @@ mod incoming_retry_tests {
     }
 
     #[test]
+    fn pending_receive_save_failure_preserves_entire_queue_and_delivery_journal() {
+        struct FailingStorage {
+            inner: InMemoryStorage,
+            fail: std::sync::atomic::AtomicBool,
+        }
+        impl StorageAdapter for FailingStorage {
+            fn get(&self, key: &str) -> crate::StorageResult<Option<String>> {
+                self.inner.get(key)
+            }
+            fn put(&self, key: &str, value: String) -> crate::StorageResult<()> {
+                if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Err(crate::StorageError::new("injected write failure"));
+                }
+                self.inner.put(key, value)
+            }
+            fn del(&self, key: &str) -> crate::StorageResult<()> {
+                self.inner.del(key)
+            }
+            fn list(&self, prefix: &str) -> crate::StorageResult<Vec<String>> {
+                self.inner.list(prefix)
+            }
+        }
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let mut receiver = test_engine(&owner, &device);
+        let mut responses = Vec::new();
+        for body in ["first waiting message", "second waiting message"] {
+            let sender = Keys::generate();
+            let (event, response) =
+                direct_message_before_receiver_observes_response(&receiver, &sender, body, 100);
+            assert!(receiver
+                .process_direct_message_event(&event)
+                .unwrap()
+                .is_none());
+            responses.push(response);
+        }
+        // Install the sessions without consuming the queued messages yet.
+        let pending = std::mem::take(&mut receiver.pending_inbound);
+        for response in responses {
+            receiver.observe_invite_response_event(&response).unwrap();
+        }
+        receiver.pending_inbound = pending;
+        let storage = Arc::new(FailingStorage {
+            inner: InMemoryStorage::new(),
+            fail: std::sync::atomic::AtomicBool::new(false),
+        });
+        receiver.storage = storage.clone();
+        receiver.persist().unwrap();
+        storage
+            .fail
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(receiver
+            .retry_pending_protocol(NdrUnixSeconds(200))
+            .is_err());
+        assert_eq!(
+            receiver.pending_inbound.len(),
+            2,
+            "a failed first receive must retain later events"
+        );
+        assert_eq!(
+            receiver.pending_decrypted_deliveries.len(),
+            1,
+            "already advanced ratchet retains plaintext"
+        );
+        storage
+            .fail
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let batch = receiver
+            .retry_pending_protocol(NdrUnixSeconds(200))
+            .unwrap();
+        assert_eq!(
+            batch.direct_messages.len(),
+            2,
+            "each pending message is offered exactly once per batch"
+        );
+        assert!(receiver.pending_inbound.is_empty());
+        let mut restored =
+            ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), &device)
+                .unwrap();
+        assert_eq!(
+            restored
+                .retry_pending_protocol(NdrUnixSeconds(201))
+                .unwrap()
+                .direct_messages
+                .len(),
+            2,
+            "both deliveries survive restart before the app acknowledges them"
+        );
+        restored.ack_pending_decrypted_deliveries().unwrap();
+        assert!(restored
+            .retry_pending_protocol(NdrUnixSeconds(202))
+            .unwrap()
+            .direct_messages
+            .is_empty());
+    }
+
+    #[test]
     fn direct_message_retry_clears_header_sender_key_candidate() {
         let bob_owner = Keys::generate();
         let bob_device = Keys::generate();
@@ -737,6 +877,9 @@ mod incoming_retry_tests {
         let mut direct_messages = bob
             .observe_invite_response_event(&response_event)
             .expect("receiver observes session response");
+        // The caller durably applies the first batch before asking for more.
+        bob.ack_pending_decrypted_deliveries()
+            .expect("ack applied batch");
         let retry = bob
             .retry_pending_protocol(NdrUnixSeconds(103))
             .expect("retry pending direct message");
@@ -749,6 +892,8 @@ mod incoming_retry_tests {
             direct_messages.direct_messages[0].content,
             "hello after backfill"
         );
+        bob.ack_pending_decrypted_deliveries()
+            .expect("ack applied retry");
         assert!(bob.pending_inbound.is_empty());
         assert!(
             bob.pending_group_sender_key_messages.is_empty(),
@@ -777,11 +922,10 @@ mod incoming_retry_tests {
             100,
         );
 
-        assert!(
-            bob.process_direct_message_event(&message_event)
-                .expect("unknown direct message queues")
-                .is_none()
-        );
+        assert!(bob
+            .process_direct_message_event(&message_event)
+            .expect("unknown direct message queues")
+            .is_none());
         assert_eq!(bob.pending_group_sender_key_messages.len(), 1);
         bob.pending_inbound.clear();
 
@@ -804,11 +948,10 @@ mod incoming_retry_tests {
             100,
         );
 
-        assert!(
-            bob.process_direct_message_event(&message_event)
-                .expect("unknown direct message queues")
-                .is_none()
-        );
+        assert!(bob
+            .process_direct_message_event(&message_event)
+            .expect("unknown direct message queues")
+            .is_none());
         assert_eq!(bob.pending_inbound.len(), 1);
         assert_eq!(bob.pending_group_sender_key_messages.len(), 1);
 

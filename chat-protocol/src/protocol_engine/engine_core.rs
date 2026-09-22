@@ -79,6 +79,7 @@ impl ProtocolEngine {
             return Ok(None);
         }
         sanitize_invite_owner_persisted_state(&mut state);
+        restore_signed_peer_evidence_for_session_manager(&mut state);
         quarantine_unverified_owner_rosters(
             &mut state.session_manager,
             &state.verified_app_keys_owners,
@@ -362,7 +363,8 @@ impl ProtocolEngine {
     }
 
     pub fn has_pending_retry_work(&self) -> bool {
-        !self.pending_inbound.is_empty()
+        !self.pending_decrypted_deliveries.is_empty()
+            || !self.pending_inbound.is_empty()
             || !self.pending_group_fanouts.is_empty()
             || !self.pending_group_pairwise_payloads.is_empty()
             || self.has_pending_group_sender_key_retry_work()
