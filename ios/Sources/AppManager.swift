@@ -3543,7 +3543,16 @@ private func hasPushEventPayload(userInfo: [AnyHashable: Any]) -> Bool {
 }
 
 private func isGenericIrisFallback(content: UNNotificationContent) -> Bool {
-    MobilePushPresentation.isGenericFallback(title: content.title, body: content.body)
+    let title = content.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let body = content.body.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let genericBody = body.isEmpty || body == "new activity" || body == "new message"
+    let genericTitle = title.isEmpty ||
+        title == "iris chat" ||
+        title == "new activity" ||
+        title == "new message" ||
+        title == "someone" ||
+        title.hasPrefix("dm by ")
+    return genericTitle && genericBody
 }
 
 private func pushEventKind(_ value: Any?) -> Int? {
