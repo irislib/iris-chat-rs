@@ -112,6 +112,10 @@ impl ProtocolEngine {
             self.processed_private_invite_response_ids.drain(0..excess);
         }
         self.invalidate_known_message_author_cache();
+        // The proof can arrive before the private session is imported. Retry
+        // messages now that both are present, even if the proof-only attempt
+        // already moved them into backoff.
+        self.wake_pending_protocol_for_owner(ndr_owner(owner_pubkey));
         if let Err(error) = self.persist() {
             self.restore_checkpoint(checkpoint);
             return Err(error);

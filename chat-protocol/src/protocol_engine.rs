@@ -6,6 +6,7 @@ include!("protocol_engine/engine_state_helpers.rs");
 include!("protocol_engine/engine_fact_ingest.rs");
 include!("protocol_engine/engine_sends.rs");
 include!("protocol_engine/engine_invite_owner.rs");
+include!("protocol_engine/engine_handshake_proof.rs");
 include!("protocol_engine/roster_helpers.rs");
 include!("protocol_engine/engine_incoming_retry.rs");
 include!("protocol_engine/engine_resolution.rs");
@@ -18,6 +19,7 @@ mod tests {
     use super::*;
 
     include!("protocol_engine/invite_owner_tests.rs");
+    include!("protocol_engine/handshake_proof_tests.rs");
 
     fn read_protocol_engine_source(path: &str) -> String {
         std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path))

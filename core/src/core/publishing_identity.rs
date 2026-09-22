@@ -4,6 +4,43 @@ type LabeledIdentityEvents = Vec<(&'static str, Event)>;
 type LocalIdentityArtifacts = (LabeledIdentityEvents, LabeledIdentityEvents);
 
 impl AppCore {
+    pub(super) fn sync_local_app_keys_to_protocol_engine(&mut self, label: &'static str) {
+        let Some((owner, app_keys, created_at, owner_keys)) =
+            self.logged_in.as_ref().and_then(|logged_in| {
+                let known = self.app_keys.get(&logged_in.owner_pubkey.to_hex())?;
+                Some((
+                    logged_in.owner_pubkey,
+                    known_app_keys_to_ndr(known),
+                    known.created_at_secs,
+                    logged_in.owner_keys.clone(),
+                ))
+            })
+        else {
+            return;
+        };
+
+        if let Some(protocol_engine) = self.protocol_engine.as_mut() {
+            // Keep a locally signed proof before publishing. Linked devices reuse
+            // the exact proof received during approval and never need owner keys.
+            let signed = owner_keys
+                .filter(|_| !self.defer_owner_app_keys_publish)
+                .and_then(|keys| {
+                    app_keys
+                        .get_encrypted_event_at(&keys, created_at)
+                        .ok()
+                        .and_then(|event| event.sign_with_keys(&keys).ok())
+                });
+            let result = if let Some(event) = signed {
+                protocol_engine.ingest_app_keys_event(&event)
+            } else {
+                protocol_engine.ingest_app_keys_snapshot(owner, app_keys, created_at)
+            };
+            if let Ok(batch) = result {
+                self.process_protocol_engine_retry_batch(label, batch);
+            }
+        }
+    }
+
     fn newest_pending_app_keys_event(&self, author: PublicKey) -> Option<Event> {
         self.pending_relay_publishes
             .values()

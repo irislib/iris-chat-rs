@@ -112,26 +112,6 @@ impl AppCore {
         self.sync_local_app_keys_to_protocol_engine("publish_local_app_keys_snapshot");
     }
 
-    pub(super) fn sync_local_app_keys_to_protocol_engine(&mut self, label: &'static str) {
-        let Some((owner, app_keys, created_at)) = self.logged_in.as_ref().and_then(|logged_in| {
-            let known = self.app_keys.get(&logged_in.owner_pubkey.to_hex())?;
-            Some((
-                logged_in.owner_pubkey,
-                known_app_keys_to_ndr(known),
-                known.created_at_secs,
-            ))
-        }) else {
-            return;
-        };
-
-        if let Some(protocol_engine) = self.protocol_engine.as_mut() {
-            if let Ok(batch) = protocol_engine.ingest_app_keys_snapshot(owner, app_keys, created_at)
-            {
-                self.process_protocol_engine_retry_batch(label, batch);
-            }
-        }
-    }
-
     fn publish_runtime_event_with_metadata(
         &mut self,
         event: Event,

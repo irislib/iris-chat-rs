@@ -127,6 +127,7 @@ include!("tests/app_keys_invites_requests.rs");
 include!("tests/pending_device_link.rs");
 include!("tests/private_invite_owner_verification.rs");
 include!("tests/private_invite_owner_crash.rs");
+include!("tests/handshake_owner_proof.rs");
 include!("tests/first_contact_receiver.rs");
 include!("tests/direct_messages_group_requests.rs");
 include!("tests/direct_messages_blocking.rs");

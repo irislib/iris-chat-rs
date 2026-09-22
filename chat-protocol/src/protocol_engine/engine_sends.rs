@@ -8,10 +8,7 @@ impl ProtocolEngine {
         self.ingest_app_keys_snapshot_inner(owner_pubkey, app_keys, created_at, None)
     }
 
-    pub fn ingest_app_keys_event(
-        &mut self,
-        event: &Event,
-    ) -> anyhow::Result<ProtocolRetryBatch> {
+    pub fn ingest_app_keys_event(&mut self, event: &Event) -> anyhow::Result<ProtocolRetryBatch> {
         let app_keys = AppKeys::from_event(event)?;
         self.ingest_app_keys_snapshot_inner(
             event.pubkey,
@@ -155,10 +152,7 @@ impl ProtocolEngine {
         if envelope.recipient != local_invite_recipient {
             return Ok(ProtocolRetryBatch::default());
         }
-        let session_checkpoint = self.session_manager.clone();
-        let pending_inbound_checkpoint = self.pending_inbound.clone();
-        let pending_group_fanouts_checkpoint = self.pending_group_fanouts.clone();
-        let pending_group_pairwise_checkpoint = self.pending_group_pairwise_payloads.clone();
+        let checkpoint = self.state_checkpoint();
         let mut rng = OsRng;
         let mut ctx = ProtocolContext::new(NdrUnixSeconds(event.created_at.as_secs()), &mut rng);
         let processed = match self
@@ -179,11 +173,32 @@ impl ProtocolEngine {
                     .unwrap_or(processed.owner_pubkey),
             );
         }
+        if let Some(processed) = processed.as_ref() {
+            if let Some(invite) = self.local_invite() {
+                let proof_batch = match self.ingest_invite_response_owner_proof(
+                    &invite,
+                    event,
+                    public_owner(
+                        processed
+                            .claimed_owner_pubkey
+                            .unwrap_or(processed.owner_pubkey),
+                    )?,
+                    public_device(processed.device_pubkey)?,
+                ) {
+                    Ok(batch) => batch,
+                    Err(error) => {
+                        self.restore_checkpoint(checkpoint);
+                        self.invalidate_known_message_author_cache();
+                        return Err(error);
+                    }
+                };
+                if !proof_batch.is_empty() {
+                    return Ok(proof_batch);
+                }
+            }
+        }
         if let Err(error) = self.persist() {
-            self.session_manager = session_checkpoint;
-            self.pending_inbound = pending_inbound_checkpoint;
-            self.pending_group_fanouts = pending_group_fanouts_checkpoint;
-            self.pending_group_pairwise_payloads = pending_group_pairwise_checkpoint;
+            self.restore_checkpoint(checkpoint);
             self.invalidate_known_message_author_cache();
             return Err(error);
         }
@@ -261,7 +276,8 @@ impl ProtocolEngine {
             // Publish the actual invite response, then an expired typing rumor
             // through the newly-created session. The second event bootstraps
             // the inviter's receiving state without showing a typing indicator.
-            let response_event = invite_response_event(&response)?;
+            let response_event =
+                invite_response_with_owner_proof(&response, self.local_handshake_owner_proof())?;
             let mut typing = pairwise_codec::typing_event(
                 self.owner_pubkey,
                 pairwise_codec::EncodeOptions::new(now.get(), current_unix_millis())
@@ -685,6 +701,7 @@ impl ProtocolEngine {
         let mut event_ids = Vec::new();
         let effects = protocol_effects_from_prepared(
             &remote,
+            self.local_handshake_owner_proof(),
             inner_event_id.clone(),
             chat_id.to_string(),
             &mut event_ids,
@@ -721,13 +738,16 @@ impl ProtocolEngine {
         let mut event_ids = Vec::new();
         let effects = protocol_effects_from_prepared(
             &local,
+            self.local_handshake_owner_proof(),
             inner_event_id.clone(),
             chat_id.to_string(),
             &mut event_ids,
         )?;
 
         if !local.relay_gaps.is_empty() {
-            anyhow::bail!("direct send readiness invariant failed: local sibling relay gaps remain");
+            anyhow::bail!(
+                "direct send readiness invariant failed: local sibling relay gaps remain"
+            );
         }
         self.persist()?;
         Ok(ProtocolDirectSendResult {
@@ -764,12 +784,14 @@ impl ProtocolEngine {
         let mut effects = Vec::new();
         effects.extend(protocol_effects_from_prepared(
             &remote,
+            self.local_handshake_owner_proof(),
             inner_event_id.clone(),
             chat_id.to_string(),
             &mut event_ids,
         )?);
         effects.extend(protocol_effects_from_prepared(
             &local,
+            self.local_handshake_owner_proof(),
             inner_event_id.clone(),
             chat_id.to_string(),
             &mut event_ids,

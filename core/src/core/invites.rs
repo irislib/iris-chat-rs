@@ -223,6 +223,26 @@ impl AppCore {
                     return PrivateInviteResponseDisposition::Handled;
                 }
             };
+        if let Some(invite) = self.private_chat_invites.get(&invite_key).cloned() {
+            if let Some(engine) = self.protocol_engine.as_mut() {
+                match engine.ingest_invite_response_owner_proof(
+                    &invite,
+                    event,
+                    owner_pubkey,
+                    response.invitee_identity,
+                ) {
+                    Ok(batch) => self
+                        .process_protocol_engine_retry_batch("private_invite_owner_proof", batch),
+                    Err(error) => {
+                        self.push_debug_log(
+                            "invite.private_response.owner_proof",
+                            error.to_string(),
+                        );
+                        return PrivateInviteResponseDisposition::RetryableFailure;
+                    }
+                }
+            }
+        }
         let owner_hex = owner_pubkey.to_hex();
         let peer_device_id = response.invitee_identity.to_hex();
         if owner_claim_needs_roster {

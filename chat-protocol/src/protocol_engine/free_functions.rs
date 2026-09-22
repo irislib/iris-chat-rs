@@ -1,12 +1,13 @@
 fn protocol_effects_from_prepared(
     prepared: &PreparedSend,
+    owner_proof: Option<&Event>,
     inner_event_id: Option<String>,
     chat_id: String,
     event_ids: &mut Vec<String>,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
     let mut publishes = Vec::new();
     for response in &prepared.invite_responses {
-        let event = invite_response_event(response)?;
+        let event = invite_response_with_owner_proof(response, owner_proof)?;
         publishes.push(ProtocolPublish {
             event,
             chat_id: chat_id.clone(),
@@ -28,13 +29,14 @@ fn protocol_effects_from_prepared(
 
 fn protocol_effects_from_group_prepared_publish(
     prepared: &GroupPreparedPublish,
+    owner_proof: Option<&Event>,
     inner_event_id: Option<String>,
     chat_id: String,
     event_ids: &mut Vec<String>,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
     let mut publishes = Vec::new();
     for response in &prepared.invite_responses {
-        let event = invite_response_event(response)?;
+        let event = invite_response_with_owner_proof(response, owner_proof)?;
         publishes.push(ProtocolPublish {
             event,
             chat_id: chat_id.clone(),
