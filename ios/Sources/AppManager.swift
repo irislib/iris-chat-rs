@@ -16,6 +16,8 @@ struct StoredAccountBundle: Codable, Equatable {
     let ownerNsec: String?
     let ownerPubkeyHex: String
     let deviceNsec: String
+    // Push subscription ownership is independent of chat identity approval.
+    var mobilePushAuthNsec: String { ownerNsec ?? deviceNsec }
 }
 
 struct StoredPendingDeviceLink: Codable, Equatable {
@@ -2570,7 +2572,7 @@ final class AppManager: ObservableObject {
         // Account-nil startup snapshots are ambiguous; logout is the deterministic
         // session boundary for discarding deferred notification navigation.
         pendingPushChatID = nil
-        mobilePushRuntime.unregisterStoredSubscription(state: state, ownerNsec: storedAccountBundle?.ownerNsec ?? secretStore.load()?.ownerNsec)
+        mobilePushRuntime.unregisterStoredSubscription(state: state, ownerNsec: (storedAccountBundle ?? secretStore.load())?.mobilePushAuthNsec)
 #endif
         guard secretStore.clear(), pendingDeviceLinkSecretStore.clear() else {
             automaticRevocationLogoutInFlight = false
@@ -2651,7 +2653,7 @@ final class AppManager: ObservableObject {
             iosSideEffectGate.resetMobilePush()
             return
         }
-        let ownerNsec = storedAccountBundle?.ownerNsec
+        let ownerNsec = storedAccountBundle?.mobilePushAuthNsec
         guard iosSideEffectGate.shouldSyncMobilePush(state: state, ownerNsec: ownerNsec) else {
             return
         }

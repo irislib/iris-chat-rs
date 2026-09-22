@@ -7,6 +7,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### GitHub
 
 - Deliver own-device encrypted traffic as silent background pushes and dismiss only notifications covered by authenticated read progress, preserving newer unread alerts.
+- Register push notifications on linked devices using their device key when the account secret key is absent.
 - Sync read progress and unread counts between linked devices, including after reconnecting or restoring history. Marking a chat unread remains local, and read-receipt privacy settings still apply to other people.
 - Keep pending read updates for offline linked devices while delivering immediately to devices that are ready.
 - Avoid repeated Apple Bluetooth discovery and reopening links that already have a working network path.

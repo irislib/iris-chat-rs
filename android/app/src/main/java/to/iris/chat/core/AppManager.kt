@@ -1088,7 +1088,7 @@ class AppManager(
             val persistedBundle = loadPersistedBundle()
             mobilePushRuntime.unregisterStoredSubscription(
                 stateBeforeLogout,
-                persistedBundle?.ownerNsec,
+                persistedBundle?.mobilePushAuthNsec,
             )
             if (!clearNativeSecretsBeforeReset()) {
                 automaticRevocationLogoutInFlight = false
@@ -1153,7 +1153,7 @@ class AppManager(
             val persistedBundle = loadPersistedBundle()
             mobilePushRuntime.unregisterStoredSubscription(
                 stateBeforeReset,
-                persistedBundle?.ownerNsec,
+                persistedBundle?.mobilePushAuthNsec,
             )
             if (clearNativeSecretsBeforeReset(showToast = false)) {
                 replaceRustCoreAfterReset()
@@ -1199,7 +1199,7 @@ class AppManager(
                     }
                     scheduleMobilePushSyncIfNeeded(
                         mutableState.value,
-                        bundle.ownerNsec,
+                        bundle.mobilePushAuthNsec,
                     )
                 }
             }
@@ -1244,7 +1244,7 @@ class AppManager(
                         "toast=${reconciledState.toast.orEmpty()}",
                 )
                 publishState(reconciledState)
-                scheduleMobilePushSyncIfNeeded(reconciledState, cachedAccountBundle?.ownerNsec)
+                scheduleMobilePushSyncIfNeeded(reconciledState, cachedAccountBundle?.mobilePushAuthNsec)
             }
         }
     }
@@ -1722,7 +1722,7 @@ class AppManager(
                 delay(retryDelay)
                 if (lastMobilePushSyncInput == input) {
                     lastMobilePushSyncInput = null
-                    scheduleMobilePushSyncIfNeeded(mutableState.value, cachedAccountBundle?.ownerNsec)
+                    scheduleMobilePushSyncIfNeeded(mutableState.value, cachedAccountBundle?.mobilePushAuthNsec)
                 }
             }
         }
@@ -1733,7 +1733,7 @@ class AppManager(
         lastMobilePushSyncInput = null
         mobilePushRetryInput = null
         mobilePushRetryAttempt = 0
-        scheduleMobilePushSyncIfNeeded(mutableState.value, cachedAccountBundle?.ownerNsec)
+        scheduleMobilePushSyncIfNeeded(mutableState.value, cachedAccountBundle?.mobilePushAuthNsec)
     }
 
     private fun mobilePushSyncInput(

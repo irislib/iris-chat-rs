@@ -1781,7 +1781,7 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
         val firstChatId = acceptAndMarkIncomingMessageSeen(firstMessage, timeoutMs)
         reportStatus("first_message_seen" to "true")
         val secondChatId = acceptAndMarkIncomingMessageSeen(secondMessage, timeoutMs)
-        SystemClock.sleep(3_000)
+        SystemClock.sleep(optionalArg("receipt_drain_ms")?.toLongOrNull()?.coerceIn(3_000, 60_000) ?: 3_000)
         reportStatus(
             "chat_id" to secondChatId,
             "same_chat" to firstChatId.equals(secondChatId, ignoreCase = true).toString(),

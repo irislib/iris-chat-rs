@@ -12,6 +12,9 @@ data class StoredAccountBundle(
     val ownerPubkeyHex: String,
     val deviceNsec: String,
 ) {
+    // A linked device can own push subscriptions without the account secret.
+    val mobilePushAuthNsec: String get() = ownerNsec ?: deviceNsec
+
     fun toJson(): String =
         JSONObject()
             .put("owner_nsec", ownerNsec)
