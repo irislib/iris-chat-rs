@@ -372,6 +372,27 @@ final class IrisChatMacComposerTests: XCTestCase {
         }
     }
 
+    func testMacComposerPreservesSystemTextCheckingDefaults() {
+        let systemTextView = NSTextView()
+        let host = NSHostingView(rootView: IrisComposerHostingHarness())
+        host.frame = NSRect(x: 0, y: 0, width: 240, height: 160)
+        host.layoutSubtreeIfNeeded()
+
+        guard let scrollView = firstSubview(of: IrisComposerScrollView.self, in: host),
+              let textView = scrollView.documentView as? IrisComposerNSTextView else {
+            return XCTFail("Composer AppKit views were not installed in the hosting view")
+        }
+
+        XCTAssertEqual(
+            textView.isAutomaticSpellingCorrectionEnabled,
+            systemTextView.isAutomaticSpellingCorrectionEnabled
+        )
+        XCTAssertEqual(
+            textView.isContinuousSpellCheckingEnabled,
+            systemTextView.isContinuousSpellCheckingEnabled
+        )
+    }
+
     func testMacComposerHostingLayoutGrowsOverflowsShrinksAndReflows() {
         let host = NSHostingView(rootView: IrisComposerHostingHarness())
         host.frame = NSRect(x: 0, y: 0, width: 240, height: 160)
