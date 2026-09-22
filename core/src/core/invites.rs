@@ -557,7 +557,7 @@ impl AppCore {
         let result = match parse_public_invite_or_direct_chat_input(trimmed) {
             Ok(PublicInviteInput::Invite(invite)) => {
                 resolve_invite_owner(&invite, None).and_then(|owner_pubkey| {
-                    if owner_pubkey != invite.inviter {
+                    if owner_pubkey != invite.inviter || self.defer_owner_app_keys_publish {
                         self.pending_outgoing_invite_acceptance =
                             Some(PendingOutgoingInviteAcceptance {
                                 invite,
@@ -594,7 +594,11 @@ impl AppCore {
                 self.state.busy.accepting_invite = false;
             }
             Ok(AcceptInviteDispatch::Pending) => {
-                self.state.toast = Some("Verifying the invite owner's device…".to_string());
+                self.state.toast = Some(if self.defer_owner_app_keys_publish {
+                    "Setting up this device…"
+                } else {
+                    "Verifying the invite owner's device…"
+                }.to_string());
             }
             Err(error) => {
                 self.state.toast = Some(error.to_string());
@@ -611,6 +615,10 @@ impl AppCore {
         invite: Invite,
         owner_pubkey: PublicKey,
     ) -> anyhow::Result<Option<String>> {
+        if self.defer_owner_app_keys_publish {
+            self.recover_deferred_owner_registration();
+            return Ok(None);
+        }
         let outcome = self
             .protocol_engine
             .as_mut()

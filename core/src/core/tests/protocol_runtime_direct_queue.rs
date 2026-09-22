@@ -44,7 +44,7 @@ fn direct_send_readiness_advances_from_appkeys_and_invite_state() {
 }
 
 #[test]
-fn nsec_restore_sends_without_waiting_for_local_roster_backfill() {
+fn nsec_restore_queues_until_local_device_approval_is_available() {
     let owner = Keys::generate();
     let peer_owner = Keys::generate();
     let peer_device = Keys::generate();
@@ -84,8 +84,8 @@ fn nsec_restore_sends_without_waiting_for_local_roster_backfill() {
         observe_peer_device_invite_for_test(engine, &peer_owner, &peer_device, 2);
         assert_eq!(
             engine.direct_send_readiness(peer_owner.public_key()),
-            DirectSendReadiness::Ready,
-            "owner-authenticated restore must not remain stuck on MissingLocalAppKeys"
+            DirectSendReadiness::MissingLocalAppKeys,
+            "holding the account key must not bypass the device approval needed by recipients"
         );
     }
 
@@ -97,18 +97,28 @@ fn nsec_restore_sends_without_waiting_for_local_roster_backfill() {
         .get(&chat_id)
         .and_then(|thread| thread.messages.first())
         .expect("sent message");
-    assert_ne!(message.id, "1", "queued message should drain immediately");
-    assert!(!message.delivery_trace.outer_event_ids.is_empty());
+    assert_eq!(message.delivery, DeliveryState::Queued);
+    assert!(message.delivery_trace.outer_event_ids.is_empty());
     assert!(update_rx.try_iter().all(|update| match update {
         AppUpdate::NearbyPublishedEvent { event_json, .. } => serde_json::from_str::<Event>(&event_json)
             .map(|event| !is_app_keys_event(&event))
             .unwrap_or(true),
         _ => true,
     }), "recovery must not publish a provisional one-device AppKeys roster");
+
+    let device = core.logged_in.as_ref().unwrap().device_keys.public_key();
+    core.complete_owner_registration_lookup(
+        core.relay_status_watch_generation, owner.public_key(), device, 2, 2, vec![],
+    );
+    let sent = &core.threads[&chat_id].messages[0];
+    assert!(!sent.delivery_trace.outer_event_ids.is_empty(), "approval must automatically drain the original message");
+    let response = pending_events_with_kind(&core, INVITE_RESPONSE_KIND).into_iter().next().unwrap();
+    assert!(response.tags.iter().any(|tag| tag.as_slice()[0] == "owner-proof"),
+        "the first send must carry the locally signed approval without waiting for server echo");
 }
 
 #[test]
-fn owner_authentication_drains_message_stuck_on_missing_local_app_keys() {
+fn signed_device_approval_drains_message_stuck_on_missing_local_app_keys() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer_owner = Keys::generate();
@@ -142,6 +152,9 @@ fn owner_authentication_drains_message_stuck_on_missing_local_app_keys() {
         .authenticate_local_owner_for_sending(&owner)
         .expect("owner authentication");
     core.retry_protocol_engine_pending_work("test_owner_authentication");
+    assert!(core.threads[&chat_id].messages[0].delivery_trace.outer_event_ids.is_empty(),
+        "account-key possession must not replace the signed approval needed by recipients");
+    core.handle_relay_event(signed_app_keys_authorization_event(&owner, device.public_key(), 10));
 
     let sent = core
         .threads

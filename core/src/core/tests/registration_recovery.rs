@@ -130,6 +130,31 @@ fn stale_registration_lookup_cannot_register_a_different_session() {
 }
 
 #[test]
+fn restored_account_invite_waits_for_local_approval_then_resumes_automatically() {
+    for same_key_peer in [false, true] {
+        let (mut sender, owner, device) = deferred_registration_core("restore-invite-approval");
+        let peer_owner = Keys::generate();
+        let peer_device = if same_key_peer { peer_owner.clone() } else { Keys::generate() };
+        let mut peer = logged_in_test_core("restore-invite-peer", &peer_owner, &peer_device);
+        let invite = create_private_invite_for_test(&mut peer);
+        prove_invite_owner(&mut sender, &peer_owner, &peer_device, 10);
+        sender.pending_relay_publishes.clear();
+        sender.handle_action(AppAction::AcceptInvite { invite_input: invite });
+        assert!(pending_events_with_kind(&sender, INVITE_RESPONSE_KIND).is_empty(),
+            "an imported account must not send an unprovable device claim");
+        assert!(sender.pending_outgoing_invite_acceptance.is_some());
+        sender.complete_owner_registration_lookup(
+            sender.relay_status_watch_generation, owner.public_key(), device.public_key(), 1, 1, vec![],
+        );
+        assert!(sender.pending_outgoing_invite_acceptance.is_none());
+        let response = pending_events_with_kind(&sender, INVITE_RESPONSE_KIND).into_iter().next().unwrap();
+        assert!(response.tags.iter().any(|tag| tag.as_slice()[0] == "owner-proof"));
+        peer.handle_relay_event(response);
+        assert_eq!(active_session_device_pubkeys(&peer, owner.public_key()), vec![device.public_key()]);
+    }
+}
+
+#[test]
 fn restored_account_publishes_verifiable_registration_to_empty_local_relay() {
     let relay = crate::local_relay::TestRelay::start();
     let temp = tempfile::TempDir::new().unwrap();

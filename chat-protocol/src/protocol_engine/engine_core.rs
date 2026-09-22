@@ -407,9 +407,11 @@ impl ProtocolEngine {
 
     pub fn direct_send_readiness(&self, peer_pubkey: PublicKey) -> DirectSendReadiness {
         let snapshot = self.session_manager.snapshot();
-        if !self.local_owner_authenticated
-            && !self.local_app_keys_observed
-            && !self.has_authoritative_local_roster()
+        // Possessing the account key locally does not give recipients proof
+        // that this device belongs to it. Restores must finish signing their
+        // approval before a send can create the first handshake.
+        if (self.local_owner_authenticated && self.local_handshake_owner_proof().is_none())
+            || (!self.local_app_keys_observed && !self.has_authoritative_local_roster())
         {
             return DirectSendReadiness::MissingLocalAppKeys;
         }

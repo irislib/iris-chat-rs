@@ -164,6 +164,7 @@ impl AppCore {
         self.app_keys.insert(owner.to_hex(), known);
         self.defer_owner_app_keys_publish = false;
         self.publish_local_app_keys_snapshot_only("restore_registration_recovery");
+        self.retry_protocol_engine_pending_work("restore_registration_recovery");
         self.push_debug_log(
             "registration.recovery.queued",
             format!("checked_servers={completed}"),
