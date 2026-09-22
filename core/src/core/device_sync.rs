@@ -388,10 +388,9 @@ impl AppCore {
             .into_iter()
             .filter_map(|id| {
                 let read_state = self.chat_read_states.get(&id).cloned().filter(|state| {
-                    !self
-                        .chat_deletions
+                    self.chat_deletions
                         .get(&id)
-                        .is_some_and(|deleted| state.updated_at_ms / 1000 <= *deleted)
+                        .is_none_or(|deleted| state.updated_at_ms / 1000 > *deleted)
                 });
                 let thread = self.threads.get(&id);
                 if thread.is_none() && read_state.is_none() {

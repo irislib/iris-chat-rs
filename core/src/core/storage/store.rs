@@ -1,7 +1,7 @@
 use super::super::{
-    ChatReadState, KnownAppKeyDevice, KnownAppKeys, OwnerProfileRecord, PersistedAuthorizationState,
-    PersistedDeliveryState, PersistedMessage, PersistedPreferences, PersistedState,
-    PersistedThread, ThreadRecord, PERSISTED_STATE_VERSION,
+    ChatReadState, KnownAppKeyDevice, KnownAppKeys, OwnerProfileRecord,
+    PersistedAuthorizationState, PersistedDeliveryState, PersistedMessage, PersistedPreferences,
+    PersistedState, PersistedThread, ThreadRecord, PERSISTED_STATE_VERSION,
 };
 use super::SharedConnection;
 use crate::state::{

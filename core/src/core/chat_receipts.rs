@@ -11,10 +11,9 @@ impl AppCore {
             return;
         };
         if unread {
-            let thread = self
-                .threads
-                .get_mut(&normalized_chat_id)
-                .expect("existing thread");
+            let Some(thread) = self.threads.get_mut(&normalized_chat_id) else {
+                return;
+            };
             thread.unread_count = thread.unread_count.max(1);
             self.persist_best_effort();
             self.rebuild_state();
