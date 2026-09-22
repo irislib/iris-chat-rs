@@ -438,6 +438,7 @@ struct ReplyPreviewView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill((isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs).opacity(0.12))

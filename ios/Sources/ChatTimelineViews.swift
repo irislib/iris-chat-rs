@@ -548,7 +548,7 @@ struct ChatMessageRow: View, Equatable {
                             desktopActionDockSlot()
                         }
 
-                        VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4) {
+                        messageContentLayout(hasReply: parsed.reply != nil).callAsFunction {
                             if showsGroupSenderName {
                                 Text(message.author)
                                     .font(.system(.footnote, design: .rounded, weight: .semibold))
@@ -766,6 +766,13 @@ struct ChatMessageRow: View, Equatable {
         return isFirstInCluster
             ? SignalConversationLayout.defaultMessageSpacing
             : SignalConversationLayout.compactMessageSpacing
+    }
+
+    private func messageContentLayout(hasReply: Bool) -> AnyLayout {
+        if hasReply {
+            return AnyLayout(ReplyBubbleLayout(isOutgoing: message.isOutgoing))
+        }
+        return AnyLayout(VStackLayout(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4))
     }
 
 #if canImport(AppKit)
