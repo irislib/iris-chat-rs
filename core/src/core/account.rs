@@ -410,7 +410,7 @@ impl AppCore {
             });
         }
 
-        self.threads.clear();
+        self.clear_chats_and_deletions();
         self.active_chat_id = None;
         self.screen_stack.clear();
         self.owner_profiles.clear();
@@ -563,7 +563,7 @@ impl AppCore {
             });
         }
 
-        self.threads.clear();
+        self.clear_chats_and_deletions();
         self.active_chat_id = None;
         self.screen_stack.clear();
         self.owner_profiles.clear();

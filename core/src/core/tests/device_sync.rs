@@ -319,6 +319,16 @@ fn device_sync_websocket_scenario(use_relay: bool) {
         .is_err());
     });
 
+    alice_core.delete_chat(&sync_chat_id);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while bob_core.threads.contains_key(&sync_chat_id) {
+        while let Ok(message) = alice_core_rx.try_recv() { alice_core.handle_message(message); }
+        while let Ok(message) = bob_core_rx.try_recv() { bob_core.handle_message(message); }
+        assert!(std::time::Instant::now() < deadline, "deletion must arrive over live device sync");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!alice_core.threads.contains_key(&sync_chat_id));
+
     attacker_core.stop_device_sync();
     bob_core.stop_device_sync();
     alice_core.stop_device_sync();

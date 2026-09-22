@@ -4,6 +4,7 @@ use super::*;
 fn chunks_are_bounded_additive_camel_case_snapshots() {
     let snapshot = DeviceSyncSnapshot {
         roster_at: 42,
+        deleted_chats: Vec::new(),
         chats: vec![DeviceSyncChat {
             id: "a".repeat(64),
             updated_at: 41,

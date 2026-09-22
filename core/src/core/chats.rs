@@ -50,7 +50,7 @@ impl AppCore {
         peer_input: &str,
     ) -> anyhow::Result<String> {
         let (chat_id, _) = parse_peer_input(peer_input)?;
-        let now = unix_now().get();
+        let now = self.chat_activity_after_deletion(&chat_id, unix_now().get());
         self.prune_expired_messages(now);
         self.fetch_missing_profile_metadata(&chat_id, "open_chat");
         self.ensure_thread_record(&chat_id, now).unread_count = 0;
@@ -477,7 +477,7 @@ impl AppCore {
             return;
         }
 
-        let now = unix_now();
+        let now = UnixSeconds(self.chat_activity_after_deletion(&normalized_chat_id, unix_now().get()));
         self.active_chat_id = Some(normalized_chat_id.clone());
         self.screen_stack = vec![Screen::Chat {
             chat_id: normalized_chat_id.clone(),
@@ -972,6 +972,9 @@ impl AppCore {
         author_owner_pubkey_hex: Option<String>,
         source_event_id: Option<String>,
     ) {
+        if self.chat_activity_is_deleted(chat_id, created_at_secs) {
+            return;
+        }
         let message_id_ref = message_id.as_deref();
         let source_event_id_ref = source_event_id.as_deref();
         if self.threads.get(chat_id).is_some_and(|thread| {
@@ -1156,64 +1159,6 @@ impl AppCore {
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
-    }
-
-    pub(super) fn delete_chat(&mut self, chat_id: &str) {
-        if chat_id.is_empty() {
-            return;
-        }
-        let normalized = self
-            .normalize_chat_id(chat_id)
-            .unwrap_or_else(|| chat_id.to_string());
-        let removed_thread = self.threads.remove(&normalized).is_some();
-        if removed_thread {
-            if let Err(error) = self.app_store.delete_thread(&normalized) {
-                self.push_debug_log(
-                    "storage.thread.delete.error",
-                    format!("chat_id={normalized} error={error}"),
-                );
-            }
-        }
-        self.chat_message_ttl_seconds.remove(&normalized);
-        self.preferences
-            .muted_chat_ids
-            .retain(|chat_id| chat_id != &normalized);
-        self.preferences
-            .pinned_chat_ids
-            .retain(|chat_id| chat_id != &normalized);
-        self.mark_mobile_push_dirty();
-        self.typing_indicators
-            .retain(|_, indicator| indicator.chat_id != normalized);
-        self.typing_floor_secs.remove(&normalized);
-
-        let removed_group = if let Some(group_id) = parse_group_id_from_chat_id(&normalized) {
-            let was_present = self.groups.remove(&group_id).is_some();
-            if was_present {
-                self.sync_runtime_groups();
-            }
-            was_present
-        } else {
-            false
-        };
-
-        if !removed_thread && !removed_group {
-            return;
-        }
-
-        if self.active_chat_id.as_deref() == Some(normalized.as_str()) {
-            self.active_chat_id = None;
-        }
-        self.screen_stack.retain(|screen| match screen {
-            Screen::Chat { chat_id } => chat_id != &normalized,
-            Screen::DirectChatInfo { chat_id } => chat_id != &normalized,
-            Screen::GroupDetails { group_id } => {
-                parse_group_id_from_chat_id(&normalized).as_deref() != Some(group_id.as_str())
-            }
-            _ => true,
-        });
-
-        self.push_debug_log("chat.delete", normalized);
-        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn send_group_event(
@@ -1727,6 +1672,9 @@ impl AppCore {
             return;
         };
         let chat_id = chat_id.unwrap_or_else(|| sender_owner.to_hex());
+        if self.chat_activity_is_deleted(&chat_id, created_at_secs) {
+            return;
+        }
         self.clear_typing_indicator(&chat_id, &sender_owner.to_hex());
         if sender_owner == local_owner {
             let message_id = message_id.unwrap_or_else(|| self.allocate_message_id());

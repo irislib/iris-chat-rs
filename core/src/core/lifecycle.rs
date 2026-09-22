@@ -81,6 +81,7 @@ impl AppCore {
             pending_private_invite_cleanup_retry: false,
             pending_outgoing_invite_acceptance: None,
             threads: BTreeMap::new(),
+            chat_deletions: BTreeMap::new(),
             active_chat_id: None,
             screen_stack: Vec::new(),
             next_message_id: 1,

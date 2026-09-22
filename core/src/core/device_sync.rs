@@ -76,6 +76,8 @@ enum DeviceSyncPacket {
         roster_at: u64,
         #[serde(default)]
         chats: Vec<DeviceSyncChat>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        deleted_chats: Vec<DeviceSyncChatDeletion>,
         #[serde(default)]
         app_keys: Vec<DeviceSyncAppKeys>,
         #[serde(default)]
@@ -89,6 +91,12 @@ enum DeviceSyncPacket {
 struct DeviceSyncChat {
     id: String,
     updated_at: u64,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceSyncChatDeletion {
+    id: String,
+    deleted_at: u64,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -165,6 +173,7 @@ impl From<&DeviceSyncMessage> for DeviceSyncCursor {
 struct DeviceSyncSnapshot {
     roster_at: u64,
     chats: Vec<DeviceSyncChat>,
+    deleted_chats: Vec<DeviceSyncChatDeletion>,
     app_keys: Vec<DeviceSyncAppKeys>,
     groups: Vec<DeviceSyncGroup>,
     messages: Vec<DeviceSyncMessage>,
@@ -172,6 +181,7 @@ struct DeviceSyncSnapshot {
 #[derive(Clone)]
 enum DeviceSyncItem {
     Chat(DeviceSyncChat),
+    Deletion(DeviceSyncChatDeletion),
     AppKeys(DeviceSyncAppKeys),
     Group(DeviceSyncGroup),
     Message(DeviceSyncMessage),
@@ -180,6 +190,7 @@ impl DeviceSyncItem {
     fn push(&self, snapshot: &mut DeviceSyncSnapshot) {
         match self {
             Self::Chat(value) => snapshot.chats.push(value.clone()),
+            Self::Deletion(value) => snapshot.deleted_chats.push(value.clone()),
             Self::AppKeys(value) => snapshot.app_keys.push(value.clone()),
             Self::Group(value) => snapshot.groups.push(value.clone()),
             Self::Message(value) => snapshot.messages.push(value.clone()),
@@ -188,6 +199,9 @@ impl DeviceSyncItem {
 
     fn pop(&self, snapshot: &mut DeviceSyncSnapshot) {
         match self {
+            Self::Deletion(_) => {
+                snapshot.deleted_chats.pop();
+            }
             Self::Chat(_) => {
                 snapshot.chats.pop();
             }
@@ -210,6 +224,7 @@ impl DeviceSyncSnapshot {
             v: DEVICE_SYNC_VERSION,
             roster_at: self.roster_at,
             chats: self.chats.clone(),
+            deleted_chats: self.deleted_chats.clone(),
             app_keys: self.app_keys.clone(),
             groups: self.groups.clone(),
             messages: self.messages.clone(),
@@ -217,7 +232,8 @@ impl DeviceSyncSnapshot {
     }
 
     fn is_empty(&self) -> bool {
-        self.chats.is_empty()
+        self.deleted_chats.is_empty()
+            && self.chats.is_empty()
             && self.app_keys.is_empty()
             && self.groups.is_empty()
             && self.messages.is_empty()
@@ -257,6 +273,7 @@ impl AppCore {
                 v,
                 roster_at,
                 chats,
+                deleted_chats,
                 app_keys,
                 groups,
                 messages,
@@ -264,6 +281,7 @@ impl AppCore {
                 self.apply_device_sync_snapshot(DeviceSyncSnapshot {
                     roster_at,
                     chats,
+                    deleted_chats,
                     app_keys,
                     groups,
                     messages,
@@ -431,6 +449,10 @@ impl AppCore {
         DeviceSyncSnapshot {
             roster_at,
             chats,
+            deleted_chats: self.chat_deletions.iter().map(|(id, deleted_at)| DeviceSyncChatDeletion {
+                id: id.clone(),
+                deleted_at: *deleted_at,
+            }).collect(),
             app_keys,
             groups,
             messages,
@@ -450,6 +472,12 @@ impl AppCore {
             return;
         };
         let mut changed = false;
+        for deletion in snapshot.deleted_chats {
+            if valid_device_sync_chat_id(&deletion.id) && deletion.deleted_at > 0
+                && deletion.deleted_at <= unix_now().get().saturating_add(300) {
+                changed |= self.apply_chat_deletion(&deletion.id, deletion.deleted_at);
+            }
+        }
         let mut app_keys_changed = false;
         let mut app_keys_retry_batch = ProtocolRetryBatch::default();
 
@@ -497,12 +525,16 @@ impl AppCore {
         }
 
         for chat in snapshot.chats {
-            if PublicKey::from_hex(&chat.id).is_ok() && !self.threads.contains_key(&chat.id) {
+            if PublicKey::from_hex(&chat.id).is_ok() && !self.threads.contains_key(&chat.id)
+                && !self.chat_activity_is_deleted(&chat.id, chat.updated_at) {
                 self.ensure_thread_record(&chat.id, chat.updated_at);
                 changed = true;
             }
         }
         for group in snapshot.groups {
+            if self.chat_activity_is_deleted(&group_chat_id(&group.id), group.updated_at) {
+                continue;
+            }
             let Some(group) = group.into_group_snapshot(&local_owner_hex) else {
                 continue;
             };
@@ -518,7 +550,8 @@ impl AppCore {
         }
         let now = unix_now().get();
         for message in snapshot.messages {
-            if message.created_at < cutoff
+            if self.chat_activity_is_deleted(&message.chat_id, message.created_at)
+                || message.created_at < cutoff
                 || message
                     .expires_at
                     .is_some_and(|expires_at| expires_at <= now)
@@ -542,8 +575,9 @@ impl AppCore {
             if is_outgoing {
                 self.accept_direct_peer(&chat_id);
             }
-            self.ensure_thread_record(&chat_id, message.created_at)
-                .insert_message_sorted(ChatMessageSnapshot {
+            let thread = self.ensure_thread_record(&chat_id, message.created_at);
+            thread.updated_at_secs = thread.updated_at_secs.max(message.created_at);
+            thread.insert_message_sorted(ChatMessageSnapshot {
                     id: message.id,
                     chat_id: chat_id.clone(),
                     kind: ChatMessageKind::User,
@@ -745,10 +779,8 @@ impl DeviceSyncAppKeys {
 
 fn encode_device_sync_chunks(snapshot: DeviceSyncSnapshot) -> Vec<Vec<u8>> {
     let roster_at = snapshot.roster_at;
-    let items = snapshot
-        .chats
-        .into_iter()
-        .map(DeviceSyncItem::Chat)
+    let items = snapshot.deleted_chats.into_iter().map(DeviceSyncItem::Deletion)
+        .chain(snapshot.chats.into_iter().map(DeviceSyncItem::Chat))
         .chain(snapshot.app_keys.into_iter().map(DeviceSyncItem::AppKeys))
         .chain(snapshot.groups.into_iter().map(DeviceSyncItem::Group))
         .chain(snapshot.messages.into_iter().map(DeviceSyncItem::Message));

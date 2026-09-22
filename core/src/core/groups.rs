@@ -435,6 +435,9 @@ impl AppCore {
         group: GroupSnapshot,
         updated_at_secs: u64,
     ) {
+        if self.chat_activity_is_deleted(&group_chat_id(&group.group_id), group.updated_at.get()) {
+            return;
+        }
         self.apply_group_snapshot_to_threads(&group, updated_at_secs);
         self.groups.insert(group.group_id.clone(), group);
     }
@@ -451,6 +454,9 @@ impl AppCore {
         self.mark_mobile_push_dirty();
         match event {
             GroupIncomingEvent::MetadataUpdated(group) => {
+                if self.chat_activity_is_deleted(&group_chat_id(&group.group_id), group.updated_at.get()) {
+                    return;
+                }
                 let previous = self.groups.get(&group.group_id).cloned();
                 self.apply_group_roster_snapshot(
                     group.clone(),

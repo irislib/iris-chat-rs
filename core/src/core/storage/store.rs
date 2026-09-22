@@ -14,6 +14,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
+#[path = "store_chat_deletions.rs"]
+mod store_chat_deletions;
+
 #[path = "store_preferences.rs"]
 mod store_preferences;
 use store_preferences::{hash_preferences, load_preferences, write_preferences};
@@ -421,16 +424,6 @@ impl AppStore {
         search_messages_fts(&conn, query, scope_chat_id, limit)
     }
 
-    pub(crate) fn delete_thread(&mut self, chat_id: &str) -> anyhow::Result<()> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
-        conn.execute("DELETE FROM threads WHERE chat_id = ?1", [chat_id])?;
-        self.cache.threads.remove(chat_id);
-        Ok(())
-    }
-
     pub(crate) fn upsert_notification_preview_message(
         &mut self,
         chat_id: &str,
@@ -443,6 +436,9 @@ impl AppStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let tx = conn.transaction()?;
+        if store_chat_deletions::message_was_deleted(&tx, chat_id, message.created_at_secs)? {
+            return Ok(());
+        }
         let message_exists = tx
             .query_row(
                 "SELECT 1 FROM messages WHERE chat_id = ?1 AND id = ?2 LIMIT 1",

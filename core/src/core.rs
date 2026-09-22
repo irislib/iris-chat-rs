@@ -78,6 +78,7 @@ mod chat_receipts;
 mod chat_settings;
 mod chat_typing;
 mod chats;
+mod chat_deletions;
 mod config;
 mod device_approval;
 mod device_sync;
@@ -504,6 +505,7 @@ pub struct AppCore {
     pending_private_invite_cleanup_retry: bool,
     pending_outgoing_invite_acceptance: Option<invites::PendingOutgoingInviteAcceptance>,
     threads: BTreeMap<String, ThreadRecord>,
+    chat_deletions: BTreeMap<String, u64>,
     active_chat_id: Option<String>,
     screen_stack: Vec<Screen>,
     next_message_id: u64,
