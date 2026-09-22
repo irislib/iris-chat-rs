@@ -9,20 +9,12 @@ import UserNotifications
 /// group name as title and prefix the body with the sender name. If
 /// decryption fails for any reason — no logged-in
 /// account, missing storage, ratchet already advanced by the foreground
-/// app — encrypted Iris placeholders are cleared instead of surfacing
-/// generic "New activity" text.
+/// app — use a quiet background-update placeholder. iOS rejects blank
+/// content without the notification-filtering entitlement.
 final class NotificationService: UNNotificationServiceExtension {
     private static let appGroupIdentifier = "group.fi.siriusbusiness.irischat"
     private static let keychainService = "fi.siriusbusiness.irischat"
     private static let keychainAccount = "stored-account-bundle"
-    private static let encryptedEventPayloadKeys = [
-        "event",
-        "outer_event",
-        "outer_event_json",
-        "nostr_event",
-        "nostr_event_json",
-    ]
-
     private var contentHandler: ((UNNotificationContent) -> Void)?
     private var bestAttempt: UNMutableNotificationContent?
 
@@ -32,13 +24,8 @@ final class NotificationService: UNNotificationServiceExtension {
     ) {
         MobilePushDeliveryProbe.recordIfArmed()
         self.contentHandler = contentHandler
-        let bestAttempt = (request.content.mutableCopy() as? UNMutableNotificationContent)
-            ?? UNMutableNotificationContent()
+        let bestAttempt = MobilePushPresentation.fallbackContent(from: request.content)
         self.bestAttempt = bestAttempt
-        let shouldClearFallback = isLikelyEncryptedIrisPush(request.content)
-        if shouldClearFallback {
-            clearVisibleFallback(bestAttempt)
-        }
 
         guard let payloadJson = serializedPayload(from: request.content) else {
             contentHandler(bestAttempt)
@@ -57,37 +44,16 @@ final class NotificationService: UNNotificationServiceExtension {
             resolution = resolveMobilePushNotificationPayload(rawPayloadJson: payloadJson)
         }
 
-        let hasPreview = !resolution.title.isEmpty || !resolution.body.isEmpty
-        if !resolution.shouldShow && !hasPreview {
-            contentHandler(bestAttempt)
-            return
-        }
-        if shouldClearFallback && isGenericFallbackResolution(resolution) {
-            contentHandler(bestAttempt)
-            return
-        }
-        if !resolution.title.isEmpty {
-            bestAttempt.title = resolution.title
-        }
-        if !resolution.body.isEmpty {
-            bestAttempt.body = resolution.body
-        }
-        if resolution.shouldShow {
-            bestAttempt.sound = .default
-        } else {
-            // Non-message kinds (typing, reactions, settings) on
-            // platforms that can really suppress would never reach
-            // here. iOS can't, so clear sound/badge for previews that
-            // are informative but not chat messages.
-            bestAttempt.sound = nil
-            bestAttempt.badge = nil
-        }
-        contentHandler(bestAttempt)
+        let resolved = MobilePushPresentation.resolvedContent(
+            from: request.content, resolution: resolution
+        )
+        self.bestAttempt = resolved
+        contentHandler(resolved)
     }
 
     override func serviceExtensionTimeWillExpire() {
         // Apple gives the NSE ~30s. Hand off whatever we managed to
-        // mutate so the user at least gets the original notification.
+        // mutate; the prepared fallback stays quiet if decryption times out.
         if let contentHandler, let bestAttempt {
             contentHandler(bestAttempt)
         }
@@ -114,72 +80,6 @@ final class NotificationService: UNNotificationServiceExtension {
             return nil
         }
         return json
-    }
-
-    private func isLikelyEncryptedIrisPush(_ content: UNNotificationContent) -> Bool {
-        for key in Self.encryptedEventPayloadKeys {
-            if eventKind(content.userInfo[key]) == 1060 {
-                return true
-            }
-        }
-        return isGenericIrisFallback(content)
-    }
-
-    private func eventKind(_ value: Any?) -> Int? {
-        if let dict = value as? [String: Any] {
-            return normalizedInt(dict["kind"])
-        }
-        if let dict = value as? [AnyHashable: Any] {
-            return normalizedInt(dict["kind"])
-        }
-        if let string = value as? String,
-           let data = string.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            return normalizedInt(object["kind"])
-        }
-        return nil
-    }
-
-    private func normalizedInt(_ value: Any?) -> Int? {
-        if let intValue = value as? Int {
-            return intValue
-        }
-        if let number = value as? NSNumber {
-            return number.intValue
-        }
-        if let string = value as? String {
-            return Int(string.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        return nil
-    }
-
-    private func isGenericIrisFallback(_ content: UNNotificationContent) -> Bool {
-        isGenericFallback(title: content.title, body: content.body)
-    }
-
-    private func isGenericFallbackResolution(_ resolution: MobilePushNotificationResolution) -> Bool {
-        isGenericFallback(title: resolution.title, body: resolution.body)
-    }
-
-    private func isGenericFallback(title: String, body: String) -> Bool {
-        let title = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let body = body.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let genericBody = body.isEmpty || body == "new activity" || body == "new message"
-        let genericTitle = title.isEmpty ||
-            title == "iris chat" ||
-            title == "new activity" ||
-            title == "new message" ||
-            title == "someone" ||
-            title.hasPrefix("dm by ")
-        return genericTitle && genericBody
-    }
-
-    private func clearVisibleFallback(_ content: UNMutableNotificationContent) {
-        content.title = ""
-        content.subtitle = ""
-        content.body = ""
-        content.sound = nil
-        content.badge = nil
     }
 
     private func sharedDataDir() -> URL? {
