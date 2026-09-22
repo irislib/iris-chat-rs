@@ -256,14 +256,12 @@ fun NdrApp(
                             }
 
                             Screen.ChatList -> {
-                                val appState by appManager.state.collectAsStateWithLifecycle()
                                 ChatListScreen(
                                     appManager = appManager,
-                                    appState = appState,
                                     nearbyService = container.nearbyIrisService,
                                     onNearbyClick = openNearbyIris,
                                     onNearbyLongClick = {
-                                        onNearbyEnabledChange(!appState.preferences.nearbyEnabled)
+                                        onNearbyEnabledChange(!appManager.preferences.value.nearbyEnabled)
                                     },
                                     onNearbyPeerLongClick = openNearbyProfile,
                                 )
@@ -295,11 +293,10 @@ fun NdrApp(
                                 if (account == null) {
                                     ChatListScreen(
                                         appManager = appManager,
-                                        appState = appState,
                                         nearbyService = container.nearbyIrisService,
                                         onNearbyClick = openNearbyIris,
                                         onNearbyLongClick = {
-                                            onNearbyEnabledChange(!appState.preferences.nearbyEnabled)
+                                            onNearbyEnabledChange(!appManager.preferences.value.nearbyEnabled)
                                         },
                                         onNearbyPeerLongClick = openNearbyProfile,
                                     )

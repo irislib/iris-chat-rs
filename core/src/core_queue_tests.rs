@@ -91,3 +91,38 @@ fn route_chat_snapshot_requires_account() {
 
     assert!(crate::core::chat_snapshot_from_state_and_db(&state, None, &chat_id, 80).is_none());
 }
+
+#[test]
+fn search_preserves_thread_results_with_large_active_history() {
+    let app = ffi_app_failure(String::new());
+    let mut state = build_large_test_app_state(80, 20, 1_200);
+    state.chat_list[10].nickname = Some("Needle contact".to_string());
+    state.chat_list[85].about = Some("Needle group".to_string());
+    let expected_contact = state.chat_list[10].clone();
+    let expected_group = state.chat_list[85].clone();
+    let chat_id = expected_contact.chat_id.clone();
+    *app.shared_state.write().unwrap() = state;
+
+    let results = app.search("needle".to_string(), None, 80);
+
+    assert_eq!(results.contacts, vec![expected_contact]);
+    assert_eq!(results.groups, vec![expected_group]);
+    assert!(results.people.is_empty());
+    assert!(results.messages.is_empty());
+
+    let scoped = app.search("needle".to_string(), Some(chat_id.clone()), 80);
+    assert_eq!(scoped.scope_chat_id.as_deref(), Some(chat_id.as_str()));
+    assert!(scoped.contacts.is_empty());
+    assert!(scoped.groups.is_empty());
+    assert_eq!(
+        app.shared_state
+            .read()
+            .unwrap()
+            .current_chat
+            .as_ref()
+            .unwrap()
+            .messages
+            .len(),
+        1_200,
+    );
+}

@@ -1,5 +1,4 @@
 import Foundation
-import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 #if canImport(AppKit)
@@ -117,36 +116,6 @@ enum IrisAvatarImageCache {
     }
 }
 
-func makeIrisAvatarImage(data: Data, maxPixelSize: Int) -> PlatformImage? {
-    let sourceOptions: [CFString: Any] = [
-        kCGImageSourceShouldCache: false
-    ]
-    guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else {
-        return nil
-    }
-
-    let thumbnailOptions: [CFString: Any] = [
-        kCGImageSourceCreateThumbnailFromImageAlways: true,
-        kCGImageSourceCreateThumbnailWithTransform: true,
-        kCGImageSourceShouldCacheImmediately: true,
-        kCGImageSourceThumbnailMaxPixelSize: max(1, maxPixelSize)
-    ]
-    guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else {
-        return nil
-    }
-
-    #if os(iOS)
-    return PlatformImage(cgImage: cgImage)
-    #elseif os(macOS)
-    return PlatformImage(
-        cgImage: cgImage,
-        size: NSSize(width: cgImage.width, height: cgImage.height)
-    )
-    #else
-    return nil
-    #endif
-}
-
 func loadIrisHttpAvatarImage(
     urls: [String],
     originalURL: String,
@@ -164,7 +133,7 @@ func loadIrisHttpAvatarImage(
             guard !Task.isCancelled else { return nil }
             guard let response = response as? HTTPURLResponse,
                   (200..<300).contains(response.statusCode),
-                  let image = makeIrisAvatarImage(data: data, maxPixelSize: maxPixelSize) else {
+                  let image = await loadIrisAvatarImage(data: data, maxPixelSize: maxPixelSize) else {
                 continue
             }
             return image
@@ -333,7 +302,7 @@ struct IrisAvatar: View {
         switch source {
         case .hashtree(let nhash):
             if let manager, let data = await manager.resolveHashtreePictureBytes(nhash: nhash) {
-                image = makeIrisAvatarImage(data: data, maxPixelSize: maxPixelSize)
+                image = await loadIrisAvatarImage(data: data, maxPixelSize: maxPixelSize)
             } else {
                 image = nil
             }

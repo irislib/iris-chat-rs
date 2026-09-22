@@ -69,12 +69,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.roundToInt
 import java.util.concurrent.ConcurrentHashMap
 import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.rust.AppAction
-import to.iris.chat.rust.AppState
+import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.ChatInputShortcut
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatThreadSnapshot
@@ -97,14 +98,20 @@ import to.iris.chat.ui.theme.IrisTheme
 @Composable
 fun ChatListScreen(
     appManager: AppManager,
-    appState: AppState,
     nearbyService: IrisNearbyService? = null,
     onNearbyClick: () -> Unit = {},
     onNearbyLongClick: () -> Unit = {},
     onNearbyPeerLongClick: (String) -> Unit = {},
 ) {
     var pendingDeleteChat by remember { mutableStateOf<ChatThreadSnapshot?>(null) }
-    val account = appState.account
+    val account = appManager.account.collectAsStateWithLifecycle().value
+    val preferences by appManager.preferences.collectAsStateWithLifecycle()
+    val chatList by appManager.chatList.collectAsStateWithLifecycle()
+    val userDiscoveryRevision by appManager.userDiscoveryRevision.collectAsStateWithLifecycle()
+    val userDiscoverySyncing by appManager.userDiscoverySyncing.collectAsStateWithLifecycle()
+    val pinnedChats = remember(chatList) { chatList.filter { it.isPinned } }
+    val unpinnedChats = remember(chatList) { chatList.filter { !it.isPinned } }
+    val knownDirectChatNames = remember(chatList) { chatList.knownDirectChatNames() }
 
     var searchQuery by remember { mutableStateOf("") }
     val haptics = rememberIrisHapticFeedback()
@@ -114,17 +121,20 @@ fun ChatListScreen(
     var expandedSearchSections by remember(trimmedQuery) { mutableStateOf(emptySet<SearchSection>()) }
     var messageSearchLimit by remember(trimmedQuery) { mutableStateOf(InitialMessageSearchLimit) }
     var searchResults by remember { mutableStateOf<SearchResultSnapshot?>(null) }
+    var globalSearchRequested by remember { mutableStateOf(false) }
 
     // Keep Rust/SQLite work out of composition. The empty call cancels any
     // debounced or in-flight global lookup when search closes.
-    LaunchedEffect(trimmedQuery, messageSearchLimit, appState.userDiscoveryRevision) {
+    LaunchedEffect(trimmedQuery, messageSearchLimit, userDiscoveryRevision) {
         searchResults =
             if (trimmedQuery.isEmpty()) {
-                if (searchResults != null) {
+                if (globalSearchRequested) {
                     appManager.search("", limit = 0u)
+                    globalSearchRequested = false
                 }
                 null
             } else {
+                globalSearchRequested = true
                 appManager.search(trimmedQuery, limit = messageSearchLimit)
             }
     }
@@ -182,7 +192,7 @@ fun ChatListScreen(
                                         ?.let { url ->
                                             imageLoadRequest(
                                                 originalSrc = url,
-                                                preferences = appState.preferences,
+                                                preferences = preferences,
                                                 width = 88u,
                                                 height = 88u,
                                                 square = true,
@@ -228,7 +238,7 @@ fun ChatListScreen(
             }
             if (searchActive) {
                 val results = searchResults?.takeIf { it.matchesSearchRequest(trimmedQuery) }
-                val findingPeople = appState.userDiscoverySyncing && (results == null || results.people.isEmpty())
+                val findingPeople = userDiscoverySyncing && (results == null || results.people.isEmpty())
                 val emptyResults = results == null
                     || (results.people.isEmpty()
                         && results.contacts.isEmpty()
@@ -281,7 +291,7 @@ fun ChatListScreen(
                             initialCount = 7,
                         )
                         items(people, key = { "p:${it.ownerPubkeyHex}" }) { person ->
-                            FollowedPersonSearchRow(appManager, appState, person)
+                            FollowedPersonSearchRow(appManager, preferences, person)
                         }
                         if (results.people.size > people.size) {
                             item(key = "section-people-more") {
@@ -302,7 +312,7 @@ fun ChatListScreen(
                         items(contacts, key = { "c:${it.chatId}" }) { chat ->
                             SearchChatRow(
                                 appManager = appManager,
-                                appState = appState,
+                                preferences = preferences,
                                 chat = chat,
                             )
                         }
@@ -325,7 +335,7 @@ fun ChatListScreen(
                         items(groups, key = { "g:${it.chatId}" }) { chat ->
                             SearchChatRow(
                                 appManager = appManager,
-                                appState = appState,
+                                preferences = preferences,
                                 chat = chat,
                             )
                         }
@@ -348,7 +358,7 @@ fun ChatListScreen(
                         items(messages, key = { "m:${it.chatId}:${it.messageId}" }) { hit ->
                             MessageSearchHitRow(
                                 appManager = appManager,
-                                appState = appState,
+                                preferences = preferences,
                                 hit = hit,
                             )
                         }
@@ -369,14 +379,12 @@ fun ChatListScreen(
                     }
                 }
             } else {
-                val nearby = nearbyService.takeIf { appState.preferences.nearbyShowInChatList }
+                val nearby = nearbyService.takeIf { preferences.nearbyShowInChatList }
                 val showNearby = nearby != null
-                val pinnedChats = appState.chatList.filter { it.isPinned }
-                val unpinnedChats = appState.chatList.filter { !it.isPinned }
                 val visibleSectionCount =
                     (if (showNearby) 1 else 0) +
                         (if (pinnedChats.isNotEmpty()) 1 else 0) +
-                        (if (unpinnedChats.isNotEmpty() || appState.chatList.isEmpty()) 1 else 0)
+                        (if (unpinnedChats.isNotEmpty() || chatList.isEmpty()) 1 else 0)
 
                 if (nearby != null) {
                     if (visibleSectionCount > 1) {
@@ -385,9 +393,9 @@ fun ChatListScreen(
                     item(key = "nearby") {
                         NearbyChatListItem(
                             appManager = appManager,
-                            nearbyEnabled = appState.preferences.nearbyEnabled,
-                            nearbyBluetoothEnabled = appState.preferences.nearbyBluetoothEnabled,
-                            knownDirectChatNames = appState.knownDirectChatNames(),
+                            nearbyEnabled = preferences.nearbyEnabled,
+                            nearbyBluetoothEnabled = preferences.nearbyBluetoothEnabled,
+                            knownDirectChatNames = knownDirectChatNames,
                             service = nearby,
                             onClick = onNearbyClick,
                             onLongClick = onNearbyLongClick,
@@ -395,7 +403,7 @@ fun ChatListScreen(
                         )
                     }
                 }
-                if (appState.chatList.isEmpty()) {
+                if (chatList.isEmpty()) {
                     if (visibleSectionCount > 1) {
                         item(key = "section-chats") { SearchSectionHeader("Chats") }
                     }
@@ -422,7 +430,7 @@ fun ChatListScreen(
                         items(pinnedChats, key = { it.chatId }) { chat ->
                             ChatListConversationRow(
                                 appManager = appManager,
-                                appState = appState,
+                                preferences = preferences,
                                 chat = chat,
                                 onDeleteRequest = { pendingDeleteChat = it },
                             )
@@ -435,7 +443,7 @@ fun ChatListScreen(
                         items(unpinnedChats, key = { it.chatId }) { chat ->
                             ChatListConversationRow(
                                 appManager = appManager,
-                                appState = appState,
+                                preferences = preferences,
                                 chat = chat,
                                 onDeleteRequest = { pendingDeleteChat = it },
                             )
@@ -795,7 +803,7 @@ private fun NearbyChatListItem(
 @Composable
 private fun ChatListConversationRow(
     appManager: AppManager,
-    appState: AppState,
+    preferences: PreferencesSnapshot,
     chat: ChatThreadSnapshot,
     onDeleteRequest: (ChatThreadSnapshot) -> Unit,
 ) {
@@ -807,7 +815,7 @@ private fun ChatListConversationRow(
             ?.let { url ->
                 imageLoadRequest(
                     originalSrc = url,
-                    preferences = appState.preferences,
+                    preferences = preferences,
                     width = 84u,
                     height = 84u,
                     square = true,
@@ -927,8 +935,8 @@ private fun nearbyPeerDisplayName(name: String): String {
     return if (trimmed.length <= 14) trimmed else trimmed.take(13) + "…"
 }
 
-private fun AppState.knownDirectChatNames(): Map<String, String> =
-    chatList
+private fun List<ChatThreadSnapshot>.knownDirectChatNames(): Map<String, String> =
+    this
         .asSequence()
         .filter { it.kind == ChatKind.DIRECT }
         .associate { it.chatId.lowercase() to it.displayName.trim().ifEmpty { "Nearby" } }
@@ -1131,7 +1139,7 @@ private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 @Composable
 private fun MessageSearchHitRow(
     appManager: AppManager,
-    appState: AppState,
+    preferences: PreferencesSnapshot,
     hit: MessageSearchHit,
 ) {
     val avatarData by rememberNhashImageData(appManager, hit.chatPictureUrl)
@@ -1141,7 +1149,7 @@ private fun MessageSearchHitRow(
             ?.let { url ->
                 imageLoadRequest(
                     originalSrc = url,
-                    preferences = appState.preferences,
+                    preferences = preferences,
                     width = 84u,
                     height = 84u,
                     square = true,

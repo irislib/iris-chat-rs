@@ -422,33 +422,40 @@ impl FfiApp {
                     return SearchResultSnapshot::empty(query.clone(), scope_chat_id.clone());
                 }
                 let limit = limit.max(1) as usize;
-                let state_snapshot = match self.shared_state.read() {
-                    Ok(slot) => slot.clone(),
-                    Err(poison) => poison.into_inner().clone(),
+                // Search needs thread summaries and exclusion identities, not
+                // the active chat's loaded history or the other screen data.
+                // Keep both allocation work and the shared read lock bounded
+                // by the contact list while the user types.
+                let (chat_list, blocked_owner_pubkeys, current_owner_hex) = {
+                    let state = self
+                        .shared_state
+                        .read()
+                        .unwrap_or_else(|poison| poison.into_inner());
+                    (
+                        state.chat_list.clone(),
+                        state.preferences.blocked_owner_pubkeys.clone(),
+                        state
+                            .account
+                            .as_ref()
+                            .map(|account| account.public_key_hex.to_ascii_lowercase()),
+                    )
                 };
                 let (contacts, groups) = if scope_chat_id.is_some() {
                     (Vec::new(), Vec::new())
                 } else {
-                    filter_threads_for_search(&state_snapshot.chat_list, trimmed)
+                    filter_threads_for_search(&chat_list, trimmed)
                 };
                 let shared_db = self.shared_db_snapshot();
-                let mut excluded_people = state_snapshot
-                    .chat_list
+                let mut excluded_people = chat_list
                     .iter()
                     .filter(|chat| chat.kind == ChatKind::Direct)
                     .map(|chat| chat.chat_id.to_ascii_lowercase())
                     .collect::<std::collections::HashSet<_>>();
                 excluded_people.extend(
-                    state_snapshot
-                        .preferences
-                        .blocked_owner_pubkeys
+                    blocked_owner_pubkeys
                         .iter()
                         .map(|owner| owner.to_ascii_lowercase()),
                 );
-                let current_owner_hex = state_snapshot
-                    .account
-                    .as_ref()
-                    .map(|account| account.public_key_hex.to_ascii_lowercase());
                 if let Some(owner) = &current_owner_hex {
                     excluded_people.insert(owner.clone());
                 }
@@ -483,7 +490,7 @@ impl FfiApp {
                     },
                     None => (Vec::new(), Vec::new()),
                 };
-                let enriched = enrich_message_hits(messages, &state_snapshot.chat_list);
+                let enriched = enrich_message_hits(messages, &chat_list);
                 // The shortcut row only makes sense for global search.
                 // Once the user has scoped to a single chat, an npub
                 // paste should still search that chat's messages, not

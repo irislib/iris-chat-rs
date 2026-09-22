@@ -1,5 +1,4 @@
 import Foundation
-import ImageIO
 import SwiftUI
 #if os(iOS)
 import UIKit
@@ -95,48 +94,6 @@ enum ChatAttachmentPreviewImageCache {
     static func store(_ image: PlatformImage, for key: String) {
         cache.setObject(image, forKey: key as NSString, cost: imagePreviewCost(image))
     }
-}
-
-func makeChatAttachmentPreviewImage(data: Data, filename: String) -> PlatformImage? {
-    guard !isAnimatedImage(data: data, filename: filename) else {
-        return nil
-    }
-
-    let sourceOptions: [CFString: Any] = [
-        kCGImageSourceShouldCache: false
-    ]
-    guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else {
-        return nil
-    }
-
-    let maxPixelSize = 512
-    let thumbnailOptions: [CFString: Any] = [
-        kCGImageSourceCreateThumbnailFromImageAlways: true,
-        kCGImageSourceCreateThumbnailWithTransform: true,
-        kCGImageSourceShouldCacheImmediately: true,
-        kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
-    ]
-    let fullImageOptions: [CFString: Any] = [
-        kCGImageSourceShouldCacheImmediately: true
-    ]
-    guard let cgImage = CGImageSourceCreateThumbnailAtIndex(
-        source,
-        0,
-        thumbnailOptions as CFDictionary
-    ) ?? CGImageSourceCreateImageAtIndex(source, 0, fullImageOptions as CFDictionary) else {
-        return nil
-    }
-
-    #if os(iOS)
-    return PlatformImage(cgImage: cgImage)
-    #elseif os(macOS)
-    return PlatformImage(
-        cgImage: cgImage,
-        size: NSSize(width: cgImage.width, height: cgImage.height)
-    )
-    #else
-    return nil
-    #endif
 }
 
 func imagePreviewCost(_ image: PlatformImage) -> Int {
@@ -257,8 +214,12 @@ struct ChatAlbumImageCell: View {
 
     @State private var localImageData: Data?
     @State private var localPreviewImage: PlatformImage?
-    @State private var isLoadingImage = false
+    // Reappearing rows may start loading before a cancelled decode finishes.
+    // Only the latest load may update the row's state.
+    @State private var imageLoadID: UUID?
     @State private var failedImageLoad = false
+
+    private var isLoadingImage: Bool { imageLoadID != nil }
 
     var body: some View {
         ZStack {
@@ -305,36 +266,40 @@ struct ChatAlbumImageCell: View {
             }
         }
         .task(id: attachment.htreeUrl) {
-            await loadImageIfNeeded()
+            await loadImageIfNeeded(restarting: true)
         }
     }
 
     @MainActor
-    private func loadImageIfNeeded() async {
-        guard localImageData == nil, !isLoadingImage else { return }
-        isLoadingImage = true
+    private func loadImageIfNeeded(restarting: Bool = false) async {
+        guard localImageData == nil, restarting || !isLoadingImage else { return }
+        let loadID = UUID()
+        imageLoadID = loadID
+        defer {
+            if imageLoadID == loadID { imageLoadID = nil }
+        }
         failedImageLoad = false
         if let cached = ChatAttachmentPreviewImageCache.image(for: attachment.htreeUrl) {
             localPreviewImage = cached
         }
-        guard let data = await downloadAttachment(attachment) else {
-            isLoadingImage = false
+        let downloaded = await downloadAttachment(attachment)
+        guard !Task.isCancelled, imageLoadID == loadID else { return }
+        guard let data = downloaded else {
             failedImageLoad = true
             return
         }
         let isAnimated = isAnimatedImage(data: data, filename: attachment.filename)
         if !isAnimated, localPreviewImage == nil {
-            if let preview = makeChatAttachmentPreviewImage(data: data, filename: attachment.filename) {
-                ChatAttachmentPreviewImageCache.store(preview, for: attachment.htreeUrl)
-                localPreviewImage = preview
-            } else {
-                isLoadingImage = false
+            let preview = await loadChatAttachmentPreviewImage(data: data, filename: attachment.filename)
+            guard !Task.isCancelled, imageLoadID == loadID else { return }
+            guard let preview else {
                 failedImageLoad = true
                 return
             }
+            ChatAttachmentPreviewImageCache.store(preview, for: attachment.htreeUrl)
+            localPreviewImage = preview
         }
         localImageData = data
-        isLoadingImage = false
     }
 }
 
@@ -350,9 +315,11 @@ struct ChatAttachmentView: View {
 
     @State private var localImageData: Data?
     @State private var localPreviewImage: PlatformImage?
-    @State private var isLoadingImage = false
+    @State private var imageLoadID: UUID?
     @State private var failedImageLoad = false
     @State private var isOpeningAttachment = false
+
+    private var isLoadingImage: Bool { imageLoadID != nil }
 
     var body: some View {
         if attachment.isImage {
@@ -400,7 +367,7 @@ struct ChatAttachmentView: View {
                 }
             }
             .task(id: attachment.htreeUrl) {
-                await loadImageIfNeeded()
+                await loadImageIfNeeded(restarting: true)
             }
         } else {
             let category = chatAttachmentCategory(for: attachment)
@@ -453,24 +420,30 @@ struct ChatAttachmentView: View {
     }
 
     @MainActor
-    private func loadImageIfNeeded() async {
-        guard localImageData == nil, !isLoadingImage else {
+    private func loadImageIfNeeded(restarting: Bool = false) async {
+        guard localImageData == nil, restarting || !isLoadingImage else {
             return
         }
-        isLoadingImage = true
+        let loadID = UUID()
+        imageLoadID = loadID
+        defer {
+            if imageLoadID == loadID { imageLoadID = nil }
+        }
         failedImageLoad = false
         if let cached = ChatAttachmentPreviewImageCache.image(for: attachment.htreeUrl) {
             localPreviewImage = cached
         }
-        guard let data = await downloadAttachment(attachment) else {
-            isLoadingImage = false
+        let downloaded = await downloadAttachment(attachment)
+        guard !Task.isCancelled, imageLoadID == loadID else { return }
+        guard let data = downloaded else {
             failedImageLoad = true
             return
         }
         let isAnimated = isAnimatedImage(data: data, filename: attachment.filename)
         if !isAnimated, localPreviewImage == nil {
-            guard let preview = makeChatAttachmentPreviewImage(data: data, filename: attachment.filename) else {
-                isLoadingImage = false
+            let preview = await loadChatAttachmentPreviewImage(data: data, filename: attachment.filename)
+            guard !Task.isCancelled, imageLoadID == loadID else { return }
+            guard let preview else {
                 failedImageLoad = true
                 return
             }
@@ -478,7 +451,6 @@ struct ChatAttachmentView: View {
             localPreviewImage = preview
         }
         localImageData = data
-        isLoadingImage = false
     }
 
 }
@@ -540,17 +512,12 @@ struct IrisImageViewer: View {
         self.onClose = onClose
         _currentIndex = State(initialValue: item.initialIndex)
         var initial: [String: Data] = [:]
-        var initialImages: [String: PlatformImage] = [:]
         if item.attachments.indices.contains(item.initialIndex) {
             let attachment = item.attachments[item.initialIndex]
             initial[attachment.htreeUrl] = item.initialData
-            if !isAnimatedImage(data: item.initialData, filename: attachment.filename),
-               let image = PlatformImage(data: item.initialData) {
-                initialImages[attachment.htreeUrl] = image
-            }
         }
         _loadedData = State(initialValue: initial)
-        _loadedImages = State(initialValue: initialImages)
+        _loadedImages = State(initialValue: [:])
     }
 
     private var currentAttachment: MessageAttachmentSnapshot? {
@@ -598,7 +565,8 @@ struct IrisImageViewer: View {
         .task(id: loadTaskID) {
             let index = currentIndex
             await ensureLoaded(index: index)
-            updateSharedFile()
+            guard !Task.isCancelled else { return }
+            await updateSharedFile()
             await preloadAdjacent(index: index)
         }
     }
@@ -643,7 +611,8 @@ struct IrisImageViewer: View {
             ForEach(Array(item.attachments.enumerated()), id: \.offset) { idx, attachment in
                 IrisImageViewerPage(
                     data: loadedData[attachment.htreeUrl],
-                    image: loadedImages[attachment.htreeUrl],
+                    image: loadedImages[attachment.htreeUrl]
+                        ?? ChatAttachmentPreviewImageCache.image(for: attachment.htreeUrl),
                     filename: attachment.filename
                 )
                 .tag(idx)
@@ -655,7 +624,8 @@ struct IrisImageViewer: View {
             if let attachment = currentAttachment {
                 IrisImageViewerPage(
                     data: loadedData[attachment.htreeUrl],
-                    image: loadedImages[attachment.htreeUrl],
+                    image: loadedImages[attachment.htreeUrl]
+                        ?? ChatAttachmentPreviewImageCache.image(for: attachment.htreeUrl),
                     filename: attachment.filename
                 )
             }
@@ -697,18 +667,25 @@ struct IrisImageViewer: View {
     }
 
     @MainActor
-    private func ensureLoaded(index: Int) async {
-        guard item.attachments.indices.contains(index) else { return }
+    private func ensureImageDataLoaded(index: Int) async -> Data? {
+        guard item.attachments.indices.contains(index), !Task.isCancelled else { return nil }
         let attachment = item.attachments[index]
-        if loadedData[attachment.htreeUrl] != nil { return }
-        guard let data = await item.downloadAttachment(attachment) else { return }
+        if let existing = loadedData[attachment.htreeUrl] {
+            return existing
+        }
+        guard let data = await item.downloadAttachment(attachment), !Task.isCancelled else { return nil }
         loadedData[attachment.htreeUrl] = data
+        return data
+    }
+
+    @MainActor
+    private func ensureLoaded(index: Int) async {
+        guard let data = await ensureImageDataLoaded(index: index), !Task.isCancelled else { return }
+        let attachment = item.attachments[index]
         let isAnimated = isAnimatedImage(data: data, filename: attachment.filename)
         if !isAnimated, loadedImages[attachment.htreeUrl] == nil {
-            let bytes = data
-            let image = await Task.detached(priority: .userInitiated) {
-                PlatformImage(data: bytes)
-            }.value
+            let image = await loadIrisDecodedImage { makeIrisDecodedImage(data: data) }
+            guard !Task.isCancelled else { return }
             if let image {
                 loadedImages[attachment.htreeUrl] = image
             }
@@ -718,17 +695,25 @@ struct IrisImageViewer: View {
     @MainActor
     private func preloadAdjacent(index: Int) async {
         for neighbor in [index - 1, index + 1] where item.attachments.indices.contains(neighbor) {
-            await ensureLoaded(index: neighbor)
+            guard !Task.isCancelled else { return }
+            // Fetch compressed bytes without allocating full-resolution pixel
+            // buffers for photos the user has not opened.
+            _ = await ensureImageDataLoaded(index: neighbor)
         }
     }
 
     @MainActor
-    private func updateSharedFile() {
+    private func updateSharedFile() async {
         guard let attachment = currentAttachment, let data = loadedData[attachment.htreeUrl] else {
             sharedFileURL = nil
             return
         }
-        sharedFileURL = writeTempImage(data: data, filename: attachment.filename)
+        let filename = attachment.filename
+        let url = await Task.detached(priority: .utility) {
+            writeTempImage(data: data, filename: filename)
+        }.value
+        guard !Task.isCancelled else { return }
+        sharedFileURL = url
     }
 
     private func topChrome(topInset: CGFloat) -> some View {

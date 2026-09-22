@@ -127,7 +127,7 @@ class AppManagerContractTest {
     }
 
     @Test
-    fun followed_people_search_contract_uses_rust_rows_and_create_chat_action() {
+    fun followed_people_search_contract_uses_rust_rows_and_create_chat_action() = runBlocking {
         val appManager = createManager()
         val rust = rustFactory.instances.single()
         val global = appManager.search("needle")

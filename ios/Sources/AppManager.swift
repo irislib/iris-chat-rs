@@ -879,7 +879,6 @@ final class DesktopUpdateController: ObservableObject {
 
 @MainActor
 final class AppManager: ObservableObject {
-    private static let downloadedAttachmentCacheLimitBytes = 128 * 1024 * 1024
     private static let activeChatSeenIdleLimit: TimeInterval = 5 * 60
     private static let maxClientDebugLogEntries = 50
     private static let dispatchFailureToast = "Action failed. Copy support bundle in Settings."
@@ -940,6 +939,7 @@ final class AppManager: ObservableObject {
     private let desktopNotifications: DesktopNotificationPosting
     private let dataDir: URL
     private let fileManager: FileManager
+    private let attachmentCache: IrisAttachmentCache
     private let sharedContainerOverride: URL?
 #if os(macOS)
     private let currentAppVersion: String
@@ -1003,6 +1003,7 @@ final class AppManager: ObservableObject {
         self.sharedContainerOverride = environment["IRIS_SHARE_CONTAINER_DIR"]
             .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
         let resolvedDataDir = dataDir ?? AppPaths.dataDir(fileManager: fileManager, environment: environment)
+        self.attachmentCache = IrisAttachmentCache(dataDir: resolvedDataDir, fileManager: fileManager)
         let resolvedSecretStore = secretStore ?? AppPaths.secretStore(
             dataDir: resolvedDataDir,
             fileManager: fileManager,
@@ -2308,46 +2309,31 @@ final class AppManager: ObservableObject {
     }
 
     func downloadAttachment(_ attachment: MessageAttachmentSnapshot) async -> Data? {
-        if let cached = cachedDownloadedAttachmentData(for: attachment) {
+        let key = IrisAttachmentCache.attachmentKey(nhash: attachment.nhash, filename: attachment.filename)
+        if let cached = await attachmentCache.data(for: key) {
             return cached
         }
-
-        return await downloadHashtreeBytes(nhash: attachment.nhash).flatMap { data in
-            _ = try? cachedDownloadedAttachmentURL(for: attachment, data: data)
-            return data
-        }
+        guard !Task.isCancelled,
+              let data = await downloadHashtreeBytes(nhash: attachment.nhash) else { return nil }
+        _ = try? await attachmentCache.store(data, for: key)
+        return data
     }
 
     /// Resolves an `htree://` profile picture (or any nhash) using the same
-    /// disk-backed cache that chat attachments use. Reads return cached bytes
-    /// immediately and avoid re-downloading the same blob next launch.
+    /// disk-backed cache that chat attachments use, without making the UI
+    /// executor wait on disk reads, writes, or eviction scans.
     func resolveHashtreePictureBytes(nhash: String) async -> Data? {
         let trimmed = nhash.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let cacheUrl = downloadedAttachmentDirectory()
-            .appendingPathComponent("picture-\(safeAttachmentFilename(trimmed))")
-        if fileManager.fileExists(atPath: cacheUrl.path) {
-            try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: cacheUrl.path)
-            if let data = try? Data(contentsOf: cacheUrl) {
-                return data
-            }
+        let key = IrisAttachmentCache.pictureKey(nhash: trimmed)
+        if let data = await attachmentCache.data(for: key) {
+            return data
         }
-        guard let data = await downloadHashtreeBytes(nhash: trimmed) else {
+        guard !Task.isCancelled, let data = await downloadHashtreeBytes(nhash: trimmed) else {
             return nil
         }
-        do {
-            try fileManager.createDirectory(
-                at: downloadedAttachmentDirectory(),
-                withIntermediateDirectories: true
-            )
-            if fileManager.fileExists(atPath: cacheUrl.path) {
-                try fileManager.removeItem(at: cacheUrl)
-            }
-            try data.write(to: cacheUrl, options: [.atomic])
-            try pruneDownloadedAttachmentCache(protecting: cacheUrl)
-        } catch {
-            // Cache is best-effort; fall through with the in-memory data.
-        }
+        // Cache is best-effort; return the downloaded bytes even if storage fails.
+        _ = try? await attachmentCache.store(data, for: key)
         return data
     }
 
@@ -2370,7 +2356,8 @@ final class AppManager: ObservableObject {
         }
 
         do {
-            let url = try cachedDownloadedAttachmentURL(for: attachment, data: data)
+            let key = IrisAttachmentCache.attachmentKey(nhash: attachment.nhash, filename: attachment.filename)
+            let url = try await attachmentCache.store(data, for: key)
             guard PlatformDocumentOpener.open(url) else {
                 showAttachmentOpenError()
                 return
@@ -3358,91 +3345,6 @@ final class AppManager: ObservableObject {
         }
         try fileManager.copyItem(at: sourceURL, to: destination)
         return (destination.path, displayName)
-    }
-
-    private func downloadedAttachmentDirectory() -> URL {
-        dataDir
-            .appendingPathComponent("attachments", isDirectory: true)
-            .appendingPathComponent("downloaded", isDirectory: true)
-    }
-
-    private func downloadedAttachmentURL(for attachment: MessageAttachmentSnapshot) -> URL {
-        downloadedAttachmentDirectory()
-            .appendingPathComponent(safeAttachmentCacheFilename(for: attachment))
-    }
-
-    private func cachedDownloadedAttachmentData(for attachment: MessageAttachmentSnapshot) -> Data? {
-        let url = downloadedAttachmentURL(for: attachment)
-        guard fileManager.fileExists(atPath: url.path) else {
-            return nil
-        }
-        try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
-        return try? Data(contentsOf: url)
-    }
-
-    @discardableResult
-    private func cachedDownloadedAttachmentURL(for attachment: MessageAttachmentSnapshot, data: Data) throws -> URL {
-        let directory = downloadedAttachmentDirectory()
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-
-        let destination = downloadedAttachmentURL(for: attachment)
-        if fileManager.fileExists(atPath: destination.path) {
-            try fileManager.removeItem(at: destination)
-        }
-        try data.write(to: destination, options: [.atomic])
-        try pruneDownloadedAttachmentCache(protecting: destination)
-        return destination
-    }
-
-    private func safeAttachmentCacheFilename(for attachment: MessageAttachmentSnapshot) -> String {
-        "\(safeAttachmentFilename(attachment.nhash))-\(safeAttachmentFilename(attachment.filename))"
-    }
-
-    private func safeAttachmentFilename(_ value: String) -> String {
-        let separators = CharacterSet(charactersIn: "/\\:")
-        let pieces = value
-            .components(separatedBy: separators)
-            .joined(separator: "-")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return pieces.isEmpty ? "attachment" : pieces
-    }
-
-    private func pruneDownloadedAttachmentCache(protecting protectedURL: URL) throws {
-        let directory = downloadedAttachmentDirectory()
-        let resourceKeys: Set<URLResourceKey> = [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]
-        let files = try fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: Array(resourceKeys),
-            options: [.skipsHiddenFiles]
-        )
-        var cachedFiles: [(url: URL, modified: Date, size: Int)] = []
-        var totalSize = 0
-
-        for file in files {
-            let values = try file.resourceValues(forKeys: resourceKeys)
-            guard values.isRegularFile == true else {
-                continue
-            }
-            let size = values.fileSize ?? 0
-            totalSize += size
-            cachedFiles.append((file, values.contentModificationDate ?? .distantPast, size))
-        }
-
-        guard totalSize > Self.downloadedAttachmentCacheLimitBytes else {
-            return
-        }
-
-        let protectedPath = protectedURL.standardizedFileURL.path
-        for file in cachedFiles.sorted(by: { $0.modified < $1.modified }) {
-            guard file.url.standardizedFileURL.path != protectedPath else {
-                continue
-            }
-            try? fileManager.removeItem(at: file.url)
-            totalSize -= file.size
-            if totalSize <= Self.downloadedAttachmentCacheLimitBytes {
-                break
-            }
-        }
     }
 }
 

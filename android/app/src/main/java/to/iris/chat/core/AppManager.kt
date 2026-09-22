@@ -324,6 +324,13 @@ class AppManager(
     private var persistedRestoreInFlight = false
     private var cachedAccountBundle: StoredAccountBundle? = null
     private val secretPersistenceMutex = Mutex()
+    private val backgroundSearch = BackgroundSearch(
+        ioDispatcher,
+        lookup = { query, scope, limit -> rust.search(query, scope, limit) },
+        onFailure = { query, scope, error ->
+            logFfiFailure("ffi.search.failed", "query_len=${query.length} scoped=${scope != null}", error)
+        },
+    )
     private var lastMobilePushSyncInput: AndroidMobilePushSyncInput? = null
     private var mobilePushRetryInput: AndroidMobilePushSyncInput? = null
     private var mobilePushRetryAttempt = 0
@@ -368,6 +375,10 @@ class AppManager(
     val busy: StateFlow<BusyState> = slice("busy") { it.busy }
     val chatList: StateFlow<List<ChatThreadSnapshot>> =
         slice("chatList") { it.chatList }
+    val userDiscoveryRevision: StateFlow<ULong> =
+        slice("userDiscoveryRevision") { it.userDiscoveryRevision }
+    val userDiscoverySyncing: StateFlow<Boolean> =
+        slice("userDiscoverySyncing") { it.userDiscoverySyncing }
     val currentChat: StateFlow<CurrentChatSnapshot?> =
         slice("currentChat") { it.currentChat }
     val groupDetails: StateFlow<GroupDetailsSnapshot?> =
@@ -488,30 +499,8 @@ class AppManager(
         dispatchToRust(action)
     }
 
-    /**
-     * Grouped search: followed people, contacts, groups, and message
-     * hits, all ranked and assembled by the Rust core. Cheap
-     * enough to call on every keystroke; runs synchronously on the
-     * caller thread, so the chat-list view should hop to the IO
-     * dispatcher when binding it to a `TextField`.
-     */
-    fun search(query: String, scopeChatId: String? = null, limit: UInt = 50u): SearchResultSnapshot =
-        runCatching { rust.search(query, scopeChatId, limit) }.getOrElse {
-            logFfiFailure(
-                category = "ffi.search.failed",
-                detail = "query_len=${query.length} scoped=${scopeChatId != null}",
-                error = it,
-            )
-            SearchResultSnapshot(
-                query = query,
-                scopeChatId = scopeChatId,
-                people = emptyList(),
-                contacts = emptyList(),
-                groups = emptyList(),
-                messages = emptyList(),
-                shortcut = null,
-            )
-        }
+    suspend fun search(query: String, scopeChatId: String? = null, limit: UInt = 50u): SearchResultSnapshot =
+        backgroundSearch.search(query, scopeChatId, limit)
 
     fun appForegrounded() {
         appInForeground = true

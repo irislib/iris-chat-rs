@@ -951,12 +951,20 @@ impl AppCore {
         self.state.rev = self.state.rev.saturating_add(1);
         let t0 = crate::perflog::now_ms();
         let snapshot = self.state.clone();
+        let shared_snapshot = snapshot.clone();
         let t_clone1 = crate::perflog::now_ms();
-        match self.shared_state.write() {
-            Ok(mut slot) => *slot = snapshot.clone(),
-            Err(poison) => *poison.into_inner() = snapshot.clone(),
-        }
+        // The FFI state/search/chat reads share this lock. Deep-cloning the
+        // new history and dropping the old one under its exclusive guard
+        // blocks those reads for work that needs no lock at all.
+        let previous = {
+            let mut slot = self
+                .shared_state
+                .write()
+                .unwrap_or_else(|poison| poison.into_inner());
+            std::mem::replace(&mut *slot, shared_snapshot)
+        };
         let t_shared = crate::perflog::now_ms();
+        drop(previous);
         self.last_emitted_state = Some(snapshot.clone());
         let _ = self.update_tx.send(AppUpdate::FullState(snapshot));
         crate::perflog!(
@@ -1039,3 +1047,7 @@ pub(crate) fn relay_connection_status(status: RelayStatus) -> &'static str {
         RelayStatus::Banned => "blocked",
     }
 }
+
+#[cfg(test)]
+#[path = "tests/projection.rs"]
+mod tests;

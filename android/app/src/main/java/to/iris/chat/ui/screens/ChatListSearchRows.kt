@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
 import to.iris.chat.core.AppManager
 import to.iris.chat.rust.AppAction
-import to.iris.chat.rust.AppState
+import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.FollowedUserSearchResult
 import to.iris.chat.ui.components.ImageLoadRequest
@@ -37,7 +37,7 @@ internal fun SearchSectionHeader(title: String) {
 @Composable
 internal fun SearchChatRow(
     appManager: AppManager,
-    appState: AppState,
+    preferences: PreferencesSnapshot,
     chat: ChatThreadSnapshot,
 ) {
     val avatarData by rememberNhashImageData(appManager, chat.pictureUrl)
@@ -47,7 +47,7 @@ internal fun SearchChatRow(
         isPinned = chat.isPinned,
         preview = chat.chatListPreview(),
         timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), System.currentTimeMillis()),
-        imageRequest = proxiedAvatarUrl(chat.pictureUrl, appState),
+        imageRequest = proxiedAvatarUrl(chat.pictureUrl, preferences),
         imageData = avatarData,
         unreadCount = chat.unreadCount.toLong(),
         lastMessageMine = chat.lastMessageIsOutgoing == true,
@@ -59,7 +59,7 @@ internal fun SearchChatRow(
 @Composable
 internal fun FollowedPersonSearchRow(
     appManager: AppManager,
-    appState: AppState,
+    preferences: PreferencesSnapshot,
     person: FollowedUserSearchResult,
 ) {
     val avatarData by rememberNhashImageData(appManager, person.pictureUrl)
@@ -71,7 +71,7 @@ internal fun FollowedPersonSearchRow(
         title = person.displayLabel,
         preview = preview,
         timeLabel = null,
-        imageRequest = proxiedAvatarUrl(person.pictureUrl, appState),
+        imageRequest = proxiedAvatarUrl(person.pictureUrl, preferences),
         imageData = avatarData,
         unreadCount = 0,
         lastMessageMine = false,
@@ -81,13 +81,13 @@ internal fun FollowedPersonSearchRow(
     )
 }
 
-private fun proxiedAvatarUrl(pictureUrl: String?, appState: AppState): ImageLoadRequest? =
+private fun proxiedAvatarUrl(pictureUrl: String?, preferences: PreferencesSnapshot): ImageLoadRequest? =
     pictureUrl
         ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
         ?.let { url ->
             imageLoadRequest(
                 originalSrc = url,
-                preferences = appState.preferences,
+                preferences = preferences,
                 width = 84u,
                 height = 84u,
                 square = true,
