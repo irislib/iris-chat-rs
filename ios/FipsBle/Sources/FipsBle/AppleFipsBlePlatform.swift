@@ -5,7 +5,6 @@ private let fipsServiceUuid = CBUUID(string: "9c90b792-2cc5-42c0-9f87-c9cc40648f
 private let fipsBootstrapUuid = CBUUID(string: "9c90b793-2cc5-42c0-9f87-c9cc40648f4c")
 private let appleSegmentMtu: UInt16 = 512
 private let maxPlatformConnections = 64
-private let maxPendingBootstrapDiscoveries = 64
 
 public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
     public var eventSink: HostBleEventSink = { _ in }
@@ -19,7 +18,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
     private var advertisedService: CBMutableService?
     private var scanRequest: UInt64?
     private var peripherals: [UUID: CBPeripheral] = [:]
-    private var discoveryPending: Set<UUID> = []
+    private var bootstrapDiscovery = AppleBleBootstrapDiscovery()
     private var connectRequests: [UUID: (requestId: UInt64, psm: UInt16)] = [:]
     private var activeOutgoingPeers: Set<UUID> = []
     private var nextConnectionId: UInt64 = 1
@@ -159,7 +158,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
             return
         }
         scanRequest = requestId
-        discoveryPending.removeAll()
+        bootstrapDiscovery.reset()
         central.scanForPeripherals(withServices: [fipsServiceUuid], options: [
             CBCentralManagerScanOptionAllowDuplicatesKey: false,
         ])
@@ -174,7 +173,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
                 central.cancelPeripheralConnection(peripheral)
             }
         }
-        discoveryPending.removeAll()
+        bootstrapDiscovery.reset()
     }
 
     private func connect(requestId: UInt64, peerToken: String, psm: UInt16) {
@@ -266,21 +265,25 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
     }
 
     private func failDiscovery(_ peripheral: CBPeripheral) {
-        discoveryPending.remove(peripheral.identifier)
-        if connectRequests[peripheral.identifier] == nil {
+        bootstrapDiscovery.cancel(peripheral.identifier)
+        if connectRequests[peripheral.identifier] == nil,
+           !activeOutgoingPeers.contains(peripheral.identifier) {
             central.cancelPeripheralConnection(peripheral)
         }
     }
 
-    private func discoverBootstrap(_ peripheral: CBPeripheral) {
+    private func discoverBootstrap(_ peripheral: CBPeripheral, refresh: Bool = false) {
         guard scanRequest != nil else { return }
         let identifier = peripheral.identifier
-        guard !discoveryPending.contains(identifier),
-              discoveryPending.count < maxPendingBootstrapDiscoveries
-        else { return }
         peripherals[identifier] = peripheral
         peripheral.delegate = self
-        discoveryPending.insert(identifier)
+        guard let action = bootstrapDiscovery.begin(identifier, refresh: refresh) else { return }
+        if case let .cached(bootstrap) = action {
+            // Keep advertising observations flowing to FIPS's reconnect/backoff
+            // policy without repeating GATT discovery on every observation.
+            emit(.peerDiscovered(peerToken: identifier.uuidString, bootstrap: bootstrap))
+            return
+        }
         if peripheral.state == .connected {
             peripheral.discoverServices([fipsServiceUuid])
         } else {
@@ -414,7 +417,7 @@ extension AppleFipsBlePlatform: CBCentralManagerDelegate {
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         peripheral.delegate = self
-        if discoveryPending.contains(peripheral.identifier) {
+        if bootstrapDiscovery.isPending(peripheral.identifier) {
             peripheral.discoverServices([fipsServiceUuid])
         }
         if let request = connectRequests[peripheral.identifier] {
@@ -441,7 +444,7 @@ extension AppleFipsBlePlatform: CBCentralManagerDelegate {
         didDisconnectPeripheral peripheral: CBPeripheral,
         error: Error?
     ) {
-        discoveryPending.remove(peripheral.identifier)
+        bootstrapDiscovery.cancel(peripheral.identifier)
         if let request = connectRequests.removeValue(forKey: peripheral.identifier) {
             emit(.failed(
                 requestId: request.requestId,
@@ -452,7 +455,13 @@ extension AppleFipsBlePlatform: CBCentralManagerDelegate {
 }
 
 extension AppleFipsBlePlatform: CBPeripheralDelegate {
+    public func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
+        guard invalidatedServices.contains(where: { $0.uuid == fipsServiceUuid }) else { return }
+        discoverBootstrap(peripheral, refresh: true)
+    }
+
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        guard bootstrapDiscovery.isPending(peripheral.identifier) else { return }
         guard error == nil,
               let service = peripheral.services?.first(where: { $0.uuid == fipsServiceUuid })
         else {
@@ -467,6 +476,8 @@ extension AppleFipsBlePlatform: CBPeripheralDelegate {
         didDiscoverCharacteristicsFor service: CBService,
         error: Error?
     ) {
+        guard service.uuid == fipsServiceUuid,
+              bootstrapDiscovery.isPending(peripheral.identifier) else { return }
         guard error == nil,
               let characteristic = service.characteristics?.first(where: { $0.uuid == fipsBootstrapUuid })
         else {
@@ -481,10 +492,16 @@ extension AppleFipsBlePlatform: CBPeripheralDelegate {
         didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
-        guard discoveryPending.remove(peripheral.identifier) != nil else { return }
-        if error == nil, let value = characteristic.value, characteristic.uuid == fipsBootstrapUuid {
-            emit(.peerDiscovered(peerToken: peripheral.identifier.uuidString, bootstrap: value))
+        guard characteristic.uuid == fipsBootstrapUuid,
+              bootstrapDiscovery.isPending(peripheral.identifier) else { return }
+        guard error == nil, let value = characteristic.value else {
+            failDiscovery(peripheral)
+            return
         }
+        guard bootstrapDiscovery.complete(
+            peripheral.identifier, bootstrap: value
+        ) else { return }
+        emit(.peerDiscovered(peerToken: peripheral.identifier.uuidString, bootstrap: value))
     }
 
     public func peripheral(
@@ -502,7 +519,8 @@ extension AppleFipsBlePlatform: CBPeripheralDelegate {
                 requestId: request.requestId,
                 message: "BLE L2CAP open failed: \(error?.localizedDescription ?? "unknown error")"
             ))
-            discoverBootstrap(peripheral)
+            // A restarted peer can advertise the same UUID with a new PSM.
+            discoverBootstrap(peripheral, refresh: true)
             return
         }
         register(channel: channel, outgoingRequest: request.requestId)
