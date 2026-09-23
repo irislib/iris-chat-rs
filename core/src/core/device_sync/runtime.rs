@@ -271,30 +271,10 @@ impl AppCore {
                 advertise_on_nostr: Some(true),
                 auto_connect: Some(true),
                 accept_connections: Some(true),
-                stun_servers: config
-                    .relay_urls
-                    .iter()
-                    .all(|url| {
-                        url::Url::parse(url)
-                            .ok()
-                            .and_then(|u| u.host_str().map(str::to_owned))
-                            .is_some_and(|host| {
-                                host == "localhost"
-                                    || host.parse::<std::net::IpAddr>().is_ok_and(|ip| {
-                                        ip.is_loopback()
-                                            || match ip {
-                                                std::net::IpAddr::V4(ip) => {
-                                                    ip.is_private() || ip.is_link_local()
-                                                }
-                                                std::net::IpAddr::V6(ip) => {
-                                                    ip.is_unique_local()
-                                                        || ip.is_unicast_link_local()
-                                                }
-                                            }
-                                    })
-                            })
-                    })
-                    .then(Vec::new),
+                // Calls and transport upgrades depend only on FIPS nodes.
+                // Host candidates can upgrade a local route; NAT-separated
+                // peers keep using their existing FIPS path without public STUN.
+                stun_servers: Some(Vec::new()),
                 ..WebRtcConfig::default()
             });
         } else {

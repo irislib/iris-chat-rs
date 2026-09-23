@@ -77,7 +77,9 @@ MediaCodec and Apple uses VideoToolbox, with platform microphone echo/noise
 processing. Native audio uses the same pinned libopus version. The browser probes
 actual codec support before calling; no installed native helper is required.
 Neither browser nor native calls require a separate calling server, TURN server,
-or any application service beyond the existing FIPS nodes. Encoded audio/video
+or any application service beyond the existing FIPS nodes. FIPS transport
+upgrades use host candidates without external STUN; peers behind separate NATs
+can keep their route through existing FIPS nodes. Encoded audio/video
 and call controls all travel inside the authenticated FIPS call service.
 
 The client media layer supplies bounded audio jitter buffering, Opus forward
