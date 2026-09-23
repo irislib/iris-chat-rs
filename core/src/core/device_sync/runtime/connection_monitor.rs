@@ -136,3 +136,109 @@ fn report_links(
         InternalEvent::FipsNearbyPeersChanged { generation, peers },
     )));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
+
+    async fn local_endpoint(rendezvous: SocketAddrV4) -> Arc<FipsEndpoint> {
+        let mut config = Config::new();
+        config.node.control.enabled = false;
+        config.node.discovery.local.rendezvous_addr = rendezvous;
+        config.node.discovery.local.retry_interval_ms = 20;
+        config.node.discovery.lan.enabled = false;
+        config.node.discovery.nostr.enabled = false;
+        config.node.routing.mode = fips_core::config::RoutingMode::ReplyLearned;
+        Arc::new(
+            FipsEndpoint::builder()
+                .config(config)
+                .local_rendezvous()
+                .without_system_tun()
+                .bind()
+                .await
+                .expect("bind local FIPS endpoint"),
+        )
+    }
+
+    async fn next_snapshot(
+        receiver: &flume::Receiver<CoreMsg>,
+    ) -> (u64, Vec<FipsNearbyLinkSnapshot>) {
+        let message = tokio::time::timeout(Duration::from_secs(10), receiver.recv_async())
+            .await
+            .expect("connection monitor update timed out")
+            .expect("connection monitor channel closed");
+        let CoreMsg::Internal(event) = message else {
+            panic!("expected internal connection update");
+        };
+        let InternalEvent::FipsNearbyPeersChanged { generation, peers } = *event else {
+            panic!("expected FIPS connection snapshot");
+        };
+        (generation, peers)
+    }
+
+    #[tokio::test]
+    async fn authenticated_links_report_with_nearby_disabled_and_clear_on_shutdown() {
+        let SocketAddr::V4(rendezvous) = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .expect("reserve local rendezvous address")
+            .local_addr()
+            .expect("reserved rendezvous address")
+        else {
+            panic!("IPv4 loopback bind returned IPv6");
+        };
+        let endpoint = local_endpoint(rendezvous).await;
+        let sibling = local_endpoint(rendezvous).await;
+        let sibling_hex = FipsPeerIdentity::from_npub(sibling.npub())
+            .expect("sibling identity")
+            .pubkey()
+            .to_string();
+        let nearby_receiver = sibling
+            .register_service_receiver(FIPS_NEARBY_PORT)
+            .await
+            .expect("register sibling Nearby receiver");
+        let bootstrap = Arc::new(RwLock::new(vec![b"nearby bootstrap".to_vec()]));
+        let mut outbox = FipsNearbyOutbox::default();
+        outbox.insert("queued".to_string(), b"nearby outbox".to_vec());
+        let (sender, receiver) = flume::unbounded();
+        let monitor = tokio::spawn(run(
+            endpoint.clone(),
+            bootstrap,
+            Arc::new(RwLock::new(outbox)),
+            sender,
+            17,
+            false,
+        ));
+
+        let (generation, connected) = next_snapshot(&receiver).await;
+        assert_eq!(generation, 17);
+        assert!(connected
+            .iter()
+            .any(|peer| peer.device_pubkey_hex == sibling_hex));
+        let mut nearby_datagrams = Vec::new();
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                nearby_receiver.recv_batch_into(&mut nearby_datagrams, 8),
+            )
+            .await
+            .is_err(),
+            "Nearby disabled must not send bootstrap or queued events"
+        );
+
+        endpoint
+            .shutdown()
+            .await
+            .expect("shutdown observed endpoint");
+        let (generation, disconnected) = next_snapshot(&receiver).await;
+        assert_eq!(generation, 17);
+        assert!(
+            disconnected.is_empty(),
+            "shutdown must clear connected devices"
+        );
+        tokio::time::timeout(Duration::from_secs(10), monitor)
+            .await
+            .expect("connection monitor did not stop")
+            .expect("connection monitor panicked");
+        sibling.shutdown().await.expect("shutdown sibling endpoint");
+    }
+}
