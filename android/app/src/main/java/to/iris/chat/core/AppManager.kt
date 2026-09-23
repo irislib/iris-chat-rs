@@ -765,7 +765,7 @@ class AppManager(
         if (currentStack.isEmpty()) {
             return
         }
-        if (currentStack.lastOrNull() == Screen.RestoreAccount) signer.cancel()
+        if (currentStack.lastOrNull() in listOf(Screen.RestoreAccount, Screen.RemoteSigner)) signer.cancel()
         val nextStack = currentStack.dropLast(1)
         navigateOptimistically(
             stack = nextStack,
@@ -815,7 +815,7 @@ class AppManager(
             return when (screen) {
                 is Screen.Welcome -> emptyList()
                 is Screen.CreateAccount,
-                is Screen.RestoreAccount,
+                is Screen.RestoreAccount, is Screen.RemoteSigner,
                 is Screen.AddDevice,
                 -> listOf(screen)
                 else -> null
@@ -875,7 +875,7 @@ class AppManager(
                 }
             }
             is Screen.CreateAccount,
-            is Screen.RestoreAccount,
+            is Screen.RestoreAccount, is Screen.RemoteSigner,
             is Screen.AddDevice,
             is Screen.DeviceRevoked,
             is Screen.Welcome,

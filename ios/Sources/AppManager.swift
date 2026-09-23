@@ -1406,7 +1406,7 @@ final class AppManager: ObservableObject {
             switch screen {
             case .welcome:
                 return []
-            case .createAccount, .restoreAccount, .addDevice:
+            case .createAccount, .restoreAccount, .remoteSigner, .addDevice:
                 return [screen]
             default:
                 return nil
@@ -1449,7 +1449,7 @@ final class AppManager: ObservableObject {
             }
             return stack
         case .createAccount,
-             .restoreAccount,
+             .restoreAccount, .remoteSigner,
              .addDevice,
              .deviceRevoked,
              .welcome:

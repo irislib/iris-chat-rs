@@ -100,6 +100,7 @@ import to.iris.chat.ui.screens.NewGroupScreen
 import to.iris.chat.ui.screens.NearbyIrisSheet
 import to.iris.chat.ui.screens.MyProfileSheet
 import to.iris.chat.ui.screens.RestoreAccountScreen
+import to.iris.chat.ui.screens.RemoteSignerScreen
 import to.iris.chat.ui.screens.SplashScreen
 import to.iris.chat.ui.screens.SplashViewModel
 import to.iris.chat.ui.screens.AddDeviceScreen
@@ -224,6 +225,10 @@ fun NdrApp(
                                 val appState by appManager.state.collectAsStateWithLifecycle()
                                 RestoreAccountScreen(appManager = appManager, appState = appState)
                             }
+                            Screen.RemoteSigner -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                RemoteSignerScreen(appManager = appManager, appState = appState)
+                            }
                             Screen.AddDevice -> {
                                 val appState by appManager.state.collectAsStateWithLifecycle()
                                 AddDeviceScreen(appManager = appManager, appState = appState)
@@ -250,6 +255,10 @@ fun NdrApp(
                                 RestoreAccountScreen(appManager = appManager, appState = appState)
                             }
 
+                            Screen.RemoteSigner -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                RemoteSignerScreen(appManager = appManager, appState = appState)
+                            }
                             Screen.AddDevice -> {
                                 val appState by appManager.state.collectAsStateWithLifecycle()
                                 AddDeviceScreen(appManager = appManager, appState = appState)
@@ -510,6 +519,7 @@ private fun screenRouteKey(screen: Screen): String =
         Screen.Welcome -> "welcome"
         Screen.CreateAccount -> "createAccount"
         Screen.RestoreAccount -> "restoreAccount"
+        Screen.RemoteSigner -> "remoteSigner"
         Screen.AddDevice -> "addDevice"
         Screen.ChatList -> "chatList"
         Screen.NewChat -> "newChat"

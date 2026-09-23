@@ -17,6 +17,7 @@ mod join_invite;
 mod nearby;
 mod new_chat;
 mod new_group;
+mod remote_signer;
 mod restore_account;
 mod settings;
 mod welcome;
@@ -26,6 +27,7 @@ pub fn render(screen: &Screen, state: &AppState, manager: &Rc<AppManager>) -> gt
         Screen::Welcome => welcome::render(manager),
         Screen::CreateAccount => create_account::render(state, manager),
         Screen::RestoreAccount => restore_account::render(state, manager),
+        Screen::RemoteSigner => remote_signer::render(state, manager),
         Screen::AddDevice => add_device::render(state, manager),
         Screen::ChatList => chat_list::render(state, manager),
         Screen::NewChat => new_chat::render(state, manager),
@@ -46,6 +48,7 @@ pub fn title(screen: &Screen) -> &'static str {
         Screen::Welcome => "Welcome",
         Screen::CreateAccount => "Create profile",
         Screen::RestoreAccount => "Restore profile",
+        Screen::RemoteSigner => "Signer app/device",
         Screen::AddDevice => "Link device",
         Screen::ChatList => "Chats",
         Screen::NewChat => "New chat",

@@ -4,7 +4,7 @@ use adw::prelude::*;
 use iris_chat_core::{AppAction, AppState};
 
 use crate::app_manager::AppManager;
-use crate::screens::{entry, screen_container};
+use crate::screens::{entry, pill_button, screen_container};
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let container = screen_container();
@@ -13,12 +13,6 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     header.add_css_class("title-2");
     header.set_halign(gtk::Align::Start);
     container.append(&header);
-
-    let hint = gtk::Label::new(Some("Paste your secret key."));
-    hint.add_css_class("dim-label");
-    hint.set_halign(gtk::Align::Start);
-    hint.set_wrap(true);
-    container.append(&hint);
 
     let busy = state.busy.restoring_session;
     let nsec = entry("Secret key");
@@ -51,6 +45,12 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
             owner_nsec: current,
         });
     });
+
+    let signer = pill_button("Signer app/device");
+    signer.set_sensitive(!busy);
+    let manager = manager.clone();
+    signer.connect_clicked(move |_| manager.dispatch(AppAction::StartRemoteSignerLogin));
+    container.append(&signer);
 
     container.upcast()
 }

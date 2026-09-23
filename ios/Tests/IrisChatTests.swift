@@ -117,7 +117,7 @@ final class MockRustApp: RustAppClient {
         currentChat: nil,
         groupDetails: nil,
         publicInvite: nil,
-        linkDevice: nil,
+        linkDevice: nil, remoteSignerLogin: nil,
         networkStatus: nil,
         mobilePush: MobilePushSyncSnapshot(
             ownerPubkeyHex: nil,
@@ -402,7 +402,7 @@ func makeAppState(
         currentChat: currentChat,
         groupDetails: nil,
         publicInvite: nil,
-        linkDevice: nil,
+        linkDevice: nil, remoteSignerLogin: nil,
         networkStatus: nil,
         mobilePush: mobilePush,
         preferences: preferences,

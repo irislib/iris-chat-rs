@@ -297,7 +297,7 @@ fun RestoreAccountScreen(
         bottomContent = {
             IrisSecondaryButton(
                 text = "Signer app/device",
-                onClick = appManager.signer::startLogin,
+                onClick = { appManager.dispatch(AppAction.StartRemoteSignerLogin) },
                 enabled = !restoring,
                 icon = {
                     if (signerBusy) {
@@ -488,7 +488,7 @@ private fun OnboardingBackButton(onClick: () -> Unit) {
 }
 
 @Composable
-private fun OnboardingMessageCard(message: String?) {
+internal fun OnboardingMessageCard(message: String?) {
     val resolved = message?.takeIf { it.isNotBlank() } ?: return
     IrisSectionCard {
         Text(
@@ -500,7 +500,7 @@ private fun OnboardingMessageCard(message: String?) {
 }
 
 @Composable
-private fun OnboardingScaffold(
+internal fun OnboardingScaffold(
     title: String,
     subtitle: String? = null,
     onBack: (() -> Unit)?,

@@ -180,6 +180,8 @@ struct NavigationRoute: Equatable {
             return "createAccount"
         case .restoreAccount:
             return "restoreAccount"
+        case .remoteSigner:
+            return "remoteSigner"
         case .addDevice:
             return "addDevice"
         case .chatList:

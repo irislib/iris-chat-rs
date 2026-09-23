@@ -169,7 +169,7 @@ struct RootView: View {
             return false
         }
         switch manager.activeScreen {
-        case .welcome, .createAccount, .restoreAccount, .addDevice, .deviceRevoked:
+        case .welcome, .createAccount, .restoreAccount, .remoteSigner, .addDevice, .deviceRevoked:
             return false
         case .chatList, .newChat, .newGroup, .createInvite, .joinInvite, .settings, .chat, .directChatInfo, .groupDetails, .deviceRoster:
             return true
@@ -217,6 +217,8 @@ struct RootView: View {
             CreateAccountScreen(manager: manager)
         case .restoreAccount:
             RestoreAccountScreen(manager: manager)
+        case .remoteSigner:
+            RemoteSignerScreen(manager: manager)
         case .addDevice:
             AddDeviceScreen(manager: manager)
         case .chatList:
@@ -416,6 +418,7 @@ struct RootView: View {
         case .welcome: return "Welcome"
         case .createAccount: return "Create Profile"
         case .restoreAccount: return "Restore Profile"
+        case .remoteSigner: return "Signer app/device"
         case .addDevice: return "Link Device"
         case .chatList: return "Chats"
         case .newChat: return "New Chat"

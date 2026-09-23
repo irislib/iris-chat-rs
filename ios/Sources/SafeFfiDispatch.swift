@@ -360,7 +360,7 @@ private func fallbackAppState(toast: String?) -> AppState {
         currentChat: nil,
         groupDetails: nil,
         publicInvite: nil,
-        linkDevice: nil,
+        linkDevice: nil, remoteSignerLogin: nil,
         networkStatus: nil,
         mobilePush: MobilePushSyncSnapshot(
             ownerPubkeyHex: nil,

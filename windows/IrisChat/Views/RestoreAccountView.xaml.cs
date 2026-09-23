@@ -22,8 +22,14 @@ public partial class RestoreAccountView : UserControl
 
     private void OnChanged(object? sender, PropertyChangedEventArgs e) => UpdateBusy();
 
-    private void UpdateBusy() =>
+    private void UpdateBusy()
+    {
         NsecInput.IsEnabled = !App.CurrentManager.Busy.restoringSession;
+        SignerButton.IsEnabled = !App.CurrentManager.Busy.restoringSession;
+    }
+
+    private void OnSigner(object sender, RoutedEventArgs e) =>
+        App.CurrentManager.StartRemoteSignerLogin();
 
     private void OnSecretChanged(object sender, RoutedEventArgs e)
     {

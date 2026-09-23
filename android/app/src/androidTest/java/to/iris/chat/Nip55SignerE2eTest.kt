@@ -187,6 +187,8 @@ class Nip55SignerE2eTest {
         waitFor("signer login button") { hasTag("restoreSignerAction") }
         stage("opening_signer")
         compose.onNodeWithTag("restoreSignerAction", useUnmergedTree = true).performClick()
+        waitFor("local signer button") { hasTag("remoteSignerOpenAppAction") }
+        compose.onNodeWithTag("remoteSignerOpenAppAction", useUnmergedTree = true).performClick()
         stage("signer_opened")
     }
 

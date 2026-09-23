@@ -6,17 +6,16 @@
             <TextBlock Text="Restore profile"
                        Style="{StaticResource HeadingText}"
                        Margin="0,0,0,12" />
-            <TextBlock Style="{StaticResource MutedText}"
-                       Text="Paste your secret key."
-                       TextWrapping="Wrap"
-                       Margin="0,0,0,16" />
-
             <TextBlock Text="Secret key" Margin="0,0,0,4" />
             <PasswordBox x:Name="NsecInput"
                          PasswordChanged="OnSecretChanged" />
             <TextBlock Style="{StaticResource MutedText}"
                        Text="Secret key = nostr nsec"
                        Margin="0,6,0,0" />
+            <Button x:Name="SignerButton" Style="{StaticResource SecondaryButton}"
+                    Margin="0,16,0,0" Click="OnSigner">
+                <TextBlock Text="Signer app/device" />
+            </Button>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

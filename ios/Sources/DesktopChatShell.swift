@@ -120,6 +120,8 @@ struct DesktopChatShell: View {
             CreateAccountScreen(manager: manager)
         case .restoreAccount:
             RestoreAccountScreen(manager: manager)
+        case .remoteSigner:
+            RemoteSignerScreen(manager: manager)
         case .addDevice:
             AddDeviceScreen(manager: manager)
         case .deviceRevoked:

@@ -482,9 +482,10 @@ impl AppManager {
         if state.account.is_none() {
             return match screen {
                 Screen::Welcome => Some(Vec::new()),
-                Screen::CreateAccount | Screen::RestoreAccount | Screen::AddDevice => {
-                    Some(vec![screen.clone()])
-                }
+                Screen::CreateAccount
+                | Screen::RestoreAccount
+                | Screen::RemoteSigner
+                | Screen::AddDevice => Some(vec![screen.clone()]),
                 _ => None,
             };
         }
@@ -546,6 +547,7 @@ impl AppManager {
             }
             Screen::CreateAccount
             | Screen::RestoreAccount
+            | Screen::RemoteSigner
             | Screen::AddDevice
             | Screen::DeviceRevoked
             | Screen::Welcome => None,

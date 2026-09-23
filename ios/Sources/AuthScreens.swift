@@ -205,10 +205,7 @@ struct RestoreAccountScreen: View {
                     .frame(height: 0)
                     .accessibilityIdentifier("restoreAccountScreen")
 
-                CardHeader(
-                    title: "Restore profile",
-                    subtitle: "Paste your secret key."
-                )
+                CardHeader(title: "Restore profile")
 
                 SecretKeyField(text: Binding(
                     get: { restoreSecret.text },
@@ -224,6 +221,16 @@ struct RestoreAccountScreen: View {
                 if requiresTermsAcceptance {
                     OnboardingTermsAgreement(accepted: $termsAccepted)
                 }
+
+                Button {
+                    manager.dispatch(.startRemoteSignerLogin)
+                } label: {
+                    Label("Signer app/device", systemImage: "checkmark.shield.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(IrisSecondaryButtonStyle())
+                .disabled(manager.state.busy.restoringSession || (requiresTermsAcceptance && !termsAccepted))
+                .accessibilityIdentifier("restoreSignerAction")
 
                 Button {
                     manager.dispatch(.pushScreen(screen: .addDevice))

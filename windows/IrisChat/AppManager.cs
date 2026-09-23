@@ -895,7 +895,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
             return screen switch
             {
                 Screen.Welcome => Array.Empty<Screen>(),
-                Screen.CreateAccount or Screen.RestoreAccount or Screen.AddDevice => new[] { screen },
+                Screen.CreateAccount or Screen.RestoreAccount or Screen.RemoteSigner or Screen.AddDevice => new[] { screen },
                 _ => null,
             };
         }

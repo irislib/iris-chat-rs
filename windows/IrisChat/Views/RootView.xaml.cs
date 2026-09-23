@@ -107,6 +107,7 @@ public partial class RootView : UserControl
             Screen.Welcome => new WelcomeView(),
             Screen.CreateAccount => new CreateAccountView(),
             Screen.RestoreAccount => new RestoreAccountView(),
+            Screen.RemoteSigner => new RemoteSignerView(),
             Screen.AddDevice => new AddDeviceView(),
             Screen.DeviceRevoked => new DeviceRevokedView(),
             Screen.ChatList => new ChatListView(),
@@ -126,7 +127,7 @@ public partial class RootView : UserControl
         signedIn && screen switch
         {
             Screen.Welcome or Screen.CreateAccount or Screen.RestoreAccount
-                or Screen.AddDevice
+                or Screen.AddDevice or Screen.RemoteSigner
                 or Screen.DeviceRevoked => false,
             _ => true,
         };
@@ -145,6 +146,7 @@ public partial class RootView : UserControl
         Screen.Welcome => "Welcome",
         Screen.CreateAccount => "Create Profile",
         Screen.RestoreAccount => "Restore Profile",
+        Screen.RemoteSigner => "Signer app/device",
         Screen.AddDevice => "Link Device",
         Screen.ChatList => "Chats",
         Screen.NewChat => "New Chat",
