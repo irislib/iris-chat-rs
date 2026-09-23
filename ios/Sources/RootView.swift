@@ -46,7 +46,13 @@ struct RootView: View {
                     mobileNavigationContent
                 }
 
+                if let call = manager.state.call {
+                    IrisCallScreen(controller: manager.calls, call: call,
+                                   voiceEnabled: manager.state.preferences.voiceCallsEnabled)
+                        .zIndex(10)
+                }
                 ToastOverlay(center: manager.toasts)
+                    .zIndex(20)
             }
 #if os(iOS)
             .sheet(isPresented: $showingSettingsSheet) {
@@ -303,7 +309,10 @@ struct RootView: View {
         // retype the chat name.
         if let target = chatHeaderSearchTarget(for: screen) {
             return AnyView(
-                InChatSearchButton(manager: manager, target: target)
+                HStack(spacing: 16) {
+                    IrisChatCallButtons(manager: manager, chatID: target.chatId)
+                    InChatSearchButton(manager: manager, target: target)
+                }
             )
         }
 

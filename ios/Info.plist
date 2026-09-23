@@ -46,7 +46,9 @@
     <string>_fips._udp</string>
   </array>
   <key>NSCameraUsageDescription</key>
-  <string>Scan codes to link devices and add members.</string>
+  <string>Make video calls and scan codes to link devices.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Talk in voice and video calls.</string>
   <key>NSPhotoLibraryUsageDescription</key>
   <string>Attach photos and videos to your messages.</string>
   <key>NSPhotoLibraryAddUsageDescription</key>
@@ -60,6 +62,7 @@
   </dict>
   <key>UIBackgroundModes</key>
   <array>
+    <string>audio</string>
     <string>remote-notification</string>
     <string>bluetooth-central</string>
     <string>bluetooth-peripheral</string>

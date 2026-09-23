@@ -95,6 +95,7 @@ final class MockRustApp: RustAppClient {
 
     init(state: AppState = AppState(
         rev: 0,
+        call: nil,
         router: Router(defaultScreen: .welcome, screenStack: []),
         account: nil,
         deviceRoster: nil,
@@ -127,6 +128,8 @@ final class MockRustApp: RustAppClient {
             sessions: []
         ),
         preferences: PreferencesSnapshot(
+            voiceCallsEnabled: true,
+            videoCallsEnabled: true,
             sendTypingIndicators: true,
             sendReadReceipts: true,
             desktopNotificationsEnabled: true,
@@ -352,6 +355,7 @@ private func makeBusyState() -> BusyState {
 
 func makeAppState(
     rev: UInt64 = 0,
+    call: CallSnapshot? = nil,
     router: Router = Router(defaultScreen: .welcome, screenStack: []),
     account: AccountSnapshot? = nil,
     chatList: [ChatThreadSnapshot] = [],
@@ -366,6 +370,8 @@ func makeAppState(
     userDiscoveryRevision: UInt64 = 0,
     userDiscoverySyncing: Bool = false,
     preferences: PreferencesSnapshot = PreferencesSnapshot(
+        voiceCallsEnabled: true,
+        videoCallsEnabled: true,
         sendTypingIndicators: true,
         sendReadReceipts: true,
         desktopNotificationsEnabled: true,
@@ -394,6 +400,7 @@ func makeAppState(
 ) -> AppState {
     AppState(
         rev: rev,
+        call: call,
         router: router,
         account: account,
         deviceRoster: nil,
@@ -1768,6 +1775,7 @@ final class IrisChatTests: XCTestCase {
 
         var linkState = makeAppState(
             rev: 1,
+            call: nil,
             router: Router(defaultScreen: .welcome, screenStack: [.addDevice])
         )
         linkState.linkDevice = LinkDeviceSnapshot(

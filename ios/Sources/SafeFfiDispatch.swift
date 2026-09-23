@@ -338,6 +338,7 @@ private func liftOptionalPeerProfileDebugSnapshot(_ buffer: RustBuffer) throws -
 private func fallbackAppState(toast: String?) -> AppState {
     AppState(
         rev: 0,
+        call: nil,
         router: Router(defaultScreen: .welcome, screenStack: []),
         account: nil,
         deviceRoster: nil,
@@ -370,6 +371,8 @@ private func fallbackAppState(toast: String?) -> AppState {
             sessions: []
         ),
         preferences: PreferencesSnapshot(
+            voiceCallsEnabled: true,
+            videoCallsEnabled: true,
             sendTypingIndicators: true,
             sendReadReceipts: true,
             desktopNotificationsEnabled: true,
