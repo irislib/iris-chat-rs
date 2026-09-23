@@ -285,3 +285,21 @@ fn finish_remote_login_through_suspend(core: &mut AppCore, messages: &flume::Rec
     }
     assert!(signed_while_suspended && published_while_suspended);
 }
+
+#[test]
+fn remote_signer_connection_name_uses_percent_encoded_spaces_for_amber() {
+    let keys = Keys::generate();
+    let relay = RelayUrl::parse("wss://relay.example").unwrap();
+    let uri = super::remote_signer_uri::client_connection_uri(&keys, &[relay], "test-secret");
+    assert!(uri.contains("name=Iris%20Chat"));
+    assert!(!uri.contains('+'));
+    let parsed = url::Url::parse(&uri).unwrap();
+    assert_eq!(
+        parsed
+            .query_pairs()
+            .find(|(name, _)| name == "name")
+            .unwrap()
+            .1,
+        "Iris Chat"
+    );
+}

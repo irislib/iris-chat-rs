@@ -79,6 +79,7 @@ async fn authorize(
             break;
         }
     }
+    rpc.progress(crate::RemoteSignerPhase::WaitingForApproval, None);
     rpc.switch_relays().await?;
     let result = rpc.request("get_public_key", Vec::new()).await?;
     let owner = PublicKey::from_hex(result.as_str().unwrap_or_default())?;

@@ -79,7 +79,7 @@ pub(super) fn client_connection_uri(keys: &Keys, relays: &[RelayUrl], secret: &s
     format!(
         "nostrconnect://{}?{}",
         keys.public_key().to_hex(),
-        query.finish()
+        query.finish().replace('+', "%20")
     )
 }
 
