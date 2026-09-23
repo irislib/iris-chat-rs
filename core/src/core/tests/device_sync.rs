@@ -59,29 +59,6 @@ fn reserve_tcp_addr() -> std::net::SocketAddr {
     listener.local_addr().expect("reserved TCP address")
 }
 
-#[test]
-fn device_sync_keeps_fixed_websocket_listener_after_roster_refresh() {
-    let owner = Keys::generate();
-    let local = Keys::generate();
-    let sibling = Keys::generate();
-    let (mut core, _updates, _temp) =
-        logged_in_test_core_with_updates("websocket-roster-refresh", &owner, &local);
-    configure_test_device_sync_profile(&mut core, &owner, &local, &sibling, None);
-    let address = reserve_tcp_addr();
-    for generation in 0..3 {
-        core.app_keys.get_mut(&owner.public_key().to_hex()).unwrap().created_at_secs += 1;
-        core.reconcile_device_sync_with_websocket_for_test(fips_core::config::WebSocketConfig {
-            bind_addr: Some(address.to_string()),
-            ..Default::default()
-        });
-        assert!(core.device_sync.is_some(), "endpoint lost on refresh {generation}");
-        std::thread::sleep(Duration::from_millis(200));
-        std::net::TcpStream::connect_timeout(&address, Duration::from_secs(1))
-            .expect("FIPS WebSocket listener must survive roster refresh");
-    }
-    core.stop_device_sync_now();
-}
-
 async fn device_sync_peer_transport(
     endpoint: &fips_core::FipsEndpoint,
     peer: &fips_core::PeerIdentity,

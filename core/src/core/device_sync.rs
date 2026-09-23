@@ -37,6 +37,7 @@ struct DeviceSyncConfig {
 }
 pub(super) struct DeviceSyncRuntime {
     key: String,
+    peer_refresh_key: String,
     pub(super) endpoint: Arc<FipsEndpoint>,
     pub(super) calls_tx: Option<Sender<super::calls::MediaSend>>,
     tcp: Option<DeviceSyncTcpSender>,
@@ -686,6 +687,7 @@ impl AppCore {
         self.device_sync = Some(DeviceSyncRuntime {
             calls_tx: None,
             key: "test".to_string(),
+            peer_refresh_key: "test".to_string(),
             endpoint,
             tcp: Some(tcp),
             siblings,

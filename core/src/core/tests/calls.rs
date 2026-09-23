@@ -322,3 +322,53 @@ fn calls_e2e_without_internet_over_local_fips_udp() {
     a.stop_device_sync_now();
     b.stop_device_sync_now();
 }
+
+#[test]
+fn device_sync_contact_refresh_preserves_live_fips_sessions() {
+    let owner = Keys::generate();
+    let local = Keys::generate();
+    let sibling = Keys::generate();
+    let (mut core, _updates, _temp) =
+        logged_in_test_core_with_updates("websocket-contact-refresh", &owner, &local);
+    configure_test_device_sync_profile(&mut core, &owner, &local, &sibling, None);
+    let address = reserve_tcp_addr();
+    let websocket = fips_core::config::WebSocketConfig {
+        bind_addr: Some(address.to_string()),
+        ..Default::default()
+    };
+    core.reconcile_device_sync_with_websocket_for_test(websocket.clone());
+    let before = core.device_sync_endpoint_for_test().unwrap();
+    let contact = Keys::generate().public_key().to_hex();
+    let mut roster = core.app_keys.get(&owner.public_key().to_hex()).unwrap().clone();
+    roster.owner_pubkey_hex = contact.clone();
+    roster.devices[0].identity_pubkey_hex = Keys::generate().public_key().to_hex();
+    roster.devices.truncate(1);
+    core.app_keys.insert(contact, roster);
+    core.reconcile_device_sync_with_websocket_for_test(websocket);
+    let after = core.device_sync_endpoint_for_test().unwrap();
+    assert!(Arc::ptr_eq(&before, &after), "learning a contact must not replace active FIPS sessions");
+    core.stop_device_sync_now();
+}
+
+#[test]
+fn device_sync_keeps_fixed_websocket_listener_after_roster_refresh() {
+    let owner = Keys::generate();
+    let local = Keys::generate();
+    let sibling = Keys::generate();
+    let (mut core, _updates, _temp) =
+        logged_in_test_core_with_updates("websocket-roster-refresh", &owner, &local);
+    configure_test_device_sync_profile(&mut core, &owner, &local, &sibling, None);
+    let address = reserve_tcp_addr();
+    for generation in 0..3 {
+        core.app_keys.get_mut(&owner.public_key().to_hex()).unwrap().created_at_secs += 1;
+        core.reconcile_device_sync_with_websocket_for_test(fips_core::config::WebSocketConfig {
+            bind_addr: Some(address.to_string()),
+            ..Default::default()
+        });
+        assert!(core.device_sync.is_some(), "endpoint lost on refresh {generation}");
+        std::thread::sleep(Duration::from_millis(200));
+        std::net::TcpStream::connect_timeout(&address, Duration::from_secs(1))
+            .expect("FIPS WebSocket listener must survive roster refresh");
+    }
+    core.stop_device_sync_now();
+}

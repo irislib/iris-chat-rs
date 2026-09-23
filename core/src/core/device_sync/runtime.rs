@@ -162,12 +162,32 @@ impl AppCore {
             options.additional_peers,
             options.udp_bind_addr
         );
-        let refreshed_bootstrap = self
-            .host_ble_attached
-            .then(|| self.local_fips_nearby_bootstrap_payloads());
-        if self.host_ble_attached {
+        // Learning another contact changes routing, not our transport or Noise
+        // identity. Keep established sessions (including an in-progress call).
+        let peer_refresh_key = format!(
+            "{}:{}:{}:{:?}:{:?}:{}:{}:{}:{:?}:{:?}:{}",
+            config.owner_hex,
+            config.local_npub,
+            config.roster_at,
+            config.siblings,
+            config.relay_urls,
+            options.same_host_hashtree,
+            nearby_enabled,
+            host_ble_requested,
+            options.udp_bind_addr,
+            options.rendezvous_addr,
+            discovery_scope,
+        );
+        let refresh_peers = self.host_ble_attached
+            || self.device_sync.as_ref().is_some_and(|runtime| {
+                runtime.key != runtime_key && runtime.peer_refresh_key == peer_refresh_key
+            });
+        let refreshed_bootstrap =
+            refresh_peers.then(|| self.local_fips_nearby_bootstrap_payloads());
+        if refresh_peers {
             if let Some(runtime) = self.device_sync.as_mut() {
                 runtime.key = runtime_key;
+                runtime.peer_refresh_key = peer_refresh_key;
                 runtime.siblings = config.siblings.clone();
                 if let Some(pubsub) = &runtime.pubsub {
                     if let Err(error) = pubsub.set_routed_peers(super::settings::routed_peer_ids(
@@ -201,6 +221,8 @@ impl AppCore {
                 self.runtime.spawn(async move {
                     let _ = endpoint.update_peers(peer_config).await;
                 });
+                self.reconcile_mesh_protocol_subscriptions();
+                self.replay_mesh_outbox();
                 return;
             }
         }
@@ -572,6 +594,7 @@ impl AppCore {
         let sibling_count = config.siblings.len();
         self.device_sync = Some(DeviceSyncRuntime {
             key: runtime_key,
+            peer_refresh_key,
             endpoint,
             calls_tx,
             tcp,
