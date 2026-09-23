@@ -902,6 +902,7 @@ final class AppManager: ObservableObject {
     @Published private(set) var pendingShare: PendingShare?
     @Published private(set) var lastForegroundedAt = Date()
     @Published private(set) var appSceneIsActive = true
+    private var appIsBackgrounded = false
     @Published private(set) var lastUserActivityAt = Date()
     /// Set when the user taps a hit in the search bar's Messages
     /// section — ChatScreen reads it on appear, scrolls the timeline
@@ -928,6 +929,29 @@ final class AppManager: ObservableObject {
     // ObservableObject so views that only care about toasts or the desktop
     // updater don't re-render on every relay event that publishes `state`.
     let toasts = ToastCenter()
+    private let callMediaQueue = DispatchQueue(label: "iris.call.send", qos: .userInteractive)
+    private let callMediaSlots = DispatchSemaphore(value: 4)
+    lazy var calls: IrisCallController = {
+        let slots = callMediaSlots
+        return IrisCallController(
+            dispatch: { [weak self] in self?.dispatch($0) },
+            send: { [weak self] id, kind, data in
+                // Drop stale capture frames when transport is busy, rather than
+                // accumulating seconds of latency in the main or Rust queues.
+                guard slots.wait(timeout: .now()) == .success else { return }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.state.call?.callId == id,
+                          self.state.call?.phase == "connected" else { slots.signal(); return }
+                    let runner = RustDispatchRunner(rust: self.rust)
+                    self.callMediaQueue.async {
+                        defer { slots.signal() }
+                        try? runner.dispatch(action: .sendCallMedia(callId: id, kind: kind, data: data))
+                    }
+                }
+            },
+            showError: { [weak self] in self?.showToast($0) }
+        )
+    }()
 #if os(iOS)
     let appStoreUpdates = AppStoreUpdateController()
 #elseif os(macOS)
@@ -2174,6 +2198,7 @@ final class AppManager: ObservableObject {
     func appForegrounded() {
         lastForegroundedAt = Date()
         appSceneIsActive = true
+        appIsBackgrounded = false
         recordUserActivity()
         backgroundSuspendPrepared = false
         dispatchToRust(.appForegrounded)
@@ -2204,7 +2229,11 @@ final class AppManager: ObservableObject {
 
     func appBackgrounded() {
         appSceneIsActive = false
+        appIsBackgrounded = true
 #if os(iOS)
+        // CallKit + background audio keep the active local connection alive.
+        // Suspending FIPS here would cut off a call when the phone locks.
+        if let call = state.call, call.phase != "ended" { return }
         guard !backgroundSuspendPrepared else {
             return
         }
@@ -2714,6 +2743,8 @@ final class AppManager: ObservableObject {
             )
         case .fullState(let nextState):
             applyFullState(nextState)
+        case .callMedia(let callId, let kind, let data):
+            calls.receive(callID: callId, kind: kind, data: data)
         }
     }
 
@@ -2734,6 +2765,13 @@ final class AppManager: ObservableObject {
         reconciledState = stateByApplyingScreenshotFixture(reconciledState)
         lastRevApplied = nextState.rev
         state = reconciledState
+        calls.update(reconciledState.call)
+#if os(iOS)
+        if appIsBackgrounded, oldState.call != nil,
+           reconciledState.call == nil || reconciledState.call?.phase == "ended" {
+            appBackgrounded()
+        }
+#endif
         if logoutIfCurrentDeviceRevoked(reconciledState) {
             return
         }

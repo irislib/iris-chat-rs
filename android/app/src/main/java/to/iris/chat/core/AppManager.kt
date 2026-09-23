@@ -21,14 +21,10 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -50,6 +46,7 @@ import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppReconciler
 import to.iris.chat.rust.AccountSnapshot
 import to.iris.chat.rust.AppState
+import to.iris.chat.rust.CallSnapshot
 import to.iris.chat.rust.BusyState
 import to.iris.chat.rust.ChatMessageSnapshot
 import to.iris.chat.rust.ChatThreadSnapshot
@@ -341,6 +338,7 @@ class AppManager(
     private var pendingNavigationOverride: PendingNavigationOverride? = null
     private var fipsNearbyPeersPublisher:
         ((DesktopNearbySnapshot, List<String>, List<String>) -> Unit)? = null
+    @Volatile private var callMediaReceiver: ((String, UByte, ByteArray) -> Unit)? = null
     private val olderChatPageLoads = Collections.synchronizedSet(mutableSetOf<String>())
     private val exhaustedOlderChatPages = Collections.synchronizedSet(mutableSetOf<String>())
     private val aroundChatPageLoads = Collections.synchronizedSet(mutableSetOf<String>())
@@ -363,52 +361,36 @@ class AppManager(
     val foregroundedAtSecs: StateFlow<Long> = mutableForegroundedAtSecs.asStateFlow()
     val lastUserActivityAtSecs: StateFlow<Long> = mutableLastUserActivityAtSecs.asStateFlow()
 
-    // Per-slice flows. Each derives from `mutableState` via
-    // `map { ... }.distinctUntilChanged()` so a Compose subscriber only
-    // recomposes when its specific slice actually changed. This is what
-    // turns a backlog of relay events from a multi-second UI freeze into
-    // imperceptible updates: ChatScreen no longer recomposes when only
-    // chat_list changes, ChatListScreen doesn't recompose when only
-    // current_chat changes, etc.
-    val router: StateFlow<Router> = slice("router") { it.router }
-    val account: StateFlow<AccountSnapshot?> = slice("account") { it.account }
+    // Distinct slices avoid recomposing unrelated screens for each incoming event.
+    val router: StateFlow<Router> = slice { it.router }
+    val account: StateFlow<AccountSnapshot?> = slice { it.account }
     val deviceRoster: StateFlow<DeviceRosterSnapshot?> =
-        slice("deviceRoster") { it.deviceRoster }
-    val busy: StateFlow<BusyState> = slice("busy") { it.busy }
+        slice { it.deviceRoster }
+    val busy: StateFlow<BusyState> = slice { it.busy }
     val chatList: StateFlow<List<ChatThreadSnapshot>> =
-        slice("chatList") { it.chatList }
+        slice { it.chatList }
     val userDiscoveryRevision: StateFlow<ULong> =
-        slice("userDiscoveryRevision") { it.userDiscoveryRevision }
+        slice { it.userDiscoveryRevision }
     val userDiscoverySyncing: StateFlow<Boolean> =
-        slice("userDiscoverySyncing") { it.userDiscoverySyncing }
+        slice { it.userDiscoverySyncing }
     val currentChat: StateFlow<CurrentChatSnapshot?> =
-        slice("currentChat") { it.currentChat }
+        slice { it.currentChat }
     val groupDetails: StateFlow<GroupDetailsSnapshot?> =
-        slice("groupDetails") { it.groupDetails }
+        slice { it.groupDetails }
     val publicInvite: StateFlow<PublicInviteSnapshot?> =
-        slice("publicInvite") { it.publicInvite }
+        slice { it.publicInvite }
     val networkStatus: StateFlow<NetworkStatusSnapshot?> =
-        slice("networkStatus") { it.networkStatus }
+        slice { it.networkStatus }
     val preferences: StateFlow<PreferencesSnapshot> =
-        slice("preferences") { it.preferences }
-    val toast: StateFlow<String?> = slice("toast") { it.toast }
+        slice { it.preferences }
+    val toast: StateFlow<String?> = slice { it.toast }
+    val call: StateFlow<CallSnapshot?> = slice { it.call }
     val selfUpdateState = selfUpdateManager.state
     private val mutablePendingShare = MutableStateFlow<PendingShare?>(null)
     val pendingShare: StateFlow<PendingShare?> = mutablePendingShare.asStateFlow()
     val signer = Nip55Signer(appContext, applicationScope, ::dispatchToRust, ::publishShellToast)
-    @Suppress("unused") // tag is helpful for tracing during perf work
-    private fun <T> slice(
-        @Suppress("UNUSED_PARAMETER") tag: String,
-        select: (AppState) -> T,
-    ): StateFlow<T> =
-        mutableState
-            .map(select)
-            .distinctUntilChanged()
-            .stateIn(
-                scope = applicationScope,
-                started = SharingStarted.Eagerly,
-                initialValue = select(mutableState.value),
-            )
+    private fun <T> slice(select: (AppState) -> T): StateFlow<T> =
+        mutableState.slice(applicationScope, select)
 
     private val mutableBootstrapState =
         MutableStateFlow<AccountBootstrapState>(AccountBootstrapState.Loading)
@@ -501,6 +483,10 @@ class AppManager(
         dispatchToRust(action)
     }
 
+    fun setCallMediaReceiver(receiver: (String, UByte, ByteArray) -> Unit) {
+        callMediaReceiver = receiver
+    }
+
     suspend fun search(query: String, scopeChatId: String? = null, limit: UInt = 50u): SearchResultSnapshot =
         backgroundSearch.search(query, scopeChatId, limit)
 
@@ -517,6 +503,8 @@ class AppManager(
         appInForeground = false
         mutableAppForegrounded.value = false
         selfUpdateManager.stopAutomaticChecks()
+        // A foreground call service keeps the encrypted transport alive during calls.
+        if (mutableState.value.call?.phase in listOf("incoming", "outgoing", "connected")) return
         runCatching {
             rust.prepareForSuspend()
         }.onFailure { error ->
@@ -1222,6 +1210,7 @@ class AppManager(
                 }
             }
             is AppUpdate.NearbyPublishedEvent -> Unit
+            is AppUpdate.CallMedia -> callMediaReceiver?.invoke(update.callId, update.kind, update.data)
             is AppUpdate.NearbyPeersChanged -> {
                 fipsNearbyPeersPublisher?.invoke(
                     update.snapshot,

@@ -72,6 +72,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         IrisDebugLog.d(TAG, "onCreate")
         container = (application as IrisChatApp).container
+        lifecycleScope.launch {
+            container.appManager.call.collect { call ->
+                setShowWhenLocked(call?.phase in listOf("incoming", "connected"))
+                setTurnScreenOn(call?.phase == "incoming")
+            }
+        }
         attachNip55Signer(container.appManager.signer)
         handleLaunchIntent(intent)
 
@@ -142,6 +148,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleLaunchIntent(intent: Intent?) {
+        if (intent?.action == "to.iris.chat.ANSWER_CALL") {
+            intent.getStringExtra("callId")?.let(container.callRuntime::requestAnswer)
+            return
+        }
         if (intent?.action == ACTION_OPEN_CHAT_LIST) {
             container.appManager.dispatch(AppAction.UpdateScreenStack(emptyList()))
             return

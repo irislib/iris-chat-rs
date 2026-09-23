@@ -1302,7 +1302,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
     }
 
     private static AppState FallbackState(string? toast) => new(
-        0,
+        0, null,
         new Router(new Screen.Welcome(), Array.Empty<Screen>()),
         null,
         null,
@@ -1327,12 +1327,14 @@ public sealed partial class AppManager : INotifyPropertyChanged
         null,
         null,
         null,
+        null,
         new MobilePushSyncSnapshot(
             null, Array.Empty<string>(), Array.Empty<string>(),
             Array.Empty<string>(),
             Array.Empty<MobilePushSessionSnapshot>()
         ),
         new PreferencesSnapshot(
+            voiceCallsEnabled: true, videoCallsEnabled: true,
             sendTypingIndicators: true,
             sendReadReceipts: true,
             desktopNotificationsEnabled: true,

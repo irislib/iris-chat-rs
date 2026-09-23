@@ -45,5 +45,9 @@
   </array>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSCameraUsageDescription</key>
+  <string>Make video calls.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Talk in voice and video calls.</string>
 </dict>
 </plist>

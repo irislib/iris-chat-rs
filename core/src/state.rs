@@ -51,6 +51,8 @@ pub struct UploadProgress {
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct PreferencesSnapshot {
+    pub voice_calls_enabled: bool,
+    pub video_calls_enabled: bool,
     pub send_typing_indicators: bool,
     pub send_read_receipts: bool,
     pub desktop_notifications_enabled: bool,
@@ -96,6 +98,8 @@ pub struct PreferencesSnapshot {
 impl Default for PreferencesSnapshot {
     fn default() -> Self {
         Self {
+            voice_calls_enabled: true,
+            video_calls_enabled: true,
             send_typing_indicators: false,
             send_read_receipts: false,
             desktop_notifications_enabled: true,
@@ -589,8 +593,25 @@ pub struct RemoteSignerLoginSnapshot {
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct CallSnapshot {
+    pub call_id: String,
+    pub chat_id: String,
+    pub peer_name: String,
+    pub phase: String,
+    pub video: bool,
+    pub video_capable: bool,
+    pub muted: bool,
+    pub remote_video: bool,
+    pub remote_muted: bool,
+    pub started_at_secs: u64,
+    pub connected_at_secs: Option<u64>,
+    pub end_reason: Option<String>,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct AppState {
     pub rev: u64,
+    pub call: Option<CallSnapshot>,
     pub router: Router,
     pub account: Option<AccountSnapshot>,
     pub device_roster: Option<DeviceRosterSnapshot>,
@@ -615,6 +636,7 @@ impl AppState {
     pub fn empty() -> Self {
         Self {
             rev: 0,
+            call: None,
             router: Router {
                 default_screen: Screen::Welcome,
                 screen_stack: Vec::new(),

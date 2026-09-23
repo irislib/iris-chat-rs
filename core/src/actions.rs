@@ -2,6 +2,36 @@ use crate::state::{OutgoingAttachment, Screen};
 
 #[derive(uniffi::Enum, Clone, Debug)]
 pub enum AppAction {
+    StartCall {
+        chat_id: String,
+        video: bool,
+    },
+    AnswerCall {
+        call_id: String,
+    },
+    AnswerCallWithVoice {
+        call_id: String,
+    },
+    EndCall {
+        call_id: String,
+    },
+    SetCallMuted {
+        muted: bool,
+    },
+    SetCallVideoEnabled {
+        enabled: bool,
+    },
+    SendCallMedia {
+        call_id: String,
+        kind: u8,
+        data: Vec<u8>,
+    },
+    SetVoiceCallsEnabled {
+        enabled: bool,
+    },
+    SetVideoCallsEnabled {
+        enabled: bool,
+    },
     CreateAccount {
         name: String,
     },

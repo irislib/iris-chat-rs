@@ -185,7 +185,8 @@ android {
         versionCode = appVersionCode
         versionName = appVersionName
         testApplicationId = "$androidAppId.test"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = providers.gradleProperty("iris.testRunner").orNull
+            ?: "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
             abiFilters += listOf("arm64-v8a")

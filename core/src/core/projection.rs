@@ -198,7 +198,8 @@ impl AppCore {
 /// Compare two `AppState` snapshots ignoring `rev`. Returns true if the UI
 /// would render identically.
 fn state_content_eq(a: &AppState, b: &AppState) -> bool {
-    a.router == b.router
+    a.call == b.call
+        && a.router == b.router
         && a.account == b.account
         && a.device_roster == b.device_roster
         && a.busy == b.busy

@@ -1,0 +1,191 @@
+use super::*;
+impl AppCore {
+    pub(in crate::core) fn handle_call_packet(&mut self, source: &str, port: u16, data: &[u8]) {
+        if port != PORT {
+            return;
+        }
+        let Some(owner) = self.call_owner(source) else {
+            return;
+        };
+        if !self.call_contact_allowed(&owner) {
+            return;
+        }
+        if data.starts_with(b"IC01") {
+            let (Some(active), Some(snapshot)) = (&mut self.calls.active, &self.state.call) else {
+                return;
+            };
+            if snapshot.phase != "connected" || active.peer.as_deref() != Some(source) {
+                return;
+            }
+            if let Some((kind, frame)) = active.frames.receive(&active.id, data, Clock::now()) {
+                if (kind == 2 && (!active.video || !snapshot.remote_video))
+                    || (kind == 1 && snapshot.remote_muted)
+                {
+                    return;
+                }
+                active.last_received = Clock::now();
+                if self.update_tx.len() < 24 {
+                    let _ = self.update_tx.send(AppUpdate::CallMedia {
+                        call_id: active.id.clone(),
+                        kind,
+                        data: frame,
+                    });
+                }
+            }
+            return;
+        }
+        let Some(signal) = Signal::decode(data) else {
+            return;
+        };
+        self.calls
+            .ended
+            .retain(|(_, at)| at.elapsed() < Duration::from_secs(120));
+        if self.calls.ended.iter().any(|(id, _)| id == &signal.call_id) {
+            if !matches!(signal.kind.as_str(), "end" | "reject") {
+                self.call_signal(
+                    vec![source.into()],
+                    Signal::new("end", &signal.call_id, false, false),
+                );
+            }
+            return;
+        }
+        // A datagram cancellation may overtake the original offer. Keep it
+        // even without a live session so that delayed ringing cannot revive it.
+        if signal.kind == "end"
+            && self
+                .calls
+                .active
+                .as_ref()
+                .is_none_or(|c| c.id != signal.call_id)
+        {
+            self.remember_ended_call(signal.call_id);
+            return;
+        }
+        if signal.kind == "offer" {
+            if let Some(active) = &self.calls.active {
+                if active.id == signal.call_id && active.peer.as_deref() == Some(source) {
+                    if self
+                        .state
+                        .call
+                        .as_ref()
+                        .is_some_and(|c| c.phase == "connected")
+                    {
+                        self.signal_active_call("answer");
+                    }
+                    return;
+                }
+                // Deterministic glare resolution when both contacts call at once.
+                if active.outgoing && active.owner == owner && signal.call_id < active.id {
+                    self.finish_call("Call ended");
+                } else {
+                    self.call_signal(
+                        vec![source.into()],
+                        Signal::new("reject", &signal.call_id, false, false),
+                    );
+                    self.remember_ended_call(signal.call_id);
+                    return;
+                }
+            }
+            let video = signal.video.unwrap_or(false) && self.preferences.video_calls_enabled;
+            if !video && !self.preferences.voice_calls_enabled {
+                self.call_signal(
+                    vec![source.into()],
+                    Signal::new("reject", &signal.call_id, false, false),
+                );
+                self.remember_ended_call(signal.call_id);
+                return;
+            }
+            self.install_call(
+                signal.call_id.clone(),
+                owner,
+                vec![source.into()],
+                Some(source.into()),
+                video,
+                signal.video.unwrap_or(false),
+                false,
+            );
+            if let Some(snapshot) = &mut self.state.call {
+                snapshot.remote_muted = signal.muted.unwrap_or(false);
+            }
+            self.schedule_call_tick(&signal.call_id);
+            self.emit_state();
+            return;
+        }
+        let Some(active) = &self.calls.active else {
+            return;
+        };
+        if active.id != signal.call_id
+            || active.owner != owner
+            || !active.targets.iter().any(|p| p == source)
+            || active.peer.as_ref().is_some_and(|p| p != source)
+        {
+            return;
+        }
+        let connected = self
+            .state
+            .call
+            .as_ref()
+            .is_some_and(|s| s.phase == "connected");
+        match signal.kind.as_str() {
+            "answer" if active.outgoing && !connected => {
+                let rejected = active
+                    .targets
+                    .iter()
+                    .filter(|p| p.as_str() != source)
+                    .cloned()
+                    .collect();
+                self.call_signal(rejected, Signal::new("end", &signal.call_id, false, false));
+                if let (Some(active), Some(snapshot)) =
+                    (&mut self.calls.active, &mut self.state.call)
+                {
+                    active.peer = Some(source.into());
+                    active.video = active.offered_video && signal.video.unwrap_or(false);
+                    active.last_received = Clock::now();
+                    snapshot.phase = "connected".into();
+                    snapshot.video &= active.video;
+                    snapshot.video_capable = active.video;
+                    snapshot.remote_video = active.video;
+                    snapshot.remote_muted = signal.muted.unwrap_or(false);
+                    snapshot.connected_at_secs = Some(unix_now().get());
+                }
+                self.signal_active_call("ping");
+                self.emit_state();
+            }
+            "reject" | "end" => {
+                if active.outgoing && !connected {
+                    if let Some(active) = &mut self.calls.active {
+                        active.targets.retain(|p| p != source);
+                        if !active.targets.is_empty() {
+                            return;
+                        }
+                    }
+                }
+                self.finish_call(if signal.kind == "reject" {
+                    "Call declined"
+                } else {
+                    "Call ended"
+                });
+            }
+            "ping" | "pong" | "media_state" if connected => {
+                if let Some(active) = &mut self.calls.active {
+                    active.last_received = Clock::now();
+                }
+                if let Some(snapshot) = &mut self.state.call {
+                    let video =
+                        snapshot.video_capable && signal.video.unwrap_or(snapshot.remote_video);
+                    let muted = signal.muted.unwrap_or(snapshot.remote_muted);
+                    let changed = snapshot.remote_video != video || snapshot.remote_muted != muted;
+                    snapshot.remote_video = video;
+                    snapshot.remote_muted = muted;
+                    if changed {
+                        self.emit_state();
+                    }
+                }
+                if signal.kind == "ping" {
+                    self.signal_active_call("pong");
+                }
+            }
+            _ => {}
+        }
+    }
+}

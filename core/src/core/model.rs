@@ -492,6 +492,10 @@ pub(super) struct PersistedState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PersistedPreferences {
+    #[serde(default = "default_true")]
+    pub(super) voice_calls_enabled: bool,
+    #[serde(default = "default_true")]
+    pub(super) video_calls_enabled: bool,
     #[serde(default)]
     pub(super) send_typing_indicators: bool,
     #[serde(default)]
@@ -544,6 +548,8 @@ impl Default for PersistedPreferences {
     fn default() -> Self {
         let defaults = PreferencesSnapshot::default();
         Self {
+            voice_calls_enabled: defaults.voice_calls_enabled,
+            video_calls_enabled: defaults.video_calls_enabled,
             send_typing_indicators: defaults.send_typing_indicators,
             send_read_receipts: defaults.send_read_receipts,
             desktop_notifications_enabled: defaults.desktop_notifications_enabled,

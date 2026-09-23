@@ -361,6 +361,20 @@ struct SettingsScreen: View {
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileAcceptUnknownMessagesToggle")
 
+                Toggle("Voice calls", isOn: Binding(
+                    get: { manager.state.preferences.voiceCallsEnabled },
+                    set: { manager.dispatch(.setVoiceCallsEnabled(enabled: $0)) }
+                ))
+                .irisControlTint()
+                .accessibilityIdentifier("myProfileVoiceCallsToggle")
+
+                Toggle("Video calls", isOn: Binding(
+                    get: { manager.state.preferences.videoCallsEnabled },
+                    set: { manager.dispatch(.setVideoCallsEnabled(enabled: $0)) }
+                ))
+                .irisControlTint()
+                .accessibilityIdentifier("myProfileVideoCallsToggle")
+
             }
 
         case .notifications:
