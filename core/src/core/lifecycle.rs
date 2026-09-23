@@ -120,6 +120,7 @@ impl AppCore {
             relay_connected_count: 0,
             all_relays_offline_since_secs: None,
             device_sync: None,
+            calls: calls::CallRuntime::default(),
             pending_host_ble: None,
             host_ble_attached: false,
             fips_nearby_links: Vec::new(),
@@ -175,6 +176,8 @@ impl AppCore {
                 _ => "Action.other",
             },
             CoreMsg::Internal(event) => match event.as_ref() {
+                InternalEvent::CallPacket { .. } => "CallPacket",
+                InternalEvent::CallTick { .. } => "CallTick",
                 InternalEvent::RelayEvent(_) => "RelayEvent",
                 InternalEvent::MeshEvent(_) => "MeshEvent",
                 InternalEvent::FipsNearbyPacket { .. } => "FipsNearbyPacket",
@@ -338,6 +341,7 @@ impl AppCore {
     }
 
     pub(super) fn shutdown(&mut self) {
+        self.finish_call("Call ended");
         self.push_debug_log("app.shutdown", "stopping core");
         self.pause_pending_linked_device();
         self.stop_device_sync();
@@ -361,6 +365,9 @@ impl AppCore {
     }
 
     pub(super) fn prepare_for_suspend(&mut self) {
+        if self.calls.active.is_some() {
+            return;
+        }
         // Set the gate first so any relay/internal events that arrive in
         // the FFI queue after this point (whether already-queued or sent
         // by an in-flight tokio task before disconnect lands) are dropped
@@ -412,6 +419,19 @@ impl AppCore {
     pub(super) fn handle_action(&mut self, action: AppAction) {
         self.state.toast = None;
         match action {
+            AppAction::StartCall { chat_id, video } => self.start_call(&chat_id, video),
+            AppAction::AnswerCall { call_id } => self.answer_call(&call_id, false),
+            AppAction::AnswerCallWithVoice { call_id } => self.answer_call(&call_id, true),
+            AppAction::EndCall { call_id } => self.end_call(&call_id),
+            AppAction::SetCallMuted { muted } => self.set_call_muted(muted),
+            AppAction::SetCallVideoEnabled { enabled } => self.set_call_video(enabled),
+            AppAction::SendCallMedia {
+                call_id,
+                kind,
+                data,
+            } => self.send_call_media(&call_id, kind, data),
+            AppAction::SetVoiceCallsEnabled { enabled } => self.set_calls_enabled(false, enabled),
+            AppAction::SetVideoCallsEnabled { enabled } => self.set_calls_enabled(true, enabled),
             AppAction::CreateAccount { name } => self.create_account(&name),
             AppAction::UpdateProfileMetadata {
                 name,
@@ -619,6 +639,12 @@ impl AppCore {
             return;
         }
         match event {
+            InternalEvent::CallPacket {
+                source_pubkey_hex,
+                source_port,
+                data,
+            } => self.handle_call_packet(&source_pubkey_hex, source_port, &data),
+            InternalEvent::CallTick { call_id } => self.call_tick(&call_id),
             InternalEvent::RelayEvent(event) => {
                 self.handle_relay_event_with_channel(event, "message servers");
             }

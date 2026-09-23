@@ -30,6 +30,11 @@ name = "iris-chat-stack-fixture"
 path = "src/bin/iris_chat_stack_fixture.rs"
 required-features = ["stack-fixture"]
 
+[[bin]]
+name = "iris-call-fixture"
+path = "src/bin/iris_call_fixture.rs"
+required-features = ["stack-fixture"]
+
 [features]
 local-relay-bin = []
 stack-fixture = []

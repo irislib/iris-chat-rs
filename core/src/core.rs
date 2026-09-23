@@ -68,12 +68,14 @@ use rand::rngs::OsRng;
 
 mod account;
 mod account_app_keys;
+mod account_logout;
 mod account_pending_link;
 mod attachment_upload;
 mod registration_recovery;
 #[cfg(feature = "stack-fixture")]
 pub use attachment_upload::download_hashtree_attachment;
 mod attachments;
+mod calls;
 mod chat_deletions;
 mod chat_reactions;
 mod chat_read_state;
@@ -556,6 +558,7 @@ pub struct AppCore {
     relay_connected_count: u64,
     all_relays_offline_since_secs: Option<u64>,
     device_sync: Option<DeviceSyncRuntime>,
+    calls: calls::CallRuntime,
     pending_host_ble: Option<HostBleAttachment>,
     host_ble_attached: bool,
     fips_nearby_links: Vec<crate::updates::FipsNearbyLinkSnapshot>,

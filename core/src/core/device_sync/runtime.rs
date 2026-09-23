@@ -55,6 +55,24 @@ impl AppCore {
     }
 
     #[cfg(test)]
+    pub(crate) fn reconcile_calls_udp_for_test(
+        &mut self,
+        local: std::net::SocketAddr,
+        peer: std::net::SocketAddr,
+        identity: &str,
+    ) {
+        self.reconcile_shared_fips(SharedFipsOptions {
+            udp_bind_addr: Some(local.to_string()),
+            additional_peers: vec![PeerConfig::new(
+                identity.to_string(),
+                "udp",
+                peer.to_string(),
+            )],
+            ..SharedFipsOptions::default()
+        });
+    }
+
+    #[cfg(test)]
     pub(crate) fn reconcile_device_sync_with_websocket_for_test(
         &mut self,
         websocket: WebSocketConfig,
@@ -129,7 +147,7 @@ impl AppCore {
             }
         }
         let nearby_enabled = host_ble_requested || config.nearby_ip_enabled;
-        let discovery_scope = if nearby_enabled {
+        let discovery_scope = if nearby_enabled || !config.peers.is_empty() {
             super::super::fips_nearby::FIPS_NEARBY_SCOPE.to_string()
         } else {
             format!("{DEVICE_SYNC_SCOPE_PREFIX}{}", config.owner_hex)
@@ -234,8 +252,11 @@ impl AppCore {
         let mut fips_config = Config::new();
         fips_config.node.control.enabled = false;
         fips_config.peers = peer_config;
-        let nostr_network_enabled = device_sync_enabled || config.nearby_ip_enabled;
-        if nostr_network_enabled {
+        let webrtc_enabled =
+            device_sync_enabled || config.nearby_ip_enabled || !config.peers.is_empty();
+        if webrtc_enabled {
+            // This also enables signed, in-band transport upgrades over an
+            // existing FIPS route. An empty relay list stays entirely local.
             fips_config.node.discovery.nostr.enabled = true;
             fips_config.node.discovery.nostr.advertise = true;
             fips_config.node.discovery.nostr.advert_relays = config.relay_urls.clone();
@@ -252,6 +273,30 @@ impl AppCore {
                 advertise_on_nostr: Some(true),
                 auto_connect: Some(true),
                 accept_connections: Some(true),
+                stun_servers: config
+                    .relay_urls
+                    .iter()
+                    .all(|url| {
+                        url::Url::parse(url)
+                            .ok()
+                            .and_then(|u| u.host_str().map(str::to_owned))
+                            .is_some_and(|host| {
+                                host == "localhost"
+                                    || host.parse::<std::net::IpAddr>().is_ok_and(|ip| {
+                                        ip.is_loopback()
+                                            || match ip {
+                                                std::net::IpAddr::V4(ip) => {
+                                                    ip.is_private() || ip.is_link_local()
+                                                }
+                                                std::net::IpAddr::V6(ip) => {
+                                                    ip.is_unique_local()
+                                                        || ip.is_unicast_link_local()
+                                                }
+                                            }
+                                    })
+                            })
+                    })
+                    .then(Vec::new),
                 ..WebRtcConfig::default()
             });
         } else {
@@ -381,6 +426,19 @@ impl AppCore {
             (Some(tcp), vec![tcp_task])
         } else {
             (None, Vec::new())
+        };
+        let calls_tx = match self.runtime.block_on(super::super::calls::start_transport(
+            endpoint.clone(),
+            self.core_sender.clone(),
+        )) {
+            Ok((tx, call_tasks)) => {
+                tasks.extend(call_tasks);
+                Some(tx)
+            }
+            Err(error) => {
+                self.push_debug_log("calls.start.error", error);
+                None
+            }
         };
         let update_pubsub = match self
             .runtime
@@ -537,6 +595,7 @@ impl AppCore {
         self.device_sync = Some(DeviceSyncRuntime {
             key: runtime_key,
             endpoint,
+            calls_tx,
             tcp,
             siblings: config.siblings,
             nearby_enabled,
@@ -765,7 +824,11 @@ fn same_host_hashtree_enabled() -> bool {
 fn configured_websocket_seeds() -> Option<WebSocketConfig> {
     let configured = std::env::var(WEBSOCKET_SEED_URLS_ENV).ok();
     let seed_urls = websocket_seed_urls(configured.as_deref());
-    (!seed_urls.is_empty()).then_some(WebSocketConfig {
+    let bind_addr = std::env::var("IRIS_CHAT_FIPS_WEBSOCKET_BIND_ADDR")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    (!seed_urls.is_empty() || bind_addr.is_some()).then_some(WebSocketConfig {
+        bind_addr,
         seed_urls,
         ..WebSocketConfig::default()
     })

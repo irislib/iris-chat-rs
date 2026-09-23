@@ -67,6 +67,7 @@ pub fn build_large_test_app_state(
     };
 
     AppState {
+        call: None,
         rev: 1,
         router: Router {
             default_screen: Screen::ChatList,

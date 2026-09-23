@@ -340,6 +340,10 @@ impl FfiApp {
         self.perf.dispatch.fetch_add(1, Ordering::Relaxed);
         ffi_or("ffiapp.dispatch", (), || {
             crate::perflog!("ffi.dispatch action={:?}", std::mem::discriminant(&action));
+            // Real-time capture must not queue behind a stalled core indefinitely.
+            if matches!(action, AppAction::SendCallMedia { .. }) && self.foreground_tx.len() >= 16 {
+                return;
+            }
             self.recovery.remember_action(&action);
             let _ = self.foreground_tx.send(CoreMsg::Action(action));
         })
@@ -787,6 +791,7 @@ impl FfiApp {
                         .chain(after_full_state)
                     {
                         let kind = match &update {
+                            AppUpdate::CallMedia { .. } => "CallMedia",
                             AppUpdate::FullState(_) => "FullState",
                             AppUpdate::PersistAccountBundle { .. } => "PersistAccountBundle",
                             AppUpdate::PersistPendingDeviceLink { .. } => {
@@ -1826,6 +1831,7 @@ mod ffi_hardening_tests {
                 AppUpdate::PersistAccountBundle { .. } => "persist".to_string(),
                 AppUpdate::PersistPendingDeviceLink { .. } => "pending-link".to_string(),
                 AppUpdate::ClearPendingDeviceLink => "clear-pending-link".to_string(),
+                AppUpdate::CallMedia { .. } => "call-media".to_string(),
                 AppUpdate::FullState(state) => format!("state:{}", state.rev),
                 AppUpdate::NearbyPublishedEvent { .. } => "nearby".to_string(),
                 AppUpdate::NearbyPeersChanged { .. } => "nearby-peers".to_string(),

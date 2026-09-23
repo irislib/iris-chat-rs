@@ -147,3 +147,5 @@ include!("tests/chat_read_receipts.rs");
 include!("tests/chat_deletion_sync.rs");
 include!("tests/mesh_chat.rs");
 include!("tests/image_proxy_preferences.rs");
+
+include!("tests/calls.rs");

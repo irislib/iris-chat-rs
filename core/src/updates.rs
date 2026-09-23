@@ -7,6 +7,11 @@ use nostr_sdk::prelude::{Event, RelayStatus};
 #[derive(uniffi::Enum, Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum AppUpdate {
+    CallMedia {
+        call_id: String,
+        kind: u8,
+        data: Vec<u8>,
+    },
     FullState(AppState),
     PersistAccountBundle {
         rev: u64,
@@ -40,10 +45,9 @@ pub(crate) fn enqueue_update_for_delivery(
 ) {
     match update {
         full @ AppUpdate::FullState(_) => *latest_full_state = Some(full),
-        nearby
-        @ (AppUpdate::NearbyPublishedEvent { .. } | AppUpdate::NearbyPeersChanged { .. }) => {
-            after_full_state.push(nearby)
-        }
+        nearby @ (AppUpdate::CallMedia { .. }
+        | AppUpdate::NearbyPublishedEvent { .. }
+        | AppUpdate::NearbyPeersChanged { .. }) => after_full_state.push(nearby),
         other => before_full_state.push(other),
     }
 }
@@ -92,6 +96,14 @@ pub(crate) struct CorePerfCountersSnapshot {
 
 #[derive(Debug)]
 pub(crate) enum InternalEvent {
+    CallPacket {
+        source_pubkey_hex: String,
+        source_port: u16,
+        data: Vec<u8>,
+    },
+    CallTick {
+        call_id: String,
+    },
     RelayEvent(Event),
     MeshEvent(Event),
     FipsNearbyPacket {

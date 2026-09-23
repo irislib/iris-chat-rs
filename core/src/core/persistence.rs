@@ -164,6 +164,8 @@ pub(super) fn apply_persisted_preferences(
     preferences: &mut PreferencesSnapshot,
     persisted: &PersistedPreferences,
 ) {
+    preferences.voice_calls_enabled = persisted.voice_calls_enabled;
+    preferences.video_calls_enabled = persisted.video_calls_enabled;
     preferences.send_typing_indicators = persisted.send_typing_indicators;
     preferences.send_read_receipts = persisted.send_read_receipts;
     preferences.desktop_notifications_enabled = persisted.desktop_notifications_enabled;

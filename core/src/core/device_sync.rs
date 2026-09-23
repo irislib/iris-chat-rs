@@ -38,6 +38,7 @@ struct DeviceSyncConfig {
 pub(super) struct DeviceSyncRuntime {
     key: String,
     pub(super) endpoint: Arc<FipsEndpoint>,
+    pub(super) calls_tx: Option<Sender<super::calls::MediaSend>>,
     tcp: Option<DeviceSyncTcpSender>,
     siblings: Vec<FipsPeerIdentity>,
     pub(super) nearby_enabled: bool,
@@ -683,6 +684,7 @@ impl AppCore {
         siblings: Vec<FipsPeerIdentity>,
     ) {
         self.device_sync = Some(DeviceSyncRuntime {
+            calls_tx: None,
             key: "test".to_string(),
             endpoint,
             tcp: Some(tcp),
