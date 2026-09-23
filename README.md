@@ -84,6 +84,9 @@ nightly or release boundaries. Machine-readable results distinguish
 
 ## Build
 
+Native builds require Rust, CMake, and the platform C/C++ toolchain. The bundled
+Opus codec builds from source; Android builds use the configured NDK.
+
 ```bash
 just build
 just android-assemble
