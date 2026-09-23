@@ -109,7 +109,9 @@ class Nip55Signer(
     fun onAppState(state: AppState) {
         if (!waitingForCore) return
         if (state.busy.restoringSession) observedCoreBusy = true
-        if (!state.busy.restoringSession && (observedCoreBusy || state.account != null)) clear()
+        // FullState updates can coalesce, including the initial busy=true snapshot on a fast
+        // lookup failure. Core failures always include a toast, so those also end this exchange.
+        if (!state.busy.restoringSession && (observedCoreBusy || state.account != null || state.toast != null)) clear()
     }
 
     @Synchronized
