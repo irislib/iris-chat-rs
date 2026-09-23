@@ -2,6 +2,39 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.24
+
+### GitHub
+
+- Add authenticated voice and video calls over the shared FIPS transport on Android, iOS and macOS, using Opus audio, hardware H.264 video, adaptive bitrate and adjustable quality limits.
+- Integrate iOS CallKit, Android Telecom and desktop call alerts. Coordinate answering, declining and cancellation across linked devices, and stop ringing when the caller disappears.
+- Persist missed, answered, declined and canceled call summaries in chat history. Allow voice-only answers to video calls and independently disable voice or video calls.
+- Preserve local FIPS routes without internet access and use optional STUN discovery for direct transport upgrades without a separate calling server.
+- Add external signer login and device authorization across native clients, including Android signer apps and NIP-46 signers.
+- Show live linked-device connection status and improve Apple composer responsiveness and draft stability.
+- Make profile names optional across native platforms and fix iPhone keyboard submission after accepting the terms.
+- Add an iPhone attachment sheet with recent photos, Camera, Photos and Files, preserving drafts and preparing selected media without blocking typing.
+
+### Apple
+
+- Make voice and video calls with compatible Iris contacts, including over an existing local connection without internet access.
+- Adjust video quality and data use during calls, or answer a video call with voice only.
+- See missed and answered calls in your chats. Answering or declining stops ringing on your other devices.
+- Choose whether to enable voice and video calls in Settings.
+- Sign in with a connected signing app and see which linked devices are connected.
+- Create a profile without entering a name.
+- Pick recent photos, use the camera or browse files from the new iPhone attachment sheet.
+- Improved typing responsiveness, draft stability and call audio reliability.
+
+### Zapstore
+
+- Make voice and video calls with compatible Iris contacts, including over an existing local connection without internet access.
+- Adjust video quality and data use during calls, or answer a video call with voice only.
+- Answer through Android's call interface and see missed and answered calls in your chats.
+- Answering or declining stops ringing on your other devices. Choose whether to enable voice and video calls in Settings.
+- Sign in with a signing app and see which linked devices are connected.
+- Create a profile without entering a name.
+
 ## v2026.9.23
 
 ### GitHub
