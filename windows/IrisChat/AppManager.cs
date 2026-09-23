@@ -1334,6 +1334,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
         ),
         new PreferencesSnapshot(
             voiceCallsEnabled: true, videoCallsEnabled: true,
+            callQuality: "auto", callMaxBitrateBps: 2_000_000,
             sendTypingIndicators: true,
             sendReadReceipts: true,
             desktopNotificationsEnabled: true,
