@@ -25,7 +25,7 @@ struct StoredPendingDeviceLink: Codable, Equatable {
     let approvalBootstrapJson: String
 }
 
-struct StagedAttachment: Identifiable, Equatable {
+struct StagedAttachment: Identifiable, Equatable, Sendable {
     let id = UUID()
     let path: String
     let filename: String
@@ -2543,10 +2543,11 @@ final class AppManager: ObservableObject {
     }
 
     func stageOutgoingAttachments(_ sourceURLs: [URL]) throws -> [StagedAttachment] {
-        try sourceURLs.map { url in
-            let staged = try stageOutgoingAttachment(url)
-            return StagedAttachment(path: staged.path, filename: staged.filename)
-        }
+        try IrisAttachmentStaging(dataDir: dataDir, fileManager: fileManager).stage(sourceURLs)
+    }
+
+    func stageOutgoingAttachmentsAsync(_ sourceURLs: [URL]) async throws -> [StagedAttachment] {
+        try await IrisAttachmentStaging(dataDir: dataDir, fileManager: fileManager).stageAsync(sourceURLs)
     }
 
     func supportBundleJson() -> String {
@@ -3405,26 +3406,8 @@ final class AppManager: ObservableObject {
     }
 
     private func stageOutgoingAttachment(_ sourceURL: URL) throws -> (path: String, filename: String) {
-        let accessed = sourceURL.startAccessingSecurityScopedResource()
-        defer {
-            if accessed {
-                sourceURL.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        let directory = dataDir
-            .appendingPathComponent("attachments", isDirectory: true)
-            .appendingPathComponent("outgoing", isDirectory: true)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-
-        let filename = sourceURL.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
-        let displayName = filename.isEmpty ? "attachment" : filename
-        let destination = directory.appendingPathComponent("\(UUID().uuidString)-\(displayName)")
-        if fileManager.fileExists(atPath: destination.path) {
-            try fileManager.removeItem(at: destination)
-        }
-        try fileManager.copyItem(at: sourceURL, to: destination)
-        return (destination.path, displayName)
+        let staged = try IrisAttachmentStaging(dataDir: dataDir, fileManager: fileManager).stage(sourceURL)
+        return (staged.path, staged.filename)
     }
 }
 

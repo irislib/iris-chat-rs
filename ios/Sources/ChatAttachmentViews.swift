@@ -320,6 +320,13 @@ struct ChatAttachmentView: View {
     @State private var isOpeningAttachment = false
 
     private var isLoadingImage: Bool { imageLoadID != nil }
+    private var playsAudioInline: Bool {
+        #if os(iOS)
+        chatAttachmentCategory(for: attachment) == .audio
+        #else
+        false
+        #endif
+    }
 
     var body: some View {
         if attachment.isImage {
@@ -369,6 +376,17 @@ struct ChatAttachmentView: View {
             .task(id: attachment.htreeUrl) {
                 await loadImageIfNeeded(restarting: true)
             }
+        } else if playsAudioInline {
+            #if os(iOS)
+            IrisAudioMessagePlayer(attachment: attachment, isOutgoing: isOutgoing,
+                                   downloadAttachment: downloadAttachment)
+                .contextMenu {
+                    Button("Forward", action: onForward)
+                    Button("Copy link") {
+                        PlatformClipboard.setString(attachment.htreeUrl)
+                    }
+                }
+            #endif
         } else {
             let category = chatAttachmentCategory(for: attachment)
 

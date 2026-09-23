@@ -206,6 +206,7 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
     func update(_ snapshot: CallSnapshot?, preferences: PreferencesSnapshot? = nil) {
+        IrisAudioActivity.setCallActive(snapshot != nil && snapshot?.phase != "ended")
         let previousID = call?.callId
         call = snapshot
         if previousID != snapshot?.callId {

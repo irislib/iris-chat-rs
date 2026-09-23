@@ -21,6 +21,9 @@ struct IrisComposerBar: View {
     @State private var isDropTargeted = false
     @State private var isPreparingPhotos = false
     #if os(iOS)
+    @StateObject private var voiceRecorder = IrisVoiceMessageRecorder.forComposer()
+    @State private var voiceSendTask: Task<Void, Never>?
+    @State private var isStagingVoice = false
     @State private var showingAttachmentSheet = false
     @State private var showingAttachmentCamera = false
     @State private var pendingAttachmentSource: IrisAttachmentSource?
@@ -38,6 +41,9 @@ struct IrisComposerBar: View {
     let onUserEdit: (String) -> Void
     let onDraftChange: () -> Void
     let onAttach: ([URL]) -> Void
+    let voiceRecordingAllowed: Bool
+    let onStageVoice: (URL) async throws -> [StagedAttachment]
+    let onSendVoice: ([StagedAttachment]) -> Bool
     let onSend: (String) -> Void
 
     private var draft: String { composerState.text }
@@ -46,12 +52,19 @@ struct IrisComposerBar: View {
         (
             !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
             !attachments.isEmpty
-        ) && !isSending && !isUploading && !isPreparingPhotos
+        ) && !isSending && !isUploading && !isPreparingPhotos && !voiceActive
     }
 
-    private var canSend: Bool {
-        canSend(text: draft)
+    private var canSend: Bool { canSend(text: draft) && !voiceActive }
+
+    private var voiceActive: Bool {
+        #if os(iOS)
+        voiceRecorder.phase != .idle
+        #else
+        false
+        #endif
     }
+
 
     var body: some View {
         VStack(spacing: 8) {
@@ -101,57 +114,9 @@ struct IrisComposerBar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            HStack(alignment: .bottom, spacing: 8) {
-                attachmentControl
-
-                if IrisLayout.usesDesktopChrome {
-                    Button {
-                        showingEmojiPicker.toggle()
-                    } label: {
-                        Image(systemName: "face.smiling.fill")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(isSending || isUploading ? palette.muted.opacity(0.54) : palette.textPrimary)
-                            .frame(width: 40, height: 40)
-                            .irisGlassSurface(in: Circle())
-                    }
-                    .buttonStyle(.irisPlain)
-                    .disabled(isSending || isUploading)
-                    .popover(isPresented: $showingEmojiPicker, arrowEdge: .bottom) {
-                        IrisEmojiPicker { emoji in
-                            insertEmoji(emoji)
-                            showingEmojiPicker = false
-                        }
-                    }
-                    .accessibilityIdentifier("chatEmojiButton")
-                }
-
-                composerInput
-
-                // Mobile keeps the Signal-style explicit send affordance.
-                // Desktop sends with Return, so showing this button only
-                // after typing causes a distracting composer width shift.
-                if !IrisLayout.usesDesktopChrome && (canSend || isSending) {
-                    Button(action: submitDraft) {
-                        IrisSendButtonLabel(isSending: isSending)
-                            .frame(width: 40, height: 40)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.irisPlain)
-                    .disabled(!canSend)
-                    .accessibilityIdentifier("chatSendButton")
-                    .transition(
-                        .asymmetric(
-                            insertion: .scale(scale: 0.4, anchor: .center)
-                                .combined(with: .opacity)
-                                .combined(with: .move(edge: .trailing)),
-                            removal: .scale(scale: 0.4, anchor: .center)
-                                .combined(with: .opacity)
-                        )
-                    )
-                }
-            }
-            .animation(.spring(response: 0.32, dampingFraction: 0.72), value: canSend)
-            .animation(.spring(response: 0.32, dampingFraction: 0.72), value: isSending)
+            composerRow
+                .animation(.spring(response: 0.32, dampingFraction: 0.72), value: canSend)
+                .animation(.spring(response: 0.32, dampingFraction: 0.72), value: isSending)
         }
         .padding(.horizontal, IrisLayout.usesDesktopChrome ? 14 : 8)
         // 6pt vertical breathing room around the glass elements so
@@ -173,7 +138,8 @@ struct IrisComposerBar: View {
         }
         .frame(maxWidth: .infinity)
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
-            handleDroppedFiles(providers)
+            guard !voiceActive else { return false }
+            return handleDroppedFiles(providers)
         }
         .fileImporter(
             isPresented: $showingAttachmentPicker,
@@ -186,6 +152,22 @@ struct IrisComposerBar: View {
             onAttach(urls)
         }
         #if os(iOS)
+        .onDisappear { voiceSendTask?.cancel(); voiceRecorder.cancel() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+            voiceSendTask?.cancel()
+        }
+        .irisOnChange(of: voiceRecordingAllowed) { allowed in
+            if !allowed {
+                voiceSendTask?.cancel()
+                Task { await voiceRecorder.finishForInterruption() }
+            }
+        }
+        .alert("Voice message", isPresented: Binding(
+            get: { voiceRecorder.errorMessage != nil },
+            set: { if !$0 { voiceRecorder.errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { voiceRecorder.errorMessage = nil }
+        } message: { Text(voiceRecorder.errorMessage ?? "") }
         .sheet(isPresented: $showingAttachmentSheet, onDismiss: presentAttachmentSource) {
             IrisAttachmentPicker(
                 onSource: { source in
@@ -216,6 +198,122 @@ struct IrisComposerBar: View {
         }
         #endif
     }
+
+    @ViewBuilder
+    private var composerRow: some View {
+        #if os(iOS)
+        if voiceRecorder.phase == .ready, let url = voiceRecorder.recordingURL {
+            HStack(spacing: 8) {
+                Button { voiceRecorder.cancel() } label: {
+                    Image(systemName: "trash.fill")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.irisPlain)
+                .foregroundStyle(palette.muted)
+                .accessibilityLabel("Delete voice message")
+                .accessibilityIdentifier("chatVoiceDeleteButton")
+                .disabled(isStagingVoice)
+                IrisAudioPlaybackControl(localURL: url, duration: voiceRecorder.duration)
+                Button(action: sendVoiceMessage) {
+                    IrisSendButtonLabel(isSending: isStagingVoice)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.irisPlain)
+                .disabled(!voiceRecordingAllowed || isSending || isUploading || isStagingVoice)
+                .accessibilityLabel("Send voice message")
+                .accessibilityIdentifier("chatVoiceSendButton")
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("chatVoicePreview")
+        } else {
+            HStack(alignment: .bottom, spacing: 8) {
+                if voiceActive { IrisVoiceRecordingStatus(recorder: voiceRecorder) }
+                else { textControls }
+                if voiceActive || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty && voiceRecordingAllowed) {
+                    IrisVoiceRecordButton(
+                        recorder: voiceRecorder,
+                        enabled: voiceRecordingAllowed && !isSending && !isUploading && !isPreparingPhotos,
+                        onBegin: {
+                            isFocused = false
+                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                        },
+                        onSend: sendVoiceMessage
+                    )
+                } else { sendControl }
+            }
+        }
+        #else
+        HStack(alignment: .bottom, spacing: 8) { textControls; sendControl }
+        #endif
+    }
+
+    @ViewBuilder
+    private var textControls: some View {
+        attachmentControl
+        if IrisLayout.usesDesktopChrome {
+            Button { showingEmojiPicker.toggle() } label: {
+                Image(systemName: "face.smiling.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(isSending || isUploading ? palette.muted.opacity(0.54) : palette.textPrimary)
+                    .frame(width: 40, height: 40)
+                    .irisGlassSurface(in: Circle())
+            }
+            .buttonStyle(.irisPlain)
+            .disabled(isSending || isUploading)
+            .popover(isPresented: $showingEmojiPicker, arrowEdge: .bottom) {
+                IrisEmojiPicker { emoji in insertEmoji(emoji); showingEmojiPicker = false }
+            }
+            .accessibilityIdentifier("chatEmojiButton")
+        }
+        composerInput
+    }
+
+    @ViewBuilder
+    private var sendControl: some View {
+        if !IrisLayout.usesDesktopChrome && (canSend || isSending) {
+            Button(action: submitDraft) {
+                IrisSendButtonLabel(isSending: isSending)
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.irisPlain)
+            .disabled(!canSend)
+            .accessibilityIdentifier("chatSendButton")
+            .transition(.scale(scale: 0.4).combined(with: .opacity))
+        }
+    }
+
+    #if os(iOS)
+    private func sendVoiceMessage() {
+        guard voiceRecordingAllowed, !isSending, !isUploading, !isStagingVoice else { return }
+        isStagingVoice = true
+        voiceSendTask = Task {
+            defer { isStagingVoice = false; voiceSendTask = nil }
+            let url = voiceRecorder.phase == .ready ? voiceRecorder.recordingURL : await voiceRecorder.finish()
+            guard let url, !Task.isCancelled, voiceRecorder.phase == .ready else { return }
+            IrisAudioPlayback.pauseAll()
+            do {
+                let staged = try await onStageVoice(url)
+                guard !Task.isCancelled, !IrisAudioActivity.isCallActive,
+                      UIApplication.shared.applicationState == .active,
+                      voiceRecorder.phase == .ready, voiceRecorder.recordingURL == url,
+                      onSendVoice(staged) else {
+                    Task.detached(priority: .utility) {
+                        for attachment in staged { try? FileManager.default.removeItem(atPath: attachment.path) }
+                    }
+                    return
+                }
+                voiceRecorder.cancel()
+            } catch {
+                if !Task.isCancelled, voiceRecorder.recordingURL == url {
+                    voiceRecorder.errorMessage = "Couldn’t send the voice message. Try again."
+                }
+            }
+        }
+    }
+    #endif
 
     @ViewBuilder
     private var composerInput: some View {

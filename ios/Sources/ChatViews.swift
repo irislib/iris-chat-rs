@@ -588,6 +588,21 @@ struct ChatScreen: View {
                                                 } catch {
                                                     manager.showAttachmentOpenError()
                                                 }
+                                            },
+                                            voiceRecordingAllowed: manager.state.call == nil || manager.state.call?.phase == "ended",
+                                            onStageVoice: { try await manager.stageOutgoingAttachmentsAsync([$0]) },
+                                            onSendVoice: { voice in
+                                                guard !manager.state.busy.sendingMessage,
+                                                      !manager.state.busy.uploadingAttachment,
+                                                      !manager.isUserBlocked(chatId) else { return false }
+                                                stopTypingIfNeeded()
+                                                resumeTimelineAutoFollow()
+                                                shouldFollowLatest = true
+                                                forceScrollToLatest = true
+                                                let caption = replyEncodedMessage(reply: replyTarget, text: "")
+                                                replyTarget = nil
+                                                manager.sendAttachments(chatId: chatId, attachments: voice, caption: caption)
+                                                return true
                                             }
                                         ) { composerText in
                                             let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)

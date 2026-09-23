@@ -48,7 +48,7 @@
   <key>NSCameraUsageDescription</key>
   <string>Make video calls and scan codes to link devices.</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Talk in voice and video calls.</string>
+  <string>Record voice messages and talk in calls.</string>
   <key>NSPhotoLibraryUsageDescription</key>
   <string>Attach photos and videos to your messages.</string>
   <key>NSPhotoLibraryAddUsageDescription</key>
