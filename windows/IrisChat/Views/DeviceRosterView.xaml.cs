@@ -142,11 +142,13 @@ public partial class DeviceRosterView : UserControl
 
     private static string StatusText(DeviceEntrySnapshot d)
     {
-        var status = d.isAuthorized ? (d.isStale ? "needs attention" : "linked") : "removed";
+        var parts = new System.Collections.Generic.List<string>();
         if (!string.IsNullOrWhiteSpace(d.clientLabel))
         {
-            status = $"{d.clientLabel!.Trim()} · {status}";
+            parts.Add(d.clientLabel!.Trim());
         }
+        if (d.isStale) parts.Add("Needs attention");
+        else if (!d.isAuthorized) parts.Add("Pending");
         if (d.addedAtSecs is { } secs && secs > 0)
         {
             var t = DateTimeOffset.FromUnixTimeSeconds((long)secs).LocalDateTime;
@@ -155,9 +157,9 @@ public partial class DeviceRosterView : UserControl
                        : ago.TotalHours < 1 ? $"{(int)ago.TotalMinutes}m ago"
                        : ago.TotalDays < 1 ? $"{(int)ago.TotalHours}h ago"
                        : $"{(int)ago.TotalDays}d ago";
-            return $"{status} · added {when}";
+            parts.Add($"Added {when}");
         }
-        return status;
+        return string.Join(" · ", parts);
     }
 
     private static string TitleText(DeviceEntrySnapshot d)

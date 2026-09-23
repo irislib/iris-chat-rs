@@ -413,9 +413,9 @@ private fun DeviceRosterRow(
                     color = IrisTheme.palette.muted,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DeviceStateChip(
-                        text = if (device.isAuthorized) "Linked" else "Pending",
-                    )
+                    if (!device.isAuthorized && !device.isStale) {
+                        DeviceStateChip(text = "Pending")
+                    }
                     if (device.isStale) {
                         DeviceStateChip(
                             text = "Needs attention",

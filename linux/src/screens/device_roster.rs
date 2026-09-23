@@ -287,19 +287,17 @@ fn device_row(
         row.set_subtitle(&subtitles.join(" - "));
     }
 
-    let status = gtk::Label::new(Some(if device.is_authorized {
-        "Linked"
-    } else {
-        "Pending"
-    }));
-    status.add_css_class("caption");
-    status.add_css_class(if device.is_authorized {
-        "success"
-    } else {
-        "warning"
-    });
-    status.set_valign(gtk::Align::Center);
-    row.add_suffix(&status);
+    if device.is_stale || !device.is_authorized {
+        let status = gtk::Label::new(Some(if device.is_stale {
+            "Needs attention"
+        } else {
+            "Pending"
+        }));
+        status.add_css_class("caption");
+        status.add_css_class("warning");
+        status.set_valign(gtk::Align::Center);
+        row.add_suffix(&status);
+    }
 
     if roster.can_manage_devices && !device.is_current_device {
         let remove = gtk::Button::from_icon_name("user-trash-symbolic");

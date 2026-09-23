@@ -786,6 +786,9 @@ public sealed partial class AppManager : INotifyPropertyChanged
             case AppUpdate.ClearPendingDeviceLink:
                 _pendingDeviceLinkSecretStore.Clear();
                 break;
+            case AppUpdate.SignerLoginSignEvent request:
+                DispatchToRust(new AppAction.CancelSignerLogin(request.requestId));
+                break;
 
             case AppUpdate.FullState f:
                 if (f.v1.rev <= _lastRevApplied) return;
