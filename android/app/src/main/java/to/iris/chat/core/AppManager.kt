@@ -396,7 +396,6 @@ class AppManager(
     private val mutablePendingShare = MutableStateFlow<PendingShare?>(null)
     val pendingShare: StateFlow<PendingShare?> = mutablePendingShare.asStateFlow()
     val signer = Nip55Signer(appContext, applicationScope, ::dispatchToRust, ::publishShellToast)
-
     @Suppress("unused") // tag is helpful for tracing during perf work
     private fun <T> slice(
         @Suppress("UNUSED_PARAMETER") tag: String,
