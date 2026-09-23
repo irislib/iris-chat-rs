@@ -193,7 +193,7 @@ build_linux_docker() {
       export DEBIAN_FRONTEND=noninteractive
       export PATH="/usr/local/cargo/bin:$PATH"
       apt-get update >/dev/null
-      apt-get install -y --no-install-recommends libclang-dev libdbus-1-dev pkg-config >/dev/null
+      apt-get install -y --no-install-recommends cmake libclang-dev libdbus-1-dev pkg-config >/dev/null
       rm -rf /var/lib/apt/lists/*
       cargo build --release --bin iris --locked --jobs "$IRIS_CLI_LINUX_BUILD_JOBS"
     '

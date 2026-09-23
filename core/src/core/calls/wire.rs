@@ -212,15 +212,15 @@ impl Assembler {
         {
             return None;
         }
-        let kind = p[20];
-        let key = p[21];
+        let kind = *p.get(20)?;
+        let key = *p.get(21)?;
         if !matches!(kind, 1 | 2) || key > 1 {
             return None;
         }
-        let seq = u32::from_be_bytes(p[22..26].try_into().ok()?);
-        let timestamp_us = u64::from_be_bytes(p[26..34].try_into().ok()?);
-        let index = u16::from_be_bytes(p[34..36].try_into().ok()?) as usize;
-        let count = u16::from_be_bytes(p[36..38].try_into().ok()?) as usize;
+        let seq = u32::from_be_bytes(p.get(22..26)?.try_into().ok()?);
+        let timestamp_us = u64::from_be_bytes(p.get(26..34)?.try_into().ok()?);
+        let index = u16::from_be_bytes(p.get(34..36)?.try_into().ok()?) as usize;
+        let count = u16::from_be_bytes(p.get(36..38)?.try_into().ok()?) as usize;
         let limit = if kind == 1 { 1275usize } else { MAX_VIDEO };
         if count == 0
             || count > limit.div_ceil(CHUNK)
@@ -261,7 +261,7 @@ impl Assembler {
         {
             return None;
         }
-        entry.parts[index] = Some(p[HEADER..].to_vec());
+        *entry.parts.get_mut(index)? = Some(p.get(HEADER..)?.to_vec());
         if entry.parts.iter().any(Option::is_none) {
             return None;
         }

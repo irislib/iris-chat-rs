@@ -97,9 +97,9 @@ impl AppCore {
                 );
                 return;
             }
-            if let Some(active) = &self.calls.active {
+            if let Some(active) = self.calls.active.as_mut() {
                 if active.id == signal.call_id && active.peer.as_deref() == Some(source) {
-                    self.calls.active.as_mut().unwrap().last_received = Clock::now();
+                    active.last_received = Clock::now();
                     if self
                         .state
                         .call

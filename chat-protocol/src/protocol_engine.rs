@@ -23,15 +23,9 @@ mod tests {
     include!("protocol_engine/handshake_proof_tests.rs");
     include!("protocol_engine/local_sibling_send_tests.rs");
 
-    fn read_protocol_engine_source(path: &str) -> String {
-        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
-            .unwrap_or_else(|error| panic!("read {path}: {error}"))
-    }
-
     #[test]
     fn sender_owner_resolution_keeps_claimed_device_pending_until_owner_verified() {
-        let protocol_source =
-            read_protocol_engine_source("src/protocol_engine/engine_resolution.rs");
+        let protocol_source = include_str!("protocol_engine/engine_resolution.rs");
         let start = protocol_source
             .find("fn resolve_message_sender_owner")
             .expect("sender resolver");
@@ -52,8 +46,7 @@ mod tests {
 
     #[test]
     fn pending_inbound_owner_targets_use_cached_metadata_not_event_reparse() {
-        let protocol_source =
-            read_protocol_engine_source("src/protocol_engine/engine_resolution.rs");
+        let protocol_source = include_str!("protocol_engine/engine_resolution.rs");
         let start = protocol_source
             .find("fn pending_inbound_owner_claim_targets")
             .expect("pending inbound target collector");
@@ -74,10 +67,8 @@ mod tests {
 
     #[test]
     fn group_sender_key_ignored_results_are_consumed_without_retry_queue() {
-        let incoming_source =
-            read_protocol_engine_source("src/protocol_engine/engine_incoming_retry.rs");
-        let repair_source =
-            read_protocol_engine_source("src/protocol_engine/engine_sender_key_repair.rs");
+        let incoming_source = include_str!("protocol_engine/engine_incoming_retry.rs");
+        let repair_source = include_str!("protocol_engine/engine_sender_key_repair.rs");
         let process_start = incoming_source
             .find("fn process_group_outer_event")
             .expect("process group outer function");

@@ -135,7 +135,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+          sudo apt-get install -y --no-install-recommends cmake libdbus-1-dev pkg-config
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-linux-android
@@ -214,6 +214,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          brew list cmake >/dev/null 2>&1 || brew install cmake
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-ios aarch64-apple-ios-sim
@@ -389,6 +390,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          brew list cmake >/dev/null 2>&1 || brew install cmake
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-darwin
@@ -402,6 +404,8 @@ jobs:
             ${{ github.workspace }}/${{ env.APP_DIR }}/macos/.build/cargo-target
           key: all-builds-macos-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/macos/project.yml') }}
           restore-keys: all-builds-macos-${{ runner.arch }}-
+      - name: Verify local FIPS calls without internet
+        run: ./scripts/test_calls_offline.sh
       - name: Configure macOS signing and notarization
         if: ${{ inputs.sign_macos }}
         env:
@@ -533,7 +537,7 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add x86_64-pc-windows-msvc
-          choco install nsis --no-progress -y
+          choco install nsis cmake --no-progress -y
       - name: Cache Cargo
         uses: actions/cache@v6
         with:
@@ -623,7 +627,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+          sudo apt-get install -y --no-install-recommends cmake libdbus-1-dev pkg-config
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew list cmake >/dev/null 2>&1 || brew install cmake
       - name: Install Rust target
         run: |
           rustup toolchain install stable --profile minimal

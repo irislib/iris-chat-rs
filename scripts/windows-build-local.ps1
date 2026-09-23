@@ -51,6 +51,7 @@ function Add-ToolPaths {
         (Join-Path $env:USERPROFILE '.cargo\bin'),
         (Join-Path $env:USERPROFILE '.dotnet\tools'),
         'C:\Program Files\LLVM\bin',
+        'C:\Program Files\CMake\bin',
         'C:\Program Files (x86)\NSIS',
         'C:\Program Files\NSIS'
     )
@@ -92,7 +93,7 @@ function Get-VersionParts {
 function Invoke-Doctor {
     Import-VisualStudioEnvironment
     Add-ToolPaths
-    foreach ($tool in @('rustc', 'cargo', 'dotnet', 'link.exe', 'clang.exe')) {
+    foreach ($tool in @('rustc', 'cargo', 'dotnet', 'link.exe', 'clang.exe', 'cmake')) {
         $found = Get-Command $tool -ErrorAction SilentlyContinue
         if (-not $found) { throw "Required tool was not found: $tool" }
         Write-Host "[ok] $tool`: $($found.Source)"
