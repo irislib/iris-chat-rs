@@ -85,36 +85,97 @@ struct IrisCameraImagePicker: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
 
+    @MainActor
     final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
         private let onPick: (URL) -> Void
         private let dismiss: DismissAction
+        private var preparationTask: Task<Void, Never>?
+        private weak var preparationIndicator: UIActivityIndicatorView?
+        private var isFinished = false
 
         init(onPick: @escaping (URL) -> Void, dismiss: DismissAction) {
             self.onPick = onPick
             self.dismiss = dismiss
         }
 
+        deinit {
+            preparationTask?.cancel()
+        }
+
         func imagePickerController(
             _ picker: UIImagePickerController,
             didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
         ) {
-            defer { dismiss() }
-            guard let image = info[.originalImage] as? UIImage,
-                  let data = image.jpegData(compressionQuality: 0.92) else {
+            guard !isFinished, preparationTask == nil else { return }
+            guard let image = info[.originalImage] as? UIImage else {
+                isFinished = true
+                dismiss()
                 return
             }
-            let directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("iris-camera-picks", isDirectory: true)
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let url = directory.appendingPathComponent("\(UUID().uuidString).jpg")
-            do {
-                try data.write(to: url, options: [.atomic])
-                onPick(url)
-            } catch {}
+
+            showPreparationIndicator(in: picker.view)
+            preparationTask = Task { [weak self] in
+                let url = await Self.prepareImage(image)
+                guard let self, !Task.isCancelled, !self.isFinished else {
+                    await Self.removePreparedImage(at: url)
+                    return
+                }
+                self.preparationTask = nil
+                self.preparationIndicator?.removeFromSuperview()
+                self.isFinished = true
+                if let url {
+                    self.onPick(url)
+                }
+                self.dismiss()
+            }
         }
 
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            guard !isFinished else { return }
+            isFinished = true
+            preparationTask?.cancel()
+            preparationTask = nil
+            preparationIndicator?.removeFromSuperview()
             dismiss()
+        }
+
+        private func showPreparationIndicator(in view: UIView) {
+            let indicator = UIActivityIndicatorView(style: .large)
+            indicator.translatesAutoresizingMaskIntoConstraints = false
+            indicator.backgroundColor = .secondarySystemBackground
+            indicator.layer.cornerRadius = 16
+            indicator.isAccessibilityElement = true
+            indicator.accessibilityLabel = "Adding photo"
+            view.addSubview(indicator)
+            NSLayoutConstraint.activate([
+                indicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                indicator.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                indicator.widthAnchor.constraint(equalToConstant: 72),
+                indicator.heightAnchor.constraint(equalToConstant: 72),
+            ])
+            indicator.startAnimating()
+            preparationIndicator = indicator
+        }
+
+        nonisolated private static func prepareImage(_ image: UIImage) async -> URL? {
+            guard !Task.isCancelled,
+                  let data = image.jpegData(compressionQuality: 0.92),
+                  !Task.isCancelled else { return nil }
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("iris-camera-picks", isDirectory: true)
+            let url = directory.appendingPathComponent("\(UUID().uuidString).jpg")
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try data.write(to: url, options: [.atomic])
+                return url
+            } catch {
+                return nil
+            }
+        }
+
+        nonisolated private static func removePreparedImage(at url: URL?) async {
+            guard let url else { return }
+            try? FileManager.default.removeItem(at: url)
         }
     }
 }

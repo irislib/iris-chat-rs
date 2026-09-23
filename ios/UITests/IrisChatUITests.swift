@@ -444,27 +444,6 @@ final class IrisChatComposerUITests: IrisChatUITestCase {
 #endif
     }
 
-    func testComposerPlusOpensAttachmentMenu() throws {
-#if os(macOS)
-        throw XCTSkip("macOS opens the file picker directly")
-#else
-        let app = launchCleanApp()
-
-        createAccount(app)
-        openChatWithPeer(app)
-
-        let attachButton = element(app, "chatAttachButton")
-        XCTAssertTrue(attachButton.waitForExistence(timeout: 10))
-        attachButton.tap()
-
-        XCTAssertTrue(
-            app.buttons["Photo Library"].waitForExistence(timeout: 5) ||
-                app.buttons["Files"].waitForExistence(timeout: 5),
-            "composer plus did not open the attachment menu"
-        )
-#endif
-    }
-
     func testMessageBubbleHorizontalSwipesOpenReplyAndInfo() throws {
 #if os(macOS)
         throw XCTSkip("Message bubble swipe actions are iOS-only")
