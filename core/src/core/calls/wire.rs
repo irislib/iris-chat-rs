@@ -98,7 +98,7 @@ pub(super) fn id_bytes(value: &str) -> Option<[u8; 16]> {
         return None;
     }
     let mut id = [0; 16];
-    for (slot, pair) in id.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+    for (slot, pair) in id.iter_mut().zip(value.as_bytes().as_chunks::<2>().0) {
         *slot = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
     }
     Some(id)

@@ -216,7 +216,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
                 continue;
             };
             match update {
-                AppUpdate::CallMedia { .. } => {},
+                AppUpdate::CallMedia { .. } => {}
                 AppUpdate::FullState(state) => {
                     let mut slot = current_for_updates.borrow_mut();
                     if state.rev >= slot.rev {

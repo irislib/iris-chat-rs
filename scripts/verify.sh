@@ -37,6 +37,7 @@ run_fast() {
     cargo fmt --manifest-path "$crate/Cargo.toml" --check
     cargo clippy --manifest-path "$crate/Cargo.toml" --locked --all-targets -- -D warnings
   done
+  cargo fmt --manifest-path linux/Cargo.toml --check
   scripts/test_fast.sh --core-only
 }
 
