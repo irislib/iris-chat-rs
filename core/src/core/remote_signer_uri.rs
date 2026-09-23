@@ -68,19 +68,19 @@ pub(super) fn validate_signer_relays(inputs: &[String]) -> anyhow::Result<Vec<Re
 }
 
 pub(super) fn client_connection_uri(keys: &Keys, relays: &[RelayUrl], secret: &str) -> String {
-    let mut url = url::Url::parse(&format!("nostrconnect://{}", keys.public_key().to_hex()))
-        .expect("generated public key is a URL host");
-    {
-        let mut query = url.query_pairs_mut();
-        for relay in relays {
-            query.append_pair("relay", relay.as_str());
-        }
-        query.append_pair("secret", secret);
-        query.append_pair("perms", PERMISSIONS);
-        query.append_pair("name", "Iris Chat");
-        query.append_pair("url", "https://iris.to");
+    let mut query = url::form_urlencoded::Serializer::new(String::new());
+    for relay in relays {
+        query.append_pair("relay", relay.as_str());
     }
-    url.to_string()
+    query.append_pair("secret", secret);
+    query.append_pair("perms", PERMISSIONS);
+    query.append_pair("name", "Iris Chat");
+    query.append_pair("url", "https://iris.to");
+    format!(
+        "nostrconnect://{}?{}",
+        keys.public_key().to_hex(),
+        query.finish()
+    )
 }
 
 pub(super) fn safe_auth_url(input: &str) -> Option<String> {
