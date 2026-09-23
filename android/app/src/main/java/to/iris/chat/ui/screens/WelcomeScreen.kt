@@ -27,6 +27,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,6 +55,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import to.iris.chat.BuildConfig
 import to.iris.chat.R
 import to.iris.chat.core.AppManager
@@ -283,14 +285,32 @@ fun RestoreAccountScreen(
 ) {
     var restoreInput by rememberSaveable { mutableStateOf("") }
     var lastSubmittedSecret by rememberSaveable { mutableStateOf<String?>(null) }
+    val signerBusy by appManager.signer.busy.collectAsStateWithLifecycle()
+    val restoring = appState.busy.restoringSession || signerBusy
 
     OnboardingScaffold(
         title = "Restore profile",
-        subtitle = "Paste your secret key.",
-        onBack = { appManager.dispatch(AppAction.UpdateScreenStack(emptyList())) },
+        onBack = {
+            appManager.signer.cancel()
+            appManager.dispatch(AppAction.UpdateScreenStack(emptyList()))
+        },
         bottomContent = {
             IrisSecondaryButton(
+                text = "Signer app/device",
+                onClick = appManager.signer::startLogin,
+                enabled = !restoring,
+                icon = {
+                    if (signerBusy) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Rounded.VerifiedUser, contentDescription = null, modifier = Modifier.size(20.dp))
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().testTag("restoreSignerAction"),
+            )
+            IrisSecondaryButton(
                 text = "Link this device",
+                enabled = !restoring,
                 onClick = {
                     appManager.startLinkedDevice("")
                     appManager.pushScreen(Screen.AddDevice)
@@ -319,7 +339,7 @@ fun RestoreAccountScreen(
                     restoreInput = value
                     val current = value.trim()
                     if (
-                        !appState.busy.restoringSession &&
+                        !restoring &&
                         current != lastSubmittedSecret &&
                         shouldAutoSubmitSecret(current)
                     ) {
@@ -340,14 +360,9 @@ fun RestoreAccountScreen(
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                enabled = !appState.busy.restoringSession,
+                enabled = !restoring,
                 shape = RoundedCornerShape(10.dp),
                 colors = irisTextFieldColors(),
-            )
-            Text(
-                text = "Secret key = nostr nsec",
-                color = IrisTheme.palette.muted,
-                style = MaterialTheme.typography.bodySmall,
             )
         }
 

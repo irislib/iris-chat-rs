@@ -73,6 +73,7 @@ impl AppCore {
             logged_in: None,
             protocol_engine: None,
             pending_linked_device: None,
+            pending_signer_login: None,
             device_approval_relay_urls: relay_urls_from_strings(&[
                 COMPILED_DEVICE_APPROVAL_RELAY_URL.to_string(),
             ]),
@@ -178,6 +179,9 @@ impl AppCore {
             CoreMsg::Internal(event) => match event.as_ref() {
                 InternalEvent::CallPacket { .. } => "CallPacket",
                 InternalEvent::CallTick { .. } => "CallTick",
+                InternalEvent::SignerLoginFetched { .. } => "SignerLoginFetched",
+                InternalEvent::SignerLoginPublished { .. } => "SignerLoginPublished",
+                InternalEvent::SignerLoginTimedOut { .. } => "SignerLoginTimedOut",
                 InternalEvent::RelayEvent(_) => "RelayEvent",
                 InternalEvent::MeshEvent(_) => "MeshEvent",
                 InternalEvent::FipsNearbyPacket { .. } => "FipsNearbyPacket",
@@ -453,6 +457,14 @@ impl AppCore {
                 device_nsec,
                 approval_bootstrap_json,
             } => self.restore_pending_linked_device(&device_nsec, &approval_bootstrap_json),
+            AppAction::BeginSignerLogin { owner_pubkey_hex } => {
+                self.begin_signer_login(&owner_pubkey_hex)
+            }
+            AppAction::CompleteSignerLogin {
+                request_id,
+                signed_event_json,
+            } => self.complete_signer_login(&request_id, &signed_event_json),
+            AppAction::CancelSignerLogin { request_id } => self.cancel_signer_login(&request_id),
             AppAction::StartLinkedDevice { owner_input } => self.start_linked_device(&owner_input),
             AppAction::SetCurrentDeviceLabels {
                 device_label,
@@ -645,6 +657,15 @@ impl AppCore {
                 data,
             } => self.handle_call_packet(&source_pubkey_hex, source_port, &data),
             InternalEvent::CallTick { call_id } => self.call_tick(&call_id),
+            InternalEvent::SignerLoginFetched { request_id, result } => {
+                self.handle_signer_login_fetched(&request_id, result)
+            }
+            InternalEvent::SignerLoginPublished { request_id, result } => {
+                self.handle_signer_login_published(&request_id, result)
+            }
+            InternalEvent::SignerLoginTimedOut { request_id } => {
+                self.handle_signer_login_timeout(&request_id)
+            }
             InternalEvent::RelayEvent(event) => {
                 self.handle_relay_event_with_channel(event, "message servers");
             }

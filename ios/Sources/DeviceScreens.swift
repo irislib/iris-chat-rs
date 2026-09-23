@@ -282,7 +282,9 @@ struct DeviceRosterRow: View {
             }
 
             HStack(spacing: 8) {
-                IrisInfoPill(device.isAuthorized ? "Linked" : "Pending", tint: device.isAuthorized ? .green : .orange)
+                if !device.isAuthorized && !device.isStale {
+                    IrisInfoPill("Pending", tint: .orange)
+                }
                 if device.isStale {
                     IrisInfoPill("Needs attention", tint: .red)
                 }

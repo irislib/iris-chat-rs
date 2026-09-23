@@ -2723,6 +2723,8 @@ final class AppManager: ObservableObject {
             ))
         case .clearPendingDeviceLink:
             pendingDeviceLinkSecretStore.clear()
+        case .signerLoginSignEvent(let requestId, _, _):
+            dispatch(.cancelSignerLogin(requestId: requestId))
         case .nearbyPublishedEvent(let eventID, let kind, let createdAtSecs, let eventJson):
             _ = eventID
             _ = kind

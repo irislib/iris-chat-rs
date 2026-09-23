@@ -447,17 +447,8 @@ impl ProtocolEngine {
             return DirectSendReadiness::MissingPeerInviteOrSession;
         }
 
-        if let Some(local_user) = user_record_snapshot(&snapshot, self.local_owner) {
-            if let Some(local_devices) = roster_device_pubkeys(local_user) {
-                if local_devices
-                    .into_iter()
-                    .filter(|device| *device != self.local_device)
-                    .any(|device| !user_can_send_to_device(local_user, device))
-                {
-                    return DirectSendReadiness::MissingLocalSiblingInviteOrSession;
-                }
-            }
-        }
+        // Sibling copies have a durable retry queue. Their discovery cannot
+        // prevent delivery to an independently authorized external recipient.
 
         DirectSendReadiness::Ready
     }

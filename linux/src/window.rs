@@ -264,6 +264,9 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
                     );
                 }
                 AppUpdate::PersistAccountBundle { .. } => {}
+                AppUpdate::SignerLoginSignEvent { request_id, .. } => {
+                    manager_for_updates.dispatch(AppAction::CancelSignerLogin { request_id });
+                }
                 AppUpdate::PersistPendingDeviceLink { .. } | AppUpdate::ClearPendingDeviceLink => {}
             }
         }

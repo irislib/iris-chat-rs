@@ -2,6 +2,7 @@ use super::*;
 
 impl AppCore {
     pub(super) fn logout(&mut self) {
+        self.pending_signer_login = None;
         self.finish_call("Call ended");
         self.calls = calls::CallRuntime::default();
         self.push_debug_log("session.logout", "clearing runtime state");

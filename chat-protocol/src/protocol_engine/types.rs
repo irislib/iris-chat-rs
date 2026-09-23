@@ -448,6 +448,10 @@ struct ProtocolEngineCheckpoint {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ProtocolPendingLocalSiblingSend {
+    // Message bodies are restricted to devices authorized when sent. None
+    // preserves current-roster broadcast semantics for read-state metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    eligible_devices: Option<BTreeSet<NdrDevicePubkey>>,
     chat_id: String,
     payload: Vec<u8>,
     message_id: String,

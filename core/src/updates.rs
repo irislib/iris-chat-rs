@@ -24,6 +24,11 @@ pub enum AppUpdate {
         approval_bootstrap_json: String,
     },
     ClearPendingDeviceLink,
+    SignerLoginSignEvent {
+        request_id: String,
+        owner_pubkey_hex: String,
+        unsigned_event_json: String,
+    },
     NearbyPublishedEvent {
         event_id: String,
         kind: u32,
@@ -103,6 +108,17 @@ pub(crate) enum InternalEvent {
     },
     CallTick {
         call_id: String,
+    },
+    SignerLoginFetched {
+        request_id: String,
+        result: Result<Option<Event>, String>,
+    },
+    SignerLoginPublished {
+        request_id: String,
+        result: Result<Event, String>,
+    },
+    SignerLoginTimedOut {
+        request_id: String,
     },
     RelayEvent(Event),
     MeshEvent(Event),

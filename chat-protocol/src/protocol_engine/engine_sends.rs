@@ -671,35 +671,13 @@ impl ProtocolEngine {
         let payload = serde_json::to_vec(&rumor)?;
         let sibling_payload = local_sibling_payload(conversation_owner, &payload)?;
         self.with_state_checkpoint(|engine| {
-            let existing = engine
-                .pending_local_sibling_sends
-                .iter()
-                .position(|pending| {
-                    pending.message_id == message_id && pending.chat_id == chat_id
-                })
-                .map(|index| engine.pending_local_sibling_sends.remove(index));
-            let mut pending = existing.unwrap_or_else(|| ProtocolPendingLocalSiblingSend {
-                chat_id: chat_id.to_string(),
-                payload: sibling_payload,
-                message_id: message_id.clone(),
-                completed_devices: BTreeSet::new(),
-                created_at_secs: now.get(),
-                next_retry_at_secs: now.get(),
-            });
-            let sessions = engine.session_manager.clone();
-            let (effects, complete) = match engine.prepare_pending_local_sibling_send(
-                &mut pending,
-                NdrUnixSeconds(now.get()),
-            ) {
-                Ok(result) => result,
-                Err(_) => {
-                    engine.session_manager = sessions;
-                    (Vec::new(), false)
-                }
-            };
-            if !complete {
-                engine.pending_local_sibling_sends.push(pending);
-            }
+            let effects = engine.queue_local_sibling_payload(
+                chat_id,
+                sibling_payload,
+                &message_id,
+                now,
+                None,
+            );
             engine.persist()?;
             Ok(ProtocolDirectSendResult {
                 message_id,
@@ -712,6 +690,44 @@ impl ProtocolEngine {
                 effects,
             })
         })
+    }
+
+    fn queue_local_sibling_payload(
+        &mut self,
+        chat_id: &str,
+        sibling_payload: Vec<u8>,
+        message_id: &str,
+        now: UnixSeconds,
+        eligible_devices: Option<BTreeSet<NdrDevicePubkey>>,
+    ) -> Vec<ProtocolEffect> {
+        let existing = self
+            .pending_local_sibling_sends
+            .iter()
+            .position(|pending| pending.message_id == message_id && pending.chat_id == chat_id)
+            .map(|index| self.pending_local_sibling_sends.remove(index));
+        let mut pending = existing.unwrap_or_else(|| ProtocolPendingLocalSiblingSend {
+            eligible_devices,
+            chat_id: chat_id.to_string(),
+            payload: sibling_payload,
+            message_id: message_id.to_string(),
+            completed_devices: BTreeSet::new(),
+            created_at_secs: now.get(),
+            next_retry_at_secs: now.get(),
+        });
+        let sessions = self.session_manager.clone();
+        let (effects, complete) = match self
+            .prepare_pending_local_sibling_send(&mut pending, NdrUnixSeconds(now.get()))
+        {
+            Ok(result) => result,
+            Err(_) => {
+                self.session_manager = sessions;
+                (Vec::new(), false)
+            }
+        };
+        if !complete {
+            self.pending_local_sibling_sends.push(pending);
+        }
+        effects
     }
 
     fn send_direct_remote_payload_inner(
@@ -810,9 +826,6 @@ impl ProtocolEngine {
             recipient_owner,
             remote_payload.clone(),
         )?;
-        let local = self
-            .session_manager
-            .prepare_local_sibling_send_reusing_sessions(&mut ctx, local_sibling_payload.clone())?;
 
         let mut event_ids = Vec::new();
         let mut effects = Vec::new();
@@ -823,22 +836,27 @@ impl ProtocolEngine {
             chat_id.to_string(),
             &mut event_ids,
         )?);
-        effects.extend(protocol_effects_from_prepared(
-            &local,
-            self.local_handshake_owner_proof(),
-            inner_event_id.clone(),
-            chat_id.to_string(),
-            &mut event_ids,
-        )?);
+        let snapshot = self.session_manager.snapshot();
+        let eligible_devices = user_record_snapshot(&snapshot, self.local_owner)
+            .and_then(roster_device_pubkeys)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|device| *device != self.local_device)
+            .collect();
+        let sibling_effects = self.queue_local_sibling_payload(
+            chat_id,
+            local_sibling_payload,
+            &message_id,
+            now,
+            Some(eligible_devices),
+        );
+        event_ids.extend(sibling_effects.iter().map(|effect| match effect {
+            ProtocolEffect::Publish(publish) => publish.event.id.to_string(),
+        }));
+        effects.extend(sibling_effects);
 
-        let gaps = remote
-            .relay_gaps
-            .iter()
-            .chain(local.relay_gaps.iter())
-            .cloned()
-            .collect::<Vec<_>>();
-        if !gaps.is_empty() {
-            anyhow::bail!("direct send readiness invariant failed: relay gaps remain");
+        if !remote.relay_gaps.is_empty() {
+            anyhow::bail!("direct send readiness invariant failed: remote relay gaps remain");
         }
         if remote.deliveries.is_empty() && remote.invite_responses.is_empty() {
             anyhow::bail!("direct send readiness invariant failed: no remote target prepared");

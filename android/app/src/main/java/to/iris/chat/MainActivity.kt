@@ -78,6 +78,7 @@ class MainActivity : ComponentActivity() {
                 setTurnScreenOn(call?.phase == "incoming")
             }
         }
+        attachNip55Signer(container.appManager.signer)
         handleLaunchIntent(intent)
 
         setContent {

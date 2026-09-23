@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""Exercise NIP-55 against a separate signer APK and a local relay on an emulator.
+
+The fixture keeps its generated identity key in its own private storage. Iris is
+driven through its real Restore profile UI and Android activity-result adapter.
+Each phase runs in a fresh Iris process; the last phase restores persisted keys.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import shutil
+import socket
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def run(command: list[str], **kwargs: object) -> str:
+    result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kwargs)
+    if result.returncode:
+        raise RuntimeError(result.stdout)
+    return result.stdout
+
+
+def instrument(command: list[str], log: Path, timeout: int = 240) -> str:
+    with log.open("w") as output:
+        result = subprocess.run(command, text=True, stdout=output, stderr=subprocess.STDOUT, timeout=timeout)
+    text = log.read_text()
+    if result.returncode:
+        raise RuntimeError(f"Instrumentation failed; see {log}")
+    return text
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--serial", required=True, help="An isolated, already running Android emulator")
+    parser.add_argument("--app-package", default="to.iris.chat.debug", help="Installed Iris build package (for isolated debug suffixes)")
+    parser.add_argument("--skip-build", action="store_true")
+    parser.add_argument("--relay-port", type=int, default=0)
+    parser.add_argument("--artifact-dir", type=Path)
+    args = parser.parse_args()
+    if not args.app_package.startswith("to.iris.chat."):
+        raise RuntimeError("Choose an isolated Iris debug package, such as to.iris.chat.debug.")
+    sdk = Path(os.environ.get("ANDROID_HOME", str(Path.home() / "Library/Android/sdk")))
+    adb = shutil.which("adb") or str(sdk / "platform-tools/adb")
+    device = [adb, "-s", args.serial]
+    if run(device + ["shell", "getprop", "ro.kernel.qemu"]).strip() != "1":
+        raise RuntimeError("Use an isolated emulator: these tests reset the Iris debug account.")
+    evidence = args.artifact_dir or ROOT / "work" / f"android-signer-{time.strftime('%Y%m%d-%H%M%S')}"
+    evidence.mkdir(parents=True, exist_ok=True)
+    if not args.skip_build:
+        print("Building the test signer and Iris test apps…", flush=True)
+        build_environment = os.environ.copy()
+        build_environment["IRIS_DEBUG_APPLICATION_ID_SUFFIX"] = args.app_package.removeprefix("to.iris.chat")
+        output = run([str(ROOT / "android/gradlew"), ":test-signer:testDebugUnitTest", ":test-signer:assembleDebug",
+                      ":app:assembleDebug", ":app:assembleDebugAndroidTest"], cwd=ROOT / "android", env=build_environment)
+        (evidence / "build.log").write_text(output)
+    for apk in ("test-signer/build/outputs/apk/debug/test-signer-debug.apk",
+                "app/build/outputs/apk/debug/app-debug.apk",
+                "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"):
+        run(device + ["install", "-r", str(ROOT / "android" / apk)])
+    installed_tests = run(device + ["shell", "pm", "list", "instrumentation"])
+    if f"to.iris.chat.test/androidx.test.runner.AndroidJUnitRunner (target={args.app_package})" not in installed_tests:
+        raise RuntimeError("The installed test APK targets a different Iris package; rebuild with the requested debug suffix.")
+    # Start the isolated test account clean. In particular, an interrupted previous
+    # run must not race a cold credential restore against the first negative test.
+    run(device + ["shell", "pm", "clear", args.app_package])
+    print("Testing signer lifecycle and response validation…", flush=True)
+    output = instrument(device + ["shell", "am", "instrument", "-w", "-r", "-e", "class",
+                          "to.iris.chat.core.Nip55SignerContractTest",
+                          "to.iris.chat.test/androidx.test.runner.AndroidJUnitRunner"], evidence / "signer-contract.log", timeout=60)
+    if "OK (5 tests)" not in output:
+        raise RuntimeError("Signer contract tests failed; see signer-contract.log")
+
+    port = args.relay_port
+    if not port:
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+    relay_log = (evidence / "relay.log").open("w")
+    relay = subprocess.Popen([sys.executable, str(ROOT / "scripts/local_nostr_relay.py"), f"127.0.0.1:{port}"],
+                             stdout=relay_log, stderr=subprocess.STDOUT)
+    try:
+        deadline = time.monotonic() + 180
+        while True:
+            if relay.poll() is not None:
+                raise RuntimeError("Local relay failed; see relay.log")
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                    break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise RuntimeError("Local relay did not start; see relay.log")
+                time.sleep(0.2)
+        run(device + ["reverse", f"tcp:{port}", f"tcp:{port}"])
+        tests = [
+            "rejects_signer_denial_without_persisting_an_account",
+            "rejects_a_valid_signature_for_a_different_event",
+            "rejects_a_response_with_the_wrong_request_id",
+            "authorizes_preserving_devices_and_messages_without_more_signer_requests",
+            "restores_after_process_restart_without_calling_the_signer",
+        ]
+        for name in tests:
+            print(f"Testing {name.replace('_', ' ')}…", flush=True)
+            run(device + ["shell", "am", "force-stop", args.app_package])
+            command = device + ["shell", "am", "instrument", "-w", "-r",
+                                "-e", "class", f"to.iris.chat.Nip55SignerE2eTest#{name}",
+                                "-e", "signer_relay", f"ws://127.0.0.1:{port}"]
+            if name.startswith("restores_"):
+                command += ["-e", "signer_restart", "1"]
+            output = instrument(command + ["to.iris.chat.test/androidx.test.runner.AndroidJUnitRunner"], evidence / f"{name}.log")
+            if "OK (1 test)" not in output:
+                raise RuntimeError(f"Failed {name}; see {evidence / (name + '.log')}")
+            screenshot = subprocess.run(device + ["exec-out", "screencap", "-p"], stdout=subprocess.PIPE, check=True)
+            (evidence / f"{name}.png").write_bytes(screenshot.stdout)
+        print("All five signer contract tests and five NIP-55 end-to-end phases passed.")
+        return 0
+    finally:
+        subprocess.run(device + ["reverse", "--remove", f"tcp:{port}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        relay.terminate()
+        try:
+            relay.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            relay.kill()
+            relay.wait()
+        relay_log.close()
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except RuntimeError as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(1)

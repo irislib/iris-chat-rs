@@ -39,6 +39,7 @@ impl AppCore {
         // Lift the suspend gate even when not logged in so a re-foregrounded
         // unauthenticated app can process events again.
         self.suspended = false;
+        self.expire_pending_signer_login();
         if self.pending_linked_device.is_some() {
             self.push_debug_log("session.link_resume", "refresh device approval");
             self.refresh_pending_linked_device();
@@ -205,6 +206,7 @@ impl AppCore {
         pairing_url: String,
         persist: bool,
     ) {
+        self.pending_signer_login = None;
         let pairing_client = Client::new(device_keys.clone());
         self.start_notifications_loop(pairing_client.clone());
         if persist {
@@ -473,7 +475,7 @@ impl AppCore {
         )
     }
 
-    fn start_session_inner(
+    pub(super) fn start_session_inner(
         &mut self,
         owner_pubkey: OwnerPubkey,
         owner_keys: Option<Keys>,
@@ -482,6 +484,7 @@ impl AppCore {
         allow_protocol_restore: bool,
         emit_account_bundle: bool,
     ) -> anyhow::Result<()> {
+        self.pending_signer_login = None;
         self.app_store.bind_account(owner_pubkey)?;
         self.push_debug_log(
             "session.start",
@@ -1007,117 +1010,6 @@ impl AppCore {
                 entry.created_at_secs,
                 latest_device_created_at,
             );
-        }
-    }
-
-    pub(super) fn refresh_local_authorization_state(&mut self) -> bool {
-        let Some(logged_in) = self.logged_in.as_ref() else {
-            return false;
-        };
-        let previous = logged_in.authorization_state;
-        let next = self.local_authorization_state(
-            logged_in.owner_keys.as_ref(),
-            logged_in.owner_pubkey,
-            logged_in.device_keys.public_key(),
-            Some(previous),
-        );
-        if next == previous {
-            return false;
-        }
-
-        let owner_hex = logged_in.owner_pubkey.to_hex();
-        let device_hex = logged_in.device_keys.public_key().to_hex();
-        if let Some(logged_in) = self.logged_in.as_mut() {
-            logged_in.authorization_state = next;
-        }
-        self.push_debug_log(
-            "session.authorization",
-            format!("state={next:?} owner={owner_hex} device={device_hex}"),
-        );
-        true
-    }
-
-    pub(super) fn restored_local_authorization_state(
-        &self,
-        owner_keys: Option<&Keys>,
-        owner_pubkey: PublicKey,
-        device_pubkey: PublicKey,
-        previous: Option<LocalAuthorizationState>,
-    ) -> LocalAuthorizationState {
-        self.local_authorization_state_inner(
-            owner_keys,
-            owner_pubkey,
-            device_pubkey,
-            previous,
-            false,
-        )
-    }
-
-    pub(super) fn local_authorization_state(
-        &self,
-        owner_keys: Option<&Keys>,
-        owner_pubkey: PublicKey,
-        device_pubkey: PublicKey,
-        previous: Option<LocalAuthorizationState>,
-    ) -> LocalAuthorizationState {
-        self.local_authorization_state_inner(
-            owner_keys,
-            owner_pubkey,
-            device_pubkey,
-            previous,
-            true,
-        )
-    }
-
-    fn local_authorization_state_inner(
-        &self,
-        owner_keys: Option<&Keys>,
-        owner_pubkey: PublicKey,
-        device_pubkey: PublicKey,
-        previous: Option<LocalAuthorizationState>,
-        allow_revoke: bool,
-    ) -> LocalAuthorizationState {
-        if owner_keys.is_some() {
-            return LocalAuthorizationState::Authorized;
-        }
-
-        let owner_hex = owner_pubkey.to_hex();
-        let device_hex = device_pubkey.to_hex();
-        let Some(app_keys) = self.app_keys.get(&owner_hex) else {
-            return previous.unwrap_or(LocalAuthorizationState::AwaitingApproval);
-        };
-
-        let registered = app_keys
-            .devices
-            .iter()
-            .any(|device| device.identity_pubkey_hex.eq_ignore_ascii_case(&device_hex));
-        if registered {
-            let has_local_session = self.protocol_engine.as_ref().is_some_and(|engine| {
-                // The owner-signed AppKeys snapshot above already proves
-                // that this local device is authorized. Here a session is
-                // only an approval-handshake readiness signal; its remote
-                // device must not be promoted to the owner for messaging
-                // unless that separate O -> D binding is verified.
-                ProtocolEngine::active_session_count_for_owner_with_snapshot(
-                    &engine.session_manager_snapshot(),
-                    owner_pubkey,
-                ) > 0
-            });
-            if has_local_session {
-                return LocalAuthorizationState::Authorized;
-            }
-            return LocalAuthorizationState::AwaitingApproval;
-        }
-
-        if !allow_revoke && previous == Some(LocalAuthorizationState::Authorized) {
-            return LocalAuthorizationState::Authorized;
-        }
-
-        match previous {
-            Some(LocalAuthorizationState::Authorized) | Some(LocalAuthorizationState::Revoked) => {
-                LocalAuthorizationState::Revoked
-            }
-            _ => LocalAuthorizationState::AwaitingApproval,
         }
     }
 }
