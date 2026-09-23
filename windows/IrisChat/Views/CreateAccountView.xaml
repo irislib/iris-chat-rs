@@ -6,7 +6,7 @@
             <TextBlock Text="Create profile"
                        Style="{StaticResource HeadingText}"
                        Margin="0,0,0,12" />
-            <TextBlock Text="Name" Margin="0,0,0,4" />
+            <TextBlock Text="Name (optional)" Margin="0,0,0,4" />
             <TextBox x:Name="NameInput"
                      KeyDown="OnNameInputKeyDown" />
 

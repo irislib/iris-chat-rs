@@ -43,8 +43,8 @@ public partial class CreateAccountView : UserControl
 
     private void SubmitCreateAccount()
     {
-        var name = NameInput.Text?.Trim();
-        if (string.IsNullOrEmpty(name) || App.CurrentManager.Busy.creatingAccount) return;
+        var name = NameInput.Text?.Trim() ?? string.Empty;
+        if (App.CurrentManager.Busy.creatingAccount) return;
         CreateButton.IsEnabled = false;
         App.CurrentManager.CreateAccount(name);
     }

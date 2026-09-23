@@ -14,7 +14,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     header.set_halign(gtk::Align::Start);
     container.append(&header);
 
-    let name = entry("Display name");
+    let name = entry("Name (optional)");
     {
         let name = name.clone();
         gtk::glib::idle_add_local_once(move || {
@@ -31,9 +31,6 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let name_for_submit = name.clone();
     submit.connect_clicked(move |button| {
         let value = name_for_submit.text().trim().to_string();
-        if value.is_empty() {
-            return;
-        }
         button.set_sensitive(false);
         manager_for_submit.dispatch(AppAction::CreateAccount { name: value });
     });
@@ -42,7 +39,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let submit_for_enter = submit.clone();
     name.connect_activate(move |entry| {
         let value = entry.text().trim().to_string();
-        if value.is_empty() || !submit_for_enter.is_sensitive() {
+        if !submit_for_enter.is_sensitive() {
             return;
         }
         submit_for_enter.set_sensitive(false);

@@ -140,7 +140,6 @@ struct CreateAccountScreen: View {
 
     private var canCreateAccount: Bool {
         (!requiresTermsAcceptance || termsAccepted) &&
-            !trimmedDisplayName.isEmpty &&
             !manager.state.busy.creatingAccount
     }
 
@@ -155,7 +154,7 @@ struct CreateAccountScreen: View {
                     title: "Create profile"
                 )
 
-                TextField("Name", text: $displayName)
+                TextField("Name (optional)", text: $displayName)
                     .textFieldStyle(.plain)
                     .irisInputField()
                     .focused($isNameFocused)
@@ -183,7 +182,11 @@ struct CreateAccountScreen: View {
     }
 
     private func submitCreateAccount() {
-        guard canCreateAccount else { return }
+        // The keyboard can retain a submit handler from before terms were accepted.
+        // Check the current stored value rather than that handler's AppStorage snapshot.
+        guard !manager.state.busy.creatingAccount,
+              !requiresTermsAcceptance || UserDefaults.standard.bool(forKey: irisTermsAcceptedDefaultsKey)
+        else { return }
         manager.createAccount(name: trimmedDisplayName)
     }
 }

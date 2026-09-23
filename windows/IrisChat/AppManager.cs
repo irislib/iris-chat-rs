@@ -252,7 +252,6 @@ public sealed partial class AppManager : INotifyPropertyChanged
     public void CreateAccount(string name)
     {
         var t = name.Trim();
-        if (string.IsNullOrEmpty(t)) return;
         DispatchToRust(new AppAction.CreateAccount(t));
     }
 

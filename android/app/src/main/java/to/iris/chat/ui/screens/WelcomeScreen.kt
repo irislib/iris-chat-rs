@@ -213,9 +213,7 @@ fun CreateAccountScreen(
     var displayName by rememberSaveable { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    val canCreateAccount =
-        displayName.trim().isNotEmpty() &&
-            !appState.busy.creatingAccount
+    val canCreateAccount = !appState.busy.creatingAccount
     val submitCreateAccount = {
         if (canCreateAccount) {
             appManager.createAccount(displayName.trim())
@@ -256,7 +254,7 @@ fun CreateAccountScreen(
                         .testTag("signupNameField"),
                 placeholder = {
                     Text(
-                        text = "Name",
+                        text = "Name (optional)",
                         color = IrisTheme.palette.muted,
                     )
                 },

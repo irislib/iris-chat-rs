@@ -1,6 +1,7 @@
 package to.iris.chat
 
 import android.Manifest
+import android.graphics.Bitmap
 import android.os.Build
 import android.view.KeyEvent as AndroidKeyEvent
 import android.view.inputmethod.InputMethodManager
@@ -21,6 +22,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performKeyPress
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -28,7 +30,9 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.test.espresso.Espresso.pressBack
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
@@ -56,6 +60,41 @@ class IrisChatUiSmokeTest {
                     .isNotEmpty()
             }.getOrDefault(false)
         }
+    }
+
+    @Test
+    fun create_profile_without_name() {
+        createProfileWithOptionalName("")
+    }
+
+    @Test
+    fun create_profile_with_whitespace_name_from_keyboard() {
+        createProfileWithOptionalName("   ", fromKeyboard = true)
+    }
+
+    private fun createProfileWithOptionalName(name: String, fromKeyboard: Boolean = false) {
+        composeRule.onNodeWithTag("welcomeCreateAction", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("signupNameField")
+        val nameField = composeRule.onNodeWithTag("signupNameField", useUnmergedTree = true)
+        if (name.isNotEmpty()) nameField.performTextInput(name)
+        val createButton = composeRule.onNodeWithTag("generateKeyButton", useUnmergedTree = true)
+        createButton.assertIsEnabled()
+        if (name.isEmpty()) {
+            composeRule.waitForIdle()
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+            File(instrumentation.targetContext.getExternalFilesDir("screenshots"), "optional-profile-name.png")
+                .outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            screenshot.recycle()
+        }
+        if (fromKeyboard) nameField.performImeAction() else createButton.performClick()
+        composeRule.waitForTag("chatListProfileButton")
+        val manager = (composeRule.activity.application as IrisChatApp).container.appManager
+        assertTrue("Unnamed profiles have a fallback name", manager.state.value.account?.displayName?.isNotBlank() == true)
+        composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("myProfileSheet")
+        composeRule.openSettingsPage("settingsProfileRow")
+        composeRule.waitForDisplayedTagAfterScroll("myProfileDisplayNameInput")
     }
 
     @Test

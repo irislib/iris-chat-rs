@@ -2305,9 +2305,6 @@ final class AppManager: ObservableObject {
 
     func createAccount(name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return
-        }
         dispatchToRust(.createAccount(name: trimmed))
     }
 
