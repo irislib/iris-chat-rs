@@ -17,22 +17,24 @@ final class IrisCallController: NSObject, ObservableObject {
     private let showError: (String) -> Void
     private var audioActive = true
     private var mediaCallID: String?
+    private var endingCallID: String?
     private var permissionRequestID: UUID?
+    private let mediaForTesting: IrisCallMediaHandling?
 #if os(macOS)
     private var ringTimer: Timer?
     private var attentionRequest: Int?
 #endif
-    private lazy var media = IrisCallMediaEngine(
+    private lazy var media: IrisCallMediaHandling = mediaForTesting ?? IrisCallMediaEngine(
         send: send,
         preview: { [weak self] id, image in
             DispatchQueue.main.async {
-                guard self?.call?.callId == id, self?.call?.phase == "connected", self?.call?.video == true else { return }
+                guard self?.mediaCallID == id, self?.call?.video == true else { return }
                 self?.localImage = image
             }
         },
         failed: { [weak self] id, message in
             DispatchQueue.main.async {
-                guard self?.call?.callId == id else { return }
+                guard self?.mediaCallID == id else { return }
                 self?.showError(message)
                 self?.end()
             }
@@ -51,12 +53,15 @@ final class IrisCallController: NSObject, ObservableObject {
 
     init(dispatch: @escaping (AppAction) -> Void,
          send: @escaping (String, UInt8, Data) -> Void,
-         showError: @escaping (String) -> Void) {
+         showError: @escaping (String) -> Void,
+         mediaForTesting: IrisCallMediaHandling? = nil) {
         self.dispatch = dispatch
         self.send = send
         self.showError = showError
+        self.mediaForTesting = mediaForTesting
         super.init()
 #if os(iOS) && !targetEnvironment(simulator)
+        guard mediaForTesting == nil else { return }
         let configuration = CXProviderConfiguration()
         configuration.supportsVideo = true
         configuration.supportedHandleTypes = [.generic]
@@ -79,7 +84,7 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
     func answer(voiceOnly: Bool = false) {
-        guard let call, call.phase == "incoming" else { return }
+        guard let call, call.phase == "incoming", endingCallID != call.callId else { return }
 #if os(iOS)
         if let systemCallID {
             answerWithVoice = voiceOnly
@@ -97,9 +102,9 @@ final class IrisCallController: NSObject, ObservableObject {
     private func answerInApp(callID: String, voiceOnly: Bool, completion: ((Bool) -> Void)? = nil) {
         Task { @MainActor [weak self] in
             guard let self, let current = self.call, current.callId == callID,
-                  current.phase == "incoming" else { completion?(false); return }
+                  current.phase == "incoming", self.endingCallID != callID else { completion?(false); return }
             guard await self.permissions(video: current.video && !voiceOnly),
-                  self.call?.callId == callID, self.call?.phase == "incoming" else {
+                  self.call?.callId == callID, self.call?.phase == "incoming", self.endingCallID != callID else {
                 completion?(false)
                 self.dispatch(.endCall(callId: callID))
                 return
@@ -113,14 +118,17 @@ final class IrisCallController: NSObject, ObservableObject {
     func end() {
         permissionRequestID = nil
         guard let call else { return }
+        endingCallID = call.callId
         // Stop capture immediately; don't wait for a network round trip.
         media.configure(callID: nil, muted: true, video: false)
         mediaCallID = nil
+        localImage = nil
+        remoteImage = nil
         dispatch(.endCall(callId: call.callId))
     }
 
     func toggleMuted() {
-        guard let call else { return }
+        guard let call, endingCallID != call.callId else { return }
         dispatch(.setCallMuted(muted: !call.muted))
 #if os(iOS)
         if let systemCallID {
@@ -130,10 +138,11 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
     func toggleCamera() {
-        guard let call, call.videoCapable else { return }
+        guard let call, call.videoCapable, endingCallID != call.callId else { return }
         if call.video { dispatch(.setCallVideoEnabled(enabled: false)); return }
         Task { @MainActor [weak self] in
-            guard let self, await self.permissions(video: true), self.call?.callId == call.callId else { return }
+            guard let self, await self.permissions(video: true), self.call?.callId == call.callId,
+                  self.endingCallID != call.callId else { return }
             self.dispatch(.setCallVideoEnabled(enabled: true))
         }
     }
@@ -150,6 +159,7 @@ final class IrisCallController: NSObject, ObservableObject {
     func update(_ snapshot: CallSnapshot?) {
         let previousID = call?.callId
         call = snapshot
+        if snapshot?.callId != endingCallID { endingCallID = nil }
         if previousID != snapshot?.callId || snapshot?.phase == "ended" || snapshot == nil {
             localImage = nil
             remoteImage = nil
@@ -159,7 +169,7 @@ final class IrisCallController: NSObject, ObservableObject {
 #if os(iOS)
         updateSystemCall(snapshot)
 #elseif os(macOS)
-        if snapshot?.phase == "incoming" {
+        if snapshot?.phase == "incoming", mediaForTesting == nil {
             if ringTimer == nil {
                 attentionRequest = NSApp.requestUserAttention(.criticalRequest)
                 NSSound(named: NSSound.Name("Glass"))?.play()
@@ -178,14 +188,14 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
     private func updateHardware() {
-        let active = call?.phase == "connected" && audioActive
+        let active = call?.phase == "connected" && audioActive && call?.callId != endingCallID
         let id = active ? call?.callId : nil
         mediaCallID = id
         media.configure(callID: id, muted: call?.muted ?? true, video: active && call?.video == true)
     }
 
     func receive(callID: String, kind: UInt8, data: Data) {
-        guard let call, call.callId == callID, call.phase == "connected" else { return }
+        guard let call, call.callId == callID, call.phase == "connected", endingCallID != callID else { return }
         if kind == 1 { media.receiveAudio(callID: callID, data: data) }
         else if kind == 2, call.remoteVideo, let image = IrisCallMediaFormat.videoImage(data) { remoteImage = image }
     }
@@ -218,6 +228,8 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
     private func updateSystemCall(_ snapshot: CallSnapshot?) {
+        // Controller tests supply a media backend and avoid all system devices.
+        guard mediaForTesting == nil else { return }
         guard let provider else {
             if let snapshot, snapshot.phase == "connected", mediaCallID != snapshot.callId {
                 do {

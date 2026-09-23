@@ -31,13 +31,19 @@ enum IrisCallMediaFormat {
 
 /// All hardware and playback operations stay on one serial queue. Capture
 /// callbacks use a tiny lock to read the current generation and mute state.
-final class IrisCallMediaEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+protocol IrisCallMediaHandling: AnyObject {
+    func configure(callID: String?, muted: Bool, video: Bool)
+    func receiveAudio(callID: String, data: Data)
+}
+
+final class IrisCallMediaEngine: NSObject, IrisCallMediaHandling, AVCaptureVideoDataOutputSampleBufferDelegate {
     private let queue = DispatchQueue(label: "iris.call.hardware", qos: .userInteractive)
     private let captureQueue = DispatchQueue(label: "iris.call.camera", qos: .userInitiated)
     private let lock = NSLock()
     private var captureCallID: String?
     private var captureMuted = false
     private var captureVideo = false
+    private var configurationGeneration: UInt64 = 0
     private var audioEngine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
     private var camera: AVCaptureSession?
@@ -63,9 +69,15 @@ final class IrisCallMediaEngine: NSObject, AVCaptureVideoDataOutputSampleBufferD
         captureCallID = callID
         captureMuted = muted
         captureVideo = video
+        configurationGeneration &+= 1
+        let generation = configurationGeneration
         lock.unlock()
         queue.async { [weak self] in
             guard let self else { return }
+            self.lock.lock()
+            let current = self.configurationGeneration == generation
+            self.lock.unlock()
+            guard current else { return }
             if self.currentCallID != callID {
                 self.stopHardware()
                 self.currentCallID = callID
