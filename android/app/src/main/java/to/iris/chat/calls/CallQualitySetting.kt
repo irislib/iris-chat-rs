@@ -23,19 +23,24 @@ import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.ui.components.IrisMenuRow
 
+private val qualityChoices = mapOf("auto" to "Automatic", "high" to "High quality", "data" to "Use less data", "custom" to "Custom")
+
 @Composable
 fun CallQualitySetting(app: AppManager, preferences: PreferencesSnapshot) {
-    val choices = mapOf("auto" to "Automatic", "high" to "High quality", "data" to "Use less data", "custom" to "Custom")
     var open by remember { mutableStateOf(false) }
-    IrisMenuRow("Call quality", onClick = { open = true }, subtitle = choices[preferences.callQuality] ?: "Automatic",
+    IrisMenuRow("Call quality", onClick = { open = true }, subtitle = qualityChoices[preferences.callQuality] ?: "Automatic",
         modifier = Modifier.testTag("callQualitySetting"))
-    if (!open) return
-    var selected by remember { mutableStateOf(preferences.callQuality) }
-    var bitrate by remember { mutableFloatStateOf((preferences.callMaxBitrateBps.toFloat() / 1_000_000).coerceIn(0.1f, 10f)) }
-    AlertDialog(onDismissRequest = { open = false }, title = { Text("Call quality") },
+    if (open) CallQualityDialog(preferences.callQuality, preferences.callMaxBitrateBps, app::dispatch) { open = false }
+}
+
+@Composable
+internal fun CallQualityDialog(quality: String, customMaxBitrateBps: UInt, onAction: (AppAction) -> Unit, onDismiss: () -> Unit) {
+    var selected by remember { mutableStateOf(quality) }
+    var bitrate by remember { mutableFloatStateOf((customMaxBitrateBps.toFloat() / 1_000_000).coerceIn(0.1f, 10f)) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Call quality") },
         text = {
             Column {
-                choices.forEach { (value, label) ->
+                qualityChoices.forEach { (value, label) ->
                     Row(Modifier.fillMaxWidth().clickable { selected = value }, verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected == value, onClick = { selected = value })
                         Text(label)
@@ -49,8 +54,8 @@ fun CallQualitySetting(app: AppManager, preferences: PreferencesSnapshot) {
             }
         },
         confirmButton = { TextButton(onClick = {
-            app.dispatch(AppAction.SetCallQuality(selected, (bitrate * 1_000_000).toUInt()))
-            open = false
+            onAction(AppAction.SetCallQuality(selected, (bitrate * 1_000_000).toUInt()))
+            onDismiss()
         }) { Text("Save") } },
-        dismissButton = { TextButton(onClick = { open = false }) { Text("Cancel") } })
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }

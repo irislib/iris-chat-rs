@@ -6,6 +6,9 @@ import android.os.SystemClock
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -54,14 +57,44 @@ class CallMediaTest {
         assertEquals(listOf(AppAction.SetCallMuted(true), AppAction.SetCallVideoEnabled(false), AppAction.EndCall("test-call")), actions)
     }
 
+    @Test fun videoCallQualityCanChangeProfileAndBitrateDuringCall() {
+        val actions = mutableListOf<AppAction>()
+        compose.setContent { IrisChatTheme {
+            CallSurface(call("connected"), true, true, null, null, null, false, 80,
+                permissions = { _, next -> next() }, onAction = { actions += it }, onSpeaker = {}, onDismiss = {},
+                quality = "high", customMaxBitrateBps = 750_000u)
+        } }
+        compose.onNodeWithContentDescription("Quality").performClick()
+        compose.onNodeWithText("Custom").performClick()
+        compose.onNodeWithTag("callQualityMaximum").performSemanticsAction(SemanticsActions.SetProgress) { it(0.6f) }
+        compose.onNodeWithText("Maximum: 0.6 Mbps").assertExists()
+        screenshot("in-call-quality.png", waitForCallBackground = false)
+        compose.onNodeWithText("Save").performClick()
+        assertEquals(AppAction.SetCallQuality("custom", 600_000u), actions.single())
+        compose.onNodeWithContentDescription("Quality").performClick()
+        compose.onNodeWithText("Use less data").performClick()
+        compose.onNodeWithText("Save").performClick()
+        assertEquals(AppAction.SetCallQuality("data", 750_000u), actions.last())
+    }
+
+    @Test fun voiceCallDoesNotShowVideoQualityControl() {
+        compose.setContent { IrisChatTheme {
+            CallSurface(call("connected").copy(video = false, videoCapable = false, remoteVideo = false),
+                true, true, null, null, null, false, 80, permissions = { _, next -> next() },
+                onAction = {}, onSpeaker = {}, onDismiss = {})
+        } }
+        compose.onNodeWithContentDescription("Quality").assertDoesNotExist()
+    }
+
     private fun call(phase: String) = CallSnapshot(callId = "test-call", chatId = "test-chat", peerName = "Alex", phase = phase,
         video = true, videoCapable = true, muted = false, remoteVideo = true, remoteMuted = false,
         startedAtSecs = 0u, connectedAtSecs = if (phase == "connected") 0u else null, endReason = null,
         outgoing = phase != "incoming", targetBitrateBps = 2_000_000u, keyFrameGeneration = 0u, mediaConnected = phase == "connected", maxBitrateBps = 2_000_000u)
 
-    private fun screenshot(name: String) {
+    private fun screenshot(name: String, waitForCallBackground: Boolean = true) {
         compose.waitForIdle()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
+        if (!waitForCallBackground) SystemClock.sleep(250)
         val deadline = SystemClock.elapsedRealtime() + 5_000
         var bitmap: Bitmap
         // Compose idleness does not include the platform dialog's opening animation.
@@ -69,7 +102,7 @@ class CallMediaTest {
         while (true) {
             bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
             val center = bitmap.getPixel(bitmap.width / 2, bitmap.height / 2)
-            if (Color.red(center) < 35 && Color.green(center) < 45 && Color.blue(center) < 45) break
+            if (!waitForCallBackground || Color.red(center) < 35 && Color.green(center) < 45 && Color.blue(center) < 45) break
             bitmap.recycle()
             check(SystemClock.elapsedRealtime() < deadline) { "Call screen did not finish appearing" }
             SystemClock.sleep(50)

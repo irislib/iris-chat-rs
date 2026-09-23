@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -118,7 +119,9 @@ fun CallOverlay(container: AppContainer) {
         while (active.phase == "connected") { now = System.currentTimeMillis() / 1_000L; delay(1_000L) }
     }
     CallSurface(active, preferences.voiceCallsEnabled, preferences.videoCallsEnabled, remote, local, error,
-        speaker, now, permissions, app::dispatch, container.callRuntime::setSpeaker) { dismissedId = active.callId }
+        speaker, now, permissions, app::dispatch, container.callRuntime::setSpeaker,
+        onDismiss = { dismissedId = active.callId }, quality = preferences.callQuality,
+        customMaxBitrateBps = preferences.callMaxBitrateBps)
 }
 
 @Composable
@@ -135,7 +138,10 @@ internal fun CallSurface(
     onAction: (AppAction) -> Unit,
     onSpeaker: (Boolean) -> Unit,
     onDismiss: () -> Unit,
+    quality: String = "auto",
+    customMaxBitrateBps: UInt = 2_000_000u,
 ) {
+    var qualityOpen by remember(active.callId) { mutableStateOf(false) }
     Dialog(onDismissRequest = { if (active.phase == "ended") onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false, decorFitsSystemWindows = false)) {
         Box(Modifier.fillMaxSize().background(Color(0xFF14201F)).testTag("callScreen")) {
@@ -182,11 +188,15 @@ internal fun CallSurface(
                             if (active.video) onAction(AppAction.SetCallVideoEnabled(false))
                             else permissions(true) { onAction(AppAction.SetCallVideoEnabled(true)) }
                         }
+                        if (active.videoCapable && active.phase == "connected") CallControl("Quality", Icons.Filled.Tune) { qualityOpen = true }
                     }
                     Spacer(Modifier.height(24.dp))
                     CallControl("End call", Icons.Filled.CallEnd, Color(0xFFE34B52)) { onAction(AppAction.EndCall(active.callId)) }
                 }
                 Spacer(Modifier.height(24.dp))
+            }
+            if (qualityOpen && active.videoCapable && active.phase == "connected") {
+                CallQualityDialog(quality, customMaxBitrateBps, onAction) { qualityOpen = false }
             }
         }
     }
