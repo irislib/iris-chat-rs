@@ -568,6 +568,7 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                 updated_at_secs: 200,
                 messages: vec![
                     ChatMessageSnapshot {
+                        call: None,
                         id: "m1".to_string(),
                         chat_id: chat_id.clone(),
                         kind: ChatMessageKind::User,
@@ -587,6 +588,7 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                         source_event_id: None,
                     },
                     ChatMessageSnapshot {
+                        call: None,
                         id: "m2".to_string(),
                         chat_id: chat_id.clone(),
                         kind: ChatMessageKind::User,
@@ -617,6 +619,7 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                 unread_count: 0,
                 updated_at_secs: 50,
                 messages: vec![ChatMessageSnapshot {
+                    call: None,
                     id: "g-system".to_string(),
                     chat_id: group_chat.clone(),
                     kind: ChatMessageKind::System,
@@ -769,6 +772,7 @@ fn delete_chat_removes_thread_and_navigates_back() {
             unread_count: 2,
             updated_at_secs: 100,
             messages: vec![ChatMessageSnapshot {
+                call: None,
                 id: "m1".to_string(),
                 chat_id: chat_id.clone(),
                 kind: ChatMessageKind::User,

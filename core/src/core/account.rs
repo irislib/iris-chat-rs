@@ -624,6 +624,7 @@ impl AppCore {
                                     let (body, parsed_attachments) =
                                         extract_message_attachments(&message.body);
                                     ChatMessageSnapshot {
+                                        call: message.call.clone(),
                                         id: message.id.clone(),
                                         chat_id: message.chat_id.clone(),
                                         kind: message.kind.clone(),

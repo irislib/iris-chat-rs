@@ -416,3 +416,24 @@ fn connection_table_exists(conn: &Connection, table_name: &str) -> bool {
     )
     .is_ok()
 }
+
+#[test]
+fn call_history_migration_preserves_existing_messages_without_metadata() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    ensure_schema(&mut conn).unwrap();
+    conn.execute_batch("ALTER TABLE messages DROP COLUMN call_json;
+        INSERT INTO threads(chat_id, unread_count, updated_at_secs) VALUES ('peer', 0, 1);
+        INSERT INTO messages(chat_id, id, kind, author, body, is_outgoing, created_at_secs, delivery)
+        VALUES ('peer', 'old', 'user', 'Friend', 'Hello', 0, 1, 'seen');
+        PRAGMA user_version = 33;").unwrap();
+    ensure_schema(&mut conn).unwrap();
+    let row: (String, Option<String>) = conn
+        .query_row(
+            "SELECT body, call_json FROM messages WHERE id = 'old'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(row, ("Hello".into(), None));
+    assert_eq!(user_version(&conn), SCHEMA_VERSION);
+}

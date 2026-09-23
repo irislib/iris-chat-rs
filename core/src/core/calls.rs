@@ -1,8 +1,9 @@
 //! Ephemeral, one-to-one calls over the shared authenticated FIPS endpoint.
-//! No signaling or media is written to chat history or replayed from a relay.
+//! Signaling and media stay ephemeral; only local summaries enter chat history.
 use super::*;
 use crate::state::CallSnapshot;
 use std::time::Instant as Clock;
+mod history;
 mod media;
 mod receive;
 #[cfg(test)]
@@ -20,6 +21,7 @@ pub(super) struct ActiveCall {
     offered_video: bool,
     outgoing: bool,
     started: Clock,
+    answered: Option<(u64, Clock)>,
     last_received: Clock,
     frames: Assembler,
     media_disconnected_since: Option<Clock>,
@@ -234,6 +236,7 @@ impl AppCore {
         offered_video: bool,
         outgoing: bool,
     ) {
+        let started_at_secs = self.chat_activity_after_deletion(&owner, unix_now().get());
         self.state.call = Some(CallSnapshot {
             outgoing,
             target_bitrate_bps: self.call_bitrate().min(1_200_000),
@@ -249,7 +252,7 @@ impl AppCore {
             muted: false,
             remote_video: video,
             remote_muted: false,
-            started_at_secs: unix_now().get(),
+            started_at_secs,
             connected_at_secs: None,
             end_reason: None,
         });
@@ -262,6 +265,7 @@ impl AppCore {
             offered_video,
             outgoing,
             started: Clock::now(),
+            answered: None,
             last_received: Clock::now(),
             frames: Assembler::default(),
             media_disconnected_since: None,
@@ -279,6 +283,7 @@ impl AppCore {
             retransmit_at: Clock::now(),
             retransmit_count: 0,
         });
+        self.persist_call_history(None);
     }
     pub(super) fn answer_call(&mut self, id: &str, voice_only: bool) {
         let (Some(active), Some(snapshot)) = (&mut self.calls.active, &mut self.state.call) else {
@@ -306,6 +311,7 @@ impl AppCore {
         if let Some(active) = &mut self.calls.active {
             active.media_disconnected_since = Some(Clock::now());
         }
+        self.persist_call_history(None);
         self.emit_state();
     }
     pub(super) fn end_call(&mut self, id: &str) {
@@ -313,7 +319,18 @@ impl AppCore {
             return;
         }
         if self.calls.active.is_some() {
-            self.finish_call("Call ended");
+            self.finish_call(
+                if self
+                    .state
+                    .call
+                    .as_ref()
+                    .is_some_and(|c| c.phase == "incoming")
+                {
+                    "Call declined"
+                } else {
+                    "Call ended"
+                },
+            );
         } else {
             self.state.call = None;
             self.emit_state();
@@ -327,7 +344,13 @@ impl AppCore {
     }
 
     pub(super) fn finish_call(&mut self, reason: &str) {
-        self.signal_active_call("end");
+        let declined = reason == "Call declined";
+        self.signal_active_call(if declined { "reject" } else { "end" });
+        self.persist_call_history(match reason {
+            "Call declined" => Some("declined"),
+            "Answered on another device" => Some("answered_elsewhere"),
+            _ => None,
+        });
         if let Some(active) = self.calls.active.take() {
             self.remember_ended_call(active.id);
             if let Some(snapshot) = &mut self.state.call {
@@ -335,6 +358,7 @@ impl AppCore {
                 snapshot.media_connected = false;
                 snapshot.end_reason = Some(reason.into());
             }
+            self.rebuild_state();
             self.emit_state();
         }
     }

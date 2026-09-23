@@ -288,6 +288,7 @@ mod tests {
         attachments: Vec<MessageAttachmentSnapshot>,
     ) -> ChatMessageSnapshot {
         ChatMessageSnapshot {
+            call: None,
             id: "message-1".to_string(),
             chat_id: "chat-1".to_string(),
             kind: ChatMessageKind::User,

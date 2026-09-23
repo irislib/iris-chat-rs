@@ -117,6 +117,7 @@ fn redelivered_persisted_message_after_restart_does_not_increment_unread() {
     let chat_id = peer.public_key().to_hex();
     let mut core = logged_in_test_core("redelivered-persisted-message", &owner, &device);
     let old_message = ChatMessageSnapshot {
+        call: None,
         id: "old-message".to_string(),
         chat_id: chat_id.clone(),
         kind: ChatMessageKind::User,
@@ -136,6 +137,7 @@ fn redelivered_persisted_message_after_restart_does_not_increment_unread() {
         source_event_id: Some("outer-old".to_string()),
     };
     let latest_message = ChatMessageSnapshot {
+        call: None,
         id: "latest-message".to_string(),
         chat_id: chat_id.clone(),
         kind: ChatMessageKind::User,
@@ -209,6 +211,7 @@ fn prune_expired_messages_removes_loaded_messages_and_sqlite_rows() {
             updated_at_secs: 200,
             messages: vec![
                 ChatMessageSnapshot {
+                    call: None,
                     id: "expired".to_string(),
                     chat_id: chat_id.clone(),
                     kind: ChatMessageKind::User,
@@ -228,6 +231,7 @@ fn prune_expired_messages_removes_loaded_messages_and_sqlite_rows() {
                     source_event_id: None,
                 },
                 ChatMessageSnapshot {
+                    call: None,
                     id: "future".to_string(),
                     chat_id: chat_id.clone(),
                     kind: ChatMessageKind::User,
@@ -373,6 +377,7 @@ fn internal_prune_expired_messages_event_ignores_stale_tokens_and_updates_state(
             updated_at_secs: now,
             messages: vec![
                 ChatMessageSnapshot {
+                    call: None,
                     id: "expired".to_string(),
                     chat_id: chat_id.clone(),
                     kind: ChatMessageKind::User,
@@ -392,6 +397,7 @@ fn internal_prune_expired_messages_event_ignores_stale_tokens_and_updates_state(
                     source_event_id: None,
                 },
                 ChatMessageSnapshot {
+                    call: None,
                     id: "future".to_string(),
                     chat_id: chat_id.clone(),
                     kind: ChatMessageKind::User,
@@ -525,6 +531,7 @@ fn test_chat_message(
     is_outgoing: bool,
 ) -> ChatMessageSnapshot {
     ChatMessageSnapshot {
+        call: None,
         id: id.to_string(),
         chat_id: chat_id.to_string(),
         kind: ChatMessageKind::User,

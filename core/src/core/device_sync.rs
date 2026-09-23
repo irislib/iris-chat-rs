@@ -627,6 +627,7 @@ impl AppCore {
                 thread.unread_count = thread.unread_count.saturating_add(1);
             }
             thread.insert_message_sorted(ChatMessageSnapshot {
+                call: None,
                 id: message.id,
                 chat_id: chat_id.clone(),
                 kind: ChatMessageKind::User,

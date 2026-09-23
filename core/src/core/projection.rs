@@ -290,7 +290,11 @@ impl AppCore {
         self.state.chat_list = threads
             .iter()
             .map(|thread| {
-                let last_message = thread.messages.last();
+                let last_message = thread
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| !self.is_live_call_history(m));
                 let thread_kind = chat_kind_for_id(&thread.chat_id);
                 let group_snapshot = self.group_snapshot_for_chat_id(&thread.chat_id);
                 let is_muted = self.is_chat_muted(&thread.chat_id);
@@ -357,7 +361,9 @@ impl AppCore {
                     last_message_preview: last_message.map(message_preview),
                     last_message_at_secs: last_message.map(|message| message.created_at_secs),
                     last_message_is_outgoing: last_message.map(|message| message.is_outgoing),
-                    last_message_delivery: last_message.map(|message| message.delivery.clone()),
+                    last_message_delivery: last_message
+                        .filter(|message| message.call.is_none())
+                        .map(|message| message.delivery.clone()),
                     unread_count: thread.unread_count,
                     is_typing: self.thread_has_typing_indicator(&thread.chat_id),
                     is_muted,
@@ -450,6 +456,7 @@ impl AppCore {
                     messages: thread
                         .messages
                         .iter()
+                        .filter(|message| !self.is_live_call_history(message))
                         .map(|message| {
                             self.decorate_message_snapshot(
                                 message,
@@ -693,7 +700,11 @@ impl AppCore {
 
                 let chat_id = group_chat_id(&group.group_id);
                 let thread = self.threads.get(&chat_id)?;
-                let last_message = thread.messages.last();
+                let last_message = thread
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| !self.is_live_call_history(m));
                 Some(ChatThreadSnapshot {
                     chat_id,
                     kind: ChatKind::Group,
@@ -707,7 +718,9 @@ impl AppCore {
                     last_message_preview: last_message.map(message_preview),
                     last_message_at_secs: last_message.map(|message| message.created_at_secs),
                     last_message_is_outgoing: last_message.map(|message| message.is_outgoing),
-                    last_message_delivery: last_message.map(|message| message.delivery.clone()),
+                    last_message_delivery: last_message
+                        .filter(|message| message.call.is_none())
+                        .map(|message| message.delivery.clone()),
                     unread_count: thread.unread_count,
                     is_typing: false,
                     is_muted: self.is_chat_muted(&thread.chat_id),

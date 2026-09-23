@@ -14,6 +14,8 @@ pub(super) struct Signal {
     pub v: u8,
     #[serde(rename = "type")]
     pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     pub call_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<bool>,
@@ -41,6 +43,7 @@ impl Signal {
         Self {
             v: 3,
             kind: kind.into(),
+            reason: None,
             call_id: call_id.into(),
             video: Some(video),
             muted: Some(muted),
@@ -53,6 +56,11 @@ impl Signal {
             frame_seq: None,
             missing: None,
         }
+    }
+    pub fn answered_elsewhere(call_id: &str, video: bool) -> Self {
+        let mut signal = Self::new("end", call_id, video, false);
+        signal.reason = Some("answered_elsewhere".into());
+        signal
     }
     pub fn decode(data: &[u8]) -> Option<Self> {
         if data.len() > 2048 {

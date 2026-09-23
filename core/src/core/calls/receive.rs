@@ -65,6 +65,19 @@ impl AppCore {
             return;
         }
         if signal.kind == "offer" {
+            if self
+                .calls
+                .active
+                .as_ref()
+                .is_none_or(|call| call.id != signal.call_id)
+                && self.call_history_contains(&owner, &signal.call_id)
+            {
+                self.call_signal(
+                    vec![source.into()],
+                    Signal::new("end", &signal.call_id, false, false),
+                );
+                return;
+            }
             if let Some(active) = &self.calls.active {
                 if active.id == signal.call_id && active.peer.as_deref() == Some(source) {
                     if self
@@ -120,7 +133,6 @@ impl AppCore {
         if active.id != signal.call_id
             || active.owner != owner
             || !active.targets.iter().any(|p| p == source)
-            || active.peer.as_ref().is_some_and(|p| p != source)
         {
             return;
         }
@@ -129,6 +141,15 @@ impl AppCore {
             .call
             .as_ref()
             .is_some_and(|s| s.phase == "connected");
+        if active.peer.as_ref().is_some_and(|peer| peer != source) {
+            if active.outgoing && connected && matches!(signal.kind.as_str(), "answer" | "ping") {
+                self.call_signal(
+                    vec![source.into()],
+                    Signal::answered_elsewhere(&active.id, active.video),
+                );
+            }
+            return;
+        }
         match signal.kind.as_str() {
             "answer" if active.outgoing && !connected => {
                 let rejected = active
@@ -137,7 +158,13 @@ impl AppCore {
                     .filter(|p| p.as_str() != source)
                     .cloned()
                     .collect();
-                self.call_signal(rejected, Signal::new("end", &signal.call_id, false, false));
+                self.call_signal(
+                    rejected,
+                    Signal::answered_elsewhere(
+                        &signal.call_id,
+                        active.offered_video && signal.video.unwrap_or(false),
+                    ),
+                );
                 if let (Some(active), Some(snapshot)) =
                     (&mut self.calls.active, &mut self.state.call)
                 {
@@ -156,9 +183,23 @@ impl AppCore {
                 if let Some(active) = &mut self.calls.active {
                     active.media_disconnected_since = Some(Clock::now());
                 }
+                self.persist_call_history(None);
                 self.emit_state();
             }
             "reject" | "end" => {
+                if signal.kind == "end"
+                    && !active.outgoing
+                    && signal.reason.as_deref() == Some("answered_elsewhere")
+                {
+                    if let Some(active) = &mut self.calls.active {
+                        if let Some(video) = signal.video {
+                            active.video = video;
+                            active.offered_video = video;
+                        }
+                    }
+                    self.finish_call("Answered on another device");
+                    return;
+                }
                 if active.outgoing && !connected {
                     if let Some(active) = &mut self.calls.active {
                         active.targets.retain(|p| p != source);

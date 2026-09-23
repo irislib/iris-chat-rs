@@ -644,6 +644,8 @@ pub(super) struct PersistedMessage {
     pub(super) recipient_deliveries: Vec<MessageRecipientDeliverySnapshot>,
     #[serde(default)]
     pub(super) delivery_trace: MessageDeliveryTraceSnapshot,
+    #[serde(default)]
+    pub(super) call: Option<crate::state::CallHistorySnapshot>,
 }
 
 fn default_message_kind() -> ChatMessageKind {

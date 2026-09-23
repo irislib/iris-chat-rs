@@ -102,10 +102,13 @@ impl AppCore {
                 if let Some(a) = &mut self.calls.active {
                     if connected {
                         a.media_disconnected_since = None;
+                        a.answered
+                            .get_or_insert_with(|| (unix_now().get(), Clock::now()));
                     } else {
                         a.media_disconnected_since.get_or_insert_with(Clock::now);
                     }
                 }
+                self.persist_call_history(None);
                 self.emit_state();
             }
         }

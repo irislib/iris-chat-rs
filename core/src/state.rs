@@ -263,6 +263,19 @@ pub struct MessageDeliveryTraceSnapshot {
     pub last_transport_error: Option<String>,
 }
 
+/// A local call summary. Signaling and media never enter message history.
+#[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct CallHistorySnapshot {
+    pub call_id: String,
+    pub direction: String,
+    pub outcome: String,
+    pub video: bool,
+    pub started_at_secs: u64,
+    pub answered_at_secs: Option<u64>,
+    pub ended_at_secs: u64,
+    pub duration_secs: u64,
+}
+
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ChatMessageSnapshot {
     pub id: String,
@@ -289,6 +302,8 @@ pub struct ChatMessageSnapshot {
     /// didn't come over the wire (system notices, locally-composed
     /// outgoing rumors).
     pub source_event_id: Option<String>,
+    #[uniffi(default = None)]
+    pub call: Option<CallHistorySnapshot>,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]

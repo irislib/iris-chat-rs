@@ -319,7 +319,7 @@ impl AppStore {
         let mut stmt = conn.prepare(
             "SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing,
                     created_at_secs, expires_at_secs, delivery, attachments_json, reactions_json,
-                    reactors_json, source_event_id, recipient_deliveries_json, delivery_trace_json
+                    reactors_json, source_event_id, recipient_deliveries_json, delivery_trace_json, call_json
              FROM messages
              WHERE kind = 'user' AND created_at_secs >= ?1
                AND delivery NOT IN ('queued', 'pending', 'failed')
@@ -745,6 +745,7 @@ fn hash_thread(thread: &ThreadRecord) -> u64 {
         message.created_at_secs.hash(&mut hasher);
         message.expires_at_secs.hash(&mut hasher);
         message.source_event_id.hash(&mut hasher);
+        message.call.hash(&mut hasher);
         serialize_delivery(&message.delivery).hash(&mut hasher);
         serialize_message_kind(&message.kind).hash(&mut hasher);
         // Attachments / reactions / reactors are vec-of-struct; fall
@@ -830,8 +831,8 @@ fn upsert_message_row(
         "INSERT INTO messages(
             chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs,
             expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
-            source_event_id, recipient_deliveries_json, delivery_trace_json
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            source_event_id, recipient_deliveries_json, delivery_trace_json, call_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
          ON CONFLICT(chat_id, id) DO UPDATE SET
             kind = excluded.kind,
             author = excluded.author,
@@ -846,7 +847,8 @@ fn upsert_message_row(
             reactors_json = excluded.reactors_json,
             source_event_id = excluded.source_event_id,
             recipient_deliveries_json = excluded.recipient_deliveries_json,
-            delivery_trace_json = excluded.delivery_trace_json",
+            delivery_trace_json = excluded.delivery_trace_json,
+            call_json = excluded.call_json",
         params![
             chat_id,
             message.id,
@@ -864,6 +866,11 @@ fn upsert_message_row(
             message.source_event_id,
             serde_json::to_string(&message.recipient_deliveries)?,
             serde_json::to_string(&message.delivery_trace)?,
+            message
+                .call
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
         ],
     )?;
     Ok(())
@@ -878,8 +885,8 @@ fn upsert_notification_preview_message_row(
         "INSERT INTO messages(
             chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs,
             expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
-            source_event_id, recipient_deliveries_json, delivery_trace_json
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            source_event_id, recipient_deliveries_json, delivery_trace_json, call_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
          ON CONFLICT(chat_id, id) DO UPDATE SET
             author_owner_pubkey_hex = COALESCE(messages.author_owner_pubkey_hex, excluded.author_owner_pubkey_hex),
             source_event_id = COALESCE(NULLIF(messages.source_event_id, ''), excluded.source_event_id)",
@@ -900,6 +907,7 @@ fn upsert_notification_preview_message_row(
             message.source_event_id,
             serde_json::to_string(&message.recipient_deliveries)?,
             serde_json::to_string(&message.delivery_trace)?,
+            message.call.as_ref().map(serde_json::to_string).transpose()?,
         ],
     )?;
     Ok(())
@@ -1295,11 +1303,11 @@ pub(crate) fn load_recent_messages(
     let mut stmt = conn.prepare(
         "SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs, expires_at_secs,
 	                delivery, attachments_json, reactions_json, reactors_json, source_event_id,
-	                recipient_deliveries_json, delivery_trace_json
+	                recipient_deliveries_json, delivery_trace_json, call_json
 	         FROM (
 	             SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs, expires_at_secs,
 	                    delivery, attachments_json, reactions_json, reactors_json, source_event_id,
-	                    recipient_deliveries_json, delivery_trace_json,
+	                    recipient_deliveries_json, delivery_trace_json, call_json,
 	                    rowid AS storage_order
 	             FROM messages
 	             WHERE chat_id = ?1
@@ -1335,12 +1343,12 @@ pub(crate) fn load_messages_before(
 	         )
          SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs, expires_at_secs,
                 delivery, attachments_json, reactions_json, reactors_json, source_event_id,
-                recipient_deliveries_json, delivery_trace_json
+                recipient_deliveries_json, delivery_trace_json, call_json
          FROM (
              SELECT m.chat_id, m.id, m.kind, m.author, m.author_owner_pubkey_hex, m.body, m.is_outgoing,
 	                    m.created_at_secs, m.expires_at_secs, m.delivery, m.attachments_json,
 	                    m.reactions_json, m.reactors_json, m.source_event_id,
-	                    m.recipient_deliveries_json, m.delivery_trace_json,
+	                    m.recipient_deliveries_json, m.delivery_trace_json, m.call_json,
 	                    m.rowid AS storage_order
 	             FROM messages m, anchor
 	             WHERE m.chat_id = ?1
@@ -1386,7 +1394,7 @@ pub(crate) fn load_messages_around(
          SELECT m.chat_id, m.id, m.kind, m.author, m.author_owner_pubkey_hex, m.body, m.is_outgoing, m.created_at_secs,
                 m.expires_at_secs, m.delivery, m.attachments_json, m.reactions_json,
                 m.reactors_json, m.source_event_id, m.recipient_deliveries_json,
-                m.delivery_trace_json
+                m.delivery_trace_json, m.call_json
          FROM messages m, anchor
          WHERE m.chat_id = ?1
            AND (
@@ -1414,6 +1422,9 @@ pub(crate) fn load_messages_around(
 fn persisted_message_from_row(row: &Row<'_>) -> rusqlite::Result<PersistedMessage> {
     let chat_id: String = row.get(0)?;
     Ok(PersistedMessage {
+        call: row
+            .get::<_, Option<String>>(16)?
+            .and_then(|json| serde_json::from_str(&json).ok()),
         id: row.get(1)?,
         chat_id,
         kind: parse_message_kind(&row.get::<_, String>(2)?),
@@ -1563,6 +1574,7 @@ mod tests {
 
     fn sample_message(id: &str, body: &str, ts: u64) -> ChatMessageSnapshot {
         ChatMessageSnapshot {
+            call: None,
             id: id.to_string(),
             chat_id: "chat".to_string(),
             kind: ChatMessageKind::User,

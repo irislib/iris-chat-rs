@@ -48,8 +48,12 @@ Calls use the same FIPS endpoint as chat. Both call control and media are
 end-to-end encrypted FIPS datagrams on service port 39511; a WebSocket seed
 can route a call without being a participant. Incoming calls require an
 accepted contact and a device in that contact's verified device list. Calls
-are ephemeral and are never replayed from the message outbox or stored as
-attachments.
+keep signaling and media ephemeral: neither is replayed from the message outbox
+or stored as attachments. A local summary in chat history records direction,
+missed/answered/canceled/declined outcome, voice or video, and answered duration.
+Other ringing devices show “Answered on another device” without inventing a duration.
+These summaries persist on that device and are not sent to peers or synced to
+other devices. A video call answered with voice is recorded as a voice call.
 
 The native call interface is available on Android, iOS and macOS. Desktop
 browsers use iris-chat; the Linux and Windows native shells do not yet have
@@ -58,6 +62,13 @@ self-managed Telecom with a foreground call service. Active calls keep their
 network connection while the app is in the background. An offline incoming
 call cannot wake an app whose process or network connection has been suspended;
 keep the apps open to establish an offline call.
+
+iOS uses the standard CallKit `voip` background mode and normal microphone,
+camera and local-network permissions. Raw multicast discovery on physical iOS
+requires the provisioned `com.apple.developer.networking.multicast` entitlement,
+which this project does not currently include; simulator results do not establish
+physical-device multicast support. Already-connected unicast FIPS calls are
+unaffected.
 
 Settings has independent Voice calls and Video calls switches. A disabled
 switch hides that call button. Video calls can be answered with voice; with

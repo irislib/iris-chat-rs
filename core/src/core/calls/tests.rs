@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "history_tests.rs"]
+mod history;
+
 const CALL_ID: &str = "00112233445566778899aabbccddeeff";
 const NEXT_CALL_ID: &str = "112233445566778899aabbccddeeff00";
 

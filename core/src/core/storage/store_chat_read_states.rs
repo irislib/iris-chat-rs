@@ -191,6 +191,7 @@ mod tests {
 
     fn sample_message(id: &str, created_at_secs: u64, is_outgoing: bool) -> ChatMessageSnapshot {
         ChatMessageSnapshot {
+            call: None,
             id: id.to_string(),
             chat_id: "chat".to_string(),
             kind: ChatMessageKind::User,

@@ -914,6 +914,7 @@ impl AppCore {
             .as_ref()
             .and_then(|owner_hex| self.owner_picture_url(owner_hex));
         let message = ChatMessageSnapshot {
+            call: None,
             id: message_id,
             chat_id: chat_id.to_string(),
             kind: ChatMessageKind::User,
@@ -1056,6 +1057,7 @@ impl AppCore {
             push_unique(&mut delivery_trace.transport_channels, &channel);
         }
         let message = ChatMessageSnapshot {
+            call: None,
             id: message_id,
             chat_id: chat_id.to_string(),
             kind: ChatMessageKind::User,
@@ -1141,6 +1143,7 @@ impl AppCore {
         }
         thread.updated_at_secs = thread.updated_at_secs.max(created_at_secs);
         thread.insert_message_sorted(ChatMessageSnapshot {
+            call: None,
             id: message_id,
             chat_id: chat_id.to_string(),
             kind: ChatMessageKind::System,
@@ -1792,6 +1795,7 @@ impl AppCore {
 pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMessageSnapshot {
     let (body, parsed_attachments) = extract_message_attachments(&message.body);
     ChatMessageSnapshot {
+        call: message.call.clone(),
         id: message.id.clone(),
         chat_id: message.chat_id.clone(),
         kind: message.kind.clone(),
