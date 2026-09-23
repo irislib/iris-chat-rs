@@ -28,6 +28,7 @@ class CallHistoryTest {
                         CallHistoryRow(history("answered", "outgoing", true, 3_665u))
                         CallHistoryRow(history("declined", "incoming", false, 0u))
                         CallHistoryRow(history("canceled", "outgoing", false, 0u))
+                        CallHistoryRow(history("answered_elsewhere", "incoming", true, 0u))
                     }
                 }
             }
@@ -40,6 +41,7 @@ class CallHistoryTest {
         compose.onNodeWithText(" · 1:01:05", substring = true).assertExists()
         compose.onNodeWithText("Declined voice call").assertExists()
         compose.onNodeWithText("Canceled voice call").assertExists()
+        compose.onNodeWithText("Answered on another device").assertExists()
         compose.waitForIdle()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val bitmap = instrumentation.uiAutomation.takeScreenshot()

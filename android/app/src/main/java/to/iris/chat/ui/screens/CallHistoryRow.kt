@@ -53,6 +53,7 @@ internal fun CallHistoryRow(call: CallHistorySnapshot) {
 }
 
 internal fun callHistoryTitle(call: CallHistorySnapshot): String {
+    if (call.outcome == "answered_elsewhere") return "Answered on another device"
     val kind = if (call.video) "video call" else "voice call"
     val label = when (call.outcome) {
         "missed" -> "Missed"
