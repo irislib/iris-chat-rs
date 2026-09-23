@@ -92,3 +92,13 @@ return infrastructure-unavailable (75) instead of claiming network isolation.
 The `iris-call-fixture` binary behind the `stack-fixture` feature drives the
 same FFI actions and echoes received media for browser and Android end-to-end
 tests; it requires a fresh data directory and never uses an installed account.
+
+`android/scripts/native-call-e2e.py` pairs a fresh emulator test account with
+that fixture, blocks non-loopback traffic on both sides, and stops the local
+message server before calling. It checks real microphone/camera capture,
+returned media bytes, audio playback, voice answering, and remote hangup.
+It requires a root-capable emulator, leaves installed account data intact,
+and removes its temporary network rules on exit. This exercises a local
+WebSocket FIPS connection forwarded to the emulator; it does not prove a
+physical Wi-Fi or Bluetooth link. Browser coverage lives in iris-chat's
+`e2e/calls.spec.ts` and `e2e/calls-native.spec.ts`.
