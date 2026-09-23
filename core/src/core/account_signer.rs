@@ -3,7 +3,8 @@ use super::*;
 use nostr_double_ratchet::APP_KEYS_ENCRYPTED_DEVICE_LABELS_FACT;
 
 const SIGNER_LOGIN_TIMEOUT: Duration = Duration::from_secs(120);
-const MAX_SIGNER_EVENT_BYTES: usize = 64 * 1024;
+// Device authorization must fit the protocol's carried handshake proof.
+const MAX_SIGNER_EVENT_BYTES: usize = 32 * 1024;
 
 pub(super) struct PendingSignerLogin {
     request_id: String,
@@ -18,7 +19,12 @@ pub(super) struct PendingSignerLogin {
 
 impl AppCore {
     pub(super) fn begin_signer_login(&mut self, owner_pubkey_hex: &str) {
-        if self.logged_in.is_some() {
+        if self.logged_in.is_some()
+            || self
+                .pending_signer_login
+                .as_ref()
+                .is_some_and(|pending| pending.publishing)
+        {
             return;
         }
         self.pending_signer_login = None;
@@ -88,17 +94,18 @@ impl AppCore {
                 unix_now().get(),
             )
             .map_err(|error| error.to_string())?;
+            let unsigned_event_json = serde_json::to_string(&unsigned)
+                .map_err(|_| "Could not prepare device authorization.".to_string())?;
             pending.previous_event = event;
-            pending.unsigned_event = Some(unsigned.clone());
-            Ok(unsigned)
+            pending.unsigned_event = Some(unsigned);
+            Ok(unsigned_event_json)
         });
         match prepared {
-            Ok(unsigned) => {
+            Ok(unsigned_event_json) => {
                 let _ = self.update_tx.send(AppUpdate::SignerLoginSignEvent {
                     request_id: request_id.to_string(),
                     owner_pubkey_hex: pending.owner.to_hex(),
-                    unsigned_event_json: serde_json::to_string(&unsigned)
-                        .expect("serialize unsigned authorization"),
+                    unsigned_event_json,
                 });
             }
             Err(error) => self.fail_signer_login(&error),
@@ -166,10 +173,9 @@ impl AppCore {
         {
             return;
         }
-        let pending = self
-            .pending_signer_login
-            .take()
-            .expect("matched pending signer");
+        let Some(pending) = self.pending_signer_login.take() else {
+            return;
+        };
         self.enter_batch();
         let result = result.map_err(anyhow::Error::msg).and_then(|event| {
             self.start_session_inner(
@@ -253,21 +259,6 @@ impl AppCore {
         self.state.busy.restoring_session = false;
         self.state.toast = Some(message.to_string());
         self.emit_state();
-    }
-
-    pub(super) fn signed_local_device_authorization(
-        &self,
-        owner: PublicKey,
-        device: PublicKey,
-    ) -> Option<bool> {
-        if self.logged_in.as_ref().is_some_and(|logged_in| {
-            logged_in.owner_pubkey != owner || logged_in.device_keys.public_key() != device
-        }) {
-            return None;
-        }
-        self.protocol_engine
-            .as_ref()?
-            .signed_local_device_authorization()
     }
 }
 

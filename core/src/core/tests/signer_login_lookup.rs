@@ -45,3 +45,27 @@ fn signer_login_rejects_partial_device_list_without_end_of_stored_events() {
         .any(|update| matches!(update, AppUpdate::SignerLoginSignEvent { .. })));
     incomplete_server.abort();
 }
+
+#[test]
+fn signer_authorization_rejects_device_list_that_cannot_fit_handshake_proof() {
+    let owner = Keys::generate();
+    let old_device = Keys::generate();
+    let new_device = Keys::generate();
+    let now = unix_now().get();
+    let mut previous = AppKeys::new(vec![DeviceEntry::new(old_device.public_key(), now - 1)])
+        .get_event_at(owner.public_key(), now - 1);
+    previous.tags.push(
+        nostr::Tag::parse([
+            nostr_double_ratchet::APP_KEYS_ENCRYPTED_DEVICE_LABELS_FACT,
+            &"x".repeat(35 * 1024),
+        ])
+        .unwrap(),
+    );
+    previous.id = None;
+    let event = previous.sign_with_keys(&owner).unwrap();
+    assert!(
+        AppKeys::from_event(&event).is_ok(),
+        "the roster itself is valid"
+    );
+    assert!(prepare_signer_authorization(owner.public_key(), new_device.public_key(), Some(&event), now).is_err(), "reject before prompting for a signature when the authorization cannot travel with the handshake");
+}

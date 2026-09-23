@@ -194,6 +194,7 @@ fn signer_login_authorizes_persists_restarts_and_sends_without_identity_secret()
     // Once publication begins, cancellation and the signing timer must not
     // discard the device key while an authorization write is in flight.
     core.cancel_signer_login("");
+    core.begin_signer_login(&Keys::generate().public_key().to_hex());
     assert!(core.state.busy.restoring_session);
     pump_signer_core_until(&mut core, &messages, |core| {
         !core.state.busy.restoring_session

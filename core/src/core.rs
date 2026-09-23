@@ -68,6 +68,7 @@ use rand::rngs::OsRng;
 
 mod account;
 mod account_app_keys;
+mod account_authorization;
 mod account_pending_link;
 mod account_signer;
 mod account_signer_relay;
