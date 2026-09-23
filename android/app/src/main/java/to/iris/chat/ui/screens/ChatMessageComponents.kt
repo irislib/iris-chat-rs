@@ -134,6 +134,10 @@ internal fun MessageBubble(
     chat: CurrentChatSnapshot? = null,
     appManager: AppManager? = null,
 ) {
+    message.call?.let { call ->
+        CallHistoryRow(call)
+        return
+    }
     if (message.kind == ChatMessageKind.SYSTEM) {
         SystemMessageChip(message = message)
         return
@@ -2013,6 +2017,9 @@ internal fun startsMessageCluster(
     chatKind: ChatKind,
 ): Boolean {
     if (previous == null) {
+        return true
+    }
+    if (previous.kind == ChatMessageKind.SYSTEM || message.kind == ChatMessageKind.SYSTEM) {
         return true
     }
     val previousSecs = previous.createdAtSecs.toLong()
