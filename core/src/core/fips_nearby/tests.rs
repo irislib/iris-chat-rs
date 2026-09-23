@@ -1,5 +1,23 @@
 use super::*;
 
+fn reconnect_fixture_after_runtime_change(
+    core: &mut AppCore,
+    previous_generation: u64,
+    links: Vec<crate::updates::FipsNearbyLinkSnapshot>,
+) {
+    // Importing a new device list changes configured peers and replaces FIPS.
+    // Simulate the replacement endpoint authenticating these fixture links again.
+    assert_ne!(core.fips_connection_generation, previous_generation);
+    assert!(
+        core.fips_nearby_links.is_empty(),
+        "retired links must be cleared"
+    );
+    core.handle_internal(InternalEvent::FipsNearbyPeersChanged {
+        generation: core.fips_connection_generation,
+        peers: links,
+    });
+}
+
 #[test]
 fn nearby_snapshot_excludes_self_before_and_after_device_list_arrives() {
     let directory = tempfile::TempDir::new().unwrap();
@@ -67,7 +85,10 @@ fn nearby_snapshot_excludes_self_before_and_after_device_list_arrives() {
     .get_event_at(owner.public_key(), created_at)
     .sign_with_keys(&owner)
     .unwrap();
+    let previous_generation = core.fips_connection_generation;
+    let links = core.fips_nearby_links.clone();
     core.handle_relay_event(device_list);
+    reconnect_fixture_after_runtime_change(&mut core, previous_generation, links);
     let (snapshot, bluetooth, lan) = latest_snapshot();
     assert_eq!(snapshot.peers.len(), 1);
     assert_eq!(snapshot.peers[0].id, other_device);
@@ -395,7 +416,10 @@ fn app_keys_event_received_over_fips_installs_peer_roster() {
         transport_addr: Some("192.168.1.25:7000".to_string()),
     }];
     while bob_updates_rx.try_recv().is_ok() {}
+    let previous_generation = bob.fips_connection_generation;
+    let links = bob.fips_nearby_links.clone();
     bob.handle_fips_nearby_packet(&alice_device, FIPS_NEARBY_PORT, &payload);
+    reconnect_fixture_after_runtime_change(&mut bob, previous_generation, links);
 
     assert_eq!(bob.debug_event_counters.app_keys_events, 1);
     let roster = bob.app_keys.get(&alice_owner).expect("Alice roster");
@@ -405,7 +429,7 @@ fn app_keys_event_received_over_fips_installs_peer_roster() {
         .any(|device| device.identity_pubkey_hex == alice_device));
     let peer_update = bob_updates_rx
         .try_iter()
-        .find_map(|update| match update {
+        .filter_map(|update| match update {
             AppUpdate::NearbyPeersChanged {
                 snapshot,
                 lan_peer_ids,
@@ -413,6 +437,7 @@ fn app_keys_event_received_over_fips_installs_peer_roster() {
             } => Some((snapshot, lan_peer_ids)),
             _ => None,
         })
+        .last()
         .expect("FIPS peer projection update");
     assert_eq!(peer_update.0.peers.len(), 1);
     assert_eq!(
@@ -573,6 +598,8 @@ fn linked_device_forwards_signed_identity_after_restart() {
             transport_addr: Some("192.168.1.25:7000".to_string()),
         }],
     });
+    let previous_generation = receiver.fips_connection_generation;
+    let links = receiver.fips_nearby_links.clone();
     for payload in &payloads {
         receiver.handle_fips_nearby_packet(
             &device.public_key().to_hex(),
@@ -580,6 +607,7 @@ fn linked_device_forwards_signed_identity_after_restart() {
             payload,
         );
     }
+    reconnect_fixture_after_runtime_change(&mut receiver, previous_generation, links);
     let snapshot = updates_rx
         .try_iter()
         .filter_map(|update| match update {
@@ -638,7 +666,10 @@ fn relay_identity_updates_refresh_an_existing_nearby_link() {
         })
         .find(is_app_keys_event)
         .unwrap();
+    let previous_generation = bob.fips_connection_generation;
+    let links = bob.fips_nearby_links.clone();
     bob.handle_relay_event(app_keys);
+    reconnect_fixture_after_runtime_change(&mut bob, previous_generation, links);
     let identified = updates_rx
         .try_iter()
         .filter_map(|update| match update {
@@ -646,7 +677,7 @@ fn relay_identity_updates_refresh_an_existing_nearby_link() {
             _ => None,
         })
         .last()
-        .expect("relay device list must refresh the nearby user ID");
+        .expect("reconnected peer must resolve the relayed device list");
     assert_eq!(
         identified.peers[0].owner_pubkey_hex.as_deref(),
         Some(alice_owner.to_hex().as_str())
