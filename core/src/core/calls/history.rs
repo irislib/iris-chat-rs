@@ -18,7 +18,11 @@ impl AppCore {
             return;
         };
         let elsewhere = disposition == Some("answered_elsewhere");
-        let answered = if elsewhere { None } else { active.answered };
+        let answered = if elsewhere || disposition == Some("declined") {
+            None
+        } else {
+            active.answered
+        };
         let outcome = if elsewhere {
             "answered_elsewhere"
         } else if answered.is_some() {

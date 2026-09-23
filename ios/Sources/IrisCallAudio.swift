@@ -13,17 +13,26 @@ final class IrisCallAudio: IrisCallAudioHandling {
     private let queue: DispatchQueue
     private let permission: (UInt64) -> (() -> Bool)
     private let send: (Data, UInt64, @escaping () -> Bool) -> Void
+    private let failed: (Error) -> Void
     private let pendingCapture = DispatchSemaphore(value: 3)
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
     private var codec: CallAudioCodec?
     private var timer: DispatchSourceTimer?
+    private var configurationObserver: NSObjectProtocol?
+    private var muted = true
     private var queuedAudio = 0
+    private var playoutGeneration: UInt64 = 0
+    private var loggedCapture = false
+    private var loggedPlayback = false
+    private var loggedPlayed = false
 
-    init(queue: DispatchQueue, permission: @escaping (UInt64) -> (() -> Bool), send: @escaping (Data, UInt64, @escaping () -> Bool) -> Void) {
+    init(queue: DispatchQueue, permission: @escaping (UInt64) -> (() -> Bool), failed: @escaping (Error) -> Void,
+         send: @escaping (Data, UInt64, @escaping () -> Bool) -> Void) {
         self.queue = queue
         self.permission = permission
         self.send = send
+        self.failed = failed
     }
 
     func start() throws {
@@ -32,6 +41,7 @@ final class IrisCallAudio: IrisCallAudioHandling {
         let engine = AVAudioEngine()
         let input = engine.inputNode
         try input.setVoiceProcessingEnabled(true)
+        input.isVoiceProcessingInputMuted = muted
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0,
               let wireFormat = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1),
@@ -76,6 +86,9 @@ final class IrisCallAudio: IrisCallAudioHandling {
                     defer { self.pendingCapture.signal() }
                     guard self.codec === codec, allowed(), let codec,
                           let bytes = try? codec.encode(samples: frame), !bytes.isEmpty else { return }
+#if DEBUG
+                    if !self.loggedCapture { self.loggedCapture = true; NSLog("IrisCall first microphone frame encoded") }
+#endif
                     self.send(Data(bytes), frameTimestamp, allowed)
                 }
                 timestamp += 20_000
@@ -83,6 +96,32 @@ final class IrisCallAudio: IrisCallAudioHandling {
         }
         do {
             self.codec = codec
+            configurationObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+            ) { [weak self, weak engine] _ in
+                self?.queue.async { [weak self, weak engine] in
+                    guard let self, let engine, self.engine === engine, !engine.isRunning else { return }
+#if DEBUG
+                    NSLog("IrisCall restarting stopped audio graph after route change")
+#endif
+                    // A CallKit/headset route change can stop the graph after
+                    // start() succeeds. Keep the voice-processing I/O unit and
+                    // its tap format; creating a second unit can fail on phones.
+                    do {
+                        self.playoutGeneration &+= 1
+                        self.player?.stop()
+                        self.queuedAudio = 0
+                        engine.prepare()
+                        try engine.start()
+                        self.player?.play()
+                    } catch {
+#if DEBUG
+                        NSLog("IrisCall audio route recovery failed: %@", error.localizedDescription)
+#endif
+                        self.failed(error)
+                    }
+                }
+            }
             engine.prepare()
             try engine.start()
             player.play()
@@ -94,6 +133,8 @@ final class IrisCallAudio: IrisCallAudioHandling {
             self.timer = timer
             timer.resume()
         } catch {
+            if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+            configurationObserver = nil
             self.codec = nil
             input.removeTap(onBus: 0)
             engine.stop()
@@ -101,10 +142,16 @@ final class IrisCallAudio: IrisCallAudioHandling {
         }
     }
 
-    func setMuted(_ muted: Bool) { engine?.inputNode.isVoiceProcessingInputMuted = muted }
+    func setMuted(_ muted: Bool) {
+        self.muted = muted
+        engine?.inputNode.isVoiceProcessingInputMuted = muted
+    }
 
     func receive(sequence: UInt32, data: Data) {
         guard !data.isEmpty, data.count <= 1_275 else { return }
+#if DEBUG
+        if !loggedPlayback { loggedPlayback = true; NSLog("IrisCall first remote audio queued") }
+#endif
         codec?.queue(sequence: sequence, data: data)
     }
 
@@ -115,18 +162,28 @@ final class IrisCallAudio: IrisCallAudioHandling {
               let channel = buffer.floatChannelData?[0] else { return }
         let samples = codec.playout()
         guard samples.count == 960 else { return }
+#if DEBUG
+        if !loggedPlayed && samples.contains(where: { $0 != 0 }) {
+            loggedPlayed = true
+            NSLog("IrisCall first non-silent remote audio played")
+        }
+#endif
         buffer.frameLength = 960
         for index in samples.indices { channel[index] = Float(samples[index]) / 32768 }
         queuedAudio += 1
+        let generation = playoutGeneration
         player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self, weak player] _ in
             self?.queue.async { [weak self, weak player] in
-                guard let self, self.player === player else { return }
+                guard let self, self.player === player, self.playoutGeneration == generation else { return }
                 self.queuedAudio = max(0, self.queuedAudio - 1)
             }
         }
     }
 
     func stop() {
+        playoutGeneration &+= 1
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+        configurationObserver = nil
         timer?.cancel()
         timer = nil
         engine?.inputNode.removeTap(onBus: 0)

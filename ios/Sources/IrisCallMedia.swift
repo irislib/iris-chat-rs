@@ -39,6 +39,7 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
     private var targetBitrate: UInt32 = 2_000_000
     private var keyFrameGeneration: UInt32 = 0
     private var ready = false
+    private var receivedVideo = false
     private let send: (String, UInt8, UInt64, Bool, Data, @escaping () -> Bool) -> Void
     private let frame: (String, Bool, CVPixelBuffer) -> Void
     private let connectionChanged: (String, Bool) -> Void
@@ -64,15 +65,23 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
             guard let self, self.session?.callID != session.callID else { return }
             self.stopHardware()
             self.session = session
+            self.receivedVideo = false
             self.receiver = IrisCallVideoReceiver(queue: self.queue,
-                output: { [weak self] pixel in self?.frame(session.callID, false, pixel) },
+                output: { [weak self] pixel in
+#if DEBUG
+                    if self?.receivedVideo == false { self?.receivedVideo = true; NSLog("IrisCall first remote video decoded") }
+#endif
+                    self?.frame(session.callID, false, pixel)
+                },
                 requestKeyFrame: { [weak self] in self?.requestKeyFrame(session.callID) })
             self.encoder = IrisH264Encoder { [weak self] data, timestamp, key, allowed in
                 guard let self, self.allowed(session.callID, video: true) else { return }
                 self.send(session.callID, 2, timestamp, key, data, allowed)
             }
             self.encoder?.setBitrate(Int(self.targetBitrate))
-            self.audio = self.audioForTesting ?? IrisCallAudio(queue: self.queue, permission: { [captureGate = self.captureGate] timestamp in captureGate.permission(callID: session.callID, kind: 1, capturedAtUs: timestamp) }) {
+            self.audio = self.audioForTesting ?? IrisCallAudio(queue: self.queue,
+                permission: { [captureGate = self.captureGate] timestamp in captureGate.permission(callID: session.callID, kind: 1, capturedAtUs: timestamp) },
+                failed: { [weak self] _ in self?.failed(session.callID, "Couldn’t restore call audio.") }) {
                 [weak self] data, timestamp, allowed in
                 guard let self, self.allowed(session.callID, video: false) else { return }
                 self.send(session.callID, 1, timestamp, false, data, allowed)

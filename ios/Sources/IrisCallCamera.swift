@@ -17,6 +17,10 @@ final class IrisCallCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         guard session == nil || self.height != height else { return }
         stop()
         let session = AVCaptureSession()
+#if os(iOS)
+        // CallKit owns the audio session; camera startup must not reconfigure it.
+        session.automaticallyConfiguresApplicationAudioSession = false
+#endif
         session.beginConfiguration()
         let preset: AVCaptureSession.Preset = height > 720 ? .hd1920x1080 : .hd1280x720
         if session.canSetSessionPreset(preset) { session.sessionPreset = preset }

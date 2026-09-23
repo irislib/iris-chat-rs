@@ -43,6 +43,7 @@ pub(super) struct ActiveCall {
 pub(super) struct CallRuntime {
     pub(super) active: Option<ActiveCall>,
     ended: VecDeque<(String, Clock)>,
+    dispositions: VecDeque<(String, Vec<String>, Signal, Clock)>,
 }
 /// Bounded frame queue: congestion drops old real-time work instead of building
 /// an ever-growing send/task backlog. Signaling has its own small path.
@@ -94,6 +95,14 @@ pub(super) async fn start_transport(
     Ok((tx, vec![receive_task, send_task]))
 }
 impl AppCore {
+    fn remember_call_disposition(&mut self, owner: String, peers: Vec<String>, signal: Signal) {
+        self.calls
+            .dispositions
+            .push_back((owner, peers, signal, Clock::now()));
+        while self.calls.dispositions.len() > 64 {
+            self.calls.dispositions.pop_front();
+        }
+    }
     fn call_owner(&self, source: &str) -> Option<String> {
         self.app_keys
             .values()
@@ -345,7 +354,26 @@ impl AppCore {
 
     pub(super) fn finish_call(&mut self, reason: &str) {
         let declined = reason == "Call declined";
-        self.signal_active_call(if declined { "reject" } else { "end" });
+        if declined {
+            if let Some(active) = &self.calls.active {
+                let targets = active
+                    .peer
+                    .as_ref()
+                    .map(|p| vec![p.clone()])
+                    .unwrap_or_else(|| active.targets.clone());
+                let mut signal = Signal::new(
+                    if active.outgoing { "end" } else { "reject" },
+                    &active.id,
+                    active.video,
+                    false,
+                );
+                signal.reason = Some("declined".into());
+                self.call_signal(targets.clone(), signal.clone());
+                self.remember_call_disposition(active.owner.clone(), targets, signal);
+            }
+        } else {
+            self.signal_active_call("end");
+        }
         self.persist_call_history(match reason {
             "Call declined" => Some("declined"),
             "Answered on another device" => Some("answered_elsewhere"),
@@ -423,6 +451,13 @@ impl AppCore {
             self.finish_call("No answer");
             return;
         }
+        if !connected
+            && !active.outgoing
+            && active.last_received.elapsed() >= Duration::from_secs(10)
+        {
+            self.finish_call("Connection lost");
+            return;
+        }
         if connected
             && active
                 .media_disconnected_since
@@ -441,6 +476,9 @@ impl AppCore {
             self.signal_active_call("ping");
         } else if active.outgoing {
             self.signal_active_call("offer");
+        } else {
+            // Recover a lost answered-elsewhere/cancel notice while ringing.
+            self.signal_active_call("ping");
         }
         self.schedule_call_tick(id);
     }

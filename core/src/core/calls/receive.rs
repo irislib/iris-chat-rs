@@ -41,6 +41,25 @@ impl AppCore {
             return;
         };
         self.calls
+            .dispositions
+            .retain(|(_, _, _, at)| at.elapsed() < Duration::from_secs(120));
+        if matches!(signal.kind.as_str(), "offer" | "answer" | "ping") {
+            if let Some((_, _, reply, _)) =
+                self.calls
+                    .dispositions
+                    .iter()
+                    .rev()
+                    .find(|(known_owner, peers, reply, _)| {
+                        known_owner == &owner
+                            && reply.call_id == signal.call_id
+                            && peers.iter().any(|p| p == source)
+                    })
+            {
+                self.call_signal(vec![source.into()], reply.clone());
+                return;
+            }
+        }
+        self.calls
             .ended
             .retain(|(_, at)| at.elapsed() < Duration::from_secs(120));
         if self.calls.ended.iter().any(|(id, _)| id == &signal.call_id) {
@@ -80,6 +99,7 @@ impl AppCore {
             }
             if let Some(active) = &self.calls.active {
                 if active.id == signal.call_id && active.peer.as_deref() == Some(source) {
+                    self.calls.active.as_mut().unwrap().last_received = Clock::now();
                     if self
                         .state
                         .call
@@ -152,19 +172,18 @@ impl AppCore {
         }
         match signal.kind.as_str() {
             "answer" if active.outgoing && !connected => {
-                let rejected = active
+                let rejected: Vec<String> = active
                     .targets
                     .iter()
                     .filter(|p| p.as_str() != source)
                     .cloned()
                     .collect();
-                self.call_signal(
-                    rejected,
-                    Signal::answered_elsewhere(
-                        &signal.call_id,
-                        active.offered_video && signal.video.unwrap_or(false),
-                    ),
+                let disposition = Signal::answered_elsewhere(
+                    &signal.call_id,
+                    active.offered_video && signal.video.unwrap_or(false),
                 );
+                self.call_signal(rejected.clone(), disposition.clone());
+                self.remember_call_disposition(owner.clone(), rejected, disposition);
                 if let (Some(active), Some(snapshot)) =
                     (&mut self.calls.active, &mut self.state.call)
                 {
@@ -187,6 +206,10 @@ impl AppCore {
                 self.emit_state();
             }
             "reject" | "end" => {
+                if signal.reason.as_deref() == Some("declined") {
+                    self.finish_call("Call declined");
+                    return;
+                }
                 if signal.kind == "end"
                     && !active.outgoing
                     && signal.reason.as_deref() == Some("answered_elsewhere")

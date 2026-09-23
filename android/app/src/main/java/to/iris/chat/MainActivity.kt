@@ -298,13 +298,11 @@ class MainActivity : ComponentActivity() {
             .orEmpty()
 
     private fun requestNotificationPermissionIfNeeded() {
-        if (BuildConfig.DEBUG) {
-            return
-        }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             return
         }
-        if (!container.appManager.state.value.preferences.desktopNotificationsEnabled) {
+        val preferences = container.appManager.state.value.preferences
+        if (!preferences.desktopNotificationsEnabled && !preferences.voiceCallsEnabled && !preferences.videoCallsEnabled) {
             return
         }
         if (

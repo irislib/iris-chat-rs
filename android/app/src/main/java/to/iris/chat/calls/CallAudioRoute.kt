@@ -7,8 +7,8 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
 
-/** Audio hardware is owned by WebRTC; this owns the Android call route and focus. */
-internal class CallAudioRoute(context: Context, failed: () -> Unit) : AutoCloseable {
+/** Standalone media tests own focus; production calls use Telecom's focus. */
+internal class CallAudioRoute(context: Context, private val telecomManaged: Boolean = false, failed: () -> Unit) : AutoCloseable {
     private val manager = context.getSystemService(AudioManager::class.java)
     private val oldMode = manager.mode
     @Suppress("DEPRECATION") private val oldSpeaker = manager.isSpeakerphoneOn
@@ -19,14 +19,15 @@ internal class CallAudioRoute(context: Context, failed: () -> Unit) : AutoClosea
     private var started = false
 
     fun start(speaker: Boolean) {
-        check(manager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
+        if (!telecomManaged) check(manager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
         started = true
-        manager.mode = AudioManager.MODE_IN_COMMUNICATION
+        if (!telecomManaged) manager.mode = AudioManager.MODE_IN_COMMUNICATION
         setSpeaker(speaker)
     }
 
     @Suppress("DEPRECATION")
     fun setSpeaker(enabled: Boolean) {
+        if (telecomManaged) { IrisConnectionService.setSpeaker(enabled); return }
         if (Build.VERSION.SDK_INT >= 31) {
             val devices = manager.availableCommunicationDevices
             val external = devices.firstOrNull { it.type in setOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
@@ -41,6 +42,7 @@ internal class CallAudioRoute(context: Context, failed: () -> Unit) : AutoClosea
     override fun close() {
         if (!started) return
         started = false
+        if (telecomManaged) return
         if (Build.VERSION.SDK_INT >= 31) manager.clearCommunicationDevice() else manager.isSpeakerphoneOn = oldSpeaker
         manager.mode = oldMode
         manager.abandonAudioFocusRequest(focus)

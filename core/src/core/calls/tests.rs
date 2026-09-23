@@ -353,3 +353,31 @@ fn calls_end_if_signaling_survives_but_media_never_connects() {
     assert_eq!(f.snapshot().phase, "ended");
     assert!(f.core.calls.active.is_none());
 }
+
+#[test]
+fn calls_explicit_decline_stops_all_targets_but_unavailable_device_does_not() {
+    let mut f = Fixture::new();
+    f.outgoing(true);
+    f.receive(0, "reject", false);
+    assert_eq!(f.snapshot().phase, "outgoing");
+    let mut reject = Signal::new("reject", CALL_ID, false, false);
+    reject.reason = Some("declined".into());
+    f.core
+        .handle_call_packet(&f.devices[1], PORT, &serde_json::to_vec(&reject).unwrap());
+    assert_eq!(f.snapshot().phase, "ended");
+    assert_eq!(f.snapshot().end_reason.as_deref(), Some("Call declined"));
+}
+
+#[test]
+fn calls_incoming_stops_when_caller_disappears_but_repeated_offers_keep_it_alive() {
+    let mut f = Fixture::new();
+    f.receive(0, "offer", false);
+    f.core.calls.active.as_mut().unwrap().last_received = Clock::now() - Duration::from_secs(11);
+    f.receive(0, "offer", false);
+    f.core.call_tick(CALL_ID);
+    assert_eq!(f.snapshot().phase, "incoming");
+    f.core.calls.active.as_mut().unwrap().last_received = Clock::now() - Duration::from_secs(11);
+    f.core.call_tick(CALL_ID);
+    assert_eq!(f.snapshot().phase, "ended");
+    assert_eq!(f.snapshot().end_reason.as_deref(), Some("Connection lost"));
+}

@@ -27,8 +27,7 @@ final class IrisCallController: NSObject, ObservableObject {
     private var permissionRequestID: UUID?
     private let mediaForTesting: IrisCallMediaHandling?
 #if os(macOS)
-    private var ringTimer: Timer?
-    private var attentionRequest: Int?
+    private let desktopAlerts = IrisDesktopCallAlerts()
 #endif
     private lazy var media: IrisCallMediaHandling = mediaForTesting ?? IrisCallMediaEngine(
         send: { [weak self, outgoingSlots, sendGate] id, kind, timestamp, key, data, captureAllowed in
@@ -154,6 +153,11 @@ final class IrisCallController: NSObject, ObservableObject {
         mediaCallID = nil
         localSurface.setCallID(nil)
         remoteSurface.setCallID(nil)
+#if os(iOS)
+        updateSystemCall(nil)
+#elseif os(macOS)
+        desktopAlerts.update(nil)
+#endif
         dispatch(.endCall(callId: call.callId))
     }
 
@@ -227,21 +231,10 @@ final class IrisCallController: NSObject, ObservableObject {
             remoteSurface.setCallID(snapshot.remoteVideo ? snapshot.callId : nil)
         }
 #if os(iOS)
-        updateSystemCall(snapshot)
+        updateSystemCall(snapshot?.callId == endingCallID ? nil : snapshot)
 #elseif os(macOS)
-        if snapshot?.phase == "incoming", mediaForTesting == nil {
-            if ringTimer == nil {
-                attentionRequest = NSApp.requestUserAttention(.criticalRequest)
-                NSSound(named: NSSound.Name("Glass"))?.play()
-                ringTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
-                    NSSound(named: NSSound.Name("Glass"))?.play()
-                }
-            }
-        } else {
-            ringTimer?.invalidate()
-            ringTimer = nil
-            if let attentionRequest { NSApp.cancelUserAttentionRequest(attentionRequest) }
-            attentionRequest = nil
+        if mediaForTesting == nil {
+            desktopAlerts.update(snapshot?.callId == endingCallID ? nil : snapshot)
         }
 #endif
         updateHardware()
@@ -344,8 +337,14 @@ final class IrisCallController: NSObject, ObservableObject {
                 provider.reportCall(with: id, updated: update)
             } else {
                 provider.reportNewIncomingCall(with: id, update: update) { [weak self] error in
-                    guard error != nil else { return }
-                    Task { @MainActor in self?.systemCallFailed(id: id) }
+                    Task { @MainActor in
+                        // Cancellation can beat CallKit's asynchronous report.
+                        guard let self, self.systemCallID == id else {
+                            if error == nil { provider.reportCall(with: id, endedAt: Date(), reason: .remoteEnded) }
+                            return
+                        }
+                        if error != nil { self.systemCallFailed(id: id) }
+                    }
                 }
             }
         }
@@ -367,11 +366,6 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 #endif
 
-    deinit {
-#if os(macOS)
-        ringTimer?.invalidate()
-#endif
-    }
 }
 
 #if os(iOS)

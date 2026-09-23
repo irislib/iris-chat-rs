@@ -118,15 +118,7 @@ fn call_history_two_recipient_devices_record_answered_elsewhere_over_fips() {
         connected: true,
     });
     wait(&mut peers, &|states| states[0] == "connected");
-    // Lose the first sibling cancellation, then let the losing device accept.
-    // Its late answer must receive the disposition again rather than timing out.
-    peers[2].0.handle_action(AppAction::AnswerCall {
-        call_id: id.clone(),
-    });
-    peers[2].0.handle_action(AppAction::SetCallMediaConnected {
-        call_id: id.clone(),
-        connected: true,
-    });
+    // The unaccepted sibling must recover a lost disposition automatically.
     wait(&mut peers, &|states| states[2] == "ended");
     assert!(!drop_sibling_end.get());
     peers[0].0.handle_action(AppAction::SetCallMediaConnected {
@@ -161,6 +153,26 @@ fn call_history_two_recipient_devices_record_answered_elsewhere_over_fips() {
         .unwrap();
     assert_eq!(answered.outcome, "answered");
     assert!(!answered.video);
+    peers[0].0.handle_action(AppAction::StartCall {
+        chat_id: owner.public_key().to_hex(),
+        video: false,
+    });
+    wait(&mut peers, &|states| {
+        states[1] == "incoming" && states[2] == "incoming"
+    });
+    let declined_id = peers[1].0.state.call.as_ref().unwrap().call_id.clone();
+    peers[1].0.handle_action(AppAction::EndCall {
+        call_id: declined_id,
+    });
+    wait(&mut peers, &|states| {
+        states.iter().all(|state| *state == "ended")
+    });
+    for (core, _, _) in &peers {
+        assert_eq!(
+            core.state.call.as_ref().unwrap().end_reason.as_deref(),
+            Some("Call declined")
+        );
+    }
     for (core, _, _) in &mut peers {
         core.shutdown();
     }

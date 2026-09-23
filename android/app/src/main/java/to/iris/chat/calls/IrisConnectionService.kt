@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.telecom.Connection
+import android.telecom.CallAudioState
 import android.telecom.ConnectionRequest
 import android.telecom.ConnectionService
 import android.telecom.DisconnectCause
@@ -21,6 +22,13 @@ import to.iris.chat.rust.CallSnapshot
 
 /** Self-managed calls integrate with headset controls and the system's other calls. */
 class IrisConnectionService : ConnectionService() {
+    override fun onConnectionServiceFocusGained() {
+        (application as IrisChatApp).container.callRuntime.telecomFocusChanged(true)
+    }
+    override fun onConnectionServiceFocusLost() {
+        (application as IrisChatApp).container.callRuntime.telecomFocusChanged(false)
+        connectionServiceFocusReleased()
+    }
     override fun onCreateIncomingConnection(account: PhoneAccountHandle?, request: ConnectionRequest?): Connection = create(true)
     override fun onCreateOutgoingConnection(account: PhoneAccountHandle?, request: ConnectionRequest?): Connection = create(false)
     override fun onCreateIncomingConnectionFailed(account: PhoneAccountHandle?, request: ConnectionRequest?) { endRejectedCall() }
@@ -62,6 +70,11 @@ class IrisConnectionService : ConnectionService() {
     companion object {
         private var current: Connection? = null
         private var currentId: String? = null
+
+        @Suppress("DEPRECATION")
+        fun setSpeaker(enabled: Boolean) {
+            current?.setAudioRoute(if (enabled) CallAudioState.ROUTE_SPEAKER else CallAudioState.ROUTE_WIRED_OR_EARPIECE)
+        }
 
         @SuppressLint("MissingPermission")
         fun announce(context: Context, call: CallSnapshot) {

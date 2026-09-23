@@ -51,14 +51,27 @@ accepted contact and a device in that contact's verified device list. Calls
 keep signaling and media ephemeral: neither is replayed from the message outbox
 or stored as attachments. A local summary in chat history records direction,
 missed/answered/canceled/declined outcome, voice or video, and answered duration.
-Other ringing devices show “Answered on another device” without inventing a duration.
+The first device to answer joins the call. Other ringing devices show “Answered on
+another device” without inventing a duration. Explicitly declining ends the call
+on all devices; an unavailable or busy device does not silence the others.
+Ringing devices retry control messages so a lost answer, decline, or cancellation
+notice does not leave them ringing.
 These summaries persist on that device and are not sent to peers or synced to
 other devices. A video call answered with voice is recorded as a voice call.
 
 The native call interface is available on Android, iOS and macOS. Desktop
 browsers use iris-chat; the Linux and Windows native shells do not yet have
 capture or call controls. Phone integration uses iOS CallKit and Android
-self-managed Telecom with a foreground call service. Active calls keep their
+self-managed Telecom with a foreground call service. Android uses a high-priority
+CallStyle notification with system ringtone and full-screen intent; presentation
+respects the phone’s notification permission, ringer, and system settings. Telecom
+owns audio focus for these calls. Apple audio restarts its existing voice-processing
+graph after hardware route changes and clears obsolete playback buffers; camera
+startup leaves the shared call audio session alone. CallKit and the in-app controls operate on the
+same call. macOS and browser alerts stop and dismiss when the call is answered,
+declined, canceled, or ends. Browser ringtones require an earlier interaction
+with the app, and call notifications require the browser’s notification permission.
+These local alerts do not require a separate push service. Active calls keep their
 network connection while the app is in the background. An offline incoming
 call cannot wake an app whose process or network connection has been suspended;
 keep the apps open to establish an offline call.
@@ -111,7 +124,7 @@ Each frame has a per-kind sequence number, capture timestamp, keyframe flag and
 bounded fragments. H.264 keyframes contain SPS/PPS and an IDR; no B frames are
 used. Retransmission caches are bounded to eight frames/1 MiB and expire after
 300 ms; incomplete receiving frames expire after 250 ms. Real-time queues discard
-stale work instead of accumulating latency. Ringing times out after 30 seconds;
+stale work instead of accumulating latency. Ringing times out after 30 seconds, or after 10 seconds without the caller;
 an established session ends after 15 seconds without its peer. Both clients must
 support version 3 to call each other.
 
@@ -140,6 +153,13 @@ decodes received Opus to measure nonzero audio. It never uses an installed accou
 Browser coverage lives in iris-chat's `e2e/calls.spec.ts` and
 `e2e/calls-native.spec.ts`, with actual encoders, decoders, bitrate feedback and
 bandwidth/loss tests.
+
+Physical paired-phone checks are opt-in in `PhoneCallUITests` with
+`IRIS_PHONE_CALL_E2E=1`. They preserve the selected phones’ accounts and exercise
+system answering, stable video-call state, and system alert dismissal after caller
+cancellation. Media evidence additionally checks device logs for actual microphone
+encoding, remote audio playback, and remote video decoding; a connected timer alone
+is not media proof.
 
 `android/scripts/native-call-e2e.py` pairs a fresh emulator account with the native
 fixture, blocks non-loopback traffic and stops the local setup message server

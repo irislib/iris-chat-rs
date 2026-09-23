@@ -4,10 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.AudioManager
-import android.media.Ringtone
-import android.media.RingtoneManager
-import android.os.Build
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,7 +27,6 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
     val error = mutableError.asStateFlow()
     val speaker = mutableSpeaker.asStateFlow()
     val answerRequest = mutableAnswerRequest.asStateFlow()
-    private var ringtone: Ringtone? = null
     @Volatile private var current: CallSnapshot? = null
     @Volatile private var audio: CallAudio? = null
     @Volatile private var video: CallVideoMedia? = null
@@ -41,6 +36,11 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
     private var announcedId: String? = null
     @Volatile private var failedCallId: String? = null
     private var serviceReady = false
+    private var telecomReady = false
+    private val receivedAudio = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val decodedVideo = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val sentAudio = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val receivedPacket = java.util.concurrent.atomic.AtomicBoolean(false)
 
     init {
         app.setCallMediaReceiver(::receive)
@@ -52,13 +52,13 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
     private fun update(call: CallSnapshot?) {
         current = call
         if (call == null || call.phase == "ended") {
-            ringtone?.stop(); ringtone = null
             mutableAnswerRequest.value = null
             stopMedia()
             IrisConnectionService.finishCurrent()
             context.stopService(Intent(context, IrisCallService::class.java))
             announcedId = null
             serviceReady = false
+            telecomReady = false
             return
         }
         if (announcedId != call.callId) {
@@ -68,14 +68,7 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
             mutableSpeaker.value = call.video
             announcedId = call.callId
             IrisConnectionService.announce(context, call)
-            if (call.phase == "incoming" && context.getSystemService(AudioManager::class.java).ringerMode == AudioManager.RINGER_MODE_NORMAL) {
-                ringtone = runCatching { RingtoneManager.getRingtone(context, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))?.apply {
-                    if (Build.VERSION.SDK_INT >= 28) isLooping = true
-                    play()
-                } }.getOrNull()
-            }
         }
-        if (call.phase != "incoming") { ringtone?.stop(); ringtone = null }
         IrisConnectionService.updateCurrent(call)
         try {
             ContextCompat.startForegroundService(context, Intent(context, IrisCallService::class.java))
@@ -88,30 +81,42 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
 
     internal fun serviceStarted() { serviceReady = true; syncMedia() }
     internal fun serviceStopped() { serviceReady = false; stopMedia() }
+    internal fun telecomFocusChanged(ready: Boolean) {
+        telecomReady = ready
+        if (ready && serviceReady) syncMedia() else if (!ready) stopMedia()
+    }
     internal fun snapshot() = current
 
     private fun syncMedia() {
         val call = current ?: return
-        if (call.phase != "connected" || failedCallId == call.callId) return
+        if (call.phase != "connected" || failedCallId == call.callId || !telecomReady) return
         val quality = CallQuality(app.preferences.value.callQuality, call.maxBitrateBps.toInt())
         if (mediaCallId != call.callId) {
             stopMedia()
             mediaCallId = call.callId
             if (!granted(Manifest.permission.RECORD_AUDIO)) { fail("Microphone unavailable"); return }
             try {
-                audioRoute = CallAudioRoute(context) { if (isActive(call.callId)) fail("Audio unavailable") }
+                audioRoute = CallAudioRoute(context, telecomManaged = true) { if (isActive(call.callId)) fail("Audio unavailable") }
                 audioRoute?.start(mutableSpeaker.value)
                 audio = CallAudio(context,
-                    send = { bytes, timestamp -> if (isActive(call.callId)) app.dispatch(AppAction.SendCallMedia(call.callId, 1u, timestamp, false, bytes)) },
-                    failed = { if (isActive(call.callId)) fail("Audio unavailable") })
+                    send = { bytes, timestamp -> if (isActive(call.callId)) {
+                        if (sentAudio.compareAndSet(false, true)) to.iris.chat.IrisDebugLog.d("IrisCall", "First encoded microphone frame sent")
+                        app.dispatch(AppAction.SendCallMedia(call.callId, 1u, timestamp, false, bytes))
+                    } },
+                    failed = { if (isActive(call.callId)) fail("Audio unavailable") },
+                    played = { samples -> if (samples.any { it.toInt() != 0 } && receivedAudio.compareAndSet(false, true))
+                        to.iris.chat.IrisDebugLog.d("IrisCall", "First non-silent remote audio played") })
                 audio?.start(call.muted)
                 if (call.videoCapable) video = CallVideoMedia(context,
                     send = { bytes, timestamp, key -> if (isActive(call.callId)) app.dispatch(AppAction.SendCallMedia(call.callId, 2u, timestamp, key, bytes)) },
                     requestKey = { if (isActive(call.callId)) app.dispatch(AppAction.RequestCallKeyFrame(call.callId)) },
                     cameraFailed = { if (isActive(call.callId)) failCamera() },
-                    decoded = {})
+                    decoded = { if (decodedVideo.compareAndSet(false, true)) to.iris.chat.IrisDebugLog.d("IrisCall", "First remote video decoded") })
                 markConnected(call.callId)
-            } catch (_: Exception) { fail("Couldn’t connect call"); return }
+            } catch (error: Exception) {
+                android.util.Log.e("IrisCall", "Media startup failed", error)
+                fail("Couldn’t connect call"); return
+            }
         }
         audio?.muted = call.muted
         if (call.video && !granted(Manifest.permission.CAMERA)) failCamera()
@@ -123,7 +128,10 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
     private fun receive(media: AppUpdate.CallMedia) {
         if (!isActive(media.callId)) return
         when (media.kind.toInt()) {
-            1 -> audio?.receive(media.sequence, media.data)
+            1 -> {
+                if (receivedPacket.compareAndSet(false, true)) to.iris.chat.IrisDebugLog.d("IrisCall", "First remote audio packet queued")
+                audio?.receive(media.sequence, media.data)
+            }
             2 -> video?.receive(media.sequence, media.data, media.timestampUs, media.keyFrame)
         }
     }
@@ -161,6 +169,8 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
         connectedSent = false
         audioRoute?.close(); audioRoute = null
         mediaCallId = null
+        receivedAudio.set(false); decodedVideo.set(false); sentAudio.set(false)
+        receivedPacket.set(false)
         mutableRemoteVideo.value = null
         mutableLocalVideo.value = null
     }
