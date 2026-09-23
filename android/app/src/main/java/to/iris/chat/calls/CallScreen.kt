@@ -2,11 +2,9 @@ package to.iris.chat.calls
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -44,9 +42,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
@@ -101,8 +98,8 @@ fun CallOverlay(container: AppContainer) {
     val app = container.appManager
     val call by app.call.collectAsStateWithLifecycle()
     val preferences by app.preferences.collectAsStateWithLifecycle()
-    val remote by container.callRuntime.remoteFrame.collectAsStateWithLifecycle()
-    val local by container.callRuntime.localFrame.collectAsStateWithLifecycle()
+    val remote by container.callRuntime.remoteVideo.collectAsStateWithLifecycle()
+    val local by container.callRuntime.localVideo.collectAsStateWithLifecycle()
     val error by container.callRuntime.error.collectAsStateWithLifecycle()
     val speaker by container.callRuntime.speaker.collectAsStateWithLifecycle()
     val answerRequest by container.callRuntime.answerRequest.collectAsStateWithLifecycle()
@@ -129,8 +126,8 @@ internal fun CallSurface(
     active: CallSnapshot,
     voiceAllowed: Boolean,
     videoAllowed: Boolean,
-    remote: Bitmap?,
-    local: Bitmap?,
+    remote: CallVideoStream?,
+    local: CallVideoStream?,
     error: String?,
     speaker: Boolean,
     now: Long,
@@ -142,7 +139,13 @@ internal fun CallSurface(
     Dialog(onDismissRequest = { if (active.phase == "ended") onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false, decorFitsSystemWindows = false)) {
         Box(Modifier.fillMaxSize().background(Color(0xFF14201F)).testTag("callScreen")) {
-            remote?.let { Image(it.asImageBitmap(), "Call video", Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
+            remote?.let {
+                CallVideo(it, Modifier.fillMaxSize())
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+                    0f to Color.Black.copy(alpha = 0.65f), 0.3f to Color.Transparent,
+                    0.55f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.75f),
+                )))
+            }
             Column(Modifier.fillMaxSize().systemBarsPadding().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Spacer(Modifier.height(36.dp))
                 Text(active.peerName, color = Color.White, style = MaterialTheme.typography.headlineLarge, textAlign = TextAlign.Center)
@@ -150,13 +153,13 @@ internal fun CallSurface(
                 val elapsed = (now - (active.connectedAtSecs?.toLong() ?: now)).coerceAtLeast(0)
                 Text(when (active.phase) {
                     "incoming" -> if (active.video) "Incoming video call" else "Incoming voice call"
-                    "connected" -> "%d:%02d".format(elapsed / 60, elapsed % 60)
+                    "connected" -> if (active.mediaConnected) "%d:%02d".format(elapsed / 60, elapsed % 60) else "Connecting…"
                     "ended" -> error ?: active.endReason ?: "Call ended"
                     else -> "Calling…"
                 }, color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.titleMedium)
                 if (active.remoteMuted && active.phase == "connected") Text("Microphone muted", color = Color.White.copy(alpha = 0.7f))
                 Spacer(Modifier.weight(1f))
-                local?.let { Image(it.asImageBitmap(), "Your video", Modifier.align(Alignment.End).size(112.dp, 150.dp).clip(MaterialTheme.shapes.large), contentScale = ContentScale.Fit) }
+                local?.let { CallVideo(it, Modifier.align(Alignment.End).size(112.dp, 150.dp).clip(MaterialTheme.shapes.large), overlay = true) }
                 Spacer(Modifier.height(24.dp))
                 if (active.phase == "incoming") {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {

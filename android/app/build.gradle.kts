@@ -523,6 +523,7 @@ dependencies {
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
     implementation("net.java.dev.jna:jna:5.12.0@aar")
+    implementation("io.github.webrtc-sdk:android:150.7871.01")
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

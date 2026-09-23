@@ -4,8 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.media.AudioManager
 import android.media.Ringtone
 import android.media.RingtoneManager
@@ -13,51 +11,41 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import to.iris.chat.core.AppManager
 import to.iris.chat.rust.AppAction
+import to.iris.chat.rust.AppUpdate
 import to.iris.chat.rust.CallSnapshot
 
 class IrisCallRuntime(private val context: Context, private val app: AppManager, private val scope: CoroutineScope) {
-    private val mutableRemoteFrame = MutableStateFlow<Bitmap?>(null)
-    private val mutableLocalFrame = MutableStateFlow<Bitmap?>(null)
+    private val mutableRemoteVideo = MutableStateFlow<CallVideoStream?>(null)
+    private val mutableLocalVideo = MutableStateFlow<CallVideoStream?>(null)
     private val mutableError = MutableStateFlow<String?>(null)
     private val mutableSpeaker = MutableStateFlow(false)
     private val mutableAnswerRequest = MutableStateFlow<String?>(null)
-    val remoteFrame = mutableRemoteFrame.asStateFlow()
-    val localFrame = mutableLocalFrame.asStateFlow()
+    val remoteVideo = mutableRemoteVideo.asStateFlow()
+    val localVideo = mutableLocalVideo.asStateFlow()
     val error = mutableError.asStateFlow()
     val speaker = mutableSpeaker.asStateFlow()
     val answerRequest = mutableAnswerRequest.asStateFlow()
     private var ringtone: Ringtone? = null
-    private val videoFrames = Channel<Pair<String, ByteArray>>(1, BufferOverflow.DROP_OLDEST)
     @Volatile private var current: CallSnapshot? = null
     @Volatile private var audio: CallAudio? = null
-    private var camera: CallCamera? = null
-    private var mediaCallId: String? = null
+    @Volatile private var video: CallVideoMedia? = null
+    private var connectedSent = false
+    private var audioRoute: CallAudioRoute? = null
+    @Volatile private var mediaCallId: String? = null
     private var announcedId: String? = null
+    @Volatile private var failedCallId: String? = null
     private var serviceReady = false
 
     init {
         app.setCallMediaReceiver(::receive)
-        scope.launch(Dispatchers.Main.immediate) { app.call.collect { update(it) } }
-        scope.launch(Dispatchers.Default) {
-            for ((id, bytes) in videoFrames) {
-                val call = current
-                if (call?.callId == id && call.phase == "connected" && call.remoteVideo) {
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                    if (bounds.outWidth in 1..320 && bounds.outHeight in 1..320 &&
-                        bounds.outWidth * bounds.outHeight <= 320 * 240) {
-                        val frame = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        if (current?.callId == id && current?.phase == "connected" && current?.remoteVideo == true) mutableRemoteFrame.value = frame
-                    }
-                }
-            }
+        scope.launch(Dispatchers.Main.immediate) {
+            combine(app.call, app.preferences) { call, _ -> call }.collect { update(it) }
         }
     }
 
@@ -75,6 +63,7 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
         }
         if (announcedId != call.callId) {
             stopMedia()
+            failedCallId = null
             mutableError.value = null
             mutableSpeaker.value = call.video
             announcedId = call.callId
@@ -88,12 +77,11 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
         }
         if (call.phase != "incoming") { ringtone?.stop(); ringtone = null }
         IrisConnectionService.updateCurrent(call)
-        if (!call.remoteVideo) mutableRemoteFrame.value = null
         try {
             ContextCompat.startForegroundService(context, Intent(context, IrisCallService::class.java))
         } catch (_: RuntimeException) {
             // Some devices reject a background start; the call stays answerable in the app.
-            if (call.phase == "connected") failAudio()
+            if (call.phase == "connected") fail("Audio unavailable")
         }
         if (serviceReady) syncMedia()
     }
@@ -104,73 +92,76 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
 
     private fun syncMedia() {
         val call = current ?: return
-        if (call.phase != "connected") return
+        if (call.phase != "connected" || failedCallId == call.callId) return
+        val quality = CallQuality(app.preferences.value.callQuality, call.maxBitrateBps.toInt())
         if (mediaCallId != call.callId) {
             stopMedia()
             mediaCallId = call.callId
-            if (!granted(Manifest.permission.RECORD_AUDIO)) { failAudio(); return }
+            if (!granted(Manifest.permission.RECORD_AUDIO)) { fail("Microphone unavailable"); return }
             try {
-                val capture = CallAudio(context, scope,
-                    send = { bytes -> send(call.callId, 1u, bytes) }, failed = ::failAudio)
-                audio = capture
-                capture.muted = call.muted
-                capture.start(mutableSpeaker.value)
-            } catch (_: Exception) { failAudio(); return }
+                audioRoute = CallAudioRoute(context) { if (isActive(call.callId)) fail("Audio unavailable") }
+                audioRoute?.start(mutableSpeaker.value)
+                audio = CallAudio(context,
+                    send = { bytes, timestamp -> if (isActive(call.callId)) app.dispatch(AppAction.SendCallMedia(call.callId, 1u, timestamp, false, bytes)) },
+                    failed = { if (isActive(call.callId)) fail("Audio unavailable") })
+                audio?.start(call.muted)
+                if (call.videoCapable) video = CallVideoMedia(context,
+                    send = { bytes, timestamp, key -> if (isActive(call.callId)) app.dispatch(AppAction.SendCallMedia(call.callId, 2u, timestamp, key, bytes)) },
+                    requestKey = { if (isActive(call.callId)) app.dispatch(AppAction.RequestCallKeyFrame(call.callId)) },
+                    cameraFailed = { if (isActive(call.callId)) failCamera() },
+                    decoded = {})
+                markConnected(call.callId)
+            } catch (_: Exception) { fail("Couldn’t connect call"); return }
         }
         audio?.muted = call.muted
-        if (call.video && camera == null) {
-            if (!granted(Manifest.permission.CAMERA)) { failCamera(); return }
-            try {
-                val capture = CallCamera(context,
-                    send = { bytes -> send(call.callId, 2u, bytes) },
-                    preview = {
-                        if (current?.callId == call.callId && current?.phase == "connected" && current?.video == true) mutableLocalFrame.value = it
-                    }, failed = ::failCamera)
-                camera = capture
-                capture.start()
-            } catch (_: Exception) { failCamera() }
-        } else if (!call.video) {
-            camera?.close(); camera = null; mutableLocalFrame.value = null
+        if (call.video && !granted(Manifest.permission.CAMERA)) failCamera()
+        video?.update(call.video && granted(Manifest.permission.CAMERA), quality, call.targetBitrateBps.toInt(), call.keyFrameGeneration)
+        mutableLocalVideo.value = video?.localVideo?.takeIf { call.video }
+        mutableRemoteVideo.value = video?.remoteVideo?.takeIf { call.remoteVideo }
+    }
+
+    private fun receive(media: AppUpdate.CallMedia) {
+        if (!isActive(media.callId)) return
+        when (media.kind.toInt()) {
+            1 -> audio?.receive(media.sequence, media.data)
+            2 -> video?.receive(media.sequence, media.data, media.timestampUs, media.keyFrame)
         }
     }
 
-    private fun send(callId: String, kind: UByte, bytes: ByteArray) {
-        if (current?.callId == callId && current?.phase == "connected") {
-            app.dispatch(AppAction.SendCallMedia(callId, kind, bytes))
+    private fun markConnected(id: String) { scope.launch(Dispatchers.Main.immediate) {
+        if (isActive(id) && !connectedSent) {
+            connectedSent = true
+            app.dispatch(AppAction.SetCallMediaConnected(id, true))
         }
-    }
+    } }
 
-    private fun receive(callId: String, kind: UByte, bytes: ByteArray) {
-        val call = current
-        if (call?.callId != callId || call.phase != "connected") return
-        when (kind.toInt()) {
-            1 -> audio?.receive(bytes)
-            2 -> if (bytes.size in 1..65_536 && call.remoteVideo) videoFrames.trySend(callId to bytes)
-        }
-    }
+    private fun isActive(id: String) = current?.let { it.callId == id && it.phase == "connected" && failedCallId != id && mediaCallId == id } == true
 
-    private fun failAudio() { scope.launch(Dispatchers.Main.immediate) {
-        mutableError.value = "Microphone unavailable"
+    private fun fail(message: String) { scope.launch(Dispatchers.Main.immediate) {
+        failedCallId = current?.callId
+        mutableError.value = message
         stopMedia()
         current?.takeIf { it.phase != "ended" }?.let { app.dispatch(AppAction.EndCall(it.callId)) }
     } }
 
     private fun failCamera() { scope.launch(Dispatchers.Main.immediate) {
-        camera?.close(); camera = null; mutableLocalFrame.value = null
+        mutableLocalVideo.value = null
         mutableError.value = "Camera unavailable"
         if (current?.video == true) app.dispatch(AppAction.SetCallVideoEnabled(false))
     } }
 
-    fun setSpeaker(enabled: Boolean) { mutableSpeaker.value = enabled; audio?.setSpeaker(enabled) }
+    fun setSpeaker(enabled: Boolean) { mutableSpeaker.value = enabled; audioRoute?.setSpeaker(enabled) }
     fun requestAnswer(callId: String) { mutableAnswerRequest.value = callId }
     fun clearAnswerRequest() { mutableAnswerRequest.value = null }
     private fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
     private fun stopMedia() {
         audio?.close(); audio = null
-        camera?.close(); camera = null
+        video?.close(); video = null
+        connectedSent = false
+        audioRoute?.close(); audioRoute = null
         mediaCallId = null
-        mutableRemoteFrame.value = null
-        mutableLocalFrame.value = null
+        mutableRemoteVideo.value = null
+        mutableLocalVideo.value = null
     }
 }

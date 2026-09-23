@@ -1,8 +1,6 @@
 package to.iris.chat.calls
 
-import android.Manifest
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.os.SystemClock
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -12,17 +10,7 @@ import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -66,63 +54,10 @@ class CallMediaTest {
         assertEquals(listOf(AppAction.SetCallMuted(true), AppAction.SetCallVideoEnabled(false), AppAction.EndCall("test-call")), actions)
     }
 
-    @Test fun nativeMicrophoneFramesPlayLocallyAndStopOnMuteAndClose() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = instrumentation.targetContext
-        instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.RECORD_AUDIO)
-        compose.setContent { androidx.compose.material3.Text("Audio call test") }
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val received = CountDownLatch(12)
-        val count = AtomicInteger()
-        val error = AtomicReference<String?>(null)
-        lateinit var audio: CallAudio
-        audio = CallAudio(context, scope, send = { bytes ->
-            if (bytes.size != 640) error.set("Unexpected audio frame")
-            count.incrementAndGet()
-            audio.receive(bytes)
-            received.countDown()
-        }, failed = { error.set("Native audio failed") })
-        try {
-            audio.start(false)
-            assertTrue("Microphone must produce PCM frames", received.await(10, TimeUnit.SECONDS))
-            audio.muted = true
-            // A read already in progress can complete; wait for several frame periods.
-            Thread.sleep(120)
-            val mutedCount = count.get()
-            Thread.sleep(200)
-            assertEquals("Muted microphone must not transmit", mutedCount, count.get())
-            audio.close()
-            Thread.sleep(120)
-            assertEquals("Closed microphone must not transmit", mutedCount, count.get())
-            assertEquals(null, error.get())
-        } finally { audio.close(); scope.cancel() }
-    }
-
-    @Test fun nativeCameraProducesBoundedInteroperableJpeg() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = instrumentation.targetContext
-        instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.CAMERA)
-        compose.setContent { androidx.compose.material3.Text("Video call test") }
-        val ready = CountDownLatch(1)
-        val frame = AtomicReference<ByteArray?>(null)
-        val failed = AtomicInteger()
-        val camera = CallCamera(context, send = { frame.set(it); ready.countDown() }, preview = {}, failed = { failed.incrementAndGet(); ready.countDown() })
-        try {
-            camera.start()
-            assertTrue("Camera must produce a JPEG frame", ready.await(15, TimeUnit.SECONDS))
-            assertEquals(0, failed.get())
-            val bytes = frame.get()
-            assertNotNull(bytes)
-            assertTrue(bytes!!.size in 1..65_536)
-            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            assertNotNull(bitmap)
-            assertTrue(bitmap.width <= 320 && bitmap.height <= 240)
-        } finally { camera.close() }
-    }
-
-    private fun call(phase: String) = CallSnapshot("test-call", "test-chat", "Alex", phase,
+    private fun call(phase: String) = CallSnapshot(callId = "test-call", chatId = "test-chat", peerName = "Alex", phase = phase,
         video = true, videoCapable = true, muted = false, remoteVideo = true, remoteMuted = false,
-        startedAtSecs = 0u, connectedAtSecs = if (phase == "connected") 0u else null, endReason = null)
+        startedAtSecs = 0u, connectedAtSecs = if (phase == "connected") 0u else null, endReason = null,
+        outgoing = phase != "incoming", targetBitrateBps = 2_000_000u, keyFrameGeneration = 0u, mediaConnected = phase == "connected", maxBitrateBps = 2_000_000u)
 
     private fun screenshot(name: String) {
         compose.waitForIdle()

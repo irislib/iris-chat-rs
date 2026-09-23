@@ -100,7 +100,7 @@ def main():
                   '(allow network-outbound (remote ip "localhost:*"))']
         relay = subprocess.Popen(prefix + [str(args.relay_binary), f"127.0.0.1:{args.relay_port}"],
                                  stdout=relay_log, stderr=subprocess.STDOUT)
-        environment = dict(os.environ, IRIS_DEMO_RELAYS=f"ws://127.0.0.1:{args.relay_port}",
+        environment = dict(os.environ, RUST_BACKTRACE="1", IRIS_DEMO_RELAYS=f"ws://127.0.0.1:{args.relay_port}",
                            IRIS_FIPS_WEBSOCKET_SEED_URLS="",
                            IRIS_CHAT_FIPS_WEBSOCKET_BIND_ADDR=f"127.0.0.1:{args.fips_port}",
                            IRIS_CHAT_FIPS_UDP_BIND_ADDR="127.0.0.1:0")
@@ -164,6 +164,8 @@ def main():
                     raise RuntimeError("Unexpected test-only control path")
             elif "nativeCallPhase=contact_ready" in line:
                 stop(relay)
+                adb("reverse", "--remove", f"tcp:{args.relay_port}")
+                reverses.remove(f"tcp:{args.relay_port}")
                 relay_stopped = True
                 print("Local message server stopped; proceeding with FIPS-only call", flush=True)
             elif "nativeCallPhase=hangup_sent" in line:

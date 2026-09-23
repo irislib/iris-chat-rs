@@ -336,9 +336,9 @@ class AppManager(
     private var lastSyncedDeviceLabelsKey: String? = null
     private var automaticRevocationLogoutInFlight = false
     private var pendingNavigationOverride: PendingNavigationOverride? = null
+    @Volatile private var callMediaReceiver: ((AppUpdate.CallMedia) -> Unit)? = null
     private var fipsNearbyPeersPublisher:
         ((DesktopNearbySnapshot, List<String>, List<String>) -> Unit)? = null
-    @Volatile private var callMediaReceiver: ((String, UByte, ByteArray) -> Unit)? = null
     private val olderChatPageLoads = Collections.synchronizedSet(mutableSetOf<String>())
     private val exhaustedOlderChatPages = Collections.synchronizedSet(mutableSetOf<String>())
     private val aroundChatPageLoads = Collections.synchronizedSet(mutableSetOf<String>())
@@ -483,9 +483,7 @@ class AppManager(
         dispatchToRust(action)
     }
 
-    fun setCallMediaReceiver(receiver: (String, UByte, ByteArray) -> Unit) {
-        callMediaReceiver = receiver
-    }
+    fun setCallMediaReceiver(receiver: (AppUpdate.CallMedia) -> Unit) { callMediaReceiver = receiver }
 
     suspend fun search(query: String, scopeChatId: String? = null, limit: UInt = 50u): SearchResultSnapshot =
         backgroundSearch.search(query, scopeChatId, limit)
@@ -1209,8 +1207,8 @@ class AppManager(
                     secretPersistenceMutex.withLock { clearPersistedPendingDeviceLink() }
                 }
             }
+            is AppUpdate.CallMedia -> callMediaReceiver?.invoke(update)
             is AppUpdate.NearbyPublishedEvent -> Unit
-            is AppUpdate.CallMedia -> callMediaReceiver?.invoke(update.callId, update.kind, update.data)
             is AppUpdate.NearbyPeersChanged -> {
                 fipsNearbyPeersPublisher?.invoke(
                     update.snapshot,

@@ -62,6 +62,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import to.iris.chat.core.AppManager
+import to.iris.chat.calls.CallQualitySetting
 import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
@@ -360,6 +361,7 @@ fun MyProfileSheet(
                                     onCheckedChange = { appManager.dispatch(AppAction.SetVideoCallsEnabled(it)) },
                                     tag = "myProfileVideoCallsSwitch",
                                 )
+                                CallQualitySetting(appManager, preferences)
                                 SettingsToggleRow(
                                     title = "Accept message requests from unknowns",
                                     checked = preferences.acceptUnknownDirectMessages,

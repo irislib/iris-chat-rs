@@ -804,9 +804,9 @@ class AppManagerContractTest {
             mobilePush = MobilePushSyncSnapshot(null, emptyList(), emptyList(), emptyList(), emptyList()),
             userDiscoveryRevision = 0u,
             userDiscoverySyncing = false,
-            preferences =
-                PreferencesSnapshot(
+            preferences = PreferencesSnapshot(
                     voiceCallsEnabled = true, videoCallsEnabled = true, sendTypingIndicators = true,
+                    callQuality = "auto", callMaxBitrateBps = 2_000_000u,
                     sendReadReceipts = true,
                     desktopNotificationsEnabled = true,
                     inviteAcceptanceNotificationsEnabled = true,
@@ -1120,9 +1120,9 @@ private object AppManagerContractDefaults {
             mobilePush = MobilePushSyncSnapshot(null, emptyList(), emptyList(), emptyList(), emptyList()),
             userDiscoveryRevision = 0u,
             userDiscoverySyncing = false,
-            preferences =
-                PreferencesSnapshot(
+            preferences = PreferencesSnapshot(
                     voiceCallsEnabled = true, videoCallsEnabled = true, sendTypingIndicators = true,
+                    callQuality = "auto", callMaxBitrateBps = 2_000_000u,
                     sendReadReceipts = true,
                     desktopNotificationsEnabled = true,
                     inviteAcceptanceNotificationsEnabled = true,
