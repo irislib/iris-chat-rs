@@ -201,6 +201,11 @@ class Nip55Signer(
         // Rust verifies the signature, identity, and complete event against its pending request.
         if (!dispatch(AppAction.CompleteSignerLogin(request.id, signedEvent))) {
             fail("Couldn’t sign in. Please try again.")
+        } else {
+            // Once submitted, core owns the bounded publication attempt. Do not time out the
+            // shell and invite a retry while a valid device authorization is being published.
+            timeout?.cancel()
+            timeout = null
         }
     }
 
