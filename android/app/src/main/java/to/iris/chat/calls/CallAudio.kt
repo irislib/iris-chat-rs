@@ -25,6 +25,7 @@ internal class CallAudio(
     private val scope: CoroutineScope,
     private val send: (ByteArray) -> Unit,
     private val failed: () -> Unit,
+    private val played: () -> Unit = {},
 ) : AutoCloseable {
     private val manager = context.getSystemService(AudioManager::class.java)
     private val attributes = AudioAttributes.Builder()
@@ -103,6 +104,7 @@ internal class CallAudio(
                         check(count > 0)
                         offset += count
                     }
+                    if (offset == frame.size) played()
                 }
             } catch (_: Exception) {
                 if (!closed) failed()
