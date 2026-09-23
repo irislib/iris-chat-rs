@@ -278,7 +278,7 @@ final class IrisCallController: NSObject, ObservableObject {
 #if os(iOS)
     private func configureAudioSession(video: Bool) throws {
         try AVAudioSession.sharedInstance().setCategory(.playAndRecord,
-            mode: video ? .videoChat : .voiceChat, options: [.allowBluetoothHFP])
+            mode: video ? .videoChat : .voiceChat, options: [.allowBluetooth])
         try AVAudioSession.sharedInstance().setPreferredSampleRate(48_000)
         try AVAudioSession.sharedInstance().setPreferredIOBufferDuration(0.02)
         speakerEnabled = video
