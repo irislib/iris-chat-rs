@@ -1,13 +1,17 @@
 package to.iris.chat.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -22,9 +26,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import to.iris.chat.core.AppManager
 import to.iris.chat.qr.DeviceApprovalQr
@@ -375,10 +382,31 @@ private fun DeviceRosterRow(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text(
-                    text = displayTitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.semantics(mergeDescendants = true) {},
+                ) {
+                    if (!device.isCurrentDevice) {
+                        Box(
+                            modifier =
+                                Modifier
+                                    .size(8.dp)
+                                    .background(
+                                        if (device.isConnected) Color(0xFF22C55E) else IrisTheme.palette.muted.copy(alpha = 0.55f),
+                                        CircleShape,
+                                    )
+                                    .semantics {
+                                        contentDescription = if (device.isConnected) "Connected" else "Not connected"
+                                    }
+                                    .testTag("deviceRosterConnection-${device.devicePubkeyHex.take(12)}"),
+                        )
+                    }
+                    Text(
+                        text = displayTitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
                 Text(
                     text = displaySubtitle,
                     style = MaterialTheme.typography.bodySmall,

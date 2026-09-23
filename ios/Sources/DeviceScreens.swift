@@ -258,9 +258,22 @@ struct DeviceRosterRow: View {
             HStack(spacing: 12) {
                 IrisAvatar(label: displayTitle, size: 36, emphasize: device.isCurrentDevice)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(displayTitle)
-                        .font(.system(.headline, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.textPrimary)
+                    HStack(spacing: 8) {
+                        if !device.isCurrentDevice {
+                            Circle()
+                                .fill(device.isConnected
+                                    ? Color(red: 34.0 / 255.0, green: 197.0 / 255.0, blue: 94.0 / 255.0)
+                                    : palette.muted.opacity(0.55))
+                                .frame(width: 8, height: 8)
+                                .accessibilityLabel(device.isConnected ? "Connected" : "Not connected")
+                                .help(device.isConnected ? "Connected" : "Not connected")
+                                .accessibilityIdentifier("deviceRosterConnection-\(String(device.devicePubkeyHex.prefix(12)))")
+                        }
+                        Text(displayTitle)
+                            .font(.system(.headline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(palette.textPrimary)
+                    }
+                    .accessibilityElement(children: .combine)
                     Text(displaySubtitle)
                         .font(.system(.footnote, design: .monospaced))
                         .foregroundStyle(palette.muted)
