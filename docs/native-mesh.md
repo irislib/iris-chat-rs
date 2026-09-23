@@ -87,11 +87,18 @@ Browser clients use WebCodecs and a bundled, pinned libopus module. Android uses
 MediaCodec and Apple uses VideoToolbox, with platform microphone echo/noise
 processing. Native audio uses the same pinned libopus version. The browser probes
 actual codec support before calling; no installed native helper is required.
-Neither browser nor native calls require a separate calling server, TURN server,
-or any application service beyond the existing FIPS nodes. FIPS transport
-upgrades use host candidates without external STUN; peers behind separate NATs
-can keep their route through existing FIPS nodes. Encoded audio/video
-and call controls all travel inside the authenticated FIPS call service.
+Calls do not require a separate calling or TURN server. FIPS transport upgrades
+use host candidates and optional STUN address discovery to find direct routes
+through NAT. Native clients inherit the shared FIPS defaults:
+`stun:stun.l.google.com:19302`, `stun:stun.cloudflare.com:3478`, and
+`stun:global.stun.twilio.com:3478`. STUN discovers addresses; it does not carry
+call media. Encoded audio/video and call controls travel inside the authenticated
+FIPS call service.
+
+Native ICE gathering is bounded to two seconds. With every STUN server
+unreachable, the pinned native FIPS transport may reject a host-only WebRTC
+upgrade. Calls can continue on their existing FIPS route, including local UDP
+without Internet access.
 
 The client media layer supplies bounded audio jitter buffering, Opus forward
 error correction and packet-loss concealment, video reordering, keyframe requests,
