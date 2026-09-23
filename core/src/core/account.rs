@@ -1069,8 +1069,6 @@ impl AppCore {
             );
         }
     }
-
-
 }
 
 pub(super) fn device_approval_bootstrap_label(label: &str) -> Option<String> {
