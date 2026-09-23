@@ -32,6 +32,7 @@ struct SettingsScreen: View {
     @State private var supportBundleShareItem: SupportBundleShareItem?
     @State private var deviceRosterInput = ""
     @State private var showingDeviceRosterScanner = false
+    @State private var showingCallQuality = false
 
     init(
         manager: AppManager,
@@ -71,6 +72,9 @@ struct SettingsScreen: View {
         )
         .sheet(item: $supportBundleShareItem) { item in
             SupportBundleShareSheet(item: item)
+        }
+        .sheet(isPresented: $showingCallQuality) {
+            IrisCallQualitySheet(controller: manager.calls)
         }
         .sheet(isPresented: $showingDeviceRosterScanner) {
             QrScannerSheet { code in
@@ -374,6 +378,19 @@ struct SettingsScreen: View {
                 ))
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileVideoCallsToggle")
+
+                Button { showingCallQuality = true } label: {
+                    HStack {
+                        Text("Video quality")
+                        Spacer()
+                        Text((IrisCallQuality(rawValue: manager.state.preferences.callQuality) ?? .automatic).label)
+                            .foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("myProfileCallQualityButton")
 
             }
 

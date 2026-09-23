@@ -932,24 +932,20 @@ final class AppManager: ObservableObject {
     private let callMediaQueue = DispatchQueue(label: "iris.call.send", qos: .userInteractive)
     private let callMediaSlots = DispatchSemaphore(value: 4)
     lazy var calls: IrisCallController = {
-        let slots = callMediaSlots
         return IrisCallController(
             dispatch: { [weak self] in self?.dispatch($0) },
-            send: { [weak self] id, kind, data in
-                // Drop stale capture frames when transport is busy, rather than
-                // accumulating seconds of latency in the main or Rust queues.
-                guard slots.wait(timeout: .now()) == .success else { return }
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, self.state.call?.callId == id,
-                          self.state.call?.phase == "connected" else { slots.signal(); return }
-                    let runner = RustDispatchRunner(rust: self.rust)
-                    self.callMediaQueue.async {
-                        defer { slots.signal() }
-                        try? runner.dispatch(action: .sendCallMedia(callId: id, kind: kind, data: data))
-                    }
+            showError: { [weak self] in self?.showToast($0) },
+            sendMedia: { [weak self] action, allowed in
+                guard let self, self.callMediaSlots.wait(timeout: .now()) == .success else { return }
+                let slots = self.callMediaSlots
+                let runner = RustDispatchRunner(rust: self.rust)
+                let deadline = ProcessInfo.processInfo.systemUptime + 0.1
+                self.callMediaQueue.async {
+                    defer { slots.signal() }
+                    guard ProcessInfo.processInfo.systemUptime < deadline, allowed() else { return }
+                    try? runner.dispatch(action: action)
                 }
-            },
-            showError: { [weak self] in self?.showToast($0) }
+            }
         )
     }()
 #if os(iOS)
@@ -2703,6 +2699,8 @@ final class AppManager: ObservableObject {
             return
         }
         switch update {
+        case .callMedia(let id, let kind, let sequence, let timestamp, let key, let data):
+            calls.receiveMedia(callID: id, kind: kind, sequence: sequence, timestampUs: timestamp, keyFrame: key, data: Data(data))
         case .persistAccountBundle(_, let ownerNsec, let ownerPubkeyHex, let deviceNsec):
             // Secure persistence is a shell side effect and must be applied even if snapshot revs race.
             let bundle = StoredAccountBundle(
@@ -2743,8 +2741,6 @@ final class AppManager: ObservableObject {
             )
         case .fullState(let nextState):
             applyFullState(nextState)
-        case .callMedia(let callId, let kind, let data):
-            calls.receive(callID: callId, kind: kind, data: data)
         }
     }
 
@@ -2765,7 +2761,7 @@ final class AppManager: ObservableObject {
         reconciledState = stateByApplyingScreenshotFixture(reconciledState)
         lastRevApplied = nextState.rev
         state = reconciledState
-        calls.update(reconciledState.call)
+        calls.update(reconciledState.call, preferences: reconciledState.preferences)
 #if os(iOS)
         if appIsBackgrounded, oldState.call != nil,
            reconciledState.call == nil || reconciledState.call?.phase == "ended" {

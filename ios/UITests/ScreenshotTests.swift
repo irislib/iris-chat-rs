@@ -16,6 +16,34 @@ final class ScreenshotTests: XCTestCase {
     }
 
     #if os(iOS)
+    func testCallQualitySettings() {
+        let app = launchFixtureApp(createAccount: true)
+        XCTAssertTrue(waitForChatList(app, timeout: 30))
+        let profile = app.descendants(matching: .any)["chatListProfileButton"]
+        XCTAssertTrue(profile.waitForExistence(timeout: 10))
+        profile.tap()
+        let messaging = app.descendants(matching: .any)["settingsMessagingRow"]
+        XCTAssertTrue(messaging.waitForExistence(timeout: 10))
+        messaging.tap()
+        let quality = app.descendants(matching: .any)["myProfileCallQualityButton"]
+        XCTAssertTrue(quality.waitForExistence(timeout: 10))
+        if !quality.isHittable { app.swipeUp() }
+        quality.tap()
+        capture(app, named: "call-quality-open")
+        let picker = app.descendants(matching: .any)["callQualityPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 10))
+        picker.tap()
+        app.buttons["Custom"].tap()
+        let slider = app.sliders["Maximum bitrate"]
+        XCTAssertTrue(slider.waitForExistence(timeout: 5))
+        slider.adjust(toNormalizedSliderPosition: 0.35)
+        capture(app, named: "call-quality-custom")
+        app.buttons["Done"].tap()
+        XCTAssertTrue(quality.waitForExistence(timeout: 5))
+        quality.tap()
+        XCTAssertTrue(slider.waitForExistence(timeout: 5), "Custom quality should remain selected")
+    }
+
     func testCaptureAppStoreScreenshots() {
         // Welcome chooser — taken before any account exists so the
         // fixture override doesn't kick in yet.

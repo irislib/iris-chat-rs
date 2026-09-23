@@ -129,7 +129,7 @@ final class MockRustApp: RustAppClient {
         ),
         preferences: PreferencesSnapshot(
             voiceCallsEnabled: true,
-            videoCallsEnabled: true,
+            videoCallsEnabled: true, callQuality: "auto", callMaxBitrateBps: 2_000_000,
             sendTypingIndicators: true,
             sendReadReceipts: true,
             desktopNotificationsEnabled: true,
@@ -371,7 +371,7 @@ func makeAppState(
     userDiscoverySyncing: Bool = false,
     preferences: PreferencesSnapshot = PreferencesSnapshot(
         voiceCallsEnabled: true,
-        videoCallsEnabled: true,
+        videoCallsEnabled: true, callQuality: "auto", callMaxBitrateBps: 2_000_000,
         sendTypingIndicators: true,
         sendReadReceipts: true,
         desktopNotificationsEnabled: true,

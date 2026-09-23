@@ -33,14 +33,14 @@ struct IrisCallScreen: View {
     @ObservedObject var controller: IrisCallController
     let call: CallSnapshot
     let voiceEnabled: Bool
+    @State private var showsQuality = false
 
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 Color(red: 0.08, green: 0.075, blue: 0.12)
-                if let image = controller.remoteImage, call.phase == "connected", call.remoteVideo {
-                    Image(decorative: image, scale: 1)
-                        .resizable().scaledToFit()
+                if call.phase == "connected", call.remoteVideo {
+                    IrisCallVideoView(surface: controller.remoteSurface)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 LinearGradient(colors: [.black.opacity(0.5), .clear, .black.opacity(0.65)], startPoint: .top, endPoint: .bottom)
@@ -52,7 +52,7 @@ struct IrisCallScreen: View {
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.75))
                     Spacer()
-                    if controller.remoteImage == nil || !call.remoteVideo {
+                    if !call.remoteVideo || call.phase != "connected" {
                         Text(String(call.peerName.prefix(1)).uppercased())
                             .font(.system(size: 64, weight: .medium, design: .rounded))
                             .frame(width: 132, height: 132)
@@ -70,11 +70,12 @@ struct IrisCallScreen: View {
                 .padding(.top, max(geometry.safeAreaInsets.top, 24) + 20)
                 .padding(.bottom, geometry.safeAreaInsets.bottom)
 
-                if let local = controller.localImage, call.video, call.phase == "connected" {
+                if call.video, call.phase == "connected" {
                     VStack {
                         HStack {
                             Spacer()
-                            Image(decorative: local, scale: 1).resizable().scaledToFit()
+                            IrisCallVideoView(surface: controller.localSurface)
+                                .scaleEffect(x: -1, y: 1)
                                 .frame(width: 104, height: 138)
                                 .background(.black).clipShape(RoundedRectangle(cornerRadius: 16))
                                 .accessibilityLabel("Your camera")
@@ -84,10 +85,28 @@ struct IrisCallScreen: View {
                     .padding(.trailing, 18).padding(.top, 130 + geometry.safeAreaInsets.top)
                     .allowsHitTesting(false)
                 }
+                if call.videoCapable, call.phase != "ended" {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Button { showsQuality = true } label: {
+                                Image(systemName: "slider.horizontal.3")
+                                    .font(.title3).padding(12)
+                                    .background(.black.opacity(0.25), in: Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Video quality")
+                            .accessibilityIdentifier("callQualityButton")
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16).padding(.top, max(geometry.safeAreaInsets.top, 24))
+                }
             }
             .foregroundStyle(.white)
             .ignoresSafeArea()
             .accessibilityIdentifier("callScreen")
+            .sheet(isPresented: $showsQuality) { IrisCallQualitySheet(controller: controller) }
         }
     }
 
@@ -95,6 +114,7 @@ struct IrisCallScreen: View {
         if call.phase == "incoming" { Text(call.videoCapable ? "Incoming video call" : "Incoming voice call") }
         else if call.phase == "outgoing" { Text("Calling…") }
         else if call.phase == "ended" { Text(call.endReason ?? "Call ended") }
+        else if !call.mediaConnected { Text("Connecting…") }
         else if let seconds = call.connectedAtSecs {
             Text(Date(timeIntervalSince1970: TimeInterval(seconds)), style: .timer)
         } else { Text("Connected") }
@@ -143,5 +163,52 @@ struct IrisCallScreen: View {
             }
         }
         .buttonStyle(.plain).accessibilityLabel(label).accessibilityIdentifier(id)
+    }
+}
+
+struct IrisCallQualitySheet: View {
+    @ObservedObject var controller: IrisCallController
+    @Environment(\.dismiss) private var dismiss
+    @State private var quality: IrisCallQuality
+    @State private var customKilobits: Double
+
+    init(controller: IrisCallController) {
+        self.controller = controller
+        _quality = State(initialValue: controller.quality)
+        _customKilobits = State(initialValue: Double(controller.customKilobits))
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Picker("Video quality", selection: $quality) {
+                    ForEach(IrisCallQuality.allCases) { Text($0.label).tag($0) }
+                }
+                .accessibilityIdentifier("callQualityPicker")
+                if quality == .custom {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Maximum bitrate")
+                            Spacer()
+                            Text(String(format: "%.1f Mbps", customKilobits / 1_000))
+                                .monospacedDigit()
+                        }
+                        Slider(value: $customKilobits, in: 100...10_000, step: 100) { editing in
+                            if !editing { controller.setQuality(.custom, customKilobits: Int(customKilobits)) }
+                        }
+                        .accessibilityLabel("Maximum bitrate")
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Video quality")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .onChange(of: quality) { controller.setQuality($0, customKilobits: Int(customKilobits)) }
+        }
+#if os(macOS)
+        .frame(width: 380, height: 240)
+#else
+        .presentationDetents([.medium])
+#endif
     }
 }

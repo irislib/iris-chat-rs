@@ -42,7 +42,9 @@ final class CallLifecycleTests: XCTestCase {
     }
 
     private func connectedCall() -> CallSnapshot {
-        CallSnapshot(callId: "lifecycle-test", chatId: "peer", peerName: "Alex", phase: "connected",
+        CallSnapshot(outgoing: false, targetBitrateBps: 2_000_000, keyFrameGeneration: 0,
+                     mediaConnected: false, maxBitrateBps: 2_000_000,
+                     callId: "lifecycle-test", chatId: "peer", peerName: "Alex", phase: "connected",
                      video: false, videoCapable: false, muted: false, remoteVideo: false, remoteMuted: false,
                      startedAtSecs: 1, connectedAtSecs: 2, endReason: nil)
     }

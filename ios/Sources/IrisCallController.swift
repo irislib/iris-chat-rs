@@ -8,16 +8,22 @@ import AppKit
 
 @MainActor
 final class IrisCallController: NSObject, ObservableObject {
-    @Published private(set) var localImage: CGImage?
-    @Published private(set) var remoteImage: CGImage?
+    nonisolated let localSurface = IrisCallVideoSurface()
+    nonisolated let remoteSurface = IrisCallVideoSurface()
+    @Published private(set) var quality = IrisCallQuality.automatic
+    @Published private(set) var customKilobits = 2_000
     @Published private(set) var speakerEnabled = false
     private(set) var call: CallSnapshot?
     private let dispatch: (AppAction) -> Void
-    private let send: (String, UInt8, Data) -> Void
+    private let sendMedia: ((AppAction, @escaping () -> Bool) -> Void)?
+    private nonisolated let sendGate = IrisCallSendGate()
+    private nonisolated let outgoingSlots = DispatchSemaphore(value: 4)
     private let showError: (String) -> Void
     private var audioActive = true
     private var mediaCallID: String?
     private var endingCallID: String?
+    private var pendingMuted: Bool?
+    private var pendingVideo: Bool?
     private var permissionRequestID: UUID?
     private let mediaForTesting: IrisCallMediaHandling?
 #if os(macOS)
@@ -25,18 +31,41 @@ final class IrisCallController: NSObject, ObservableObject {
     private var attentionRequest: Int?
 #endif
     private lazy var media: IrisCallMediaHandling = mediaForTesting ?? IrisCallMediaEngine(
-        send: send,
-        preview: { [weak self] id, image in
-            DispatchQueue.main.async {
-                guard self?.mediaCallID == id, self?.call?.video == true else { return }
-                self?.localImage = image
+        send: { [weak self, outgoingSlots, sendGate] id, kind, timestamp, key, data, captureAllowed in
+            guard outgoingSlots.wait(timeout: .now()) == .success else { return }
+            let ticket = sendGate.permission(callID: id, kind: kind)
+            let allowed = { captureAllowed() && ticket() }
+            Task { @MainActor in
+                defer { outgoingSlots.signal() }
+                guard let self, self.call?.callId == id, self.endingCallID != id,
+                      self.call?.phase == "connected", self.audioActive,
+                      kind == 1 ? !(self.pendingMuted ?? self.call?.muted ?? true) :
+                        (self.pendingVideo ?? self.call?.video ?? false) else { return }
+                let action = AppAction.sendCallMedia(callId: id, kind: kind, timestampUs: timestamp, keyFrame: key, data: data)
+                if let sendMedia = self.sendMedia { sendMedia(action, allowed) }
+                else if allowed() { self.dispatch(action) }
+            }
+        },
+        frame: { [localSurface, remoteSurface] id, local, pixel in
+            (local ? localSurface : remoteSurface).present(pixel, callID: id)
+        },
+        connectionChanged: { [weak self] id, connected in
+            Task { @MainActor in
+                guard let self, self.call?.callId == id, self.endingCallID != id else { return }
+                self.dispatch(.setCallMediaConnected(callId: id, connected: connected))
+            }
+        },
+        requestKeyFrame: { [weak self] id in
+            Task { @MainActor in
+                guard let self, self.call?.callId == id, self.endingCallID != id else { return }
+                self.dispatch(.requestCallKeyFrame(callId: id))
             }
         },
         failed: { [weak self] id, message in
-            DispatchQueue.main.async {
-                guard self?.mediaCallID == id else { return }
-                self?.showError(message)
-                self?.end()
+            Task { @MainActor in
+                guard let self, self.call?.callId == id, self.endingCallID != id else { return }
+                self.showError(message)
+                self.end()
             }
         }
     )
@@ -52,12 +81,12 @@ final class IrisCallController: NSObject, ObservableObject {
 #endif
 
     init(dispatch: @escaping (AppAction) -> Void,
-         send: @escaping (String, UInt8, Data) -> Void,
          showError: @escaping (String) -> Void,
+         sendMedia: ((AppAction, @escaping () -> Bool) -> Void)? = nil,
          mediaForTesting: IrisCallMediaHandling? = nil) {
         self.dispatch = dispatch
-        self.send = send
         self.showError = showError
+        self.sendMedia = sendMedia
         self.mediaForTesting = mediaForTesting
         super.init()
 #if os(iOS) && !targetEnvironment(simulator)
@@ -119,30 +148,41 @@ final class IrisCallController: NSObject, ObservableObject {
         permissionRequestID = nil
         guard let call else { return }
         endingCallID = call.callId
+        sendGate.update(callID: nil, muted: true, video: false)
         // Stop capture immediately; don't wait for a network round trip.
-        media.configure(callID: nil, muted: true, video: false)
+        media.stop()
         mediaCallID = nil
-        localImage = nil
-        remoteImage = nil
+        localSurface.setCallID(nil)
+        remoteSurface.setCallID(nil)
         dispatch(.endCall(callId: call.callId))
     }
 
     func toggleMuted() {
         guard let call, endingCallID != call.callId else { return }
-        dispatch(.setCallMuted(muted: !call.muted))
+        let muted = !(pendingMuted ?? call.muted)
+        pendingMuted = muted
+        updateHardware()
+        dispatch(.setCallMuted(muted: muted))
 #if os(iOS)
         if let systemCallID {
-            systemCalls.request(CXTransaction(action: CXSetMutedCallAction(call: systemCallID, muted: !call.muted))) { _ in }
+            systemCalls.request(CXTransaction(action: CXSetMutedCallAction(call: systemCallID, muted: muted))) { _ in }
         }
 #endif
     }
 
     func toggleCamera() {
         guard let call, call.videoCapable, endingCallID != call.callId else { return }
-        if call.video { dispatch(.setCallVideoEnabled(enabled: false)); return }
+        if pendingVideo ?? call.video {
+            pendingVideo = false
+            updateHardware()
+            dispatch(.setCallVideoEnabled(enabled: false))
+            return
+        }
         Task { @MainActor [weak self] in
             guard let self, await self.permissions(video: true), self.call?.callId == call.callId,
                   self.endingCallID != call.callId else { return }
+            self.pendingVideo = true
+            self.updateHardware()
             self.dispatch(.setCallVideoEnabled(enabled: true))
         }
     }
@@ -156,16 +196,36 @@ final class IrisCallController: NSObject, ObservableObject {
 #endif
     }
 
-    func update(_ snapshot: CallSnapshot?) {
+    func setQuality(_ quality: IrisCallQuality, customKilobits: Int? = nil) {
+        let custom = min(10_000, max(100, customKilobits ?? self.customKilobits))
+        dispatch(.setCallQuality(quality: quality.rawValue, maxBitrateBps: UInt32(custom * 1_000)))
+    }
+
+    func update(_ snapshot: CallSnapshot?, preferences: PreferencesSnapshot? = nil) {
         let previousID = call?.callId
         call = snapshot
+        if previousID != snapshot?.callId {
+            pendingMuted = nil
+            pendingVideo = nil
+        }
+        if pendingMuted == snapshot?.muted { pendingMuted = nil }
+        if pendingVideo == snapshot?.video { pendingVideo = nil }
+        if let preferences {
+            quality = IrisCallQuality(rawValue: preferences.callQuality) ?? .automatic
+            customKilobits = Int(preferences.callMaxBitrateBps / 1_000)
+        }
         if snapshot?.callId != endingCallID { endingCallID = nil }
         if previousID != snapshot?.callId || snapshot?.phase == "ended" || snapshot == nil {
-            localImage = nil
-            remoteImage = nil
+            media.stop()
+            localSurface.setCallID(nil)
+            remoteSurface.setCallID(nil)
         }
-        if snapshot?.video != true { localImage = nil }
-        if snapshot?.remoteVideo != true { remoteImage = nil }
+        if let snapshot, snapshot.phase == "connected", endingCallID != snapshot.callId {
+            media.setQuality(quality, customKilobits: customKilobits)
+            media.adapt(targetBitrate: snapshot.targetBitrateBps, keyFrameGeneration: snapshot.keyFrameGeneration)
+            media.start(IrisCallMediaSession(callID: snapshot.callId, videoCapable: snapshot.videoCapable))
+            remoteSurface.setCallID(snapshot.remoteVideo ? snapshot.callId : nil)
+        }
 #if os(iOS)
         updateSystemCall(snapshot)
 #elseif os(macOS)
@@ -187,17 +247,21 @@ final class IrisCallController: NSObject, ObservableObject {
         updateHardware()
     }
 
+    func receiveMedia(callID: String, kind: UInt8, sequence: UInt32, timestampUs: UInt64, keyFrame: Bool, data: Data) {
+        guard call?.callId == callID, call?.phase == "connected", endingCallID != callID,
+              kind == 1 || call?.remoteVideo == true else { return }
+        media.receive(callID: callID, kind: kind, sequence: sequence, timestampUs: timestampUs, keyFrame: keyFrame, data: data)
+    }
+
     private func updateHardware() {
         let active = call?.phase == "connected" && audioActive && call?.callId != endingCallID
         let id = active ? call?.callId : nil
         mediaCallID = id
-        media.configure(callID: id, muted: call?.muted ?? true, video: active && call?.video == true)
-    }
-
-    func receive(callID: String, kind: UInt8, data: Data) {
-        guard let call, call.callId == callID, call.phase == "connected", endingCallID != callID else { return }
-        if kind == 1 { media.receiveAudio(callID: callID, data: data) }
-        else if kind == 2, call.remoteVideo, let image = IrisCallMediaFormat.videoImage(data) { remoteImage = image }
+        sendGate.update(callID: id, muted: pendingMuted ?? call?.muted ?? true,
+                        video: active && (pendingVideo ?? call?.video ?? false))
+        localSurface.setCallID(active && (pendingVideo ?? call?.video ?? false) ? id : nil)
+        media.configure(callID: id, muted: pendingMuted ?? call?.muted ?? true,
+                        video: active && (pendingVideo ?? call?.video ?? false))
     }
 
     private func permissions(video: Bool) async -> Bool {
@@ -340,6 +404,8 @@ extension IrisCallController: @preconcurrency CXProviderDelegate {
 
     func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
         guard action.callUUID == systemCallID, call?.phase != "ended" else { action.fail(); return }
+        pendingMuted = action.isMuted
+        updateHardware()
         dispatch(.setCallMuted(muted: action.isMuted))
         action.fulfill()
     }
