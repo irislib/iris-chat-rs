@@ -108,6 +108,9 @@ func irisStartsMessageCluster(
     guard let previous else {
         return true
     }
+    if previous.kind == .system || message.kind == .system {
+        return true
+    }
     if !irisSameTimelineDay(previous.createdAtSecs, message.createdAtSecs) {
         return true
     }
@@ -516,7 +519,10 @@ struct ChatMessageRow: View, Equatable {
                 .accessibilityHidden(hidesInlineDayChip)
             }
 
-            if message.kind == .system {
+            if let call = message.call {
+                ChatCallHistoryRow(call: call)
+                    .padding(.top, showDayChip ? 0 : SignalConversationLayout.systemMessageSpacing)
+            } else if message.kind == .system {
                 HStack {
                     Spacer(minLength: 24)
                     Text(message.body)

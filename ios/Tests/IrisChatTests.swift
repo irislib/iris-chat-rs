@@ -569,7 +569,8 @@ private func makeMessage(
             transportChannels: [],
             lastTransportError: nil
         ),
-        sourceEventId: nil
+        sourceEventId: nil,
+        call: nil
     )
 }
 

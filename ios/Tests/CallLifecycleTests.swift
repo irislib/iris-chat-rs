@@ -3,6 +3,12 @@ import XCTest
 @testable import IrisChat
 
 final class CallLifecycleTests: XCTestCase {
+    func testCallKitHasRequiredBackgroundModes() {
+        let modes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] ?? []
+        XCTAssertTrue(modes.contains("voip"), "CallKit rejects transactions without the VoIP background mode")
+        XCTAssertTrue(modes.contains("audio"), "Ongoing calls need background audio when the phone locks")
+    }
+
     @MainActor
     func testCallKeepsConnectionInBackgroundAndSuspendsAfterEnd() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
