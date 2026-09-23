@@ -98,10 +98,10 @@ impl AppCore {
             | InternalEvent::RemoteSignerFailed { token, .. } => token,
             _ => return,
         };
-        if !self
+        if self
             .pending_remote_signer
             .as_ref()
-            .is_some_and(|pending| &pending.token == token)
+            .is_none_or(|pending| &pending.token != token)
         {
             return;
         }
