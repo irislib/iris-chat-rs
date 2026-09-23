@@ -1937,7 +1937,7 @@ class AppManager(
                             npub = account.npub,
                         ),
                     )
-                snapshot.busy.restoringSession -> AccountBootstrapState.Loading
+                snapshot.busy.restoringSession && snapshot.router.screenStack.lastOrNull() != Screen.RemoteSigner -> AccountBootstrapState.Loading
                 else -> AccountBootstrapState.NeedsLogin
             }
     }

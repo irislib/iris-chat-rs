@@ -963,7 +963,7 @@ class AppManagerContractTest {
     }
 }
 
-private class RecordingSecureSecretStore : SecureSecretStore {
+internal class RecordingSecureSecretStore : SecureSecretStore {
     var clearCount = 0
     var clearSucceeds = true
 
@@ -978,7 +978,7 @@ private class RecordingSecureSecretStore : SecureSecretStore {
     }
 }
 
-private class RecordingRustFactory {
+internal class RecordingRustFactory {
     val initialStates = ArrayDeque<AppState>()
     val instances = mutableListOf<MockRustAppClient>()
 
@@ -988,7 +988,7 @@ private class RecordingRustFactory {
     }
 }
 
-private class MockRustAppClient(
+internal class MockRustAppClient(
     var currentState: AppState,
 ) : RustAppClient {
     val dispatchedActions = mutableListOf<AppAction>()

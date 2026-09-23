@@ -16,6 +16,7 @@ struct RemoteSignerScreen: View {
             IrisSectionCard {
                 VStack(spacing: 20) {
                     CardHeader(title: "Signer app/device")
+                        .accessibilityIdentifier("remoteSignerScreen")
                     if let uri = login?.connectionUri, !awaitingApproval {
                         Text("Scan with your signer app.")
                             .foregroundStyle(.secondary)
@@ -64,7 +65,6 @@ struct RemoteSignerScreen: View {
             }
             .frame(maxWidth: 480)
             .frame(maxWidth: .infinity)
-            .accessibilityIdentifier("remoteSignerScreen")
         }
     }
 
