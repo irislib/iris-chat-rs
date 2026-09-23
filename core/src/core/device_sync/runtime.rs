@@ -5,11 +5,12 @@ use crate::core::update_pubsub::{
 use fips_core::config::{
     BleConfig, NostrDiscoveryPolicy, PeerConfig, TransportInstances, UdpConfig, WebSocketConfig,
 };
-use fips_core::{Config, FipsEndpointOutboundDatagram, WebRtcConfig};
+use fips_core::{Config, WebRtcConfig};
 use hashtree_core::BlobRoute;
 use std::collections::BTreeMap;
 use std::net::SocketAddrV4;
 
+mod connection_monitor;
 mod peer_snapshot;
 const SAME_HOST_HASHTREE_ENV: &str = "IRIS_CHAT_SAME_HOST_HASHTREE";
 const LOCAL_RENDEZVOUS_ADDR_ENV: &str = "IRIS_CHAT_FIPS_LOCAL_RENDEZVOUS_ADDR";
@@ -516,14 +517,15 @@ impl AppCore {
                 }
             }));
         }
-        if nearby_enabled {
-            tasks.push(self.runtime.spawn(run_fips_nearby_link_monitor(
-                endpoint.clone(),
-                nearby_bootstrap_payloads.clone(),
-                nearby_outbox.clone(),
-                self.core_sender.clone(),
-            )));
-        }
+        self.fips_connection_generation = self.fips_connection_generation.wrapping_add(1);
+        tasks.push(self.runtime.spawn(connection_monitor::run(
+            endpoint.clone(),
+            nearby_bootstrap_payloads.clone(),
+            nearby_outbox.clone(),
+            self.core_sender.clone(),
+            self.fips_connection_generation,
+            nearby_enabled,
+        )));
         if let Some(recent_peers) = &recent_peers {
             tasks.push(self.runtime.spawn(run_recent_peer_observer(
                 endpoint.clone(),
@@ -574,6 +576,8 @@ impl AppCore {
         &mut self,
     ) -> Option<impl std::future::Future<Output = ()> + Send + 'static> {
         self.host_ble_attached = false;
+        self.fips_connection_generation = self.fips_connection_generation.wrapping_add(1);
+        self.update_fips_connection_links(Vec::new());
         let DeviceSyncRuntime {
             endpoint,
             pubsub,
@@ -709,121 +713,6 @@ fn configure_fips_lan(config: &mut Config, enabled: bool) {
     } else {
         TransportInstances::default()
     };
-}
-
-async fn run_fips_nearby_link_monitor(
-    endpoint: Arc<FipsEndpoint>,
-    bootstrap_payloads: Arc<RwLock<Vec<Vec<u8>>>>,
-    outbox: Arc<RwLock<super::super::fips_nearby::FipsNearbyOutbox>>,
-    core_sender: Sender<CoreMsg>,
-) {
-    let mut initialized_links = BTreeMap::<String, (u64, u64)>::new();
-    let mut current_bootstrap = Vec::new();
-    let mut bootstrap_revision = 0_u64;
-    let mut reported_links = Vec::new();
-    loop {
-        if let Ok(payloads) = bootstrap_payloads.read() {
-            if *payloads != current_bootstrap {
-                current_bootstrap = payloads.clone();
-                bootstrap_revision = bootstrap_revision.wrapping_add(1);
-            }
-        }
-        let peers = match peer_snapshot::query(|| endpoint.peers()).await {
-            Ok(peers) => peers,
-            Err(_) => return,
-        };
-        let mut current_links = peers
-            .iter()
-            .filter(|peer| peer.connected)
-            .filter_map(|peer| {
-                let identity = FipsPeerIdentity::from_npub(&peer.npub).ok()?;
-                Some(crate::updates::FipsNearbyLinkSnapshot {
-                    device_pubkey_hex: identity.pubkey().to_string(),
-                    transport_type: peer.transport_type.clone().unwrap_or_default(),
-                    transport_addr: peer.transport_addr.clone(),
-                })
-            })
-            .collect::<Vec<_>>();
-        current_links.sort_by(|left, right| {
-            left.device_pubkey_hex
-                .cmp(&right.device_pubkey_hex)
-                .then_with(|| left.transport_type.cmp(&right.transport_type))
-        });
-        if current_links != reported_links {
-            reported_links = current_links.clone();
-            let _ = core_sender.send(CoreMsg::Internal(Box::new(
-                InternalEvent::FipsNearbyPeersChanged(current_links),
-            )));
-        }
-        for peer in peers.into_iter().filter(|peer| peer.connected) {
-            let Ok(identity) = FipsPeerIdentity::from_npub(&peer.npub) else {
-                continue;
-            };
-            let initialization = (peer.link_id, bootstrap_revision);
-            let initialized = if initialized_links.get(&peer.npub) == Some(&initialization) {
-                true
-            } else {
-                let payloads = current_bootstrap.clone();
-                let sent = if payloads.is_empty() {
-                    true
-                } else {
-                    let datagrams = payloads
-                        .into_iter()
-                        .map(|data| {
-                            FipsEndpointOutboundDatagram::new(
-                                super::super::fips_nearby::FIPS_NEARBY_PORT,
-                                super::super::fips_nearby::FIPS_NEARBY_PORT,
-                                data,
-                            )
-                        })
-                        .collect();
-                    endpoint
-                        .send_datagram_batch_to_peer(identity, datagrams)
-                        .await
-                        .is_ok()
-                };
-                if sent {
-                    initialized_links.insert(peer.npub.clone(), initialization);
-                }
-                sent
-            };
-            if !initialized {
-                continue;
-            }
-
-            let pending = outbox
-                .read()
-                .map(|outbox| outbox.pending_for_link(&peer.npub, peer.link_id))
-                .unwrap_or_default();
-            if pending.is_empty() {
-                continue;
-            }
-            let event_ids = pending
-                .iter()
-                .map(|(event_id, _)| event_id.clone())
-                .collect::<Vec<_>>();
-            let datagrams = pending
-                .into_iter()
-                .map(|(_, data)| {
-                    FipsEndpointOutboundDatagram::new(
-                        super::super::fips_nearby::FIPS_NEARBY_PORT,
-                        super::super::fips_nearby::FIPS_NEARBY_PORT,
-                        data,
-                    )
-                })
-                .collect();
-            if endpoint
-                .send_datagram_batch_to_peer(identity, datagrams)
-                .await
-                .is_ok()
-            {
-                if let Ok(mut outbox) = outbox.write() {
-                    outbox.mark_sent_on_link(&peer.npub, peer.link_id, &event_ids);
-                }
-            }
-        }
-        sleep(Duration::from_secs(1)).await;
-    }
 }
 
 async fn run_recent_peer_observer(
