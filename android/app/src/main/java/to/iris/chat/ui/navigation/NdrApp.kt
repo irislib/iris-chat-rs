@@ -373,6 +373,8 @@ fun NdrApp(
                 }
             }
 
+            to.iris.chat.calls.CallOverlay(container)
+
             if (showingNearbyIris) {
                 val appState by appManager.state.collectAsStateWithLifecycle()
                 NearbyIrisSheet(

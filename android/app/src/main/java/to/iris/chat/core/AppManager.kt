@@ -50,6 +50,7 @@ import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppReconciler
 import to.iris.chat.rust.AccountSnapshot
 import to.iris.chat.rust.AppState
+import to.iris.chat.rust.CallSnapshot
 import to.iris.chat.rust.BusyState
 import to.iris.chat.rust.ChatMessageSnapshot
 import to.iris.chat.rust.ChatThreadSnapshot
@@ -341,6 +342,7 @@ class AppManager(
     private var pendingNavigationOverride: PendingNavigationOverride? = null
     private var fipsNearbyPeersPublisher:
         ((DesktopNearbySnapshot, List<String>, List<String>) -> Unit)? = null
+    @Volatile private var callMediaReceiver: ((String, UByte, ByteArray) -> Unit)? = null
     private val olderChatPageLoads = Collections.synchronizedSet(mutableSetOf<String>())
     private val exhaustedOlderChatPages = Collections.synchronizedSet(mutableSetOf<String>())
     private val aroundChatPageLoads = Collections.synchronizedSet(mutableSetOf<String>())
@@ -363,13 +365,7 @@ class AppManager(
     val foregroundedAtSecs: StateFlow<Long> = mutableForegroundedAtSecs.asStateFlow()
     val lastUserActivityAtSecs: StateFlow<Long> = mutableLastUserActivityAtSecs.asStateFlow()
 
-    // Per-slice flows. Each derives from `mutableState` via
-    // `map { ... }.distinctUntilChanged()` so a Compose subscriber only
-    // recomposes when its specific slice actually changed. This is what
-    // turns a backlog of relay events from a multi-second UI freeze into
-    // imperceptible updates: ChatScreen no longer recomposes when only
-    // chat_list changes, ChatListScreen doesn't recompose when only
-    // current_chat changes, etc.
+    // Distinct slices avoid recomposing unrelated screens for each incoming event.
     val router: StateFlow<Router> = slice("router") { it.router }
     val account: StateFlow<AccountSnapshot?> = slice("account") { it.account }
     val deviceRoster: StateFlow<DeviceRosterSnapshot?> =
@@ -392,6 +388,7 @@ class AppManager(
     val preferences: StateFlow<PreferencesSnapshot> =
         slice("preferences") { it.preferences }
     val toast: StateFlow<String?> = slice("toast") { it.toast }
+    val call: StateFlow<CallSnapshot?> = slice("call") { it.call }
     val selfUpdateState = selfUpdateManager.state
     private val mutablePendingShare = MutableStateFlow<PendingShare?>(null)
     val pendingShare: StateFlow<PendingShare?> = mutablePendingShare.asStateFlow()
@@ -501,6 +498,10 @@ class AppManager(
         dispatchToRust(action)
     }
 
+    fun setCallMediaReceiver(receiver: (String, UByte, ByteArray) -> Unit) {
+        callMediaReceiver = receiver
+    }
+
     suspend fun search(query: String, scopeChatId: String? = null, limit: UInt = 50u): SearchResultSnapshot =
         backgroundSearch.search(query, scopeChatId, limit)
 
@@ -517,6 +518,8 @@ class AppManager(
         appInForeground = false
         mutableAppForegrounded.value = false
         selfUpdateManager.stopAutomaticChecks()
+        // A foreground call service keeps the encrypted transport alive during calls.
+        if (mutableState.value.call?.phase in listOf("incoming", "outgoing", "connected")) return
         runCatching {
             rust.prepareForSuspend()
         }.onFailure { error ->
@@ -1219,6 +1222,7 @@ class AppManager(
                 }
             }
             is AppUpdate.NearbyPublishedEvent -> Unit
+            is AppUpdate.CallMedia -> callMediaReceiver?.invoke(update.callId, update.kind, update.data)
             is AppUpdate.NearbyPeersChanged -> {
                 fipsNearbyPeersPublisher?.invoke(
                     update.snapshot,

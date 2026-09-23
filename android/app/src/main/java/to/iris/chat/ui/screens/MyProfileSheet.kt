@@ -349,6 +349,18 @@ fun MyProfileSheet(
                         SettingsPage.Messaging -> {
                             SettingsRowsSection {
                                 SettingsToggleRow(
+                                    title = "Voice calls",
+                                    checked = preferences.voiceCallsEnabled,
+                                    onCheckedChange = { appManager.dispatch(AppAction.SetVoiceCallsEnabled(it)) },
+                                    tag = "myProfileVoiceCallsSwitch",
+                                )
+                                SettingsToggleRow(
+                                    title = "Video calls",
+                                    checked = preferences.videoCallsEnabled,
+                                    onCheckedChange = { appManager.dispatch(AppAction.SetVideoCallsEnabled(it)) },
+                                    tag = "myProfileVideoCallsSwitch",
+                                )
+                                SettingsToggleRow(
                                     title = "Accept message requests from unknowns",
                                     checked = preferences.acceptUnknownDirectMessages,
                                     onCheckedChange = { enabled ->

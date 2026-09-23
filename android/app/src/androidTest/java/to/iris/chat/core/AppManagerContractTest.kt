@@ -775,7 +775,7 @@ class AppManagerContractTest {
         currentChat: CurrentChatSnapshot? = null,
     ): AppState =
         AppState(
-            rev = rev,
+            call = null, rev = rev,
             router = router,
             account = account,
             deviceRoster = null,
@@ -806,7 +806,7 @@ class AppManagerContractTest {
             userDiscoverySyncing = false,
             preferences =
                 PreferencesSnapshot(
-                    sendTypingIndicators = true,
+                    voiceCallsEnabled = true, videoCallsEnabled = true, sendTypingIndicators = true,
                     sendReadReceipts = true,
                     desktopNotificationsEnabled = true,
                     inviteAcceptanceNotificationsEnabled = true,
@@ -1091,7 +1091,7 @@ private class MockRustAppClient(
 private object AppManagerContractDefaults {
     fun initialState(): AppState =
         AppState(
-            rev = 0u,
+            call = null, rev = 0u,
             router = Router(Screen.Welcome, emptyList()),
             account = null,
             deviceRoster = null,
@@ -1122,7 +1122,7 @@ private object AppManagerContractDefaults {
             userDiscoverySyncing = false,
             preferences =
                 PreferencesSnapshot(
-                    sendTypingIndicators = true,
+                    voiceCallsEnabled = true, videoCallsEnabled = true, sendTypingIndicators = true,
                     sendReadReceipts = true,
                     desktopNotificationsEnabled = true,
                     inviteAcceptanceNotificationsEnabled = true,

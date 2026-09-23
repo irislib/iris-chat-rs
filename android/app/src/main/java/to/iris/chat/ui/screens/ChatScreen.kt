@@ -458,6 +458,9 @@ fun ChatScreen(
                         } ?: { appManager.pushScreen(Screen.DirectChatInfo(chatId)) }
                     },
                 actions = {
+                    if (chat?.kind == ChatKind.DIRECT && !chat.isRequest && !isUserBlocked(preferences, chatId)) {
+                        to.iris.chat.calls.ChatCallButtons(appManager, chatId)
+                    }
                     if (chat != null) {
                         IconButton(
                             onClick = { inChatSearchOpen = true },
