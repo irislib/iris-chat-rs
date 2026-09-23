@@ -251,6 +251,23 @@ fn device_row(
             .to_string()
     };
     let row = adw::ActionRow::builder().title(title).build();
+    if !device.is_current_device {
+        let connection_label = if device.is_connected {
+            "Connected"
+        } else {
+            "Not connected"
+        };
+        let connection = gtk::Label::new(Some("●"));
+        connection.add_css_class(if device.is_connected {
+            "success"
+        } else {
+            "dim-label"
+        });
+        connection.set_valign(gtk::Align::Center);
+        connection.set_tooltip_text(Some(connection_label));
+        connection.update_property(&[gtk::accessible::Property::Label(connection_label)]);
+        row.add_prefix(&connection);
+    }
     let mut subtitles = Vec::new();
     if device.is_current_device {
         if let Some(label) = non_empty(device.device_label.as_deref()) {

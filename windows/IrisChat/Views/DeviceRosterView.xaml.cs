@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using IrisChat.Bindings;
@@ -71,7 +72,29 @@ public partial class DeviceRosterView : UserControl
             Foreground = (Brush)Application.Current.Resources["TextPrimary"],
             FontWeight = FontWeights.SemiBold,
         };
-        info.Children.Add(primary);
+        var title = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+        };
+        title.Children.Add(primary);
+        if (!d.isCurrentDevice)
+        {
+            var connectionLabel = d.isConnected ? "Connected" : "Not connected";
+            var connection = new TextBlock
+            {
+                Text = "●",
+                FontSize = 12,
+                Foreground = d.isConnected
+                    ? new SolidColorBrush(Color.FromRgb(0x34, 0xC7, 0x59))
+                    : (Brush)Application.Current.Resources["TextMuted"],
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(8, 0, 0, 0),
+                ToolTip = connectionLabel,
+            };
+            AutomationProperties.SetName(connection, connectionLabel);
+            title.Children.Add(connection);
+        }
+        info.Children.Add(title);
 
         var meta = new TextBlock
         {
