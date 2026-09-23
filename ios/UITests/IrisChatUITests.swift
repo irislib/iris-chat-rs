@@ -30,6 +30,18 @@ class IrisChatUITestCase: XCTestCase {
         typeText(validPeerNpub, into: editableElement(app, "newChatPeerInput"), app: app)
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 15))
     }
+
+    func openSelfOnlyGroup(_ app: XCUIApplication) {
+        tapNewChat(app)
+        XCTAssertTrue(element(app, "newChatNewGroupButton").waitForExistence(timeout: 10))
+        element(app, "newChatNewGroupButton").tap()
+        XCTAssertTrue(element(app, "newGroupNextButton").waitForExistence(timeout: 10))
+        element(app, "newGroupNextButton").tap()
+        XCTAssertTrue(element(app, "newGroupNameInput").waitForExistence(timeout: 10))
+        typeText("Composer notes", into: editableElement(app, "newGroupNameInput"), app: app)
+        element(app, "newGroupCreateButton").tap()
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 45))
+    }
 }
 
 final class IrisChatUITests: IrisChatUITestCase {
@@ -303,7 +315,7 @@ final class IrisChatUITests: IrisChatUITestCase {
         let app = launchCleanApp()
 
         createAccount(app)
-        openChatWithPeer(app)
+        openSelfOnlyGroup(app)
 
         let input = element(app, "chatMessageInput")
         XCTAssertTrue(input.waitForExistence(timeout: 10))
@@ -370,13 +382,45 @@ final class IrisChatUITests: IrisChatUITestCase {
 
 final class IrisChatComposerUITests: IrisChatUITestCase {
 
+    func testSentMessageStaysOutOfComposerWhenReopeningChat() throws {
+#if os(macOS)
+        throw XCTSkip("Covered by the shared composer state tests on macOS")
+#else
+        let app = launchCleanApp()
+        createAccount(app)
+        openSelfOnlyGroup(app)
+        let message = "sent draft \(UUID().uuidString)"
+        let input = editableElement(app, "chatMessageInput")
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        typeText(message, into: input, app: app)
+        element(app, "chatSendButton").tap()
+        XCTAssertTrue(app.staticTexts[message].firstMatch.waitForExistence(timeout: 15))
+        XCTAssertEqual(input.value as? String, "")
+
+        returnToChatList(app)
+        let row = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'chatRow-'"))
+            .firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        XCTAssertTrue(app.staticTexts[message].firstMatch.waitForExistence(timeout: 10))
+        let reopenedInput = editableElement(app, "chatMessageInput")
+        XCTAssertTrue(reopenedInput.waitForExistence(timeout: 10))
+        XCTAssertEqual(reopenedInput.value as? String, "")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "sent-message-empty-composer"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+#endif
+    }
+
     func testComposerRestoresDraftWhenReopeningChat() throws {
 #if os(macOS)
         throw XCTSkip("Covered by the shared draft persistence unit tests on macOS")
 #else
         let app = launchCleanApp()
         createAccount(app)
-        openChatWithPeer(app)
+        openSelfOnlyGroup(app)
 
         let draft = "draft \(UUID().uuidString)"
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))

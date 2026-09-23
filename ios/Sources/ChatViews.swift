@@ -598,13 +598,14 @@ struct ChatScreen: View {
                                             forceScrollToLatest = true
                                             let outgoingText = replyEncodedMessage(reply: replyTarget, text: text)
                                             replyTarget = nil
+                                            composerState.clearForSend { text in
+                                                manager.dispatch(.setChatDraft(chatId: chatId, text: text))
+                                            }
                                             if selectedAttachments.isEmpty {
-                                                composerState.text = ""
                                                 manager.dispatch(.sendMessage(chatId: chatId, text: outgoingText))
                                             } else {
                                                 let attachments = selectedAttachments
                                                 selectedAttachments = []
-                                                composerState.text = ""
                                                 manager.sendAttachments(chatId: chatId, attachments: attachments, caption: outgoingText)
                                             }
                                         }

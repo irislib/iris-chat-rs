@@ -45,6 +45,83 @@ final class IrisComposerTypingTests: XCTestCase {
     }
 
     @MainActor
+    func testClearedSentDraftIgnoresDelayedPersistedText() {
+        let composer = IrisComposerState()
+        composer.restore("", replaceExisting: true)
+        composer.text = "sent message"
+        composer.flush { _ in }
+
+        composer.clearForSend { _ in }
+        composer.restore("sent message", replaceExisting: false)
+
+        XCTAssertEqual(composer.text, "")
+        composer.flush { _ in XCTFail("Sent text must not become a draft again") }
+    }
+
+    @MainActor
+    func testSendingWithEmptyCaptionRejectsLateDraftRestore() {
+        let composer = IrisComposerState()
+        composer.restore("", replaceExisting: true)
+
+        composer.clearForSend { _ in }
+        composer.restore("old caption", replaceExisting: false)
+
+        XCTAssertEqual(composer.text, "")
+    }
+
+    @MainActor
+    func testSendingCancelsPendingDraftSaveAndPreservesNextMessage() async {
+        let composer = IrisComposerState()
+        composer.restore("old draft", replaceExisting: true)
+        composer.text = "message to send"
+        let staleSave = expectation(description: "cancelled outgoing draft save")
+        staleSave.isInverted = true
+        composer.scheduleSave { _ in staleSave.fulfill() }
+        var saved: [String] = []
+
+        composer.clearForSend { saved.append($0) }
+        XCTAssertEqual(saved, [""])
+        XCTAssertEqual(composer.text, "")
+        composer.text = "next message"
+        composer.restore("message to send", replaceExisting: false)
+        composer.restore("", replaceExisting: false)
+        await fulfillment(of: [staleSave], timeout: 0.7)
+
+        XCTAssertEqual(composer.text, "next message")
+        composer.flush { saved.append($0) }
+        XCTAssertEqual(saved, ["", "next message"])
+    }
+
+    @MainActor
+    func testDeletingDraftIgnoresDelayedPersistedText() async {
+        let composer = IrisComposerState()
+        composer.restore("old draft", replaceExisting: true)
+        let didSave = expectation(description: "empty draft saved")
+        var saved: [String] = []
+        composer.text = ""
+        composer.scheduleSave {
+            saved.append($0)
+            didSave.fulfill()
+        }
+
+        composer.restore("old draft", replaceExisting: false)
+
+        XCTAssertEqual(composer.text, "")
+        await fulfillment(of: [didSave], timeout: 2)
+        XCTAssertEqual(saved, [""])
+    }
+
+    @MainActor
+    func testInitialDraftCanArriveAfterChatOpens() {
+        let composer = IrisComposerState()
+        composer.restore("", replaceExisting: true)
+        composer.restore("saved draft", replaceExisting: false)
+
+        XCTAssertEqual(composer.text, "saved draft")
+        composer.flush { _ in XCTFail("Restored draft should not be saved again") }
+    }
+
+    @MainActor
     func testRestoringAnotherChatCancelsPreviousDraftSave() async {
         let composer = IrisComposerState()
         composer.restore("first chat", replaceExisting: true)

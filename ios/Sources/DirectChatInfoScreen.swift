@@ -187,12 +187,8 @@ struct DirectChatInfoScreen: View {
                         isExpanded: $advancedExpanded
                     )
                     .accessibilityIdentifier("directChatAdvancedCard")
-                    .onAppear(perform: loadProfileDebugIfNeeded)
-                    .irisOnChange(of: advancedExpanded) { _ in
-                        loadProfileDebugIfNeeded()
-                    }
-                    .irisOnChange(of: manager.state.rev) { _ in
-                        refreshProfileDebugIfExpanded()
+                    .task(id: "\(chatId)|\(advancedExpanded)|\(manager.state.rev)") {
+                        await refreshProfileDebugIfExpanded()
                     }
 
                     IrisSectionCard {
@@ -270,7 +266,7 @@ struct DirectChatInfoScreen: View {
             manager: manager
         )
         .task(id: chatId) {
-            loadCommonGroups()
+            await loadCommonGroups()
         }
         .confirmationDialog(
             "Block user?",
@@ -383,25 +379,24 @@ struct DirectChatInfoScreen: View {
         .accessibilityIdentifier("directChatCommonGroup-\(String(group.chatId.prefix(12)))")
     }
 
-    private func loadProfileDebugIfNeeded() {
+    private func refreshProfileDebugIfExpanded() async {
         guard advancedExpanded else { return }
         if loadedProfileDebugFor != chatId {
             profileDebug = nil
             loadedProfileDebugFor = chatId
         }
-        guard profileDebug == nil else { return }
-        profileDebug = manager.peerProfileDebug(ownerInput: chatId)
+        let result = await manager.peerProfileDebug(ownerInput: chatId)
+        guard !Task.isCancelled else { return }
+        profileDebug = result
     }
 
-    private func refreshProfileDebugIfExpanded() {
-        guard advancedExpanded else { return }
-        profileDebug = manager.peerProfileDebug(ownerInput: chatId)
-    }
-
-    private func loadCommonGroups() {
+    private func loadCommonGroups() async {
         guard commonGroupsLoadedFor != chatId else { return }
+        commonGroups = []
+        let result = await manager.mutualGroups(ownerInput: chatId)
+        guard !Task.isCancelled else { return }
         commonGroupsLoadedFor = chatId
-        commonGroups = manager.mutualGroups(ownerInput: chatId)
+        commonGroups = result
     }
 
     private func profileAboutRow(_ about: String) -> some View {

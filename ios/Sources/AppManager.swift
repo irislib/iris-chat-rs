@@ -465,6 +465,26 @@ private final class ChatPageLoadRunner: @unchecked Sendable {
     }
 }
 
+/// Core profile queries wait for a reply. Serialize them away from the UI and
+/// skip cancelled requests when newer screen updates supersede queued reads.
+private actor ProfileReadRunner {
+    private let rust: RustAppClient
+
+    init(rust: RustAppClient) {
+        self.rust = rust
+    }
+
+    func mutualGroups(ownerInput: String) -> [ChatThreadSnapshot] {
+        guard !Task.isCancelled else { return [] }
+        return rust.mutualGroups(ownerInput: ownerInput)
+    }
+
+    func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot? {
+        guard !Task.isCancelled else { return nil }
+        return rust.peerProfileDebug(ownerInput: ownerInput)
+    }
+}
+
 /// Trampoline so `AppPaths.appVersion(bundle:)` can call the FFI
 /// `appVersion()` free function without name-resolving back to itself.
 private func irisCoreAppVersion() -> String {
@@ -955,6 +975,7 @@ final class AppManager: ObservableObject {
 #endif
 
     private var rust: RustAppClient
+    private lazy var profileReadRunner = ProfileReadRunner(rust: rust)
     private let makeRustClient: () -> RustAppClient
     private let secretStore: AccountSecretStore
     private let pendingDeviceLinkSecretStore: PendingDeviceLinkSecretStore
@@ -1345,8 +1366,8 @@ final class AppManager: ObservableObject {
     }
 #endif
 
-    func mutualGroups(ownerInput: String) -> [ChatThreadSnapshot] {
-        rust.mutualGroups(ownerInput: ownerInput)
+    func mutualGroups(ownerInput: String) async -> [ChatThreadSnapshot] {
+        await profileReadRunner.mutualGroups(ownerInput: ownerInput)
     }
 
     private func shouldBlockOutgoingAction(_ action: AppAction) -> Bool {
@@ -2553,8 +2574,8 @@ final class AppManager: ObservableObject {
         }
     }
 
-    func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot? {
-        rust.peerProfileDebug(ownerInput: ownerInput)
+    func peerProfileDebug(ownerInput: String) async -> PeerProfileDebugSnapshot? {
+        await profileReadRunner.peerProfileDebug(ownerInput: ownerInput)
     }
 
     func exportOwnerNsec() -> String? {
@@ -2633,6 +2654,7 @@ final class AppManager: ObservableObject {
         )
         reconciler = nextReconciler
         rust = nextRust
+        profileReadRunner = ProfileReadRunner(rust: nextRust)
         nextRust.listenForUpdates(reconciler: nextReconciler)
         applyFullState(nextRust.state(), force: true)
         automaticRevocationLogoutInFlight = false
@@ -3049,9 +3071,8 @@ final class AppManager: ObservableObject {
         if merged.typingIndicators.isEmpty {
             merged.typingIndicators = existing.typingIndicators
         }
-        if merged.draft.isEmpty, !existing.draft.isEmpty {
-            merged.draft = existing.draft
-        }
+        // Keep the authoritative draft even when empty. Preserving loaded
+        // message history must not revive text that has already been sent.
         return merged
     }
 
@@ -3728,6 +3749,9 @@ private func normalizedPushString(_ value: Any?) -> String? {
 final class UpdateBridge: NSObject, AppReconciler, @unchecked Sendable {
     weak var owner: AppManager?
     private let generation: UInt64
+    private let pendingLock = NSLock()
+    private var pendingUpdates: [AppUpdate] = []
+    private var deliveryScheduled = false
 
     init(owner: AppManager, generation: UInt64) {
         self.owner = owner
@@ -3735,7 +3759,34 @@ final class UpdateBridge: NSObject, AppReconciler, @unchecked Sendable {
     }
 
     func reconcile(update: AppUpdate) {
-        Task { @MainActor [weak owner, generation] in
+        pendingLock.lock()
+        // Rust can publish faster than the main actor can draw. Coalesce again
+        // at this boundary; never discard or reorder side effects between states.
+        if case .fullState(let next) = update,
+           case .fullState(let previous)? = pendingUpdates.last {
+            if next.rev > previous.rev {
+                pendingUpdates[pendingUpdates.count - 1] = update
+            }
+        } else {
+            pendingUpdates.append(update)
+        }
+        let shouldSchedule = !deliveryScheduled
+        deliveryScheduled = true
+        pendingLock.unlock()
+        guard shouldSchedule else { return }
+        Task { @MainActor [weak self] in
+            self?.deliverPendingUpdates()
+        }
+    }
+
+    @MainActor
+    private func deliverPendingUpdates() {
+        pendingLock.lock()
+        let updates = pendingUpdates
+        pendingUpdates = []
+        deliveryScheduled = false
+        pendingLock.unlock()
+        for update in updates {
             owner?.apply(update: update, generation: generation)
         }
     }

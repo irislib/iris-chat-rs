@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 #if os(macOS)
 import AppKit
 @testable import IrisChatMac
@@ -7,6 +8,7 @@ import AppKit
 #endif
 final class InMemorySecretStore: AccountSecretStore {
     var bundle: StoredAccountBundle?
+    var onSave: (() -> Void)?
     var clearSucceeds = true
     init(bundle: StoredAccountBundle? = nil) {
         self.bundle = bundle
@@ -16,6 +18,7 @@ final class InMemorySecretStore: AccountSecretStore {
     }
     func save(_ bundle: StoredAccountBundle) {
         self.bundle = bundle
+        onSave?()
     }
     @discardableResult
     func clear() -> Bool {
@@ -44,6 +47,7 @@ final class MockRustApp: RustAppClient {
     var currentState: AppState
     var supportBundleJson = "{\"ok\":true}"
     var peerDebug: PeerProfileDebugSnapshot?
+    var onProfileRead: (() -> Void)?
     var mutualGroupsByOwner: [String: [ChatThreadSnapshot]] = [:]
     var dispatchError: Error?
     var onDispatch: ((AppAction) -> Void)?
@@ -244,11 +248,13 @@ final class MockRustApp: RustAppClient {
     }
 
     func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot? {
-        peerDebug
+        onProfileRead?()
+        return peerDebug
     }
 
     func mutualGroups(ownerInput: String) -> [ChatThreadSnapshot] {
-        mutualGroupsByOwner[ownerInput] ?? []
+        onProfileRead?()
+        return mutualGroupsByOwner[ownerInput] ?? []
     }
 
     func prepareForSuspend() {
@@ -2161,6 +2167,96 @@ final class IrisChatTests: XCTestCase {
         XCTAssertTrue(messageIds.contains("200"))
         XCTAssertEqual(messageIds.first, "15")
         XCTAssertEqual(messageIds.last, "200")
+    }
+
+    @MainActor
+    func testFullStateBurstPublishesOnlyLatestSnapshot() async {
+        let rust = MockRustApp(state: makeLargeFixtureState(rev: 1))
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), dataDir: tempDir, environment: [:])
+        var publishedRevisions: [UInt64] = []
+        let subscription = manager.$state.dropFirst().sink { publishedRevisions.append($0.rev) }
+        defer { subscription.cancel() }
+
+        for revision in 2...100 {
+            rust.emit(.fullState(makeLargeFixtureState(rev: UInt64(revision))))
+        }
+        let updated = await waitUntil { manager.state.rev == 100 }
+
+        XCTAssertTrue(updated)
+        XCTAssertEqual(publishedRevisions, [100])
+    }
+
+    @MainActor
+    func testSnapshotCoalescingPreservesAccountUpdateOrder() async {
+        let rust = MockRustApp(state: makeLargeFixtureState(rev: 1))
+        let store = InMemorySecretStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(rust: rust, secretStore: store, dataDir: tempDir, environment: [:])
+        var events: [String] = []
+        let subscription = manager.$state.dropFirst().sink { events.append("state:\($0.rev)") }
+        defer { subscription.cancel() }
+        store.onSave = { events.append("persist") }
+
+        rust.emit(.fullState(makeLargeFixtureState(rev: 2)))
+        rust.emit(.fullState(makeLargeFixtureState(rev: 3)))
+        rust.emit(.persistAccountBundle(rev: 4, ownerNsec: nil, ownerPubkeyHex: "test-owner", deviceNsec: "test-device"))
+        rust.emit(.fullState(makeLargeFixtureState(rev: 5)))
+        rust.emit(.fullState(makeLargeFixtureState(rev: 6)))
+        let updated = await waitUntil { manager.state.rev == 6 }
+
+        XCTAssertTrue(updated)
+        XCTAssertEqual(events, ["state:3", "persist", "state:6"])
+        XCTAssertEqual(store.bundle?.deviceNsec, "test-device")
+        rust.emit(.fullState(makeLargeFixtureState(rev: 7)))
+        let nextBatchDelivered = await waitUntil { manager.state.rev == 7 }
+        XCTAssertTrue(nextBatchDelivered)
+    }
+
+    @MainActor
+    func testProfileReadsDoNotRunOnMainThread() async {
+        let rust = MockRustApp(state: makeLargeFixtureState(rev: 1))
+        rust.onProfileRead = {
+            XCTAssertFalse(Thread.isMainThread, "A slow core query must not block input or rendering")
+        }
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), dataDir: tempDir, environment: [:])
+
+        _ = await manager.peerProfileDebug(ownerInput: "peer")
+        _ = await manager.mutualGroups(ownerInput: "peer")
+    }
+
+    @MainActor
+    func testFullStateClearsSentDraftWhileKeepingLoadedHistory() async {
+        let chatId = "chat-1"
+        let router = Router(defaultScreen: .chatList, screenStack: [.chat(chatId: chatId)])
+        var chat = makeCurrentChat(
+            chatId: chatId,
+            messages: [makeMessage(chatId: chatId, id: "older", createdAtSecs: 1)]
+        )
+        chat.draft = "sent message"
+        let rust = MockRustApp(state: makeLargeFixtureState(rev: 1, router: router, currentChat: chat))
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), dataDir: tempDir, environment: [:])
+
+        await Task.yield()
+        rust.emit(.fullState(makeLargeFixtureState(
+            rev: 2,
+            router: router,
+            currentChat: makeCurrentChat(
+                chatId: chatId,
+                messages: [makeMessage(chatId: chatId, id: "sent", createdAtSecs: 2)]
+            )
+        )))
+        let updated = await waitUntil { manager.state.rev == 2 }
+
+        XCTAssertTrue(updated)
+        XCTAssertEqual(manager.state.currentChat?.messages.map(\.id), ["older", "sent"])
+        XCTAssertEqual(manager.state.currentChat?.draft, "")
     }
 
     @MainActor
