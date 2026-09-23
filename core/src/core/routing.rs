@@ -3,7 +3,14 @@ use super::*;
 impl AppCore {
     pub(super) fn push_screen(&mut self, screen: Screen) {
         if self.state.account.is_none() {
+            if !matches!(screen, Screen::RemoteSigner) {
+                self.cancel_remote_signer_login();
+            }
             match screen {
+                Screen::RemoteSigner => {
+                    self.start_remote_signer_login(None);
+                    return;
+                }
                 Screen::Welcome => {
                     self.stop_pending_linked_device();
                     self.screen_stack.clear();
@@ -27,7 +34,10 @@ impl AppCore {
         }
 
         match screen {
-            Screen::CreateAccount | Screen::RestoreAccount | Screen::AddDevice => return,
+            Screen::CreateAccount
+            | Screen::RestoreAccount
+            | Screen::AddDevice
+            | Screen::RemoteSigner => return,
             Screen::ChatList => {
                 self.screen_stack.clear();
                 self.active_chat_id = None;
@@ -125,6 +135,9 @@ impl AppCore {
 
     pub(super) fn navigate_back(&mut self) {
         self.reset_pending_invite_acceptance();
+        if matches!(self.screen_stack.last(), Some(Screen::RemoteSigner)) {
+            self.cancel_remote_signer_login();
+        }
         if self.screen_stack.pop().is_none() {
             return;
         }
@@ -139,7 +152,10 @@ impl AppCore {
                 .filter(|screen| {
                     matches!(
                         screen,
-                        Screen::CreateAccount | Screen::RestoreAccount | Screen::AddDevice
+                        Screen::CreateAccount
+                            | Screen::RestoreAccount
+                            | Screen::AddDevice
+                            | Screen::RemoteSigner
                     )
                 })
                 .collect();
@@ -149,6 +165,13 @@ impl AppCore {
                 .any(|screen| matches!(screen, Screen::AddDevice))
             {
                 self.stop_pending_linked_device();
+            }
+            if !self
+                .screen_stack
+                .iter()
+                .any(|screen| matches!(screen, Screen::RemoteSigner))
+            {
+                self.cancel_remote_signer_login();
             }
             self.active_chat_id = None;
             self.rebuild_persist_and_emit_state();
@@ -161,6 +184,7 @@ impl AppCore {
                 Screen::Welcome
                 | Screen::CreateAccount
                 | Screen::RestoreAccount
+                | Screen::RemoteSigner
                 | Screen::AddDevice
                 | Screen::ChatList
                 | Screen::DeviceRevoked => {}

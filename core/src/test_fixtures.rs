@@ -84,6 +84,7 @@ pub fn build_large_test_app_state(
         current_chat: Some(current_chat),
         group_details: Some(fixture_group_details(group_chat_count.max(1))),
         public_invite: None,
+        remote_signer_login: None,
         link_device: None,
         network_status: None,
         mobile_push: Default::default(),

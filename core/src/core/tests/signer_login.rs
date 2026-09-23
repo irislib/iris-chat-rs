@@ -254,46 +254,7 @@ fn signer_login_authorizes_persists_restarts_and_sends_without_identity_secret()
     restored.logged_in.as_mut().unwrap().relay_urls.clear();
     restored.preferences.nostr_relay_urls.clear();
 
-    // Exercise production invite acceptance, carried owner proof, encryption,
-    // and receiver delivery with the restored device secret alone.
-    let receiver_owner = Keys::generate();
-    let receiver_device = Keys::generate();
-    let mut receiver =
-        logged_in_test_core("signer-chat-receiver", &receiver_owner, &receiver_device);
-    let invite = create_private_invite_for_test(&mut receiver);
-    prove_invite_owner(
-        &mut restored,
-        &receiver_owner,
-        &receiver_device,
-        unix_now().get(),
-    );
-    restored.pending_relay_publishes.clear();
-    restored.handle_action(AppAction::AcceptInvite {
-        invite_input: invite,
-    });
-    restored.handle_action(AppAction::SendMessage {
-        chat_id: receiver_owner.public_key().to_hex(),
-        text: "Signed in with a signer".into(),
-    });
-    let response = pending_events_with_kind(&restored, INVITE_RESPONSE_KIND)
-        .into_iter()
-        .next()
-        .expect("device handshake");
-    assert!(response
-        .tags
-        .iter()
-        .any(|tag| tag.as_slice()[0] == "owner-proof"));
-    for event in pending_events_with_kind(&restored, MESSAGE_EVENT_KIND) {
-        receiver.handle_relay_event(event);
-    }
-    receiver.handle_relay_event(response);
-    assert!(receiver
-        .threads
-        .get(&owner.public_key().to_hex())
-        .is_some_and(|thread| thread
-            .messages
-            .iter()
-            .any(|message| message.body == "Signed in with a signer")));
+    assert_signer_device_can_message(&mut restored, owner.public_key());
 
     let revocation = app_keys_event(&owner, &[&old_device], signed.created_at.as_secs() + 1);
     restored.handle_relay_event(revocation);
@@ -424,4 +385,47 @@ fn signer_login_rejects_conflicting_rosters_and_unreachable_servers() {
     assert!(!updates
         .try_iter()
         .any(|update| matches!(update, AppUpdate::SignerLoginSignEvent { .. })));
+}
+
+fn assert_signer_device_can_message(restored: &mut AppCore, owner: PublicKey) {
+    // Exercise production invite acceptance, carried owner proof, encryption,
+    // and receiver delivery with the restored device secret alone.
+    let receiver_owner = Keys::generate();
+    let receiver_device = Keys::generate();
+    let mut receiver =
+        logged_in_test_core("signer-chat-receiver", &receiver_owner, &receiver_device);
+    let invite = create_private_invite_for_test(&mut receiver);
+    prove_invite_owner(
+        restored,
+        &receiver_owner,
+        &receiver_device,
+        unix_now().get(),
+    );
+    restored.pending_relay_publishes.clear();
+    restored.handle_action(AppAction::AcceptInvite {
+        invite_input: invite,
+    });
+    restored.handle_action(AppAction::SendMessage {
+        chat_id: receiver_owner.public_key().to_hex(),
+        text: "Signed in with a signer".into(),
+    });
+    let response = pending_events_with_kind(restored, INVITE_RESPONSE_KIND)
+        .into_iter()
+        .next()
+        .expect("device handshake");
+    assert!(response
+        .tags
+        .iter()
+        .any(|tag| tag.as_slice()[0] == "owner-proof"));
+    for event in pending_events_with_kind(restored, MESSAGE_EVENT_KIND) {
+        receiver.handle_relay_event(event);
+    }
+    receiver.handle_relay_event(response);
+    assert!(receiver
+        .threads
+        .get(&owner.to_hex())
+        .is_some_and(|thread| thread
+            .messages
+            .iter()
+            .any(|message| message.body == "Signed in with a signer")));
 }

@@ -13,7 +13,7 @@ pub(super) struct PendingSignerLogin {
     relay_urls: Vec<RelayUrl>,
     previous_event: Option<Event>,
     unsigned_event: Option<UnsignedEvent>,
-    publishing: bool,
+    pub(super) publishing: bool,
     deadline: Instant,
 }
 
@@ -102,9 +102,13 @@ impl AppCore {
         });
         match prepared {
             Ok(unsigned_event_json) => {
+                let owner_pubkey_hex = pending.owner.to_hex();
+                if self.send_remote_signer_request(request_id, &unsigned_event_json) {
+                    return;
+                }
                 let _ = self.update_tx.send(AppUpdate::SignerLoginSignEvent {
                     request_id: request_id.to_string(),
-                    owner_pubkey_hex: pending.owner.to_hex(),
+                    owner_pubkey_hex,
                     unsigned_event_json,
                 });
             }
@@ -176,6 +180,7 @@ impl AppCore {
         let Some(pending) = self.pending_signer_login.take() else {
             return;
         };
+        self.stop_remote_signer();
         self.enter_batch();
         let result = result.map_err(anyhow::Error::msg).and_then(|event| {
             self.start_session_inner(
@@ -254,7 +259,8 @@ impl AppCore {
         }
     }
 
-    fn fail_signer_login(&mut self, message: &str) {
+    pub(super) fn fail_signer_login(&mut self, message: &str) {
+        self.stop_remote_signer();
         self.pending_signer_login = None;
         self.state.busy.restoring_session = false;
         self.state.toast = Some(message.to_string());

@@ -74,6 +74,7 @@ impl AppCore {
             protocol_engine: None,
             pending_linked_device: None,
             pending_signer_login: None,
+            pending_remote_signer: None,
             device_approval_relay_urls: relay_urls_from_strings(&[
                 COMPILED_DEVICE_APPROVAL_RELAY_URL.to_string(),
             ]),
@@ -176,6 +177,10 @@ impl AppCore {
                 _ => "Action.other",
             },
             CoreMsg::Internal(event) => match event.as_ref() {
+                InternalEvent::RemoteSignerProgress { .. }
+                | InternalEvent::RemoteSignerConnected { .. }
+                | InternalEvent::RemoteSignerSigned { .. }
+                | InternalEvent::RemoteSignerFailed { .. } => "RemoteSigner",
                 InternalEvent::SignerLoginFetched { .. } => "SignerLoginFetched",
                 InternalEvent::SignerLoginPublished { .. } => "SignerLoginPublished",
                 InternalEvent::SignerLoginTimedOut { .. } => "SignerLoginTimedOut",
@@ -342,6 +347,7 @@ impl AppCore {
     }
 
     pub(super) fn shutdown(&mut self) {
+        self.stop_remote_signer();
         self.push_debug_log("app.shutdown", "stopping core");
         self.pause_pending_linked_device();
         self.stop_device_sync();
@@ -437,7 +443,16 @@ impl AppCore {
                 device_nsec,
                 approval_bootstrap_json,
             } => self.restore_pending_linked_device(&device_nsec, &approval_bootstrap_json),
+            AppAction::StartRemoteSignerLogin => self.start_remote_signer_login(None),
+            AppAction::ConnectRemoteSigner { connection_uri } => {
+                self.start_remote_signer_login(Some(&connection_uri))
+            }
+            AppAction::CancelRemoteSignerLogin => {
+                self.cancel_remote_signer_login();
+                self.emit_state();
+            }
             AppAction::BeginSignerLogin { owner_pubkey_hex } => {
+                self.cancel_remote_signer_login();
                 self.begin_signer_login(&owner_pubkey_hex)
             }
             AppAction::CompleteSignerLogin {
@@ -624,6 +639,7 @@ impl AppCore {
 
     pub(super) fn handle_internal(&mut self, event: InternalEvent) {
         if self.suspended {
+            self.defer_remote_signer_event(event);
             // Drop queued background work while iOS is taking us down. We
             // don't want any further SQLite writes once the suspend
             // checkpoint has run. Foregrounding clears the gate and
@@ -631,6 +647,10 @@ impl AppCore {
             return;
         }
         match event {
+            event @ (InternalEvent::RemoteSignerProgress { .. }
+            | InternalEvent::RemoteSignerConnected { .. }
+            | InternalEvent::RemoteSignerSigned { .. }
+            | InternalEvent::RemoteSignerFailed { .. }) => self.handle_remote_signer_event(event),
             InternalEvent::SignerLoginFetched { request_id, result } => {
                 self.handle_signer_login_fetched(&request_id, result)
             }

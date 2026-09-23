@@ -22,6 +22,11 @@ pub enum AppAction {
         device_nsec: String,
         approval_bootstrap_json: String,
     },
+    StartRemoteSignerLogin,
+    ConnectRemoteSigner {
+        connection_uri: String,
+    },
+    CancelRemoteSignerLogin,
     BeginSignerLogin {
         owner_pubkey_hex: String,
     },

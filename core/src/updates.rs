@@ -97,6 +97,24 @@ pub(crate) struct CorePerfCountersSnapshot {
 
 #[derive(Debug)]
 pub(crate) enum InternalEvent {
+    RemoteSignerProgress {
+        token: String,
+        phase: crate::RemoteSignerPhase,
+        auth_url: Option<String>,
+    },
+    RemoteSignerConnected {
+        token: String,
+        owner_pubkey_hex: String,
+    },
+    RemoteSignerSigned {
+        token: String,
+        request_id: String,
+        signed_event_json: String,
+    },
+    RemoteSignerFailed {
+        token: String,
+        message: String,
+    },
     SignerLoginFetched {
         request_id: String,
         result: Result<Option<Event>, String>,

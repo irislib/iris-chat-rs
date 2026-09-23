@@ -5,6 +5,7 @@ pub enum Screen {
     Welcome,
     CreateAccount,
     RestoreAccount,
+    RemoteSigner,
     AddDevice,
     ChatList,
     NewChat,
@@ -572,6 +573,21 @@ pub struct LinkDeviceSnapshot {
     pub device_input: String,
 }
 
+#[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
+pub enum RemoteSignerPhase {
+    Connecting,
+    WaitingForSigner,
+    WaitingForApproval,
+    Finishing,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct RemoteSignerLoginSnapshot {
+    pub connection_uri: Option<String>,
+    pub phase: RemoteSignerPhase,
+    pub auth_url: Option<String>,
+}
+
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct AppState {
     pub rev: u64,
@@ -584,6 +600,7 @@ pub struct AppState {
     pub group_details: Option<GroupDetailsSnapshot>,
     pub public_invite: Option<PublicInviteSnapshot>,
     pub link_device: Option<LinkDeviceSnapshot>,
+    pub remote_signer_login: Option<RemoteSignerLoginSnapshot>,
     pub network_status: Option<NetworkStatusSnapshot>,
     pub mobile_push: MobilePushSyncSnapshot,
     pub preferences: PreferencesSnapshot,
@@ -610,6 +627,7 @@ impl AppState {
             group_details: None,
             public_invite: None,
             link_device: None,
+            remote_signer_login: None,
             network_status: None,
             mobile_push: MobilePushSyncSnapshot::default(),
             preferences: PreferencesSnapshot::default(),

@@ -128,6 +128,8 @@ include!("tests/app_keys_invites_requests.rs");
 include!("tests/pending_device_link.rs");
 include!("tests/signer_login.rs");
 include!("tests/signer_login_lookup.rs");
+include!("tests/remote_signer_fixture.rs");
+include!("tests/remote_signer.rs");
 include!("tests/private_invite_owner_verification.rs");
 include!("tests/private_invite_owner_crash.rs");
 include!("tests/handshake_owner_proof.rs");

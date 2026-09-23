@@ -74,6 +74,10 @@ mod account_signer;
 mod account_signer_relay;
 mod attachment_upload;
 mod registration_recovery;
+mod remote_signer;
+mod remote_signer_rpc;
+mod remote_signer_transport;
+mod remote_signer_uri;
 #[cfg(feature = "stack-fixture")]
 pub use attachment_upload::download_hashtree_attachment;
 mod attachments;
@@ -506,6 +510,7 @@ pub struct AppCore {
     protocol_engine: Option<ProtocolEngine>,
     pending_linked_device: Option<PendingLinkedDeviceState>,
     pending_signer_login: Option<account_signer::PendingSignerLogin>,
+    pending_remote_signer: Option<remote_signer::PendingRemoteSigner>,
     device_approval_relay_urls: Vec<RelayUrl>,
     private_chat_invites: BTreeMap<String, Invite>,
     pending_private_invite_responses: BTreeMap<String, invites::PendingPrivateInviteResponseV1>,

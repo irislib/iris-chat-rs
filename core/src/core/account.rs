@@ -39,6 +39,7 @@ impl AppCore {
         // Lift the suspend gate even when not logged in so a re-foregrounded
         // unauthenticated app can process events again.
         self.suspended = false;
+        self.resume_remote_signer_events();
         self.expire_pending_signer_login();
         if self.pending_linked_device.is_some() {
             self.push_debug_log("session.link_resume", "refresh device approval");
@@ -206,6 +207,7 @@ impl AppCore {
         pairing_url: String,
         persist: bool,
     ) {
+        self.stop_remote_signer();
         self.pending_signer_login = None;
         let pairing_client = Client::new(device_keys.clone());
         self.start_notifications_loop(pairing_client.clone());
@@ -391,6 +393,7 @@ impl AppCore {
     }
 
     pub(super) fn logout(&mut self) {
+        self.stop_remote_signer();
         self.pending_signer_login = None;
         self.push_debug_log("session.logout", "clearing runtime state");
         let previous_rev = self.state.rev;
@@ -541,6 +544,7 @@ impl AppCore {
         allow_protocol_restore: bool,
         emit_account_bundle: bool,
     ) -> anyhow::Result<()> {
+        self.stop_remote_signer();
         self.pending_signer_login = None;
         self.app_store.bind_account(owner_pubkey)?;
         self.push_debug_log(
