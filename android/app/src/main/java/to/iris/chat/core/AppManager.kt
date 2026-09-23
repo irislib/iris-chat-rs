@@ -395,6 +395,7 @@ class AppManager(
     val selfUpdateState = selfUpdateManager.state
     private val mutablePendingShare = MutableStateFlow<PendingShare?>(null)
     val pendingShare: StateFlow<PendingShare?> = mutablePendingShare.asStateFlow()
+    val signer = Nip55Signer(appContext, applicationScope, ::dispatchToRust, ::publishShellToast)
 
     @Suppress("unused") // tag is helpful for tracing during perf work
     private fun <T> slice(
@@ -765,6 +766,7 @@ class AppManager(
         if (currentStack.isEmpty()) {
             return
         }
+        if (currentStack.lastOrNull() == Screen.RestoreAccount) signer.cancel()
         val nextStack = currentStack.dropLast(1)
         navigateOptimistically(
             stack = nextStack,
@@ -1080,6 +1082,7 @@ class AppManager(
         }
 
     fun logout() {
+        signer.cancel()
         automaticRevocationLogoutInFlight = true
         applicationScope.launch(ioDispatcher) {
             // Logout is owned by Rust. The shell clears native secrets and then swaps in a fresh core
@@ -1185,6 +1188,7 @@ class AppManager(
 
     private fun applyUpdate(update: AppUpdate) {
         when (update) {
+            is AppUpdate.SignerLoginSignEvent -> signer.signEvent(update)
             is AppUpdate.PersistAccountBundle -> {
                 // Secure persistence is a shell side effect and must be applied even if snapshot revs race.
                 applicationScope.launch(ioDispatcher) {
@@ -1754,6 +1758,7 @@ class AppManager(
         )
 
     private fun replaceRustCoreAfterReset() {
+        signer.cancel()
         val previous = rust
         previous.shutdown()
         wipeAppStorage()
@@ -1889,6 +1894,7 @@ class AppManager(
         trim().replace(Regex("\\s+"), " ")
 
     private fun publishState(snapshot: AppState) {
+        signer.onAppState(snapshot)
         IrisDebugLog.enabled = snapshot.preferences.debugLoggingEnabled
         rust.setFipsBleEnabled(
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&

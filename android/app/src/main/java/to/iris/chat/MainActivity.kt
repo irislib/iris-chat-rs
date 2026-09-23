@@ -72,6 +72,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         IrisDebugLog.d(TAG, "onCreate")
         container = (application as IrisChatApp).container
+        attachNip55Signer(container.appManager.signer)
         handleLaunchIntent(intent)
 
         setContent {
