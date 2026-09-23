@@ -15,6 +15,7 @@ final class CallHistoryTests: XCTestCase {
             ("outgoing", "answered", true, "Outgoing video call"),
             ("outgoing", "canceled", false, "Canceled voice call"),
             ("incoming", "declined", true, "Declined video call"),
+            ("incoming", "answered_elsewhere", true, "Answered on another device"),
         ]
         for (direction, outcome, video, title) in cases {
             let view = CallHistoryPresentation(call: history(direction: direction, outcome: outcome, video: video))
@@ -26,7 +27,7 @@ final class CallHistoryTests: XCTestCase {
     }
 
     func testOnlyAnsweredCallsShowDurationIncludingBriefAndLongCalls() {
-        for outcome in ["missed", "declined", "canceled"] {
+        for outcome in ["missed", "declined", "canceled", "answered_elsewhere"] {
             XCTAssertNil(CallHistoryPresentation(call: history(outcome: outcome, duration: 20)).duration)
         }
         for (seconds, text) in [(UInt64(0), "0:00"), (65, "1:05"), (3_661, "1:01:01")] {

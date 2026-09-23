@@ -6,6 +6,7 @@ struct CallHistoryPresentation {
     var title: String {
         let medium = call.video ? "video call" : "voice call"
         switch call.outcome {
+        case "answered_elsewhere": return "Answered on another device"
         case "missed": return "Missed \(medium)"
         case "declined": return "Declined \(medium)"
         case "canceled": return "Canceled \(medium)"
