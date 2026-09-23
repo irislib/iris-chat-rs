@@ -24,7 +24,20 @@ pub enum AppAction {
     SendCallMedia {
         call_id: String,
         kind: u8,
+        timestamp_us: u64,
+        key_frame: bool,
         data: Vec<u8>,
+    },
+    RequestCallKeyFrame {
+        call_id: String,
+    },
+    SetCallMediaConnected {
+        call_id: String,
+        connected: bool,
+    },
+    SetCallQuality {
+        quality: String,
+        max_bitrate_bps: u32,
     },
     SetVoiceCallsEnabled {
         enabled: bool,

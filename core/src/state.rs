@@ -53,6 +53,8 @@ pub struct UploadProgress {
 pub struct PreferencesSnapshot {
     pub voice_calls_enabled: bool,
     pub video_calls_enabled: bool,
+    pub call_quality: String,
+    pub call_max_bitrate_bps: u32,
     pub send_typing_indicators: bool,
     pub send_read_receipts: bool,
     pub desktop_notifications_enabled: bool,
@@ -100,6 +102,8 @@ impl Default for PreferencesSnapshot {
         Self {
             voice_calls_enabled: true,
             video_calls_enabled: true,
+            call_quality: "auto".into(),
+            call_max_bitrate_bps: 2_000_000,
             send_typing_indicators: false,
             send_read_receipts: false,
             desktop_notifications_enabled: true,
@@ -594,6 +598,11 @@ pub struct RemoteSignerLoginSnapshot {
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct CallSnapshot {
+    pub outgoing: bool,
+    pub target_bitrate_bps: u32,
+    pub key_frame_generation: u32,
+    pub media_connected: bool,
+    pub max_bitrate_bps: u32,
     pub call_id: String,
     pub chat_id: String,
     pub peer_name: String,

@@ -222,6 +222,7 @@ impl AppCore {
         if !changed {
             return;
         }
+        self.reconcile_device_sync();
         self.rebuild_persist_and_emit_state();
     }
 
@@ -254,6 +255,7 @@ impl AppCore {
             return;
         }
         self.preferences.nearby_lan_enabled = enabled;
+        self.reconcile_device_sync();
         self.rebuild_persist_and_emit_state();
     }
 

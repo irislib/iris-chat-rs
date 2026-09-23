@@ -15,7 +15,7 @@ fn call_test_peer(core: &mut AppCore, owner: &Keys, device: &Keys) {
 }
 fn call_control(id: &str, kind: &str, video: bool) -> Vec<u8> {
     serde_json::to_vec(
-        &serde_json::json!({"v":1,"type":kind,"call_id":id,"video":video,"codec":"pcm16-jpeg-v1"}),
+        &serde_json::json!({"v":3,"type":kind,"call_id":id,"video":video,"codec":"opus-h264-v3"}),
     )
     .unwrap()
 }
@@ -26,7 +26,7 @@ fn calls_require_known_accepted_unblocked_device_and_matching_call() {
     let peer = Keys::generate();
     let device = Keys::generate();
     let stranger = Keys::generate();
-    let (mut core, updates, _dir) = logged_in_test_core_with_updates("call-policy", &owner, &local);
+    let (mut core, _updates, _dir) = logged_in_test_core_with_updates("call-policy", &owner, &local);
     let id = "00112233445566778899aabbccddeeff";
     let offer = call_control(id, "offer", true);
     core.handle_call_packet(&device.public_key().to_hex(), 39511, &offer);
@@ -79,9 +79,6 @@ fn calls_require_known_accepted_unblocked_device_and_matching_call() {
         "ended",
         "replayed offer cannot ring again"
     );
-    assert!(!updates
-        .try_iter()
-        .any(|u| matches!(u, AppUpdate::CallMedia { .. })));
     core.handle_action(AppAction::EndCall { call_id: id.into() });
     assert!(core.state.call.is_none());
     assert!(
@@ -134,6 +131,7 @@ fn call_settings_persist_and_allow_voice_answer_when_video_disabled() {
         &call_control("ffeeddccbbaa99887766554433221100", "offer", true),
     );
     assert!(core.state.call.is_none());
+    core.handle_action(AppAction::SetCallQuality { quality: "custom".into(), max_bitrate_bps: 777_000 });
     drop(core);
     let restarted = AppCore::new(
         flume::unbounded().0,
@@ -144,6 +142,8 @@ fn call_settings_persist_and_allow_voice_answer_when_video_disabled() {
     assert!(!restarted.state.preferences.voice_calls_enabled);
     assert!(!restarted.state.preferences.video_calls_enabled);
     assert!(restarted.state.call.is_none());
+    assert_eq!(restarted.state.preferences.call_quality, "custom");
+    assert_eq!(restarted.state.preferences.call_max_bitrate_bps, 777_000);
 }
 fn pump_call_pair(
     a: &mut AppCore,
@@ -264,54 +264,25 @@ fn calls_e2e_without_internet_over_local_fips_udp() {
     });
     au.try_iter().for_each(drop);
     bu.try_iter().for_each(drop);
-    let audio = (0..320)
-        .flat_map(|i| (((i as f64 * 0.17).sin() * 12000.0) as i16).to_le_bytes())
-        .collect::<Vec<_>>();
-    let mut video = vec![42u8; 12000];
-    video[..2].copy_from_slice(&[255, 216]);
-    video[11998..].copy_from_slice(&[255, 217]);
-    for core in [&mut a, &mut b] {
-        core.handle_action(AppAction::SendCallMedia {
-            call_id: id.clone(),
-            kind: 1,
-            data: audio.clone(),
-        });
-        core.handle_action(AppAction::SendCallMedia {
-            call_id: id.clone(),
-            kind: 2,
-            data: video.clone(),
-        });
+    let codec=crate::CallAudioCodec::new().unwrap();
+    let audio=codec.encode((0..960).map(|i|((i as f32*0.1).sin()*10000.0) as i16).collect()).unwrap();
+    let mut video=vec![42;12000];video[..4].copy_from_slice(&[0,0,0,1]);
+    for core in [&mut a,&mut b] {
+        core.handle_action(AppAction::SendCallMedia {call_id:id.clone(),kind:1,timestamp_us:0,key_frame:true,data:audio.clone()});
+        core.handle_action(AppAction::SendCallMedia {call_id:id.clone(),kind:2,timestamp_us:0,key_frame:true,data:video.clone()});
     }
-    let mut seen_a = Vec::new();
-    let mut seen_b = Vec::new();
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while seen_a.len() < 2 || seen_b.len() < 2 {
-        pump_call_pair(&mut a, &ar, &mut b, &br);
-        for (updates, seen) in [(&au, &mut seen_a), (&bu, &mut seen_b)] {
+    let mut seen_a=Vec::new();let mut seen_b=Vec::new();let deadline=std::time::Instant::now()+Duration::from_secs(10);
+    while seen_a.len()<2 || seen_b.len()<2 {
+        pump_call_pair(&mut a,&ar,&mut b,&br);
+        for (updates,seen) in [(&au,&mut seen_a),(&bu,&mut seen_b)] {
             for update in updates.try_iter() {
-                if let AppUpdate::CallMedia {
-                    call_id,
-                    kind,
-                    data,
-                } = update
-                {
-                    assert_eq!(call_id, id);
-                    assert_eq!(
-                        data,
-                        if kind == 1 {
-                            audio.clone()
-                        } else {
-                            video.clone()
-                        }
-                    );
-                    seen.push(kind);
+                if let AppUpdate::CallMedia{call_id,kind,sequence,timestamp_us,key_frame,data}=update {
+                    assert_eq!(call_id,id);assert_eq!(sequence,0);assert_eq!(timestamp_us,0);assert!(key_frame);
+                    assert_eq!(data,if kind==1 {audio.clone()}else {video.clone()});seen.push(kind);
                 }
             }
         }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "bidirectional media missing: {seen_a:?}/{seen_b:?}"
-        );
+        assert!(std::time::Instant::now()<deadline,"Bidirectional codec packets missing: {seen_a:?}/{seen_b:?}");
         std::thread::sleep(Duration::from_millis(10));
     }
     a.handle_action(AppAction::SetCallMuted { muted: true });

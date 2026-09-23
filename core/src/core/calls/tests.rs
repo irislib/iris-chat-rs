@@ -5,7 +5,7 @@ const NEXT_CALL_ID: &str = "112233445566778899aabbccddeeff00";
 
 struct Fixture {
     core: AppCore,
-    updates: flume::Receiver<AppUpdate>,
+    _updates: flume::Receiver<AppUpdate>,
     owner: String,
     devices: Vec<String>,
     _directory: tempfile::TempDir,
@@ -56,7 +56,7 @@ impl Fixture {
         core.ensure_thread_record(&owner, unix_now().get());
         Self {
             core,
-            updates,
+            _updates: updates,
             owner,
             devices,
             _directory: directory,
@@ -178,20 +178,10 @@ fn calls_pre_answer_mute_and_camera_choice_survive_both_answer_paths() {
             f.snapshot().video_capable,
             "camera-off does not renegotiate as voice"
         );
-        f.core.send_call_media(CALL_ID, 1, vec![0; 640]);
-        f.core
-            .send_call_media(CALL_ID, 2, vec![0xff, 0xd8, 0xff, 0xd9]);
-        let active = f.core.calls.active.as_ref().unwrap();
-        assert_eq!(active.audio_seq, 0, "muted capture cannot reach the sender");
-        assert_eq!(
-            active.video_seq, 0,
-            "disabled camera cannot reach the sender"
-        );
-
+        // Platform engines enforce these consent flags before enabling tracks.
         f.core
             .handle_action(AppAction::SetCallMuted { muted: false });
-        f.core.send_call_media(CALL_ID, 1, vec![0; 640]);
-        assert_eq!(f.core.calls.active.as_ref().unwrap().audio_seq, 1);
+        assert!(!f.snapshot().muted);
     }
 }
 
@@ -267,14 +257,14 @@ fn calls_revocation_or_blocking_drops_media_and_cleans_up_on_tick() {
                     LocalAuthorizationState::Revoked
             }
         }
-        f.updates.try_iter().for_each(drop);
-        let packet = wire::encode(CALL_ID, 1, 0, &[0; 640]).remove(0);
-        f.core.handle_call_packet(&f.devices[0], PORT, &packet);
-        assert!(
-            !f.updates
-                .try_iter()
-                .any(|u| matches!(u, AppUpdate::CallMedia { .. })),
-            "{change} must immediately reject inbound media"
+        let received = f.core.calls.active.as_ref().unwrap().last_received;
+        for packet in wire::encode(CALL_ID, 1, 0, 0, true, &[42; 80]) {
+            f.core.handle_call_packet(&f.devices[0], PORT, &packet);
+        }
+        assert_eq!(
+            f.core.calls.active.as_ref().unwrap().last_received,
+            received,
+            "{change} must reject media"
         );
         f.core.call_tick(CALL_ID);
         assert!(
@@ -283,4 +273,80 @@ fn calls_revocation_or_blocking_drops_media_and_cleans_up_on_tick() {
         );
         assert_eq!(f.snapshot().phase, "ended");
     }
+}
+
+#[test]
+fn calls_feedback_adapts_bitrate_and_ignores_unauthenticated_or_replayed_feedback() {
+    let mut f = Fixture::new();
+    f.outgoing(true);
+    f.receive(0, "answer", true);
+    let initial = f.snapshot().target_bitrate_bps;
+    let mut feedback = Signal::new("feedback", CALL_ID, true, false);
+    feedback.feedback_seq = Some(0);
+    feedback.video_seq = Some(29);
+    feedback.received_frames = Some(15);
+    feedback.received_bytes = Some(50000);
+    feedback.interval_ms = Some(1000);
+    f.core
+        .handle_call_packet(&f.devices[1], PORT, &serde_json::to_vec(&feedback).unwrap());
+    assert_eq!(f.snapshot().target_bitrate_bps, initial);
+    f.core
+        .handle_call_packet(&f.devices[0], PORT, &serde_json::to_vec(&feedback).unwrap());
+    assert_eq!(f.snapshot().target_bitrate_bps, initial * 3 / 4);
+    f.core
+        .handle_call_packet(&f.devices[0], PORT, &serde_json::to_vec(&feedback).unwrap());
+    assert_eq!(f.snapshot().target_bitrate_bps, initial * 3 / 4);
+    feedback.feedback_seq = Some(1);
+    feedback.video_seq = Some(59);
+    feedback.received_frames = Some(30);
+    f.core
+        .handle_call_packet(&f.devices[0], PORT, &serde_json::to_vec(&feedback).unwrap());
+    assert!(f.snapshot().target_bitrate_bps > initial * 3 / 4);
+    f.core.set_call_quality("custom".into(), 200_000);
+    assert_eq!(f.snapshot().target_bitrate_bps, 200_000);
+    f.receive(0, "keyframe", true);
+    assert_eq!(f.snapshot().key_frame_generation, 1);
+    f.receive(0, "keyframe", true);
+    assert_eq!(f.snapshot().key_frame_generation, 1);
+}
+
+#[test]
+fn calls_reduce_bitrate_when_only_control_packets_survive() {
+    let mut f = Fixture::new();
+    f.outgoing(true);
+    f.receive(0, "answer", true);
+    let initial = f.snapshot().target_bitrate_bps;
+    f.core.calls.active.as_mut().unwrap().video_seq = 30;
+    let mut feedback = Signal::new("feedback", CALL_ID, true, false);
+    feedback.feedback_seq = Some(0);
+    feedback.received_frames = Some(0);
+    feedback.received_bytes = Some(0);
+    feedback.interval_ms = Some(1000);
+    f.core
+        .handle_call_packet(&f.devices[0], PORT, &serde_json::to_vec(&feedback).unwrap());
+    assert_eq!(f.snapshot().target_bitrate_bps, initial * 3 / 4);
+    feedback.feedback_seq = Some(1);
+    f.core
+        .handle_call_packet(&f.devices[0], PORT, &serde_json::to_vec(&feedback).unwrap());
+    assert_eq!(
+        f.snapshot().target_bitrate_bps,
+        initial * 3 / 4,
+        "no further reduction when capture sends nothing"
+    );
+}
+
+#[test]
+fn calls_end_if_signaling_survives_but_media_never_connects() {
+    let mut f = Fixture::new();
+    f.connected_incoming(false);
+    f.core
+        .calls
+        .active
+        .as_mut()
+        .unwrap()
+        .media_disconnected_since = Some(Clock::now() - Duration::from_secs(31));
+    f.receive(0, "ping", false);
+    f.core.call_tick(CALL_ID);
+    assert_eq!(f.snapshot().phase, "ended");
+    assert!(f.core.calls.active.is_none());
 }

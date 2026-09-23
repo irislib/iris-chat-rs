@@ -79,6 +79,8 @@ sha2 = "0.10"
 socket2 = "0.6"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "fs"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+opus = "=0.4.0"
+opusic-sys = "=0.7.3"
 tokio-util = { version = "0.7", features = ["compat"] }
 uniffi = "0.29.4"
 url = "2"

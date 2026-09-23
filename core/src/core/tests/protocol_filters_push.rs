@@ -2696,7 +2696,9 @@ fn nearby_master_toggle_preserves_transport_preferences() {
 
     core.handle_action(AppAction::SetNearbyBluetoothEnabled { enabled: true });
     core.handle_action(AppAction::SetNearbyLanEnabled { enabled: true });
+    assert!(core.device_sync.is_some(), "Enabling LAN must immediately start the shared call endpoint");
     core.handle_action(AppAction::SetNearbyEnabled { enabled: false });
+    assert!(core.device_sync.is_none(), "Disabling Nearby releases the LAN-only endpoint");
 
     assert!(!core.state.preferences.nearby_enabled);
     assert!(core.state.preferences.nearby_bluetooth_enabled);

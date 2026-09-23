@@ -10,25 +10,28 @@ impl AppCore {
         if !self.call_contact_allowed(&owner) {
             return;
         }
-        if data.starts_with(b"IC01") {
+        if data.starts_with(b"IC03") {
             let (Some(active), Some(snapshot)) = (&mut self.calls.active, &self.state.call) else {
                 return;
             };
             if snapshot.phase != "connected" || active.peer.as_deref() != Some(source) {
                 return;
             }
-            if let Some((kind, frame)) = active.frames.receive(&active.id, data, Clock::now()) {
-                if (kind == 2 && (!active.video || !snapshot.remote_video))
-                    || (kind == 1 && snapshot.remote_muted)
+            if let Some(frame) = active.frames.receive(&active.id, data, Clock::now()) {
+                if (frame.kind == 1 && snapshot.remote_muted)
+                    || (frame.kind == 2 && (!active.video || !snapshot.remote_video))
                 {
                     return;
                 }
                 active.last_received = Clock::now();
-                if self.update_tx.len() < 24 {
+                if self.update_tx.len() < 32 {
                     let _ = self.update_tx.send(AppUpdate::CallMedia {
                         call_id: active.id.clone(),
-                        kind,
-                        data: frame,
+                        kind: frame.kind,
+                        sequence: frame.seq,
+                        timestamp_us: frame.timestamp_us,
+                        key_frame: frame.key,
+                        data: frame.data,
                     });
                 }
             }
@@ -148,7 +151,11 @@ impl AppCore {
                     snapshot.remote_muted = signal.muted.unwrap_or(false);
                     snapshot.connected_at_secs = Some(unix_now().get());
                 }
+                self.schedule_call_recovery(&signal.call_id);
                 self.signal_active_call("ping");
+                if let Some(active) = &mut self.calls.active {
+                    active.media_disconnected_since = Some(Clock::now());
+                }
                 self.emit_state();
             }
             "reject" | "end" => {
@@ -165,6 +172,24 @@ impl AppCore {
                 } else {
                     "Call ended"
                 });
+            }
+            "nack" if connected => self.receive_call_nack(&signal),
+            "feedback" if connected => self.receive_call_feedback(&signal),
+            "keyframe" if connected => {
+                if let (Some(active), Some(snapshot)) =
+                    (&mut self.calls.active, &mut self.state.call)
+                {
+                    if snapshot.video
+                        && active
+                            .last_peer_key_request
+                            .is_none_or(|at| at.elapsed() >= Duration::from_millis(800))
+                    {
+                        active.last_peer_key_request = Some(Clock::now());
+                        snapshot.key_frame_generation =
+                            snapshot.key_frame_generation.wrapping_add(1);
+                        self.emit_state();
+                    }
+                }
             }
             "ping" | "pong" | "media_state" if connected => {
                 if let Some(active) = &mut self.calls.active {

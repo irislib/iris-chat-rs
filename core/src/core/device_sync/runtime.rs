@@ -211,11 +211,9 @@ impl AppCore {
         {
             return;
         }
-        if self.pending_host_ble.is_some() {
-            self.stop_device_sync_now();
-        } else {
-            self.stop_device_sync();
-        }
+        // Release listeners before binding the replacement endpoint. An async
+        // shutdown races a fixed WebSocket/UDP port when contact keys refresh.
+        self.stop_device_sync_now();
 
         let mut peer_config = config
             .peers

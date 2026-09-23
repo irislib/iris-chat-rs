@@ -497,6 +497,10 @@ pub(super) struct PersistedPreferences {
     #[serde(default = "default_true")]
     pub(super) video_calls_enabled: bool,
     #[serde(default)]
+    pub(super) call_quality: String,
+    #[serde(default)]
+    pub(super) call_max_bitrate_bps: u32,
+    #[serde(default)]
     pub(super) send_typing_indicators: bool,
     #[serde(default)]
     pub(super) send_read_receipts: bool,
@@ -550,6 +554,8 @@ impl Default for PersistedPreferences {
         Self {
             voice_calls_enabled: defaults.voice_calls_enabled,
             video_calls_enabled: defaults.video_calls_enabled,
+            call_quality: defaults.call_quality,
+            call_max_bitrate_bps: defaults.call_max_bitrate_bps,
             send_typing_indicators: defaults.send_typing_indicators,
             send_read_receipts: defaults.send_read_receipts,
             desktop_notifications_enabled: defaults.desktop_notifications_enabled,

@@ -1,4 +1,6 @@
 mod actions;
+mod call_audio;
+pub use call_audio::{CallAudioCodec, CallAudioError};
 mod core;
 mod desktop_nearby;
 mod desktop_update;
@@ -340,8 +342,7 @@ impl FfiApp {
         self.perf.dispatch.fetch_add(1, Ordering::Relaxed);
         ffi_or("ffiapp.dispatch", (), || {
             crate::perflog!("ffi.dispatch action={:?}", std::mem::discriminant(&action));
-            // Real-time capture must not queue behind a stalled core indefinitely.
-            if matches!(action, AppAction::SendCallMedia { .. }) && self.foreground_tx.len() >= 16 {
+            if matches!(action, AppAction::SendCallMedia { .. }) && self.foreground_tx.len() >= 24 {
                 return;
             }
             self.recovery.remember_action(&action);
@@ -1832,8 +1833,8 @@ mod ffi_hardening_tests {
                 AppUpdate::PersistAccountBundle { .. } => "persist".to_string(),
                 AppUpdate::PersistPendingDeviceLink { .. } => "pending-link".to_string(),
                 AppUpdate::ClearPendingDeviceLink => "clear-pending-link".to_string(),
-                AppUpdate::CallMedia { .. } => "call-media".to_string(),
                 AppUpdate::FullState(state) => format!("state:{}", state.rev),
+                AppUpdate::CallMedia { .. } => "call-media".to_string(),
                 AppUpdate::NearbyPublishedEvent { .. } => "nearby".to_string(),
                 AppUpdate::NearbyPeersChanged { .. } => "nearby-peers".to_string(),
                 AppUpdate::SignerLoginSignEvent { .. } => "signer".to_string(),

@@ -10,6 +10,9 @@ pub enum AppUpdate {
     CallMedia {
         call_id: String,
         kind: u8,
+        sequence: u32,
+        timestamp_us: u64,
+        key_frame: bool,
         data: Vec<u8>,
     },
     FullState(AppState),
@@ -123,6 +126,9 @@ pub(crate) enum InternalEvent {
         source_pubkey_hex: String,
         source_port: u16,
         data: Vec<u8>,
+    },
+    CallRecoveryTick {
+        call_id: String,
     },
     CallTick {
         call_id: String,

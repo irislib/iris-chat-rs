@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Proves the production call lifecycle/media service with all non-loopback
+# Proves the production call lifecycle and compressed-media datagrams with all non-loopback
 # networking denied by macOS, not merely with an empty message-server list.
 set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

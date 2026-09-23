@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 32;
+const SCHEMA_VERSION: u32 = 33;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -561,6 +561,16 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
                     "ALTER TABLE preferences ADD COLUMN {column} INTEGER NOT NULL DEFAULT 1;"
                 ))?;
             }
+        }
+    }
+    if current < 33 {
+        if !column_exists(&tx, "preferences", "call_quality")? {
+            tx.execute_batch(
+                "ALTER TABLE preferences ADD COLUMN call_quality TEXT NOT NULL DEFAULT 'auto';",
+            )?;
+        }
+        if !column_exists(&tx, "preferences", "call_max_bitrate_bps")? {
+            tx.execute_batch("ALTER TABLE preferences ADD COLUMN call_max_bitrate_bps INTEGER NOT NULL DEFAULT 2000000;")?;
         }
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;

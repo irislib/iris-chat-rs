@@ -166,6 +166,19 @@ pub(super) fn apply_persisted_preferences(
 ) {
     preferences.voice_calls_enabled = persisted.voice_calls_enabled;
     preferences.video_calls_enabled = persisted.video_calls_enabled;
+    preferences.call_quality = if matches!(
+        persisted.call_quality.as_str(),
+        "auto" | "high" | "data" | "custom"
+    ) {
+        persisted.call_quality.clone()
+    } else {
+        "auto".into()
+    };
+    preferences.call_max_bitrate_bps = if persisted.call_max_bitrate_bps == 0 {
+        2_000_000
+    } else {
+        persisted.call_max_bitrate_bps.clamp(100_000, 10_000_000)
+    };
     preferences.send_typing_indicators = persisted.send_typing_indicators;
     preferences.send_read_receipts = persisted.send_read_receipts;
     preferences.desktop_notifications_enabled = persisted.desktop_notifications_enabled;

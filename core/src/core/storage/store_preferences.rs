@@ -43,6 +43,8 @@ pub(super) fn hash_preferences(preferences: &PreferencesSnapshot) -> u64 {
     let mut hasher = DefaultHasher::new();
     preferences.voice_calls_enabled.hash(&mut hasher);
     preferences.video_calls_enabled.hash(&mut hasher);
+    preferences.call_quality.hash(&mut hasher);
+    preferences.call_max_bitrate_bps.hash(&mut hasher);
     preferences.send_typing_indicators.hash(&mut hasher);
     preferences.send_read_receipts.hash(&mut hasher);
     preferences.desktop_notifications_enabled.hash(&mut hasher);
@@ -85,7 +87,7 @@ pub(super) fn load_preferences(
                     debug_logging_enabled, accept_unknown_direct_messages,
                     nearby_enabled,
                     blocked_owner_pubkeys_json, accepted_owner_pubkeys_json,
-                    nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled
+                    nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps
              FROM preferences WHERE id = 1",
             [],
             |row| {
@@ -120,6 +122,8 @@ pub(super) fn load_preferences(
                     image_proxy_fallback_enabled: row.get::<_, i64>(22)? != 0,
                     voice_calls_enabled: row.get::<_, i64>(23)? != 0,
                     video_calls_enabled: row.get::<_, i64>(24)? != 0,
+                    call_quality: row.get(25)?,
+                    call_max_bitrate_bps: row.get(26)?,
                 })
             },
         )
@@ -141,11 +145,13 @@ pub(super) fn write_preferences(
             mobile_push_server_url, muted_chat_ids_json, pinned_chat_ids_json,
             debug_logging_enabled, accept_unknown_direct_messages, nearby_enabled,
             blocked_owner_pubkeys_json, accepted_owner_pubkeys_json,
-            nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled
-         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
+            nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps
+         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
          ON CONFLICT(id) DO UPDATE SET
             voice_calls_enabled = excluded.voice_calls_enabled,
             video_calls_enabled = excluded.video_calls_enabled,
+            call_quality = excluded.call_quality,
+            call_max_bitrate_bps = excluded.call_max_bitrate_bps,
             send_typing_indicators = excluded.send_typing_indicators,
             send_read_receipts = excluded.send_read_receipts,
             desktop_notifications_enabled = excluded.desktop_notifications_enabled,
@@ -195,6 +201,8 @@ pub(super) fn write_preferences(
             preferences.image_proxy_fallback_enabled as i64,
             preferences.voice_calls_enabled as i64,
             preferences.video_calls_enabled as i64,
+            preferences.call_quality,
+            preferences.call_max_bitrate_bps,
         ],
     )?;
     Ok(())

@@ -3,6 +3,7 @@
 use super::*;
 use crate::state::CallSnapshot;
 use std::time::Instant as Clock;
+mod media;
 mod receive;
 #[cfg(test)]
 mod tests;
@@ -21,8 +22,20 @@ pub(super) struct ActiveCall {
     started: Clock,
     last_received: Clock,
     frames: Assembler,
+    media_disconnected_since: Option<Clock>,
     audio_seq: u32,
     video_seq: u32,
+    feedback_seq: u32,
+    feedback_at: Clock,
+    last_feedback_at: Clock,
+    last_feedback_seq: Option<u32>,
+    feedback_video_seq: Option<u32>,
+    feedback_sent_video: u32,
+    last_key_request: Option<Clock>,
+    last_peer_key_request: Option<Clock>,
+    sent_video: VecDeque<(u32, Clock, Vec<Vec<u8>>)>,
+    retransmit_at: Clock,
+    retransmit_count: usize,
 }
 #[derive(Default)]
 pub(super) struct CallRuntime {
@@ -48,7 +61,7 @@ pub(super) async fn start_transport(
         let mut packets = Vec::with_capacity(32);
         while receiver.recv_batch_into(&mut packets, 32).await.is_some() {
             for packet in packets.drain(..) {
-                if packet.data.len() > 1129 || sender.len() >= 96 {
+                if packet.data.len() > 1138 || sender.len() >= 96 {
                     continue;
                 }
                 let _ = sender.send(CoreMsg::Internal(Box::new(InternalEvent::CallPacket {
@@ -59,7 +72,7 @@ pub(super) async fn start_transport(
             }
         }
     });
-    let (tx, rx) = flume::bounded::<MediaSend>(8);
+    let (tx, rx) = flume::bounded::<MediaSend>(64);
     let send_task = tokio::spawn(async move {
         while let Ok(frame) = rx.recv_async().await {
             if frame.queued.elapsed() > Duration::from_millis(150) {
@@ -222,6 +235,11 @@ impl AppCore {
         outgoing: bool,
     ) {
         self.state.call = Some(CallSnapshot {
+            outgoing,
+            target_bitrate_bps: self.call_bitrate().min(1_200_000),
+            key_frame_generation: 0,
+            media_connected: false,
+            max_bitrate_bps: self.call_bitrate(),
             call_id: id.clone(),
             chat_id: owner.clone(),
             peer_name: self.owner_display_label(&owner),
@@ -246,8 +264,20 @@ impl AppCore {
             started: Clock::now(),
             last_received: Clock::now(),
             frames: Assembler::default(),
+            media_disconnected_since: None,
             audio_seq: 0,
             video_seq: 0,
+            feedback_seq: 0,
+            feedback_at: Clock::now(),
+            last_feedback_at: Clock::now(),
+            last_feedback_seq: None,
+            feedback_video_seq: None,
+            feedback_sent_video: 0,
+            last_key_request: None,
+            last_peer_key_request: None,
+            sent_video: VecDeque::new(),
+            retransmit_at: Clock::now(),
+            retransmit_count: 0,
         });
     }
     pub(super) fn answer_call(&mut self, id: &str, voice_only: bool) {
@@ -272,6 +302,10 @@ impl AppCore {
         snapshot.phase = "connected".into();
         snapshot.connected_at_secs = Some(unix_now().get());
         self.signal_active_call("answer");
+        self.schedule_call_recovery(id);
+        if let Some(active) = &mut self.calls.active {
+            active.media_disconnected_since = Some(Clock::now());
+        }
         self.emit_state();
     }
     pub(super) fn end_call(&mut self, id: &str) {
@@ -298,6 +332,7 @@ impl AppCore {
             self.remember_ended_call(active.id);
             if let Some(snapshot) = &mut self.state.call {
                 snapshot.phase = "ended".into();
+                snapshot.media_connected = false;
                 snapshot.end_reason = Some(reason.into());
             }
             self.emit_state();
@@ -339,38 +374,6 @@ impl AppCore {
         }
         self.rebuild_persist_and_emit_state();
     }
-    pub(super) fn send_call_media(&mut self, id: &str, kind: u8, data: Vec<u8>) {
-        let (Some(active), Some(snapshot)) = (&mut self.calls.active, &self.state.call) else {
-            return;
-        };
-        if active.id != id
-            || snapshot.phase != "connected"
-            || (kind == 1 && snapshot.muted)
-            || (kind == 2 && (!snapshot.video || !active.video))
-        {
-            return;
-        }
-        let Some(peer) = active.peer.as_ref().and_then(|p| fips_peer_from_hex(p)) else {
-            return;
-        };
-        let seq = if kind == 1 {
-            &mut active.audio_seq
-        } else {
-            &mut active.video_seq
-        };
-        let packets = wire::encode(id, kind, *seq, &data);
-        *seq = seq.wrapping_add(1);
-        if packets.is_empty() {
-            return;
-        }
-        if let Some(tx) = self.device_sync.as_ref().and_then(|r| r.calls_tx.as_ref()) {
-            let _ = tx.try_send(MediaSend {
-                peer,
-                packets,
-                queued: Clock::now(),
-            });
-        }
-    }
     pub(super) fn call_tick(&mut self, id: &str) {
         let Some(active) = &self.calls.active else {
             return;
@@ -396,11 +399,21 @@ impl AppCore {
             self.finish_call("No answer");
             return;
         }
+        if connected
+            && active
+                .media_disconnected_since
+                .is_some_and(|since| since.elapsed() >= Duration::from_secs(30))
+        {
+            self.finish_call("Couldn’t connect the call");
+            return;
+        }
         if connected && active.last_received.elapsed() >= Duration::from_secs(15) {
             self.finish_call("Connection lost");
             return;
         }
         if connected {
+            self.send_call_feedback();
+            self.check_call_feedback();
             self.signal_active_call("ping");
         } else if active.outgoing {
             self.signal_active_call("offer");

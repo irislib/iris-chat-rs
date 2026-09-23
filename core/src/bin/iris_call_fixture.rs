@@ -1,7 +1,7 @@
 //! Opt-in interoperability driver using the same FFI actions and updates as
 //! native shells. Fresh test account only; echoes media after accepting a call.
 use anyhow::{bail, Context, Result};
-use iris_chat_core::{AppAction, AppReconciler, AppUpdate, FfiApp};
+use iris_chat_core::{AppAction, AppReconciler, AppUpdate, CallAudioCodec, FfiApp};
 use serde_json::json;
 use std::io::{self, BufRead, Write};
 use std::time::{Duration, Instant};
@@ -62,9 +62,12 @@ fn main() -> Result<()> {
     let mut auto_answer = true;
     let mut answer_voice = false;
     let mut last_call = String::new();
+    let mut last_key_request = (String::new(), 0u32);
     let mut audio = 0u64;
     let mut video = 0u64;
     let mut audio_nonzero = 0u64;
+    let audio_codec = CallAudioCodec::new()?;
+    let mut audio_playout_at = Instant::now();
     loop {
         match commands.recv_timeout(Duration::from_millis(10)) {
             Ok(line) => {
@@ -111,31 +114,54 @@ fn main() -> Result<()> {
             if let AppUpdate::CallMedia {
                 call_id,
                 kind,
+                sequence,
+                timestamp_us,
+                key_frame,
                 data,
             } = update
             {
                 if kind == 1 {
                     audio += 1;
-                    if data.iter().any(|b| *b != 0) {
-                        audio_nonzero += 1;
-                    }
+                    audio_codec.queue(sequence, data.clone());
                 } else if kind == 2 {
                     video += 1;
                 }
                 app.dispatch(AppAction::SendCallMedia {
                     call_id,
                     kind,
+                    timestamp_us,
+                    key_frame,
                     data,
                 });
             }
         }
+        if audio_playout_at.elapsed() >= Duration::from_millis(20) {
+            audio_playout_at = Instant::now();
+            if audio_codec.playout().iter().any(|v| v.unsigned_abs() > 10) {
+                audio_nonzero += 1;
+            }
+        }
         if let Some(call) = app.state().call {
+            if call.key_frame_generation > 0
+                && last_key_request != (call.call_id.clone(), call.key_frame_generation)
+            {
+                app.dispatch(AppAction::RequestCallKeyFrame {
+                    call_id: call.call_id.clone(),
+                });
+                last_key_request = (call.call_id.clone(), call.key_frame_generation);
+            }
             let state = format!("{}:{}", call.call_id, call.phase);
             if last_call != state {
                 emit(
                     json!({"event":"call","id":call.call_id,"phase":call.phase,"video":call.video_capable}),
                 )?;
                 last_call = state;
+                if call.phase == "connected" {
+                    app.dispatch(AppAction::SetCallMediaConnected {
+                        call_id: call.call_id.clone(),
+                        connected: true,
+                    });
+                }
                 if auto_answer && call.phase == "incoming" {
                     app.dispatch(if answer_voice {
                         AppAction::AnswerCallWithVoice {

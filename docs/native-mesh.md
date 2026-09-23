@@ -65,40 +65,64 @@ video disabled and voice enabled, an incoming video offer rings as voice.
 Voice answering negotiates an audio-only session and stops the caller's camera.
 Mute and camera-off choices made while ringing remain in effect when answered.
 
-The initial shared media format uses 20 ms mono PCM16 frames at 16 kHz and
-independent JPEG video frames up to 320 by 240 pixels, eight frames per second.
-This is a basic Wi-Fi/LAN format, not HD video or an optimized low-bandwidth
-codec. Datagram fragments and decode/playback queues are bounded; incomplete
-or late frames are dropped instead of accumulating latency. Ringing times out
-after 30 seconds and an established call ends after 15 seconds without the peer.
+Calls encode voice as 48 kHz mono Opus (32 kbps, 20 ms packets) and video as
+H.264 access units with an adaptive bitrate. Camera capture targets 720p/30fps
+when supported; High can capture 1080p on capable devices. Auto caps video at
+2 Mbps, High at 4 Mbps, and Data saver at 400 kbps. The custom cap ranges from
+100 kbps to 10 Mbps and can change during a call. These are ceilings, not promises
+of a fixed bitrate or resolution. Audio and transport headers add overhead.
+
+Browser clients use WebCodecs and a bundled, pinned libopus module. Android uses
+MediaCodec and Apple uses VideoToolbox, with platform microphone echo/noise
+processing. Native audio uses the same pinned libopus version. The browser probes
+actual codec support before calling; no installed native helper is required.
+Neither browser nor native calls require a separate calling server, TURN server,
+or any application service beyond the existing FIPS nodes. Encoded audio/video
+and call controls all travel inside the authenticated FIPS call service.
+
+The client media layer supplies bounded audio jitter buffering, Opus forward
+error correction and packet-loss concealment, video reordering, keyframe requests,
+and deadline-limited retransmission of missing video fragments. Receiver feedback
+adjusts the sender's video bitrate below the user's cap. The codecs are standard
+Opus/H.264; adaptation and packet delivery are the Iris client implementation.
+
+Protocol version 3 (`opus-h264-v3`, `IC03`) replaces the earlier PCM/JPEG prototype.
+Each frame has a per-kind sequence number, capture timestamp, keyframe flag and
+bounded fragments. H.264 keyframes contain SPS/PPS and an IDR; no B frames are
+used. Retransmission caches are bounded to eight frames/1 MiB and expire after
+300 ms; incomplete receiving frames expire after 250 ms. Real-time queues discard
+stale work instead of accumulating latency. Ringing times out after 30 seconds;
+an established session ends after 15 seconds without its peer. Both clients must
+support version 3 to call each other.
 
 ### Offline verification
 
 Native-to-native calls can use Nearby on the same Wi-Fi/LAN with no message
-server. A browser needs an initial browser-compatible FIPS path. Configure a
-local WebSocket seed under Call servers in iris-chat Settings; the native
-listener above can provide it. A browser can upgrade that authenticated path
-to WebRTC, but WebRTC discovery alone does not establish the initial path.
-For a local HTTP test use localhost; an HTTPS web app may require a trusted
-local WSS endpoint because browsers enforce secure-context and mixed-content
-rules. Once contact identities and the FIPS route are established, calls do
-not require a message server or internet access.
+server. A standalone browser needs an initial browser-compatible FIPS path.
+Configure an existing local FIPS WebSocket seed under Call servers in browser
+settings; a native FIPS listener can provide it. No additional media service is
+needed. FIPS can subsequently use its WebRTC data transport while keeping media
+inside FIPS packets. WebRTC discovery alone does not establish the initial path.
+Use localhost for same-host HTTP tests; other devices need HTTPS/WSS with a
+certificate the browser trusts for microphone/camera access and browser network
+policy. Once contact identities and the FIPS route are established, calls do not
+require a message server or Internet access.
 
-`scripts/test_calls_offline.sh` builds and runs the production Rust call
-lifecycle over two authenticated local UDP endpoints. macOS sandbox rules
-allow loopback traffic, explicitly reject a nonlocal network probe, and cover
-bidirectional media, mute, camera, hangup, and voice answering. Other runners
-return infrastructure-unavailable (75) instead of claiming network isolation.
-The `iris-call-fixture` binary behind the `stack-fixture` feature drives the
-same FFI actions and echoes received media for browser and Android end-to-end
-tests; it requires a fresh data directory and never uses an installed account.
+`scripts/test_calls_offline.sh` runs production call control and compressed-frame
+transport over authenticated local FIPS UDP with macOS sandbox rules denying all
+nonlocal traffic, including an explicit denial probe. It covers bidirectional
+codec packets, mute, camera, hangup and voice answering. Separate codec tests
+exercise actual Opus encode/decode, reordering, FEC/PLC and recovery after mute.
 
-`android/scripts/native-call-e2e.py` pairs a fresh emulator test account with
-that fixture, blocks non-loopback traffic on both sides, and stops the local
-message server before calling. It checks real microphone/camera capture,
-returned media bytes, audio playback, voice answering, and remote hangup.
-It requires a root-capable emulator, leaves installed account data intact,
-and removes its temporary network rules on exit. This exercises a local
-WebSocket FIPS connection forwarded to the emulator; it does not prove a
-physical Wi-Fi or Bluetooth link. Browser coverage lives in iris-chat's
-`e2e/calls.spec.ts` and `e2e/calls-native.spec.ts`.
+`iris-call-fixture` (feature `stack-fixture`) uses a fresh native FFI account and
+echoes the actual encoded Opus/H.264 frames for interoperability tests. It also
+decodes received Opus to measure nonzero audio. It never uses an installed account.
+Browser coverage lives in iris-chat's `e2e/calls.spec.ts` and
+`e2e/calls-native.spec.ts`, with actual encoders, decoders, bitrate feedback and
+bandwidth/loss tests.
+
+`android/scripts/native-call-e2e.py` pairs a fresh emulator account with the native
+fixture, blocks non-loopback traffic and stops the local setup message server
+before calling. Installed account data is preserved and temporary network rules
+are removed on exit. This exercises local FIPS transport, not a physical Wi-Fi or
+Bluetooth link. Results distinguish simulated capture from physical hardware.
