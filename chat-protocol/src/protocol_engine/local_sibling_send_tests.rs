@@ -166,7 +166,7 @@ fn own_seen_sync_with_known_single_device_needs_no_retry() {
 }
 
 #[test]
-fn direct_send_delivers_peer_while_missing_sibling_copy_survives_restart() {
+fn direct_send_does_not_copy_history_to_later_siblings_after_restart() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let sibling_device = Keys::generate();
@@ -211,8 +211,34 @@ fn direct_send_delivers_peer_while_missing_sibling_copy_survives_restart() {
         .unwrap()
         .effects
         .is_empty());
+    // A newly linked device should receive the chat list, never this older
+    // queued message body, even when retry discovers its invite first.
+    let new_device = Keys::generate();
+    let mut newly_added = test_engine(&owner, &new_device);
+    let expanded_roster = signed_app_keys(
+        &owner,
+        &[
+            device.public_key(),
+            sibling_device.public_key(),
+            new_device.public_key(),
+        ],
+        30,
+    );
+    for engine in [&mut sender, &mut sibling, &mut newly_added] {
+        assert!(engine
+            .ingest_app_keys_event(&expanded_roster)
+            .unwrap()
+            .effects
+            .is_empty());
+    }
     sender = ProtocolEngine::load_or_create_for_local_device(store, owner.public_key(), &device)
         .unwrap();
+    let retry = observe_sibling_invite(&mut sender, &newly_added, &new_device);
+    assert!(
+        retry.effects.is_empty(),
+        "newly authorized sibling must not receive an old queued body"
+    );
+
     assert_eq!(sender.pending_local_sibling_sends.len(), 1);
     let retry = observe_sibling_invite(&mut sender, &sibling, &sibling_device);
     let messages = decrypt_own_sync_effects(&mut sibling, retry.effects);

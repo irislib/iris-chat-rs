@@ -671,8 +671,13 @@ impl ProtocolEngine {
         let payload = serde_json::to_vec(&rumor)?;
         let sibling_payload = local_sibling_payload(conversation_owner, &payload)?;
         self.with_state_checkpoint(|engine| {
-            let effects =
-                engine.queue_local_sibling_payload(chat_id, sibling_payload, &message_id, now);
+            let effects = engine.queue_local_sibling_payload(
+                chat_id,
+                sibling_payload,
+                &message_id,
+                now,
+                None,
+            );
             engine.persist()?;
             Ok(ProtocolDirectSendResult {
                 message_id,
@@ -693,6 +698,7 @@ impl ProtocolEngine {
         sibling_payload: Vec<u8>,
         message_id: &str,
         now: UnixSeconds,
+        eligible_devices: Option<BTreeSet<NdrDevicePubkey>>,
     ) -> Vec<ProtocolEffect> {
         let existing = self
             .pending_local_sibling_sends
@@ -700,6 +706,7 @@ impl ProtocolEngine {
             .position(|pending| pending.message_id == message_id && pending.chat_id == chat_id)
             .map(|index| self.pending_local_sibling_sends.remove(index));
         let mut pending = existing.unwrap_or_else(|| ProtocolPendingLocalSiblingSend {
+            eligible_devices,
             chat_id: chat_id.to_string(),
             payload: sibling_payload,
             message_id: message_id.to_string(),
@@ -829,8 +836,20 @@ impl ProtocolEngine {
             chat_id.to_string(),
             &mut event_ids,
         )?);
-        let sibling_effects =
-            self.queue_local_sibling_payload(chat_id, local_sibling_payload, &message_id, now);
+        let snapshot = self.session_manager.snapshot();
+        let eligible_devices = user_record_snapshot(&snapshot, self.local_owner)
+            .and_then(roster_device_pubkeys)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|device| *device != self.local_device)
+            .collect();
+        let sibling_effects = self.queue_local_sibling_payload(
+            chat_id,
+            local_sibling_payload,
+            &message_id,
+            now,
+            Some(eligible_devices),
+        );
         event_ids.extend(sibling_effects.iter().map(|effect| match effect {
             ProtocolEffect::Publish(publish) => publish.event.id.to_string(),
         }));

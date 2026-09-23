@@ -19,7 +19,12 @@ impl ProtocolEngine {
         let targets = devices
             .into_iter()
             .filter(|device| {
-                *device != self.local_device && !pending.completed_devices.contains(device)
+                *device != self.local_device
+                    && !pending.completed_devices.contains(device)
+                    && pending
+                        .eligible_devices
+                        .as_ref()
+                        .is_none_or(|eligible| eligible.contains(device))
             })
             .collect::<Vec<_>>();
         if targets.is_empty() {
