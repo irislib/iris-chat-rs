@@ -293,10 +293,7 @@ impl AppCore {
                 advertise_on_nostr: Some(true),
                 auto_connect: Some(true),
                 accept_connections: Some(true),
-                // Calls and transport upgrades depend only on FIPS nodes.
-                // Host candidates can upgrade a local route; NAT-separated
-                // peers keep using their existing FIPS path without public STUN.
-                stun_servers: Some(Vec::new()),
+                // Inherit FIPS STUN defaults to discover direct routes through NAT.
                 ..WebRtcConfig::default()
             });
         } else {

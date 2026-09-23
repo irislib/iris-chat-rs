@@ -262,6 +262,17 @@ fn calls_e2e_without_internet_over_local_fips_udp() {
             .as_ref()
             .is_some_and(|c| !c.remote_muted && c.remote_video)
     });
+    // The WAN-denial harness blocks STUN. Keep the call alive beyond ICE
+    // gathering before proving codec delivery on the existing FIPS route.
+    let gather_deadline = std::time::Instant::now()
+        + Duration::from_millis(fips_core::WebRtcConfig::default().ice_gather_timeout_ms() + 500);
+    while std::time::Instant::now() < gather_deadline {
+        pump_call_pair(&mut a, &ar, &mut b, &br);
+        for core in [&a, &b] {
+            assert_eq!(core.state.call.as_ref().unwrap().phase, "connected");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
     au.try_iter().for_each(drop);
     bu.try_iter().for_each(drop);
     let codec=crate::CallAudioCodec::new().unwrap();
