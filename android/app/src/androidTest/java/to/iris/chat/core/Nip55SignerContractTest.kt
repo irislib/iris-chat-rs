@@ -55,6 +55,7 @@ class Nip55SignerContractTest {
     @Test
     fun activity_recreation_claims_once_and_old_results_cannot_complete_a_retry() {
         val original = startAndClaim()
+        assertEquals("get_public_key", original.intent().getStringExtra("type"))
         assertNull("Recollecting on resume must not relaunch", signer.claimRequest(original.id))
         signer.cancel()
         val retry = startAndClaim()
@@ -85,6 +86,7 @@ class Nip55SignerContractTest {
         val unsigned = """{"id":"event-id","pubkey":"$OWNER","created_at":1,"kind":37368,"tags":[],"content":""}"""
         signer.signEvent(AppUpdate.SignerLoginSignEvent("core-request", OWNER, unsigned))
         val sign = signer.claimRequest("core-request")!!
+        assertEquals("sign_event", sign.intent().getStringExtra("type"))
         assertEquals(FIXTURE_PACKAGE, sign.intent().`package`)
         assertEquals(OWNER, sign.intent().getStringExtra("current_user"))
         assertNull(signer.claimRequest(sign.id))

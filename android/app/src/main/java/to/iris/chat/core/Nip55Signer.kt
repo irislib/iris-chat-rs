@@ -28,7 +28,7 @@ data class SignerActivityRequest(
 ) {
     fun intent(): Intent =
         Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:$payload")).apply {
-            putExtra("type", type)
+            putExtra("type", this@SignerActivityRequest.type)
             putExtra("id", id)
             packageName?.let { setPackage(it) }
             ownerPubkeyHex?.let { putExtra("current_user", it) }
