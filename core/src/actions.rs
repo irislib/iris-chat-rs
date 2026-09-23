@@ -22,6 +22,16 @@ pub enum AppAction {
         device_nsec: String,
         approval_bootstrap_json: String,
     },
+    BeginSignerLogin {
+        owner_pubkey_hex: String,
+    },
+    CompleteSignerLogin {
+        request_id: String,
+        signed_event_json: String,
+    },
+    CancelSignerLogin {
+        request_id: String,
+    },
     StartLinkedDevice {
         owner_input: String,
     },

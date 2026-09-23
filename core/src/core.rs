@@ -69,6 +69,8 @@ use rand::rngs::OsRng;
 mod account;
 mod account_app_keys;
 mod account_pending_link;
+mod account_signer;
+mod account_signer_relay;
 mod attachment_upload;
 mod registration_recovery;
 #[cfg(feature = "stack-fixture")]
@@ -502,6 +504,7 @@ pub struct AppCore {
     logged_in: Option<LoggedInState>,
     protocol_engine: Option<ProtocolEngine>,
     pending_linked_device: Option<PendingLinkedDeviceState>,
+    pending_signer_login: Option<account_signer::PendingSignerLogin>,
     device_approval_relay_urls: Vec<RelayUrl>,
     private_chat_invites: BTreeMap<String, Invite>,
     pending_private_invite_responses: BTreeMap<String, invites::PendingPrivateInviteResponseV1>,

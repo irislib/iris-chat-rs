@@ -4,6 +4,13 @@ const HANDSHAKE_OWNER_PROOF_TAG: &str = "owner-proof";
 const HANDSHAKE_OWNER_PROOF_MAX_BYTES: usize = 32 * 1024;
 
 impl ProtocolEngine {
+    /// Whether retained, verified identity-signed evidence authorizes this device.
+    pub fn signed_local_device_authorization(&self) -> Option<bool> {
+        self.invite_owner_app_keys_evidence
+            .get(&self.local_owner)
+            .map(|_| self.local_handshake_owner_proof().is_some())
+    }
+
     fn local_handshake_owner_proof(&self) -> Option<&Event> {
         let ProtocolAppKeysEvidence::Verified(event) =
             self.invite_owner_app_keys_evidence.get(&self.local_owner)?

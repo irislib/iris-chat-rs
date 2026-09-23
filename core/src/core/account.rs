@@ -39,6 +39,7 @@ impl AppCore {
         // Lift the suspend gate even when not logged in so a re-foregrounded
         // unauthenticated app can process events again.
         self.suspended = false;
+        self.expire_pending_signer_login();
         if self.pending_linked_device.is_some() {
             self.push_debug_log("session.link_resume", "refresh device approval");
             self.refresh_pending_linked_device();
@@ -205,6 +206,7 @@ impl AppCore {
         pairing_url: String,
         persist: bool,
     ) {
+        self.pending_signer_login = None;
         let pairing_client = Client::new(device_keys.clone());
         self.start_notifications_loop(pairing_client.clone());
         if persist {
@@ -389,6 +391,7 @@ impl AppCore {
     }
 
     pub(super) fn logout(&mut self) {
+        self.pending_signer_login = None;
         self.push_debug_log("session.logout", "clearing runtime state");
         let previous_rev = self.state.rev;
         self.stop_pending_linked_device();
@@ -529,7 +532,7 @@ impl AppCore {
         )
     }
 
-    fn start_session_inner(
+    pub(super) fn start_session_inner(
         &mut self,
         owner_pubkey: OwnerPubkey,
         owner_keys: Option<Keys>,
@@ -538,6 +541,7 @@ impl AppCore {
         allow_protocol_restore: bool,
         emit_account_bundle: bool,
     ) -> anyhow::Result<()> {
+        self.pending_signer_login = None;
         self.app_store.bind_account(owner_pubkey)?;
         self.push_debug_log(
             "session.start",
@@ -1135,6 +1139,21 @@ impl AppCore {
     ) -> LocalAuthorizationState {
         if owner_keys.is_some() {
             return LocalAuthorizationState::Authorized;
+        }
+
+        if let Some(authorized) =
+            self.signed_local_device_authorization(owner_pubkey, device_pubkey)
+        {
+            return if authorized {
+                LocalAuthorizationState::Authorized
+            } else if matches!(
+                previous,
+                Some(LocalAuthorizationState::Authorized | LocalAuthorizationState::Revoked)
+            ) {
+                LocalAuthorizationState::Revoked
+            } else {
+                LocalAuthorizationState::AwaitingApproval
+            };
         }
 
         let owner_hex = owner_pubkey.to_hex();

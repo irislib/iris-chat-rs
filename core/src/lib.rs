@@ -795,6 +795,7 @@ impl FfiApp {
                             AppUpdate::ClearPendingDeviceLink => "ClearPendingDeviceLink",
                             AppUpdate::NearbyPublishedEvent { .. } => "NearbyPublishedEvent",
                             AppUpdate::NearbyPeersChanged { .. } => "NearbyPeersChanged",
+                            AppUpdate::SignerLoginSignEvent { .. } => "SignerLoginSignEvent",
                         };
                         let t0 = crate::perflog::now_ms();
                         crate::perflog!("reconcile.start kind={kind}");
@@ -1829,6 +1830,7 @@ mod ffi_hardening_tests {
                 AppUpdate::FullState(state) => format!("state:{}", state.rev),
                 AppUpdate::NearbyPublishedEvent { .. } => "nearby".to_string(),
                 AppUpdate::NearbyPeersChanged { .. } => "nearby-peers".to_string(),
+                AppUpdate::SignerLoginSignEvent { .. } => "signer".to_string(),
             })
             .collect::<Vec<_>>();
 

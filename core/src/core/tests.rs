@@ -126,6 +126,8 @@ include!("tests/app_keys_roster.rs");
 include!("tests/app_keys_device_labels.rs");
 include!("tests/app_keys_invites_requests.rs");
 include!("tests/pending_device_link.rs");
+include!("tests/signer_login.rs");
+include!("tests/signer_login_lookup.rs");
 include!("tests/private_invite_owner_verification.rs");
 include!("tests/private_invite_owner_crash.rs");
 include!("tests/handshake_owner_proof.rs");

@@ -164,3 +164,68 @@ fn own_seen_sync_with_known_single_device_needs_no_retry() {
     assert!(sent.effects.is_empty());
     assert!(!engine.has_pending_retry_work());
 }
+
+#[test]
+fn direct_send_delivers_peer_while_missing_sibling_copy_survives_restart() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sibling_device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let store = Arc::new(InMemoryStorage::new());
+    let mut sender =
+        ProtocolEngine::load_or_create_for_local_device(store.clone(), owner.public_key(), &device)
+            .unwrap();
+    let mut sibling = test_engine(&owner, &sibling_device);
+    let mut peer = test_engine(&peer_owner, &peer_device);
+    let own_roster = signed_app_keys(
+        &owner,
+        &[device.public_key(), sibling_device.public_key()],
+        1,
+    );
+    let peer_roster = signed_app_keys(&peer_owner, &[peer_device.public_key()], 1);
+    for engine in [&mut sender, &mut sibling, &mut peer] {
+        engine.ingest_app_keys_event(&own_roster).unwrap();
+        engine.ingest_app_keys_event(&peer_roster).unwrap();
+    }
+    observe_sibling_invite(&mut sender, &peer, &peer_device);
+    assert_eq!(
+        sender.direct_send_readiness(peer_owner.public_key()),
+        DirectSendReadiness::Ready
+    );
+    let sent = sender
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "peer first, sibling later",
+            None,
+            UnixSeconds(10),
+        )
+        .unwrap();
+    let messages = decrypt_own_sync_effects(&mut peer, sent.effects);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].sender, owner.public_key());
+    assert_eq!(sender.pending_local_sibling_sends.len(), 1);
+    assert!(sender
+        .retry_pending_protocol(NdrUnixSeconds(20))
+        .unwrap()
+        .effects
+        .is_empty());
+    sender = ProtocolEngine::load_or_create_for_local_device(store, owner.public_key(), &device)
+        .unwrap();
+    assert_eq!(sender.pending_local_sibling_sends.len(), 1);
+    let retry = observe_sibling_invite(&mut sender, &sibling, &sibling_device);
+    let messages = decrypt_own_sync_effects(&mut sibling, retry.effects);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].sender, owner.public_key());
+    assert_eq!(
+        messages[0].conversation_owner,
+        Some(peer_owner.public_key())
+    );
+    assert!(sender.pending_local_sibling_sends.is_empty());
+    assert!(sender
+        .retry_pending_protocol(NdrUnixSeconds(40))
+        .unwrap()
+        .effects
+        .is_empty());
+}
