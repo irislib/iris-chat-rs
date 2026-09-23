@@ -159,6 +159,7 @@ pub struct DeviceEntrySnapshot {
     pub device_pubkey_hex: String,
     pub device_npub: String,
     pub is_current_device: bool,
+    pub is_connected: bool,
     pub is_authorized: bool,
     pub is_stale: bool,
     pub added_at_secs: Option<u64>,

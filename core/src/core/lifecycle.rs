@@ -123,6 +123,7 @@ impl AppCore {
             pending_host_ble: None,
             host_ble_attached: false,
             fips_nearby_links: Vec::new(),
+            fips_connection_generation: 0,
             pending_relay_publishes: BTreeMap::new(),
             pending_relay_publish_inflight: HashSet::new(),
             pending_decrypted_delivery_acks: HashSet::new(),
@@ -177,7 +178,7 @@ impl AppCore {
                 InternalEvent::RelayEvent(_) => "RelayEvent",
                 InternalEvent::MeshEvent(_) => "MeshEvent",
                 InternalEvent::FipsNearbyPacket { .. } => "FipsNearbyPacket",
-                InternalEvent::FipsNearbyPeersChanged(_) => "FipsNearbyPeersChanged",
+                InternalEvent::FipsNearbyPeersChanged { .. } => "FipsNearbyPeersChanged",
                 InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
                 InternalEvent::ProfileMetadataFetchFinished { .. } => {
                     "ProfileMetadataFetchFinished"
@@ -631,9 +632,10 @@ impl AppCore {
             } => {
                 self.handle_fips_nearby_packet(&source_pubkey_hex, source_port, &data);
             }
-            InternalEvent::FipsNearbyPeersChanged(peers) => {
-                self.fips_nearby_links = peers;
-                self.emit_fips_nearby_peers();
+            InternalEvent::FipsNearbyPeersChanged { generation, peers } => {
+                if generation == self.fips_connection_generation {
+                    self.update_fips_connection_links(peers);
+                }
             }
             InternalEvent::FetchTrackedPeerCatchUp { token } => {
                 if token

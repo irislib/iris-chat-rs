@@ -451,6 +451,22 @@ impl AppCore {
         }
     }
 
+    pub(super) fn update_fips_connection_links(
+        &mut self,
+        links: Vec<crate::updates::FipsNearbyLinkSnapshot>,
+    ) {
+        if self.fips_nearby_links == links {
+            return;
+        }
+        self.fips_nearby_links = links;
+        self.emit_fips_nearby_peers();
+        let roster = self.build_device_roster_snapshot();
+        if self.state.device_roster != roster {
+            self.state.device_roster = roster;
+            self.emit_state();
+        }
+    }
+
     pub(super) fn emit_fips_nearby_peers(&self) {
         let now = unix_now().get();
         let local_device = self

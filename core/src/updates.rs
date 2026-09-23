@@ -99,7 +99,10 @@ pub(crate) enum InternalEvent {
         source_port: u16,
         data: Vec<u8>,
     },
-    FipsNearbyPeersChanged(Vec<FipsNearbyLinkSnapshot>),
+    FipsNearbyPeersChanged {
+        generation: u64,
+        peers: Vec<FipsNearbyLinkSnapshot>,
+    },
     FetchTrackedPeerCatchUp {
         token: u64,
     },

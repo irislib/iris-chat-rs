@@ -38,11 +38,14 @@ fn nearby_snapshot_excludes_self_before_and_after_device_list_arrives() {
         transport_type: transport.to_string(),
         transport_addr: Some("192.168.1.25:7000".to_string()),
     };
-    core.handle_internal(InternalEvent::FipsNearbyPeersChanged(vec![
-        link(local_device.to_hex().to_ascii_uppercase(), "BLE"),
-        link(sibling_id.clone(), "UDP"),
-        link(other_device.clone(), "Bluetooth"),
-    ]));
+    core.handle_internal(InternalEvent::FipsNearbyPeersChanged {
+        generation: core.fips_connection_generation,
+        peers: vec![
+            link(local_device.to_hex().to_ascii_uppercase(), "BLE"),
+            link(sibling_id.clone(), "UDP"),
+            link(other_device.clone(), "Bluetooth"),
+        ],
+    });
     let (snapshot, bluetooth, lan) = latest_snapshot();
     assert_eq!(
         snapshot
@@ -112,7 +115,10 @@ fn nearby_snapshot_excludes_transit_connections() {
     ] {
         let has_local_peers = links.len() > 2;
         while updates_rx.try_recv().is_ok() {}
-        core.handle_internal(InternalEvent::FipsNearbyPeersChanged(links));
+        core.handle_internal(InternalEvent::FipsNearbyPeersChanged {
+            generation: core.fips_connection_generation,
+            peers: links,
+        });
         let (snapshot, bluetooth_peer_ids, lan_peer_ids) = updates_rx
             .try_iter()
             .find_map(|update| match update {
@@ -559,13 +565,14 @@ fn linked_device_forwards_signed_identity_after_restart() {
     );
     receiver.preferences.nostr_relay_urls.clear();
     receiver.create_account("Receiver");
-    receiver.handle_internal(InternalEvent::FipsNearbyPeersChanged(vec![
-        crate::updates::FipsNearbyLinkSnapshot {
+    receiver.handle_internal(InternalEvent::FipsNearbyPeersChanged {
+        generation: receiver.fips_connection_generation,
+        peers: vec![crate::updates::FipsNearbyLinkSnapshot {
             device_pubkey_hex: device.public_key().to_hex(),
             transport_type: "UDP".to_string(),
             transport_addr: Some("192.168.1.25:7000".to_string()),
-        },
-    ]));
+        }],
+    });
     for payload in &payloads {
         receiver.handle_fips_nearby_packet(
             &device.public_key().to_hex(),
@@ -609,13 +616,14 @@ fn relay_identity_updates_refresh_an_existing_nearby_link() {
         Arc::new(RwLock::new(AppState::empty())),
     );
     bob.create_account("Bob");
-    bob.handle_internal(InternalEvent::FipsNearbyPeersChanged(vec![
-        crate::updates::FipsNearbyLinkSnapshot {
+    bob.handle_internal(InternalEvent::FipsNearbyPeersChanged {
+        generation: bob.fips_connection_generation,
+        peers: vec![crate::updates::FipsNearbyLinkSnapshot {
             device_pubkey_hex: alice_device.clone(),
             transport_type: "BLE".to_string(),
             transport_addr: Some("192.168.1.25:7000".to_string()),
-        },
-    ]));
+        }],
+    });
     while updates_rx.try_recv().is_ok() {}
 
     let app_keys = alice

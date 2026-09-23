@@ -115,6 +115,7 @@ include!("tests/protocol_runtime.rs");
 include!("tests/protocol_runtime_direct_queue.rs");
 include!("tests/registration_recovery.rs");
 include!("tests/device_roster_fetch.rs");
+include!("tests/device_connections.rs");
 include!("tests/protocol_startup_guards.rs");
 include!("tests/profile_metadata_restart.rs");
 include!("tests/protocol_runtime_replay.rs");
