@@ -83,7 +83,7 @@
                 <TextBox x:Name="Input"
                          Grid.Column="2"
                          AcceptsReturn="True"
-                         KeyDown="OnInputKeyDown"
+                         PreviewKeyDown="OnInputKeyDown"
                          TextChanged="OnInputTextChanged"
                          TextWrapping="Wrap"
                          VerticalScrollBarVisibility="Auto"
