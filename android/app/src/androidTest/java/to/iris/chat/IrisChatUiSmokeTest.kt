@@ -14,6 +14,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -309,6 +310,35 @@ class IrisChatUiSmokeTest {
         composeRule.waitForText("hello from test")
         composeRule.waitUntil(10_000) { !composeRule.hasTag("chatSendButton") }
         composeRule.onNodeWithTag("chatAttachButton", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun composer_keeps_focus_and_text_between_keystrokes() {
+        composeRule.ensureChatList()
+        composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("newChatNewGroupButton")
+        composeRule.onNodeWithTag("newChatNewGroupButton", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("newGroupMemberStep")
+        composeRule.onNodeWithTag("newGroupNextButton", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("newGroupDetailsStep")
+        composeRule.onNodeWithTag("newGroupNameInput", useUnmergedTree = true).performTextInput("Keyboard notes")
+        composeRule.onNodeWithTag("newGroupCreateButton", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("chatMessageInput")
+        val input = composeRule.onNodeWithTag("chatMessageInput", useUnmergedTree = true)
+        input.performClick()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var expected = ""
+        for (character in "Hello from keyboard") {
+            // Deliver keys to the currently focused view. performTextInput on
+            // each iteration would refocus the node and conceal focus loss.
+            instrumentation.sendStringSync(character.toString())
+            expected += character
+            composeRule.waitForIdle()
+            input.assertIsFocused().assertTextEquals(expected)
+        }
+        composeRule.onNodeWithTag("chatSendButton", useUnmergedTree = true).performClick()
+        composeRule.waitForText(expected)
+        input.assertTextEquals("")
     }
 
     @Test
