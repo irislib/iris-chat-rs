@@ -67,11 +67,12 @@ class DependencyLockConsistencyTests(unittest.TestCase):
 
     def test_linux_build_inherits_the_pinned_core_manifest(self):
         manifest = (ROOT / "linux" / "Cargo.toml").read_text(encoding="utf-8")
-        self.assertRegex(
-            manifest,
-            r'(?m)^iris-chat-core = \{ package = "iris-chat", path = "\.\./core" \}$',
-            "Linux must build the same pinned core dependency graph",
-        )
+        core = re.search(r'(?m)^iris-chat-core\s*=\s*\{([^}]+)\}', manifest)
+        self.assertIsNotNone(core, "Linux must declare its core dependency")
+        dependency = core.group(1)
+        self.assertRegex(dependency, r'\bpackage\s*=\s*"iris-chat"')
+        self.assertRegex(dependency, r'\bpath\s*=\s*"\.\./core"', "Linux must use the pinned local core")
+        self.assertRegex(dependency, r'\bfeatures\s*=\s*\[[^\]]*"desktop-media"', "Linux releases must include calling")
 
 
 if __name__ == "__main__":

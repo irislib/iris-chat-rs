@@ -2,6 +2,32 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.24.6
+
+### GitHub
+
+- Add native voice and video calls on Windows and Linux with echo cancellation, adaptive video quality and bounded media queues.
+- Stop sending captured audio and video promptly when muting, turning off the camera or ending a desktop call, including when a stale call update arrives.
+- Pace Android camera frames when adapting to lower video frame rates.
+- Add desktop codec, audio, privacy and call-screen regression checks to platform verification and include the desktop media licenses in release packages.
+- Includes the idle CPU, queued-message timestamp, nearby-delivery and incoming-call fixes from v2026.9.24.5.
+
+### Apple
+
+- Make voice and video calls, adjust video quality, and answer a video call with voice only.
+- Improved incoming call alerts and call recovery.
+- Reduced idle CPU use and improved message delivery.
+- Queued messages keep their original timestamps.
+- Record voice messages on iPhone and play audio inside chats.
+- Keep typing while connection checks run, and adjust message text size.
+
+### Zapstore
+
+- Smoother video when calls adjust to slower connections.
+- Improved incoming call alerts and message delivery.
+- Reduced repeated background work.
+- Queued messages keep their original timestamps.
+
 ## v2026.9.24.5
 
 ### GitHub
