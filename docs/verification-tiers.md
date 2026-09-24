@@ -60,6 +60,13 @@ of one core. Results are stored under `artifacts/idle-cpu/`. Set
 `IRIS_TEST_GATE_IDLE_CPU=0` only when intentionally excluding this release
 criterion.
 
+These fresh-account CPU fixtures do not require a connected nearby peer or
+reproduce a long-lived account's session history; the iOS lane runs in a
+simulator. The fast core suite separately checks that repeated two-peer nearby
+identity exchanges settle without regenerating announcements or reapplying
+unchanged device lists, while profile and device changes still propagate.
+Physical-device profiling remains necessary for account-specific heat reports.
+
 The native platform matrix runs Android, the Apple lane, Linux, and Windows in
 parallel. iOS and macOS remain ordered within one lane because both regenerate
 the shared Swift bindings. When the fast tier passed in the same full

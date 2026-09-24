@@ -571,6 +571,7 @@ pub struct AppCore {
     pending_host_ble: Option<HostBleAttachment>,
     host_ble_attached: bool,
     fips_nearby_links: Vec<crate::updates::FipsNearbyLinkSnapshot>,
+    fips_nearby_bootstrap: std::cell::RefCell<Option<fips_nearby::FipsNearbyBootstrapCache>>,
     fips_connection_generation: u64,
     pending_relay_publishes: BTreeMap<String, PendingRelayPublish>,
     pending_relay_publish_inflight: HashSet<String>,
