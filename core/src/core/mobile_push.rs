@@ -9,7 +9,7 @@ use std::time::Duration;
 mod diagnostics;
 mod invite_owner;
 mod read_state;
-mod subscriptions;
+pub(super) mod subscriptions;
 use invite_owner::pending_invite_response_owner;
 pub(crate) use read_state::read_mobile_push_notification_indexes;
 pub(crate) use subscriptions::{
@@ -114,6 +114,12 @@ impl AppCore {
         };
 
         MobilePushSyncSnapshot {
+            call_device_pubkey_hex: Some(logged_in.device_keys.public_key().to_hex()),
+            call_author_pubkeys: if self.preferences.voice_calls_enabled || self.preferences.video_calls_enabled {
+                sorted_hexes(self.app_keys.values()
+                    .filter(|keys| keys.created_at_secs > 0 && self.call_contact_allowed(&keys.owner_pubkey_hex))
+                    .flat_map(|keys| keys.devices.iter().map(|device| device.identity_pubkey_hex.clone())).collect())
+            } else { Vec::new() },
             owner_pubkey_hex: Some(logged_in.owner_pubkey.to_string()),
             message_author_pubkeys,
             background_message_author_pubkeys,
@@ -142,7 +148,15 @@ impl AppCore {
             return;
         }
         self.push_debug_log("push.event.ingest", format!("id={event_id}"));
-        self.handle_relay_event(event);
+        self.ingest_push_event(event);
+    }
+
+    fn ingest_push_event(&mut self, event: Event) {
+        if event.kind.as_u16() == super::calls::push::CALL_WAKE_KIND {
+            self.receive_call_push(&event);
+        } else {
+            self.handle_relay_event(event);
+        }
     }
 
     pub(super) fn drain_pending_mobile_push_events(&mut self) {
@@ -152,13 +166,13 @@ impl AppCore {
         self.enter_batch();
         while let Some(event) = self.pending_mobile_push_events.pop_front() {
             self.push_debug_log("push.event.ingest", format!("id={}", event.id));
-            self.handle_relay_event(event);
+            self.ingest_push_event(event);
         }
         self.exit_batch();
     }
 }
 
-fn mobile_push_event_from_payload(raw_payload_json: &str) -> Option<Event> {
+pub(super) fn mobile_push_event_from_payload(raw_payload_json: &str) -> Option<Event> {
     let payload_value: serde_json::Value = serde_json::from_str(raw_payload_json).ok()?;
     let payload_object = payload_value.as_object()?;
     for key in MOBILE_PUSH_EVENT_PAYLOAD_KEYS {
@@ -880,7 +894,7 @@ fn suppressed_resolution() -> MobilePushNotificationResolution {
     }
 }
 
-fn open_lookup_connection(data_dir: &str) -> Option<rusqlite::Connection> {
+pub(in crate::core) fn open_lookup_connection(data_dir: &str) -> Option<rusqlite::Connection> {
     let path = PathBuf::from(data_dir).join(super::storage::CORE_DB_FILENAME);
     if !path.exists() {
         return None;

@@ -35,6 +35,8 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
     @Volatile private var mediaCallId: String? = null
     private var announcedId: String? = null
     @Volatile private var failedCallId: String? = null
+    private var pendingPushCallId: String? = null
+    private var pushRecoveryJob: kotlinx.coroutines.Job? = null
     private var serviceReady = false
     private var telecomReady = false
     private val receivedAudio = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -49,7 +51,28 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
         }
     }
 
+    fun receivePushInvite(invite: CallSnapshot) {
+        // The core handles busy responses; a second invitation must not replace
+        // the system call or stop media for the call already in progress.
+        if (current?.let { it.phase != "ended" } == true) return
+        update(invite)
+        pendingPushCallId = invite.callId
+        pushRecoveryJob?.cancel()
+        pushRecoveryJob = scope.launch(Dispatchers.Main) {
+            kotlinx.coroutines.delay(5_000)
+            if (pendingPushCallId != invite.callId) return@launch
+            pendingPushCallId = null
+            app.dispatch(AppAction.EndCall(invite.callId))
+            update(null)
+        }
+    }
+
     private fun update(call: CallSnapshot?) {
+        if (pendingPushCallId != null) {
+            if (call == null) return
+            pendingPushCallId = null
+            pushRecoveryJob?.cancel()
+        }
         current = call
         if (call == null || call.phase == "ended") {
             mutableAnswerRequest.value = null

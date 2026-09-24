@@ -20,6 +20,7 @@ import org.json.JSONObject
 import to.iris.chat.BuildConfig
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.MobilePushSubscriptionRequest
+import to.iris.chat.rust.buildCallPushSubscriptionRequest
 import to.iris.chat.rust.buildMobilePushCreateSubscriptionRequest
 import to.iris.chat.rust.buildMobilePushDeleteSubscriptionRequest
 import to.iris.chat.rust.buildMobilePushListSubscriptionsRequest
@@ -28,10 +29,12 @@ import to.iris.chat.rust.mobilePushSubscriptionIdKey
 
 class AndroidMobilePushRuntime(
     private val dataStore: DataStore<Preferences>,
+    private val forCalls: Boolean = false,
     private val httpClient: OkHttpClient = OkHttpClient(),
     private val messaging: FirebaseMessaging = FirebaseMessaging.getInstance(),
 ) {
     private val syncMutex = Mutex()
+    private var callDevicePubkeyHex: String? = null
     @Volatile private var lastSyncSignature: String? = null
 
     suspend fun sync(
@@ -40,15 +43,17 @@ class AndroidMobilePushRuntime(
     ): Boolean = syncMutex.withLock {
         val owner = state.mobilePush.ownerPubkeyHex?.trim()?.ifEmpty { null }
         val ownerSecret = ownerNsec?.trim()?.ifEmpty { null }
-        val authors = state.mobilePush.messageAuthorPubkeys
-        val backgroundAuthors = state.mobilePush.backgroundMessageAuthorPubkeys
-        val inviteResponses = state.mobilePush.inviteResponsePubkeys
-        val enabled = state.preferences.desktopNotificationsEnabled
+        callDevicePubkeyHex = state.mobilePush.callDevicePubkeyHex
+        val authors = if (forCalls) state.mobilePush.callAuthorPubkeys else state.mobilePush.messageAuthorPubkeys
+        val backgroundAuthors = if (forCalls) emptyList() else state.mobilePush.backgroundMessageAuthorPubkeys
+        val inviteResponses = if (forCalls) emptyList() else state.mobilePush.inviteResponsePubkeys
+        val enabled = if (forCalls) state.preferences.voiceCallsEnabled || state.preferences.videoCallsEnabled else state.preferences.desktopNotificationsEnabled
         val serverOverride = userServerOverride(state) ?: buildServerOverride()
         val signature =
             listOf(
                 if (enabled) "1" else "0",
                 owner.orEmpty(),
+                if (forCalls) callDevicePubkeyHex.orEmpty() else "",
                 if (ownerSecret == null) "0" else "1",
                 authors.joinToString(","),
                 backgroundAuthors.joinToString(","),
@@ -59,7 +64,7 @@ class AndroidMobilePushRuntime(
             return@withLock true
         }
 
-        val storageKeyName = mobilePushSubscriptionIdKey(PLATFORM_KEY)
+        val storageKeyName = (mobilePushSubscriptionIdKey(PLATFORM_KEY) + if (forCalls) ".calls" else "")
         val storageKey = stringPreferencesKey(storageKeyName)
         if (!enabled || ownerSecret == null || (authors.isEmpty() && inviteResponses.isEmpty())) {
             val disabled = disableStoredSubscription(ownerSecret, storageKey, serverOverride)
@@ -95,7 +100,7 @@ class AndroidMobilePushRuntime(
         state: AppState,
         ownerNsec: String?,
     ) {
-        val storageKeyName = mobilePushSubscriptionIdKey(PLATFORM_KEY)
+        val storageKeyName = (mobilePushSubscriptionIdKey(PLATFORM_KEY) + if (forCalls) ".calls" else "")
         val storageKey = stringPreferencesKey(storageKeyName)
         val serverOverride = userServerOverride(state) ?: buildServerOverride()
         disableStoredSubscription(ownerNsec?.trim()?.ifEmpty { null }, storageKey, serverOverride)
@@ -125,6 +130,8 @@ class AndroidMobilePushRuntime(
         while (keys.hasNext()) {
             val subscriptionId = keys.next()
             val subscription = subscriptions.optJSONObject(subscriptionId) ?: continue
+            val callSubscription = subscription.optJSONObject("filter")?.optJSONArray("kinds")?.optInt(0) == 21111
+            if (callSubscription != forCalls) continue
             val tokens = subscription.optJSONArray("fcm_tokens") ?: continue
             for (index in 0 until tokens.length()) {
                 if (tokens.optString(index) == pushToken) {
@@ -146,7 +153,12 @@ class AndroidMobilePushRuntime(
         serverOverride: String?,
     ): Boolean {
         val request =
-            buildMobilePushUpdateSubscriptionRequest(
+            if (forCalls) buildCallPushSubscriptionRequest(
+                ownerNsec = ownerNsec, devicePubkeyHex = callDevicePubkeyHex ?: return false,
+                authorPubkeys = authors, subscriptionId = subscriptionId, platformKey = PLATFORM_KEY,
+                pushToken = pushToken, apnsTopic = null, isRelease = !BuildConfig.DEBUG,
+                serverUrlOverride = serverOverride,
+            ) ?: return false else buildMobilePushUpdateSubscriptionRequest(
                 ownerNsec = ownerNsec,
                 subscriptionId = subscriptionId,
                 platformKey = PLATFORM_KEY,
@@ -179,7 +191,12 @@ class AndroidMobilePushRuntime(
         serverOverride: String?,
     ): Boolean {
         val request =
-            buildMobilePushCreateSubscriptionRequest(
+            if (forCalls) buildCallPushSubscriptionRequest(
+                ownerNsec = ownerNsec, devicePubkeyHex = callDevicePubkeyHex ?: return false,
+                authorPubkeys = authors, subscriptionId = null, platformKey = PLATFORM_KEY,
+                pushToken = pushToken, apnsTopic = null, isRelease = !BuildConfig.DEBUG,
+                serverUrlOverride = serverOverride,
+            ) ?: return false else buildMobilePushCreateSubscriptionRequest(
                 ownerNsec = ownerNsec,
                 platformKey = PLATFORM_KEY,
                 pushToken = pushToken,

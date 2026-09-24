@@ -3,6 +3,7 @@
 use super::*;
 use crate::state::CallSnapshot;
 use std::time::Instant as Clock;
+pub(super) mod push;
 mod history;
 mod media;
 mod receive;
@@ -138,7 +139,7 @@ impl AppCore {
             })
             .map(|keys| keys.owner_pubkey_hex.clone())
     }
-    fn call_contact_allowed(&self, owner: &str) -> bool {
+    pub(super) fn call_contact_allowed(&self, owner: &str) -> bool {
         !self.is_owner_blocked(owner)
             && self.can_use_chats()
             && (self
@@ -257,6 +258,7 @@ impl AppCore {
             .collect::<String>();
         self.install_call(id.clone(), owner.into(), targets, None, video, video, true);
         self.signal_active_call("offer");
+        self.send_call_push_wakeups();
         self.schedule_call_tick(&id);
         self.emit_state();
     }
@@ -444,6 +446,7 @@ impl AppCore {
         self.emit_state();
     }
     pub(super) fn set_calls_enabled(&mut self, video: bool, enabled: bool) {
+        self.mark_mobile_push_dirty();
         if video {
             self.preferences.video_calls_enabled = enabled;
         } else {

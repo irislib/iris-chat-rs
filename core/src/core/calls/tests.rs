@@ -45,16 +45,16 @@ fn media_batches_expire_and_preserve_peer_validation() {
     }
 }
 
-struct Fixture {
-    core: AppCore,
+pub(super) struct Fixture {
+    pub(super) core: AppCore,
     _updates: flume::Receiver<AppUpdate>,
-    owner: String,
+    pub(super) owner: String,
     devices: Vec<String>,
     _directory: tempfile::TempDir,
 }
 
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
         let (sender, updates) = flume::unbounded();
         let mut core = AppCore::new(

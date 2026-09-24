@@ -4,6 +4,8 @@ import android.util.Log
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import org.json.JSONObject
 import to.iris.chat.IrisChatApp
 import to.iris.chat.IrisDebugLog
@@ -18,6 +20,17 @@ class IrisFirebaseMessagingService : FirebaseMessagingService() {
         IrisDebugLog.d(TAG, "FCM message received with data keys=${message.data.keys.sorted()}")
         val payloadJson = message.toPayloadJson()
         val appManager = (applicationContext as? IrisChatApp)?.container?.appManager
+        if (isCallWakeup(message.data["event"])) {
+            val container = (applicationContext as? IrisChatApp)?.container ?: return
+            runBlocking {
+                val invite = container.appManager.resolveCallPush(payloadJson) ?: return@runBlocking
+                // Establish the visible call/foreground service before FCM
+                // releases its short wake lease, including a cold process start.
+                withContext(Dispatchers.Main) { container.callRuntime.receivePushInvite(invite) }
+                container.appManager.ingestCallPush(payloadJson)
+            }
+            return
+        }
         // Block here on purpose. Firebase keeps the wakelock alive for as
         // long as onMessageReceived is on-stack, so a quick suspend block
         // is the right shape for "load secrets + decrypt + post" in
@@ -71,3 +84,6 @@ private fun RemoteMessage.toPayloadJson(): String {
     }
     return payload.toString()
 }
+
+internal fun isCallWakeup(event: String?): Boolean =
+    event != null && runCatching { JSONObject(event).optInt("kind") == 21111 }.getOrDefault(false)

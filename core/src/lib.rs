@@ -1870,3 +1870,27 @@ mod ffi_hardening_tests {
         app.shutdown();
     }
 }
+
+/// Register a device for incoming call wakeups on the existing notification service.
+#[uniffi::export]
+#[allow(clippy::too_many_arguments)]
+pub fn build_call_push_subscription_request(
+    owner_nsec: String, device_pubkey_hex: String, author_pubkeys: Vec<String>,
+    subscription_id: Option<String>, platform_key: String, push_token: String,
+    apns_topic: Option<String>, is_release: bool, server_url_override: Option<String>,
+) -> Option<MobilePushSubscriptionRequest> {
+    ffi_or("build_call_push_subscription_request", None, || {
+        crate::core::build_call_push_subscription_request(owner_nsec, device_pubkey_hex,
+            author_pubkeys, subscription_id, platform_key, push_token, apns_topic,
+            is_release, server_url_override)
+    })
+}
+
+/// Authenticate a call wakeup locally before reporting it to the system call UI.
+#[uniffi::export]
+pub fn resolve_call_push_invite(data_dir: String, device_nsec: String,
+    payload_json: String) -> Option<CallSnapshot> {
+    ffi_or("resolve_call_push_invite", None, || {
+        crate::core::resolve_call_push_invite(data_dir, device_nsec, payload_json)
+    })
+}

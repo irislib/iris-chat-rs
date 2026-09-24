@@ -456,6 +456,8 @@ pub struct MobilePushSessionSnapshot {
 
 #[derive(uniffi::Record, Clone, Debug, Default, PartialEq, Eq)]
 pub struct MobilePushSyncSnapshot {
+    pub call_device_pubkey_hex: Option<String>,
+    pub call_author_pubkeys: Vec<String>,
     pub owner_pubkey_hex: Option<String>,
     pub message_author_pubkeys: Vec<String>,
     pub background_message_author_pubkeys: Vec<String>,

@@ -265,15 +265,6 @@ private data class PendingNavigationOverride(
     val expiresAtMs: Long,
 )
 
-private data class AndroidMobilePushSyncInput(
-    val enabled: Boolean,
-    val ownerPubkeyHex: String?,
-    val ownerSecretAvailable: Boolean,
-    val messageAuthorPubkeys: List<String>,
-    val backgroundMessageAuthorPubkeys: List<String>,
-    val inviteResponsePubkeys: List<String>,
-    val serverOverride: String,
-)
 
 private data class ClientDebugLogEntry(
     val timestampSecs: Long,
@@ -305,6 +296,7 @@ class AppManager(
             )
     val messageFontSize = to.iris.chat.ui.theme.MessageFontSizePreference(this.dataStore, applicationScope)
     private val mobilePushRuntime = AndroidMobilePushRuntime(this.dataStore)
+    private val callPushRuntime = AndroidMobilePushRuntime(this.dataStore, forCalls = true)
     private val readNotificationCleanup = to.iris.chat.push.ReadNotificationCleanup(applicationScope, ioDispatcher)
     private val selfUpdateManager =
         AndroidSelfUpdateManager(
@@ -1075,6 +1067,10 @@ class AppManager(
             // instead of fabricating a shell-authored logged-out snapshot.
             val stateBeforeLogout = mutableState.value
             val persistedBundle = loadPersistedBundle()
+            callPushRuntime.unregisterStoredSubscription(
+                stateBeforeLogout,
+                persistedBundle?.mobilePushAuthNsec,
+            )
             mobilePushRuntime.unregisterStoredSubscription(
                 stateBeforeLogout,
                 persistedBundle?.mobilePushAuthNsec,
@@ -1140,6 +1136,10 @@ class AppManager(
         runBlocking(ioDispatcher) {
             val stateBeforeReset = mutableState.value
             val persistedBundle = loadPersistedBundle()
+            callPushRuntime.unregisterStoredSubscription(
+                stateBeforeReset,
+                persistedBundle?.mobilePushAuthNsec,
+            )
             mobilePushRuntime.unregisterStoredSubscription(
                 stateBeforeReset,
                 persistedBundle?.mobilePushAuthNsec,
@@ -1535,6 +1535,15 @@ class AppManager(
      * main process uses, so it works whether the app is alive,
      * background, or just been woken from killed by FCM.
      */
+    suspend fun resolveCallPush(payloadJson: String): to.iris.chat.rust.CallSnapshot? {
+        val bundle = loadPersistedBundle() ?: return null
+        return to.iris.chat.rust.resolveCallPushInvite(rustDataDir, bundle.deviceNsec, payloadJson)
+    }
+
+    fun ingestCallPush(payloadJson: String) {
+        dispatchToRust(AppAction.IngestMobilePushPayload(payloadJson), showsToastOnFailure = false)
+    }
+
     suspend fun decryptOrResolveNotificationPayload(
         payloadJson: String,
     ): to.iris.chat.rust.MobilePushNotificationResolution {
@@ -1699,7 +1708,9 @@ class AppManager(
         }
         lastMobilePushSyncInput = input
         applicationScope.launch(ioDispatcher) {
-            if (mobilePushRuntime.sync(state, ownerNsec)) {
+            val messagesSynced = mobilePushRuntime.sync(state, ownerNsec)
+            val callsSynced = callPushRuntime.sync(state, ownerNsec)
+            if (messagesSynced && callsSynced) {
                 if (mobilePushRetryInput == input) {
                     mobilePushRetryAttempt = 0
                 }
@@ -1721,28 +1732,12 @@ class AppManager(
 
     fun refreshMobilePushSubscription() {
         mobilePushRuntime.invalidate()
+        callPushRuntime.invalidate()
         lastMobilePushSyncInput = null
         mobilePushRetryInput = null
         mobilePushRetryAttempt = 0
         scheduleMobilePushSyncIfNeeded(mutableState.value, cachedAccountBundle?.mobilePushAuthNsec)
     }
-
-    private fun mobilePushSyncInput(
-        state: AppState,
-        ownerNsec: String?,
-    ): AndroidMobilePushSyncInput =
-        AndroidMobilePushSyncInput(
-            enabled = state.preferences.desktopNotificationsEnabled,
-            ownerPubkeyHex = state.mobilePush.ownerPubkeyHex?.trim()?.ifEmpty { null },
-            ownerSecretAvailable = !ownerNsec.isNullOrBlank(),
-            messageAuthorPubkeys = state.mobilePush.messageAuthorPubkeys,
-            backgroundMessageAuthorPubkeys = state.mobilePush.backgroundMessageAuthorPubkeys,
-            inviteResponsePubkeys = state.mobilePush.inviteResponsePubkeys,
-            serverOverride =
-                state.preferences.mobilePushServerUrl
-                    .trim()
-                    .ifEmpty { BuildConfig.MOBILE_PUSH_SERVER_URL.trim() },
-        )
 
     private fun replaceRustCoreAfterReset() {
         signer.cancel()

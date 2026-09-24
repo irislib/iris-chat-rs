@@ -128,7 +128,7 @@ pub(crate) fn build_mobile_push_delete_subscription_request(
     )
 }
 
-fn build_mobile_push_subscription_request(
+pub(in crate::core) fn build_mobile_push_subscription_request(
     owner_nsec: String,
     method: &str,
     path: &str,

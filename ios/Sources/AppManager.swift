@@ -992,6 +992,8 @@ final class AppManager: ObservableObject {
 #endif
 #if os(iOS)
     private let mobilePushRuntime = MobilePushRuntime()
+    private let callPushRuntime = CallPushRuntime()
+    private var callPushToken: String?
     private let readNotificationCleanup = ReadNotificationCleanup()
     private let shareSuggestionDonor = ShareSuggestionDonor()
     private let shareSuggestionsExporter = ShareSuggestionsExporter(
@@ -1912,6 +1914,29 @@ final class AppManager: ObservableObject {
 #endif
 
 #if os(iOS)
+    func setCallPushToken(_ token: String?) {
+        callPushToken = token
+        callPushRuntime.sync(state: state, ownerNsec: storedAccountBundle?.mobilePushAuthNsec, token: token)
+    }
+
+    func receiveCallPush(userInfo: [AnyHashable: Any], completion: @escaping () -> Void) {
+        let payload = serializedPushPayload(userInfo: userInfo)
+        let bundle = storedAccountBundle ?? secretStore.load()
+        let invite = payload.flatMap { payload in
+            bundle.flatMap { resolveCallPushInvite(dataDir: dataDir.path,
+                deviceNsec: $0.deviceNsec, payloadJson: payload) }
+        }
+        // Report before returning to PushKit, including cold launches. Network
+        // recovery happens concurrently and cannot delay the system call UI.
+        calls.receivePushInvite(invite, completion: completion)
+        guard invite != nil, let payload else { return }
+        backgroundSuspendPrepared = false
+        dispatchToRust(.ingestMobilePushPayload(payloadJson: payload), showsToastOnFailure: false)
+        if state.preferences.nearbyEnabled && state.preferences.nearbyLanEnabled {
+            nearbyIris.setFipsLanVisible(true)
+        }
+    }
+
     func receiveBackgroundPush(userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
         guard let payload = serializedPushPayload(userInfo: userInfo) else { return .noData }
         let priorRevision = state.rev
@@ -2250,7 +2275,7 @@ final class AppManager: ObservableObject {
 #if os(iOS)
         // CallKit + background audio keep the active local connection alive.
         // Suspending FIPS here would cut off a call when the phone locks.
-        if let call = state.call, call.phase != "ended" { return }
+        if let call = calls.call ?? state.call, call.phase != "ended" { return }
         guard !backgroundSuspendPrepared else {
             return
         }
@@ -2269,7 +2294,7 @@ final class AppManager: ObservableObject {
                 // Unlock can enqueue AppForegrounded before this background
                 // worker reaches Rust. Resume again after the late flush so
                 // its suspend gate cannot leave the visible app disconnected.
-                if let self, !self.appIsBackgrounded {
+                if let self, !self.appIsBackgrounded || (self.calls.call != nil && self.calls.call?.phase != "ended") {
                     self.dispatchToRust(.appForegrounded)
                 }
                 if taskID != .invalid {
@@ -2621,6 +2646,7 @@ final class AppManager: ObservableObject {
         // Account-nil startup snapshots are ambiguous; logout is the deterministic
         // session boundary for discarding deferred notification navigation.
         pendingPushChatID = nil
+        callPushRuntime.unregister(state: state, ownerNsec: (storedAccountBundle ?? secretStore.load())?.mobilePushAuthNsec)
         mobilePushRuntime.unregisterStoredSubscription(state: state, ownerNsec: (storedAccountBundle ?? secretStore.load())?.mobilePushAuthNsec)
 #endif
         guard secretStore.clear(), pendingDeviceLinkSecretStore.clear() else {
@@ -2704,6 +2730,7 @@ final class AppManager: ObservableObject {
             return
         }
         let ownerNsec = storedAccountBundle?.mobilePushAuthNsec
+        callPushRuntime.sync(state: state, ownerNsec: ownerNsec, token: callPushToken)
         guard iosSideEffectGate.shouldSyncMobilePush(state: state, ownerNsec: ownerNsec) else {
             return
         }

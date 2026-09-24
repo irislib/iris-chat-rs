@@ -129,6 +129,7 @@ func makeAppState(
     chatList: [ChatThreadSnapshot] = [],
     currentChat: CurrentChatSnapshot? = nil,
     mobilePush: MobilePushSyncSnapshot = MobilePushSyncSnapshot(
+            callDevicePubkeyHex: nil, callAuthorPubkeys: [],
         ownerPubkeyHex: nil,
         messageAuthorPubkeys: [],
         backgroundMessageAuthorPubkeys: [],
@@ -619,6 +620,7 @@ final class IrisChatTests: XCTestCase {
         var gate = IosStateSideEffectGate()
         let chatList = makeLargeChatList(replacingFirstWith: makeChatThread(unreadCount: 0))
         let push = MobilePushSyncSnapshot(
+            callDevicePubkeyHex: nil, callAuthorPubkeys: [],
             ownerPubkeyHex: "owner",
             messageAuthorPubkeys: ["author-1"],
             backgroundMessageAuthorPubkeys: [],
@@ -637,6 +639,7 @@ final class IrisChatTests: XCTestCase {
     func testIosStateSideEffectGateTracksPushSecretAvailability() {
         var gate = IosStateSideEffectGate()
         let push = MobilePushSyncSnapshot(
+            callDevicePubkeyHex: nil, callAuthorPubkeys: [],
             ownerPubkeyHex: "owner",
             messageAuthorPubkeys: ["author-1"],
             backgroundMessageAuthorPubkeys: [],

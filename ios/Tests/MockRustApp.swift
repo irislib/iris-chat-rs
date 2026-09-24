@@ -87,6 +87,7 @@ final class MockRustApp: RustAppClient {
         linkDevice: nil, remoteSignerLogin: nil,
         networkStatus: nil,
         mobilePush: MobilePushSyncSnapshot(
+            callDevicePubkeyHex: nil, callAuthorPubkeys: [],
             ownerPubkeyHex: nil,
             messageAuthorPubkeys: [],
             backgroundMessageAuthorPubkeys: [],

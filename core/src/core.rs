@@ -83,6 +83,7 @@ mod remote_signer_uri;
 pub use attachment_upload::download_hashtree_attachment;
 mod attachments;
 mod calls;
+pub(crate) use calls::push::{build_call_push_subscription_request, resolve_call_push_invite};
 mod chat_deletions;
 mod chat_reactions;
 mod chat_read_state;

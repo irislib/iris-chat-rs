@@ -33,6 +33,9 @@ fn main() -> Result<()> {
         name: "Call test".into(),
     });
     app.dispatch(AppAction::SetNearbyLanEnabled { enabled: true });
+    if let Ok(url) = std::env::var("IRIS_CALL_PUSH_SERVER_URL") {
+        app.dispatch(AppAction::SetMobilePushServerUrl { url });
+    }
     app.dispatch(AppAction::CreatePublicInvite);
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
@@ -95,7 +98,8 @@ fn main() -> Result<()> {
                         let state = app.state();
                         let call=state.call.map(|s|json!({"id":s.call_id,"phase":s.phase,"video":s.video_capable,"muted":s.remote_muted}));
                         emit(
-                            json!({"event":"status","call":call,"audio_frames":audio,"video_frames":video,"nonzero_audio_frames":audio_nonzero}),
+                            json!({"event":"status","call":call,"audio_frames":audio,"video_frames":video,"nonzero_audio_frames":audio_nonzero,
+                                "call_authors":state.mobile_push.call_author_pubkeys}),
                         )?;
                     }
                     ["end"] => {

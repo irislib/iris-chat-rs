@@ -22,6 +22,51 @@ private final class CallMediaProbe: IrisCallMediaHandling {
 }
 
 final class CallControllerTests: XCTestCase {
+#if os(iOS)
+    @MainActor
+    func testSecondPushCannotReplaceConnectedCallOrStopItsMedia() {
+        let media = CallMediaProbe()
+        let controller = IrisCallController(dispatch: { _ in }, showError: { _ in }, mediaForTesting: media)
+        controller.update(connectedCall(id: "active"))
+        let stops = media.stopCount
+        var invite = connectedCall(id: "second")
+        invite.phase = "incoming"
+        var completed = false
+        controller.receivePushInvite(invite) { completed = true }
+        XCTAssertTrue(completed)
+        XCTAssertEqual(controller.call?.callId, "active")
+        XCTAssertEqual(media.stopCount, stops)
+    }
+
+    @MainActor
+    func testPushInviteSurvivesColdLaunchSnapshotsAndDismissesAfterCancellation() {
+        let controller = IrisCallController(dispatch: { _ in }, showError: { _ in }, mediaForTesting: CallMediaProbe())
+        var invite = connectedCall(id: "push-call")
+        invite.phase = "incoming"
+        var completed = false
+        controller.receivePushInvite(invite) { completed = true }
+        XCTAssertTrue(completed, "PushKit completion follows the local call report without waiting for FIPS")
+        controller.update(nil)
+        XCTAssertEqual(controller.call?.callId, invite.callId)
+        controller.update(invite)
+        controller.update(nil)
+        XCTAssertNil(controller.call)
+        XCTAssertNil(controller.presentedCall)
+    }
+
+    @MainActor
+    func testDecliningPushInviteClearsPendingStartupProtection() {
+        let controller = IrisCallController(dispatch: { _ in }, showError: { _ in }, mediaForTesting: CallMediaProbe())
+        var invite = connectedCall(id: "push-decline")
+        invite.phase = "incoming"
+        controller.receivePushInvite(invite) {}
+        controller.end()
+        controller.update(nil)
+        XCTAssertNil(controller.call)
+        XCTAssertNil(controller.presentedCall)
+    }
+#endif
+
     @MainActor
     func testDeclineImmediatelyDismissesAndDoesNotReappearFromQueuedState() {
         var actions: [AppAction] = []

@@ -1328,6 +1328,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
         null,
         null,
         new MobilePushSyncSnapshot(
+            null, new List<string>(),
             null, Array.Empty<string>(), Array.Empty<string>(),
             Array.Empty<string>(),
             Array.Empty<MobilePushSessionSnapshot>()

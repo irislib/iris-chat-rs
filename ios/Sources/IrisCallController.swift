@@ -71,6 +71,9 @@ final class IrisCallController: NSObject, ObservableObject {
         }
     )
 #if os(iOS)
+    private var pendingPushCallID: String?
+    private var pushRecoveryTask: Task<Void, Never>?
+    private var pushReportCompletion: (() -> Void)?
     private var provider: CXProvider?
     private let systemCalls = CXCallController()
     private var systemCallID: UUID?
@@ -146,6 +149,11 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
     func end() {
+#if os(iOS)
+        pendingPushCallID = nil
+        pushRecoveryTask?.cancel()
+        pushRecoveryTask = nil
+#endif
         permissionRequestID = nil
         guard let call else { return }
         endingCallID = call.callId
@@ -211,6 +219,16 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
     func update(_ snapshot: CallSnapshot?, preferences: PreferencesSnapshot? = nil) {
+#if os(iOS)
+        if pendingPushCallID != nil {
+            // Startup may emit several empty snapshots before the queued push
+            // reaches the restored core. Keep the system call visible meanwhile.
+            if snapshot == nil { return }
+            self.pendingPushCallID = nil
+            pushRecoveryTask?.cancel()
+            pushRecoveryTask = nil
+        }
+#endif
         IrisAudioActivity.setCallActive(snapshot != nil && snapshot?.phase != "ended")
         let previousID = call?.callId
         call = snapshot
@@ -317,10 +335,53 @@ final class IrisCallController: NSObject, ObservableObject {
         speakerEnabled = video
     }
 
+    func receivePushInvite(_ invite: CallSnapshot?, completion: @escaping () -> Void) {
+        guard let invite else {
+            // iOS requires every delivered VoIP push to be reported, even if it
+            // expired or the sender was blocked since subscription registration.
+            reportUnavailablePush(completion: completion)
+            return
+        }
+        if systemCallCoreID == invite.callId {
+            completion()
+            return
+        }
+        if let call, call.phase != "ended", call.callId != invite.callId {
+            // Report the push as required without replacing the active call.
+            // The core will send the authenticated busy response over FIPS.
+            reportUnavailablePush(completion: completion)
+            return
+        }
+        pushReportCompletion = completion
+        update(invite)
+        pendingPushCallID = invite.callId
+        pushRecoveryTask?.cancel()
+        pushRecoveryTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
+            guard let self, self.pendingPushCallID == invite.callId else { return }
+            self.pendingPushCallID = nil
+            self.end()
+        }
+    }
+
+    private func reportUnavailablePush(completion: @escaping () -> Void) {
+        guard mediaForTesting == nil, let provider else { completion(); return }
+        let id = UUID()
+        let update = CXCallUpdate()
+        update.localizedCallerName = "Iris call"
+        provider.reportNewIncomingCall(with: id, update: update) { _ in
+            provider.reportCall(with: id, endedAt: Date(), reason: .failed)
+            completion()
+        }
+    }
+
     private func updateSystemCall(_ snapshot: CallSnapshot?) {
         // Controller tests supply a media backend and avoid all system devices.
-        guard mediaForTesting == nil else { return }
+        let pushCompletion = pushReportCompletion
+        pushReportCompletion = nil
+        guard mediaForTesting == nil else { pushCompletion?(); return }
         guard let provider else {
+            pushCompletion?()
             if let snapshot, snapshot.phase == "connected", mediaCallID != snapshot.callId {
                 do {
                     try configureAudioSession(video: snapshot.videoCapable)
@@ -370,6 +431,7 @@ final class IrisCallController: NSObject, ObservableObject {
                 provider.reportCall(with: id, updated: update)
             } else {
                 provider.reportNewIncomingCall(with: id, update: update) { [weak self] error in
+                    pushCompletion?()
                     Task { @MainActor in
                         // Cancellation can beat CallKit's asynchronous report.
                         guard let self, self.systemCallID == id else {

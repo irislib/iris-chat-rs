@@ -1,11 +1,13 @@
 #if os(iOS)
 import Foundation
 import UIKit
+import PushKit
 import UserNotifications
 
 @MainActor
-final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate, PKPushRegistryDelegate {
     let manager = AppManager()
+    private var callPushRegistry: PKPushRegistry?
 
     func application(
         _ application: UIApplication,
@@ -19,6 +21,10 @@ final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
 #if targetEnvironment(simulator)
         return true
 #else
+        let registry = PKPushRegistry(queue: .main)
+        registry.delegate = self
+        registry.desiredPushTypes = [.voIP]
+        callPushRegistry = registry
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         if ProcessInfo.processInfo.environment["IRIS_REQUEST_NOTIFICATION_PERMISSION_FOR_AUTOMATION"] == "1" {
@@ -28,6 +34,21 @@ final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
         }
         return true
 #endif
+    }
+
+    func pushRegistry(_ registry: PKPushRegistry, didUpdate pushCredentials: PKPushCredentials, for type: PKPushType) {
+        guard type == .voIP else { return }
+        manager.setCallPushToken(pushCredentials.token.map { String(format: "%02x", $0) }.joined())
+    }
+
+    func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
+        if type == .voIP { manager.setCallPushToken(nil) }
+    }
+
+    func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload,
+                      for type: PKPushType, completion: @escaping () -> Void) {
+        guard type == .voIP else { completion(); return }
+        manager.receiveCallPush(userInfo: payload.dictionaryPayload, completion: completion)
     }
 
     func application(

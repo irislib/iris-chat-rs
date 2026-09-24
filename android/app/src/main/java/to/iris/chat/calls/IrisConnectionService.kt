@@ -35,13 +35,17 @@ class IrisConnectionService : ConnectionService() {
     override fun onCreateOutgoingConnectionFailed(account: PhoneAccountHandle?, request: ConnectionRequest?) { endRejectedCall() }
 
     private fun endRejectedCall() {
-        val app = (application as IrisChatApp).container.appManager
-        app.call.value?.takeIf { it.phase != "ended" }?.let { app.dispatch(AppAction.EndCall(it.callId)) }
+        val container = (application as IrisChatApp).container
+        container.callRuntime.snapshot()?.takeIf { it.phase != "ended" }
+            ?.let { container.appManager.dispatch(AppAction.EndCall(it.callId)) }
     }
 
     private fun create(incoming: Boolean): Connection {
-        val app = (application as IrisChatApp).container.appManager
-        val call = app.call.value?.takeIf { it.phase != "ended" }
+        val container = (application as IrisChatApp).container
+        val app = container.appManager
+        // A push can register with Telecom before the core finishes restoring its state.
+        // Use the authenticated invite already held by the call runtime during startup.
+        val call = container.callRuntime.snapshot()?.takeIf { it.phase != "ended" }
             ?: return Connection.createFailedConnection(DisconnectCause(DisconnectCause.CANCELED))
         return object : Connection() {
             override fun onAnswer() { openCall() }

@@ -181,15 +181,20 @@ fn wait_call_pair(
 }
 #[test]
 fn calls_e2e_without_internet_over_local_fips_udp() {
-    exercise_local_fips_call(false);
+    exercise_local_fips_call(false, false);
 }
 
 #[test]
 fn calls_e2e_resuming_recipient_receives_still_ringing_call() {
-    exercise_local_fips_call(true);
+    exercise_local_fips_call(true, false);
 }
 
-fn exercise_local_fips_call(resume_recipient: bool) {
+#[test]
+fn calls_e2e_push_wakes_suspended_recipient_and_connects_over_fips() {
+    exercise_local_fips_call(true, true);
+}
+
+fn exercise_local_fips_call(resume_recipient: bool, push_wakeup: bool) {
     let ao = Keys::generate();
     let ad = Keys::generate();
     let bo = Keys::generate();
@@ -237,6 +242,28 @@ fn exercise_local_fips_call(resume_recipient: bool) {
         assert!(b.suspended);
         assert!(b.device_sync.is_none());
     }
+    let wake_server = if push_wakeup {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        a.preferences.mobile_push_server_url = format!("http://{}", listener.local_addr().unwrap());
+        Some(std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut bytes = Vec::new(); let mut buffer = [0u8; 4096];
+            loop {
+                let count = stream.read(&mut buffer).unwrap();
+                assert!(count > 0); bytes.extend_from_slice(&buffer[..count]);
+                if let Some(end) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&bytes[..end]);
+                    let length: usize = headers.lines().find_map(|line| line.to_lowercase().strip_prefix("content-length:").map(|n| n.trim().parse().unwrap())).unwrap();
+                    if bytes.len() >= end + 4 + length {
+                        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}").unwrap();
+                        break serde_json::from_slice::<serde_json::Value>(&bytes[end+4..end+4+length]).unwrap();
+                    }
+                }
+            }
+        }))
+    } else { None };
     a.handle_action(AppAction::StartCall {
         chat_id: bo.public_key().to_hex(),
         video: true,
@@ -248,7 +275,18 @@ fn exercise_local_fips_call(resume_recipient: bool) {
             assert!(b.state.call.is_none());
             std::thread::sleep(Duration::from_millis(10));
         }
-        b.handle_app_foregrounded();
+        if let Some(server) = wake_server {
+            let event = server.join().unwrap();
+            let payload = serde_json::json!({"event": event}).to_string();
+            b.persist_best_effort();
+            assert!(super::calls::push::resolve_call_push_invite(
+                _bdir.path().to_string_lossy().into(), bd.secret_key().to_secret_hex(), payload.clone()).is_some());
+            b.ingest_mobile_push_payload(&payload);
+            assert_eq!(b.state.call.as_ref().unwrap().phase, "incoming");
+            b.ingest_mobile_push_payload(&payload); // Duplicate push cannot create another call.
+        } else {
+            b.handle_app_foregrounded();
+        }
         // Restore the test's local-only addressing after the production resume.
         b.reconcile_calls_udp_for_test(ba, aa, &test_fips_peer(&ad).npub());
         assert!(!b.suspended);
