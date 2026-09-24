@@ -65,6 +65,9 @@ def main():
                    and "id=7401 " in line and (not channel or f"channel={channel} " in line)
                    for line in dump.splitlines())
 
+    assert adb("shell", "pm", "path", "com.google.android.gms", check=False).strip(), (
+        "This FCM test requires Google Play services in the device's active profile")
+
     def native_action(action):
         adb("shell", "input", "keyevent", "WAKEUP")
         adb("shell", "input", "keyevent", "82")

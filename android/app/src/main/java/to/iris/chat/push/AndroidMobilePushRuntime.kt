@@ -74,7 +74,15 @@ class AndroidMobilePushRuntime(
             return@withLock disabled
         }
 
-        val token = messaging.token.await()?.trim()?.ifEmpty { null }
+        val token = try {
+            messaging.token.await()?.trim()?.ifEmpty { null }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Registration can fail while offline or before Play services is
+            // ready. Keep the app alive and let the existing worker retry.
+            null
+        }
         if (token == null) {
             Log.w(TAG, "FCM token unavailable; mobile push sync will retry")
             return@withLock false
