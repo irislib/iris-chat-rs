@@ -159,7 +159,7 @@ impl Composer {
                     manager_for_typing.dispatch(AppAction::StopTyping {
                         chat_id: chat_id_for_typing.clone(),
                     });
-                } else {
+                } else if can_send(&manager_for_typing, &chat_id_for_typing) {
                     manager_for_typing.dispatch(AppAction::SendTyping {
                         chat_id: chat_id_for_typing.clone(),
                     });
@@ -242,7 +242,12 @@ impl Composer {
         // The live buffer owns local edits. Replaying a queued draft here would
         // overwrite newer typing, the selection, or an input method's preedit.
         self.ttl.set(chat.message_ttl_seconds);
-        self.send.set_sensitive(!state.busy.sending_message);
+        self.send.set_sensitive(
+            !state.busy.sending_message
+                && chat.direct_chat_capability.as_ref().is_none_or(|state| {
+                    matches!(state, iris_chat_core::DirectChatCapabilityState::Available)
+                }),
+        );
         self.attach.set_sensitive(!state.busy.uploading_attachment);
         self.progress.set_visible(state.busy.uploading_attachment);
         if state.busy.uploading_attachment {
@@ -275,6 +280,9 @@ fn submit_composer(
     preview_row: &gtk::Box,
     preview_scroll: &gtk::ScrolledWindow,
 ) -> bool {
+    if !can_send(manager, chat_id) {
+        return false;
+    }
     let text = composer_buffer_text(buffer).trim().to_string();
     let staged = manager.staged_attachments(chat_id);
     if text.is_empty() && staged.is_empty() {
@@ -450,4 +458,17 @@ fn send_action(chat_id: &str, text: String, ttl_seconds: Option<u64>) -> AppActi
             text,
         }
     }
+}
+
+fn can_send(manager: &AppManager, chat_id: &str) -> bool {
+    manager
+        .current_state()
+        .current_chat
+        .as_ref()
+        .filter(|chat| chat.chat_id == chat_id)
+        .is_some_and(|chat| {
+            chat.direct_chat_capability.as_ref().is_none_or(|state| {
+                matches!(state, iris_chat_core::DirectChatCapabilityState::Available)
+            })
+        })
 }

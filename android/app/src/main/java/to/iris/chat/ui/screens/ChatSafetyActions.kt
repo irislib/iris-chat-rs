@@ -5,6 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,6 +26,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -183,7 +188,7 @@ fun DirectChatCapabilityBar(
                 text =
                     when (state) {
                         DirectChatCapabilityState.CHECKING ->
-                            "Checking whether this person can receive messages…"
+                            "Checking messaging…"
                         DirectChatCapabilityState.UNAVAILABLE ->
                             "This person can’t receive Iris messages yet."
                         DirectChatCapabilityState.CHECK_FAILED ->
@@ -405,4 +410,49 @@ fun MessageRequestReportDialog(
             }
         },
     )
+}
+
+@Composable
+internal fun DelayedDirectChatCapabilityStatus(
+    chatId: String,
+    state: DirectChatCapabilityState?,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var showsChecking by androidx.compose.runtime.remember(chatId, state) { androidx.compose.runtime.mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(chatId, state) {
+        if (state == DirectChatCapabilityState.CHECKING) {
+            kotlinx.coroutines.delay(2_000)
+            showsChecking = true
+        }
+    }
+    if (state != null && state != DirectChatCapabilityState.AVAILABLE &&
+        (state != DirectChatCapabilityState.CHECKING || showsChecking)) {
+        androidx.compose.foundation.layout.Box(modifier) {
+            DirectChatCapabilityBar(state = state, onRetry = onRetry)
+        }
+    }
+}
+
+@Composable
+internal fun DirectChatComposer(
+    chatId: String,
+    state: DirectChatCapabilityState?,
+    onRetry: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Box(Modifier.fillMaxWidth()) {
+        content()
+        Box(Modifier.matchParentSize()) {
+            DelayedDirectChatCapabilityStatus(
+                chatId = chatId,
+                state = state,
+                onRetry = onRetry,
+                modifier = Modifier.align(Alignment.TopCenter).layout { measurable, constraints ->
+                    val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+                    layout(placeable.width, 0) { placeable.placeRelative(0, -placeable.height) }
+                },
+            )
+        }
+    }
 }

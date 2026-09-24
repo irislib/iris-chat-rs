@@ -108,6 +108,7 @@ private enum class SettingsPage(
     Profile("Profile", "settingsProfileRow"),
     Devices("Devices", "settingsDevicesRow"),
     Messaging("Messaging", "settingsMessagingRow"),
+    Appearance("Appearance", "settingsAppearanceRow"),
     Notifications("Notifications", "settingsNotificationsRow"),
     Media("Media", "settingsMediaRow"),
     Nearby("Nearby", "settingsNearbyRow"),
@@ -123,6 +124,7 @@ private enum class SettingsPage(
             listOf(
                 Notifications,
                 Messaging,
+                Appearance,
                 Nearby,
                 Devices,
                 Security,
@@ -347,6 +349,9 @@ fun MyProfileSheet(
                             )
                         }
 
+                        SettingsPage.Appearance -> {
+                            MessageFontSizeSetting(appManager)
+                        }
                         SettingsPage.Messaging -> {
                             SettingsRowsSection {
                                 SettingsToggleRow(
@@ -1673,6 +1678,7 @@ private fun settingsPageIcon(page: SettingsPage): ImageVector =
     when (page) {
         SettingsPage.Profile -> IrisIcons.Devices
         SettingsPage.Devices -> IrisIcons.Devices
+        SettingsPage.Appearance -> IrisIcons.Image
         SettingsPage.Messaging -> IrisIcons.NewChat
         SettingsPage.Notifications -> IrisIcons.Notifications
         SettingsPage.Media -> IrisIcons.Image

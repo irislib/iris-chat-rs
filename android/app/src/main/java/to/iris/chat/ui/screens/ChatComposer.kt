@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import to.iris.chat.rust.ChatMessageSnapshot
 import to.iris.chat.rust.MessageAttachmentSnapshot
 import to.iris.chat.ui.components.IrisIcons
@@ -205,13 +206,14 @@ internal fun ComposerBar(
     onAttach: () -> Unit,
     onRemoveAttachment: (PickedAttachment) -> Unit,
     onSend: () -> Unit,
+    sendAllowed: Boolean = true,
 ) {
     val haptics = rememberIrisHapticFeedback()
     val isBusy = isSending || isUploading
     val hasText = draft.isNotBlank()
     val hasAttachment = selectedAttachments.isNotEmpty()
     val hasSendContent = hasText || hasAttachment
-    val canSend = hasSendContent && !isBusy
+    val canSend = hasSendContent && !isBusy && sendAllowed
     val trailingIsSend = hasSendContent || isSending
     val showTrailingProgress = isSending || (isUploading && hasSendContent)
     val showInlineAttach = hasText && !hasAttachment && !isUploading
@@ -372,6 +374,8 @@ internal fun ComposerBar(
                                     .testTag("chatMessageInput"),
                             textStyle =
                                 MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = to.iris.chat.ui.theme.LocalMessageFontSize.current.body.sp,
+                                    lineHeight = (to.iris.chat.ui.theme.LocalMessageFontSize.current.body * 1.4f).sp,
                                     color = MaterialTheme.colorScheme.onSurface,
                                 ),
                             cursorBrush = SolidColor(IrisTheme.palette.accent),
@@ -440,7 +444,7 @@ internal fun ComposerBar(
                         Modifier
                             .size(40.dp)
                             .clip(CircleShape)
-                            .background(IrisTheme.palette.accent)
+                            .background(IrisTheme.palette.accent.copy(alpha = if (trailingIsSend && !canSend && !showTrailingProgress) 0.45f else 1f))
                             .clickable(
                                 enabled = if (trailingIsSend) canSend else !isBusy,
                                 interactionSource = sendInteractionSource,

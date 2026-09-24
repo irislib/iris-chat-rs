@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct IrisChatMacApp: App {
     @StateObject private var manager = AppManager()
+    @AppStorage("desktopZoomLevel") private var desktopZoomLevel = 0
     @NSApplicationDelegateAdaptor(IrisChatAppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
     private let startInBackground = CommandLine.arguments.contains(PlatformStartupAtLogin.backgroundLaunchArgument)
@@ -11,6 +12,7 @@ struct IrisChatMacApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(manager: manager)
+                .modifier(IrisDesktopZoom(level: desktopZoomLevel))
                 .frame(minWidth: 980, minHeight: 640)
                 .modifier(MacUserActivityMonitor(manager: manager))
                 .onAppear {
@@ -34,6 +36,7 @@ struct IrisChatMacApp: App {
                     }
                 }
         }
+        .commands { IrisDesktopZoomCommands(level: $desktopZoomLevel) }
         .defaultSize(width: 1280, height: 820)
         .windowResizability(.automatic)
     }

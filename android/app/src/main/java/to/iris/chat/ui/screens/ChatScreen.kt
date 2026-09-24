@@ -662,7 +662,7 @@ fun ChatScreen(
                     }
                 }
 
-                if (!composerBlocked && !isMessageRequest && !capabilityBlocked) {
+                if (!composerBlocked && !isMessageRequest) {
                     replyTarget?.let { reply ->
                         ReplyComposerStrip(
                             message = reply,
@@ -694,85 +694,82 @@ fun ChatScreen(
                             },
                         )
                     }
-                    capabilityBlocked -> {
-                        DirectChatCapabilityBar(
-                            state = directCapability!!,
-                            onRetry = {
-                                appManager.dispatch(AppAction.RetryDirectChatCapability(chat.chatId))
-                            },
-                        )
-                    }
                     else -> {
-                        ComposerBar(
-                            draft = draft,
-                            selectedAttachments = selectedAttachments,
-                            isSending = busy.sendingMessage,
-                            isUploading = busy.uploadingAttachment,
-                            uploadFraction = busy.uploadProgress?.let { progress ->
-                                if (progress.totalBytes > 0u) {
-                                    (progress.bytesUploaded.toDouble() / progress.totalBytes.toDouble())
-                                        .toFloat()
-                                        .coerceIn(0f, 1f)
-                                } else {
-                                    null
-                                }
-                            },
-                            focusRequester = composerFocusRequester,
-                            modifier = Modifier.onGloballyPositioned { coordinates ->
-                                composerBounds = coordinates.boundsInParent()
-                            },
-                            onDraftChange = { value ->
-                                draft = value
-                                if (value.isBlank()) {
+                        DirectChatComposer(chat.chatId, directCapability, {
+                            appManager.dispatch(AppAction.RetryDirectChatCapability(chat.chatId))
+                        }) {
+                            ComposerBar(
+                                draft = draft,
+                                sendAllowed = !capabilityBlocked,
+                                selectedAttachments = selectedAttachments,
+                                isSending = busy.sendingMessage,
+                                isUploading = busy.uploadingAttachment,
+                                uploadFraction = busy.uploadProgress?.let { progress ->
+                                    if (progress.totalBytes > 0u) {
+                                        (progress.bytesUploaded.toDouble() / progress.totalBytes.toDouble())
+                                            .toFloat()
+                                            .coerceIn(0f, 1f)
+                                    } else {
+                                        null
+                                    }
+                                },
+                                focusRequester = composerFocusRequester,
+                                modifier = Modifier.onGloballyPositioned { coordinates ->
+                                    composerBounds = coordinates.boundsInParent()
+                                },
+                                onDraftChange = { value ->
+                                    draft = value
+                                    if (value.isBlank()) {
+                                        if (hasSentTyping) {
+                                            hasSentTyping = false
+                                            lastTypingSentMs = 0L
+                                            appManager.dispatch(AppAction.StopTyping(chatId))
+                                        }
+                                    } else {
+                                        val nowMs = System.currentTimeMillis()
+                                        if (!capabilityBlocked && nowMs - lastTypingSentMs >= 3_000L) {
+                                            lastTypingSentMs = nowMs
+                                            hasSentTyping = true
+                                            appManager.dispatch(AppAction.SendTyping(chatId))
+                                        }
+                                    }
+                                },
+                                onAttach = { attachmentPicker.launch(arrayOf("*/*")) },
+                                onRemoveAttachment = { attachment ->
+                                    selectedAttachments = selectedAttachments - attachment
+                                },
+                                onSend = {
+                                    shouldFollowLatest = true
+                                    forceScrollToLatest = true
+                                    val outgoingDraft = replyEncodedMessage(replyTarget, draft.trim())
+                                    replyTarget = null
+                                    if (selectedAttachments.isEmpty()) {
+                                        appManager.sendText(chatId, outgoingDraft)
+                                    } else {
+                                        appManager.sendAttachments(
+                                            chatId = chatId,
+                                            attachments =
+                                                selectedAttachments.map { attachment ->
+                                                    OutgoingAttachment(
+                                                        filePath = attachment.path,
+                                                        filename = attachment.filename,
+                                                    )
+                                                },
+                                            caption = outgoingDraft,
+                                        )
+                                        selectedAttachments = emptyList()
+                                    }
+                                    draft = ""
+                                    lastPersistedDraft = ""
+                                    appManager.dispatch(AppAction.SetChatDraft(chatId, ""))
                                     if (hasSentTyping) {
                                         hasSentTyping = false
                                         lastTypingSentMs = 0L
                                         appManager.dispatch(AppAction.StopTyping(chatId))
                                     }
-                                } else {
-                                    val nowMs = System.currentTimeMillis()
-                                    if (nowMs - lastTypingSentMs >= 3_000L) {
-                                        lastTypingSentMs = nowMs
-                                        hasSentTyping = true
-                                        appManager.dispatch(AppAction.SendTyping(chatId))
-                                    }
-                                }
-                            },
-                            onAttach = { attachmentPicker.launch(arrayOf("*/*")) },
-                            onRemoveAttachment = { attachment ->
-                                selectedAttachments = selectedAttachments - attachment
-                            },
-                            onSend = {
-                                shouldFollowLatest = true
-                                forceScrollToLatest = true
-                                val outgoingDraft = replyEncodedMessage(replyTarget, draft.trim())
-                                replyTarget = null
-                                if (selectedAttachments.isEmpty()) {
-                                    appManager.sendText(chatId, outgoingDraft)
-                                } else {
-                                    appManager.sendAttachments(
-                                        chatId = chatId,
-                                        attachments =
-                                            selectedAttachments.map { attachment ->
-                                                OutgoingAttachment(
-                                                    filePath = attachment.path,
-                                                    filename = attachment.filename,
-                                                )
-                                            },
-                                        caption = outgoingDraft,
-                                    )
-                                    selectedAttachments = emptyList()
-                                }
-                                draft = ""
-                                lastPersistedDraft = ""
-                                appManager.dispatch(AppAction.SetChatDraft(chatId, ""))
-                                if (hasSentTyping) {
-                                    hasSentTyping = false
-                                    lastTypingSentMs = 0L
-                                    appManager.dispatch(AppAction.StopTyping(chatId))
-                                }
-                            },
-                        )
+                                },
+                            )
+                        }
                     }
                 }
             }

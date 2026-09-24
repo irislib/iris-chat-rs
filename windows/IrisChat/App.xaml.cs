@@ -95,7 +95,7 @@ public partial class App : Application
         );
         ApplyPlatformPalette();
         var startMinimized = IsBackgroundLaunch(e.Args);
-        var window = new MainWindow(startMinimized);
+        var window = new MainWindow(dataDir, startMinimized);
         _window = window;
         MainWindow = window;
         _singleInstance.Start(args => Dispatcher.Invoke(() => HandleLaunchArgs(args)));

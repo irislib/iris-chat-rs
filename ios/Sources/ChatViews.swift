@@ -526,7 +526,7 @@ struct ChatScreen: View {
                                 let capability = chat.kind == .direct ? chat.directChatCapability : nil
                                 let capabilityBlocked = capability != nil && capability != .available
                                 VStack(spacing: 0) {
-                                    if let replyTarget, !composerBlocked, !isRequest, !capabilityBlocked {
+                                    if let replyTarget, !composerBlocked, !isRequest {
                                         IrisReplyComposerStrip(message: replyTarget) {
                                             self.replyTarget = nil
                                         }
@@ -559,10 +559,6 @@ struct ChatScreen: View {
                                                 )
                                             }
                                         )
-                                    } else if let capability, capability != .available {
-                                        IrisDirectChatCapabilityBar(state: capability) {
-                                            manager.dispatch(.retryDirectChatCapability(chatId: chat.chatId))
-                                        }
                                     } else {
                                         IrisComposerBar(
                                             composerState: composerState,
@@ -573,7 +569,7 @@ struct ChatScreen: View {
                                             uploadFraction: uploadFraction(manager.state.busy.uploadProgress),
                                             isFocused: $isComposerFocused,
                                             onUserEdit: { text in
-                                                sendTypingIfNeeded(text: text)
+                                                if !capabilityBlocked { sendTypingIfNeeded(text: text) }
                                             },
                                             onDraftChange: {
                                                 composerState.scheduleSave { text in
@@ -589,7 +585,7 @@ struct ChatScreen: View {
                                                     manager.showAttachmentOpenError()
                                                 }
                                             },
-                                            voiceRecordingAllowed: manager.state.call == nil || manager.state.call?.phase == "ended",
+                                            voiceRecordingAllowed: !capabilityBlocked && (manager.state.call == nil || manager.state.call?.phase == "ended"),
                                             onStageVoice: { try await manager.stageOutgoingAttachmentsAsync([$0]) },
                                             onSendVoice: { voice in
                                                 guard !manager.state.busy.sendingMessage,
@@ -603,7 +599,8 @@ struct ChatScreen: View {
                                                 replyTarget = nil
                                                 manager.sendAttachments(chatId: chatId, attachments: voice, caption: caption)
                                                 return true
-                                            }
+                                            },
+                                            sendAllowed: !capabilityBlocked
                                         ) { composerText in
                                             let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
                                             guard !text.isEmpty || !selectedAttachments.isEmpty else { return }
@@ -623,6 +620,13 @@ struct ChatScreen: View {
                                                 selectedAttachments = []
                                                 manager.sendAttachments(chatId: chatId, attachments: attachments, caption: outgoingText)
                                             }
+                                        }
+                                        .overlay(alignment: .top) {
+                                            IrisDelayedCapabilityStatus(state: capability) {
+                                                manager.dispatch(.retryDirectChatCapability(chatId: chat.chatId))
+                                            }
+                                            .id(chat.chatId)
+                                            .alignmentGuide(.top) { $0[.bottom] }
                                         }
                                     }
                                 }

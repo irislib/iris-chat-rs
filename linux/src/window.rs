@@ -37,6 +37,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
         .title("Iris Chat")
         .build();
     window.add_css_class("iris-root");
+    crate::widgets::text_size::install(&window, manager.app_data_dir());
 
     let header = adw::HeaderBar::new();
     let title_label = gtk::Label::new(None);

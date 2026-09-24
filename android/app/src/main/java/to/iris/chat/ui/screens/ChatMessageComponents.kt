@@ -402,7 +402,8 @@ internal fun MessageBubble(
                             ReplyPreview(reply = reply, isOutgoing = message.isOutgoing, onTap = onScrollToQuote)
                         }
                         if (parsed.body.isNotBlank()) {
-                            val bodyStyle = MaterialTheme.typography.bodyLarge
+                            val messageSize = to.iris.chat.ui.theme.LocalMessageFontSize.current.body.sp
+                            val bodyStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = messageSize, lineHeight = messageSize * 1.4f)
                             TruncatableMessageBody(
                                 text = parsed.body,
                                 style =
@@ -1025,7 +1026,10 @@ private fun ReplyPreview(
                 )
                 Text(
                     text = reply.body,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = to.iris.chat.ui.theme.LocalMessageFontSize.current.quote.sp,
+                        lineHeight = (to.iris.chat.ui.theme.LocalMessageFontSize.current.quote * 1.4f).sp,
+                    ),
                     maxLines = collapsedLineLimit,
                     overflow = TextOverflow.Ellipsis,
                 )

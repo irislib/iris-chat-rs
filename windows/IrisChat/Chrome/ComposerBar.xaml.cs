@@ -26,6 +26,12 @@ public partial class ComposerBar : UserControl
         StagedAttachmentsList.ItemsSource = _staged;
     }
 
+    public bool SendAllowed
+    {
+        get => SendButton.IsEnabled;
+        set => SendButton.IsEnabled = value;
+    }
+
     public void Clear()
     {
         Input.Clear();
@@ -132,6 +138,7 @@ public partial class ComposerBar : UserControl
 
     private void Submit()
     {
+        if (!SendAllowed) return;
         var text = Input.Text?.Trim() ?? string.Empty;
         var paths = StagedFilePaths;
         if (string.IsNullOrEmpty(text) && paths.Count == 0) return;

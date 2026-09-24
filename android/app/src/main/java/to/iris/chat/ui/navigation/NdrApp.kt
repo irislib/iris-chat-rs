@@ -130,6 +130,7 @@ fun NdrApp(
     val bootstrapState by splashViewModel.bootstrapState.collectAsStateWithLifecycle()
     val router by appManager.router.collectAsStateWithLifecycle()
     val preferences by appManager.preferences.collectAsStateWithLifecycle()
+    val messageFontSize by appManager.messageFontSize.size.collectAsStateWithLifecycle()
     val networkStatus by appManager.networkStatus.collectAsStateWithLifecycle()
     val toast by appManager.toast.collectAsStateWithLifecycle()
     val foregroundedAtSecs by appManager.foregroundedAtSecs.collectAsStateWithLifecycle()
@@ -196,6 +197,7 @@ fun NdrApp(
     CompositionLocalProvider(
         LocalIrisOfflineBannerState provides offlineBannerState,
         LocalImagePreferences provides preferences,
+        to.iris.chat.ui.theme.LocalMessageFontSize provides messageFontSize,
     ) {
         Box(
             modifier =

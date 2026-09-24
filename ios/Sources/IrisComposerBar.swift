@@ -44,6 +44,7 @@ struct IrisComposerBar: View {
     let voiceRecordingAllowed: Bool
     let onStageVoice: (URL) async throws -> [StagedAttachment]
     let onSendVoice: ([StagedAttachment]) -> Bool
+    var sendAllowed = true
     let onSend: (String) -> Void
 
     private var draft: String { composerState.text }
@@ -52,7 +53,7 @@ struct IrisComposerBar: View {
         (
             !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
             !attachments.isEmpty
-        ) && !isSending && !isUploading && !isPreparingPhotos && !voiceActive
+        ) && sendAllowed && !isSending && !isUploading && !isPreparingPhotos && !voiceActive
     }
 
     private var canSend: Bool { canSend(text: draft) && !voiceActive }
@@ -231,7 +232,7 @@ struct IrisComposerBar: View {
             HStack(alignment: .bottom, spacing: 8) {
                 if voiceActive { IrisVoiceRecordingStatus(recorder: voiceRecorder) }
                 else { textControls }
-                if voiceActive || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty && voiceRecordingAllowed) {
+                if voiceActive || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty) {
                     IrisVoiceRecordButton(
                         recorder: voiceRecorder,
                         enabled: voiceRecordingAllowed && !isSending && !isUploading && !isPreparingPhotos,
@@ -272,7 +273,7 @@ struct IrisComposerBar: View {
 
     @ViewBuilder
     private var sendControl: some View {
-        if !IrisLayout.usesDesktopChrome && (canSend || isSending) {
+        if !IrisLayout.usesDesktopChrome && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty || isSending) {
             Button(action: submitDraft) {
                 IrisSendButtonLabel(isSending: isSending)
                     .frame(width: 40, height: 40)
@@ -280,6 +281,7 @@ struct IrisComposerBar: View {
             }
             .buttonStyle(.irisPlain)
             .disabled(!canSend)
+            .opacity(canSend || isSending ? 1 : 0.45)
             .accessibilityIdentifier("chatSendButton")
             .transition(.scale(scale: 0.4).combined(with: .opacity))
         }

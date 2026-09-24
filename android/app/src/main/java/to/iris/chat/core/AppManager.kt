@@ -303,6 +303,7 @@ class AppManager(
             ?: PreferenceDataStoreFactory.create(
                 produceFile = { appContext.preferencesDataStoreFile(dataStoreName) },
             )
+    val messageFontSize = to.iris.chat.ui.theme.MessageFontSizePreference(this.dataStore, applicationScope)
     private val mobilePushRuntime = AndroidMobilePushRuntime(this.dataStore)
     private val readNotificationCleanup = to.iris.chat.push.ReadNotificationCleanup(applicationScope, ioDispatcher)
     private val selfUpdateManager =

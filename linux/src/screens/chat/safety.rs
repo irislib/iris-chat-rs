@@ -98,7 +98,7 @@ pub(super) fn capability_bar(
         row.append(&spinner);
     }
     let message = match state {
-        DirectChatCapabilityState::Checking => "Checking whether this person can receive messages…",
+        DirectChatCapabilityState::Checking => "Checking messaging…",
         DirectChatCapabilityState::Unavailable => "This person can’t receive Iris messages yet.",
         DirectChatCapabilityState::CheckFailed => "Couldn’t check messaging availability.",
         DirectChatCapabilityState::Available => "",
@@ -470,4 +470,25 @@ fn percent_encode(value: &str) -> String {
         }
     }
     output
+}
+
+pub(super) fn delayed_capability_bar(
+    chat: &CurrentChatSnapshot,
+    manager: &Rc<AppManager>,
+) -> Option<gtk::Widget> {
+    let state = chat
+        .direct_chat_capability
+        .as_ref()
+        .filter(|state| !matches!(state, DirectChatCapabilityState::Available))?;
+    let bar = capability_bar(chat, state, manager);
+    if matches!(state, DirectChatCapabilityState::Checking) {
+        bar.set_visible(false);
+        let weak = bar.downgrade();
+        gtk::glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
+            if let Some(bar) = weak.upgrade() {
+                bar.set_visible(true);
+            }
+        });
+    }
+    Some(bar)
 }

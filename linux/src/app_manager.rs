@@ -325,6 +325,10 @@ impl AppManager {
             .unwrap_or_default()
     }
 
+    pub fn app_data_dir(&self) -> &std::path::Path {
+        &self.data_dir
+    }
+
     pub fn current_state(&self) -> AppState {
         self.local_state.borrow().clone()
     }

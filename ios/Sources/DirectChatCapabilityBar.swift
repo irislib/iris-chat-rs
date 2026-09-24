@@ -36,13 +36,37 @@ struct IrisDirectChatCapabilityBar: View {
     private var message: String {
         switch state {
         case .checking:
-            return "Checking whether this person can receive messages…"
+            return "Checking messaging…"
         case .unavailable:
             return "This person can’t receive Iris messages yet."
         case .checkFailed:
             return "Couldn’t check messaging availability."
         case .available:
             return ""
+        }
+    }
+}
+
+// An overlay leaves the input and keyboard in place throughout the check.
+struct IrisDelayedCapabilityStatus: View {
+    let state: DirectChatCapabilityState?
+    let onRetry: () -> Void
+    @State private var showsChecking = false
+
+    var body: some View {
+        ZStack {
+            Color.clear.frame(height: 0)
+            if let state, state != .available, state != .checking || showsChecking {
+                IrisDirectChatCapabilityBar(state: state, onRetry: onRetry)
+                    .allowsHitTesting(state != .checking)
+            }
+        }
+        .task(id: state) {
+            showsChecking = false
+            guard state == .checking else { return }
+            do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { return }
+            guard !Task.isCancelled else { return }
+            showsChecking = true
         }
     }
 }

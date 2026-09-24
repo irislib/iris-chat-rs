@@ -174,32 +174,33 @@
                 </Grid>
             </StackPanel>
 
-            <Border x:Name="DirectCapabilityPanel"
-                    Visibility="Collapsed"
-                    Background="{StaticResource Toolbar}"
-                    Padding="14,12">
-                <DockPanel LastChildFill="True">
-                    <Button x:Name="DirectCapabilityRetryButton"
-                            DockPanel.Dock="Right"
-                            Style="{StaticResource GhostButton}"
-                            Click="OnDirectCapabilityRetry"
-                            Margin="10,0,0,0">
-                        <TextBlock Text="Check again" />
-                    </Button>
-                    <ProgressBar x:Name="DirectCapabilityProgress"
-                                 DockPanel.Dock="Left"
-                                 Width="22"
-                                 Height="4"
-                                 IsIndeterminate="True"
-                                 Margin="0,0,10,0" />
-                    <TextBlock x:Name="DirectCapabilityText"
-                               Foreground="{StaticResource TextPrimary}"
-                               VerticalAlignment="Center"
-                               TextWrapping="Wrap" />
-                </DockPanel>
-            </Border>
-
             <chrome:ComposerBar x:Name="Composer" />
         </Grid>
+
+        <Border x:Name="DirectCapabilityPanel" Grid.Row="1" Grid.RowSpan="2"
+                VerticalAlignment="Bottom" Panel.ZIndex="1"
+                Visibility="Collapsed"
+                Background="{StaticResource Toolbar}"
+                Padding="14,12">
+            <DockPanel LastChildFill="True">
+                <Button x:Name="DirectCapabilityRetryButton"
+                        DockPanel.Dock="Right"
+                        Style="{StaticResource GhostButton}"
+                        Click="OnDirectCapabilityRetry"
+                        Margin="10,0,0,0">
+                    <TextBlock Text="Check again" />
+                </Button>
+                <ProgressBar x:Name="DirectCapabilityProgress"
+                             DockPanel.Dock="Left"
+                             Width="22"
+                             Height="4"
+                             IsIndeterminate="True"
+                             Margin="0,0,10,0" />
+                <TextBlock x:Name="DirectCapabilityText"
+                           Foreground="{StaticResource TextPrimary}"
+                           VerticalAlignment="Center"
+                           TextWrapping="Wrap" />
+            </DockPanel>
+        </Border>
     </Grid>
 </UserControl>

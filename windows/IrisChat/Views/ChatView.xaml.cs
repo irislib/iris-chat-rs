@@ -19,12 +19,15 @@ public partial class ChatView : UserControl
 
     public string? ChatId { get; set; }
 
+    private DateTime? _checkingSince;
+    private readonly System.Windows.Threading.DispatcherTimer _capabilityTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private string? _focusedChatId;
     private string? _renderedMessageSignature;
 
     public ChatView()
     {
         InitializeComponent();
+        _capabilityTimer.Tick += (_, _) => { _capabilityTimer.Stop(); Refresh(); };
         PreviewKeyDown += OnUserActivity;
         PreviewMouseDown += OnUserActivity;
         PreviewMouseMove += OnUserActivity;
@@ -41,6 +44,9 @@ public partial class ChatView : UserControl
         };
         Unloaded += (_, _) =>
         {
+            _capabilityTimer.Stop();
+            _checkingSince = null;
+            DirectCapabilityPanel.Visibility = Visibility.Collapsed;
             App.CurrentManager.PropertyChanged -= OnChanged;
             Composer.Submitted -= OnSubmit;
             Composer.AttachRequested -= OnAttach;
@@ -68,9 +74,11 @@ public partial class ChatView : UserControl
         var capabilityBlocked = directCapability != null && directCapability != DirectChatCapabilityState.Available;
         if (chatChanged)
         {
+            _checkingSince = null;
+            _capabilityTimer.Stop();
             _focusedChatId = chat.chatId;
             _renderedMessageSignature = null;
-            if (!userBlocked && !messageRequest && !capabilityBlocked)
+            if (!userBlocked && !messageRequest)
             {
                 Dispatcher.BeginInvoke(new Action(() => Composer.FocusInput()));
             }
@@ -111,6 +119,16 @@ public partial class ChatView : UserControl
         MessageRequestPanel.Visibility = messageRequest ? Visibility.Visible : Visibility.Collapsed;
         MessageRequestText.Text = $"Message request from {chat.displayName}";
         var showCapability = !userBlocked && !messageRequest && capabilityBlocked;
+        if (showCapability && directCapability == DirectChatCapabilityState.Checking)
+        {
+            if (_checkingSince == null)
+            {
+                _checkingSince = DateTime.UtcNow;
+                _capabilityTimer.Start();
+            }
+            showCapability = DateTime.UtcNow - _checkingSince.Value >= TimeSpan.FromSeconds(2);
+        }
+        else { _checkingSince = null; _capabilityTimer.Stop(); }
         DirectCapabilityPanel.Visibility = showCapability ? Visibility.Visible : Visibility.Collapsed;
         DirectCapabilityProgress.Visibility = directCapability == DirectChatCapabilityState.Checking
             ? Visibility.Visible
@@ -120,12 +138,13 @@ public partial class ChatView : UserControl
             : Visibility.Visible;
         DirectCapabilityText.Text = directCapability switch
         {
-            DirectChatCapabilityState.Checking => "Checking whether this person can receive messages…",
+            DirectChatCapabilityState.Checking => "Checking messaging…",
             DirectChatCapabilityState.Unavailable => "This person can’t receive Iris messages yet.",
             DirectChatCapabilityState.CheckFailed => "Couldn’t check messaging availability.",
             _ => string.Empty,
         };
-        Composer.Visibility = userBlocked || messageRequest || capabilityBlocked
+        Composer.SendAllowed = !capabilityBlocked;
+        Composer.Visibility = userBlocked || messageRequest
             ? Visibility.Collapsed
             : Visibility.Visible;
 

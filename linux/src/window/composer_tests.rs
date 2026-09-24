@@ -32,6 +32,22 @@ fn text_view(widget: &gtk::Widget) -> Option<gtk::TextView> {
     None
 }
 
+fn find_label(widget: &gtk::Widget, text: &str) -> Option<gtk::Label> {
+    if let Ok(label) = widget.clone().downcast::<gtk::Label>() {
+        if label.text() == text {
+            return Some(label);
+        }
+    }
+    let mut child = widget.first_child();
+    while let Some(widget) = child {
+        if let Some(label) = find_label(&widget, text) {
+            return Some(label);
+        }
+        child = widget.next_sibling();
+    }
+    None
+}
+
 fn header() -> HeaderWidgets {
     let title = gtk::Label::new(None);
     let title_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -150,6 +166,65 @@ pub fn run() {
     state.busy.uploading_attachment = false;
     apply_state(&slot, &header, &manager, &state);
     assert!(input.has_focus());
+
+    // Capability checks never replace or resize the live composer.
+    let capability_start = Instant::now();
+    state.current_chat.as_mut().unwrap().direct_chat_capability =
+        Some(iris_chat_core::DirectChatCapabilityState::Checking);
+    apply_state(&slot, &header, &manager, &state);
+    let checking = find_label(slot.root.upcast_ref(), "Checking messaging…")
+        .unwrap()
+        .parent()
+        .unwrap();
+    assert!(!checking.is_visible(), "short checks must stay silent");
+    assert_eq!(text_view(slot.root.upcast_ref()).unwrap(), input);
+    let before = input.compute_bounds(&slot.root).unwrap();
+    pump_until(|| checking.is_visible());
+    assert!(capability_start.elapsed() >= Duration::from_secs(2));
+    assert_eq!(input.compute_bounds(&slot.root).unwrap(), before);
+    assert!(input.has_focus());
+    state.current_chat.as_mut().unwrap().direct_chat_capability =
+        Some(iris_chat_core::DirectChatCapabilityState::Available);
+    apply_state(&slot, &header, &manager, &state);
+    assert!(checking.parent().is_none());
+    assert_eq!(text_view(slot.root.upcast_ref()).unwrap(), input);
+    assert_eq!(input.compute_bounds(&slot.root).unwrap(), before);
+    assert!(input.has_focus());
+
+    window.add_css_class("iris-root");
+    crate::widgets::text_size::install(&window, data.path());
+    let normal_font = input.pango_context().font_description().unwrap().size();
+    let keys = window
+        .observe_controllers()
+        .iter::<glib::Object>()
+        .filter_map(Result::ok)
+        .find_map(|controller| controller.downcast::<gtk::EventControllerKey>().ok())
+        .unwrap();
+    let handled: bool = keys.emit_by_name(
+        "key-pressed",
+        &[
+            &gtk::gdk::Key::plus,
+            &0u32,
+            &gtk::gdk::ModifierType::CONTROL_MASK,
+        ],
+    );
+    assert!(handled);
+    pump_until(|| input.pango_context().font_description().unwrap().size() > normal_font);
+    pump_until(|| {
+        std::fs::read_to_string(data.path().join("desktop-zoom.txt"))
+            .ok()
+            .as_deref()
+            == Some("1")
+    });
+    let _: bool = keys.emit_by_name(
+        "key-pressed",
+        &[
+            &gtk::gdk::Key::_0,
+            &0u32,
+            &gtk::gdk::ModifierType::CONTROL_MASK,
+        ],
+    );
+    pump_until(|| input.pango_context().font_description().unwrap().size() == normal_font);
 
     // Leaving and reopening the same chat should restore the saved draft and
     // focus the new editor once, without the old per-chat focus suppression.

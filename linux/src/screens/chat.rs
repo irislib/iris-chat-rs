@@ -7,7 +7,7 @@ use gtk::glib;
 use iris_chat_core::{
     image_load_urls, peer_input_to_npub, AppAction, AppState, ChatKind, ChatMessageKind,
     ChatMessageSnapshot, ChatThreadSnapshot, CurrentChatSnapshot, DeliveryState,
-    DirectChatCapabilityState, MessageAttachmentSnapshot, MessageReactionSnapshot, MessageReactor,
+    MessageAttachmentSnapshot, MessageReactionSnapshot, MessageReactor,
     MessageRecipientDeliverySnapshot, PreferencesSnapshot,
 };
 
@@ -23,8 +23,8 @@ pub use view::ChatView;
 
 use chat_links::{install_link_actions, linkified_text};
 use safety::{
-    blocked_bar, capability_bar, is_user_blocked, message_request_bar, present_block_user_dialog,
-    present_report_user_dialog,
+    blocked_bar, delayed_capability_bar, is_user_blocked, message_request_bar,
+    present_block_user_dialog, present_report_user_dialog,
 };
 
 #[derive(Clone)]
