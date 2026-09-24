@@ -80,7 +80,7 @@ impl VoiceProcessing {
     }
     pub(super) fn capture(&mut self, samples: &[f32]) -> Result<Vec<i16>, String> {
         let mut out = Vec::with_capacity(samples.len());
-        for input in samples.chunks_exact(480) {
+        for input in samples.as_chunks::<480>().0 {
             let mut processed = [0.0; 480];
             self.processor
                 .process_capture_f32(&[input], &mut [&mut processed])
