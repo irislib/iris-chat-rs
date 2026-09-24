@@ -12,10 +12,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.net.InetSocketAddress
+import java.net.InetAddress
 import java.net.Socket
 import java.net.URI
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -31,7 +33,7 @@ import to.iris.chat.rust.AppReconciler
 import to.iris.chat.rust.AppUpdate
 import to.iris.chat.rust.FfiApp
 
-/** Real native codecs and a FIPS echo peer, with a fresh account and both ends denied WAN. */
+/** Real native codecs and a FIPS echo peer, using a fresh isolated account. */
 @RunWith(AndroidJUnit4::class)
 class NativeCallFipsE2eTest {
     @get:Rule val compose = createComposeRule()
@@ -44,24 +46,31 @@ class NativeCallFipsE2eTest {
         val invite = args.getString("call_invite")
         val peer = args.getString("call_peer_owner")
         val voiceOnly = args.getString("call_answer_voice") == "1"
+        val lan = args.getString("call_lan") == "1"
         assumeTrue("Run with the local native call fixture", listOf(relay, seed, invite, peer).all { !it.isNullOrBlank() })
         check(instrumentation is NativeCallTestRunner)
-        listOf(relay!!, seed!!).forEach { check(URI(it).let { url -> url.scheme == "ws" && url.host == "127.0.0.1" }) }
+        listOf(relay!!, seed!!).forEach { check(URI(it).let { url ->
+            url.scheme == "ws" && if (lan) InetAddress.getByName(url.host).isSiteLocalAddress else url.host == "127.0.0.1"
+        }) }
         val context = instrumentation.targetContext
+        if (lan) listOf(relay, seed).forEach { endpoint ->
+            val url = URI(endpoint)
+            Socket().use { it.connect(InetSocketAddress(url.host, url.port), 2000) }
+        }
         listOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA).forEach {
             instrumentation.uiAutomation.grantRuntimePermission(context.packageName, it)
         }
         val screen = mutableStateOf<@Composable () -> Unit>({ Text("Local voice and video call test") })
         compose.setContent { screen.value() }
         compose.waitForIdle()
-        assertTrue("Test app must be denied Internet access", runCatching {
+        if (!lan) assertTrue("Test app must be denied Internet access", runCatching {
             Socket().use { it.connect(InetSocketAddress("1.1.1.1", 443), 600) }
         }.isFailure)
         val directory = File(context.cacheDir, "native-call-e2e-${UUID.randomUUID()}").apply { mkdirs() }
         val remoteEnded = File(directory, "remote-ended")
         status("nativeCallControlPath", remoteEnded.absolutePath)
         val environment = mapOf("IRIS_DEMO_RELAYS" to relay, "IRIS_FIPS_WEBSOCKET_SEED_URLS" to seed,
-            "IRIS_CHAT_FIPS_WEBSOCKET_BIND_ADDR" to "", "IRIS_CHAT_FIPS_UDP_BIND_ADDR" to "127.0.0.1:0")
+            "IRIS_CHAT_FIPS_WEBSOCKET_BIND_ADDR" to "", "IRIS_CHAT_FIPS_UDP_BIND_ADDR" to if (lan) "0.0.0.0:0" else "127.0.0.1:0")
         val previous = environment.mapValues { Os.getenv(it.key) }
         environment.forEach { (key, value) -> Os.setenv(key, value, true) }
         var app: FfiApp? = null
@@ -75,6 +84,9 @@ class NativeCallFipsE2eTest {
         val decoded = AtomicInteger(); val pixels = AtomicInteger(); val width = AtomicInteger(); val height = AtomicInteger()
         val failed = AtomicReference<String?>(null); val callId = AtomicReference<String?>(null)
         val hashes = ConcurrentHashMap.newKeySet<String>()
+        val sentAt = ConcurrentHashMap<ULong, Long>()
+        val roundTrips = Collections.synchronizedList(mutableListOf<Long>())
+        val encodedBytes = java.util.concurrent.atomic.AtomicLong()
         try {
             val ffi = FfiApp(directory.absolutePath, "", "native-call-e2e").also { app = it }
             ffi.listenForUpdates(object : AppReconciler {
@@ -101,7 +113,7 @@ class NativeCallFipsE2eTest {
             }
             status("nativeCallPhase", "contact_ready")
             await("message server stopped", 15_000) {
-                runCatching { Socket().use { it.connect(InetSocketAddress("127.0.0.1", URI(relay).port), 250) } }.isFailure
+                runCatching { Socket().use { it.connect(InetSocketAddress(URI(relay).host, URI(relay).port), 250) } }.isFailure
             }
             ffi.dispatch(AppAction.StartCall(peer, true))
             if (voiceOnly) ffi.dispatch(AppAction.SetCallMuted(true))
@@ -125,10 +137,16 @@ class NativeCallFipsE2eTest {
             if (!voiceOnly) {
                 video = CallVideoMedia(context, send = { bytes, timestamp, key ->
                     hashes.add(hash(bytes)); videoSent.incrementAndGet()
+                    encodedBytes.addAndGet(bytes.size.toLong())
+                    sentAt[timestamp] = SystemClock.elapsedRealtimeNanos()
+                    if (sentAt.size > 1000) sentAt.keys.removeIf { it < timestamp - 30_000_000uL }
                     ffi.dispatch(AppAction.SendCallMedia(connected.callId, 2u, timestamp, key, bytes))
                 }, requestKey = { ffi.dispatch(AppAction.RequestCallKeyFrame(connected.callId)) },
                     cameraFailed = { failed.set("Native camera failed") }, decoded = { decoded.incrementAndGet() })
                 video!!.remoteVideo.add { frame ->
+                    sentAt.remove((frame.timestampNs / 1000).toULong())?.let {
+                        roundTrips.add((SystemClock.elapsedRealtimeNanos() - it) / 1_000_000)
+                    }
                     val count = frame.rotatedWidth * frame.rotatedHeight
                     pixels.accumulateAndGet(count, ::maxOf); width.set(frame.rotatedWidth); height.set(frame.rotatedHeight)
                 }
@@ -158,11 +176,28 @@ class NativeCallFipsE2eTest {
             }
             if (!voiceOnly) {
                 assertTrue("Video exceeds the old preview limit", pixels.get() > 320 * 240)
-                ffi.dispatch(AppAction.SetCallQuality("custom", 350_000u))
+                ffi.dispatch(AppAction.SetCallQuality("custom", 150_000u))
                 await("lower bandwidth video still decodes") {
                     sync()
-                    ffi.state().call?.maxBitrateBps == 350_000u && width.get() * height.get() <= 640 * 480
+                    ffi.state().call?.maxBitrateBps == 150_000u && width.get() * height.get() <= 320 * 240
                 }
+                // Measure steady state after the resolution transition and initial keyframe.
+                val warmup = SystemClock.elapsedRealtime() + 1500
+                while (SystemClock.elapsedRealtime() < warmup) { sync(); SystemClock.sleep(40) }
+                roundTrips.clear()
+                val start = SystemClock.elapsedRealtime()
+                val bytesBefore = encodedBytes.get(); val framesBefore = decoded.get()
+                while (SystemClock.elapsedRealtime() - start < 5000) { sync(); SystemClock.sleep(40) }
+                val seconds = (SystemClock.elapsedRealtime() - start) / 1000.0
+                val bps = (encodedBytes.get() - bytesBefore) * 8 / seconds
+                val fps = (decoded.get() - framesBefore) / seconds
+                val timings = synchronized(roundTrips) { roundTrips.sorted() }
+                assertTrue("Echoed frames must retain usable presentation timestamps", timings.size >= 20)
+                val p95 = timings[(timings.size * 0.95).toInt().coerceAtMost(timings.lastIndex)]
+                status("nativeLanBenchmark", "target=150000,actual_bps=$bps,decoded_fps=$fps,encoded_to_echo_decoded_p95_ms=$p95")
+                assertTrue("Low bitrate stays within budget: $bps", bps <= 200_000)
+                assertTrue("Low bandwidth sustains useful video: $fps fps", decoded.get() - framesBefore + 1 >= seconds * 8)
+                assertTrue("Video does not build a lagging queue: $p95 ms", p95 < 500)
                 ffi.dispatch(AppAction.SetCallQuality("auto", 350_000u))
                 await("higher quality video returns", 30_000) { sync(); width.get() * height.get() > 640 * 480 }
             }

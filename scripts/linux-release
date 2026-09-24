@@ -170,6 +170,8 @@ echo "Installed iris-chat to \$PREFIX/bin/iris-chat"
 INSTALL
     chmod +x "$BUNDLE/install.sh"
 
+    cp ../DESKTOP_MEDIA_LICENSES.txt "$BUNDLE/DESKTOP_MEDIA_LICENSES.txt"
+
     cat > "$BUNDLE/README.txt" <<README
 Iris Chat ${IRIS_APP_VERSION_NAME} (Linux x86_64)
 ============================================
@@ -182,7 +184,7 @@ Manual install:
   cp iris-chat /usr/local/bin/
 
 Runtime dependencies (Debian/Ubuntu): libgtk-4-1, libadwaita-1-0,
-libsecret-1-0, libsoup-3.0-0, libv4l-0.
+libsecret-1-0, libsoup-3.0-0, libv4l-0, libasound2t64.
 README
 
     tar -czf "$OUT/${ARTIFACT_BASENAME}.tar.gz" -C "$STAGE" iris-chat

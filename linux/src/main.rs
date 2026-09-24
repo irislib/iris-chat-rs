@@ -1,4 +1,5 @@
 mod app_manager;
+mod calls;
 mod platform;
 mod screens;
 mod secure_storage;

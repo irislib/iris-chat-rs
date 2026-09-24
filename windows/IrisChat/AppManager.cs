@@ -82,6 +82,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
         var version = typeof(AppManager).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
         _ffi = new FfiApp(dataDir, "", version);
         _state = SafeState();
+        Calls = new CallController(this);
         _lastRevApplied = _state.rev;
         _nearby = CreateNearbySafely();
         _nearbySnapshot = SafeNearbySnapshot();
@@ -99,6 +100,8 @@ public sealed partial class AppManager : INotifyPropertyChanged
     // ────────────────────────────── projection ────────────────────────────────
 
     public AppState State => _state;
+    public CallController Calls { get; }
+    internal void DispatchCall(AppAction action) => DispatchToRust(action);
     public bool BootstrapInFlight { get; private set; } = true;
     public string? ToastMessage => _activeToast;
 
@@ -289,6 +292,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
     public void Logout()
     {
+        Calls.Update(null);
         _automaticRevocationLogoutInFlight = true;
         if (!_secretStore.Clear() || !_pendingDeviceLinkSecretStore.Clear())
         {
@@ -303,6 +307,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
     public void Shutdown()
     {
+        Calls.Dispose();
         StopDesktopUpdateChecks();
         try { _ffi.Shutdown(); } catch { }
     }
@@ -789,11 +794,17 @@ public sealed partial class AppManager : INotifyPropertyChanged
                 DispatchToRust(new AppAction.CancelSignerLogin(request.requestId));
                 break;
 
+            case AppUpdate.CallMedia frame:
+                Calls.Receive(frame);
+                break;
             case AppUpdate.FullState f:
                 if (f.v1.rev <= _lastRevApplied) return;
                 var prev = _state;
                 var next = StateByReconcilingPendingNavigation(f.v1);
                 _state = next;
+                Calls.Update(next.account != null ? next.call : null);
+                if (next.call?.phase == "incoming" && (prev.call?.callId != next.call.callId || prev.call.phase != "incoming"))
+                { try { _notifier.Post(next.call.peerName, next.call.videoCapable ? "Incoming video call" : "Incoming voice call"); } catch { } }
                 _lastRevApplied = f.v1.rev;
                 if (next.account?.authorizationState != DeviceAuthorizationState.Revoked)
                 {

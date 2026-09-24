@@ -83,7 +83,9 @@ class NativeCallCodecTest {
             val lowBps = (encodedBytes.get() - lowBytes) * 8 / lowSeconds
             val lowFps = (frames.get() - lowFrames) / lowSeconds
             assertTrue("Encoder must honor live 150 kbps target: $lowBps", lowBps < 230_000)
-            assertTrue("Low bandwidth must keep decoding: $lowFps", lowFps >= 8)
+            // A wall-clock window can end between two frames; allow that one
+            // frame of sampling error without hiding sustained frame loss.
+            assertTrue("Low bandwidth must keep decoding: $lowFps", frames.get() - lowFrames + 1 >= lowSeconds * 8)
             val beforeRecovery = frames.get()
             await("bandwidth recovery restores 720p and sustained decoding") {
                 update(); receivedPixels.get() >= 1280 * 720 && frames.get() >= beforeRecovery + 60

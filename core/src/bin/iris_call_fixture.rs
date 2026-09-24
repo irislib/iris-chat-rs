@@ -71,6 +71,38 @@ fn main() -> Result<()> {
     let mut audio_nonzero = 0u64;
     let audio_codec = CallAudioCodec::new()?;
     let mut audio_playout_at = Instant::now();
+    #[cfg(feature = "desktop-media")]
+    let desktop_video = if std::env::var_os("IRIS_CALL_DESKTOP_CODEC").is_some() {
+        let (send, recv) = flume::bounded::<(String, u32, bool, u64, Vec<u8>, u32, u32)>(8);
+        let (out_send, out_recv) = flume::bounded(16);
+        let mut codec =
+            iris_chat_core::DesktopVideoTranscoder::new().map_err(anyhow::Error::msg)?;
+        std::thread::spawn(move || {
+            let mut active = String::new();
+            while let Ok((id, seq, key, timestamp, data, target, generation)) = recv.recv() {
+                if active != id {
+                    let Ok(fresh) = iris_chat_core::DesktopVideoTranscoder::new() else {
+                        break;
+                    };
+                    codec = fresh;
+                    active = id.clone();
+                }
+                for event in codec.receive(seq, key, data, target, generation) {
+                    if out_send.send((id.clone(), timestamp, event)).is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+        Some((send, out_recv))
+    } else {
+        None
+    };
+    #[cfg(not(feature = "desktop-media"))]
+    if std::env::var_os("IRIS_CALL_DESKTOP_CODEC").is_some() {
+        bail!("Build the call fixture with desktop-media for desktop codec interoperability");
+    }
+
     loop {
         match commands.recv_timeout(Duration::from_millis(10)) {
             Ok(line) => {
@@ -130,6 +162,26 @@ fn main() -> Result<()> {
                 } else if kind == 2 {
                     video += 1;
                 }
+                #[cfg(feature = "desktop-media")]
+                if kind == 2 {
+                    if let (Some((send, _)), Some(call)) = (&desktop_video, app.state().call) {
+                        if send
+                            .try_send((
+                                call_id.clone(),
+                                sequence,
+                                key_frame,
+                                timestamp_us,
+                                data,
+                                call.target_bitrate_bps,
+                                call.key_frame_generation,
+                            ))
+                            .is_err()
+                        {
+                            app.dispatch(AppAction::RequestCallKeyFrame { call_id });
+                        }
+                        continue;
+                    }
+                }
                 app.dispatch(AppAction::SendCallMedia {
                     call_id,
                     kind,
@@ -137,6 +189,29 @@ fn main() -> Result<()> {
                     key_frame,
                     data,
                 });
+            }
+        }
+        #[cfg(feature = "desktop-media")]
+        if let Some((_, recv)) = &desktop_video {
+            for (call_id, timestamp_us, event) in recv.try_iter().take(16) {
+                match event {
+                    iris_chat_core::DesktopCallEvent::Encoded {
+                        kind,
+                        key_frame,
+                        data,
+                        ..
+                    } => app.dispatch(AppAction::SendCallMedia {
+                        call_id,
+                        kind,
+                        timestamp_us,
+                        key_frame,
+                        data,
+                    }),
+                    iris_chat_core::DesktopCallEvent::RequestKeyFrame => {
+                        app.dispatch(AppAction::RequestCallKeyFrame { call_id })
+                    }
+                    _ => {}
+                }
             }
         }
         if audio_playout_at.elapsed() >= Duration::from_millis(20) {

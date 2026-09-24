@@ -537,7 +537,7 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add x86_64-pc-windows-msvc
-          choco install nsis cmake --no-progress -y
+          choco install nsis cmake nasm --no-progress -y
       - name: Cache Cargo
         uses: actions/cache@v6
         with:
@@ -550,6 +550,7 @@ jobs:
       - name: Build and verify Windows artifacts
         run: |
           ./scripts/windows-build-local.ps1 artifacts
+          ./scripts/windows-build-local.ps1 call-tests
           $installer = "dist/windows/iris-chat-v$env:IRIS_APP_VERSION_NAME-windows-x64-setup.exe"
           $zip = "dist/windows/iris-chat-v$env:IRIS_APP_VERSION_NAME-windows-x64.zip"
           if (-not (Test-Path $installer) -or -not (Test-Path $zip)) { throw 'Windows artifacts are missing' }

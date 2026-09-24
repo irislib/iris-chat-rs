@@ -135,6 +135,22 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
         });
     }
     header.pack_end(&chat_search_button);
+    let voice_call_button = gtk::Button::from_icon_name("call-start-symbolic");
+    voice_call_button.set_tooltip_text(Some("Voice call"));
+    let video_call_button = gtk::Button::from_icon_name("camera-video-symbolic");
+    video_call_button.set_tooltip_text(Some("Video call"));
+    for (button, video) in [(&voice_call_button, false), (&video_call_button, true)] {
+        let manager = manager.clone();
+        button.connect_clicked(move |_| {
+            if let Some(chat) = manager.current_state().current_chat {
+                manager.dispatch(AppAction::StartCall {
+                    chat_id: chat.chat_id,
+                    video,
+                });
+            }
+        });
+        header.pack_end(button);
+    }
 
     let chat_info_button = gtk::Button::from_icon_name("dialog-information-symbolic");
     chat_info_button.set_tooltip_text(Some("Chat info"));
@@ -187,6 +203,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
 
     window.set_content(Some(&toolbar));
 
+    let calls = crate::calls::Calls::new(&window, manager.clone());
     let current = Rc::new(RefCell::new(manager.current_state()));
     let last_toast: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
     let header_widgets = HeaderWidgets {
@@ -195,6 +212,8 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
         settings: settings_button.clone(),
         chat_info: chat_info_button.clone(),
         chat_search: chat_search_button.clone(),
+        voice_call: voice_call_button,
+        video_call: video_call_button,
         title: title_label.clone(),
         title_column: title_column.clone(),
         title_status: title_status.clone(),
@@ -219,12 +238,28 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
                 continue;
             };
             match update {
-                AppUpdate::CallMedia { .. } => {}
+                AppUpdate::CallMedia {
+                    call_id,
+                    kind,
+                    sequence,
+                    timestamp_us,
+                    key_frame,
+                    data,
+                } => {
+                    calls
+                        .borrow()
+                        .receive(&call_id, kind, sequence, timestamp_us, key_frame, data)
+                }
                 AppUpdate::FullState(state) => {
                     let mut slot = current_for_updates.borrow_mut();
                     if state.rev >= slot.rev {
                         let prev_chat_list = slot.chat_list.clone();
                         *slot = state;
+                        calls.borrow_mut().sync(if slot.account.is_some() {
+                            slot.call.clone()
+                        } else {
+                            None
+                        });
                         manager_for_updates.sync_nearby_preference(&slot);
                         apply_state(
                             &content_for_updates,
@@ -403,6 +438,8 @@ struct HeaderWidgets {
     settings: gtk::Button,
     chat_info: gtk::Button,
     chat_search: gtk::Button,
+    voice_call: gtk::Button,
+    video_call: gtk::Button,
     title: gtk::Label,
     title_column: gtk::Box,
     title_status: gtk::Box,
@@ -412,6 +449,28 @@ struct HeaderWidgets {
 }
 
 fn apply_state(slot: &Content, header: &HeaderWidgets, manager: &Rc<AppManager>, state: &AppState) {
+    let callable = matches!(current_screen(state), Screen::Chat { .. })
+        && state.current_chat.as_ref().is_some_and(|c| {
+            c.kind == iris_chat_core::ChatKind::Direct
+                && !c.is_request
+                && !state.preferences.blocked_owner_pubkeys.contains(&c.chat_id)
+                && c.direct_chat_capability.as_ref().is_none_or(|capability| {
+                    *capability == iris_chat_core::DirectChatCapabilityState::Available
+                })
+        });
+    header
+        .voice_call
+        .set_visible(callable && state.preferences.voice_calls_enabled);
+    header
+        .video_call
+        .set_visible(callable && state.preferences.video_calls_enabled);
+    header
+        .voice_call
+        .set_sensitive(state.call.as_ref().is_none_or(|c| c.phase == "ended"));
+    header
+        .video_call
+        .set_sensitive(state.call.as_ref().is_none_or(|c| c.phase == "ended"));
+
     if manager.bootstrap_in_flight() {
         header.back.set_visible(false);
         header.new_chat.set_visible(false);

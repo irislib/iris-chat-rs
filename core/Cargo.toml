@@ -38,9 +38,16 @@ required-features = ["stack-fixture"]
 [features]
 local-relay-bin = []
 stack-fixture = []
+desktop-media = ["dep:cpal", "dep:nokhwa", "dep:openh264", "dep:image", "dep:sonora", "dep:openh264-sys2"]
 
 [dependencies]
 anyhow = "1"
+sonora = { version = "=0.2.0", optional = true }
+cpal = { version = "=0.16.0", optional = true }
+nokhwa = { version = "=0.10.11", default-features = false, features = ["input-native"], optional = true }
+openh264-sys2 = { version = "=0.9.8", optional = true }
+openh264 = { version = "=0.9.8", optional = true }
+image = { version = "0.25", default-features = false, optional = true }
 async-trait = "0.1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }

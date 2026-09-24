@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('doctor', 'rust', 'bindings', 'dotnet', 'build', 'installer', 'zip', 'artifacts', 'run')]
+    [ValidateSet('doctor', 'rust', 'bindings', 'dotnet', 'build', 'installer', 'zip', 'artifacts', 'run', 'call-tests')]
     [string] $Command = 'artifacts'
 )
 
@@ -52,6 +52,7 @@ function Add-ToolPaths {
         (Join-Path $env:USERPROFILE '.dotnet\tools'),
         'C:\Program Files\LLVM\bin',
         'C:\Program Files\CMake\bin',
+        'C:\Program Files\NASM',
         'C:\Program Files (x86)\NSIS',
         'C:\Program Files\NSIS'
     )
@@ -109,9 +110,9 @@ function Build-Rust {
     Push-Location $Core
     try {
         if ($RustProfile -eq 'release') {
-            Invoke-Checked { cargo build --locked --target $Target --release } 'cargo build'
+            Invoke-Checked { cargo build --locked --features desktop-media --target $Target --release } 'cargo build'
         } else {
-            Invoke-Checked { cargo build --locked --target $Target } 'cargo build'
+            Invoke-Checked { cargo build --locked --features desktop-media --target $Target } 'cargo build'
         }
     } finally {
         Pop-Location
@@ -231,6 +232,14 @@ switch ($Command) {
     'rust' { Build-Rust }
     'bindings' { Build-Bindings }
     'dotnet' { Build-Dotnet }
+    'call-tests' {
+        Import-VisualStudioEnvironment
+        Add-ToolPaths
+        Push-Location $Core
+        try { Invoke-Checked { cargo test --locked --release --features desktop-media --lib desktop_call -- --nocapture } 'desktop media tests' }
+        finally { Pop-Location }
+        Invoke-Checked { dotnet run --project (Join-Path $Root 'windows\CallTests\CallTests.csproj') -c Release -- (Join-Path $Root 'work\call-ui') } 'Windows call UI tests'
+    }
     'build' { Build-All }
     'installer' { Build-Installer }
     'zip' { Build-Zip }

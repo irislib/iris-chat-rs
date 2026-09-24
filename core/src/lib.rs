@@ -1,6 +1,8 @@
 mod actions;
 mod call_audio;
+mod desktop_call;
 pub use call_audio::{CallAudioCodec, CallAudioError};
+pub use desktop_call::*;
 mod core;
 mod desktop_nearby;
 mod desktop_update;

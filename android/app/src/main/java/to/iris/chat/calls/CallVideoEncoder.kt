@@ -34,7 +34,7 @@ internal class CallVideoEncoder(
     private var dimensions: Pair<Int, Int>? = null
     private var requestedSize: Pair<Int, Int>? = null
     private var headers = emptyList<ByteArray>()
-    private var lastFrameNs = 0L
+    private val pacer = CallFramePacer()
     private var lastKeyRequestNs = 0L
     private var needsOutputKey = true
     @Volatile private var profile = "auto"
@@ -70,8 +70,7 @@ internal class CallVideoEncoder(
             try {
                 if (closed.get() || !enabled || ticket != generation.get()) return@post
                 val fps = if (targetBitrate < 200_000) 10 else if (profile == "data" || targetBitrate < 500_000) 15 else 30
-                if (frame.timestampNs - lastFrameNs < 950_000_000L / fps) return@post
-                lastFrameNs = frame.timestampNs
+                if (!pacer.accept(frame.timestampNs, fps)) return@post
                 val longEdge = when {
                     targetBitrate < 200_000 -> 320
                     targetBitrate < 500_000 || profile == "data" -> 640

@@ -60,6 +60,8 @@ fn header() -> HeaderWidgets {
         settings: gtk::Button::new(),
         chat_info: gtk::Button::new(),
         chat_search: gtk::Button::new(),
+        voice_call: gtk::Button::new(),
+        video_call: gtk::Button::new(),
         title,
         title_column,
         title_status: gtk::Box::new(gtk::Orientation::Horizontal, 0),
@@ -77,6 +79,7 @@ pub fn run() {
     std::env::set_var("XDG_DATA_HOME", data.path().join("data"));
     adw::init().expect("GTK display required; run this test under xvfb-run on Linux");
     let manager = Rc::new(AppManager::new());
+    crate::calls::verify_ui(manager.clone());
     let rx = manager.update_rx();
     let drain = || {
         while let Ok(update) = rx.try_recv() {

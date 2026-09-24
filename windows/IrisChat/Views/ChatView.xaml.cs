@@ -55,6 +55,8 @@ public partial class ChatView : UserControl
         };
     }
 
+    private void OnVoiceCall(object sender, RoutedEventArgs e) { if (App.CurrentManager.CurrentChat is {} c) App.CurrentManager.DispatchCall(new AppAction.StartCall(c.chatId, false)); }
+    private void OnVideoCall(object sender, RoutedEventArgs e) { if (App.CurrentManager.CurrentChat is {} c) App.CurrentManager.DispatchCall(new AppAction.StartCall(c.chatId, true)); }
     private void OnChanged(object? sender, PropertyChangedEventArgs e) => Refresh();
 
     private void OnUserActivity(object? sender, InputEventArgs e)
@@ -84,6 +86,10 @@ public partial class ChatView : UserControl
             }
         }
 
+        var callable = chat.kind == ChatKind.Direct && !userBlocked && !messageRequest && !capabilityBlocked;
+        VoiceCall.Visibility = callable && App.CurrentManager.Preferences.voiceCallsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        VideoCall.Visibility = callable && App.CurrentManager.Preferences.videoCallsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        VoiceCall.IsEnabled = VideoCall.IsEnabled = !App.CurrentManager.Calls.Visible;
         HeaderTitle.Text = chat.displayName;
         // Header subtitle priority: disappearing-message timeout (clock + ttl)
         // > muted (bell-slash + muted) > group subtitle text. Hide the others

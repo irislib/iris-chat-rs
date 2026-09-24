@@ -72,6 +72,8 @@
                     </Grid>
                 </Border>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="VoiceCall" Style="{StaticResource GhostButton}" Content="&#xE717;" FontFamily="Segoe MDL2 Assets" ToolTip="Voice call" Click="OnVoiceCall"/>
+                    <Button x:Name="VideoCall" Style="{StaticResource GhostButton}" Content="&#xE714;" FontFamily="Segoe MDL2 Assets" ToolTip="Video call" Click="OnVideoCall"/>
                     <Button Style="{StaticResource GhostButton}"
                             Click="OnToggleMute"
                             x:Name="MuteChatButton"

@@ -32,6 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libsoup-3.0-dev \
         libclang-dev \
         libv4l-dev \
+        libasound2-dev \
+        nasm \
         xvfb \
         x11vnc \
         fluxbox \

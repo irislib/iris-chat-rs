@@ -1,0 +1,30 @@
+<UserControl x:Class="IrisChat.Views.CallView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Visibility="Collapsed">
+    <Border Background="{StaticResource Background}" Padding="20">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <StackPanel HorizontalAlignment="Center" Margin="0,8,0,12">
+                <TextBlock x:Name="Peer" FontSize="24" Foreground="{StaticResource TextPrimary}" HorizontalAlignment="Center"/>
+                <TextBlock x:Name="Status" FontSize="14" Foreground="{StaticResource TextMuted}" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+            </StackPanel>
+            <Grid Grid.Row="1" Background="Black">
+                <Image x:Name="RemoteVideo" Stretch="Uniform"/>
+                <Border x:Name="Avatar" Width="112" Height="112" CornerRadius="56" Background="{StaticResource Panel}">
+                    <TextBlock x:Name="Initial" Foreground="{StaticResource TextPrimary}" FontSize="48" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <Image x:Name="LocalVideo" Width="150" Height="90" Stretch="Uniform" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="12"/>
+            </Grid>
+            <WrapPanel Grid.Row="2" HorizontalAlignment="Center" Margin="0,16,0,0">
+                <Button x:Name="Answer" Style="{StaticResource CompactPrimaryButton}" Content="Answer" Click="OnAnswer" Margin="4" Padding="14,10"/>
+                <Button x:Name="Voice" Style="{StaticResource CompactSecondaryButton}" Content="Voice only" Click="OnVoice" Margin="4" Padding="14,10"/>
+                <Button x:Name="Mute" Style="{StaticResource CompactSecondaryButton}" Content="Mute" Click="OnMute" Margin="4" Padding="14,10"/>
+                <Button x:Name="Camera" Style="{StaticResource CompactSecondaryButton}" Content="Camera off" Click="OnCamera" Margin="4" Padding="14,10"/>
+                <Button x:Name="End" Style="{StaticResource DangerButton}" Content="End call" Click="OnEnd" Margin="4" Padding="14,10"/>
+            </WrapPanel>
+        </Grid>
+    </Border>
+</UserControl>

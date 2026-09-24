@@ -12,7 +12,7 @@ path = "src/main.rs"
 ui-tests = []
 
 [dependencies]
-iris-chat-core = { package = "iris-chat", path = "../core" }
+iris-chat-core = { package = "iris-chat", path = "../core", features = ["desktop-media"] }
 gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
 adw = { package = "libadwaita", version = "0.7", features = ["v1_5"] }
 glib = "0.20"
@@ -36,6 +36,7 @@ extended-description = "Iris Chat — encrypted Nostr messenger."
 section = "net"
 priority = "optional"
 assets = [
+    ["../DESKTOP_MEDIA_LICENSES.txt", "usr/share/doc/iris-chat/DESKTOP_MEDIA_LICENSES.txt", "644"],
     ["target/release/iris-chat", "usr/bin/", "755"],
     ["resources/iris-chat-16.png", "usr/share/icons/hicolor/16x16/apps/iris-chat.png", "644"],
     ["resources/iris-chat-22.png", "usr/share/icons/hicolor/22x22/apps/iris-chat.png", "644"],

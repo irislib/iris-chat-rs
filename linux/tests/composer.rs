@@ -1,6 +1,8 @@
 // A separate main-thread runner is required by GTK's macOS backend too.
 #[path = "../src/app_manager.rs"]
 mod app_manager;
+#[path = "../src/calls.rs"]
+mod calls;
 #[path = "../src/platform/mod.rs"]
 mod platform;
 #[path = "../src/screens/mod.rs"]
