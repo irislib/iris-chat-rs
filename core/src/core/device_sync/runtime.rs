@@ -272,8 +272,12 @@ impl AppCore {
         let mut fips_config = Config::new();
         fips_config.node.control.enabled = false;
         fips_config.peers = peer_config;
-        let webrtc_enabled =
-            device_sync_enabled || config.nearby_ip_enabled || !config.peers.is_empty();
+        let webrtc_enabled = super::settings::webrtc_enabled(
+            device_sync_enabled || config.nearby_ip_enabled || !config.peers.is_empty(),
+            std::env::var("IRIS_CHAT_FIPS_ENABLE_WEBRTC")
+                .ok()
+                .as_deref(),
+        );
         if webrtc_enabled {
             // This also enables signed, in-band transport upgrades over an
             // existing FIPS route. An empty relay list stays entirely local.

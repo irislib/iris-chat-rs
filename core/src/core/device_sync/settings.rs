@@ -1,5 +1,12 @@
 use fips_core::{config::PeerConfig, PeerIdentity};
 
+pub(super) fn webrtc_enabled(eligible: bool, configured: Option<&str>) -> bool {
+    eligible
+        && !configured.is_some_and(|value| {
+            matches!(value.trim().to_ascii_lowercase().as_str(), "false" | "0")
+        })
+}
+
 pub(super) fn pubsub_policy_options() -> nostr_pubsub_fips::FipsPubsubPolicyOptions {
     policy_options(
         &std::env::var_os("IRIS_CHAT_FIPS_TRUSTED_RATERS")
@@ -82,6 +89,18 @@ fn parse_peer_hints(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_webrtc_opt_out_preserves_default_discovery() {
+        for configured in [None, Some("true"), Some("1")] {
+            assert!(webrtc_enabled(true, configured));
+            assert!(!webrtc_enabled(false, configured));
+        }
+        for configured in [Some("false"), Some(" FALSE "), Some("0")] {
+            assert!(!webrtc_enabled(true, configured));
+            assert!(!webrtc_enabled(false, configured));
+        }
+    }
 
     #[test]
     fn machine_trust_entrypoints_are_explicit_and_empty_by_default() {
