@@ -1273,6 +1273,7 @@ impl AppCore {
             None,
             content,
             outer_event_id,
+            unix_now().get(),
         );
     }
 
@@ -1283,6 +1284,7 @@ impl AppCore {
         conversation_owner: Option<PublicKey>,
         content: String,
         outer_event_id: Option<String>,
+        outer_created_at_secs: u64,
     ) {
         let is_supported_group_pairwise_payload =
             is_supported_group_pairwise_payload(content.as_bytes());
@@ -1335,7 +1337,7 @@ impl AppCore {
                 effective_sender_owner,
                 chat_id,
                 content,
-                unix_now().get(),
+                outer_created_at_secs,
                 None,
                 outer_event_id.clone(),
                 outer_event_id,

@@ -37,6 +37,7 @@ fn direct_message_storage_failure_can_be_received_again() {
             .count(),
         1
     );
+    assert_eq!(thread.messages[0].created_at_secs, 200);
     assert!(core.has_seen_event(&event_id));
 }
 
@@ -79,6 +80,7 @@ fn unrelated_save_preserves_unapplied_decrypted_message_across_restart() {
         .unwrap()
         .has_pending_retry_work());
     core.retry_protocol_engine_pending_work("restart");
+    assert_eq!(core.threads[&sender.public_key().to_hex()].messages[0].created_at_secs, 200);
     assert_eq!(
         core.threads[&sender.public_key().to_hex()]
             .messages
@@ -421,4 +423,106 @@ fn queued_direct_send_schedules_subscription_liveness_tick() {
         due_at <= Instant::now() + Duration::from_secs(5),
         "queued direct work should schedule a fast subscription liveness tick, not wait for the normal liveness interval"
     );
+}
+
+#[test]
+fn repeated_pending_message_does_not_rebuild_or_emit_state() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let (mut core, updates, _dir) =
+        logged_in_test_core_with_updates("pending-replay-idle", &owner, &device);
+    let engine = core.protocol_engine.as_mut().unwrap();
+    let invite = engine.local_invite().unwrap();
+    let (mut session, response) = invite
+        .accept_with_owner(
+            peer_device.public_key(),
+            peer_device.secret_key().to_secret_bytes(),
+            None,
+            Some(peer_owner.public_key()),
+        )
+        .unwrap();
+    engine
+        .observe_invite_response_event(
+            &nostr_double_ratchet::invite_response_event(&response).unwrap(),
+        )
+        .unwrap();
+    let plan = session
+        .plan_send(b"waiting for authorization", NdrUnixSeconds(200))
+        .unwrap();
+    let sent = session.apply_send(plan);
+    let event = nostr_double_ratchet::message_event(&sent.envelope).unwrap();
+    core.handle_relay_event(event.clone());
+    assert!(core
+        .protocol_engine
+        .as_ref()
+        .unwrap()
+        .has_pending_inbound_direct_event_id(&event.id.to_hex()));
+    drain_app_updates(&updates);
+    let builds = core.debug_snapshot_build_count();
+    for _ in 0..100 {
+        core.handle_relay_event(event.clone());
+    }
+    assert!(
+        updates.try_recv().is_err(),
+        "unchanged pending replays must not emit app state"
+    );
+    assert_eq!(core.debug_snapshot_build_count(), builds);
+    // A duplicate is still pending, not permanently discarded. New proof must deliver it.
+    core.handle_relay_event(signed_app_keys_authorization_event(
+        &peer_owner,
+        peer_device.public_key(),
+        201,
+    ));
+    let messages = &core.threads[&peer_owner.public_key().to_hex()].messages;
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].body, "waiting for authorization");
+    assert_eq!(messages[0].created_at_secs, 200);
+}
+
+#[test]
+fn legacy_message_journal_replay_keeps_original_time() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let storage = Arc::new(SwitchableFailStorage::new());
+    let mut core = logged_in_test_core_with_storage(
+        "legacy-timestamp-restart",
+        &owner,
+        &device,
+        storage.clone(),
+    );
+    let engine = core.protocol_engine.as_mut().unwrap();
+    let invite = engine.local_invite().unwrap();
+    let (mut session, response) = invite
+        .accept_with_owner(
+            sender.public_key(),
+            sender.secret_key().to_secret_bytes(),
+            None,
+            Some(sender.public_key()),
+        )
+        .unwrap();
+    engine
+        .observe_invite_response_event(
+            &nostr_double_ratchet::invite_response_event(&response).unwrap(),
+        )
+        .unwrap();
+    let plan = session
+        .plan_send(b"old legacy plaintext", NdrUnixSeconds(200))
+        .unwrap();
+    let sent = session.apply_send(plan);
+    let event = nostr_double_ratchet::message_event(&sent.envelope).unwrap();
+    let decrypted = engine
+        .process_direct_message_event(&event)
+        .unwrap()
+        .unwrap();
+    assert_eq!(decrypted.content, "old legacy plaintext");
+    assert_eq!(decrypted.created_at_secs, 200);
+    core.persist_best_effort();
+    install_test_protocol_engine(&mut core, &owner, &device, storage, None, None);
+    core.retry_protocol_engine_pending_work("legacy_restart");
+    let messages = &core.threads[&sender.public_key().to_hex()].messages;
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].created_at_secs, 200);
 }

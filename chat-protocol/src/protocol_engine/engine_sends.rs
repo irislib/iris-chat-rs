@@ -565,8 +565,22 @@ impl ProtocolEngine {
         expires_at_secs: Option<u64>,
         now: UnixSeconds,
     ) -> anyhow::Result<ProtocolDirectSendResult> {
+        self.send_direct_text_created_at(peer_pubkey, chat_id, text, expires_at_secs, now, now)
+    }
+
+    /// Keep the authored time separate from the transport/retry clock.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_direct_text_created_at(
+        &mut self,
+        peer_pubkey: PublicKey,
+        chat_id: &str,
+        text: &str,
+        expires_at_secs: Option<u64>,
+        created_at: UnixSeconds,
+        now: UnixSeconds,
+    ) -> anyhow::Result<ProtocolDirectSendResult> {
         let now_ms = current_unix_millis();
-        let mut options = pairwise_codec::EncodeOptions::new(now.get(), now_ms);
+        let mut options = pairwise_codec::EncodeOptions::new(created_at.get(), now_ms);
         if let Some(expires_at_secs) = expires_at_secs {
             options = options.with_expiration(expires_at_secs);
         }

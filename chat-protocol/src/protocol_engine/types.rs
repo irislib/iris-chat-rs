@@ -290,6 +290,8 @@ pub enum ProtocolInviteSessionImportOutcome {
 
 #[derive(Clone, Debug)]
 pub struct ProtocolDecryptedMessage {
+    /// Original signed outer-event time, retained across durable delivery retries.
+    pub created_at_secs: u64,
     pub sender: PublicKey,
     pub sender_device: Option<PublicKey>,
     pub conversation_owner: Option<PublicKey>,
@@ -338,6 +340,7 @@ struct ProtocolPendingInboundMetadata {
 impl From<ProtocolPendingDecryptedDelivery> for ProtocolDecryptedMessage {
     fn from(pending: ProtocolPendingDecryptedDelivery) -> Self {
         Self {
+            created_at_secs: pending.created_at_secs,
             sender: pending.sender,
             sender_device: pending.sender_device,
             conversation_owner: pending.conversation_owner,

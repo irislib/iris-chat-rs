@@ -1,4 +1,3 @@
-use super::protocol::PROTOCOL_RECONNECT_CHECK_SECS;
 use super::*;
 
 impl AppCore {
@@ -67,6 +66,21 @@ impl AppCore {
             if self.handle_pending_link_device_response(event) {
                 self.remember_event(event_id);
             }
+            return;
+        }
+
+        // The durable retry queue already owns this event. Mirrored history
+        // must not recompute subscriptions, serialize state, or emit UI updates.
+        if kind == MESSAGE_EVENT_KIND
+            && self
+                .protocol_engine
+                .as_ref()
+                .is_some_and(|engine| engine.has_pending_inbound_direct_event_id(&event_id))
+        {
+            self.push_debug_log(
+                "appcore.protocol.message.pending_replay",
+                "already stored as pending inbound",
+            );
             return;
         }
 
@@ -308,24 +322,6 @@ impl AppCore {
         }
 
         if kind == MESSAGE_EVENT_KIND {
-            if self
-                .protocol_engine
-                .as_ref()
-                .is_some_and(|engine| engine.has_pending_inbound_direct_event_id(&event_id))
-            {
-                self.push_debug_log(
-                    "appcore.protocol.message.pending_replay",
-                    "already stored as pending inbound",
-                );
-                self.request_protocol_subscription_refresh();
-                self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
-                    PROTOCOL_RECONNECT_CHECK_SECS,
-                ));
-                self.persist_best_effort();
-                self.rebuild_state();
-                self.emit_state();
-                return;
-            }
             if let Some(protocol_engine) = self.protocol_engine.as_mut() {
                 match protocol_engine.process_direct_message_event(&event) {
                     Ok(Some(decrypted)) => {
@@ -336,6 +332,7 @@ impl AppCore {
                             decrypted.conversation_owner,
                             decrypted.content,
                             decrypted.event_id,
+                            decrypted.created_at_secs,
                         );
                         if let Some(event_id) = event_id {
                             self.pending_decrypted_delivery_acks

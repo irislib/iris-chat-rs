@@ -10,8 +10,16 @@ impl ProtocolEngine {
         &self,
         sender: NdrDevicePubkey,
     ) -> ProtocolSenderOwnerResolution {
-        self.session_record_matching_message_sender(sender)
-            .map(|record| self.owner_resolution_for_sender_record(record))
+        self.resolve_message_sender_owner_with_snapshot(sender, &self.session_manager.snapshot())
+    }
+
+    fn resolve_message_sender_owner_with_snapshot(
+        &self,
+        sender: NdrDevicePubkey,
+        snapshot: &SessionManagerSnapshot,
+    ) -> ProtocolSenderOwnerResolution {
+        Self::session_record_matching_message_sender(sender, snapshot)
+            .map(|record| self.owner_resolution_for_sender_record_with_snapshot(record, snapshot))
             .unwrap_or_else(|| ProtocolSenderOwnerResolution::ProvisionalDeviceOwner {
                 owner: provisional_owner_from_sender_pubkey(sender),
             })
@@ -49,11 +57,24 @@ impl ProtocolEngine {
         &self,
         record: ProtocolSenderDeviceRecord,
     ) -> ProtocolSenderOwnerResolution {
+        self.owner_resolution_for_sender_record_with_snapshot(
+            record,
+            &self.session_manager.snapshot(),
+        )
+    }
+
+    fn owner_resolution_for_sender_record_with_snapshot(
+        &self,
+        record: ProtocolSenderDeviceRecord,
+        snapshot: &SessionManagerSnapshot,
+    ) -> ProtocolSenderOwnerResolution {
         if let Some(claimed_owner) = record
             .claimed_owner_pubkey
             .filter(|claimed_owner| *claimed_owner != record.storage_owner)
         {
-            if self.has_verified_device_owner_claim(claimed_owner, record.device_pubkey) {
+            if self.has_verified_device_owner_claim_with_snapshot(
+                claimed_owner, record.device_pubkey, snapshot,
+            ) {
                 return ProtocolSenderOwnerResolution::Verified {
                     owner: claimed_owner,
                 };
@@ -68,9 +89,9 @@ impl ProtocolEngine {
             ProtocolSenderOwnerResolution::ProvisionalDeviceOwner {
                 owner: record.storage_owner,
             }
-        } else if self
-            .has_verified_device_owner_claim(record.storage_owner, record.device_pubkey)
-        {
+        } else if self.has_verified_device_owner_claim_with_snapshot(
+            record.storage_owner, record.device_pubkey, snapshot,
+        ) {
             ProtocolSenderOwnerResolution::Verified {
                 owner: record.storage_owner,
             }
@@ -84,11 +105,11 @@ impl ProtocolEngine {
     }
 
     fn session_record_matching_message_sender(
-        &self,
         sender: NdrDevicePubkey,
+        snapshot: &SessionManagerSnapshot,
     ) -> Option<ProtocolSenderDeviceRecord> {
-        for user in self.session_manager.snapshot().users {
-            for record in user.devices {
+        for user in &snapshot.users {
+            for record in &user.devices {
                 let matches_active = record
                     .active_session
                     .as_ref()
@@ -132,18 +153,28 @@ impl ProtocolEngine {
         owner: NdrOwnerPubkey,
         device: NdrDevicePubkey,
     ) -> bool {
+        self.has_verified_device_owner_claim_with_snapshot(
+            owner, device, &self.session_manager.snapshot(),
+        )
+    }
+
+    fn has_verified_device_owner_claim_with_snapshot(
+        &self,
+        owner: NdrOwnerPubkey,
+        device: NdrDevicePubkey,
+        snapshot: &SessionManagerSnapshot,
+    ) -> bool {
         if owner == provisional_owner_from_sender_pubkey(device) {
             return true;
         }
         if !self.verified_app_keys_owners.contains(&owner) {
             return false;
         }
-        self.session_manager
-            .snapshot()
+        snapshot
             .users
-            .into_iter()
+            .iter()
             .find(|user| user.owner_pubkey == owner)
-            .and_then(|user| user.roster)
+            .and_then(|user| user.roster.as_ref())
             .is_some_and(|roster| roster.get_device(&device).is_some())
     }
 
@@ -364,10 +395,16 @@ impl ProtocolEngine {
 
     fn pending_inbound_owner_claim_targets(&self) -> Vec<String> {
         let mut targets = Vec::new();
+        if self.pending_inbound.is_empty() {
+            return targets;
+        }
+        // A backlog can contain hundreds of old events. Clone the session
+        // state once for the whole scan, not once for every queued event.
+        let snapshot = self.session_manager.snapshot();
         for pending in &self.pending_inbound {
             if let Some(sender) = pending_inbound_sender_pubkey(pending) {
                 if let ProtocolSenderOwnerResolution::PendingOwnerClaim { claimed_owner, .. } =
-                    self.resolve_message_sender_owner_for_sender(sender)
+                    self.resolve_message_sender_owner_with_snapshot(sender, &snapshot)
                 {
                     targets.push(format!("owner:{}", claimed_owner.to_hex()));
                 }

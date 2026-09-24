@@ -110,6 +110,7 @@ fn self_synced_outgoing_message_from_linked_device_marks_thread_accepted() {
         Some(sender.public_key()),
         outgoing,
         Some("d".repeat(64)),
+        unix_now().get(),
     );
     core.rebuild_state();
 
@@ -283,6 +284,7 @@ fn self_sync_runtime_metadata_overrides_malicious_inner_p_tag() {
         Some(real_peer.public_key()),
         content,
         Some("4".repeat(64)),
+        unix_now().get(),
     );
 
     let real_chat_id = real_peer.public_key().to_hex();
@@ -328,6 +330,7 @@ fn self_synced_direct_message_from_device_claim_routes_to_peer_owner() {
         Some(peer.public_key()),
         content,
         Some("9".repeat(64)),
+        unix_now().get(),
     );
 
     let thread = core.threads.get(&peer_chat_id).expect("peer thread");
@@ -372,6 +375,7 @@ fn incoming_direct_message_from_known_peer_device_routes_to_owner_thread() {
         None,
         content,
         Some("b".repeat(64)),
+        unix_now().get(),
     );
 
     let thread = core
@@ -450,6 +454,7 @@ fn incoming_direct_message_from_unverified_claimed_peer_device_is_not_attributed
         None,
         content,
         Some("d".repeat(64)),
+        unix_now().get(),
     );
 
     let thread = core
@@ -548,6 +553,7 @@ fn self_synced_seen_receipt_marks_incoming_message_seen() {
         Some(peer.public_key()),
         content,
         Some("8".repeat(64)),
+        unix_now().get(),
     );
 
     let thread = core.threads.get(&chat_id).expect("thread");
@@ -845,6 +851,7 @@ fn retry_batch_self_synced_direct_message_updates_open_chat_projection() {
         "test_self_sync",
         ProtocolRetryBatch {
             direct_messages: vec![ProtocolDecryptedMessage {
+                created_at_secs: unix_now().get(),
                 sender: owner.public_key(),
                 sender_device: Some(sibling_device.public_key()),
                 conversation_owner: Some(peer.public_key()),

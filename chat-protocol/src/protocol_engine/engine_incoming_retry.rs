@@ -495,6 +495,7 @@ impl ProtocolEngine {
         };
         let content = String::from_utf8(payload)?;
         let decrypted = ProtocolDecryptedMessage {
+            created_at_secs: event.created_at.as_secs(),
             sender,
             sender_device,
             conversation_owner,

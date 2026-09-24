@@ -226,17 +226,9 @@ fn appcore_direct_text_queues_until_subscription_state_makes_peer_ready() {
     assert_eq!(still_queued.delivery, DeliveryState::Queued);
     assert!(core.pending_relay_publishes.is_empty());
 
-    let mut rng = OsRng;
-    let mut ctx = ProtocolContext::new(NdrUnixSeconds(12), &mut rng);
-    let invite = Invite::create_new_with_context(
-        &mut ctx,
-        NdrDevicePubkey::from_bytes(peer_device.public_key().to_bytes()),
-        Some(NdrOwnerPubkey::from_bytes(
-            peer_owner.public_key().to_bytes(),
-        )),
-        None,
-    )
-    .expect("peer invite");
+    let mut receiver = logged_in_test_core("queued-timestamp-recipient", &peer_owner, &peer_device);
+    receiver.handle_relay_event(signed_app_keys_authorization_event(&owner, device.public_key(), 1));
+    let invite = receiver.protocol_engine.as_mut().unwrap().local_invite().unwrap();
     let invite_event = nostr_double_ratchet::invite_unsigned_event(&invite)
         .expect("invite event")
         .sign_with_keys(&peer_device)
@@ -261,7 +253,16 @@ fn appcore_direct_text_queues_until_subscription_state_makes_peer_ready() {
     assert_eq!(drained.created_at_secs, queued_message.created_at_secs);
     assert!(!drained.delivery_trace.outer_event_ids.is_empty());
     assert!(!core.pending_relay_publishes.is_empty());
+    for kind in [INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND] {
+        for event in pending_events_with_kind(&core, kind) {
+            receiver.handle_relay_event(event);
+        }
+    }
+    let received = &receiver.threads[&owner.public_key().to_hex()].messages[0];
+    assert_eq!(received.created_at_secs, queued_message.created_at_secs,
+        "the recipient must see when the queued message was written, not when it drained");
 }
+
 
 #[test]
 fn appcore_ready_direct_text_uses_same_queue_then_drain_path() {

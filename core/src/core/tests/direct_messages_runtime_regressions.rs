@@ -23,6 +23,7 @@ fn incoming_device_authored_runtime_message_from_known_peer_routes_to_owner_thre
         None,
         content,
         Some("e".repeat(64)),
+        unix_now().get(),
     );
 
     let thread = core
@@ -84,6 +85,7 @@ fn direct_group_pairwise_payload_that_looks_like_runtime_rumor_is_applied() {
         None,
         content,
         Some("f".repeat(64)),
+        unix_now().get(),
     );
 
     let applied = core.groups.get(&group_id).expect("group metadata applied");

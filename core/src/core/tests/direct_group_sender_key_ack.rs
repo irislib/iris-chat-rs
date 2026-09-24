@@ -75,6 +75,7 @@ fn direct_group_runtime_message_ack_clears_sender_key_candidate() {
         None,
         payload,
         Some("direct-copy-event".to_string()),
+        unix_now().get(),
     );
 
     let snapshot = core

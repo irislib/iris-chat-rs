@@ -65,6 +65,9 @@ reproduce a long-lived account's session history; the iOS lane runs in a
 simulator. The fast core suite separately checks that repeated two-peer nearby
 identity exchanges settle without regenerating announcements or reapplying
 unchanged device lists, while profile and device changes still propagate.
+The core suite also replays pending messages repeatedly without UI updates and
+checks original timestamps through deferred sends and journal recovery. These
+regressions cover specific failure modes, not a populated-account CPU budget.
 Physical-device profiling remains necessary for account-specific heat reports.
 
 The native platform matrix runs Android, the Apple lane, Linux, and Windows in

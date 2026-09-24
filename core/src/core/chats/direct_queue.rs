@@ -96,11 +96,12 @@ impl AppCore {
                 blocked: true,
             };
         };
-        let result = protocol_engine.send_direct_text(
+        let result = protocol_engine.send_direct_text_created_at(
             peer_pubkey,
             chat_id,
             &wire_text,
             message.expires_at_secs,
+            UnixSeconds(message.created_at_secs),
             unix_now(),
         );
         match result {

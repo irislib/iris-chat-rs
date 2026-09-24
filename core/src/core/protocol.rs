@@ -143,6 +143,7 @@ impl AppCore {
                 decrypted.conversation_owner,
                 decrypted.content,
                 decrypted.event_id,
+                decrypted.created_at_secs,
             );
             if let Some(event_id) = event_id {
                 self.pending_decrypted_delivery_acks
