@@ -77,7 +77,7 @@ try {
     } finally { $Key.Dispose() }
     Type-Into 'MemberSearchInput' $Peer
     Invoke-Id 'AddMemberButton'
-    Invoke-Id 'NextButton' 
+    Invoke-Id 'NextButton'
     Type-Into 'NameInput' 'Keyboard notes'
     Invoke-Id 'CreateButton'
     $Input = Wait-For { Find-Id 'Input' } 'message input'

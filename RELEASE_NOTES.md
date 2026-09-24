@@ -7,6 +7,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### GitHub
 
 - Reduce idle CPU use by reusing unchanged nearby identity announcements and avoiding repeated processing of messages waiting for device verification.
+- Retry unacknowledged nearby deliveries with bounded backoff instead of depending on another connection change.
 - Preserve original message timestamps when sending queued messages and recovering encrypted or legacy messages after a restart.
 - Add iPhone voice-message recording and inline audio playback.
 - Keep the message composer available during connection checks, preserve input focus on Linux, and fix the Windows send shortcut.
@@ -17,6 +18,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### Apple
 
 - Reduced idle CPU use and improved message processing.
+- Improved nearby delivery when a packet is lost during reconnection.
 - Messages keep their original timestamps when sent after a delay or recovered after restarting.
 - Record voice messages on iPhone and play audio inside chats.
 - Keep typing while connection checks run, and adjust message text size.
@@ -25,6 +27,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### Zapstore
 
 - Reduced repeated background work and improved message processing.
+- Improved nearby delivery when a packet is lost during reconnection.
 - Messages keep their original timestamps when sent after a delay or recovered after restarting.
 - Keep typing while connection checks run, and adjust message text size.
 - Improved video calls and incoming call alerts.

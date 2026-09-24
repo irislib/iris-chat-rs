@@ -105,6 +105,8 @@ pub(super) fn encode_fips_nearby_event(event: &Event) -> Option<Vec<u8>> {
 struct FipsNearbyOutboxLink {
     peer_npub: String,
     link_id: u64,
+    attempts: u8,
+    retry_at: Instant,
 }
 
 #[derive(Clone, Debug)]
@@ -116,9 +118,9 @@ struct FipsNearbyOutboxEntry {
 
 /// Bounded nearby-event queue shared with the FIPS link monitor.
 ///
-/// A successful send suppresses repeats only for that exact logical link.
-/// When a peer reconnects with a new link id, unacknowledged events become
-/// eligible again. Signed FIPS-nearby receipts remove them from the queue.
+/// Transport acceptance is not a delivery acknowledgement. Retry unacknowledged
+/// events on the same link with exponential backoff (2 to 30 seconds), or
+/// immediately on a new link. FIPS-nearby receipts remove acknowledged events.
 #[derive(Default, Debug)]
 pub(super) struct FipsNearbyOutbox {
     entries: VecDeque<FipsNearbyOutboxEntry>,
@@ -144,13 +146,13 @@ impl FipsNearbyOutbox {
     }
 
     pub(super) fn pending_for_link(&self, peer_npub: &str, link_id: u64) -> Vec<(String, Vec<u8>)> {
+        let now = Instant::now();
         self.entries
             .iter()
             .filter(|entry| {
-                !entry
-                    .sent_links
-                    .iter()
-                    .any(|link| link.peer_npub == peer_npub && link.link_id == link_id)
+                !entry.sent_links.iter().any(|link| {
+                    link.peer_npub == peer_npub && link.link_id == link_id && now < link.retry_at
+                })
             })
             .map(|entry| (entry.event_id.clone(), entry.payload.clone()))
             .collect()
@@ -162,22 +164,31 @@ impl FipsNearbyOutbox {
         link_id: u64,
         event_ids: &[String],
     ) {
-        let link = FipsNearbyOutboxLink {
-            peer_npub: peer_npub.to_string(),
-            link_id,
-        };
+        let now = Instant::now();
         for entry in self
             .entries
             .iter_mut()
             .filter(|entry| event_ids.contains(&entry.event_id))
         {
-            if entry.sent_links.contains(&link) {
+            if let Some(link) = entry
+                .sent_links
+                .iter_mut()
+                .find(|link| link.peer_npub == peer_npub && link.link_id == link_id)
+            {
+                link.attempts = link.attempts.saturating_add(1);
+                let delay_secs = (1_u64 << link.attempts.min(5)).min(30);
+                link.retry_at = now + Duration::from_secs(delay_secs);
                 continue;
             }
             while entry.sent_links.len() >= FIPS_NEARBY_OUTBOX_MAX_LINKS_PER_EVENT {
                 entry.sent_links.pop_front();
             }
-            entry.sent_links.push_back(link.clone());
+            entry.sent_links.push_back(FipsNearbyOutboxLink {
+                peer_npub: peer_npub.to_string(),
+                link_id,
+                attempts: 1,
+                retry_at: now + Duration::from_secs(2),
+            });
         }
     }
 

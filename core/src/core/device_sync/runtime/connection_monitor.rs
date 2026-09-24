@@ -178,6 +178,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unacknowledged_nearby_event_retries_without_reconnecting() {
+        let SocketAddr::V4(rendezvous) = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+        else {
+            panic!("expected IPv4 rendezvous");
+        };
+        let endpoint = local_endpoint(rendezvous).await;
+        let sibling = local_endpoint(rendezvous).await;
+        let receiver = sibling
+            .register_service_receiver(FIPS_NEARBY_PORT)
+            .await
+            .unwrap();
+        let event_id = "ab".repeat(32);
+        let payload = b"receipt that was lost during peer restart".to_vec();
+        let outbox = Arc::new(RwLock::new(FipsNearbyOutbox::default()));
+        outbox
+            .write()
+            .unwrap()
+            .insert(event_id.clone(), payload.clone());
+        let (sender, _updates) = flume::unbounded();
+        let monitor = tokio::spawn(run(
+            endpoint.clone(),
+            Arc::new(RwLock::new(Vec::new())),
+            outbox.clone(),
+            sender,
+            1,
+            true,
+        ));
+        let mut datagrams = Vec::new();
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            receiver.recv_batch_into(&mut datagrams, 8),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(datagrams
+            .iter()
+            .any(|datagram| datagram.data.as_ref() == payload.as_slice()));
+        let first_link = endpoint
+            .peers()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|peer| peer.npub == sibling.npub())
+            .unwrap()
+            .link_id;
+        // The send was accepted, but the receiver deliberately drops it before
+        // acknowledgement. Recovery must not depend on identity changes or a new link.
+        datagrams.clear();
+        tokio::time::timeout(
+            Duration::from_secs(6),
+            receiver.recv_batch_into(&mut datagrams, 8),
+        )
+        .await
+        .expect("lost nearby event was never retried")
+        .unwrap();
+        assert!(datagrams
+            .iter()
+            .any(|datagram| datagram.data.as_ref() == payload.as_slice()));
+        let retry_link = endpoint
+            .peers()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|peer| peer.npub == sibling.npub())
+            .unwrap()
+            .link_id;
+        assert_eq!(retry_link, first_link);
+        outbox.write().unwrap().forget(&event_id);
+        datagrams.clear();
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                receiver.recv_batch_into(&mut datagrams, 8)
+            )
+            .await
+            .is_err(),
+            "acknowledged events must stop retrying"
+        );
+        monitor.abort();
+        endpoint.shutdown().await.unwrap();
+        sibling.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn authenticated_links_report_with_nearby_disabled_and_clear_on_shutdown() {
         let SocketAddr::V4(rendezvous) = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
             .expect("reserve local rendezvous address")
