@@ -1,7 +1,7 @@
 import AVFoundation
 
 /// A few complete access units may overtake one another while FIPS repairs
-/// fragments. Give a gap 50 ms, then discard dependent frames until an IDR.
+/// fragments. Allow a bounded repair window before discarding dependent frames.
 final class IrisCallVideoReceiver {
     private struct Frame { let timestamp: UInt64; let key: Bool; let data: Data }
     private let queue: DispatchQueue
@@ -30,11 +30,11 @@ final class IrisCallVideoReceiver {
         pending[sequence] = Frame(timestamp: timestampUs, key: keyFrame, data: data)
         if expected == nil && keyFrame { expected = sequence }
         drain()
-        if pending.count > 3 { expireGap() }
+        if pending.count > 8 { expireGap() }
         if !pending.isEmpty && gap == nil {
             let timer = DispatchWorkItem { [weak self] in self?.expireGap() }
             gap = timer
-            queue.asyncAfter(deadline: .now() + .milliseconds(50), execute: timer)
+            queue.asyncAfter(deadline: .now() + .milliseconds(200), execute: timer)
         }
     }
 

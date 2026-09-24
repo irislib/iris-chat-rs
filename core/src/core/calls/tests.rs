@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "adaptation_tests.rs"]
+mod adaptation;
 #[path = "history_tests.rs"]
 mod history;
 
@@ -332,16 +334,20 @@ fn calls_feedback_adapts_bitrate_and_ignores_unauthenticated_or_replayed_feedbac
     assert_eq!(f.snapshot().target_bitrate_bps, initial);
     f.core
         .handle_call_packet(&f.devices[0], PORT, &serde_json::to_vec(&feedback).unwrap());
-    assert_eq!(f.snapshot().target_bitrate_bps, initial * 3 / 4);
+    assert_eq!(f.snapshot().target_bitrate_bps, 340_000);
     f.core
         .handle_call_packet(&f.devices[0], PORT, &serde_json::to_vec(&feedback).unwrap());
-    assert_eq!(f.snapshot().target_bitrate_bps, initial * 3 / 4);
+    assert_eq!(f.snapshot().target_bitrate_bps, 340_000);
     feedback.feedback_seq = Some(1);
     feedback.video_seq = Some(59);
     feedback.received_frames = Some(30);
     f.core
         .handle_call_packet(&f.devices[0], PORT, &serde_json::to_vec(&feedback).unwrap());
-    assert!(f.snapshot().target_bitrate_bps > initial * 3 / 4);
+    assert_eq!(
+        f.snapshot().target_bitrate_bps,
+        340_000,
+        "hold after loss so queues can clear"
+    );
     f.core.set_call_quality("custom".into(), 200_000);
     assert_eq!(f.snapshot().target_bitrate_bps, 200_000);
     f.receive(0, "keyframe", true);
@@ -364,13 +370,13 @@ fn calls_reduce_bitrate_when_only_control_packets_survive() {
     feedback.interval_ms = Some(1000);
     f.core
         .handle_call_packet(&f.devices[0], PORT, &serde_json::to_vec(&feedback).unwrap());
-    assert_eq!(f.snapshot().target_bitrate_bps, initial * 3 / 4);
+    assert_eq!(f.snapshot().target_bitrate_bps, initial / 2);
     feedback.feedback_seq = Some(1);
     f.core
         .handle_call_packet(&f.devices[0], PORT, &serde_json::to_vec(&feedback).unwrap());
     assert_eq!(
         f.snapshot().target_bitrate_bps,
-        initial * 3 / 4,
+        initial / 2,
         "no further reduction when capture sends nothing"
     );
 }

@@ -8,6 +8,8 @@ final class IrisH264Encoder {
     private var dimensions = CGSize.zero
     private var bitrate = 2_000_000
     private var forceKeyFrame = true
+    private var lastEncodedTimestamp: UInt64?
+    private var frameRate: Int { bitrate < 200_000 ? 10 : bitrate < 500_000 ? 15 : 30 }
     private let pendingFrames = DispatchSemaphore(value: 3)
     private final class PendingFrame {
         let isCurrent: () -> Bool
@@ -27,17 +29,26 @@ final class IrisH264Encoder {
     func encode(_ pixel: CVPixelBuffer, timestampUs: UInt64, isCurrent: @escaping () -> Bool = { true }) throws {
         let width = CVPixelBufferGetWidth(pixel), height = CVPixelBufferGetHeight(pixel)
         guard width > 0, height > 0, width * height <= 1920 * 1080 else { return }
-        if session == nil || dimensions != CGSize(width: width, height: height) {
+        // Bitrate alone cannot make detailed 720p/30 input fit a narrow link.
+        // VideoToolbox scales the input into this session's encoded dimensions.
+        let longEdge = bitrate < 200_000 ? 320 : bitrate < 500_000 ? 640 : bitrate < 1_000_000 ? 960 : max(width, height)
+        let scale = min(1, Double(longEdge) / Double(max(width, height)))
+        let encodedWidth = max(2, Int(Double(width) * scale) / 2 * 2)
+        let encodedHeight = max(2, Int(Double(height) * scale) / 2 * 2)
+        if session == nil || dimensions != CGSize(width: encodedWidth, height: encodedHeight) {
             stop()
-            try create(width: width, height: height)
+            try create(width: encodedWidth, height: encodedHeight)
         }
+        if frameRate < 30, let lastEncodedTimestamp, timestampUs >= lastEncodedTimestamp,
+           timestampUs - lastEncodedTimestamp < UInt64(950_000 / frameRate) { return }
         guard let session, pendingFrames.wait(timeout: .now()) == .success else { return }
+        lastEncodedTimestamp = timestampUs
         let properties: CFDictionary? = forceKeyFrame ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil
         forceKeyFrame = false
         let context = Unmanaged.passRetained(PendingFrame(isCurrent)).toOpaque()
         let status = VTCompressionSessionEncodeFrame(session, imageBuffer: pixel,
             presentationTimeStamp: CMTime(value: Int64(clamping: timestampUs), timescale: 1_000_000),
-            duration: CMTime(value: 1, timescale: 30), frameProperties: properties,
+            duration: CMTime(value: 1, timescale: Int32(frameRate)), frameProperties: properties,
             sourceFrameRefcon: context, infoFlagsOut: nil)
         if status != noErr {
             Unmanaged<PendingFrame>.fromOpaque(context).release()
@@ -48,13 +59,13 @@ final class IrisH264Encoder {
 
     private func create(width: Int, height: Int) throws {
         var created: VTCompressionSession?
-        var specification: CFDictionary?
+        var specification: [CFString: Any] = [kVTVideoEncoderSpecification_EnableLowLatencyRateControl: true]
         if #available(iOS 17.4, *) {
-            specification = [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true] as CFDictionary
+            specification[kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder] = true
         }
         let status = VTCompressionSessionCreate(allocator: kCFAllocatorDefault, width: Int32(width), height: Int32(height),
             codecType: kCMVideoCodecType_H264,
-            encoderSpecification: specification,
+            encoderSpecification: specification as CFDictionary,
             imageBufferAttributes: nil, compressedDataAllocator: nil,
             outputCallback: { refcon, frameRefcon, status, _, sample in
                 guard let refcon else { return }
@@ -77,8 +88,8 @@ final class IrisH264Encoder {
         for (key, value) in [(kVTCompressionPropertyKey_RealTime, true as CFTypeRef),
                              (kVTCompressionPropertyKey_AllowFrameReordering, false as CFTypeRef),
                              (kVTCompressionPropertyKey_ProfileLevel, profile as CFTypeRef),
-                             (kVTCompressionPropertyKey_ExpectedFrameRate, 30 as CFTypeRef),
-                             (kVTCompressionPropertyKey_MaxKeyFrameInterval, 30 as CFTypeRef),
+                             (kVTCompressionPropertyKey_ExpectedFrameRate, frameRate as CFTypeRef),
+                             (kVTCompressionPropertyKey_MaxKeyFrameInterval, frameRate as CFTypeRef),
                              (kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, 1 as CFTypeRef)] {
             let result = VTSessionSetProperty(created, key: key, value: value)
             if result != noErr { stop(); throw NSError(domain: NSOSStatusErrorDomain, code: Int(result)) }
@@ -104,6 +115,7 @@ final class IrisH264Encoder {
         }
         session = nil
         dimensions = .zero
+        lastEncodedTimestamp = nil
     }
 
     deinit { stop() }

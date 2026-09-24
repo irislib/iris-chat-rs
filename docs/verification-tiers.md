@@ -29,6 +29,21 @@ is reported separately. Run timing gates on an otherwise idle host. The same
 `CallVideoQualityTests` case is part of the Apple unit-test targets and can run
 on a physical iPhone.
 
+The Apple codec suite also changes the bitrate live (1.5 Mbps → 150 kbps →
+1.5 Mbps), measures actual encoded bytes and decoded fps, and requires the
+encoded resolution to fall and recover. A delayed-IDR test sends dependent
+frames before their repaired reference. The Android `NativeCallCodecTest`
+checks the same live reduction, continued decoding, HD recovery, and delayed
+first IDR through its camera/MediaCodec pipeline using the isolated call runner.
+
+The Rust fast tier includes a virtual-time bandwidth matrix at 256/400/800 kbps,
+with audio and packet overhead sharing the bottleneck, and requires at least
+95% complete video-frame delivery after adaptation, bounded frame gaps, and
+recovery after bandwidth returns. Its frame sizes are synthetic; this does not
+substitute for codec tests. Feedback tests cover delivered throughput, report
+boundaries, malformed/replayed reports, sequence wraparound, camera pause,
+missing feedback, and quality ceilings.
+
 The transport stage runs a six-second bidirectional call through production
 FIPS encryption, UDP, reassembly, and feedback. It mixes 30 fps video with
 50 audio packets per second, maximum-size recovery frames, and brief core
@@ -42,6 +57,12 @@ video. The codec and transport measurements isolate stages and do not measure
 camera capture, display scanout, Wi-Fi, or whether two physical devices select
 the direct LAN route. A two-device camera-to-screen measurement is still
 needed to confirm the complete user experience.
+
+Apple codec sources are shared by iOS/macOS; Android uses MediaCodec; browser
+calls have a separate WebCodecs implementation and Chromium/WebKit bitrate
+benchmark in the browser repository. Linux and Windows native shells currently
+have no call capture/playback implementation, so passing the shared Rust tests
+must not be reported as native calling support on those platforms.
 
 ## Full tier
 

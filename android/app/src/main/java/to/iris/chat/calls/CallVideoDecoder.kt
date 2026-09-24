@@ -44,9 +44,10 @@ internal class CallVideoDecoder(
         handler.post {
             try {
                 if (closed.get()) return@post
-                val next = expected ?: sequence.also { expected = it }
-                if ((sequence - next).toInt() < 0) return@post
+                val next = expected
+                if (next != null && (sequence - next).toInt() < 0) return@post
                 reorder[sequence] = Packet(bytes, timestamp, key)
+                if (expected == null && key) expected = sequence
                 drainOrdered()
             } finally { pending.decrementAndGet() }
         }
@@ -54,16 +55,17 @@ internal class CallVideoDecoder(
 
     private fun drainOrdered() {
         while (true) {
-            val next = expected ?: return
+            val next = expected ?: break
             val packet = reorder.remove(next) ?: break
             expected = next + 1u
             decode(packet)
         }
         if (reorder.isEmpty()) { gapSince = 0; return }
         val now = SystemClock.elapsedRealtime()
-        if (gapSince == 0L) { gapSince = now; handler.postDelayed({ if (!closed.get()) drainOrdered() }, 50) }
-        if (reorder.size > 3 || now - gapSince >= 50) {
-            val next = checkNotNull(expected)
+        // Match the bounded FIPS fragment-repair window; 50 ms rejected repaired IDRs.
+        if (gapSince == 0L) { gapSince = now; handler.postDelayed({ if (!closed.get()) drainOrdered() }, 200) }
+        if (reorder.size > 8 || now - gapSince >= 200) {
+            val next = expected ?: reorder.keys.minOrNull() ?: return
             val key = reorder.entries.filter { it.value.key }.minByOrNull { (it.key - next).toLong() }
             loseReference()
             val following = if (key == null) emptyMap() else reorder.filterKeys { (it - key.key).toInt() > 0 }
@@ -87,7 +89,7 @@ internal class CallVideoDecoder(
                 if (codec == null || sps?.contentEquals(newSps) != true) configure(newSps, pps, dimensions)
                 needsKey = false
             }
-            if (packets.size >= 4) { loseReference(); return }
+            if (packets.size >= 8) { loseReference(); return }
             packets.addLast(packet)
             drain()
         } catch (error: Exception) { android.util.Log.w("IrisCallCodec", "AVC frame rejected", error); loseReference() }

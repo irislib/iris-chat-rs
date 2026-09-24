@@ -217,10 +217,7 @@ impl AppCore {
         {
             return;
         }
-        a.last_feedback_seq = Some(seq);
-        a.last_feedback_at = Clock::now();
         let sent = a.video_seq.wrapping_sub(a.feedback_sent_video);
-        a.feedback_sent_video = a.video_seq;
         let expected = feedback.video_seq.map_or(0, |highest| {
             a.feedback_video_seq
                 .map_or(highest.wrapping_add(1), |last| highest.wrapping_sub(last))
@@ -228,6 +225,9 @@ impl AppCore {
         if expected >= 1 << 31 {
             return;
         }
+        a.last_feedback_seq = Some(seq);
+        a.last_feedback_at = Clock::now();
+        a.feedback_sent_video = a.video_seq;
         a.feedback_video_seq = feedback.video_seq.or(a.feedback_video_seq);
         // A working control path must not hide complete media loss. No newly
         // received sequence is also loss when we sent video during this interval.
@@ -236,15 +236,41 @@ impl AppCore {
         } else {
             expected
         };
-        if !s.video || expected == 0 {
+        if !s.video {
             return;
         }
-        let expected = expected.max(frames);
-        let loss = 1.0 - frames as f64 / expected as f64;
-        let target = if loss > 0.1 {
-            s.target_bitrate_bps.saturating_mul(3) / 4
+        // The highest observed frame may still be incomplete at a reporting
+        // boundary. Carry that debt forward; a late completion pays it back.
+        a.feedback_frame_debt =
+            (a.feedback_frame_debt + expected.min(1000) as i32 - frames as i32).clamp(0, 1000);
+        if expected == 0 {
+            return;
+        }
+        let loss =
+            a.feedback_frame_debt.saturating_sub(1).max(0) as f64 / expected.max(frames) as f64;
+        let target = if loss > 0.02 || frames == 0 {
+            // Complete-frame goodput is conservative after fragment loss. Back
+            // off below what arrived and let queues/references recover before
+            // probing again. Even one lost reference can freeze H.264 video.
+            a.feedback_healthy_ms = 0;
+            a.feedback_frame_debt = 0;
+            let delivered_bps = (u64::from(bytes) * 8000 / u64::from(interval)) as u32;
+            if frames == 0 {
+                s.target_bitrate_bps / 2
+            } else {
+                (s.target_bitrate_bps.saturating_mul(3) / 4)
+                    .min(delivered_bps.saturating_mul(85) / 100)
+            }
         } else {
-            s.target_bitrate_bps.saturating_mul(115) / 100 + 20_000
+            a.feedback_healthy_ms = a.feedback_healthy_ms.saturating_add(interval).min(5000);
+            if a.feedback_healthy_ms < 5000 {
+                s.target_bitrate_bps
+            } else {
+                let increase = (u64::from(s.target_bitrate_bps) * 8 / 100 + 10_000)
+                    * u64::from(interval)
+                    / 1000;
+                s.target_bitrate_bps.saturating_add(increase as u32)
+            }
         };
         let target = target.clamp(100_000, s.max_bitrate_bps);
         if target != s.target_bitrate_bps {
@@ -257,6 +283,7 @@ impl AppCore {
             return;
         };
         if s.video && a.video_seq > 0 && a.last_feedback_at.elapsed() > Duration::from_secs(3) {
+            a.feedback_healthy_ms = 0;
             let target = (s.target_bitrate_bps.saturating_mul(3) / 4).max(100_000);
             if target != s.target_bitrate_bps {
                 s.target_bitrate_bps = target;
