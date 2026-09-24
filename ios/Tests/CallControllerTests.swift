@@ -23,6 +23,51 @@ private final class CallMediaProbe: IrisCallMediaHandling {
 
 final class CallControllerTests: XCTestCase {
     @MainActor
+    func testDeclineImmediatelyDismissesAndDoesNotReappearFromQueuedState() {
+        var actions: [AppAction] = []
+        let controller = IrisCallController(dispatch: { actions.append($0) },
+            showError: { _ in }, mediaForTesting: CallMediaProbe())
+        var call = connectedCall(id: "declined")
+        call.phase = "incoming"
+        controller.update(call)
+        XCTAssertEqual(controller.presentedCall?.phase, "incoming")
+        // The CallKit end delegate and the in-app Decline button both use end().
+        controller.end()
+        XCTAssertNil(controller.presentedCall)
+        controller.update(call)
+        XCTAssertNil(controller.presentedCall)
+        call.phase = "ended"
+        call.endReason = "Call declined"
+        controller.update(call)
+        XCTAssertNil(controller.presentedCall)
+        XCTAssertEqual(actions.filter { if case .endCall(callId: "declined") = $0 { return true }; return false }.count, 2)
+        controller.update(connectedCall(id: "next"))
+        XCTAssertEqual(controller.presentedCall?.callId, "next")
+    }
+
+    @MainActor
+    func testRemoteEndDismissesAutomaticallyWithoutDismissingANewCall() async throws {
+        var actions: [AppAction] = []
+        let controller = IrisCallController(dispatch: { actions.append($0) },
+            showError: { _ in }, mediaForTesting: CallMediaProbe())
+        var ended = connectedCall(id: "remote")
+        ended.phase = "ended"
+        ended.endReason = "Call ended"
+        controller.update(ended)
+        XCTAssertEqual(controller.presentedCall?.endReason, "Call ended")
+        try await Task.sleep(nanoseconds: 1_800_000_000)
+        XCTAssertNil(controller.presentedCall)
+        XCTAssertTrue(actions.contains { if case .endCall(callId: "remote") = $0 { return true }; return false })
+
+        ended.callId = "old"
+        controller.update(ended)
+        controller.update(connectedCall(id: "new"))
+        try await Task.sleep(nanoseconds: 1_800_000_000)
+        XCTAssertEqual(controller.presentedCall?.callId, "new")
+        XCTAssertFalse(actions.contains { if case .endCall(callId: "old") = $0 { return true }; return false })
+    }
+
+    @MainActor
     func testHangupRejectsQueuedConnectedStateAndMediaUntilANewCall() {
         let media = CallMediaProbe()
         var actions: [AppAction] = []

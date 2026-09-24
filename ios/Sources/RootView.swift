@@ -46,11 +46,9 @@ struct RootView: View {
                     mobileNavigationContent
                 }
 
-                if let call = manager.state.call {
-                    IrisCallScreen(controller: manager.calls, call: call,
-                                   voiceEnabled: manager.state.preferences.voiceCallsEnabled)
-                        .zIndex(10)
-                }
+                IrisCallOverlay(controller: manager.calls,
+                                voiceEnabled: manager.state.preferences.voiceCallsEnabled)
+                    .zIndex(10)
                 ToastOverlay(center: manager.toasts)
                     .zIndex(20)
             }

@@ -13,6 +13,8 @@ final class IrisCallController: NSObject, ObservableObject {
     @Published private(set) var quality = IrisCallQuality.automatic
     @Published private(set) var customKilobits = 2_000
     @Published private(set) var speakerEnabled = false
+    @Published private(set) var presentedCall: CallSnapshot?
+    private var dismissalTask: Task<Void, Never>?
     private(set) var call: CallSnapshot?
     private let dispatch: (AppAction) -> Void
     private let sendMedia: ((AppAction, @escaping () -> Bool) -> Void)?
@@ -147,6 +149,9 @@ final class IrisCallController: NSObject, ObservableObject {
         permissionRequestID = nil
         guard let call else { return }
         endingCallID = call.callId
+        presentedCall = nil
+        dismissalTask?.cancel()
+        dismissalTask = nil
         sendGate.update(callID: nil, muted: true, video: false)
         // Stop capture immediately; don't wait for a network round trip.
         media.stop()
@@ -239,6 +244,33 @@ final class IrisCallController: NSObject, ObservableObject {
         }
 #endif
         updateHardware()
+        updatePresentation(snapshot, previousID: previousID)
+    }
+
+    private func updatePresentation(_ snapshot: CallSnapshot?, previousID: String?) {
+        if snapshot?.callId != previousID {
+            dismissalTask?.cancel()
+            dismissalTask = nil
+        }
+        guard let snapshot else { presentedCall = nil; return }
+        if snapshot.callId == endingCallID {
+            presentedCall = nil
+            // Core keeps the terminal snapshot until dismissed. The call record
+            // has already been saved; clearing the overlay doesn't remove it.
+            if snapshot.phase == "ended" { dispatch(.endCall(callId: snapshot.callId)) }
+            return
+        }
+        presentedCall = snapshot
+        guard snapshot.phase == "ended", dismissalTask == nil else { return }
+        // Match Signal: local hangup closes immediately, remote end/failure
+        // remains briefly so the person can read what happened.
+        dismissalTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(nanoseconds: 1_500_000_000) }
+            catch { return }
+            guard let self, self.call?.callId == snapshot.callId,
+                  self.call?.phase == "ended" else { return }
+            self.end()
+        }
     }
 
     func receiveMedia(callID: String, kind: UInt8, sequence: UInt32, timestampUs: UInt64, keyFrame: Bool, data: Data) {

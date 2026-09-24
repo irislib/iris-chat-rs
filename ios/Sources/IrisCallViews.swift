@@ -29,6 +29,17 @@ struct IrisChatCallButtons: View {
     }
 }
 
+struct IrisCallOverlay: View {
+    @ObservedObject var controller: IrisCallController
+    let voiceEnabled: Bool
+
+    var body: some View {
+        if let call = controller.presentedCall {
+            IrisCallScreen(controller: controller, call: call, voiceEnabled: voiceEnabled)
+        }
+    }
+}
+
 struct IrisCallScreen: View {
     @ObservedObject var controller: IrisCallController
     let call: CallSnapshot

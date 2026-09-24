@@ -2263,13 +2263,18 @@ final class AppManager: ObservableObject {
 
         let runner = SuspendPreparationRunner(rust: rust)
         let taskID = UIApplication.shared.beginBackgroundTask(withName: "IrisSuspend") {}
-        DispatchQueue.global(qos: .utility).async {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
             runner.prepareForSuspend()
-            guard taskID != .invalid else {
-                return
-            }
-            DispatchQueue.main.async {
-                UIApplication.shared.endBackgroundTask(taskID)
+            DispatchQueue.main.async { [weak self] in
+                // Unlock can enqueue AppForegrounded before this background
+                // worker reaches Rust. Resume again after the late flush so
+                // its suspend gate cannot leave the visible app disconnected.
+                if let self, !self.appIsBackgrounded {
+                    self.dispatchToRust(.appForegrounded)
+                }
+                if taskID != .invalid {
+                    UIApplication.shared.endBackgroundTask(taskID)
+                }
             }
         }
 #endif

@@ -28,7 +28,8 @@ final class PhoneCallUITests: XCTestCase {
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         screenshot.name = "outgoing-video-connected"; screenshot.lifetime = .keepAlways; add(screenshot)
         app.buttons.matching(NSPredicate(format: "label == 'End'")).firstMatch.tap()
-        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["startVideoCallButton"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.otherElements["callScreen"].exists)
         print("PHONE_CALL_ENDED")
     }
 
@@ -66,7 +67,8 @@ final class PhoneCallUITests: XCTestCase {
         let active = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         active.name = "connected-phone-call"; active.lifetime = .keepAlways; add(active)
         end.tap()
-        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["startVideoCallButton"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.otherElements["callScreen"].exists)
         print("PHONE_CALL_ENDED")
     }
 

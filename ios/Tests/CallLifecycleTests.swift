@@ -47,6 +47,31 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertEqual(rust.prepareForSuspendCallCount, 0)
     }
 
+    @MainActor
+    func testLateSuspendCompletionResumesAnAlreadyUnlockedApp() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let rust = MockRustApp()
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(),
+                                 dataDir: directory, environment: [:])
+        let started = expectation(description: "background flush started")
+        let release = DispatchSemaphore(value: 0)
+        rust.onNextPrepareForSuspend {
+            started.fulfill()
+            _ = release.wait(timeout: .now() + 5)
+        }
+        manager.appBackgrounded()
+        await fulfillment(of: [started], timeout: 2)
+        manager.appForegrounded()
+        let resumed = expectation(description: "resume after late flush")
+        rust.onDispatch = { action in
+            if case .appForegrounded = action { resumed.fulfill() }
+        }
+        release.signal()
+        await fulfillment(of: [resumed], timeout: 2)
+        XCTAssertEqual(rust.dispatchedActions.filter { $0 == .appForegrounded }.count, 2)
+    }
+
     private func connectedCall() -> CallSnapshot {
         CallSnapshot(outgoing: false, targetBitrateBps: 2_000_000, keyFrameGeneration: 0,
                      mediaConnected: false, maxBitrateBps: 2_000_000,

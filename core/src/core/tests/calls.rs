@@ -181,6 +181,15 @@ fn wait_call_pair(
 }
 #[test]
 fn calls_e2e_without_internet_over_local_fips_udp() {
+    exercise_local_fips_call(false);
+}
+
+#[test]
+fn calls_e2e_resuming_recipient_receives_still_ringing_call() {
+    exercise_local_fips_call(true);
+}
+
+fn exercise_local_fips_call(resume_recipient: bool) {
     let ao = Keys::generate();
     let ad = Keys::generate();
     let bo = Keys::generate();
@@ -223,10 +232,27 @@ fn calls_e2e_without_internet_over_local_fips_udp() {
             .as_deref(),
         Some("udp")
     );
+    if resume_recipient {
+        b.prepare_for_suspend();
+        assert!(b.suspended);
+        assert!(b.device_sync.is_none());
+    }
     a.handle_action(AppAction::StartCall {
         chat_id: bo.public_key().to_hex(),
         video: true,
     });
+    if resume_recipient {
+        let suspended_until = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < suspended_until {
+            pump_call_pair(&mut a, &ar, &mut b, &br);
+            assert!(b.state.call.is_none());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        b.handle_app_foregrounded();
+        // Restore the test's local-only addressing after the production resume.
+        b.reconcile_calls_udp_for_test(ba, aa, &test_fips_peer(&ad).npub());
+        assert!(!b.suspended);
+    }
     wait_call_pair(&mut a, &ar, &mut b, &br, |_, b| {
         b.state.call.as_ref().is_some_and(|c| c.phase == "incoming")
     });
