@@ -804,6 +804,74 @@ fn exact_fips_bootstrap_makes_peer_ready_and_drains_queued_direct_message() {
 }
 
 #[test]
+fn unchanged_nearby_identity_does_not_restart_bootstrap_exchange() {
+    let (_alice_dir, mut alice, alice_owner, alice_device) = test_peer_bootstrap();
+    let (_bob_dir, mut bob, _, bob_device) = test_peer_bootstrap();
+    let alice_payloads = alice.local_fips_nearby_bootstrap_payloads();
+    let bob_payloads = bob.local_fips_nearby_bootstrap_payloads();
+    let mut settled_counts = None;
+    for _ in 0..6 {
+        for payload in &alice_payloads {
+            bob.handle_fips_nearby_packet(&alice_device, FIPS_NEARBY_PORT, payload);
+        }
+        for payload in &bob_payloads {
+            alice.handle_fips_nearby_packet(&bob_device, FIPS_NEARBY_PORT, payload);
+        }
+        assert!(
+            alice.local_fips_nearby_bootstrap_payloads() == alice_payloads,
+            "receiving a peer's identity must not create a fresh local announcement"
+        );
+        assert!(bob.local_fips_nearby_bootstrap_payloads() == bob_payloads);
+        let counts = (
+            alice.debug_event_counters.app_keys_events,
+            bob.debug_event_counters.app_keys_events,
+        );
+        if let Some(settled) = settled_counts {
+            assert_eq!(
+                counts, settled,
+                "idle peers must stop reapplying device lists"
+            );
+        }
+        settled_counts = Some(counts);
+    }
+
+    let profile = alice.owner_profiles.get_mut(&alice_owner.to_hex()).unwrap();
+    profile.name = Some("Updated Alice".into());
+    profile.updated_at_secs += 1;
+    let changed = alice.local_fips_nearby_bootstrap_payloads();
+    assert!(
+        changed != alice_payloads,
+        "real profile changes must propagate"
+    );
+    assert!(alice.local_fips_nearby_bootstrap_payloads() == changed);
+
+    let roster = alice.app_keys.get_mut(&alice_owner.to_hex()).unwrap();
+    roster.created_at_secs += 1;
+    roster.devices.push(KnownAppKeyDevice {
+        identity_pubkey_hex: Keys::generate().public_key().to_hex(),
+        created_at_secs: roster.created_at_secs,
+        device_label: None,
+        client_label: None,
+        label_updated_at_secs: 0,
+    });
+    let linked = alice.local_fips_nearby_bootstrap_payloads();
+    assert!(linked != changed, "new devices must propagate");
+    assert!(alice.local_fips_nearby_bootstrap_payloads() == linked);
+
+    alice.current_device_labels = Some(CurrentDeviceLabels {
+        device_label: Some("New phone".into()),
+        client_label: None,
+    });
+    alice.defer_owner_app_keys_publish = true;
+    let restored = alice.local_fips_nearby_bootstrap_payloads();
+    assert!(restored != linked);
+    assert!(
+        alice.local_fips_nearby_bootstrap_payloads() == restored,
+        "restoring offline must also reuse its encrypted announcement"
+    );
+}
+
+#[test]
 fn reordered_fips_bootstrap_makes_peer_ready_and_drains_queued_direct_message() {
     let (_alice_dir, alice, alice_owner, alice_device) = test_peer_bootstrap();
     let mut bootstrap_payloads = alice.local_fips_nearby_bootstrap_payloads();

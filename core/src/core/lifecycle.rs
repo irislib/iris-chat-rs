@@ -127,6 +127,7 @@ impl AppCore {
             pending_host_ble: None,
             host_ble_attached: false,
             fips_nearby_links: Vec::new(),
+            fips_nearby_bootstrap: Default::default(),
             fips_connection_generation: 0,
             pending_relay_publishes: BTreeMap::new(),
             pending_relay_publish_inflight: HashSet::new(),

@@ -257,33 +257,6 @@ impl AppCore {
         });
     }
 
-    pub(super) fn local_fips_nearby_bootstrap_payloads(&self) -> Vec<Vec<u8>> {
-        let (background, mut durable) = self.build_local_identity_artifacts();
-        if self
-            .logged_in
-            .as_ref()
-            .is_some_and(|login| login.owner_keys.is_none())
-        {
-            // Linked devices cannot recreate owner signatures. Forward the original
-            // signed records so a new peer can resolve our device, name and picture.
-            for kind in [Kind::Metadata, Kind::Custom(APP_KEYS_EVENT_KIND as u16)] {
-                if let Some(event) = self.cached_local_fips_identity(kind) {
-                    durable.push(("linked-identity-nearby", event));
-                }
-            }
-        }
-        if let Some(event) = self.deferred_owner_app_keys_for_fips_nearby() {
-            durable.insert(0, ("app-keys-nearby", event));
-        }
-        durable
-            .into_iter()
-            .chain(background)
-            .map(|(_, event)| event)
-            .filter(is_fips_nearby_bootstrap_event)
-            .filter_map(|event| encode_fips_nearby_event(&event))
-            .collect()
-    }
-
     fn local_fips_identity_storage(&self) -> Option<SqliteStorageAdapter> {
         let login = self.logged_in.as_ref()?;
         Some(SqliteStorageAdapter::new(
@@ -563,3 +536,6 @@ fn is_local_udp_address(address: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+mod bootstrap;
+pub(super) use bootstrap::FipsNearbyBootstrapCache;
