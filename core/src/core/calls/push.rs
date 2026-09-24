@@ -152,13 +152,20 @@ pub(crate) fn build_call_push_subscription_request(
     });
     if ios {
         let topic = apns_topic.filter(|topic| !topic.trim().is_empty())?;
-        body["apns_topic"] = format!("{}.voip", topic.trim_end_matches(".voip")).into();
-        body["apns_environment"] = if is_release {
-            "production"
-        } else {
-            "development"
-        }
-        .into();
+        let fields = body.as_object_mut()?;
+        fields.insert(
+            "apns_topic".into(),
+            format!("{}.voip", topic.trim_end_matches(".voip")).into(),
+        );
+        fields.insert(
+            "apns_environment".into(),
+            if is_release {
+                "production"
+            } else {
+                "development"
+            }
+            .into(),
+        );
     }
     let path = match subscription_id {
         Some(id) if !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') => {

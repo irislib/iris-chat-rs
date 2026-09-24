@@ -2,6 +2,34 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.24.5
+
+### GitHub
+
+- Reduce idle CPU use by reusing unchanged nearby identity announcements and avoiding repeated processing of messages waiting for device verification.
+- Preserve original message timestamps when sending queued messages and recovering encrypted or legacy messages after a restart.
+- Add iPhone voice-message recording and inline audio playback.
+- Keep the message composer available during connection checks, preserve input focus on Linux, and fix the Windows send shortcut.
+- Add adjustable message text size and desktop zoom controls.
+- Improve video keyframe recovery and adapt call traffic to constrained connections.
+- Wake native incoming calls through encrypted push notifications, retry temporary Android push-registration failures, and improve Apple call dismissal and background recovery.
+
+### Apple
+
+- Reduced idle CPU use and improved message processing.
+- Messages keep their original timestamps when sent after a delay or recovered after restarting.
+- Record voice messages on iPhone and play audio inside chats.
+- Keep typing while connection checks run, and adjust message text size.
+- Improved video calls, incoming call alerts, and call dismissal.
+
+### Zapstore
+
+- Reduced repeated background work and improved message processing.
+- Messages keep their original timestamps when sent after a delay or recovered after restarting.
+- Keep typing while connection checks run, and adjust message text size.
+- Improved video calls and incoming call alerts.
+- Retry push registration after temporary network or notification-service failures.
+
 ## v2026.9.24.4
 
 ### GitHub

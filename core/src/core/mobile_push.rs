@@ -115,11 +115,26 @@ impl AppCore {
 
         MobilePushSyncSnapshot {
             call_device_pubkey_hex: Some(logged_in.device_keys.public_key().to_hex()),
-            call_author_pubkeys: if self.preferences.voice_calls_enabled || self.preferences.video_calls_enabled {
-                sorted_hexes(self.app_keys.values()
-                    .filter(|keys| keys.created_at_secs > 0 && self.call_contact_allowed(&keys.owner_pubkey_hex))
-                    .flat_map(|keys| keys.devices.iter().map(|device| device.identity_pubkey_hex.clone())).collect())
-            } else { Vec::new() },
+            call_author_pubkeys: if self.preferences.voice_calls_enabled
+                || self.preferences.video_calls_enabled
+            {
+                sorted_hexes(
+                    self.app_keys
+                        .values()
+                        .filter(|keys| {
+                            keys.created_at_secs > 0
+                                && self.call_contact_allowed(&keys.owner_pubkey_hex)
+                        })
+                        .flat_map(|keys| {
+                            keys.devices
+                                .iter()
+                                .map(|device| device.identity_pubkey_hex.clone())
+                        })
+                        .collect(),
+                )
+            } else {
+                Vec::new()
+            },
             owner_pubkey_hex: Some(logged_in.owner_pubkey.to_string()),
             message_author_pubkeys,
             background_message_author_pubkeys,
