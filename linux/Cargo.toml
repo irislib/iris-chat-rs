@@ -8,6 +8,9 @@ publish = false
 name = "iris-chat"
 path = "src/main.rs"
 
+[features]
+ui-tests = []
+
 [dependencies]
 iris-chat-core = { package = "iris-chat", path = "../core" }
 gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
@@ -45,3 +48,12 @@ assets = [
     ["resources/iris-chat-512.png", "usr/share/icons/hicolor/512x512/apps/iris-chat.png", "644"],
     ["resources/iris-chat.desktop", "usr/share/applications/iris-chat.desktop", "644"],
 ]
+
+[dev-dependencies]
+tempfile = "3"
+
+[[test]]
+name = "composer"
+path = "tests/composer.rs"
+harness = false
+required-features = ["ui-tests"]

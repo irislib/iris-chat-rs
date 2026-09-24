@@ -13,6 +13,10 @@ use crate::platform::notifications;
 use crate::screens;
 use crate::widgets::image_cache;
 
+#[path = "window/content.rs"]
+mod content;
+use content::Content;
+
 const APP_ID: &str = "to.iris.chat";
 
 pub fn build_ui(app: &adw::Application, present_on_create: bool) {
@@ -174,12 +178,10 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
     toolbar.add_css_class("iris-root");
     toolbar.add_top_bar(&header);
 
-    let content_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    content_slot.add_css_class("iris-root");
-    content_slot.set_vexpand(true);
+    let content_slot = Content::new();
 
     let toast_overlay = adw::ToastOverlay::new();
-    toast_overlay.set_child(Some(&content_slot));
+    toast_overlay.set_child(Some(&content_slot.root));
     toolbar.set_content(Some(&toast_overlay));
 
     window.set_content(Some(&toolbar));
@@ -408,16 +410,7 @@ struct HeaderWidgets {
     title_slot: gtk::Box,
 }
 
-fn apply_state(
-    slot: &gtk::Box,
-    header: &HeaderWidgets,
-    manager: &Rc<AppManager>,
-    state: &AppState,
-) {
-    while let Some(child) = slot.first_child() {
-        slot.remove(&child);
-    }
-
+fn apply_state(slot: &Content, header: &HeaderWidgets, manager: &Rc<AppManager>, state: &AppState) {
     if manager.bootstrap_in_flight() {
         header.back.set_visible(false);
         header.new_chat.set_visible(false);
@@ -427,7 +420,7 @@ fn apply_state(
         header.chat_search.set_visible(false);
         header.title.set_label("Loading");
         header.title_status.set_visible(false);
-        slot.append(&loading_screen());
+        slot.replace(&loading_screen());
         return;
     }
 
@@ -511,14 +504,7 @@ fn apply_state(
         }
     }
 
-    let widget = screens::render(&screen, state, manager);
-    let clamp = adw::Clamp::builder()
-        .maximum_size(600)
-        .tightening_threshold(560)
-        .build();
-    clamp.set_child(Some(&widget));
-    clamp.set_vexpand(true);
-    slot.append(&clamp);
+    slot.update(&screen, state, manager);
 }
 
 fn loading_screen() -> gtk::Widget {
@@ -661,3 +647,7 @@ fn current_screen(state: &AppState) -> Screen {
         .cloned()
         .unwrap_or_else(|| state.router.default_screen.clone())
 }
+
+#[cfg(all(test, feature = "ui-tests"))]
+#[path = "window/composer_tests.rs"]
+pub mod composer_tests;

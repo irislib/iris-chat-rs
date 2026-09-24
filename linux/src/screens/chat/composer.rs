@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -7,236 +8,258 @@ use iris_chat_core::{AppAction, AppState, CurrentChatSnapshot, OutgoingAttachmen
 use crate::app_manager::AppManager;
 use crate::screens::chat_list::unix_now;
 
-pub(super) fn composer(
-    chat: &CurrentChatSnapshot,
-    state: &AppState,
-    manager: &Rc<AppManager>,
-) -> gtk::Widget {
-    let outer = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    outer.set_margin_top(8);
-    outer.set_margin_bottom(8);
-    outer.set_margin_start(12);
-    outer.set_margin_end(12);
+pub(super) struct Composer {
+    pub root: gtk::Box,
+    send: gtk::Button,
+    attach: gtk::Button,
+    progress: gtk::ProgressBar,
+    ttl: Rc<Cell<Option<u64>>>,
+}
 
-    let preview_scroll = gtk::ScrolledWindow::new();
-    preview_scroll.set_hscrollbar_policy(gtk::PolicyType::Automatic);
-    preview_scroll.set_vscrollbar_policy(gtk::PolicyType::Never);
-    preview_scroll.set_propagate_natural_height(true);
-    let preview_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    preview_scroll.set_child(Some(&preview_row));
-    outer.append(&preview_scroll);
-    rebuild_attachment_previews(&preview_row, manager, &chat.chat_id);
-    preview_scroll.set_visible(preview_row.first_child().is_some());
+impl Composer {
+    pub fn new(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManager>) -> Self {
+        let outer = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        outer.set_margin_top(8);
+        outer.set_margin_bottom(8);
+        outer.set_margin_start(12);
+        outer.set_margin_end(12);
 
-    if state.busy.uploading_attachment {
+        let preview_scroll = gtk::ScrolledWindow::new();
+        preview_scroll.set_hscrollbar_policy(gtk::PolicyType::Automatic);
+        preview_scroll.set_vscrollbar_policy(gtk::PolicyType::Never);
+        preview_scroll.set_propagate_natural_height(true);
+        let preview_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        preview_scroll.set_child(Some(&preview_row));
+        outer.append(&preview_scroll);
+        rebuild_attachment_previews(&preview_row, manager, &chat.chat_id);
+        preview_scroll.set_visible(preview_row.first_child().is_some());
+
         let progress = gtk::ProgressBar::new();
         progress.set_show_text(false);
         progress.add_css_class("osd");
-        if let Some(upload) = state.busy.upload_progress.as_ref() {
-            if upload.total_bytes > 0 {
-                let fraction =
-                    (upload.bytes_uploaded as f64 / upload.total_bytes as f64).clamp(0.0, 1.0);
-                progress.set_fraction(fraction);
-            } else {
-                progress.pulse();
-            }
-        } else {
-            progress.pulse();
-        }
         outer.append(&progress);
-    }
 
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
 
-    let attach = gtk::Button::from_icon_name("mail-attachment-symbolic");
-    attach.add_css_class("flat");
-    attach.add_css_class("circular");
-    attach.set_tooltip_text(Some("Attach file"));
-    attach.set_sensitive(!state.busy.uploading_attachment);
-    let manager_for_attach = manager.clone();
-    let chat_id_for_attach = chat.chat_id.clone();
-    let preview_row_for_attach = preview_row.clone();
-    let preview_scroll_for_attach = preview_scroll.clone();
-    attach.connect_clicked(move |btn| {
-        let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
-        let dialog = gtk::FileDialog::builder().title("Attach file").build();
-        let manager = manager_for_attach.clone();
-        let chat_id = chat_id_for_attach.clone();
-        let preview_row = preview_row_for_attach.clone();
-        let preview_scroll = preview_scroll_for_attach.clone();
-        dialog.open(
-            parent.as_ref(),
-            gtk::gio::Cancellable::NONE,
-            move |result| {
-                let Ok(file) = result else { return };
-                let path = match file.path() {
-                    Some(p) => p.to_string_lossy().to_string(),
-                    None => return,
-                };
-                let filename = file
-                    .basename()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "attachment".to_string());
-                manager.stage_attachment(
-                    &chat_id,
-                    OutgoingAttachment {
-                        file_path: path,
-                        filename,
-                    },
-                );
-                rebuild_attachment_previews(&preview_row, &manager, &chat_id);
-                preview_scroll.set_visible(preview_row.first_child().is_some());
-            },
-        );
-    });
-    row.append(&attach);
-
-    let buffer = gtk::TextBuffer::new(None);
-    let input = gtk::TextView::with_buffer(&buffer);
-    input.add_css_class("composer-input");
-    input.set_accepts_tab(false);
-    input.set_hexpand(true);
-    input.set_wrap_mode(gtk::WrapMode::WordChar);
-    input.set_top_margin(9);
-    input.set_bottom_margin(9);
-    input.set_left_margin(12);
-    input.set_right_margin(12);
-
-    let input_scroll = gtk::ScrolledWindow::new();
-    input_scroll.set_hexpand(true);
-    input_scroll.set_min_content_height(40);
-    input_scroll.set_max_content_height(132);
-    input_scroll.set_propagate_natural_height(true);
-    input_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
-    input_scroll.set_vscrollbar_policy(gtk::PolicyType::Automatic);
-    input_scroll.set_child(Some(&input));
-
-    let input_overlay = gtk::Overlay::new();
-    input_overlay.set_hexpand(true);
-    input_overlay.set_child(Some(&input_scroll));
-
-    let placeholder = gtk::Label::new(Some("Message"));
-    placeholder.add_css_class("dim-label");
-    placeholder.set_halign(gtk::Align::Start);
-    placeholder.set_valign(gtk::Align::Start);
-    placeholder.set_margin_start(13);
-    placeholder.set_margin_top(10);
-    placeholder.set_can_target(false);
-    input_overlay.add_overlay(&placeholder);
-
-    // Seed before wiring `connect_changed`; the core dedups identical draft writes.
-    if !chat.draft.is_empty() {
-        buffer.set_text(&chat.draft);
-    }
-    placeholder.set_visible(chat.draft.is_empty());
-    row.append(&input_overlay);
-
-    let emoji_btn = gtk::Button::from_icon_name("face-smile-symbolic");
-    emoji_btn.add_css_class("flat");
-    emoji_btn.add_css_class("circular");
-    emoji_btn.set_tooltip_text(Some("Insert emoji"));
-    let emoji_chooser = gtk::EmojiChooser::new();
-    emoji_chooser.set_parent(&emoji_btn);
-    {
-        let buffer_for_emoji = buffer.clone();
-        let input_for_emoji = input.clone();
-        emoji_chooser.connect_emoji_picked(move |_, emoji_text| {
-            buffer_for_emoji.insert_at_cursor(emoji_text);
-            input_for_emoji.grab_focus();
+        let attach = gtk::Button::from_icon_name("mail-attachment-symbolic");
+        attach.add_css_class("flat");
+        attach.add_css_class("circular");
+        attach.set_tooltip_text(Some("Attach file"));
+        attach.set_sensitive(!state.busy.uploading_attachment);
+        let manager_for_attach = manager.clone();
+        let chat_id_for_attach = chat.chat_id.clone();
+        let preview_row_for_attach = preview_row.clone();
+        let preview_scroll_for_attach = preview_scroll.clone();
+        attach.connect_clicked(move |btn| {
+            let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+            let dialog = gtk::FileDialog::builder().title("Attach file").build();
+            let manager = manager_for_attach.clone();
+            let chat_id = chat_id_for_attach.clone();
+            let preview_row = preview_row_for_attach.clone();
+            let preview_scroll = preview_scroll_for_attach.clone();
+            dialog.open(
+                parent.as_ref(),
+                gtk::gio::Cancellable::NONE,
+                move |result| {
+                    let Ok(file) = result else { return };
+                    let path = match file.path() {
+                        Some(p) => p.to_string_lossy().to_string(),
+                        None => return,
+                    };
+                    let filename = file
+                        .basename()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "attachment".to_string());
+                    manager.stage_attachment(
+                        &chat_id,
+                        OutgoingAttachment {
+                            file_path: path,
+                            filename,
+                        },
+                    );
+                    rebuild_attachment_previews(&preview_row, &manager, &chat_id);
+                    preview_scroll.set_visible(preview_row.first_child().is_some());
+                },
+            );
         });
-    }
-    {
-        let chooser_for_click = emoji_chooser.clone();
-        emoji_btn.connect_clicked(move |_| chooser_for_click.popup());
-    }
-    row.append(&emoji_btn);
+        row.append(&attach);
 
-    if manager.should_focus_composer(&chat.chat_id) {
-        let input_for_focus = input.clone();
-        gtk::glib::idle_add_local_once(move || {
-            input_for_focus.grab_focus();
-        });
-    }
+        let buffer = gtk::TextBuffer::new(None);
+        let input = gtk::TextView::with_buffer(&buffer);
+        input.add_css_class("composer-input");
+        input.set_accepts_tab(false);
+        input.set_hexpand(true);
+        input.set_wrap_mode(gtk::WrapMode::WordChar);
+        input.set_top_margin(9);
+        input.set_bottom_margin(9);
+        input.set_left_margin(12);
+        input.set_right_margin(12);
 
-    {
-        let manager_for_typing = manager.clone();
-        let chat_id_for_typing = chat.chat_id.clone();
-        let placeholder_for_typing = placeholder.clone();
-        buffer.connect_changed(move |buffer| {
-            let text = composer_buffer_text(buffer);
-            placeholder_for_typing.set_visible(text.is_empty());
-            if text.is_empty() {
-                manager_for_typing.dispatch(AppAction::StopTyping {
-                    chat_id: chat_id_for_typing.clone(),
-                });
-            } else {
-                manager_for_typing.dispatch(AppAction::SendTyping {
-                    chat_id: chat_id_for_typing.clone(),
-                });
-            }
-            manager_for_typing.dispatch(AppAction::SetChatDraft {
-                chat_id: chat_id_for_typing.clone(),
-                text,
-            });
-        });
-    }
+        let input_scroll = gtk::ScrolledWindow::new();
+        input_scroll.set_hexpand(true);
+        input_scroll.set_min_content_height(40);
+        input_scroll.set_max_content_height(132);
+        input_scroll.set_propagate_natural_height(true);
+        input_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+        input_scroll.set_vscrollbar_policy(gtk::PolicyType::Automatic);
+        input_scroll.set_child(Some(&input));
 
-    let busy = state.busy.sending_message;
-    let send = gtk::Button::from_icon_name("document-send-symbolic");
-    send.add_css_class("suggested-action");
-    send.add_css_class("circular");
-    send.set_tooltip_text(Some("Send"));
-    send.set_sensitive(!busy);
-    row.append(&send);
+        let input_overlay = gtk::Overlay::new();
+        input_overlay.set_hexpand(true);
+        input_overlay.set_child(Some(&input_scroll));
 
-    let chat_id = chat.chat_id.clone();
-    let ttl = chat.message_ttl_seconds;
-    let manager_for_click = manager.clone();
-    let buffer_for_click = buffer.clone();
-    let preview_row_for_send = preview_row.clone();
-    let preview_scroll_for_send = preview_scroll.clone();
-    send.connect_clicked(move |btn| {
-        if submit_composer(
-            &manager_for_click,
-            &chat_id,
-            &buffer_for_click,
-            ttl,
-            &preview_row_for_send,
-            &preview_scroll_for_send,
-        ) {
-            btn.set_sensitive(false);
+        let placeholder = gtk::Label::new(Some("Message"));
+        placeholder.add_css_class("dim-label");
+        placeholder.set_halign(gtk::Align::Start);
+        placeholder.set_valign(gtk::Align::Start);
+        placeholder.set_margin_start(13);
+        placeholder.set_margin_top(10);
+        placeholder.set_can_target(false);
+        input_overlay.add_overlay(&placeholder);
+
+        // Seed before wiring `connect_changed`; the core dedups identical draft writes.
+        if !chat.draft.is_empty() {
+            buffer.set_text(&chat.draft);
         }
-    });
+        placeholder.set_visible(chat.draft.is_empty());
+        row.append(&input_overlay);
 
-    let chat_id = chat.chat_id.clone();
-    let ttl = chat.message_ttl_seconds;
-    let manager_for_enter = manager.clone();
-    let buffer_for_enter = buffer.clone();
-    let preview_row_for_enter = preview_row.clone();
-    let preview_scroll_for_enter = preview_scroll.clone();
-    let key_controller = gtk::EventControllerKey::new();
-    key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
-    key_controller.connect_key_pressed(move |_, keyval, _, state| {
-        if !matches!(keyval, gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter)
-            || state.contains(gtk::gdk::ModifierType::SHIFT_MASK)
+        let emoji_btn = gtk::MenuButton::new();
+        emoji_btn.set_icon_name("face-smile-symbolic");
+        emoji_btn.add_css_class("flat");
+        emoji_btn.add_css_class("circular");
+        emoji_btn.set_tooltip_text(Some("Insert emoji"));
+        let emoji_chooser = gtk::EmojiChooser::new();
+        emoji_btn.set_popover(Some(&emoji_chooser));
         {
-            return glib::Propagation::Proceed;
+            let buffer_for_emoji = buffer.clone();
+            let input_for_emoji = input.clone();
+            emoji_chooser.connect_emoji_picked(move |_, emoji_text| {
+                buffer_for_emoji.insert_at_cursor(emoji_text);
+                input_for_emoji.grab_focus();
+            });
+        }
+        row.append(&emoji_btn);
+
+        {
+            let input_for_focus = input.clone();
+            gtk::glib::idle_add_local_once(move || {
+                input_for_focus.grab_focus();
+            });
         }
 
-        submit_composer(
-            &manager_for_enter,
-            &chat_id,
-            &buffer_for_enter,
-            ttl,
-            &preview_row_for_enter,
-            &preview_scroll_for_enter,
-        );
-        glib::Propagation::Stop
-    });
-    input.add_controller(key_controller);
+        {
+            let manager_for_typing = manager.clone();
+            let chat_id_for_typing = chat.chat_id.clone();
+            let placeholder_for_typing = placeholder.clone();
+            buffer.connect_changed(move |buffer| {
+                let text = composer_buffer_text(buffer);
+                placeholder_for_typing.set_visible(text.is_empty());
+                if text.is_empty() {
+                    manager_for_typing.dispatch(AppAction::StopTyping {
+                        chat_id: chat_id_for_typing.clone(),
+                    });
+                } else {
+                    manager_for_typing.dispatch(AppAction::SendTyping {
+                        chat_id: chat_id_for_typing.clone(),
+                    });
+                }
+                manager_for_typing.dispatch(AppAction::SetChatDraft {
+                    chat_id: chat_id_for_typing.clone(),
+                    text,
+                });
+            });
+        }
 
-    outer.append(&row);
-    outer.upcast()
+        let busy = state.busy.sending_message;
+        let send = gtk::Button::from_icon_name("document-send-symbolic");
+        send.add_css_class("suggested-action");
+        send.add_css_class("circular");
+        send.set_tooltip_text(Some("Send"));
+        send.set_sensitive(!busy);
+        row.append(&send);
+
+        let chat_id = chat.chat_id.clone();
+        let ttl = Rc::new(Cell::new(chat.message_ttl_seconds));
+        let ttl_for_click = ttl.clone();
+        let manager_for_click = manager.clone();
+        let buffer_for_click = buffer.clone();
+        let preview_row_for_send = preview_row.clone();
+        let preview_scroll_for_send = preview_scroll.clone();
+        send.connect_clicked(move |btn| {
+            if submit_composer(
+                &manager_for_click,
+                &chat_id,
+                &buffer_for_click,
+                ttl_for_click.get(),
+                &preview_row_for_send,
+                &preview_scroll_for_send,
+            ) {
+                btn.set_sensitive(false);
+            }
+        });
+
+        let chat_id = chat.chat_id.clone();
+        let ttl_for_enter = ttl.clone();
+        let manager_for_enter = manager.clone();
+        let buffer_for_enter = buffer.clone();
+        let preview_row_for_enter = preview_row.clone();
+        let preview_scroll_for_enter = preview_scroll.clone();
+        let key_controller = gtk::EventControllerKey::new();
+        key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        key_controller.connect_key_pressed(move |_, keyval, _, state| {
+            if !matches!(keyval, gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter)
+                || state.contains(gtk::gdk::ModifierType::SHIFT_MASK)
+            {
+                return glib::Propagation::Proceed;
+            }
+
+            submit_composer(
+                &manager_for_enter,
+                &chat_id,
+                &buffer_for_enter,
+                ttl_for_enter.get(),
+                &preview_row_for_enter,
+                &preview_scroll_for_enter,
+            );
+            glib::Propagation::Stop
+        });
+        input.add_controller(key_controller);
+
+        outer.append(&row);
+        let composer = Self {
+            root: outer,
+            send,
+            attach,
+            progress,
+            ttl,
+        };
+        composer.update(chat, state);
+        composer
+    }
+
+    pub fn update(&self, chat: &CurrentChatSnapshot, state: &AppState) {
+        // The live buffer owns local edits. Replaying a queued draft here would
+        // overwrite newer typing, the selection, or an input method's preedit.
+        self.ttl.set(chat.message_ttl_seconds);
+        self.send.set_sensitive(!state.busy.sending_message);
+        self.attach.set_sensitive(!state.busy.uploading_attachment);
+        self.progress.set_visible(state.busy.uploading_attachment);
+        if state.busy.uploading_attachment {
+            if let Some(upload) = state
+                .busy
+                .upload_progress
+                .as_ref()
+                .filter(|p| p.total_bytes > 0)
+            {
+                self.progress.set_fraction(
+                    (upload.bytes_uploaded as f64 / upload.total_bytes as f64).clamp(0.0, 1.0),
+                );
+            } else {
+                self.progress.pulse();
+            }
+        }
+    }
 }
 
 fn composer_buffer_text(buffer: &gtk::TextBuffer) -> String {

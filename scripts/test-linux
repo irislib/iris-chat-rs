@@ -12,7 +12,7 @@ REPO_BASENAME="$(basename "$ROOT")"
 RATCHET_ROOT="${IRIS_RATCHET_ROOT:-$ROOT/../nostr-double-ratchet}"
 
 if [[ "$(uname -s)" == "Linux" ]]; then
-  cargo test --manifest-path "$ROOT/linux/Cargo.toml"
+  dbus-run-session -- xvfb-run -a cargo test --manifest-path "$ROOT/linux/Cargo.toml" --locked --features ui-tests
   exit 0
 fi
 
@@ -44,4 +44,4 @@ docker run \
   "${DOCKER_VOLUMES[@]}" \
   -w "/workspace/$REPO_BASENAME/linux" \
   --entrypoint /bin/bash \
-  "$IMAGE" -lc 'set -Eeuo pipefail; cargo test'
+  "$IMAGE" -lc 'set -Eeuo pipefail; dbus-run-session -- xvfb-run -a cargo test --locked --features ui-tests'

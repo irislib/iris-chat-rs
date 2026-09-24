@@ -173,6 +173,7 @@ jobs:
             libsoup-3.0-dev \
             libssl-dev \
             libv4l-dev \
+            xvfb xauth dbus-x11 \
             pkg-config
 
       - name: Install Rust
@@ -192,7 +193,7 @@ jobs:
             linux-${{ runner.os }}-
 
       - name: Linux tests
-        run: cargo test --manifest-path linux/Cargo.toml --locked
+        run: dbus-run-session -- xvfb-run -a cargo test --manifest-path linux/Cargo.toml --locked --features ui-tests
 
   macos:
     name: macOS build and tests

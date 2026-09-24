@@ -18,6 +18,8 @@ use crate::widgets::image_cache;
 mod chat_links;
 mod composer;
 mod safety;
+mod view;
+pub use view::ChatView;
 
 use chat_links::{install_link_actions, linkified_text};
 use safety::{
@@ -47,38 +49,9 @@ struct ParticipantInfo {
 }
 
 pub fn render(chat_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
-    let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    container.set_vexpand(true);
-
-    let Some(chat) = state.current_chat.as_ref().filter(|c| c.chat_id == chat_id) else {
-        let placeholder = gtk::Label::new(Some("Loading chat…"));
-        placeholder.add_css_class("dim-label");
-        placeholder.set_vexpand(true);
-        container.append(&placeholder);
-        return container.upcast();
-    };
-
-    mark_visible_seen(chat, manager);
-
-    container.append(&ttl_strip(chat, manager));
-    container.append(&messages_view(chat, &state.preferences, manager));
-    let composer_blocked =
-        matches!(chat.kind, ChatKind::Direct) && is_user_blocked(&state.preferences, &chat.chat_id);
-    if composer_blocked {
-        container.append(&blocked_bar(chat, manager));
-    } else if matches!(chat.kind, ChatKind::Direct) && chat.is_request {
-        container.append(&message_request_bar(chat, manager));
-    } else if let Some(capability) = chat
-        .direct_chat_capability
-        .as_ref()
-        .filter(|capability| !matches!(capability, DirectChatCapabilityState::Available))
-    {
-        container.append(&capability_bar(chat, capability, manager));
-    } else {
-        container.append(&composer::composer(chat, state, manager));
-    }
-
-    container.upcast()
+    let mut view = ChatView::new(chat_id);
+    view.update(state, manager);
+    view.root.upcast()
 }
 
 pub fn present_chat_info(

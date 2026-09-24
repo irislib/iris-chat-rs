@@ -2476,6 +2476,7 @@ dependencies = [
  "rqrr",
  "serde",
  "serde_json",
+ "tempfile",
  "v4l",
 ]
 

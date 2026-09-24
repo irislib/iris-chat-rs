@@ -70,7 +70,6 @@ pub struct AppManager {
     persisted_restore_in_flight: Cell<bool>,
     pending_navigation_override: RefCell<Option<PendingNavigationOverride>>,
     staged_attachments: RefCell<HashMap<String, Vec<OutgoingAttachment>>>,
-    last_focused_chat_id: RefCell<Option<String>>,
     search_ui: RefCell<SearchUiState>,
     client_debug_log: RefCell<Vec<ClientDebugLogEntry>>,
     window_active: Cell<bool>,
@@ -222,7 +221,6 @@ impl AppManager {
             persisted_restore_in_flight: Cell::new(persisted_restore_in_flight),
             pending_navigation_override: RefCell::new(None),
             staged_attachments: RefCell::new(HashMap::new()),
-            last_focused_chat_id: RefCell::new(None),
             search_ui: RefCell::new(SearchUiState::default()),
             client_debug_log: RefCell::new(Vec::new()),
             window_active: Cell::new(false),
@@ -296,15 +294,6 @@ impl AppManager {
     pub fn redraw_ui(&self) {
         let state = self.current_state();
         let _ = self.update_tx_ui.send_blocking(AppUpdate::FullState(state));
-    }
-
-    pub fn should_focus_composer(&self, chat_id: &str) -> bool {
-        let mut slot = self.last_focused_chat_id.borrow_mut();
-        if slot.as_deref() == Some(chat_id) {
-            return false;
-        }
-        *slot = Some(chat_id.to_string());
-        true
     }
 
     pub fn staged_attachments(&self, chat_id: &str) -> Vec<OutgoingAttachment> {
