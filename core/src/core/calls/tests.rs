@@ -6,6 +6,43 @@ mod history;
 const CALL_ID: &str = "00112233445566778899aabbccddeeff";
 const NEXT_CALL_ID: &str = "112233445566778899aabbccddeeff00";
 
+#[test]
+fn media_batches_expire_and_preserve_peer_validation() {
+    let mut f = Fixture::new();
+    f.connected_incoming(true);
+    f._updates.try_iter().for_each(drop);
+    let slots = Arc::new(tokio::sync::Semaphore::new(4));
+    let video = vec![0, 0, 0, 1, 0x65, 42];
+    for (sequence, age_ms, source, port, delivered) in [
+        (0, 200, f.devices[0].clone(), PORT, false),
+        (1, 0, f.devices[1].clone(), PORT, false),
+        (2, 0, f.devices[0].clone(), PORT + 1, false),
+        (3, 0, f.devices[0].clone(), PORT, true),
+    ] {
+        let packets = wire::encode(CALL_ID, 2, sequence, 0, true, &video)
+            .into_iter()
+            .map(|data| (source.clone(), port, data))
+            .collect();
+        f.core
+            .handle_message(CoreMsg::Internal(Box::new(InternalEvent::CallMediaBatch {
+                packets,
+                received_at: Clock::now() - Duration::from_millis(age_ms),
+                _permit: slots.clone().try_acquire_owned().unwrap(),
+            })));
+        assert_eq!(
+            f._updates
+                .try_iter()
+                .any(|update| matches!(update, AppUpdate::CallMedia { .. })),
+            delivered
+        );
+        assert_eq!(
+            slots.available_permits(),
+            4,
+            "discarded batches must release their queue budget"
+        );
+    }
+}
+
 struct Fixture {
     core: AppCore,
     _updates: flume::Receiver<AppUpdate>,

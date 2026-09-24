@@ -127,6 +127,12 @@ pub(crate) enum InternalEvent {
         source_port: u16,
         data: Vec<u8>,
     },
+    CallMediaBatch {
+        packets: Vec<(String, u16, Vec<u8>)>,
+        received_at: std::time::Instant,
+        // Released on consumption or discard, including during shutdown.
+        _permit: tokio::sync::OwnedSemaphorePermit,
+    },
     CallRecoveryTick {
         call_id: String,
     },

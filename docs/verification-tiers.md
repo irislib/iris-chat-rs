@@ -13,6 +13,36 @@ nextest when installed and also runs documentation tests; otherwise it uses
 `CARGO_TARGET_DIR` is set. Android compilation, iOS tests, simulators, phones,
 VMs, and GUI sessions are intentionally deferred.
 
+## Call video measurements
+
+Run `scripts/test_call_video_quality.sh` on a Mac with Xcode. Use `codec` or
+`transport` as its argument to run one stage; `transport` also runs on other
+desktop hosts. Each stage prints `CALL_QUALITY` JSON and fails on excessive
+loss, latency, or frame gaps. Neither stage opens the app or uses a camera or
+microphone.
+
+The native stage feeds moving 720p images through the production Apple H.264
+encoder and decoder at 30 fps, without flushing the encoder to force output.
+After 30 warmup frames, it measures encoding and input-to-decoded-frame
+p95 latency, delivered fps, bitrate, and the longest frame gap. Cold startup
+is reported separately. Run timing gates on an otherwise idle host. The same
+`CallVideoQualityTests` case is part of the Apple unit-test targets and can run
+on a physical iPhone.
+
+The transport stage runs a six-second bidirectional call through production
+FIPS encryption, UDP, reassembly, and feedback. It mixes 30 fps video with
+50 audio packets per second, maximum-size recovery frames, and brief core
+scheduling stalls. It requires every recovery frame, at least 98% delivery,
+video p95 below 150 ms, audio p95 below 100 ms, and no frame gap above 250 ms.
+It also runs with the regular Rust core tests. These are regression budgets,
+not promises about a particular device or network.
+
+The transport payloads model compressed frame sizes; they are not decoded
+video. The codec and transport measurements isolate stages and do not measure
+camera capture, display scanout, Wi-Fi, or whether two physical devices select
+the direct LAN route. A two-device camera-to-screen measurement is still
+needed to confirm the complete user experience.
+
 ## Full tier
 
 Run `just verify-full` nightly and before release candidates. It runs the fast

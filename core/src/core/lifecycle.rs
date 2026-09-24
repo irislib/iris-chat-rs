@@ -184,6 +184,7 @@ impl AppCore {
                 | InternalEvent::RemoteSignerSigned { .. }
                 | InternalEvent::RemoteSignerFailed { .. } => "RemoteSigner",
                 InternalEvent::CallPacket { .. } => "CallPacket",
+                InternalEvent::CallMediaBatch { .. } => "CallMediaBatch",
                 InternalEvent::CallTick { .. } => "CallTick",
                 InternalEvent::CallRecoveryTick { .. } => "CallRecoveryTick",
                 InternalEvent::SignerLoginFetched { .. } => "SignerLoginFetched",
@@ -446,6 +447,18 @@ impl AppCore {
                 source_port,
                 data,
             } => self.handle_call_packet(&source_pubkey_hex, source_port, &data),
+            InternalEvent::CallMediaBatch {
+                packets,
+                received_at,
+                _permit,
+            } => {
+                // Do not turn a stalled core into a delayed video playback queue.
+                if received_at.elapsed() <= Duration::from_millis(150) {
+                    for (source, port, data) in packets {
+                        self.handle_call_packet(&source, port, &data);
+                    }
+                }
+            }
             InternalEvent::CallTick { call_id } => self.call_tick(&call_id),
             InternalEvent::CallRecoveryTick { call_id } => self.call_recovery_tick(&call_id),
             InternalEvent::SignerLoginFetched { request_id, result } => {

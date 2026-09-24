@@ -62,16 +62,40 @@ pub(super) async fn start_transport(
         .map_err(|e| e.to_string())?;
     let receive_task = tokio::spawn(async move {
         let mut packets = Vec::with_capacity(32);
+        // A maximum-size video frame needs 239 datagrams. The old shared
+        // 96-message cutoff dropped its tail even on a lossless local link.
+        // Batch dispatch also avoids waking the core once per fragment. At most
+        // 512 datagrams (~570 KiB) can wait, independently of other events.
+        // Count packets, since a batch may contain fewer than 32 of them.
+        let slots = Arc::new(tokio::sync::Semaphore::new(512));
         while receiver.recv_batch_into(&mut packets, 32).await.is_some() {
+            let received_at = Clock::now();
+            let mut media = Vec::with_capacity(packets.len());
             for packet in packets.drain(..) {
-                if packet.data.len() > 1138 || sender.len() >= 96 {
+                if packet.data.len() > 1138 {
                     continue;
                 }
-                let _ = sender.send(CoreMsg::Internal(Box::new(InternalEvent::CallPacket {
-                    source_pubkey_hex: packet.source_peer.pubkey().to_string(),
-                    source_port: packet.source_port,
-                    data: packet.data.into_vec(),
-                })));
+                let source = packet.source_peer.pubkey().to_string();
+                let data = packet.data.into_vec();
+                if data.starts_with(b"IC03") {
+                    media.push((source, packet.source_port, data));
+                } else if sender.len() < 96 {
+                    let _ = sender.send(CoreMsg::Internal(Box::new(InternalEvent::CallPacket {
+                        source_pubkey_hex: source,
+                        source_port: packet.source_port,
+                        data,
+                    })));
+                }
+            }
+            if !media.is_empty() {
+                if let Ok(permit) = slots.clone().try_acquire_many_owned(media.len() as u32) {
+                    let _ =
+                        sender.send(CoreMsg::Internal(Box::new(InternalEvent::CallMediaBatch {
+                            packets: media,
+                            received_at,
+                            _permit: permit,
+                        })));
+                }
             }
         }
     });

@@ -73,7 +73,7 @@ final class CallMediaTests: XCTestCase {
     }
 
     func testH264DecoderRequiresAKeyFrameAndRejectsMalformedAccessUnits() {
-        let decoder = IrisH264Decoder { _ in XCTFail("malformed input must not produce a frame") }
+        let decoder = IrisH264Decoder { _, _ in XCTFail("malformed input must not produce a frame") }
         let invalid = [Data(), Data([1, 2, 3]), Data([0, 0, 1]), Data([0, 0, 1, 0x80]),
                        Data(repeating: 0, count: IrisH264Wire.maximumBytes + 1)]
         for data in invalid { XCTAssertFalse(decoder.decode(data, timestampUs: 1, keyFrame: true)) }
@@ -115,7 +115,7 @@ final class CallMediaTests: XCTestCase {
     func testHardwareH264AccessUnitIncludesRecoveryHeadersAndDecodesAt720p() throws {
         let decoded = expectation(description: "hardware encoded access unit decodes")
         let queue = DispatchQueue(label: "iris.codec.test")
-        let decoder = IrisH264Decoder { pixel in
+        let decoder = IrisH264Decoder { pixel, _ in
             XCTAssertEqual(CVPixelBufferGetWidth(pixel), 1280)
             XCTAssertEqual(CVPixelBufferGetHeight(pixel), 720)
             decoded.fulfill()

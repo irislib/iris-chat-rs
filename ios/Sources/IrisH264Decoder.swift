@@ -6,10 +6,10 @@ final class IrisH264Decoder {
     private var format: CMVideoFormatDescription?
     private var parameterSets: [Data] = []
     private var needsKeyFrame = true
-    private let output: (CVPixelBuffer) -> Void
+    private let output: (CVPixelBuffer, UInt64) -> Void
     var onFailure: (() -> Void)?
 
-    init(output: @escaping (CVPixelBuffer) -> Void) { self.output = output }
+    init(output: @escaping (CVPixelBuffer, UInt64) -> Void) { self.output = output }
 
     func discontinuity() { needsKeyFrame = true }
 
@@ -71,11 +71,12 @@ final class IrisH264Decoder {
         let dimensions = CMVideoFormatDescriptionGetDimensions(description)
         guard dimensions.width > 0, dimensions.height > 0, dimensions.width <= 1920, dimensions.height <= 1920,
               Int64(dimensions.width) * Int64(dimensions.height) <= 1920 * 1080 else { return false }
-        var callback = VTDecompressionOutputCallbackRecord(decompressionOutputCallback: { refcon, _, status, _, buffer, _, _ in
+        var callback = VTDecompressionOutputCallbackRecord(decompressionOutputCallback: { refcon, _, status, _, buffer, timestamp, _ in
             guard let refcon else { return }
             let decoder = Unmanaged<IrisH264Decoder>.fromOpaque(refcon).takeUnretainedValue()
             guard status == noErr, let buffer else { decoder.onFailure?(); return }
-            decoder.output(buffer)
+            let micros = CMTimeConvertScale(timestamp, timescale: 1_000_000, method: .default).value
+            decoder.output(buffer, UInt64(max(0, micros)))
         }, decompressionOutputRefCon: Unmanaged.passUnretained(self).toOpaque())
         var created: VTDecompressionSession?
         var specification: CFDictionary?

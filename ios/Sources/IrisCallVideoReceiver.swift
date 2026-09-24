@@ -14,7 +14,7 @@ final class IrisCallVideoReceiver {
 
     init(queue: DispatchQueue, output: @escaping (CVPixelBuffer) -> Void, requestKeyFrame: @escaping () -> Void) {
         self.queue = queue
-        self.decoder = IrisH264Decoder(output: output)
+        self.decoder = IrisH264Decoder { pixel, _ in output(pixel) }
         self.requestKeyFrame = requestKeyFrame
         decoder.onFailure = { [weak self] in
             queue.async { [weak self] in
