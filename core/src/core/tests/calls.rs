@@ -180,6 +180,92 @@ fn wait_call_pair(
     }
 }
 #[test]
+fn repeated_call_start_failures_reach_every_platform_shell() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let peer_device = Keys::generate();
+    let (mut core, updates, _dir) = logged_in_test_core_with_updates("call-retry", &owner, &device);
+    let peer_id = peer.public_key().to_hex();
+    // First retry a missing chat, then an accepted chat without known devices.
+    for accepted in [false, true] {
+        if accepted {
+            call_test_peer(&mut core, &peer, &peer_device);
+            core.app_keys.remove(&peer_id);
+        }
+        for video in [false, false, true, true] {
+            updates.try_iter().for_each(drop);
+            core.handle_action(AppAction::StartCall {
+                chat_id: peer_id.clone(),
+                video,
+            });
+            let message = if accepted {
+                "Calling is unavailable. Try again when connected."
+            } else {
+                "Open an accepted chat to call"
+            };
+            assert!(
+                updates.try_iter().any(|update| {
+                    matches!(update, AppUpdate::FullState(state) if state.toast.as_deref() == Some(message))
+                }),
+                "Each tap must report why it cannot start a call, including identical retries"
+            );
+            assert!(core.state.call.is_none());
+        }
+    }
+}
+
+#[test]
+fn starting_calls_does_not_wait_for_an_unreachable_peer() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let peer_device = Keys::generate();
+    let (mut core, updates, _dir) = logged_in_test_core_with_updates("call-start", &owner, &device);
+    call_test_peer(&mut core, &peer, &peer_device);
+    // An open UDP port that never responds keeps transport discovery pending.
+    let silent_peer = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    core.reconcile_calls_udp_for_test(
+        "127.0.0.1:0".parse().unwrap(),
+        silent_peer.local_addr().unwrap(),
+        &test_fips_peer(&peer_device).npub(),
+    );
+    for video in [false, true] {
+        updates.try_iter().for_each(drop);
+        let started = std::time::Instant::now();
+        core.handle_action(AppAction::StartCall {
+            chat_id: peer.public_key().to_hex(),
+            video,
+        });
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "Call UI must not wait for networking"
+        );
+        let call = core
+            .state
+            .call
+            .clone()
+            .expect("outgoing call is immediately available");
+        assert_eq!(call.phase, "outgoing");
+        assert_eq!(call.video, video);
+        assert!(
+            updates.try_iter().any(|update| {
+                matches!(update, AppUpdate::FullState(state) if state.call.as_ref() == Some(&call))
+            }),
+            "All platform shells must receive the outgoing state before a peer answers"
+        );
+        core.handle_action(AppAction::StartCall {
+            chat_id: peer.public_key().to_hex(),
+            video: !video,
+        });
+        assert_eq!(core.state.call.as_ref().unwrap().call_id, call.call_id);
+        core.handle_action(AppAction::EndCall {
+            call_id: call.call_id,
+        });
+    }
+}
+
+#[test]
 fn calls_e2e_without_internet_over_local_fips_udp() {
     exercise_local_fips_call(false, false);
 }

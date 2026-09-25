@@ -2,21 +2,28 @@ import SwiftUI
 
 struct IrisChatCallButtons: View {
     @ObservedObject var manager: AppManager
+    @ObservedObject private var controller: IrisCallController
     let chatID: String
+
+    init(manager: AppManager, chatID: String) {
+        self.manager = manager
+        self.controller = manager.calls
+        self.chatID = chatID
+    }
 
     var body: some View {
         if !chatID.hasPrefix("group:"), !manager.isUserBlocked(chatID) {
-            HStack(spacing: 16) {
+            HStack(spacing: 0) {
                 if manager.state.preferences.voiceCallsEnabled {
                     Button { manager.calls.start(chatID: chatID, video: false) } label: {
-                        Image(systemName: "phone.fill")
+                        callIcon("phone.fill", video: false)
                     }
                     .accessibilityLabel("Voice call")
                     .accessibilityIdentifier("startVoiceCallButton")
                 }
                 if manager.state.preferences.videoCallsEnabled {
                     Button { manager.calls.start(chatID: chatID, video: true) } label: {
-                        Image(systemName: "video.fill")
+                        callIcon("video.fill", video: true)
                     }
                     .accessibilityLabel("Video call")
                     .accessibilityIdentifier("startVideoCallButton")
@@ -24,8 +31,17 @@ struct IrisChatCallButtons: View {
             }
             .font(.system(size: 19, weight: .semibold))
             .buttonStyle(.plain)
-            .disabled(manager.state.call != nil && manager.state.call?.phase != "ended")
+            .disabled(controller.startingVideo != nil || (manager.state.call != nil && manager.state.call?.phase != "ended"))
         }
+    }
+
+    private func callIcon(_ name: String, video: Bool) -> some View {
+        ZStack {
+            Image(systemName: name).opacity(controller.startingVideo == video ? 0 : 1)
+            if controller.startingVideo == video { ProgressView().controlSize(.small) }
+        }
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
     }
 }
 

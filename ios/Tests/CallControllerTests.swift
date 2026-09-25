@@ -1,4 +1,5 @@
 import XCTest
+import AVFoundation
 #if os(macOS)
 @testable import IrisChatMac
 #else
@@ -22,6 +23,136 @@ private final class CallMediaProbe: IrisCallMediaHandling {
 }
 
 final class CallControllerTests: XCTestCase {
+    @MainActor
+    func testCanceledToastTimerDoesNotEraseNewCallError() async throws {
+        let toasts = ToastCenter()
+        let message = "Calling is unavailable. Try again when connected."
+        toasts.show(message, duration: 0.2)
+        try await Task.sleep(nanoseconds: 20_000_000)
+        toasts.show("Another error", duration: 0.2)
+        toasts.show(message, duration: 0.2)
+        try await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(toasts.message, message, "The canceled timer must not clear the retry's feedback")
+        try await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertNil(toasts.message)
+    }
+
+    @MainActor
+    func testUnchangedSnapshotsDoNotKeepCallErrorVisibleIndefinitely() async throws {
+        let toasts = ToastCenter()
+        let message = "Calling is unavailable. Try again when connected."
+        toasts.show(message, duration: 0.1)
+        toasts.show(message, duration: 10)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertNil(toasts.message)
+        toasts.show(message)
+        XCTAssertEqual(toasts.message, message, "A retry after dismissal must show feedback again")
+    }
+
+    @MainActor
+    func testGrantedCallPermissionsNeverRequestAccessAgain() async {
+        let permissions = IrisCallPermissions(status: { _ in .authorized }, request: { _ in
+            XCTFail("A returning caller must not wait for another permission request")
+            return false
+        })
+        for video in [false, true] {
+            let error = await permissions.error(video: video)
+            XCTAssertNil(error)
+        }
+    }
+
+    @MainActor
+    func testOnlyMissingCallPermissionsAreRequestedAndDenialIsReported() async {
+        var requested: [AVMediaType] = []
+        let permissions = IrisCallPermissions(status: { $0 == .audio ? .authorized : .notDetermined }, request: {
+            requested.append($0)
+            return false
+        })
+        let voiceError = await permissions.error(video: false)
+        XCTAssertNil(voiceError)
+        XCTAssertTrue(requested.isEmpty)
+        let videoError = await permissions.error(video: true)
+        XCTAssertEqual(videoError, "Allow camera access in Settings for video calls.")
+        XCTAssertEqual(requested, [.video])
+        let denied = IrisCallPermissions(status: { _ in .denied }, request: { _ in
+            XCTFail("Denied access must offer Settings without requesting again")
+            return true
+        })
+        let deniedError = await denied.error(video: false)
+        XCTAssertEqual(deniedError, "Allow microphone access in Settings to call.")
+    }
+
+    @MainActor
+    func testRepeatedTapsKeepFirstCallWhilePermissionIsPending() async {
+        let prompted = expectation(description: "permission prompt")
+        let dispatched = expectation(description: "call starts")
+        var resume: CheckedContinuation<Bool, Never>?
+        var actions: [AppAction] = []
+        let controller = IrisCallController(dispatch: { actions.append($0); dispatched.fulfill() },
+            showError: { XCTFail($0) }, mediaForTesting: CallMediaProbe(),
+            permissionAccess: IrisCallPermissions(status: { _ in .notDetermined }, request: { _ in
+                await withCheckedContinuation { resume = $0; prompted.fulfill() }
+            }))
+        controller.start(chatID: "peer", video: false)
+        XCTAssertEqual(controller.startingVideo, false, "A tap is acknowledged synchronously")
+        controller.start(chatID: "other", video: true)
+        await fulfillment(of: [prompted], timeout: 1)
+        XCTAssertTrue(actions.isEmpty)
+        resume?.resume(returning: true)
+        await fulfillment(of: [dispatched], timeout: 1)
+        XCTAssertEqual(actions, [.startCall(chatId: "peer", video: false)])
+        XCTAssertNil(controller.startingVideo)
+    }
+
+    @MainActor
+    func testCancelOrIncomingCallInvalidatesPendingStart() async {
+        for incoming in [false, true] {
+            let prompted = expectation(description: "permission prompt")
+            let resumed = expectation(description: "permission returned")
+            var resume: CheckedContinuation<Bool, Never>?
+            var actions: [AppAction] = []
+            let controller = IrisCallController(dispatch: { actions.append($0) },
+                showError: { XCTFail($0) }, mediaForTesting: CallMediaProbe(),
+                permissionAccess: IrisCallPermissions(status: { _ in .notDetermined }, request: { _ in
+                    let granted = await withCheckedContinuation { resume = $0; prompted.fulfill() }
+                    resumed.fulfill()
+                    return granted
+                }))
+            controller.start(chatID: "peer", video: false)
+            await fulfillment(of: [prompted], timeout: 1)
+            if incoming {
+                var call = connectedCall(id: "incoming")
+                call.phase = "incoming"
+                controller.update(call)
+                controller.update(nil)
+            } else {
+                controller.end()
+            }
+            XCTAssertNil(controller.startingVideo)
+            resume?.resume(returning: true)
+            await fulfillment(of: [resumed], timeout: 1)
+            await Task.yield()
+            XCTAssertTrue(actions.isEmpty)
+        }
+    }
+
+    @MainActor
+    func testPermissionFailureAllowsRetry() async {
+        let denied = expectation(description: "denial shown")
+        let dispatched = expectation(description: "retry starts")
+        var granted = false
+        let controller = IrisCallController(dispatch: { _ in dispatched.fulfill() },
+            showError: { _ in denied.fulfill() }, mediaForTesting: CallMediaProbe(),
+            permissionAccess: IrisCallPermissions(status: { _ in granted ? .authorized : .denied }))
+        controller.start(chatID: "peer", video: false)
+        await fulfillment(of: [denied], timeout: 1)
+        XCTAssertNil(controller.startingVideo)
+        granted = true
+        controller.start(chatID: "peer", video: false)
+        await fulfillment(of: [dispatched], timeout: 1)
+        XCTAssertNil(controller.startingVideo)
+    }
+
 #if os(iOS)
     @MainActor
     func testSecondPushCannotReplaceConnectedCallOrStopItsMedia() {

@@ -7,6 +7,31 @@ import AppKit
 #endif
 
 @MainActor
+struct IrisCallPermissions {
+    var status: (AVMediaType) -> AVAuthorizationStatus = { AVCaptureDevice.authorizationStatus(for: $0) }
+    var request: (AVMediaType) async -> Bool = { await AVCaptureDevice.requestAccess(for: $0) }
+
+    func error(video: Bool) async -> String? {
+        // Device discovery can stall the main thread. The media engine opens
+        // capture hardware on its own queue after the call is answered.
+        for type in video ? [AVMediaType.audio, .video] : [.audio] {
+            switch status(type) {
+            case .authorized:
+                continue
+            case .notDetermined:
+                if await request(type) { continue }
+            default:
+                break
+            }
+            return type == .audio
+                ? "Allow microphone access in Settings to call."
+                : "Allow camera access in Settings for video calls."
+        }
+        return nil
+    }
+}
+
+@MainActor
 final class IrisCallController: NSObject, ObservableObject {
     nonisolated let localSurface = IrisCallVideoSurface()
     nonisolated let remoteSurface = IrisCallVideoSurface()
@@ -14,6 +39,7 @@ final class IrisCallController: NSObject, ObservableObject {
     @Published private(set) var customKilobits = 2_000
     @Published private(set) var speakerEnabled = false
     @Published private(set) var presentedCall: CallSnapshot?
+    @Published private(set) var startingVideo: Bool?
     private var dismissalTask: Task<Void, Never>?
     private(set) var call: CallSnapshot?
     private let dispatch: (AppAction) -> Void
@@ -27,6 +53,7 @@ final class IrisCallController: NSObject, ObservableObject {
     private var pendingMuted: Bool?
     private var pendingVideo: Bool?
     private var permissionRequestID: UUID?
+    private let permissionAccess: IrisCallPermissions
     private let mediaForTesting: IrisCallMediaHandling?
 #if os(macOS)
     private let desktopAlerts = IrisDesktopCallAlerts()
@@ -87,11 +114,13 @@ final class IrisCallController: NSObject, ObservableObject {
     init(dispatch: @escaping (AppAction) -> Void,
          showError: @escaping (String) -> Void,
          sendMedia: ((AppAction, @escaping () -> Bool) -> Void)? = nil,
-         mediaForTesting: IrisCallMediaHandling? = nil) {
+         mediaForTesting: IrisCallMediaHandling? = nil,
+         permissionAccess: IrisCallPermissions? = nil) {
         self.dispatch = dispatch
         self.showError = showError
         self.sendMedia = sendMedia
         self.mediaForTesting = mediaForTesting
+        self.permissionAccess = permissionAccess ?? IrisCallPermissions()
         super.init()
 #if os(iOS) && !targetEnvironment(simulator)
         guard mediaForTesting == nil else { return }
@@ -108,10 +137,17 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
     func start(chatID: String, video: Bool) {
+        guard permissionRequestID == nil, call == nil || call?.phase == "ended" else { return }
         let requestID = UUID()
         permissionRequestID = requestID
+        startingVideo = video
         Task { @MainActor [weak self] in
-            guard let self, await self.permissions(video: video), self.permissionRequestID == requestID else { return }
+            guard let self else { return }
+            let error = await self.permissionAccess.error(video: video)
+            guard self.permissionRequestID == requestID else { return }
+            self.permissionRequestID = nil
+            self.startingVideo = nil
+            if let error { self.showError(error); return }
             self.dispatch(.startCall(chatId: chatID, video: video))
         }
     }
@@ -155,6 +191,7 @@ final class IrisCallController: NSObject, ObservableObject {
         pushRecoveryTask = nil
 #endif
         permissionRequestID = nil
+        startingVideo = nil
         guard let call else { return }
         endingCallID = call.callId
         presentedCall = nil
@@ -232,6 +269,10 @@ final class IrisCallController: NSObject, ObservableObject {
         IrisAudioActivity.setCallActive(snapshot != nil && snapshot?.phase != "ended")
         let previousID = call?.callId
         call = snapshot
+        if let snapshot, snapshot.phase != "ended" {
+            permissionRequestID = nil
+            startingVideo = nil
+        }
         if previousID != snapshot?.callId {
             pendingMuted = nil
             pendingVideo = nil
@@ -309,18 +350,8 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
     private func permissions(video: Bool) async -> Bool {
-        guard AVCaptureDevice.default(for: .audio) != nil else {
-            showError("Connect a microphone to call.")
-            return false
-        }
-        if video, AVCaptureDevice.default(for: .video) == nil {
-            showError("Connect a camera for video calls.")
-            return false
-        }
-        let microphone = await AVCaptureDevice.requestAccess(for: .audio)
-        guard microphone else { showError("Allow microphone access in Settings to call."); return false }
-        if video, !(await AVCaptureDevice.requestAccess(for: .video)) {
-            showError("Allow camera access in Settings for video calls.")
+        if let error = await permissionAccess.error(video: video) {
+            showError(error)
             return false
         }
         return true

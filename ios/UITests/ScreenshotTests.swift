@@ -16,6 +16,41 @@ final class ScreenshotTests: XCTestCase {
     }
 
     #if os(iOS)
+    func testVoiceCallButtonEdgeResponds() {
+        assertCallButtonEdgeResponds("startVoiceCallButton")
+    }
+
+    func testVideoCallButtonEdgeResponds() {
+        assertCallButtonEdgeResponds("startVideoCallButton")
+    }
+
+    private func assertCallButtonEdgeResponds(_ id: String) {
+        let app = launchFixtureApp(createAccount: true)
+        XCTAssertTrue(waitForChatList(app, timeout: 30))
+        openFixtureChat(app, index: 0)
+        capture(app, named: "call-button-hit-areas")
+        // Fixture chats do not exist in the core: its validation toast proves
+        // the real button/permission/dispatch path ran without placing a call.
+        let button = app.buttons[id]
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        button.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.08)).tap()
+        let toast = app.staticTexts["Open an accepted chat to call"]
+        let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        var responded = toast.waitForExistence(timeout: 2)
+        for _ in 0..<2 {
+            if responded { break }
+            let alert = system.alerts.firstMatch
+            guard alert.exists else { break }
+            let allow = alert.buttons["Allow"]
+            if allow.exists { allow.tap() }
+            else { alert.buttons["OK"].tap() }
+            responded = toast.waitForExistence(timeout: 2)
+        }
+        XCTAssertTrue(responded, "One edge tap must reach call validation promptly")
+    }
+
     func testCallQualitySettings() {
         let app = launchFixtureApp(createAccount: true)
         XCTAssertTrue(waitForChatList(app, timeout: 30))

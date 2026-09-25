@@ -686,12 +686,13 @@ final class ToastCenter: ObservableObject {
     private var clearTask: Task<Void, Never>?
 
     func show(_ text: String, duration: TimeInterval = 3) {
+        guard message != text else { return }
         message = text
         clearTask?.cancel()
         let pending = text
         clearTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-            guard let self, self.message == pending else { return }
+            guard !Task.isCancelled, let self, self.message == pending else { return }
             self.message = nil
         }
     }

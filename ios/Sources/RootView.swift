@@ -309,7 +309,7 @@ struct RootView: View {
         // retype the chat name.
         if let target = chatHeaderSearchTarget(for: screen) {
             return AnyView(
-                HStack(spacing: 16) {
+                HStack(spacing: 0) {
                     IrisChatCallButtons(manager: manager, chatID: target.chatId)
                     InChatSearchButton(manager: manager, target: target)
                 }

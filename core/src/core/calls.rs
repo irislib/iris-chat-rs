@@ -214,8 +214,7 @@ impl AppCore {
             || self.is_owner_blocked(owner)
             || self.thread_is_message_request(owner)
         {
-            self.state.toast = Some("Open an accepted chat to call".into());
-            self.emit_state();
+            self.report_call_start_error("Open an accepted chat to call");
             return;
         }
         let targets = self
@@ -238,8 +237,7 @@ impl AppCore {
                 .as_ref()
                 .is_none_or(|r| r.calls_tx.is_none())
         {
-            self.state.toast = Some("Calling is unavailable. Try again when connected.".into());
-            self.emit_state();
+            self.report_call_start_error("Calling is unavailable. Try again when connected.");
             return;
         }
         // Starting a call is an explicit interaction with this contact.
@@ -260,6 +258,13 @@ impl AppCore {
         self.signal_active_call("offer");
         self.send_call_push_wakeups();
         self.schedule_call_tick(&id);
+        self.emit_state();
+    }
+    fn report_call_start_error(&mut self, message: &str) {
+        self.state.toast = Some(message.into());
+        // A retry is a new interaction even when its error text is identical.
+        // Otherwise snapshot deduplication makes subsequent taps look ignored.
+        self.last_emitted_state = None;
         self.emit_state();
     }
     #[allow(clippy::too_many_arguments)]
