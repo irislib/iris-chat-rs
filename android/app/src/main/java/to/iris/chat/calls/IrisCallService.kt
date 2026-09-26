@@ -71,7 +71,7 @@ class IrisCallService : Service() {
         var types = if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL else 0
         // Reserve while-in-use access while the outgoing call's activity is visible.
         // Capture still begins only after the other person answers.
-        if (Build.VERSION.SDK_INT >= 30 && call.phase in listOf("outgoing", "connected")) {
+        if (Build.VERSION.SDK_INT >= 30 && call.phase in listOf("outgoing", "ringing", "connected")) {
             types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
             if (call.video) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
         }

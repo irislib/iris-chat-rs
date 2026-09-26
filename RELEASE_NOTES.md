@@ -2,6 +2,28 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.26
+
+### GitHub
+
+- Make iPhone voice and video call buttons easier to tap and keep progress visible while granting permissions and starting a call.
+- Avoid repeated permission requests and main-thread camera discovery when starting Apple calls.
+- Play outgoing connecting and ringing tones on iOS, Android, macOS, Windows, and Linux. Ringing begins when the other device responds, and tones stop when the call is answered or ends.
+- Show call-start errors on every attempt, including repeated failures and disabled calling.
+
+### Apple
+
+- Easier-to-tap voice and video call buttons on iPhone.
+- Clearer call progress while granting microphone and camera access.
+- Hear connecting and ringing sounds when calling someone.
+- More reliable feedback when a call cannot start.
+
+### Zapstore
+
+- Hear connecting and ringing sounds when calling someone.
+- See when the other device is ringing.
+- More reliable feedback when a call cannot start.
+
 ## v2026.9.24.7
 
 ### GitHub

@@ -73,6 +73,7 @@ impl Signal {
             || !matches!(
                 value.kind.as_str(),
                 "offer"
+                    | "ringing"
                     | "answer"
                     | "reject"
                     | "end"

@@ -28,7 +28,7 @@ public partial class CallView : UserControl
         Peer.Text = c.peerName;
         Initial.Text = string.IsNullOrWhiteSpace(c.peerName) ? "?" : c.peerName.Trim()[..1].ToUpperInvariant();
         Avatar.Visibility = Show(!connected || !c.remoteVideo);
-        Status.Text = c.phase == "ended" ? c.endReason ?? "Call ended" : incoming ? (c.videoCapable ? "Incoming video call" : "Incoming voice call") : !connected ? "Calling…" : !c.mediaConnected ? "Connecting…" : c.remoteMuted ? "Microphone muted" : "Connected";
+        Status.Text = c.phase == "ended" ? c.endReason ?? "Call ended" : incoming ? (c.videoCapable ? "Incoming video call" : "Incoming voice call") : c.phase == "ringing" ? "Ringing…" : !connected ? "Calling…" : !c.mediaConnected ? "Connecting…" : c.remoteMuted ? "Microphone muted" : "Connected";
         Answer.Visibility = Show(incoming); Voice.Visibility = Show(incoming && c.videoCapable);
         Mute.Visibility = Show(connected); Mute.Content = c.muted ? "Unmute" : "Mute";
         Camera.Visibility = Show(connected && c.videoCapable); Camera.Content = c.video ? "Camera off" : "Camera on";

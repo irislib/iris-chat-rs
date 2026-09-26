@@ -30,6 +30,7 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
     @Volatile private var current: CallSnapshot? = null
     @Volatile private var audio: CallAudio? = null
     @Volatile private var video: CallVideoMedia? = null
+    private val tones = CallTones(context)
     private var connectedSent = false
     private var audioRoute: CallAudioRoute? = null
     @Volatile private var mediaCallId: String? = null
@@ -92,6 +93,7 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
             announcedId = call.callId
             IrisConnectionService.announce(context, call)
         }
+        if (call.phase == "connected") tones.stop()
         IrisConnectionService.updateCurrent(call)
         try {
             ContextCompat.startForegroundService(context, Intent(context, IrisCallService::class.java))
@@ -106,12 +108,14 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
     internal fun serviceStopped() { serviceReady = false; stopMedia() }
     internal fun telecomFocusChanged(ready: Boolean) {
         telecomReady = ready
+        if (ready) IrisConnectionService.setSpeaker(mutableSpeaker.value)
         if (ready && serviceReady) syncMedia() else if (!ready) stopMedia()
     }
     internal fun snapshot() = current
 
     private fun syncMedia() {
         val call = current ?: return
+        tones.update(call.takeIf { telecomReady && failedCallId != it.callId })
         if (call.phase != "connected" || failedCallId == call.callId || !telecomReady) return
         val quality = CallQuality(app.preferences.value.callQuality, call.maxBitrateBps.toInt())
         if (mediaCallId != call.callId) {
@@ -181,12 +185,13 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
         if (current?.video == true) app.dispatch(AppAction.SetCallVideoEnabled(false))
     } }
 
-    fun setSpeaker(enabled: Boolean) { mutableSpeaker.value = enabled; audioRoute?.setSpeaker(enabled) }
+    fun setSpeaker(enabled: Boolean) { mutableSpeaker.value = enabled; IrisConnectionService.setSpeaker(enabled) }
     fun requestAnswer(callId: String) { mutableAnswerRequest.value = callId }
     fun clearAnswerRequest() { mutableAnswerRequest.value = null }
     private fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
     private fun stopMedia() {
+        tones.stop()
         audio?.close(); audio = null
         video?.close(); video = null
         connectedSent = false

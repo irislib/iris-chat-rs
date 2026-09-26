@@ -199,7 +199,14 @@ impl AppCore {
         });
     }
     pub(super) fn start_call(&mut self, owner: &str, video: bool) {
-        if self.calls.active.is_some() || !self.can_use_chats() {
+        if self.calls.active.is_some() {
+            // Recover the current call screen if a shell missed its snapshot.
+            self.last_emitted_state = None;
+            self.emit_state();
+            return;
+        }
+        if !self.can_use_chats() {
+            self.report_call_start_error("Sign in to call.");
             return;
         }
         if !if video {
@@ -207,6 +214,11 @@ impl AppCore {
         } else {
             self.preferences.voice_calls_enabled
         } {
+            self.report_call_start_error(if video {
+                "Turn on video calls in Settings."
+            } else {
+                "Turn on voice calls in Settings."
+            });
             return;
         }
         if is_group_chat_id(owner)

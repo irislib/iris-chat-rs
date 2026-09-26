@@ -101,7 +101,66 @@ final class CallControllerTests: XCTestCase {
         resume?.resume(returning: true)
         await fulfillment(of: [dispatched], timeout: 1)
         XCTAssertEqual(actions, [.startCall(chatId: "peer", video: false)])
+        XCTAssertEqual(controller.startingVideo, false, "Feedback continues after permission approval")
+        controller.start(chatID: "other", video: true)
+        XCTAssertEqual(actions.count, 1)
+        controller.update(connectedCall(id: "outgoing"))
         XCTAssertNil(controller.startingVideo)
+    }
+
+    @MainActor
+    func testFirstVideoCallDispatchesImmediatelyAfterBothPermissionsAndKeepsFeedback() async {
+        var requested: [AVMediaType] = []
+        var resumes: [CheckedContinuation<Bool, Never>] = []
+        let microphone = expectation(description: "microphone permission")
+        let camera = expectation(description: "camera permission")
+        let dispatched = expectation(description: "call dispatched after approval")
+        let controller = IrisCallController(dispatch: {
+            XCTAssertEqual($0, .startCall(chatId: "peer", video: true))
+            dispatched.fulfill()
+        }, showError: { XCTFail($0) }, mediaForTesting: CallMediaProbe(),
+        permissionAccess: IrisCallPermissions(status: { _ in .notDetermined }, request: { type in
+            requested.append(type)
+            return await withCheckedContinuation {
+                resumes.append($0)
+                (type == .audio ? microphone : camera).fulfill()
+            }
+        }))
+        controller.start(chatID: "peer", video: true)
+        await fulfillment(of: [microphone], timeout: 1)
+        resumes.removeFirst().resume(returning: true)
+        await fulfillment(of: [camera], timeout: 1)
+        controller.update(nil) // Background snapshots must not clear progress.
+        XCTAssertEqual(controller.startingVideo, true)
+        resumes.removeFirst().resume(returning: true)
+        await fulfillment(of: [dispatched], timeout: 1)
+        XCTAssertEqual(requested, [.audio, .video])
+        XCTAssertEqual(controller.startingVideo, true)
+        controller.update(nil)
+        XCTAssertEqual(controller.startingVideo, true)
+        controller.update(connectedCall(id: "video"))
+        XCTAssertNil(controller.startingVideo)
+    }
+
+    @MainActor
+    func testOutgoingToneFollowsConfirmedRingingAndStopsOnAnswerOrEnd() {
+        var call = connectedCall(id: "outgoing")
+        call.outgoing = true
+        call.phase = "outgoing"
+        XCTAssertEqual(IrisCallTones.tone(for: call), "connecting")
+        call.phase = "ringing"
+        XCTAssertEqual(IrisCallTones.tone(for: call), "ringing")
+        for phase in ["connected", "ended", "incoming"] {
+            call.phase = phase
+            XCTAssertNil(IrisCallTones.tone(for: call))
+        }
+        call.phase = "ringing"
+        call.outgoing = false
+        XCTAssertNil(IrisCallTones.tone(for: call))
+        XCTAssertNil(IrisCallTones.tone(for: nil))
+        for name in ["connecting", "ringing"] {
+            XCTAssertNotNil(Bundle.main.url(forResource: "call-\(name)", withExtension: "wav"))
+        }
     }
 
     @MainActor
@@ -150,6 +209,8 @@ final class CallControllerTests: XCTestCase {
         granted = true
         controller.start(chatID: "peer", video: false)
         await fulfillment(of: [dispatched], timeout: 1)
+        XCTAssertEqual(controller.startingVideo, false)
+        controller.update(nil, error: "Calling is unavailable. Try again when connected.")
         XCTAssertNil(controller.startingVideo)
     }
 

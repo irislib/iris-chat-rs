@@ -424,3 +424,61 @@ fn calls_incoming_stops_when_caller_disappears_but_repeated_offers_keep_it_alive
     assert_eq!(f.snapshot().phase, "ended");
     assert_eq!(f.snapshot().end_reason.as_deref(), Some("Connection lost"));
 }
+
+#[test]
+fn ringing_requires_a_target_device_and_does_not_select_the_answering_device() {
+    for video in [false, true] {
+        let mut f = Fixture::new();
+        f.outgoing(video);
+        let stranger = Keys::generate().public_key().to_hex();
+        let ringing = serde_json::to_vec(&Signal::new("ringing", CALL_ID, video, false)).unwrap();
+        f.core.handle_call_packet(&stranger, PORT, &ringing);
+        let wrong_call =
+            serde_json::to_vec(&Signal::new("ringing", NEXT_CALL_ID, video, false)).unwrap();
+        f.core
+            .handle_call_packet(&f.devices[0].clone(), PORT, &wrong_call);
+        assert_eq!(f.snapshot().phase, "outgoing");
+        f.receive(0, "ringing", video);
+        assert_eq!(f.snapshot().phase, "ringing");
+        assert!(f.core.calls.active.as_ref().unwrap().peer.is_none());
+        f._updates.try_iter().for_each(drop);
+        f.receive(0, "ringing", video);
+        assert!(!f
+            ._updates
+            .try_iter()
+            .any(|u| matches!(u, AppUpdate::FullState(_))));
+        f.receive(1, "answer", video);
+        assert_eq!(f.snapshot().phase, "connected");
+        f.receive(0, "ringing", video);
+        f.receive(1, "ringing", video);
+        assert_eq!(
+            f.snapshot().phase,
+            "connected",
+            "Late acknowledgments cannot restart ringback"
+        );
+        f.core.handle_action(AppAction::EndCall {
+            call_id: CALL_ID.into(),
+        });
+        f.receive(1, "ringing", video);
+        assert_eq!(f.snapshot().phase, "ended");
+    }
+}
+
+#[test]
+fn disabled_call_attempts_report_errors_instead_of_leaving_the_ui_waiting() {
+    let mut f = Fixture::new();
+    f.core.preferences.voice_calls_enabled = false;
+    f.core.preferences.video_calls_enabled = false;
+    for (video, message) in [
+        (false, "Turn on voice calls in Settings."),
+        (true, "Turn on video calls in Settings."),
+    ] {
+        for _ in 0..2 {
+            f._updates.try_iter().for_each(drop);
+            f.core.start_call(&f.owner.clone(), video);
+            assert!(f._updates.try_iter().any(|update| matches!(update,
+                AppUpdate::FullState(s) if s.toast.as_deref() == Some(message))));
+            assert!(f.core.state.call.is_none());
+        }
+    }
+}

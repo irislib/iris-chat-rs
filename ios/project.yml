@@ -39,6 +39,8 @@ targets:
     type: application
     platform: iOS
     sources:
+      - path: ../core/assets/call-audio
+        buildPhase: resources
       - path: Assets.xcassets
       - path: Sources
       - path: Bindings

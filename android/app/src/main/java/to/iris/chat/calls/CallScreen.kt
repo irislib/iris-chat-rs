@@ -160,6 +160,7 @@ internal fun CallSurface(
                 Text(when (active.phase) {
                     "incoming" -> if (active.video) "Incoming video call" else "Incoming voice call"
                     "connected" -> if (active.mediaConnected) "%d:%02d".format(elapsed / 60, elapsed % 60) else "Connecting…"
+                    "ringing" -> "Ringing…"
                     "ended" -> error ?: active.endReason ?: "Call ended"
                     else -> "Calling…"
                 }, color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.titleMedium)

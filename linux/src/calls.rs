@@ -1,7 +1,9 @@
 use crate::app_manager::AppManager;
 use adw::prelude::*;
 use gtk::{gdk, gio, glib};
-use iris_chat_core::{AppAction, CallSnapshot, DesktopCallEvent, DesktopCallMedia};
+use iris_chat_core::{
+    AppAction, CallSnapshot, DesktopCallEvent, DesktopCallMedia, DesktopCallTone,
+};
 use std::{cell::RefCell, rc::Rc, sync::Arc, time::Duration};
 
 pub struct Calls {
@@ -20,6 +22,7 @@ pub struct Calls {
     last_ring: std::time::Instant,
     call: Option<CallSnapshot>,
     media: Option<Arc<DesktopCallMedia>>,
+    tone: Option<Arc<DesktopCallTone>>,
 }
 impl Calls {
     pub fn new(parent: &adw::ApplicationWindow, manager: Rc<AppManager>) -> Rc<RefCell<Self>> {
@@ -79,6 +82,7 @@ impl Calls {
             last_ring: std::time::Instant::now() - Duration::from_secs(5),
             call: None,
             media: None,
+            tone: None,
         }));
         for (button, action) in [(answer, 0), (voice, 1), (end, 2), (mute, 3), (camera, 4)] {
             let weak = Rc::downgrade(&calls);
@@ -176,6 +180,8 @@ impl Calls {
             } else {
                 "Incoming voice call"
             }
+        } else if call.phase == "ringing" {
+            "Ringing…"
         } else if !connected {
             "Calling…"
         } else if !call.media_connected {
@@ -205,6 +211,13 @@ impl Calls {
         });
         self.local.set_visible(connected && call.video);
         self.remote.set_visible(connected && call.remote_video);
+        if call.outgoing && matches!(call.phase.as_str(), "outgoing" | "ringing") {
+            self.tone
+                .get_or_insert_with(|| DesktopCallTone::new(call.phase == "ringing"))
+                .set_ringing(call.phase == "ringing");
+        } else if let Some(tone) = self.tone.take() {
+            tone.stop();
+        }
         if connected {
             let media = self.media.get_or_insert_with(DesktopCallMedia::new);
             media.configure(
@@ -213,8 +226,8 @@ impl Calls {
                 call.target_bitrate_bps,
                 call.key_frame_generation,
             );
-        } else {
-            self.stop();
+        } else if let Some(media) = self.media.take() {
+            media.stop();
         }
         if changed {
             self.window.present();
@@ -321,6 +334,9 @@ impl Calls {
         }
     }
     fn stop(&mut self) {
+        if let Some(tone) = self.tone.take() {
+            tone.stop();
+        }
         if let Some(media) = self.media.take() {
             media.stop();
         }

@@ -107,6 +107,8 @@ impl AppCore {
                         .is_some_and(|c| c.phase == "connected")
                     {
                         self.signal_active_call("answer");
+                    } else if !active.outgoing {
+                        self.signal_active_call("ringing");
                     }
                     return;
                 }
@@ -144,6 +146,7 @@ impl AppCore {
                 snapshot.remote_muted = signal.muted.unwrap_or(false);
             }
             self.schedule_call_tick(&signal.call_id);
+            self.signal_active_call("ringing");
             self.emit_state();
             return;
         }
@@ -171,6 +174,16 @@ impl AppCore {
             return;
         }
         match signal.kind.as_str() {
+            "ringing" if active.outgoing && !connected => {
+                // A linked device may ring while another device answers.
+                // Acknowledgment must not select the eventual media peer.
+                if let Some(snapshot) = &mut self.state.call {
+                    if snapshot.phase == "outgoing" {
+                        snapshot.phase = "ringing".into();
+                        self.emit_state();
+                    }
+                }
+            }
             "answer" if active.outgoing && !connected => {
                 let rejected: Vec<String> = active
                     .targets

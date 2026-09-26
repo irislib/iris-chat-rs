@@ -308,6 +308,7 @@ android {
         unitTests.isIncludeAndroidResources = true
     }
 
+    sourceSets["main"].assets.srcDir("../../core/assets/call-audio")
     sourceSets["main"].jniLibs.directories.add(generatedJniDir.get().asFile.absolutePath)
 }
 

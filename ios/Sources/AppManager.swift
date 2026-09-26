@@ -1275,6 +1275,7 @@ final class AppManager: ObservableObject {
 
     func dispatch(_ action: AppAction) {
         if shouldBlockOutgoingAction(action) {
+            if case .startCall = action { calls.startFailed() }
             showToast("User is blocked")
             return
         }
@@ -2814,7 +2815,7 @@ final class AppManager: ObservableObject {
         reconciledState = stateByApplyingScreenshotFixture(reconciledState)
         lastRevApplied = nextState.rev
         state = reconciledState
-        calls.update(reconciledState.call, preferences: reconciledState.preferences)
+        calls.update(reconciledState.call, preferences: reconciledState.preferences, error: reconciledState.toast)
 #if os(iOS)
         if appIsBackgrounded, oldState.call != nil,
            reconciledState.call == nil || reconciledState.call?.phase == "ended" {
@@ -3300,6 +3301,7 @@ final class AppManager: ObservableObject {
 
     private func handleDispatchFailure(action: AppAction, error: Error, showsToast: Bool) {
         logDispatchFailure(action: action, error: error)
+        if case .startCall = action { calls.startFailed() }
         if showsToast {
             showToast(Self.dispatchFailureToast)
         }

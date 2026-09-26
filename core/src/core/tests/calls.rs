@@ -377,8 +377,9 @@ fn exercise_local_fips_call(resume_recipient: bool, push_wakeup: bool) {
         b.reconcile_calls_udp_for_test(ba, aa, &test_fips_peer(&ad).npub());
         assert!(!b.suspended);
     }
-    wait_call_pair(&mut a, &ar, &mut b, &br, |_, b| {
-        b.state.call.as_ref().is_some_and(|c| c.phase == "incoming")
+    wait_call_pair(&mut a, &ar, &mut b, &br, |a, b| {
+        a.state.call.as_ref().is_some_and(|c| c.phase == "ringing")
+            && b.state.call.as_ref().is_some_and(|c| c.phase == "incoming")
     });
     let id = b.state.call.as_ref().unwrap().call_id.clone();
     a.handle_action(AppAction::SetCallMuted { muted: true });

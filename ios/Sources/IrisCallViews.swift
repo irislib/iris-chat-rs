@@ -139,6 +139,7 @@ struct IrisCallScreen: View {
 
     @ViewBuilder private var status: some View {
         if call.phase == "incoming" { Text(call.videoCapable ? "Incoming video call" : "Incoming voice call") }
+        else if call.phase == "ringing" { Text("Ringing…") }
         else if call.phase == "outgoing" { Text("Calling…") }
         else if call.phase == "ended" { Text(call.endReason ?? "Call ended") }
         else if !call.mediaConnected { Text("Connecting…") }

@@ -1,8 +1,10 @@
 //! Desktop capture/playout. The engine owns no sockets: compressed media is
 //! handed back to the existing authenticated FIPS call actions.
+mod tones;
 use std::sync::Arc;
 #[cfg(not(feature = "desktop-media"))]
 use std::sync::Mutex;
+pub use tones::DesktopCallTone;
 #[cfg(feature = "desktop-media")]
 mod audio;
 #[cfg(feature = "desktop-media")]

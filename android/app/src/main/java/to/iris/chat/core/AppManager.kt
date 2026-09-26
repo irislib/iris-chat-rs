@@ -495,7 +495,7 @@ class AppManager(
         mutableAppForegrounded.value = false
         selfUpdateManager.stopAutomaticChecks()
         // A foreground call service keeps the encrypted transport alive during calls.
-        if (mutableState.value.call?.phase in listOf("incoming", "outgoing", "connected")) return
+        if (mutableState.value.call?.phase in listOf("incoming", "outgoing", "ringing", "connected")) return
         runCatching {
             rust.prepareForSuspend()
         }.onFailure { error ->

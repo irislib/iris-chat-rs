@@ -53,6 +53,8 @@ final class IrisCallController: NSObject, ObservableObject {
     private var pendingMuted: Bool?
     private var pendingVideo: Bool?
     private var permissionRequestID: UUID?
+    private var startDispatched = false
+    private let tones = IrisCallTones()
     private let permissionAccess: IrisCallPermissions
     private let mediaForTesting: IrisCallMediaHandling?
 #if os(macOS)
@@ -145,11 +147,16 @@ final class IrisCallController: NSObject, ObservableObject {
             guard let self else { return }
             let error = await self.permissionAccess.error(video: video)
             guard self.permissionRequestID == requestID else { return }
-            self.permissionRequestID = nil
-            self.startingVideo = nil
-            if let error { self.showError(error); return }
+            if let error { self.startFailed(); self.showError(error); return }
+            self.startDispatched = true
             self.dispatch(.startCall(chatId: chatID, video: video))
         }
+    }
+
+    func startFailed() {
+        permissionRequestID = nil
+        startingVideo = nil
+        startDispatched = false
     }
 
     func answer(voiceOnly: Bool = false) {
@@ -190,8 +197,8 @@ final class IrisCallController: NSObject, ObservableObject {
         pushRecoveryTask?.cancel()
         pushRecoveryTask = nil
 #endif
-        permissionRequestID = nil
-        startingVideo = nil
+        startFailed()
+        tones.update(nil)
         guard let call else { return }
         endingCallID = call.callId
         presentedCall = nil
@@ -255,7 +262,7 @@ final class IrisCallController: NSObject, ObservableObject {
         dispatch(.setCallQuality(quality: quality.rawValue, maxBitrateBps: UInt32(custom * 1_000)))
     }
 
-    func update(_ snapshot: CallSnapshot?, preferences: PreferencesSnapshot? = nil) {
+    func update(_ snapshot: CallSnapshot?, preferences: PreferencesSnapshot? = nil, error: String? = nil) {
 #if os(iOS)
         if pendingPushCallID != nil {
             // Startup may emit several empty snapshots before the queued push
@@ -269,9 +276,8 @@ final class IrisCallController: NSObject, ObservableObject {
         IrisAudioActivity.setCallActive(snapshot != nil && snapshot?.phase != "ended")
         let previousID = call?.callId
         call = snapshot
-        if let snapshot, snapshot.phase != "ended" {
-            permissionRequestID = nil
-            startingVideo = nil
+        if (snapshot != nil && snapshot?.phase != "ended") || (startDispatched && error != nil) {
+            startFailed()
         }
         if previousID != snapshot?.callId {
             pendingMuted = nil
@@ -339,6 +345,7 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
     private func updateHardware() {
+        tones.update(mediaForTesting == nil && audioActive && call?.callId != endingCallID ? call : nil)
         let active = call?.phase == "connected" && audioActive && call?.callId != endingCallID
         let id = active ? call?.callId : nil
         mediaCallID = id
@@ -413,7 +420,7 @@ final class IrisCallController: NSObject, ObservableObject {
         guard mediaForTesting == nil else { pushCompletion?(); return }
         guard let provider else {
             pushCompletion?()
-            if let snapshot, snapshot.phase == "connected", mediaCallID != snapshot.callId {
+            if let snapshot, (snapshot.outgoing || snapshot.phase == "connected"), snapshot.phase != "ended", !fallbackAudioSessionActive {
                 do {
                     try configureAudioSession(video: snapshot.videoCapable)
                     try AVAudioSession.sharedInstance().setActive(true)
@@ -441,7 +448,7 @@ final class IrisCallController: NSObject, ObservableObject {
             let id = UUID()
             systemCallID = id
             systemCallCoreID = snapshot.callId
-            systemOutgoing = snapshot.phase == "outgoing"
+            systemOutgoing = snapshot.outgoing
             systemConnected = false
             answerWithVoice = false
             let update = CXCallUpdate()
