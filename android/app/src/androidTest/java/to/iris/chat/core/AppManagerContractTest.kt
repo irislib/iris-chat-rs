@@ -91,6 +91,22 @@ class AppManagerContractTest {
     }
 
     @Test
+    fun forward_marks_the_sent_body_for_each_recipient_and_leaves_normal_messages_alone() {
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        appManager.startForward("Bring a picnic blanket.")
+        assertTrue(appManager.pendingShare.value!!.isForward)
+        assertEquals("Forwarded:\n\nBring a picnic blanket.", appManager.pendingShare.value!!.text)
+        appManager.sendPendingShareToChats(listOf("recipient-one", "recipient-two"))
+        val sends = rust.dispatchedActions.filterIsInstance<AppAction.SendMessage>()
+        assertEquals(listOf("recipient-one", "recipient-two"), sends.map { it.chatId })
+        assertTrue(sends.all { it.text == "Forwarded:\n\nBring a picnic blanket." })
+        assertNull(appManager.pendingShare.value)
+        appManager.sendText("recipient-one", "My own message")
+        assertEquals("My own message", rust.dispatchedActions.filterIsInstance<AppAction.SendMessage>().last().text)
+    }
+
+    @Test
     fun startup_without_stored_credentials_settles_to_needs_login() {
         val appManager = createManager()
 

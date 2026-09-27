@@ -112,6 +112,7 @@ fn protocol_targeted_payload_count(effects: &[ProtocolEffect], _owner_pubkey_hex
 }
 
 include!("tests/protocol_runtime.rs");
+include!("tests/forwarding.rs");
 include!("tests/protocol_runtime_direct_queue.rs");
 include!("tests/registration_recovery.rs");
 include!("tests/device_roster_fetch.rs");

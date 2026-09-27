@@ -557,7 +557,7 @@ public partial class MessageBubble : UserControl
 
     private void PresentForwardPicker(string text)
     {
-        var trimmed = text.Trim();
+        var trimmed = Native.FormatForwardedMessage(text);
         if (string.IsNullOrEmpty(trimmed)) return;
 
         var chats = App.CurrentManager.ChatList;

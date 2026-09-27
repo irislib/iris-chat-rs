@@ -1723,7 +1723,7 @@ final class AppManager: ObservableObject {
     }
 
     func startForward(text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = formatForwardedMessage(text: text)
         guard !trimmed.isEmpty else {
             return
         }

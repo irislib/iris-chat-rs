@@ -2005,7 +2005,7 @@ fn reply_stripped_body(body: &str) -> &str {
 }
 
 fn present_forward_dialog(parent: Option<&gtk::Window>, text: &str, manager: &Rc<AppManager>) {
-    let text = text.trim().to_string();
+    let text = iris_chat_core::format_forwarded_message(text.to_string());
     if text.is_empty() {
         return;
     }

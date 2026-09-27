@@ -905,7 +905,7 @@ class AppManager(
     }
 
     fun startForward(text: String) {
-        val trimmedText = text.trim()
+        val trimmedText = to.iris.chat.rust.formatForwardedMessage(text)
         if (trimmedText.isEmpty()) {
             return
         }

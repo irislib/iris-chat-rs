@@ -411,6 +411,24 @@ private func writePendingShare(
     return url
 }
 final class IrisChatTests: XCTestCase {
+    @MainActor
+    func testForwardMarksEveryRecipientAndRepeatedForwardOnce() async throws {
+        let dataDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dataDir) }
+        let rust = MockRustApp(state: makeLargeFixtureState(account: makeAccount()))
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), dataDir: dataDir, environment: [:])
+        manager.startForward(text: "Bring a picnic blanket.")
+        XCTAssertEqual(manager.pendingShare?.text, "Forwarded:\n\nBring a picnic blanket.")
+        XCTAssertEqual(manager.pendingShare?.isForwarding, true)
+        manager.sendPendingShare(to: ["recipient-one", "recipient-two"])
+        for chatId in ["recipient-one", "recipient-two"] {
+            XCTAssertTrue(rust.dispatchedActions.contains(.sendMessage(chatId: chatId, text: "Forwarded:\n\nBring a picnic blanket.")))
+        }
+        XCTAssertNil(manager.pendingShare)
+        manager.startForward(text: "Forwarded:\n\nBring a picnic blanket.")
+        XCTAssertEqual(manager.pendingShare?.text, "Forwarded:\n\nBring a picnic blanket.")
+    }
+
     func testOnboardingTermsAcceptanceIsIOSOnly() {
 #if os(iOS)
         XCTAssertTrue(irisRequiresOnboardingTermsAcceptance())
