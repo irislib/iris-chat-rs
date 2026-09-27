@@ -54,7 +54,8 @@ fn people_search_connection() -> Connection {
              name TEXT,
              display_name TEXT,
              picture TEXT,
-             about TEXT
+             about TEXT,
+             nickname TEXT
          );
          CREATE TABLE profile_search_candidates (
              owner_pubkey_hex TEXT PRIMARY KEY,
@@ -279,7 +280,7 @@ fn canonical_profile_fields_override_stale_index_hints() {
     )
     .unwrap();
     conn.execute(
-        "INSERT INTO owner_profiles VALUES (?1, 'Current', NULL, NULL, NULL)",
+        "INSERT INTO owner_profiles VALUES (?1, 'Current', NULL, NULL, NULL, NULL)",
         [&owner],
     )
     .unwrap();

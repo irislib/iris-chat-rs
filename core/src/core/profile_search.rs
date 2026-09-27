@@ -1,6 +1,7 @@
 use super::profile::fallback_profile_name_for_identity;
 use super::profile_search_capability::{fetch_search_app_keys, MAX_SEARCH_CAPABILITY_CANDIDATES};
 use super::*;
+use crate::search::SearchQuery;
 use crate::state::FollowedUserSearchResult;
 use nostr_social_graph::SocialGraph;
 use rusqlite::{Connection, OptionalExtension};
@@ -339,13 +340,9 @@ fn search_people_candidates(
     if normalized_query.is_empty() {
         return Ok(Vec::new());
     }
-    let compact_query = compact_search_text(&normalized_query);
+    let search_query = SearchQuery::new(&normalized_query);
     let explicit_owner = PublicKey::parse(query.trim()).ok().map(|key| key.to_hex());
     let personal_graph = graph::load_people_graph(conn, current_owner_hex)?;
-    let terms = normalized_query
-        .split_whitespace()
-        .map(|term| (term.to_string(), compact_search_text(term)))
-        .collect::<Vec<_>>();
     let personalized_social = match current_owner_hex {
         Some(owner) => conn
             .query_row(
@@ -371,7 +368,7 @@ fn search_people_candidates(
          SELECT c.owner_pubkey_hex, d.follow_position, d.petname,
                 p.name, p.display_name, p.picture, p.about,
                 p.owner_pubkey_hex IS NOT NULL,
-                s.name, s.aliases_json, s.nip05, s.picture, r.friend_support
+                s.name, s.aliases_json, s.nip05, s.picture, r.friend_support, p.nickname
          FROM candidate_owners c
          LEFT JOIN current_discovery d
            ON d.owner_pubkey_hex = c.owner_pubkey_hex
@@ -403,6 +400,7 @@ fn search_people_candidates(
             row.get::<_, Option<String>>(10)?,
             row.get::<_, Option<String>>(11)?,
             row.get::<_, Option<u16>>(12)?.map(usize::from),
+            row.get::<_, Option<String>>(13)?,
         ))
     })?;
 
@@ -422,6 +420,7 @@ fn search_people_candidates(
             nip05,
             indexed_picture,
             personalized_friend_support,
+            nickname,
         ) = row?;
         if excluded_owner_hexes.contains(&owner_hex) {
             continue;
@@ -431,6 +430,7 @@ fn search_people_candidates(
         };
         let npub = pubkey.to_bech32().unwrap_or_else(|_| owner_hex.clone());
         let petname = normalize_profile_field(petname);
+        let nickname = normalize_profile_field(nickname);
         let profile_name = normalize_profile_field(profile_name);
         let profile_display_name = normalize_profile_field(profile_display_name);
         // A verified kind-0 event is authoritative once we have one. The
@@ -457,8 +457,9 @@ fn search_people_candidates(
             .clone()
             .or_else(|| profile_name.clone())
             .or_else(|| indexed_name.clone());
-        let display_label = petname
+        let display_label = nickname
             .clone()
+            .or_else(|| petname.clone())
             .or_else(|| profile_label.clone())
             .unwrap_or_else(|| fallback_profile_name_for_identity(&owner_hex));
         let picture_url = normalize_profile_url(if has_canonical_profile {
@@ -467,6 +468,7 @@ fn search_people_candidates(
             profile_picture.or(indexed_picture)
         });
         let mut fields = vec![
+            nickname.as_deref().unwrap_or_default(),
             petname.as_deref().unwrap_or_default(),
             profile_name.as_deref().unwrap_or_default(),
             profile_display_name.as_deref().unwrap_or_default(),
@@ -477,15 +479,7 @@ fn search_people_candidates(
             npub.as_str(),
         ];
         fields.extend(aliases.iter().map(String::as_str));
-        let searchable_fields = fields
-            .iter()
-            .flat_map(|field| [field.to_lowercase(), compact_search_text(field)])
-            .collect::<Vec<_>>();
-        if !terms.iter().all(|(term, compact_term)| {
-            searchable_fields.iter().any(|field| {
-                field.contains(term) || (!compact_term.is_empty() && field.contains(compact_term))
-            })
-        }) {
+        if !search_query.matches(&fields) {
             continue;
         }
 
@@ -496,32 +490,18 @@ fn search_people_candidates(
         }
 
         let labels = [
+            nickname.as_deref(),
             petname.as_deref(),
             profile_name.as_deref(),
             profile_display_name.as_deref(),
             indexed_name.as_deref(),
-        ];
-        let text_rank = if labels
-            .into_iter()
-            .flatten()
-            .any(|label| search_text_equals(label, &normalized_query, &compact_query))
-        {
-            0u8
-        } else if labels
-            .into_iter()
-            .flatten()
-            .any(|label| search_text_starts_with(label, &normalized_query, &compact_query))
-        {
-            1u8
-        } else if aliases
-            .iter()
-            .chain(nip05.iter())
-            .any(|value| search_text_starts_with(value, &normalized_query, &compact_query))
-        {
-            2u8
-        } else {
-            3u8
-        };
+        ]
+        .into_iter()
+        .flatten()
+        .chain(aliases.iter().map(String::as_str))
+        .chain(nip05.as_deref())
+        .collect::<Vec<_>>();
+        let text_rank = search_query.name_rank(&labels);
         let (social_source, social_distance, friend_support) = social_rank(
             &owner_hex,
             personalized_social,
@@ -612,24 +592,6 @@ fn compact_user_id(user_id: &str) -> String {
     } else {
         user_id.to_string()
     }
-}
-
-fn compact_search_text(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| character.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
-fn search_text_equals(value: &str, query: &str, compact_query: &str) -> bool {
-    value.to_lowercase() == query
-        || (!compact_query.is_empty() && compact_search_text(value) == compact_query)
-}
-
-fn search_text_starts_with(value: &str, query: &str, compact_query: &str) -> bool {
-    value.to_lowercase().starts_with(query)
-        || (!compact_query.is_empty() && compact_search_text(value).starts_with(compact_query))
 }
 
 #[cfg(test)]

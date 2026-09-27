@@ -12,6 +12,7 @@ pub mod image_proxy;
 pub mod local_relay;
 pub mod perflog;
 mod qr;
+mod search;
 mod state;
 mod test_fixtures;
 #[doc(hidden)]
@@ -450,7 +451,7 @@ impl FfiApp {
                 let (contacts, groups) = if scope_chat_id.is_some() {
                     (Vec::new(), Vec::new())
                 } else {
-                    filter_threads_for_search(&chat_list, trimmed)
+                    search::filter_threads_for_search(&chat_list, trimmed)
                 };
                 let shared_db = self.shared_db_snapshot();
                 let mut excluded_people = chat_list
@@ -1240,40 +1241,6 @@ fn is_foreground_core_msg(message: &CoreMsg) -> bool {
 
 #[cfg(test)]
 mod core_queue_tests;
-
-fn filter_threads_for_search(
-    chat_list: &[ChatThreadSnapshot],
-    query: &str,
-) -> (Vec<ChatThreadSnapshot>, Vec<ChatThreadSnapshot>) {
-    let needle = query.to_lowercase();
-    let mut contacts = Vec::new();
-    let mut groups = Vec::new();
-    for chat in chat_list {
-        if !thread_matches_query(chat, &needle) {
-            continue;
-        }
-        match chat.kind {
-            ChatKind::Direct => contacts.push(chat.clone()),
-            ChatKind::Group => groups.push(chat.clone()),
-        }
-    }
-    (contacts, groups)
-}
-
-fn thread_matches_query(chat: &ChatThreadSnapshot, needle_lower: &str) -> bool {
-    let candidates: [&str; 7] = [
-        &chat.display_name,
-        chat.nickname.as_deref().unwrap_or(""),
-        chat.profile_name.as_deref().unwrap_or(""),
-        chat.about.as_deref().unwrap_or(""),
-        chat.subtitle.as_deref().unwrap_or(""),
-        &chat.draft,
-        &chat.chat_id,
-    ];
-    candidates
-        .iter()
-        .any(|field| field.to_lowercase().contains(needle_lower))
-}
 
 fn enrich_message_hits(
     hits: Vec<crate::core::PersistedMessageSearchHit>,

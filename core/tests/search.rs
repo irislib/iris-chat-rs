@@ -573,3 +573,74 @@ fn ffi_people_search_filters_before_limit_and_restores_only_supported_people_off
         app.shutdown();
     }
 }
+
+#[test]
+fn ffi_people_search_ranks_private_nicknames_and_public_names_after_restart() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().to_string_lossy().to_string();
+    FfiApp::new(path.clone(), String::new(), "test".to_string()).shutdown();
+    let conn = Connection::open(dir.path().join("core.sqlite3")).unwrap();
+    conn.execute("INSERT INTO user_discovery_state(id) VALUES (1)", [])
+        .unwrap();
+    let cases = [
+        ("Joanna", None, None),
+        ("Public Second", Some("Family Anna"), None),
+        ("Public Third", Some("Anna Smith"), None),
+        ("Public Fourth", Some("Ann"), None),
+        ("Rihanna", None, None),
+        ("O'Ann-Marie", None, None),
+        ("Other Person", None, Some("Ann")),
+    ];
+    let mut owners = Vec::new();
+    for (position, (name, nickname, about)) in cases.iter().enumerate() {
+        let owner = Keys::generate().public_key().to_hex();
+        conn.execute(
+            "INSERT INTO owner_profiles(owner_pubkey_hex, name, nickname, about, updated_at_secs)
+             VALUES (?1, ?2, ?3, ?4, 1)",
+            rusqlite::params![owner, name, nickname, about],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO user_discovery_users(owner_pubkey_hex, follow_position)
+             VALUES (?1, ?2)",
+            rusqlite::params![owner, position],
+        )
+        .unwrap();
+        seed_messaging_support(&conn, &owner);
+        owners.push(owner);
+    }
+    drop(conn);
+
+    for _ in 0..2 {
+        let app = FfiApp::new(path.clone(), String::new(), "test".to_string());
+        let result = app.search("  ANN  ".to_string(), None, 20);
+        assert_eq!(
+            result
+                .people
+                .iter()
+                .map(|person| &person.owner_pubkey_hex)
+                .collect::<Vec<_>>(),
+            [3, 1, 2, 5, 0, 4, 6].map(|index| &owners[index]),
+        );
+        assert_eq!(result.people[0].display_label, "Ann");
+        assert_eq!(
+            result.people[0].profile_label.as_deref(),
+            Some("Public Fourth")
+        );
+        assert_eq!(
+            app.search("ann".to_string(), None, 1).people[0].owner_pubkey_hex,
+            owners[3]
+        );
+        for query in ["smi ann", "AnnaSmith", "Public Third"] {
+            let result = app.search(query.to_string(), None, 20);
+            assert_eq!(result.people.len(), 1, "{query}");
+            assert_eq!(result.people[0].owner_pubkey_hex, owners[2], "{query}");
+            assert_eq!(result.people[0].display_label, "Anna Smith");
+        }
+        assert!(app
+            .search("unrelated".to_string(), None, 20)
+            .people
+            .is_empty());
+        app.shutdown();
+    }
+}
