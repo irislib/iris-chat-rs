@@ -10,10 +10,15 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material3.AlertDialog
@@ -26,11 +31,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -218,6 +226,14 @@ fun MessageRequestBar(
     onBlockAndReport: () -> Unit,
     onAccept: () -> Unit,
 ) {
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    // A request has no composer. Dismiss a keyboard left open by the previous
+    // screen once on entry, without interfering with later report dialogs.
+    LaunchedEffect(Unit) {
+        focusManager.clearFocus(force = true)
+        keyboard?.hide()
+    }
     Surface(
         modifier =
             Modifier
@@ -227,7 +243,12 @@ fun MessageRequestBar(
         tonalElevation = 2.dp,
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            modifier =
+                Modifier
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -238,16 +259,15 @@ fun MessageRequestBar(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 TextButton(
                     onClick = onBlock,
                     modifier =
                         Modifier
-                            .weight(1f)
                             .testTag("messageRequestBlockButton"),
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
                 ) {
@@ -257,7 +277,6 @@ fun MessageRequestBar(
                     onClick = onBlockAndReport,
                     modifier =
                         Modifier
-                            .weight(1f)
                             .testTag("messageRequestBlockAndReportButton"),
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
                 ) {
@@ -267,7 +286,6 @@ fun MessageRequestBar(
                     onClick = onAccept,
                     modifier =
                         Modifier
-                            .weight(1f)
                             .testTag("messageRequestAcceptButton"),
                     colors =
                         ButtonDefaults.buttonColors(
