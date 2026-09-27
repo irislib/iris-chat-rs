@@ -187,6 +187,10 @@ pub(super) struct OwnerProfileRecord {
     #[serde(default)]
     pub(super) nickname: Option<String>,
     #[serde(default)]
+    pub(super) contact_note: Option<String>,
+    #[serde(default)]
+    pub(super) contact_updated_at_ms: u64,
+    #[serde(default)]
     pub(super) name: Option<String>,
     #[serde(default)]
     pub(super) display_name: Option<String>,
@@ -213,6 +217,8 @@ impl Default for OwnerProfileRecord {
     fn default() -> Self {
         Self {
             nickname: None,
+            contact_note: None,
+            contact_updated_at_ms: 0,
             name: None,
             display_name: None,
             picture: None,

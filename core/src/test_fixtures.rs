@@ -44,6 +44,7 @@ pub fn build_large_test_app_state(
         kind: current_thread.kind.clone(),
         display_name: current_thread.display_name.clone(),
         nickname: current_thread.nickname.clone(),
+        contact_note: current_thread.contact_note.clone(),
         profile_name: current_thread.profile_name.clone(),
         subtitle: current_thread.subtitle.clone(),
         picture_url: current_thread.picture_url.clone(),
@@ -189,6 +190,7 @@ fn fixture_thread(kind: ChatKind, index: u32) -> ChatThreadSnapshot {
         kind,
         display_name: format!("{display_prefix} {:04}", index + 1),
         nickname: None,
+        contact_note: None,
         profile_name: None,
         subtitle: Some(if is_group {
             format!("{member_count} people")

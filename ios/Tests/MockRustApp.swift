@@ -181,6 +181,7 @@ final class MockRustApp: RustAppClient {
             kind: thread?.kind ?? (groupId == nil ? .direct : .group),
             displayName: thread?.displayName ?? trimmed,
             nickname: thread?.nickname,
+            contactNote: thread?.contactNote,
             profileName: thread?.profileName,
             subtitle: thread?.subtitle,
             pictureUrl: thread?.pictureUrl,

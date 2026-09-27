@@ -92,6 +92,7 @@ mod chat_settings;
 mod chat_typing;
 mod chats;
 mod config;
+mod contact_details;
 mod device_approval;
 mod device_sync;
 mod device_sync_tcp;
@@ -305,6 +306,7 @@ fn build_chat_snapshot_with_messages(
             .map(|thread| thread.display_name.clone())
             .unwrap_or_else(|| fallback_chat_title(chat_id)),
         nickname: thread.and_then(|thread| thread.nickname.clone()),
+        contact_note: thread.and_then(|thread| thread.contact_note.clone()),
         profile_name: thread.and_then(|thread| thread.profile_name.clone()),
         subtitle: thread
             .and_then(|thread| thread.subtitle.clone())

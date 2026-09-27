@@ -347,6 +347,10 @@ impl AppCore {
                     kind: thread_kind,
                     display_name,
                     nickname: direct_nickname,
+                    contact_note: self
+                        .owner_profiles
+                        .get(&thread.chat_id)
+                        .and_then(|profile| profile.contact_note.clone()),
                     profile_name: direct_profile_name,
                     subtitle,
                     picture_url: group_snapshot
@@ -425,6 +429,10 @@ impl AppCore {
                         .map(|group| group.name.clone())
                         .unwrap_or_else(|| self.owner_display_label(&thread.chat_id)),
                     nickname: direct_nickname,
+                    contact_note: self
+                        .owner_profiles
+                        .get(&thread.chat_id)
+                        .and_then(|profile| profile.contact_note.clone()),
                     profile_name: direct_profile_name,
                     subtitle: group_snapshot
                         .as_ref()
@@ -710,6 +718,7 @@ impl AppCore {
                     kind: ChatKind::Group,
                     display_name: group.name.clone(),
                     nickname: None,
+                    contact_note: None,
                     profile_name: None,
                     subtitle: None,
                     picture_url: None,

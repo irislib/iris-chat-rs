@@ -119,6 +119,7 @@ mod tests {
             kind: ChatKind::Direct,
             display_name: format!("name-{id}"),
             nickname: None,
+            contact_note: None,
             profile_name: None,
             subtitle: None,
             picture_url: None,

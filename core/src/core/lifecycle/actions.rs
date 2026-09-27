@@ -37,6 +37,11 @@ impl AppCore {
                 owner_pubkey_hex,
                 nickname,
             } => self.set_contact_nickname(&owner_pubkey_hex, &nickname),
+            AppAction::SetContactDetails {
+                owner_pubkey_hex,
+                nickname,
+                note,
+            } => self.set_contact_details(&owner_pubkey_hex, &nickname, &note),
             AppAction::DeleteProfileMetadata => self.delete_profile_metadata(),
             AppAction::RestoreSession { owner_nsec } => self.restore_primary_session(&owner_nsec),
             AppAction::RestoreAccountBundle {

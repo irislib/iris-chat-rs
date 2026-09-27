@@ -437,3 +437,20 @@ fn call_history_migration_preserves_existing_messages_without_metadata() {
     assert_eq!(row, ("Hello".into(), None));
     assert_eq!(user_version(&conn), SCHEMA_VERSION);
 }
+
+#[test]
+fn migrates_v34_private_contact_details_without_changing_nicknames() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch("CREATE TABLE owner_profiles (
+        owner_pubkey_hex TEXT PRIMARY KEY, nickname TEXT, name TEXT, display_name TEXT,
+        picture TEXT, about TEXT, extra_metadata_json TEXT NOT NULL DEFAULT '{}',
+        extra_tags_json TEXT NOT NULL DEFAULT '[]', updated_at_secs INTEGER NOT NULL);
+        INSERT INTO owner_profiles(owner_pubkey_hex, nickname, updated_at_secs) VALUES ('peer', 'Alice', 1);
+        PRAGMA user_version = 34;").unwrap();
+    ensure_schema(&mut conn).unwrap();
+    let saved: (String, Option<String>, i64) = conn.query_row(
+        "SELECT nickname, contact_note, contact_updated_at_ms FROM owner_profiles WHERE owner_pubkey_hex = 'peer'", [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+    assert_eq!(saved, ("Alice".to_string(), None, 0));
+    assert_eq!(user_version(&conn), SCHEMA_VERSION);
+}

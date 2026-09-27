@@ -155,3 +155,5 @@ include!("tests/image_proxy_preferences.rs");
 include!("tests/calls.rs");
 include!("tests/call_quality.rs");
 include!("tests/call_history_multi_device.rs");
+
+include!("tests/contact_details.rs");

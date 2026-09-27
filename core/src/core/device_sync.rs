@@ -95,6 +95,8 @@ struct DeviceSyncChat {
     updated_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     read_state: Option<ChatReadState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    contact_details: Option<super::contact_details::ContactDetails>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -407,6 +409,10 @@ impl AppCore {
                         },
                         |thread| thread.updated_at_secs,
                     ),
+                    contact_details: self
+                        .owner_profiles
+                        .get(&id)
+                        .and_then(OwnerProfileRecord::contact_details),
                     id,
                     read_state,
                 })
@@ -586,6 +592,9 @@ impl AppCore {
         }
         for chat in snapshot.chats {
             if valid_device_sync_chat_id(&chat.id) {
+                if let Some(details) = chat.contact_details {
+                    changed |= self.apply_contact_details(&chat.id, details);
+                }
                 if let Some(read_state) = chat.read_state {
                     changed |= self.apply_chat_read_state(&chat.id, read_state);
                 }

@@ -17,6 +17,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Flag
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -57,6 +58,7 @@ import to.iris.chat.ui.components.imageLoadRequest
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisDivider
 import to.iris.chat.ui.components.IrisIcons
+import to.iris.chat.ui.components.IrisTextButton
 import to.iris.chat.ui.components.IrisInlineAction
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisTopBar
@@ -83,6 +85,7 @@ fun DirectChatInfoScreen(
     var profileDebug by remember(chatId) { mutableStateOf<PeerProfileDebugSnapshot?>(null) }
     var commonGroups by remember(chatId) { mutableStateOf<List<ChatThreadSnapshot>>(emptyList()) }
     var nicknameDraft by remember(chatId) { mutableStateOf(chat.nickname.orEmpty()) }
+    var noteDraft by remember(chatId) { mutableStateOf(chat.contactNote.orEmpty()) }
     var editingNickname by remember(chatId) { mutableStateOf(false) }
     var showBlockDialog by remember(chatId) { mutableStateOf(false) }
     var showReportDialog by remember(chatId) { mutableStateOf(false) }
@@ -108,8 +111,11 @@ fun DirectChatInfoScreen(
     LaunchedEffect(chatId) {
         commonGroups = appManager.mutualGroups(chatId)
     }
-    LaunchedEffect(chatId, chat.nickname) {
-        nicknameDraft = chat.nickname.orEmpty()
+    LaunchedEffect(chatId, chat.nickname, chat.contactNote) {
+        if (!editingNickname) {
+            nicknameDraft = chat.nickname.orEmpty()
+            noteDraft = chat.contactNote.orEmpty()
+        }
     }
 
     BackHandler {
@@ -189,19 +195,28 @@ fun DirectChatInfoScreen(
                         chat = chat,
                         nicknameDraft = nicknameDraft,
                         onNicknameChange = { nicknameDraft = it },
+                        noteDraft = noteDraft,
+                        onNoteChange = { noteDraft = it },
                         onSave = {
                             appManager.dispatch(
-                                AppAction.SetContactNickname(chatId, nicknameDraft),
+                                AppAction.SetContactDetails(chatId, nicknameDraft, noteDraft),
                             )
                             editingNickname = false
                         },
                         onRemove = {
                             nicknameDraft = ""
+                            noteDraft = ""
                             editingNickname = false
-                            appManager.dispatch(AppAction.SetContactNickname(chatId, ""))
+                            appManager.dispatch(AppAction.SetContactDetails(chatId, "", ""))
                         },
                         editing = editingNickname,
-                        onToggleEditing = { editingNickname = !editingNickname },
+                        onToggleEditing = {
+                            if (!editingNickname) {
+                                nicknameDraft = chat.nickname.orEmpty()
+                                noteDraft = chat.contactNote.orEmpty()
+                            }
+                            editingNickname = !editingNickname
+                        },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (showMessageAction) {
@@ -410,6 +425,8 @@ private fun ContactNicknameCard(
     chat: to.iris.chat.rust.CurrentChatSnapshot,
     nicknameDraft: String,
     onNicknameChange: (String) -> Unit,
+    noteDraft: String,
+    onNoteChange: (String) -> Unit,
     onSave: () -> Unit,
     onRemove: () -> Unit,
     editing: Boolean,
@@ -417,6 +434,11 @@ private fun ContactNicknameCard(
     modifier: Modifier = Modifier,
 ) {
     val storedNickname = chat.nickname?.trim().orEmpty()
+    val normalizedNickname = nicknameDraft.trim().split(Regex("(?U)\\s+")).joinToString(" ")
+    val normalizedNote = noteDraft.replace("\r\n", "\n").replace('\r', '\n').trim()
+    val noteLength = normalizedNote.codePointCount(0, normalizedNote.length)
+    val valid = normalizedNickname.codePointCount(0, normalizedNickname.length) <= 80 && noteLength <= 240
+    val changed = normalizedNickname != storedNickname || normalizedNote != chat.contactNote.orEmpty()
     val primaryName = storedNickname.ifEmpty { chat.displayName.trim() }
     val profileName =
         chat.profileName
@@ -434,7 +456,7 @@ private fun ContactNicknameCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Nickname",
+                text = "Nickname and note",
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -442,6 +464,7 @@ private fun ContactNicknameCard(
             if (storedNickname.isNotEmpty()) {
                 Text(
                     text = storedNickname,
+                    modifier = Modifier.weight(1f).padding(start = 12.dp),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
@@ -474,42 +497,69 @@ private fun ContactNicknameCard(
                 )
             }
         }
-        if (editing) {
+        if (!editing && !chat.contactNote.isNullOrBlank()) {
             IrisDivider()
-            TextField(
-                value = nicknameDraft,
-                onValueChange = onNicknameChange,
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .testTag("directChatNicknameField"),
-                label = { Text("Nickname") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                colors = irisTextFieldColors(),
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IrisInlineAction(
-                    text = "Save",
-                    onClick = onSave,
-                    modifier = Modifier.testTag("directChatSaveNicknameButton"),
-                ) {
-                    Icon(imageVector = IrisIcons.Check, contentDescription = null)
-                }
-                if (storedNickname.isNotEmpty()) {
-                    IrisInlineAction(
-                        text = "Remove",
-                        onClick = onRemove,
-                        modifier = Modifier.testTag("directChatRemoveNicknameButton"),
-                    ) {
-                        Icon(imageVector = IrisIcons.Close, contentDescription = null)
-                    }
-                }
+            SelectionContainer {
+                Text(chat.contactNote.orEmpty(), modifier = Modifier.testTag("directChatNoteText"))
             }
         }
+    }
+    if (editing) {
+        AlertDialog(
+            onDismissRequest = onToggleEditing,
+            title = { Text("Nickname and note") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text("Only you can see this.", style = MaterialTheme.typography.bodySmall)
+                    TextField(
+                        value = nicknameDraft,
+                        onValueChange = onNicknameChange,
+                        modifier = Modifier.fillMaxWidth().testTag("directChatNicknameField"),
+                        label = { Text("Nickname") },
+                        singleLine = true,
+                        isError = normalizedNickname.codePointCount(0, normalizedNickname.length) > 80,
+                        supportingText = {
+                            if (normalizedNickname.codePointCount(0, normalizedNickname.length) > 80) {
+                                Text("Use up to 80 characters.")
+                            }
+                        },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                        colors = irisTextFieldColors(),
+                    )
+                    TextField(
+                        value = noteDraft,
+                        onValueChange = onNoteChange,
+                        modifier = Modifier.fillMaxWidth().testTag("directChatNoteField"),
+                        label = { Text("Note") },
+                        minLines = 3,
+                        maxLines = 6,
+                        isError = noteLength > 240,
+                        supportingText = { if (noteLength >= 140) Text("$noteLength/240") },
+                        colors = irisTextFieldColors(),
+                    )
+                    if (storedNickname.isNotEmpty() || !chat.contactNote.isNullOrEmpty()) {
+                        IrisInlineAction(
+                            text = "Remove nickname and note",
+                            onClick = onRemove,
+                            modifier = Modifier.testTag("directChatRemoveNicknameButton"),
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                IrisTextButton(
+                    onClick = onSave,
+                    enabled = valid && changed,
+                    modifier = Modifier.testTag("directChatSaveNicknameButton"),
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                IrisTextButton(onClick = onToggleEditing, modifier = Modifier.testTag("directChatCancelNicknameButton")) { Text("Cancel") }
+            },
+        )
     }
 }
 

@@ -336,4 +336,10 @@ pub enum AppAction {
         owner_pubkey_hex: String,
         nickname: String,
     },
+    /// Private contact details, shared only with this account's linked devices.
+    SetContactDetails {
+        owner_pubkey_hex: String,
+        nickname: String,
+        note: String,
+    },
 }

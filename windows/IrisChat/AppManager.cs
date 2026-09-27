@@ -417,8 +417,8 @@ public sealed partial class AppManager : INotifyPropertyChanged
     public void SetChatMuted(string chatId, bool muted) =>
         DispatchToRust(new AppAction.SetChatMuted(chatId, muted));
 
-    public void SetContactNickname(string ownerPubkeyHex, string nickname) =>
-        DispatchToRust(new AppAction.SetContactNickname(ownerPubkeyHex.Trim(), nickname.Trim()));
+    public void SetContactDetails(string ownerPubkeyHex, string nickname, string note) =>
+        DispatchToRust(new AppAction.SetContactDetails(ownerPubkeyHex.Trim(), nickname, note));
 
     public void SetChatPinned(string chatId, bool pinned) =>
         DispatchToRust(new AppAction.SetChatPinned(chatId, pinned));

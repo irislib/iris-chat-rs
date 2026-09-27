@@ -8,16 +8,6 @@ impl OwnerProfileRecord {
     pub(super) fn profile_label(&self) -> Option<String> {
         self.display_name.clone().or_else(|| self.name.clone())
     }
-
-    pub(super) fn is_empty(&self) -> bool {
-        self.nickname.is_none()
-            && self.name.is_none()
-            && self.display_name.is_none()
-            && self.picture.is_none()
-            && self.about.is_none()
-            && self.extra_tags.is_empty()
-            && parsed_extra_metadata_object(&self.extra_metadata_json).is_empty()
-    }
 }
 
 fn parsed_extra_metadata_object(raw: &str) -> serde_json::Map<String, serde_json::Value> {
@@ -59,6 +49,8 @@ pub(super) fn build_owner_profile_record(
 
     Some(OwnerProfileRecord {
         nickname: None,
+        contact_note: None,
+        contact_updated_at_ms: 0,
         name: Some(trimmed.to_string()),
         display_name: Some(trimmed.to_string()),
         picture: normalize_profile_url(picture_url.map(str::to_string)),
@@ -100,6 +92,8 @@ pub(super) fn parse_owner_profile_record(
 
     Some(OwnerProfileRecord {
         nickname: None,
+        contact_note: None,
+        contact_updated_at_ms: 0,
         name,
         display_name,
         picture,

@@ -918,7 +918,7 @@ fn load_owner_profiles(
 ) -> anyhow::Result<BTreeMap<String, OwnerProfileRecord>> {
     let mut stmt = conn.prepare(
         "SELECT owner_pubkey_hex, nickname, name, display_name, picture, about,
-                extra_metadata_json, extra_tags_json, updated_at_secs
+                extra_metadata_json, extra_tags_json, updated_at_secs, contact_note, contact_updated_at_ms
          FROM owner_profiles",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -929,6 +929,8 @@ fn load_owner_profiles(
             serde_json::from_str(&extra_tags_json).unwrap_or_default();
         let record = OwnerProfileRecord {
             nickname: row.get(1)?,
+            contact_note: row.get(9)?,
+            contact_updated_at_ms: row.get::<_, i64>(10)? as u64,
             name: row.get(2)?,
             display_name: row.get(3)?,
             picture: row.get(4)?,
@@ -955,8 +957,8 @@ fn write_owner_profiles(
     let mut stmt = tx.prepare_cached(
         "INSERT INTO owner_profiles
             (owner_pubkey_hex, nickname, name, display_name, picture, about,
-             extra_metadata_json, extra_tags_json, updated_at_secs)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             extra_metadata_json, extra_tags_json, updated_at_secs, contact_note, contact_updated_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
     )?;
     for (owner_pubkey_hex, profile) in profiles {
         let extra_tags_json =
@@ -971,6 +973,8 @@ fn write_owner_profiles(
             profile.extra_metadata_json,
             extra_tags_json,
             profile.updated_at_secs as i64,
+            profile.contact_note,
+            profile.contact_updated_at_ms as i64,
         ])?;
     }
     Ok(())

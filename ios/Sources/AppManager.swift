@@ -1359,6 +1359,7 @@ final class AppManager: ObservableObject {
              .setChatUnread(let chatId, _),
              .setChatMessageTtl(let chatId, _),
              .setContactNickname(let chatId, _),
+             .setContactDetails(let chatId, _, _),
              .setChatDraft(let chatId, _),
              .toggleReaction(let chatId, _, _),
              .markMessagesSeen(let chatId, _),

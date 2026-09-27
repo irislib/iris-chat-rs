@@ -679,6 +679,7 @@ fn nearby_peer_chat_info(
         chat_id: owner.to_string(),
         display_name: name,
         nickname: None,
+        contact_note: None,
         profile_name: None,
         subtitle: None,
         picture_url: peer.picture_url.clone(),
