@@ -394,6 +394,9 @@ struct ChatScreen: View {
                                 .onPreferenceChange(ChatMessageBubbleFramePreferenceKey.self) { value in
                                     timelineCoordinator.messageBubbleFrames = value
                                 }
+                                .onPreferenceChange(ChatAudioControlFramePreferenceKey.self) { value in
+                                    timelineCoordinator.audioControlFrames = value
+                                }
                                 .onPreferenceChange(ChatTimelineDaySeparatorFramePreferenceKey.self) { value in
                                     timelineDaySeparatorFrames = value
                                 }
@@ -901,6 +904,10 @@ struct ChatScreen: View {
 
     private func handleMessageBubbleDragChanged(_ value: DragGesture.Value) {
         guard !timelineCoordinator.bubblePanRejected else { return }
+        if timelineCoordinator.audioControlFrames.contains(where: { $0.contains(value.startLocation) }) {
+            timelineCoordinator.bubblePanRejected = true
+            return
+        }
 
         let horizontal = abs(value.translation.width)
         let vertical = abs(value.translation.height)

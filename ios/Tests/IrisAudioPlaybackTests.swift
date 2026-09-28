@@ -10,6 +10,83 @@ import XCTest
 
 final class IrisAudioPlaybackTests: XCTestCase {
     @MainActor
+    func testPreparationShowsWaveformAndAllowsSeekingWithoutPlayback() async throws {
+        let url = try await silentM4A(varying: true)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let bytes = try Data(contentsOf: url)
+        var downloads = 0
+        let playback = IrisAudioPlayback(filename: "Voice message.m4a") {
+            downloads += 1
+            return bytes
+        }
+        defer { playback.stop() }
+        playback.prepare()
+        await waitForWaveform(playback)
+        XCTAssertEqual(playback.duration, 4, accuracy: 0.15)
+        XCTAssertFalse(playback.isPlaying)
+        XCTAssertFalse(playback.isLoading)
+        XCTAssertFalse(playback.isPreparing)
+        XCTAssertNil(playback.errorMessage)
+        playback.seek(to: 1.5)
+        XCTAssertEqual(playback.elapsed, 1.5, accuracy: 0.01)
+        XCTAssertFalse(playback.isPlaying)
+        playback.play()
+        await waitForPlayback(playback)
+        XCTAssertEqual(downloads, 1, "Play must reuse the prepared attachment")
+        XCTAssertGreaterThanOrEqual(playback.elapsed, 1.4)
+    }
+
+    @MainActor
+    func testPreparationDoesNotInterruptAnotherMessage() async throws {
+        let url = try await silentM4A()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let playing = IrisAudioPlayback(localURL: url)
+        let preview = IrisAudioPlayback(localURL: url)
+        defer { playing.stop(); preview.stop() }
+        playing.play()
+        await waitForPlayback(playing)
+        preview.prepare()
+        await waitForWaveform(preview)
+        XCTAssertTrue(playing.isPlaying)
+        XCTAssertFalse(preview.isPlaying)
+    }
+
+    @MainActor
+    func testPlayJoinsPendingPreparation() async throws {
+        let url = try await silentM4A()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let bytes = try Data(contentsOf: url)
+        let started = expectation(description: "preview download starts")
+        var continuation: CheckedContinuation<Data?, Never>?
+        var downloads = 0
+        let playback = IrisAudioPlayback(filename: "voice.m4a") {
+            downloads += 1
+            return await withCheckedContinuation { pending in
+                continuation = pending
+                started.fulfill()
+            }
+        }
+        defer { playback.stop() }
+        playback.prepare()
+        await fulfillment(of: [started], timeout: 2)
+        XCTAssertFalse(playback.isLoading)
+        playback.play()
+        XCTAssertTrue(playback.isLoading)
+        continuation?.resume(returning: bytes)
+        await waitForPlayback(playback)
+        XCTAssertEqual(downloads, 1)
+    }
+
+    @MainActor
+    private func waitForWaveform(_ playback: IrisAudioPlayback) async {
+        let prepared = expectation(description: "waveform ready without playback")
+        let observation = playback.$isPreparing.dropFirst().filter { !$0 }.prefix(1).sink { _ in prepared.fulfill() }
+        await fulfillment(of: [prepared], timeout: 5)
+        XCTAssertEqual(playback.waveform.count, 47)
+        observation.cancel()
+    }
+
+    @MainActor
     func testM4AAttachmentPlaysPausesSeeksAndReplaysInApp() async throws {
         let url = try await silentM4A()
         defer { try? FileManager.default.removeItem(at: url) }
@@ -134,7 +211,7 @@ final class IrisAudioPlaybackTests: XCTestCase {
     }
 
     @MainActor
-    func testDownloadStartsOnlyOnPlayAndRetriesFailure() async {
+    func testDownloadIsLazyUntilPreparationOrPlayAndRetriesFailure() async {
         var downloads = 0
         let firstDownload = expectation(description: "first requested download")
         let retryDownload = expectation(description: "retry requested download")

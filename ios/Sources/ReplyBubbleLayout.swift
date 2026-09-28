@@ -1,5 +1,9 @@
 import SwiftUI
 
+struct ReplyBubbleTrailingRow: LayoutValueKey {
+    static let defaultValue = false
+}
+
 /// Measure the bubble at its natural width, then give each row that width.
 /// This lets the quote fill a longer reply without stretching short replies.
 struct ReplyBubbleLayout: Layout {
@@ -18,9 +22,12 @@ struct ReplyBubbleLayout: Layout {
         let rowProposal = ProposedViewSize(width: bounds.width, height: nil)
         var y = bounds.minY
         for row in subviews {
+            // Only the outgoing timestamp belongs on the trailing edge.
+            // A wider quote must not push the reply text away from its left inset.
+            let trailing = isOutgoing && row[ReplyBubbleTrailingRow.self]
             row.place(
-                at: CGPoint(x: isOutgoing ? bounds.maxX : bounds.minX, y: y),
-                anchor: isOutgoing ? .topTrailing : .topLeading,
+                at: CGPoint(x: trailing ? bounds.maxX : bounds.minX, y: y),
+                anchor: trailing ? .topTrailing : .topLeading,
                 proposal: rowProposal
             )
             y += row.sizeThatFits(rowProposal).height + spacing

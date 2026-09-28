@@ -371,11 +371,11 @@ struct IrisChatListSearchBar: UIViewRepresentable {
         }
 
         func searchBarTextDidBeginEditing(_ searchBar: UISearchBar) {
-            isEditing = true
+            if !isEditing { isEditing = true }
         }
 
         func searchBarTextDidEndEditing(_ searchBar: UISearchBar) {
-            isEditing = false
+            if isEditing { isEditing = false }
         }
 
         func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {

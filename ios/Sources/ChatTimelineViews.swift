@@ -240,6 +240,7 @@ final class ChatTimelineInteractionCoordinator: ObservableObject {
     weak var scrollView: UIScrollView?
 #endif
     var messageBubbleFrames: [String: CGRect] = [:]
+    var audioControlFrames: [CGRect] = []
     var bubblePanRejected = false
 
     func stopScrolling() {
@@ -301,6 +302,14 @@ struct ChatTimelineContentHeightPreferenceKey: PreferenceKey {
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+struct ChatAudioControlFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [CGRect] = []
+
+    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) {
+        value.append(contentsOf: nextValue())
     }
 }
 
@@ -634,6 +643,7 @@ struct ChatMessageRow: View, Equatable {
                                     (message.isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs)
                                         .opacity(0.72)
                                 )
+                                .layoutValue(key: ReplyBubbleTrailingRow.self, value: true)
                             }
                         }
                         .foregroundStyle(message.isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs)

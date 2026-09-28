@@ -11,6 +11,7 @@ import AppKit
 final class IrisAudioPlayback: ObservableObject {
     @Published private(set) var waveform: [Float] = []
     @Published private(set) var isPlaying = false
+    @Published private(set) var isPreparing = false
     @Published private(set) var isLoading = false
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var duration: TimeInterval
@@ -81,8 +82,17 @@ final class IrisAudioPlayback: ObservableObject {
             return
         }
 
-        releasePlayer()
         isLoading = true
+        prepare()
+    }
+
+    /// Load the visible clip and its waveform without taking over audio playback.
+    func prepare() {
+        guard loadTask == nil else { return }
+        if let player, player.currentItem?.status != .failed { return }
+        releasePlayer()
+        errorMessage = nil
+        isPreparing = true
         let requestID = UUID()
         loadID = requestID
         let localURL = localURL
@@ -111,7 +121,7 @@ final class IrisAudioPlayback: ObservableObject {
                 guard playable else { throw AudioLoadError.unavailable }
                 let waveform = await IrisAudioWaveform.decode(url)
                 try Task.checkCancellation()
-                guard let self, self.loadID == requestID, self.wantsToPlay, self.canPlay else {
+                guard let self, self.loadID == requestID else {
                     if let ownedURL { Self.removeTemporaryAudio(ownedURL) }
                     return
                 }
@@ -119,11 +129,13 @@ final class IrisAudioPlayback: ObservableObject {
                 self.temporaryURL = ownedURL
                 self.duration = Self.validTime(assetDuration.seconds)
                 self.installPlayer(asset: asset)
+                self.isPreparing = false
                 self.loadTask = nil
             } catch {
                 if let ownedURL { Self.removeTemporaryAudio(ownedURL) }
                 guard let self, self.loadID == requestID, !Task.isCancelled else { return }
                 self.loadTask = nil
+                self.isPreparing = false
                 self.isLoading = false
                 self.wantsToPlay = false
                 self.errorMessage = "Couldn't play audio. Try again."
@@ -141,6 +153,7 @@ final class IrisAudioPlayback: ObservableObject {
         player?.pause()
         isPlaying = false
         isLoading = false
+        isPreparing = false
     }
 
     func stop() {
@@ -373,8 +386,11 @@ struct IrisAudioPlaybackControl: View {
             VStack(alignment: .leading, spacing: 0) {
                 IrisWaveformSlider(value: Binding(get: { playback.elapsed }, set: { playback.seek(to: $0) }),
                                    duration: playback.duration, peaks: playback.waveform, color: color,
-                                   enabled: playback.duration > 0 && !playback.isLoading && playback.errorMessage == nil)
+                                   enabled: playback.duration > 0 && !playback.isPreparing && !playback.isLoading && playback.errorMessage == nil)
                     .frame(height: 32)
+                    .overlay {
+                        if playback.isPreparing { ProgressView().tint(color) }
+                    }
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(playback.errorMessage ?? durationLabel)
                         .foregroundStyle(color.opacity(0.7))
@@ -400,6 +416,14 @@ struct IrisAudioPlaybackControl: View {
         .foregroundStyle(color)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chatAudioPlayer")
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(key: ChatAudioControlFramePreferenceKey.self, value: [
+                    geometry.frame(in: .named(ChatTimelineCoordinateSpace.name)),
+                ])
+            }
+        }
+        .task { playback.prepare() }
         .onDisappear { playback.stop() }
     }
 

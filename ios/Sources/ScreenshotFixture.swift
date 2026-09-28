@@ -305,7 +305,8 @@ extension ScreenshotFixture {
             }
         } else if let body = environment["IRIS_UI_TEST_MESSAGE_BODY"] {
             timelines["\(chatIdPrefix)1"] = [
-                Message(body: body, isOutgoing: false, ageSecs: 60, delivery: .seen),
+                Message(body: body, isOutgoing: environment["IRIS_UI_TEST_MESSAGE_OUTGOING"] == "1",
+                        ageSecs: 60, delivery: .seen),
             ]
         } else {
             return fixture

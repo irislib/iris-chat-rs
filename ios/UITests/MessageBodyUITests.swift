@@ -64,7 +64,41 @@ final class MessageBodyUITests: IrisChatUITestCase {
         capture(app, named: "short-message")
     }
 
-    private func openMessage(_ body: String, largeText: Bool = false) -> XCUIApplication {
+    func testOutgoingQuotedParagraphStartsAtBubbleInset() {
+        let quote = "We could take the early train, have lunch by the lake, and walk back through the woods. What do you think?"
+        let app = openMessage("↩ Friend: \(quote)\n\n\(paragraph)", outgoing: true)
+        let text = app.staticTexts.matching(NSPredicate(format: "label == %@", paragraph)).firstMatch
+        let preview = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", quote)).firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 10))
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        capture(app, named: "outgoing-quote-long-reply")
+        XCTAssertEqual(text.frame.minX, preview.frame.minX, accuracy: 1,
+                       "Outgoing reply text must begin at the same bubble inset as its quote")
+    }
+
+    func testOutgoingShortReplyUnderLongQuoteStaysLeading() {
+        let quote = "We could take the early train, have lunch by the lake, and walk back through the woods. What do you think?"
+        let app = openMessage("↩ Friend: \(quote)\n\nThat sounds good!", outgoing: true)
+        let text = app.staticTexts["That sounds good!"].firstMatch
+        let preview = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", quote)).firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 10))
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        capture(app, named: "outgoing-quote-short-reply")
+        XCTAssertEqual(text.frame.minX, preview.frame.minX, accuracy: 1)
+    }
+
+    func testShortQuoteAndReplyStayCompact() {
+        let app = openMessage("↩ Friend: A short quote\n\nYes", outgoing: true)
+        let text = app.staticTexts["Yes"].firstMatch
+        let preview = app.buttons.matching(NSPredicate(format: "label CONTAINS 'A short quote'")).firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 10))
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertLessThan(preview.frame.width, 200)
+        XCTAssertEqual(text.frame.minX, preview.frame.minX, accuracy: 1)
+        capture(app, named: "outgoing-short-quote-compact-reply")
+    }
+
+    private func openMessage(_ body: String, largeText: Bool = false, outgoing: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
         app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = "message-body-\(UUID().uuidString)"
@@ -73,6 +107,7 @@ final class MessageBodyUITests: IrisChatUITestCase {
         app.launchEnvironment["IRIS_DEMO_RELAYS"] = "ws://127.0.0.1:9"
         app.launchEnvironment["IRIS_UI_TEST_SCREENSHOT_FIXTURE"] = "1"
         app.launchEnvironment["IRIS_UI_TEST_MESSAGE_BODY"] = body
+        app.launchEnvironment["IRIS_UI_TEST_MESSAGE_OUTGOING"] = outgoing ? "1" : "0"
         if largeText {
             app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
         }
