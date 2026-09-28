@@ -1,7 +1,11 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import AVFoundation
 import SwiftUI
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 @MainActor
 final class IrisAudioPlayback: ObservableObject {
@@ -9,6 +13,7 @@ final class IrisAudioPlayback: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var duration: TimeInterval
+    @Published private(set) var playbackRate: Float = 1
     @Published private(set) var errorMessage: String?
 
     private static weak var activePlayback: IrisAudioPlayback?
@@ -148,10 +153,21 @@ final class IrisAudioPlayback: ObservableObject {
                     toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
+    func cyclePlaybackRate() {
+        let rates: [Float] = [1, 1.5, 2, 0.5]
+        let index = rates.firstIndex(of: playbackRate) ?? 0
+        playbackRate = rates[(index + 1) % rates.count]
+        if isPlaying { player?.rate = playbackRate }
+    }
+
     private var canPlay: Bool {
-        !IrisAudioActivity.isCallActive &&
-            !IrisAudioActivity.isRecordingActive &&
-            UIApplication.shared.applicationState == .active
+        guard !IrisAudioActivity.isCallActive, !IrisAudioActivity.isRecordingActive else { return false }
+        #if os(iOS)
+        return UIApplication.shared.applicationState == .active
+        #else
+        // Desktop voice messages may keep playing while another app is focused.
+        return true
+        #endif
     }
 
     private func installPlayer(asset: AVURLAsset) {
@@ -195,7 +211,7 @@ final class IrisAudioPlayback: ObservableObject {
                 self.activationTask = nil
                 guard available, self.canPlay, self.wantsToPlay else { self.pause(); return }
                 if self.duration > 0, self.elapsed >= self.duration - 0.05 { self.seek(to: 0) }
-                player.play()
+                player.playImmediately(atRate: self.playbackRate)
                 self.isPlaying = true
                 self.isLoading = false
             } catch {
@@ -224,8 +240,13 @@ final class IrisAudioPlayback: ObservableObject {
 
     private func observeAudioLifecycle() {
         let center = NotificationCenter.default
-        for name in [UIApplication.willResignActiveNotification, AVAudioSession.interruptionNotification,
-                     IrisAudioActivity.callDidChange] {
+        #if os(iOS)
+        let pauseNotifications = [UIApplication.willResignActiveNotification, AVAudioSession.interruptionNotification,
+                                  IrisAudioActivity.callDidChange]
+        #else
+        let pauseNotifications = [NSApplication.willTerminateNotification, IrisAudioActivity.callDidChange]
+        #endif
+        for name in pauseNotifications {
             notifications.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor [weak self] in self?.pause() }
             })
@@ -260,10 +281,12 @@ final class IrisAudioPlayback: ObservableObject {
             // ownership; OS activation must not stall UI rendering.
             return try IrisAudioActivity.withPlaybackSessionIfAvailable {
                 try Task.checkCancellation()
+                #if os(iOS)
                 let session = AVAudioSession.sharedInstance()
                 try session.setCategory(.playback, mode: .default)
                 try Task.checkCancellation()
                 try session.setActive(true)
+                #endif
                 return true
             } ?? false
         }
@@ -282,7 +305,11 @@ final class IrisAudioPlayback: ObservableObject {
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("iris-audio-\(UUID().uuidString).\(fileExtension)")
             do {
+                #if os(iOS)
                 try data.write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])
+                #else
+                try data.write(to: url, options: [.atomic])
+                #endif
                 try Task.checkCancellation()
                 return url
             } catch {
@@ -347,12 +374,26 @@ struct IrisAudioPlaybackControl: View {
                     .accessibilityLabel("Audio position")
                     .accessibilityValue("\(time(playback.elapsed)) of \(time(playback.duration))")
                     .accessibilityIdentifier("chatAudioProgress")
-                Text(playback.errorMessage ?? durationLabel)
-                    .font(.system(.caption, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(color.opacity(0.7))
-                    .lineLimit(2)
-                    .accessibilityIdentifier("chatAudioDuration")
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(playback.errorMessage ?? durationLabel)
+                        .foregroundStyle(color.opacity(0.7))
+                        .lineLimit(2)
+                        .accessibilityIdentifier("chatAudioDuration")
+                    Spacer(minLength: 0)
+                    Button { playback.cyclePlaybackRate() } label: {
+                        Text(rateLabel)
+                            .fontWeight(.semibold)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(color.opacity(0.12), in: Capsule())
+                    }
+                    .buttonStyle(.irisPlain)
+                    .accessibilityLabel("Playback speed")
+                    .accessibilityValue(rateLabel)
+                    .accessibilityIdentifier("chatAudioSpeedButton")
+                }
+                .font(.system(.caption, design: .rounded))
+                .monospacedDigit()
             }
         }
         .foregroundStyle(color)
@@ -362,6 +403,8 @@ struct IrisAudioPlaybackControl: View {
     }
 
     private var color: Color { foreground ?? palette.textPrimary }
+
+    private var rateLabel: String { String(format: "%g×", playback.playbackRate) }
 
     private var durationLabel: String {
         playback.duration > 0 ? "\(time(playback.elapsed)) / \(time(playback.duration))" : "Audio"

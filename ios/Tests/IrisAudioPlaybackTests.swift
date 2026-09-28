@@ -1,9 +1,117 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
+import AVFoundation
 import Combine
 import XCTest
+#if os(macOS)
+@testable import IrisChatMac
+#else
 @testable import IrisChat
+#endif
 
 final class IrisAudioPlaybackTests: XCTestCase {
+    @MainActor
+    func testM4AAttachmentPlaysPausesSeeksAndReplaysInApp() async throws {
+        let url = try await silentM4A()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let bytes = try Data(contentsOf: url)
+        var downloads = 0
+        let playback = IrisAudioPlayback(filename: "Voice message.m4a") {
+            downloads += 1
+            return bytes
+        }
+        defer { playback.stop() }
+        playback.play()
+        await waitForPlayback(playback)
+        XCTAssertEqual(playback.duration, 4, accuracy: 0.15)
+        XCTAssertNil(playback.errorMessage)
+
+        playback.pause()
+        XCTAssertFalse(playback.isPlaying)
+        playback.seek(to: 1.5)
+        XCTAssertEqual(playback.elapsed, 1.5, accuracy: 0.01)
+        playback.play()
+        await waitForPlayback(playback)
+        XCTAssertEqual(downloads, 1, "Resuming must reuse the decrypted attachment")
+
+        playback.seek(to: playback.duration)
+        playback.pause()
+        playback.play()
+        await waitForPlayback(playback)
+        XCTAssertLessThan(playback.elapsed, 1, "Playing a finished message must restart it")
+        XCTAssertEqual(downloads, 1)
+    }
+
+    @MainActor
+    func testPlaybackSpeedCyclesWithoutStartingPausedAudio() async throws {
+        let url = try await silentM4A()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let playback = IrisAudioPlayback(localURL: url)
+        defer { playback.stop() }
+        for rate: Float in [1.5, 2, 0.5, 1] {
+            playback.cyclePlaybackRate()
+            XCTAssertEqual(playback.playbackRate, rate)
+            XCTAssertFalse(playback.isPlaying)
+        }
+        playback.play()
+        await waitForPlayback(playback)
+        playback.cyclePlaybackRate()
+        XCTAssertTrue(playback.isPlaying)
+        playback.pause()
+        playback.play()
+        await waitForPlayback(playback)
+        XCTAssertEqual(playback.playbackRate, 1.5)
+    }
+
+    @MainActor
+    func testAnotherMessageAndCallPausePreparedAudio() async throws {
+        let url = try await silentM4A()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let first = IrisAudioPlayback(localURL: url)
+        let second = IrisAudioPlayback(localURL: url)
+        defer {
+            first.stop()
+            second.stop()
+            IrisAudioActivity.setCallActive(false)
+        }
+        first.play()
+        await waitForPlayback(first)
+        second.play()
+        await waitForPlayback(second)
+        XCTAssertFalse(first.isPlaying)
+        let paused = expectation(description: "call pauses prepared audio")
+        let observation = second.$isPlaying.dropFirst().filter { !$0 }.prefix(1).sink { _ in paused.fulfill() }
+        IrisAudioActivity.setCallActive(true)
+        await fulfillment(of: [paused], timeout: 2)
+        XCTAssertFalse(second.isPlaying)
+        observation.cancel()
+    }
+
+    @MainActor
+    private func waitForPlayback(_ playback: IrisAudioPlayback) async {
+        let started = expectation(description: "AVPlayer starts local M4A")
+        let observation = playback.$isPlaying.filter { $0 }.prefix(1).sink { _ in started.fulfill() }
+        await fulfillment(of: [started], timeout: 5)
+        XCTAssertTrue(playback.isPlaying, playback.errorMessage ?? "Audio did not start")
+        observation.cancel()
+    }
+
+    private func silentM4A() async throws -> URL {
+        try await Task.detached {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("audio-test-\(UUID().uuidString).m4a")
+            let file = try AVAudioFile(forWriting: url, settings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000,
+            ])
+            let frames: AVAudioFrameCount = 44_100 * 4
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frames))
+            let channel = try XCTUnwrap(buffer.floatChannelData?[0])
+            channel.initialize(repeating: 0, count: Int(frames))
+            buffer.frameLength = frames
+            try file.write(from: buffer)
+            return url
+        }.value
+    }
+
     @MainActor
     func testDownloadStartsOnlyOnPlayAndRetriesFailure() async {
         var downloads = 0

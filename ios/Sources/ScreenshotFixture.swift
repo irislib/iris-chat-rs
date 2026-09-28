@@ -52,6 +52,7 @@ struct ScreenshotFixture {
         let ageSecs: TimeInterval
         let delivery: DeliveryState
         let reactions: [MessageReactionSnapshot]
+        let attachments: [MessageAttachmentSnapshot]
         /// Group sender name. The chat bubble renders `message.author`
         /// verbatim as the sender name above the bubble — production
         /// chats resolve a hex pubkey to a display name elsewhere; the
@@ -66,13 +67,15 @@ struct ScreenshotFixture {
             ageSecs: TimeInterval,
             delivery: DeliveryState,
             reactions: [MessageReactionSnapshot] = [],
-            groupAuthorName: String? = nil
+            groupAuthorName: String? = nil,
+            attachments: [MessageAttachmentSnapshot] = []
         ) {
             self.body = body
             self.isOutgoing = isOutgoing
             self.ageSecs = ageSecs
             self.delivery = delivery
             self.reactions = reactions
+            self.attachments = attachments
             self.groupAuthorName = groupAuthorName
         }
     }
@@ -290,11 +293,23 @@ extension ScreenshotFixture {
         guard enabled(environment: environment) else { return nil }
         let fixture = environment["IRIS_UI_TEST_SCREENSHOT_STYLE"] == "marketing" ? Self.marketing : Self.default
         fixture.prepareAvatars(environment: environment)
-        guard let body = environment["IRIS_UI_TEST_MESSAGE_BODY"] else { return fixture }
         var timelines = fixture.timelines
-        timelines["\(chatIdPrefix)1"] = [
-            Message(body: body, isOutgoing: false, ageSecs: 60, delivery: .seen),
-        ]
+        if environment["IRIS_UI_TEST_AUDIO_MESSAGES"] == "1" {
+            timelines["\(chatIdPrefix)1"] = [false, true].map { outgoing in
+                Message(body: "", isOutgoing: outgoing, ageSecs: outgoing ? 30 : 60, delivery: .seen,
+                        attachments: [MessageAttachmentSnapshot(
+                            nhash: "fixture-voice", filename: "Voice message.m4a", filenameEncoded: "Voice%20message.m4a",
+                            htreeUrl: "htree://fixture-voice/Voice%20message.m4a", isImage: false, isVideo: false,
+                            // Exercise both explicit audio metadata and legacy extension detection.
+                            isAudio: !outgoing)])
+            }
+        } else if let body = environment["IRIS_UI_TEST_MESSAGE_BODY"] {
+            timelines["\(chatIdPrefix)1"] = [
+                Message(body: body, isOutgoing: false, ageSecs: 60, delivery: .seen),
+            ]
+        } else {
+            return fixture
+        }
         return ScreenshotFixture(
             ownerDisplayName: fixture.ownerDisplayName,
             threads: fixture.threads,
@@ -473,7 +488,7 @@ extension ScreenshotFixture {
             authorOwnerPubkeyHex: authorOwnerPubkeyHex,
             authorPictureUrl: nil,
             body: message.body,
-            attachments: [],
+            attachments: message.attachments,
             reactions: message.reactions,
             reactors: [],
             isOutgoing: message.isOutgoing,
