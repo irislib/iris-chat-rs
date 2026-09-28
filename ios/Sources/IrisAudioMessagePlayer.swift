@@ -12,6 +12,7 @@ final class IrisAudioPlayback: ObservableObject {
     @Published private(set) var waveform: [Float] = []
     @Published private(set) var isPlaying = false
     @Published private(set) var isPreparing = false
+    @Published private(set) var requiresDownload = false
     @Published private(set) var isLoading = false
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var duration: TimeInterval
@@ -22,6 +23,8 @@ final class IrisAudioPlayback: ObservableObject {
     private let localURL: URL?
     private let filename: String
     private let loadData: (() async -> Data?)?
+    private let loadPreviewData: (() async -> Data?)?
+    private let waveformCacheKey: String?
     private var player: AVPlayer?
     private var itemObservation: NSKeyValueObservation?
     private var timeObserver: Any?
@@ -36,14 +39,19 @@ final class IrisAudioPlayback: ObservableObject {
         self.localURL = localURL
         self.filename = localURL.lastPathComponent
         self.loadData = nil
+        self.loadPreviewData = nil
+        self.waveformCacheKey = nil
         self.duration = Self.validTime(duration)
         observeAudioLifecycle()
     }
 
-    init(filename: String, loadData: @escaping () async -> Data?) {
+    init(filename: String, cacheKey: String? = nil, loadPreviewData: (() async -> Data?)? = nil,
+         loadData: @escaping () async -> Data?) {
         self.localURL = nil
         self.filename = filename
         self.loadData = loadData
+        self.loadPreviewData = loadPreviewData
+        self.waveformCacheKey = cacheKey
         self.duration = 0
         observeAudioLifecycle()
     }
@@ -97,6 +105,8 @@ final class IrisAudioPlayback: ObservableObject {
         loadID = requestID
         let localURL = localURL
         let loadData = loadData
+        let previewLoader = wantsToPlay ? nil : loadPreviewData
+        let cacheKey = waveformCacheKey
         let filename = filename
         loadTask = Task { @MainActor [weak self] in
             var ownedURL: URL?
@@ -105,7 +115,20 @@ final class IrisAudioPlayback: ObservableObject {
                 if let localURL {
                     url = localURL
                 } else {
-                    guard let data = await loadData?(), !data.isEmpty else {
+                    var data = await (previewLoader ?? loadData)?()
+                    try Task.checkCancellation()
+                    // A tap during a policy-limited preview must upgrade to a full download.
+                    if data == nil, previewLoader != nil, self?.wantsToPlay == true {
+                        data = await loadData?()
+                    }
+                    guard let data, !data.isEmpty else {
+                        if previewLoader != nil, self?.wantsToPlay != true {
+                            guard let self, self.loadID == requestID else { return }
+                            self.requiresDownload = true
+                            self.isPreparing = false
+                            self.loadTask = nil
+                            return
+                        }
                         throw AudioLoadError.unavailable
                     }
                     try Task.checkCancellation()
@@ -119,12 +142,13 @@ final class IrisAudioPlayback: ObservableObject {
                 let assetDuration = try await asset.load(.duration)
                 try Task.checkCancellation()
                 guard playable else { throw AudioLoadError.unavailable }
-                let waveform = await IrisAudioWaveform.decode(url)
+                let waveform = await IrisAudioWaveform.decode(url, cacheKey: cacheKey)
                 try Task.checkCancellation()
                 guard let self, self.loadID == requestID else {
                     if let ownedURL { Self.removeTemporaryAudio(ownedURL) }
                     return
                 }
+                self.requiresDownload = false
                 self.waveform = waveform
                 self.temporaryURL = ownedURL
                 self.duration = Self.validTime(assetDuration.seconds)
@@ -353,14 +377,18 @@ struct IrisAudioPlaybackControl: View {
     @Environment(\.irisPalette) private var palette
     @StateObject private var playback: IrisAudioPlayback
     private let foreground: Color?
+    @ObservedObject private var downloads = IrisAudioDownloads.shared
+    @AppStorage(IrisAudioDownloadPreference.defaultsKey) private var downloadPreference = IrisAudioDownloadPreference.wifiAndCellular.rawValue
 
     init(localURL: URL, duration: TimeInterval = 0) {
         _playback = StateObject(wrappedValue: IrisAudioPlayback(localURL: localURL, duration: duration))
         foreground = nil
     }
 
-    init(filename: String, foreground: Color, loadData: @escaping () async -> Data?) {
-        _playback = StateObject(wrappedValue: IrisAudioPlayback(filename: filename, loadData: loadData))
+    init(filename: String, foreground: Color, cacheKey: String? = nil,
+         loadPreviewData: (() async -> Data?)? = nil, loadData: @escaping () async -> Data?) {
+        _playback = StateObject(wrappedValue: IrisAudioPlayback(filename: filename, cacheKey: cacheKey,
+            loadPreviewData: loadPreviewData, loadData: loadData))
         self.foreground = foreground
     }
 
@@ -371,7 +399,7 @@ struct IrisAudioPlaybackControl: View {
                     if playback.isLoading { ProgressView().tint(color) }
                     else {
                         Image(systemName: playback.errorMessage != nil ? "arrow.clockwise" :
-                            (playback.isPlaying ? "pause.fill" : "play.fill"))
+                            (playback.requiresDownload ? "arrow.down" : (playback.isPlaying ? "pause.fill" : "play.fill")))
                             .font(.system(size: 18, weight: .semibold))
                     }
                 }
@@ -380,7 +408,7 @@ struct IrisAudioPlaybackControl: View {
             }
             .buttonStyle(.irisPlain)
             .accessibilityLabel(playback.isLoading ? "Cancel loading" :
-                (playback.errorMessage != nil ? "Retry audio" : (playback.isPlaying ? "Pause audio" : "Play audio")))
+                (playback.errorMessage != nil ? "Retry audio" : (playback.requiresDownload ? "Download and play audio" : (playback.isPlaying ? "Pause audio" : "Play audio"))))
             .accessibilityIdentifier("chatAudioPlayButton")
 
             VStack(alignment: .leading, spacing: 0) {
@@ -424,6 +452,11 @@ struct IrisAudioPlaybackControl: View {
             }
         }
         .task { playback.prepare() }
+        .irisOnChange(of: downloadPreference) { _ in playback.prepare() }
+        .irisOnChange(of: downloads.network) { _ in playback.prepare() }
+        .irisOnChange(of: downloads.callActive) { active in
+            if !active { playback.prepare() }
+        }
         .onDisappear { playback.stop() }
     }
 
@@ -447,10 +480,13 @@ struct IrisAudioMessagePlayer: View {
     let attachment: MessageAttachmentSnapshot
     let isOutgoing: Bool
     let downloadAttachment: (MessageAttachmentSnapshot) async -> Data?
+    let previewAudioAttachment: (MessageAttachmentSnapshot) async -> Data?
 
     var body: some View {
         IrisAudioPlaybackControl(filename: attachment.filename,
-                                 foreground: isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs) {
+                                 foreground: isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs,
+                                 cacheKey: attachment.nhash,
+                                 loadPreviewData: { await previewAudioAttachment(attachment) }) {
             await downloadAttachment(attachment)
         }
         .id(attachment.htreeUrl)

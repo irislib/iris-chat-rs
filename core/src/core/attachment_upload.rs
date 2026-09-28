@@ -310,7 +310,18 @@ impl AppCore {
 
 #[uniffi::export]
 pub fn download_hashtree_attachment(nhash: String) -> AttachmentDownloadResult {
-    match download_hashtree_attachment_blocking(&nhash) {
+    download_hashtree_attachment_with_limit(nhash, MAX_ATTACHMENT_BYTES)
+}
+
+const MAX_ATTACHMENT_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Automatic previews may request a lower ceiling; callers cannot raise the app limit.
+#[uniffi::export]
+pub fn download_hashtree_attachment_with_limit(
+    nhash: String,
+    max_bytes: u64,
+) -> AttachmentDownloadResult {
+    match download_hashtree_attachment_blocking(&nhash, max_bytes.min(MAX_ATTACHMENT_BYTES)) {
         Ok(data_base64) => AttachmentDownloadResult {
             data_base64: Some(data_base64),
             error: None,
@@ -445,14 +456,24 @@ pub(super) fn looks_like_image(path: &Path, data: &[u8]) -> bool {
         || data.starts_with(b"RIFF")
 }
 
-fn download_hashtree_attachment_blocking(nhash: &str) -> anyhow::Result<String> {
+fn download_hashtree_attachment_blocking(nhash: &str, max_bytes: u64) -> anyhow::Result<String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(download_hashtree_attachment_base64(nhash))
+    runtime.block_on(download_hashtree_attachment_base64_with_limit(
+        nhash, max_bytes,
+    ))
 }
 
+#[cfg(test)]
 pub(super) async fn download_hashtree_attachment_base64(nhash: &str) -> anyhow::Result<String> {
+    download_hashtree_attachment_base64_with_limit(nhash, MAX_ATTACHMENT_BYTES).await
+}
+
+async fn download_hashtree_attachment_base64_with_limit(
+    nhash: &str,
+    max_bytes: u64,
+) -> anyhow::Result<String> {
     let nhash = nhash.trim();
     if nhash.is_empty() {
         anyhow::bail!("missing attachment hash");
@@ -463,23 +484,21 @@ pub(super) async fn download_hashtree_attachment_base64(nhash: &str) -> anyhow::
         key: data.decrypt_key,
     };
     let bytes = if let Some(store) = active_attachment_blob_store() {
-        read_hashtree_attachment(&cid, store).await?
+        read_hashtree_attachment(&cid, store, max_bytes).await?
     } else {
-        read_hashtree_attachment(&cid, blossom_read_store()).await?
+        read_hashtree_attachment(&cid, blossom_read_store(), max_bytes).await?
     };
-    if bytes.len() > 64 * 1024 * 1024 {
-        anyhow::bail!("attachment is too large");
-    }
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
 async fn read_hashtree_attachment<S: Store + 'static>(
     cid: &Cid,
     store: Arc<S>,
+    max_bytes: u64,
 ) -> anyhow::Result<Vec<u8>> {
     let tree = HashTree::new(HashTreeConfig::new(store));
     let bytes = tree
-        .get(cid, None)
+        .get(cid, Some(max_bytes.min(MAX_ATTACHMENT_BYTES)))
         .await
         .map_err(|error| anyhow::anyhow!("hashtree download failed: {error}"))?
         .ok_or_else(|| anyhow::anyhow!("attachment was not found"))?;
@@ -544,8 +563,39 @@ fn is_local_server_url(value: &str) -> bool {
     )
 }
 
+async fn download_attachment_blob(
+    client: &reqwest::Client,
+    server: &str,
+    hash: &str,
+    max_bytes: u64,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    let url = format!("{}/{}.bin", server.trim_end_matches('/'), hash);
+    let mut response = client.get(url).send().await?;
+    if !response.status().is_success() {
+        return Ok(None);
+    }
+    if response
+        .content_length()
+        .is_some_and(|size| size > max_bytes)
+    {
+        anyhow::bail!("attachment blob is too large");
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if (bytes.len() as u64).saturating_add(chunk.len() as u64) > max_bytes {
+            anyhow::bail!("attachment blob is too large");
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    if hashtree_blossom::compute_sha256(&bytes) != hash {
+        anyhow::bail!("attachment hash mismatch");
+    }
+    Ok(Some(bytes))
+}
+
 struct UploadingBlossomStore {
     client: BlossomClient,
+    download_client: reqwest::Client,
     uploaded: AsyncRwLock<HashSet<String>>,
     progress: Option<Arc<AtomicU64>>,
 }
@@ -562,6 +612,10 @@ impl UploadingBlossomStore {
             .with_write_servers(write_servers);
         Self {
             client,
+            download_client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("attachment HTTP client"),
             uploaded: AsyncRwLock::new(HashSet::new()),
             progress,
         }
@@ -619,20 +673,22 @@ impl Store for UploadingBlossomStore {
             }
         }
 
-        match self.client.try_download(&key).await {
-            Some(data) => {
-                let computed = hashtree_blossom::compute_sha256(&data);
-                if computed != key {
-                    return Err(StoreError::Other(format!(
-                        "download hash mismatch for {key}"
-                    )));
-                }
-                let mut cache = shared_chunk_cache_write();
-                cache.insert(key, data.clone());
-                Ok(Some(data))
+        // Bound the HTTP body as well as the assembled tree. A single oversized
+        // blob or a server that omits Content-Length must not fill memory first.
+        for server in self.client.read_servers() {
+            if let Ok(Some(data)) = download_attachment_blob(
+                &self.download_client,
+                server,
+                &key,
+                MAX_ATTACHMENT_BYTES + 64,
+            )
+            .await
+            {
+                shared_chunk_cache_write().insert(key.clone(), data.clone());
+                return Ok(Some(data));
             }
-            None => Ok(None),
         }
+        Ok(None)
     }
 
     async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {

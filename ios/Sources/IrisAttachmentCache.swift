@@ -32,7 +32,9 @@ actor IrisAttachmentCache {
 
     func data(for key: String) -> Data? {
         let url = directory.appendingPathComponent(key)
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size <= 64 * 1024 * 1024,
+              let data = try? Data(contentsOf: url) else { return nil }
         try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
         return data
     }

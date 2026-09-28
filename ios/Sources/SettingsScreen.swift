@@ -403,6 +403,7 @@ struct SettingsScreen: View {
         case .media:
             IrisSectionCard {
                 CardHeader(title: "Media")
+                AudioDownloadSettingsSection()
                 ImageProxySettingsSection(manager: manager)
             }
 

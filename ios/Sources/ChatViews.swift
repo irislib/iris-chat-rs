@@ -819,6 +819,9 @@ struct ChatScreen: View {
             downloadAttachment: { attachment in
                 await manager.downloadAttachment(attachment)
             },
+            previewAudioAttachment: { attachment in
+                await manager.previewAudioAttachment(attachment)
+            },
             openAttachment: { attachment in
                 await manager.openAttachment(attachment)
             },

@@ -10,6 +10,59 @@ import XCTest
 
 final class IrisAudioPlaybackTests: XCTestCase {
     @MainActor
+    func testDeferredPreviewDoesNotDownloadUntilPlayAndStillWorksOffline() async throws {
+        let url = try await silentM4A(varying: true)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let bytes = try Data(contentsOf: url)
+        var downloads = 0
+        let playback = IrisAudioPlayback(filename: "large.m4a", loadPreviewData: { nil }) {
+            downloads += 1
+            return bytes
+        }
+        defer { playback.stop() }
+        let deferred = expectation(description: "preview waits for an explicit tap")
+        let observation = playback.$requiresDownload.filter { $0 }.prefix(1).sink { _ in deferred.fulfill() }
+        playback.prepare()
+        await fulfillment(of: [deferred], timeout: 3)
+        XCTAssertEqual(downloads, 0)
+        XCTAssertFalse(playback.isPlaying)
+        XCTAssertNil(playback.errorMessage)
+        playback.play()
+        await waitForPlayback(playback)
+        XCTAssertEqual(downloads, 1)
+        XCTAssertFalse(playback.requiresDownload)
+        playback.pause()
+        playback.play()
+        await waitForPlayback(playback)
+        XCTAssertEqual(downloads, 1, "A downloaded clip must play without another network request")
+        observation.cancel()
+    }
+
+    @MainActor
+    func testPlayUpgradesPreviewThatIsRejectedWhileLoading() async throws {
+        let url = try await silentM4A()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let bytes = try Data(contentsOf: url)
+        let started = expectation(description: "preview starts")
+        var continuation: CheckedContinuation<Data?, Never>?
+        var downloads = 0
+        let playback = IrisAudioPlayback(filename: "large.m4a", loadPreviewData: {
+            await withCheckedContinuation { pending in continuation = pending; started.fulfill() }
+        }) {
+            downloads += 1
+            return bytes
+        }
+        defer { playback.stop() }
+        playback.prepare()
+        await fulfillment(of: [started], timeout: 3)
+        playback.play()
+        continuation?.resume(returning: nil)
+        await waitForPlayback(playback)
+        XCTAssertEqual(downloads, 1)
+        XCTAssertNil(playback.errorMessage)
+    }
+
+    @MainActor
     func testPreparationShowsWaveformAndAllowsSeekingWithoutPlayback() async throws {
         let url = try await silentM4A(varying: true)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -171,6 +224,35 @@ final class IrisAudioPlaybackTests: XCTestCase {
         await fulfillment(of: [started], timeout: 5)
         XCTAssertTrue(playback.isPlaying, playback.errorMessage ?? "Audio did not start")
         observation.cancel()
+    }
+
+    func testLongAudioSkipsWaveformWithoutPreventingPlaybackPreparation() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("long-waveform-\(UUID().uuidString).caf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: [
+                AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 8000,
+                AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false,
+            ])
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 8000))
+            buffer.frameLength = 8000
+            buffer.floatChannelData?[0].initialize(repeating: 0, count: 8000)
+            for _ in 0..<901 { try file.write(from: buffer) }
+        }
+        let peaks = await IrisAudioWaveform.decode(url)
+        XCTAssertTrue(peaks.isEmpty)
+        let playback = await IrisAudioPlayback(localURL: url)
+        await MainActor.run { playback.prepare() }
+        for _ in 0..<100 {
+            if await !playback.isPreparing { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let duration = await playback.duration
+        let error = await playback.errorMessage
+        XCTAssertEqual(duration, 901, accuracy: 0.1)
+        XCTAssertNil(error)
+        await playback.stop()
     }
 
     func testWaveformReflectsDecodedAudioAndSilence() async throws {

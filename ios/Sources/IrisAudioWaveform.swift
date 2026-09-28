@@ -5,40 +5,80 @@ import SwiftUI
 enum IrisAudioWaveform {
     static let barCount = 47
 
-    // Read decoded PCM in small blocks, never keeping a whole recording in memory.
-    // Analysis is optional: unsupported or slow files retain a flat seek control.
-    static func decode(_ url: URL) async -> [Float] {
-        let task = Task.detached(priority: .userInitiated) { () -> [Float] in
-            do {
-                let file = try AVAudioFile(forReading: url)
-                guard file.length > 0,
-                      let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096)
-                else { return [] }
-                var sums = [Double](repeating: 0, count: barCount)
-                var counts = [Int](repeating: 0, count: barCount)
-                let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-                while file.framePosition < file.length {
-                    try Task.checkCancellation()
-                    guard ContinuousClock.now < deadline else { return [] }
-                    let start = file.framePosition
-                    try file.read(into: buffer)
-                    guard buffer.frameLength > 0, let channels = buffer.floatChannelData else { break }
-                    for frame in 0..<Int(buffer.frameLength) {
-                        let bin = min(barCount - 1, Int((start + Int64(frame)) * Int64(barCount) / file.length))
-                        for channel in 0..<Int(buffer.format.channelCount) {
-                            let value = abs(channels[channel][frame])
-                            if value.isFinite { sums[bin] += Double(value) * Double(value); counts[bin] += 1 }
-                        }
-                    }
-                }
-                var peaks = sums.enumerated().map { Float(sqrt($0.element / Double(max(1, counts[$0.offset])))) }
-                if let maximum = peaks.max(), maximum > 0.0001 {
-                    peaks = peaks.map { $0 / maximum }
-                }
-                return peaks
-            } catch { return [] }
+    private static let worker = IrisAudioWaveformWorker()
+
+    static func decode(_ url: URL, cacheKey: String? = nil) async -> [Float] {
+        let task = Task.detached(priority: .utility) {
+            await worker.decode(url, cacheKey: cacheKey)
         }
         return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+    }
+
+    // Read PCM in small blocks. Waveform analysis is optional and must stay cheap.
+    static func sample(_ url: URL) -> [Float] {
+        do {
+            try Task.checkCancellation()
+            let file = try AVAudioFile(forReading: url)
+            guard file.length > 0, file.processingFormat.sampleRate > 0,
+                  Double(file.length) / file.processingFormat.sampleRate <= 15 * 60,
+                  let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096)
+            else { return [] }
+            var sums = [Double](repeating: 0, count: barCount)
+            var counts = [Int](repeating: 0, count: barCount)
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while file.framePosition < file.length {
+                try Task.checkCancellation()
+                guard ContinuousClock.now < deadline else { return [] }
+                let start = file.framePosition
+                try file.read(into: buffer)
+                guard buffer.frameLength > 0, let channels = buffer.floatChannelData else { break }
+                for frame in 0..<Int(buffer.frameLength) {
+                    let bin = min(barCount - 1, Int((start + Int64(frame)) * Int64(barCount) / file.length))
+                    for channel in 0..<Int(buffer.format.channelCount) {
+                        let value = abs(channels[channel][frame])
+                        if value.isFinite { sums[bin] += Double(value) * Double(value); counts[bin] += 1 }
+                    }
+                }
+            }
+            var peaks = sums.enumerated().map { Float(sqrt($0.element / Double(max(1, counts[$0.offset])))) }
+            if let maximum = peaks.max(), maximum > 0.0001 { peaks = peaks.map { $0 / maximum } }
+            return peaks
+        } catch { return [] }
+    }
+}
+
+/// No suspension during sampling: only one waveform is decoded at a time, off the UI thread.
+/// Content-addressed message keys let recreated cells reuse both successful and skipped results.
+actor IrisAudioWaveformWorker {
+    private var cache: [String: [Float]] = [:]
+    private var recency: [String] = []
+    private let capacity: Int
+    private let sample: @Sendable (URL) -> [Float]
+
+    init(capacity: Int = 128, sample: @escaping @Sendable (URL) -> [Float] = { IrisAudioWaveform.sample($0) }) {
+        self.capacity = max(1, capacity)
+        self.sample = sample
+    }
+
+    func decode(_ url: URL, cacheKey: String?) -> [Float] {
+        guard !Task.isCancelled else { return [] }
+        if let key = cacheKey, let result = cache[key] {
+            touch(key)
+            return result
+        }
+        let result = sample(url)
+        guard !Task.isCancelled else { return [] }
+        if let key = cacheKey {
+            cache[key] = result
+            touch(key)
+            while recency.count > capacity { cache.removeValue(forKey: recency.removeFirst()) }
+        }
+        return result
+    }
+
+    private func touch(_ key: String) {
+        recency.removeAll { $0 == key }
+        recency.append(key)
     }
 }
 

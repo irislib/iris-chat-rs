@@ -2,6 +2,52 @@
 import XCTest
 
 final class IosReviewDemoUITests: IrisChatUITestCase {
+    func testAudioDownloadPreferencePersists() {
+        continueAfterFailure = false
+        let runID = "audio-policy-\(UUID().uuidString)"
+        var app = launchCleanApp(runId: runID)
+        createAccount(app)
+        element(app, "chatListProfileButton").tap()
+        openSettingsPage(app, "settingsMediaRow")
+        let preference = app.buttons["audioAutoDownloadPreference"].firstMatch
+        XCTAssertTrue(preference.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Download audio automatically"].exists)
+        preference.tap()
+        app.buttons["Never"].firstMatch.tap()
+        XCTAssertTrue(preference.label.contains("Never") || (preference.value as? String) == "Never")
+        captureDemo(app, name: "audio-download-settings")
+        app.terminate()
+        app = launchApp(runId: runID)
+        XCTAssertTrue(waitForChatList(app, timeout: 20))
+        element(app, "chatListProfileButton").tap()
+        openSettingsPage(app, "settingsMediaRow")
+        let restored = app.buttons["audioAutoDownloadPreference"].firstMatch
+        XCTAssertTrue(restored.waitForExistence(timeout: 10))
+        XCTAssertTrue(restored.label.contains("Never") || (restored.value as? String) == "Never")
+        restored.tap()
+        app.buttons["Wi-Fi and mobile data"].firstMatch.tap()
+    }
+
+    func testUncachedAudioShowsDownloadButtonWhenAutomaticDownloadsAreOff() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-audioAutoDownloadNetwork", "never"]
+        app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = "audio-deferred-\(UUID().uuidString)"
+        app.launchEnvironment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] = "1"
+        app.launchEnvironment["IRIS_DISABLE_NOTIFICATIONS"] = "1"
+        app.launchEnvironment["IRIS_DEMO_RELAYS"] = "ws://127.0.0.1:9"
+        app.launchEnvironment["IRIS_UI_TEST_SCREENSHOT_FIXTURE"] = "1"
+        app.launchEnvironment["IRIS_UI_TEST_AUDIO_MESSAGES"] = "1"
+        app.launch()
+        submitWelcomeName(app, name: "Alex Rivera")
+        XCTAssertTrue(waitForChatList(app, timeout: 30))
+        element(app, "chatRow-fx-chat-1").tap()
+        let buttons = app.buttons.matching(NSPredicate(format: "label == 'Download and play audio'"))
+        XCTAssertTrue(waitUntil(timeout: 10) { buttons.count == 2 })
+        XCTAssertFalse(app.buttons["Retry audio"].exists, "Waiting for a tap is not an error")
+        captureDemo(app, name: "audio-waits-for-download")
+    }
+
     func testAudioShowsWaveformAndDurationBeforePlaying() {
         continueAfterFailure = false
         let app = launchCleanApp()

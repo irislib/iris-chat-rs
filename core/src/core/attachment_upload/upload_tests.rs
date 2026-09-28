@@ -147,3 +147,136 @@ async fn real_blossom_round_trip_survives_sender_cache_clear() {
         .expect("decode downloaded logo");
     assert_eq!(downloaded, IRIS_LOGO_PNG);
 }
+
+struct CountingDownloadStore {
+    inner: MemoryStore,
+    reads: AtomicU64,
+}
+
+#[async_trait]
+impl Store for CountingDownloadStore {
+    async fn put(&self, hash: Hash, data: Vec<u8>) -> Result<bool, StoreError> {
+        self.inner.put(hash, data).await
+    }
+    async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.inner.get(hash).await
+    }
+    async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
+        self.inner.has(hash).await
+    }
+    async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
+        self.inner.delete(hash).await
+    }
+}
+
+#[tokio::test]
+async fn attachment_limit_rejects_encrypted_tree_before_downloading_children() {
+    let store = Arc::new(CountingDownloadStore {
+        inner: MemoryStore::new(),
+        reads: AtomicU64::new(0),
+    });
+    let tree = HashTree::new(HashTreeConfig::new(store.clone()).with_chunk_size(1024));
+    let data = vec![7u8; 4096];
+    let (cid, _) = tree.put(&data).await.unwrap();
+    store.reads.store(0, Ordering::Relaxed);
+    let error = read_hashtree_attachment(&cid, store.clone(), 4095)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("max_size"), "{error}");
+    assert_eq!(
+        store.reads.load(Ordering::Relaxed),
+        1,
+        "only the root may be read for an oversized attachment"
+    );
+    assert_eq!(
+        read_hashtree_attachment(&cid, store, 4096).await.unwrap(),
+        data
+    );
+}
+
+#[tokio::test]
+async fn attachment_limit_cannot_be_raised_by_a_preview_caller() {
+    use hashtree_core::{encode_tree_node, Link, LinkType, TreeNode};
+    let store = Arc::new(CountingDownloadStore {
+        inner: MemoryStore::new(),
+        reads: AtomicU64::new(0),
+    });
+    let node = TreeNode {
+        node_type: LinkType::File,
+        links: vec![Link::new([9; 32]).with_size(MAX_ATTACHMENT_BYTES + 1)],
+    };
+    let data = encode_tree_node(&node).unwrap();
+    let hash = hashtree_core::sha256(&data);
+    store.put(hash, data).await.unwrap();
+    let error = read_hashtree_attachment(&Cid { hash, key: None }, store.clone(), u64::MAX)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("max_size"), "{error}");
+    assert_eq!(store.reads.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
+async fn attachment_limit_bounds_http_with_and_without_content_length() {
+    for headers in ["Content-Length: 1024\r\n", ""] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request).unwrap();
+            let _ = stream.write_all(
+                format!("HTTP/1.1 200 OK\r\n{headers}Connection: close\r\n\r\n").as_bytes(),
+            );
+            let _ = stream.write_all(&[7u8; 1024]);
+        });
+        let hash = to_hex(&hashtree_core::sha256(&[7u8; 1024]));
+        let error = download_attachment_blob(
+            &reqwest::Client::new(),
+            &format!("http://{address}"),
+            &hash,
+            100,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("too large"), "{error}");
+        server.join().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn attachment_download_accepts_exact_limit_and_checks_hash() {
+    for valid_hash in [true, false] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = [0u8; 4096];
+            stream.read(&mut request).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nclip")
+                .unwrap();
+        });
+        let expected = if valid_hash { b"clip" } else { b"fake" };
+        let hash = to_hex(&hashtree_core::sha256(expected));
+        let result = download_attachment_blob(
+            &reqwest::Client::new(),
+            &format!("http://{address}"),
+            &hash,
+            4,
+        )
+        .await;
+        if valid_hash {
+            assert_eq!(result.unwrap().unwrap(), b"clip");
+        } else {
+            assert!(result.unwrap_err().to_string().contains("hash mismatch"));
+        }
+        server.join().unwrap();
+    }
+}

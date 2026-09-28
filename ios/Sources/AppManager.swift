@@ -2501,6 +2501,22 @@ final class AppManager: ObservableObject {
         return data
     }
 
+    func previewAudioAttachment(_ attachment: MessageAttachmentSnapshot) async -> Data? {
+        let key = IrisAttachmentCache.attachmentKey(nhash: attachment.nhash, filename: attachment.filename)
+        // Cached audio and the bundled review sample require no network permission.
+        if let cached = await attachmentCache.data(for: key) { return cached }
+#if os(iOS)
+        if isReviewDemo, attachment.nhash == IosReviewDemo.audioHash {
+            return await downloadAttachment(attachment)
+        }
+#endif
+        guard IrisAudioDownloads.shared.allowsPreview, !Task.isCancelled else { return nil }
+        let data = await IrisAudioPreviewDownloader.shared.download(nhash: attachment.nhash)
+        guard let data, !Task.isCancelled else { return nil }
+        _ = try? await attachmentCache.store(data, for: key)
+        return data
+    }
+
     /// Resolves an `htree://` profile picture (or any nhash) using the same
     /// disk-backed cache that chat attachments use, without making the UI
     /// executor wait on disk reads, writes, or eviction scans.
@@ -2521,12 +2537,8 @@ final class AppManager: ObservableObject {
 
     func downloadHashtreeBytes(nhash: String) async -> Data? {
         return await Task.detached(priority: .userInitiated) { () -> Data? in
-            let result = downloadHashtreeAttachment(
-                nhash: nhash
-            )
-            guard let encoded = result.dataBase64, !encoded.isEmpty else {
-                return nil
-            }
+            let result = downloadHashtreeAttachment(nhash: nhash)
+            guard let encoded = result.dataBase64, !encoded.isEmpty else { return nil }
             return Data(base64Encoded: encoded)
         }.value
     }

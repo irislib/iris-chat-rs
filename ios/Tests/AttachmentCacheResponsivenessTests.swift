@@ -7,11 +7,11 @@ import XCTest
 #endif
 
 private final class CacheProbeFileManager: FileManager, @unchecked Sendable {
-    var onTouch: (() -> Void)?
+    var onTouch: ((String) -> Void)?
     var onScan: (() -> Void)?
 
     override func setAttributes(_ attributes: [FileAttributeKey: Any], ofItemAtPath path: String) throws {
-        onTouch?()
+        onTouch?(path)
         try super.setAttributes(attributes, ofItemAtPath: path)
     }
 
@@ -38,11 +38,6 @@ final class AttachmentCacheResponsivenessTests: XCTestCase {
         let gate = DispatchSemaphore(value: 0)
         defer { gate.signal() }
         let files = CacheProbeFileManager()
-        files.onTouch = {
-            XCTAssertFalse(Thread.isMainThread)
-            started.fulfill()
-            XCTAssertEqual(gate.wait(timeout: .now() + 3), .success)
-        }
         let manager = AppManager(
             rust: MockRustApp(),
             secretStore: InMemorySecretStore(),
@@ -52,6 +47,14 @@ final class AttachmentCacheResponsivenessTests: XCTestCase {
             fileManager: files,
             environment: [:]
         )
+        // App initialization also hardens permissions on existing files. Start
+        // observing only the cache read, after those unrelated startup touches.
+        files.onTouch = { path in
+            guard path.hasSuffix("/picture-test-hash") else { return }
+            XCTAssertFalse(Thread.isMainThread)
+            started.fulfill()
+            XCTAssertEqual(gate.wait(timeout: .now() + 3), .success)
+        }
         let load = Task { await manager.resolveHashtreePictureBytes(nhash: " test-hash ") }
         await fulfillment(of: [started], timeout: 2)
         // The UI executor can resume even while the cache is stalled.
@@ -71,7 +74,7 @@ final class AttachmentCacheResponsivenessTests: XCTestCase {
             XCTAssertFalse(Thread.isMainThread)
             scanned.fulfill()
         }
-        files.onTouch = { XCTAssertFalse(Thread.isMainThread) }
+        files.onTouch = { _ in XCTAssertFalse(Thread.isMainThread) }
         let cache = IrisAttachmentCache(dataDir: directory, fileManager: files)
         let data = Data("attachment".utf8)
         let key = IrisAttachmentCache.attachmentKey(nhash: "hash", filename: "image.png")

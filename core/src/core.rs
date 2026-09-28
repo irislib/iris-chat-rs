@@ -79,7 +79,7 @@ mod remote_signer;
 mod remote_signer_rpc;
 mod remote_signer_transport;
 mod remote_signer_uri;
-pub use attachment_upload::download_hashtree_attachment;
+pub use attachment_upload::{download_hashtree_attachment, download_hashtree_attachment_with_limit};
 mod attachments;
 mod calls;
 pub(crate) use calls::push::{build_call_push_subscription_request, resolve_call_push_invite};

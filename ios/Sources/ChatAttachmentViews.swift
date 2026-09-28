@@ -309,6 +309,7 @@ struct ChatAttachmentView: View {
     let attachment: MessageAttachmentSnapshot
     let isOutgoing: Bool
     let downloadAttachment: (MessageAttachmentSnapshot) async -> Data?
+    var previewAudioAttachment: (MessageAttachmentSnapshot) async -> Data? = { _ in nil }
     let openAttachment: (MessageAttachmentSnapshot) async -> Void
     let onOpenImage: (Data, MessageAttachmentSnapshot) -> Void
     let onForward: () -> Void
@@ -371,7 +372,7 @@ struct ChatAttachmentView: View {
             }
         } else if chatAttachmentCategory(for: attachment) == .audio {
             IrisAudioMessagePlayer(attachment: attachment, isOutgoing: isOutgoing,
-                                   downloadAttachment: downloadAttachment)
+                                   downloadAttachment: downloadAttachment, previewAudioAttachment: previewAudioAttachment)
                 .contextMenu {
                     Button("Forward", action: onForward)
                     Button("Copy link") {

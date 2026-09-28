@@ -457,6 +457,7 @@ struct ChatMessageRow: View, Equatable {
     let onScrollToQuote: (ReplyPreview) -> Void
     let onShowReactors: () -> Void
     let downloadAttachment: (MessageAttachmentSnapshot) async -> Data?
+    var previewAudioAttachment: (MessageAttachmentSnapshot) async -> Data? = { _ in nil }
     let openAttachment: (MessageAttachmentSnapshot) async -> Void
     let onOpenImage: (Data, MessageAttachmentSnapshot) -> Void
 
@@ -611,6 +612,7 @@ struct ChatMessageRow: View, Equatable {
                                     attachment: attachment,
                                     isOutgoing: message.isOutgoing,
                                     downloadAttachment: downloadAttachment,
+                                    previewAudioAttachment: previewAudioAttachment,
                                     openAttachment: openAttachment,
                                     onOpenImage: onOpenImage,
                                     onForward: {

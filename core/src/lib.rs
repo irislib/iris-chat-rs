@@ -31,7 +31,7 @@ use std::{panic, panic::AssertUnwindSafe};
 use flume::{Receiver, Sender};
 
 pub use actions::AppAction;
-pub use core::download_hashtree_attachment;
+pub use core::{download_hashtree_attachment, download_hashtree_attachment_with_limit};
 pub use core::validate_account_storage;
 #[cfg(feature = "stack-fixture")]
 #[doc(hidden)]
