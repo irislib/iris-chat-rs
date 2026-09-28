@@ -3,6 +3,29 @@ use nostr::Keys;
 use nostr_double_ratchet::DeviceEntry;
 
 #[test]
+fn migrates_v35_messages_without_changing_existing_ids_or_content() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    ensure_schema(&mut conn).unwrap();
+    conn.execute_batch(
+        "ALTER TABLE messages DROP COLUMN outgoing_event_json;
+         INSERT INTO threads(chat_id) VALUES ('chat');
+         INSERT INTO messages(chat_id, id, kind, author, body, is_outgoing, created_at_secs, delivery)
+             VALUES ('chat', '1', 'user', 'me', 'queued before upgrade', 1, 10, 'queued');
+         PRAGMA user_version = 35;",
+    ).unwrap();
+    ensure_schema(&mut conn).unwrap();
+    let saved: (String, String, Option<String>) = conn
+        .query_row(
+            "SELECT id, body, outgoing_event_json FROM messages WHERE chat_id = 'chat'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(saved, ("1".into(), "queued before upgrade".into(), None));
+    assert_eq!(user_version(&conn), SCHEMA_VERSION);
+}
+
+#[test]
 fn migrates_v29_image_proxy_fallback_to_disabled_without_changing_other_preferences() {
     let mut conn = Connection::open_in_memory().unwrap();
     ensure_schema(&mut conn).unwrap();

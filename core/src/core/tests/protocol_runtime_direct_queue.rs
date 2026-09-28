@@ -161,7 +161,7 @@ fn signed_device_approval_drains_message_stuck_on_missing_local_app_keys() {
         .get(&chat_id)
         .and_then(|thread| thread.messages.first())
         .expect("recovered message");
-    assert_ne!(sent.id, queued_id);
+    assert_eq!(sent.id, queued_id, "a queued message must keep its final event ID");
     assert!(!sent.delivery_trace.outer_event_ids.is_empty());
 }
 
@@ -193,6 +193,7 @@ fn appcore_direct_text_queues_until_subscription_state_makes_peer_ready() {
         .expect("queued message")
         .clone();
     assert_eq!(queued_message.delivery, DeliveryState::Queued);
+    assert!(nostr::EventId::from_hex(&queued_message.id).is_ok(), "queue with the final event hash");
     assert_eq!(queued_message.body, "queued hello");
     assert_eq!(queued_message.attachments.len(), 1);
     assert_eq!(queued_message.attachments[0].filename, "iris-logo.png");
@@ -244,9 +245,9 @@ fn appcore_direct_text_queues_until_subscription_state_makes_peer_ready() {
     let thread = core.threads.get(&chat_id).expect("thread after drain");
     assert_eq!(thread.messages.len(), 1);
     let drained = &thread.messages[0];
-    assert_ne!(
+    assert_eq!(
         drained.id, queued_message.id,
-        "drain should replace the temporary local id with the final rumor id"
+        "drain must preserve the final event ID assigned when queued"
     );
     assert_eq!(drained.body, "queued hello");
     assert_eq!(drained.attachments, queued_message.attachments);
@@ -259,10 +260,86 @@ fn appcore_direct_text_queues_until_subscription_state_makes_peer_ready() {
         }
     }
     let received = &receiver.threads[&owner.public_key().to_hex()].messages[0];
+    assert_eq!(received.id, queued_message.id, "recipient must index the same event");
     assert_eq!(received.created_at_secs, queued_message.created_at_secs,
         "the recipient must see when the queued message was written, not when it drained");
 }
 
+
+#[test]
+fn appcore_direct_queue_keeps_distinct_final_ids_across_restart_and_retry() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let chat_id = peer_owner.public_key().to_hex();
+    let (mut core, _updates, dir) =
+        logged_in_test_core_with_updates("stable-queued-events", &owner, &device);
+    let authored_at = unix_now();
+    for _ in 0..2 {
+        core.send_direct_message(
+            &chat_id,
+            "same message\nnhash1abc123/iris-logo.png",
+            authored_at,
+            Some(authored_at.get() + 3600),
+        );
+    }
+    let ids = core.threads[&chat_id]
+        .messages
+        .iter()
+        .map(|message| message.id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids.len(),
+        2,
+        "intentional identical sends must remain distinct"
+    );
+    assert_ne!(ids[0], ids[1]);
+    let events = ids
+        .iter()
+        .map(|id| {
+            core.app_store
+                .load_outgoing_event(&chat_id, id)
+                .unwrap()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    for (id, event) in ids.iter().zip(&events) {
+        assert_eq!(event.id.unwrap().to_hex(), *id);
+        assert_eq!(event.content, "same message\nnhash1abc123/iris-logo.png");
+    }
+    // A normal state save must retain the exact authored events, too.
+    core.persist_best_effort();
+    drop(core);
+
+    let mut core =
+        logged_in_test_core_at_data_dir(&owner, &device, dir.path().to_string_lossy().into_owned());
+    core.open_chat(&chat_id);
+    assert_eq!(core.threads[&chat_id].messages.len(), 2);
+    {
+        let engine = core.protocol_engine.as_mut().unwrap();
+        observe_current_device_appkeys_for_test(engine, &owner, &device);
+        observe_peer_appkeys_for_test(engine, &peer_owner, &[peer_device.public_key()], 1);
+        observe_peer_device_invite_for_test(engine, &peer_owner, &peer_device, 2);
+    }
+    assert!(core.drain_queued_direct_text_messages("test_restart"));
+    assert!(!core.drain_queued_direct_text_messages("test_retry"));
+    core.persist_best_effort();
+    let messages = &core.threads[&chat_id].messages;
+    assert_eq!(messages.len(), 2);
+    for (id, event) in ids.iter().zip(events) {
+        let message = messages
+            .iter()
+            .find(|message| message.id == *id)
+            .expect("same message ID after send");
+        assert!(!message.delivery_trace.outer_event_ids.is_empty());
+        assert_eq!(message.created_at_secs, authored_at.get());
+        assert_eq!(
+            core.app_store.load_outgoing_event(&chat_id, id).unwrap(),
+            Some(event)
+        );
+    }
+}
 
 #[test]
 fn appcore_ready_direct_text_uses_same_queue_then_drain_path() {

@@ -20,6 +20,9 @@ mod store_chat_deletions;
 #[path = "store_chat_read_states.rs"]
 mod store_chat_read_states;
 
+#[path = "store_outgoing_events.rs"]
+mod store_outgoing_events;
+
 #[path = "store_preferences.rs"]
 mod store_preferences;
 use store_preferences::{hash_preferences, load_preferences, write_preferences};

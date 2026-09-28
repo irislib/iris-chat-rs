@@ -585,6 +585,17 @@ impl ProtocolEngine {
             options = options.with_expiration(expires_at_secs);
         }
         let rumor = pairwise_codec::message_event(self.owner_pubkey, text.to_string(), options)?;
+        self.send_direct_unsigned_event(peer_pubkey, chat_id, rumor, now)
+    }
+
+    pub fn send_direct_unsigned_event(
+        &mut self,
+        peer_pubkey: PublicKey,
+        chat_id: &str,
+        mut rumor: UnsignedEvent,
+        now: UnixSeconds,
+    ) -> anyhow::Result<ProtocolDirectSendResult> {
+        rumor.ensure_id();
         let message_id = rumor
             .id
             .as_ref()
@@ -612,34 +623,6 @@ impl ProtocolEngine {
                     now,
                 )
             }
-        })
-    }
-
-    pub fn send_direct_unsigned_event(
-        &mut self,
-        peer_pubkey: PublicKey,
-        chat_id: &str,
-        mut rumor: UnsignedEvent,
-        now: UnixSeconds,
-    ) -> anyhow::Result<ProtocolDirectSendResult> {
-        rumor.ensure_id();
-        let message_id = rumor
-            .id
-            .as_ref()
-            .map(ToString::to_string)
-            .unwrap_or_default();
-        let remote_payload = serde_json::to_vec(&rumor)?;
-        let sibling_payload = local_sibling_payload(peer_pubkey, &remote_payload)?;
-        self.with_state_checkpoint(|engine| {
-            engine.send_direct_payloads_inner(
-                peer_pubkey,
-                chat_id,
-                remote_payload,
-                sibling_payload,
-                Some(message_id.clone()),
-                message_id,
-                now,
-            )
         })
     }
 

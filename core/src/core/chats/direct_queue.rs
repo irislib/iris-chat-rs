@@ -1,6 +1,34 @@
 use super::*;
 
 impl AppCore {
+    pub(in crate::core) fn prepare_direct_text_event(
+        &self,
+        chat_id: &str,
+        text: &str,
+        created_at: UnixSeconds,
+        expires_at_secs: Option<u64>,
+    ) -> anyhow::Result<UnsignedEvent> {
+        let owner = self
+            .logged_in
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?
+            .owner_pubkey;
+        let mut options = pairwise_codec::EncodeOptions::new(created_at.get(), unix_now_ms());
+        if let Some(expires_at_secs) = expires_at_secs {
+            options = options.with_expiration(expires_at_secs);
+        }
+        loop {
+            let rumor = pairwise_codec::message_event(owner, text.to_string(), options)?;
+            let id = rumor.id.map(|id| id.to_hex()).unwrap_or_default();
+            // Two intentional identical sends can arrive in the same millisecond.
+            // Advance only the event's ms tag so each send has its own final ID.
+            if !self.app_store.message_exists(chat_id, Some(&id), None)? {
+                return Ok(rumor);
+            }
+            options.millis = options.millis.saturating_add(1);
+        }
+    }
+
     pub(in crate::core) fn has_queued_direct_text_messages(&self) -> bool {
         self.threads.iter().any(|(chat_id, thread)| {
             thread
@@ -96,14 +124,21 @@ impl AppCore {
                 blocked: true,
             };
         };
-        let result = protocol_engine.send_direct_text_created_at(
-            peer_pubkey,
-            chat_id,
-            &wire_text,
-            message.expires_at_secs,
-            UnixSeconds(message.created_at_secs),
-            unix_now(),
-        );
+        let result = match self.app_store.load_outgoing_event(chat_id, &message.id) {
+            Ok(Some(rumor)) => {
+                protocol_engine.send_direct_unsigned_event(peer_pubkey, chat_id, rumor, unix_now())
+            }
+            // Queued rows from older versions did not retain their authored event.
+            Ok(None) => protocol_engine.send_direct_text_created_at(
+                peer_pubkey,
+                chat_id,
+                &wire_text,
+                message.expires_at_secs,
+                UnixSeconds(message.created_at_secs),
+                unix_now(),
+            ),
+            Err(error) => Err(error),
+        };
         match result {
             Ok(result) if !result.event_ids.is_empty() => {
                 self.replace_queued_direct_text_message(

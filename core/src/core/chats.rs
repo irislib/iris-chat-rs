@@ -547,14 +547,22 @@ impl AppCore {
             return;
         };
 
-        let message_id = self.allocate_message_id();
+        let rumor =
+            match self.prepare_direct_text_event(&normalized_chat_id, text, now, expires_at_secs) {
+                Ok(rumor) => rumor,
+                Err(error) => {
+                    self.state.toast = Some(error.to_string());
+                    return;
+                }
+            };
+        let message_id = rumor.id.map(|id| id.to_hex()).unwrap_or_default();
         self.push_debug_log(
             "message.direct.queue",
             format!(
                 "reason=message.direct.send chat_id={normalized_chat_id} message_id={message_id}"
             ),
         );
-        self.push_outgoing_message_with_id(
+        let message = self.push_outgoing_message_with_id(
             message_id,
             &normalized_chat_id,
             text.to_string(),
@@ -562,6 +570,17 @@ impl AppCore {
             expires_at_secs,
             DeliveryState::Queued,
         );
+        if let Some(thread) = self.threads.get(&normalized_chat_id) {
+            if let Err(error) = self.app_store.save_outgoing_event(thread, &message, &rumor) {
+                self.update_message_delivery(
+                    &normalized_chat_id,
+                    &message.id,
+                    DeliveryState::Failed,
+                );
+                self.state.toast = Some(error.to_string());
+                return;
+            }
+        }
         self.drain_queued_direct_text_messages("message.direct.send");
     }
 
