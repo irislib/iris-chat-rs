@@ -7,6 +7,85 @@ import XCTest
 
 final class ChatReadResponsivenessTests: XCTestCase {
     @MainActor
+    func testReopeningPagedChatUsesLatestPageWithoutTrimmingActiveHistory() async throws {
+        var state = buildLargeTestAppState(directChatCount: 1, groupChatCount: 0, messagesInCurrentChat: 1_200)
+        state.rev = 1
+        let history = try XCTUnwrap(state.currentChat)
+        state.router.screenStack = [.chat(chatId: history.chatId)]
+        let rust = MockRustApp(state: state)
+        var latest = history
+        latest.messages = Array(history.messages.suffix(80))
+        rust.chatSnapshotOverride = latest
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(), desktopNotifications: NoopDesktopNotificationPoster(), dataDir: directory, environment: [:])
+
+        // Applying a snapshot refreshes the navigation cache, but must leave
+        // the currently browsed history and its scroll anchors available.
+        state.rev = 2
+        rust.emit(.fullState(state))
+        let updated = await waitUntil { manager.state.rev == 2 }
+        XCTAssertTrue(updated)
+        XCTAssertEqual(manager.state.currentChat?.messages.count, 1_200)
+
+        manager.navigateBack()
+        XCTAssertNil(manager.state.currentChat)
+        manager.dispatch(.openChat(chatId: history.chatId))
+
+        // Check the immediate cached first paint before the async page read
+        // can return; reopening must not eagerly lay out all browsed pages.
+        XCTAssertEqual(manager.state.currentChat?.messages.map(\.id), latest.messages.map(\.id))
+        XCTAssertEqual(manager.state.currentChat?.messages.count, 80)
+    }
+
+    @MainActor
+    func testMetadataUpdatesReuseLoadedHistoryAndMessageEditsStillMerge() async throws {
+        var state = buildLargeTestAppState(directChatCount: 1, groupChatCount: 0, messagesInCurrentChat: 1_200)
+        state.rev = 1
+        let history = try XCTUnwrap(state.currentChat)
+        state.router.screenStack = [.chat(chatId: history.chatId)]
+        let rust = MockRustApp(state: state)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(), desktopNotifications: NoopDesktopNotificationPoster(), dataDir: directory, environment: [:])
+        var latest = history
+        latest.messages = Array(history.messages.suffix(80))
+        latest.draft = "still typing"
+        latest.displayName = "Updated name"
+        state.currentChat = latest
+        state.rev = 2
+        rust.emit(.fullState(state))
+        let updated = await waitUntil { manager.state.rev == 2 }
+        XCTAssertTrue(updated)
+        let afterTyping = try XCTUnwrap(manager.state.currentChat)
+
+        XCTAssertEqual(afterTyping.messages, history.messages)
+        XCTAssertEqual(afterTyping.draft, "still typing")
+        XCTAssertEqual(afterTyping.displayName, "Updated name")
+        // Keeping the original array alive makes this a deterministic
+        // allocation regression: a metadata update must not rebuild and sort
+        // every retained message just to produce the same history again.
+        let reusedHistory = history.messages.withUnsafeBufferPointer { original in
+            afterTyping.messages.withUnsafeBufferPointer { updated in
+                original.baseAddress == updated.baseAddress
+            }
+        }
+        XCTAssertTrue(reusedHistory)
+
+        latest.messages[latest.messages.count - 1].body = "Edited message"
+        latest.draft = ""
+        state.currentChat = latest
+        state.rev = 3
+        rust.emit(.fullState(state))
+        let editApplied = await waitUntil { manager.state.rev == 3 }
+        XCTAssertTrue(editApplied)
+        XCTAssertEqual(manager.state.currentChat?.messages.count, history.messages.count)
+        XCTAssertEqual(manager.state.currentChat?.messages.map(\.id), history.messages.map(\.id))
+        XCTAssertEqual(manager.state.currentChat?.messages.last?.body, "Edited message")
+        XCTAssertEqual(manager.state.currentChat?.draft, "")
+    }
+
+    @MainActor
     func testBackToChatListDoesNotWaitForBusyNavigationDispatch() async {
         var state = buildLargeTestAppState(directChatCount: 100, groupChatCount: 0, messagesInCurrentChat: 80)
         state.router.screenStack = []

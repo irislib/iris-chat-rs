@@ -103,50 +103,49 @@ struct QrScannerSheet: UIViewControllerRepresentable {
 final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
     var onCode: ((String) -> Void)?
 
-    private let session = AVCaptureSession()
+    private lazy var capture = IrisQrCaptureSession(delegate: self)
+    private lazy var lifecycle: IrisQrScannerLifecycle = {
+        let capture = self.capture
+        return IrisQrScannerLifecycle(
+            requestAccess: { await AVCaptureDevice.requestAccess(for: .video) },
+            startSession: { capture.start() },
+            stopSession: { capture.stop() }
+        )
+    }()
+    private var activationTask: Task<Void, Never>?
+    private var deliveredCode = false
     private var previewLayer: AVCaptureVideoPreviewLayer?
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
+        let layer = AVCaptureVideoPreviewLayer(session: capture.session)
+        layer.videoGravity = .resizeAspectFill
+        layer.frame = view.bounds
+        view.layer.addSublayer(layer)
+        previewLayer = layer
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        deliveredCode = false
         if let testValue = ProcessInfo.processInfo.environment["IRIS_QR_TEST_VALUE"], !testValue.isEmpty {
             DispatchQueue.main.async { [weak self] in
                 self?.onCode?(testValue)
             }
             return
         }
-        AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
-            guard granted else { return }
-            DispatchQueue.main.async {
-                self?.configureSession()
-            }
+        let lifecycle = self.lifecycle
+        activationTask = Task {
+            await lifecycle.activate()
         }
     }
 
-    private func configureSession() {
-        guard previewLayer == nil,
-              let device = AVCaptureDevice.default(for: .video),
-              let input = try? AVCaptureDeviceInput(device: device)
-        else {
-            return
-        }
-        if session.canAddInput(input) {
-            session.addInput(input)
-        }
-
-        let output = AVCaptureMetadataOutput()
-        if session.canAddOutput(output) {
-            session.addOutput(output)
-            output.setMetadataObjectsDelegate(self, queue: .main)
-            output.metadataObjectTypes = [.qr]
-        }
-
-        let layer = AVCaptureVideoPreviewLayer(session: session)
-        layer.videoGravity = .resizeAspectFill
-        layer.frame = view.bounds
-        view.layer.addSublayer(layer)
-        previewLayer = layer
-        session.startRunning()
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        activationTask?.cancel()
+        activationTask = nil
+        lifecycle.deactivate()
     }
 
     override func viewDidLayoutSubviews() {
@@ -159,13 +158,90 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         didOutput metadataObjects: [AVMetadataObject],
         from connection: AVCaptureConnection
     ) {
-        guard let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+        guard lifecycle.isActive, !deliveredCode,
+              let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
               let value = object.stringValue
         else {
             return
         }
-        session.stopRunning()
+        deliveredCode = true
+        lifecycle.deactivate()
         onCode?(value)
+    }
+}
+
+@MainActor
+final class IrisQrScannerLifecycle {
+    private let queue: DispatchQueue
+    private let requestAccess: @MainActor () async -> Bool
+    private let startSession: @Sendable () -> Void
+    private let stopSession: @Sendable () -> Void
+    private var generation: UInt64 = 0
+    private(set) var isActive = false
+
+    init(
+        queue: DispatchQueue = DispatchQueue(label: "to.iris.chat.qr-session"),
+        requestAccess: @escaping @MainActor () async -> Bool,
+        startSession: @escaping @Sendable () -> Void,
+        stopSession: @escaping @Sendable () -> Void
+    ) {
+        self.queue = queue
+        self.requestAccess = requestAccess
+        self.startSession = startSession
+        self.stopSession = stopSession
+    }
+
+    func activate() async {
+        guard !Task.isCancelled else { return }
+        generation &+= 1
+        let requestGeneration = generation
+        isActive = true
+        let granted = await requestAccess()
+        guard granted, isActive, generation == requestGeneration, !Task.isCancelled else { return }
+        queue.async(execute: startSession)
+    }
+
+    func deactivate() {
+        generation &+= 1
+        isActive = false
+        queue.async(execute: stopSession)
+    }
+
+    deinit {
+        queue.async(execute: stopSession)
+    }
+}
+
+// Configuration and start/stop run only on IrisQrScannerLifecycle's serial queue.
+// The preview layer reads the immutable session reference on the main thread.
+private final class IrisQrCaptureSession: @unchecked Sendable {
+    let session = AVCaptureSession()
+    private weak var delegate: AVCaptureMetadataOutputObjectsDelegate?
+    private var configured = false
+
+    init(delegate: AVCaptureMetadataOutputObjectsDelegate) {
+        self.delegate = delegate
+    }
+
+    func start() {
+        if !configured {
+            guard let device = AVCaptureDevice.default(for: .video),
+                  let input = try? AVCaptureDeviceInput(device: device) else { return }
+            let output = AVCaptureMetadataOutput()
+            guard session.canAddInput(input), session.canAddOutput(output) else { return }
+            session.beginConfiguration()
+            session.addInput(input)
+            session.addOutput(output)
+            output.setMetadataObjectsDelegate(delegate, queue: .main)
+            output.metadataObjectTypes = [.qr]
+            session.commitConfiguration()
+            configured = true
+        }
+        if !session.isRunning { session.startRunning() }
+    }
+
+    func stop() {
+        if session.isRunning { session.stopRunning() }
     }
 }
 #else

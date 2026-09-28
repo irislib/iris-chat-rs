@@ -70,6 +70,10 @@ extension Image {
 struct IrisAnimatedImageDataView: UIViewRepresentable {
     let data: Data
 
+    func makeCoordinator() -> IrisAnimatedImageLoader {
+        IrisAnimatedImageLoader()
+    }
+
     func makeUIView(context: Context) -> WKWebView {
         let webView = WKWebView(frame: .zero)
         webView.isOpaque = false
@@ -77,16 +81,12 @@ struct IrisAnimatedImageDataView: UIViewRepresentable {
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.isScrollEnabled = false
         webView.scrollView.bounces = false
-        load(data, in: webView)
+        context.coordinator.update(data) { webView.loadHTMLString($0, baseURL: nil) }
         return webView
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        load(data, in: webView)
-    }
-
-    private func load(_ data: Data, in webView: WKWebView) {
-        webView.loadHTMLString(irisAnimatedImageHTML(data: data), baseURL: nil)
+        context.coordinator.update(data) { webView.loadHTMLString($0, baseURL: nil) }
     }
 }
 #elseif os(macOS)
@@ -104,22 +104,35 @@ extension Image {
 struct IrisAnimatedImageDataView: NSViewRepresentable {
     let data: Data
 
+    func makeCoordinator() -> IrisAnimatedImageLoader {
+        IrisAnimatedImageLoader()
+    }
+
     func makeNSView(context: Context) -> WKWebView {
         let webView = WKWebView(frame: .zero)
         webView.setValue(false, forKey: "drawsBackground")
-        load(data, in: webView)
+        context.coordinator.update(data) { webView.loadHTMLString($0, baseURL: nil) }
         return webView
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        load(data, in: webView)
-    }
-
-    private func load(_ data: Data, in webView: WKWebView) {
-        webView.loadHTMLString(irisAnimatedImageHTML(data: data), baseURL: nil)
+        context.coordinator.update(data) { webView.loadHTMLString($0, baseURL: nil) }
     }
 }
 #endif
+
+@MainActor
+final class IrisAnimatedImageLoader {
+    private var loadedData: Data?
+
+    func update(_ data: Data, loadHTML: (String) -> Void) {
+        // SwiftUI updates the existing view for unrelated layout/state changes.
+        // Reusing its document avoids encoding the bytes again and restarting GIFs.
+        guard loadedData != data else { return }
+        loadedData = data
+        loadHTML(irisAnimatedImageHTML(data: data))
+    }
+}
 
 private func irisAnimatedImageHTML(data: Data) -> String {
     let encoded = data.base64EncodedString()

@@ -60,7 +60,7 @@ struct IrisAttachmentStaging: @unchecked Sendable {
         }
     }
 
-    private func discard(_ attachments: [StagedAttachment]) {
+    func discard(_ attachments: [StagedAttachment]) {
         for attachment in attachments {
             try? fileManager.removeItem(at: URL(fileURLWithPath: attachment.path))
         }

@@ -12,7 +12,11 @@ final class IosReviewDemoTests: XCTestCase {
                                  pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
                                  dataDir: directory,
                                  environment: ["IRIS_UI_TEST_RUN_ID": UUID().uuidString])
-        defer { manager.logout(); try? FileManager.default.removeItem(at: directory) }
+        addTeardownBlock { @MainActor in
+            manager.logout()
+            try await self.eventually { !manager.bootstrapInFlight && manager.state.account == nil }
+            try? FileManager.default.removeItem(at: directory)
+        }
         manager.createAccount(name: "  appstoredemousermode  ")
         try await eventually { manager.state.account != nil && !IosReviewDemo.needsPreparation(in: directory) && !manager.reviewDemoPreparing }
         XCTAssertTrue(manager.isReviewDemo)
@@ -33,7 +37,7 @@ final class IosReviewDemoTests: XCTestCase {
         XCTAssertGreaterThan(player.duration, 5)
 
         manager.logout()
-        try await eventually { manager.state.account == nil }
+        try await eventually { !manager.bootstrapInFlight && manager.state.account == nil }
         XCTAssertFalse(manager.isReviewDemo)
         XCTAssertFalse(IosReviewDemo.isEnabled(in: directory))
         manager.createAccount(name: IosReviewDemo.username)

@@ -111,11 +111,11 @@ struct ShareTargetSheet: View {
                 if hasShareTargets {
                     ToolbarItem(placement: .confirmationAction) {
                         Button {
-                            sendSelectedAndDismiss()
+                            sendSelected()
                         } label: {
                             Text(sendButtonTitle)
                         }
-                        .disabled(selectedChatIds.isEmpty)
+                        .disabled(selectedChatIds.isEmpty || manager.isSendingPendingShare)
                     }
                 }
 #endif
@@ -212,7 +212,7 @@ struct ShareTargetSheet: View {
                 .accessibilityHidden(selectedChatIds.isEmpty)
 
                 Button {
-                    sendSelectedAndDismiss()
+                    sendSelected()
                 } label: {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 21, weight: .bold))
@@ -225,7 +225,7 @@ struct ShareTargetSheet: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.irisPlain)
-                .disabled(selectedChatIds.isEmpty)
+                .disabled(selectedChatIds.isEmpty || manager.isSendingPendingShare)
                 .accessibilityLabel(sendButtonTitle)
                 .accessibilityIdentifier("shareTargetSendButton")
             }
@@ -244,11 +244,10 @@ struct ShareTargetSheet: View {
     }
 #endif
 
-    private func sendSelectedAndDismiss() {
+    private func sendSelected() {
         manager.sendPendingShare(
             to: Array(selectedChatIds).sorted()
         )
-        dismiss()
     }
 
     private func shareTargetRow(_ chat: ChatThreadSnapshot) -> some View {

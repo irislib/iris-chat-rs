@@ -8,8 +8,100 @@ struct IrisFipsBleDebugSnapshot {
     let writeCompletedCount: Int
 }
 
+protocol IrisFipsBleSession: AnyObject, Sendable {
+    func close()
+    func debugSnapshot() -> IrisFipsBleDebugSnapshot
+}
+
+/// Only desired state is changed by UI callbacks. Blocking bridge work runs on
+/// one worker, which rechecks that state after every constructor/close returns.
+final class IrisFipsBleLifecycle: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "fi.siriusbusiness.irischat.fips-ble.lifecycle")
+    private let lock = NSLock()
+    private let makeSession: @Sendable () -> IrisFipsBleSession?
+    private var desiredEnabled = false
+    private var terminated = false
+    private var scheduled = false
+    private var session: IrisFipsBleSession?
+
+    init(makeSession: @escaping @Sendable () -> IrisFipsBleSession?) {
+        self.makeSession = makeSession
+    }
+
+    func setEnabled(_ enabled: Bool) {
+        lock.withLock {
+            guard !terminated else { return }
+            desiredEnabled = enabled
+            scheduleLocked()
+        }
+    }
+
+    func disableAndWait() async {
+        setEnabled(false)
+        await settle()
+    }
+
+    func shutdown() async {
+        lock.withLock {
+            terminated = true
+            desiredEnabled = false
+            scheduleLocked()
+        }
+        await settle()
+    }
+
+    func debugSnapshot() -> IrisFipsBleDebugSnapshot? {
+        let current = lock.withLock { session }
+        return current?.debugSnapshot()
+    }
+
+    private func scheduleLocked() {
+        guard !scheduled else { return }
+        scheduled = true
+        queue.async { self.reconcile() }
+    }
+
+    private func settle() async {
+        await withCheckedContinuation { continuation in
+            queue.async { continuation.resume() }
+        }
+    }
+
+    private func reconcile() {
+        while true {
+            lock.lock()
+            if !desiredEnabled, let previous = session {
+                session = nil
+                lock.unlock()
+                previous.close()
+            } else if desiredEnabled, session == nil {
+                lock.unlock()
+                let created = makeSession()
+                lock.lock()
+                session = created
+                if created == nil {
+                    // A later state update may retry a failed attachment; never
+                    // spin on an unavailable core from this worker.
+                    scheduled = false
+                    lock.unlock()
+                    return
+                }
+                lock.unlock()
+            } else {
+                scheduled = false
+                lock.unlock()
+                return
+            }
+        }
+    }
+
+    deinit {
+        if let session { queue.async { session.close() } }
+    }
+}
+
 /// Thin Iris mapper between generated UniFFI types and the reusable FIPS Apple adapter.
-final class IrisFipsBleRuntime {
+final class IrisFipsBleRuntime: IrisFipsBleSession, @unchecked Sendable {
     private let bridge: FfiFipsBle
     private let platform: AppleFipsBlePlatform
     private let runner: FipsBleCommandRunner

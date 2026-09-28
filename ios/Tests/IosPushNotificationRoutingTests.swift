@@ -120,6 +120,7 @@ final class IosPushNotificationRoutingTests: XCTestCase {
         let manager = AppManager(
             rust: rust,
             secretStore: InMemorySecretStore(bundle: makeStoredAccountBundle()),
+            pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
             dataDir: dataDir,
             environment: [:]
         )
@@ -127,6 +128,8 @@ final class IosPushNotificationRoutingTests: XCTestCase {
         manager.handlePushNotificationTap(userInfo: pushPayload(chatID: "chat-before-logout"))
         XCTAssertEqual(pushIngestCount(in: rust.dispatchedActions), 1)
         manager.logout()
+        let resetCompleted = await waitUntil { !manager.bootstrapInFlight && rust.shutdownCallCount == 1 }
+        XCTAssertTrue(resetCompleted)
         rust.clearDispatchedActions()
 
         rust.emit(.fullState(makeAppState(rev: 1, account: makeAuthorizedAccount())))

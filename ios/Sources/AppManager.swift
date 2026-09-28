@@ -31,12 +31,12 @@ struct StagedAttachment: Identifiable, Equatable, Sendable {
     let filename: String
 }
 
-struct PendingShareAttachment: Codable, Equatable {
+struct PendingShareAttachment: Codable, Equatable, Sendable {
     let path: String
     let filename: String
 }
 
-struct PendingShare: Codable, Identifiable, Equatable {
+struct PendingShare: Codable, Identifiable, Equatable, Sendable {
     let id: String
     let text: String
     let attachments: [PendingShareAttachment]
@@ -302,7 +302,7 @@ protocol RustAppClient: AnyObject {
     func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot?
     func prepareForSuspend()
     func setFipsBleEnabled(_ enabled: Bool)
-    func shutdown()
+    func shutdown() async
     func listenForUpdates(reconciler: AppReconciler)
 }
 
@@ -316,9 +316,13 @@ final class LiveRustAppClient: RustAppClient {
     private var reviewDemoLinkActive = false
 
     func beginReviewDemoLink() -> FfiApp {
-        setFipsBleEnabled(false)
         reviewDemoLinkActive = true
+        setFipsBleEnabled(false)
         return ffi
+    }
+
+    func waitForFipsBleDisabled() async {
+        await fipsBle.disableAndWait()
     }
 
     func endReviewDemoLink() {
@@ -328,11 +332,15 @@ final class LiveRustAppClient: RustAppClient {
     }
 #endif
 #if os(iOS) || os(macOS)
-    private var fipsBle: IrisFipsBleRuntime?
+    private let fipsBle: IrisFipsBleLifecycle
 #endif
 
     init(dataDir: String, appVersion: String) {
-        self.ffi = FfiApp(dataDir: dataDir, keychainGroup: "", appVersion: appVersion)
+        let app = FfiApp(dataDir: dataDir, keychainGroup: "", appVersion: appVersion)
+        self.ffi = app
+#if os(iOS) || os(macOS)
+        self.fipsBle = IrisFipsBleLifecycle { IrisFipsBleRuntime(app: app) }
+#endif
     }
 
     func state() -> AppState {
@@ -385,27 +393,22 @@ final class LiveRustAppClient: RustAppClient {
         guard !enabled || !reviewDemoLinkActive else { return }
 #endif
 #if os(iOS) || os(macOS)
-        if enabled, fipsBle == nil {
-            fipsBle = IrisFipsBleRuntime(app: ffi)
-        } else if !enabled {
-            fipsBle?.close()
-            fipsBle = nil
-        }
+        fipsBle.setEnabled(enabled)
 #endif
     }
 
 #if os(iOS) || os(macOS)
     func fipsBleDebugSnapshot() -> IrisFipsBleDebugSnapshot? {
-        fipsBle?.debugSnapshot()
+        fipsBle.debugSnapshot()
     }
 #endif
 
-    func shutdown() {
+    func shutdown() async {
 #if os(iOS) || os(macOS)
-        fipsBle?.close()
-        fipsBle = nil
+        await fipsBle.shutdown()
 #endif
-        ffi.shutdownSafely()
+        let app = ffi
+        await Task.detached(priority: .userInitiated) { app.shutdownSafely() }.value
     }
 
     func listenForUpdates(reconciler: AppReconciler) {
@@ -422,6 +425,22 @@ private final class SuspendPreparationRunner: @unchecked Sendable {
 
     func prepareForSuspend() {
         rust.prepareForSuspend()
+    }
+}
+
+private final class LocalRustDataResetRunner: @unchecked Sendable {
+    private let directory: URL
+    private let fileManager: FileManager
+
+    init(directory: URL, fileManager: FileManager) {
+        self.directory = directory
+        self.fileManager = fileManager
+    }
+
+    func reset() {
+        try? fileManager.removeItem(at: directory)
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        AppPaths.prepareDataDirForBackgroundNotificationReads(directory, fileManager: fileManager)
     }
 }
 
@@ -1026,16 +1045,26 @@ final class AppManager: ObservableObject {
     private var reviewDemoTask: Task<Void, Never>?
     private var reviewDemoAttempted = false
     private var pendingPushChatID: String?
+    private lazy var pendingShares = IrisPendingShares(
+        containerOverride: sharedContainerOverride,
+        appGroupIdentifier: AppPaths.appGroupIdentifier,
+        fileManager: fileManager
+    )
+    private var pendingShareReadTask: Task<Void, Never>?
+    private var pendingShareRescanRequested = false
+    private var consumedPendingShareIDs = Set<String>()
 #endif
+    @Published private var pendingShareSendTask: Task<Void, Never>?
+    var isSendingPendingShare: Bool { pendingShareSendTask != nil }
     private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
     private var reconciliationGeneration: UInt64 = 0
     private var pendingNavigationOverride: PendingNavigationOverride?
-    private var pendingSharePayloadURLs: [String: URL] = [:]
     private var backgroundSuspendPrepared = false
     private var storedAccountBundle: StoredAccountBundle?
     private var persistedRestoreInFlight = false
     private var automaticRevocationLogoutInFlight = false
+    private var localResetInFlight = false
     // UI-test escape hatch: when IRIS_UI_TEST_SEED_PEER + IRIS_UI_TEST_SEED_COUNT
     // are set, AppManager auto-creates a chat with that peer once the account
     // is ready, then dispatches `count` outgoing messages back-to-back. Lets
@@ -1184,7 +1213,7 @@ final class AppManager: ObservableObject {
             // longer while Rust replays local state; never show Welcome while
             // stored credentials are still being restored.
             try? await Task.sleep(nanoseconds: 8_000_000_000)
-            guard bootstrapInFlight else {
+            guard bootstrapInFlight, !localResetInFlight else {
                 return
             }
             guard !persistedRestoreInFlight else {
@@ -1743,7 +1772,12 @@ final class AppManager: ObservableObject {
     }
 
     func clearPendingShare() {
+        pendingShareSendTask?.cancel()
+        pendingShareSendTask = nil
 #if os(iOS)
+        pendingShareReadTask?.cancel()
+        pendingShareReadTask = nil
+        pendingShareRescanRequested = false
         if let pendingShare {
             removePendingShareFiles(for: pendingShare)
         }
@@ -1756,6 +1790,7 @@ final class AppManager: ObservableObject {
         guard !trimmed.isEmpty else {
             return
         }
+        clearPendingShare()
         pendingShare = PendingShare(
             id: UUID().uuidString,
             text: trimmed,
@@ -1772,20 +1807,43 @@ final class AppManager: ObservableObject {
     }
 
     func sendPendingShare(to chatIds: [String]) {
-        guard let share = pendingShare else {
+        guard let share = pendingShare, pendingShareSendTask == nil else {
             return
         }
         let targets = uniqueTrimmedChatIds(chatIds)
         guard !targets.isEmpty else {
             return
         }
-        let stagedAttachments: [StagedAttachment]
-        do {
-            stagedAttachments = try stagePendingShareAttachments(share.attachments)
-        } catch {
-            showToast("Attachment could not be opened")
+        guard !share.attachments.isEmpty else {
+            finishSendingPendingShare(share, to: targets, stagedAttachments: [])
             return
         }
+        let staging = IrisAttachmentStaging(dataDir: dataDir, fileManager: fileManager)
+        let generation = reconciliationGeneration
+        pendingShareSendTask = Task { [weak self] in
+            do {
+                let copies = try await staging.stageAsync(share.attachments.map { URL(fileURLWithPath: $0.path) })
+                guard let self, !Task.isCancelled, self.reconciliationGeneration == generation,
+                      self.pendingShare?.id == share.id else {
+                    await Task.detached(priority: .utility) { staging.discard(copies) }.value
+                    return
+                }
+                let attachments = zip(copies, share.attachments).map { copy, original in
+                    let name = original.filename.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return StagedAttachment(path: copy.path, filename: name.isEmpty ? copy.filename : name)
+                }
+                self.pendingShareSendTask = nil
+                self.finishSendingPendingShare(share, to: targets, stagedAttachments: attachments)
+            } catch {
+                guard let self, !Task.isCancelled, self.reconciliationGeneration == generation,
+                      self.pendingShare?.id == share.id else { return }
+                self.pendingShareSendTask = nil
+                self.showToast("Attachment could not be opened")
+            }
+        }
+    }
+
+    private func finishSendingPendingShare(_ share: PendingShare, to targets: [String], stagedAttachments: [StagedAttachment]) {
         var dispatchedAll = true
         for chatId in targets {
             if shouldBlockOutgoingChat(chatId: chatId) {
@@ -1835,27 +1893,10 @@ final class AppManager: ObservableObject {
         return result
     }
 
-    private func stagePendingShareAttachments(_ attachments: [PendingShareAttachment]) throws -> [StagedAttachment] {
-        try attachments.map { attachment in
-            let staged = try stageOutgoingAttachment(URL(fileURLWithPath: attachment.path))
-            let filename = attachment.filename.trimmingCharacters(in: .whitespacesAndNewlines)
-            return StagedAttachment(
-                path: staged.path,
-                filename: filename.isEmpty ? staged.filename : filename
-            )
-        }
-    }
-
     private func loadPendingShare(id: String, autoSend: Bool = false) {
 #if os(iOS)
-        guard let dir = pendingSharesDirectory() else {
-            showToast("Sharing unavailable")
-            return
-        }
-        let url = dir.appendingPathComponent(id).appendingPathExtension("json")
-        guard loadPendingShare(from: url, autoSend: autoSend, showsToast: true) else {
-            return
-        }
+        pendingShareReadTask?.cancel()
+        readPendingShare(id: id, autoSend: autoSend)
 #else
         _ = id
         _ = autoSend
@@ -1864,47 +1905,46 @@ final class AppManager: ObservableObject {
 
 #if os(iOS)
     private func processPendingShareFilesIfNeeded() {
-        guard pendingShare == nil,
-              let dir = pendingSharesDirectory(),
-              let urls = try? fileManager.contentsOfDirectory(
-                at: dir,
-                includingPropertiesForKeys: [.contentModificationDateKey],
-                options: [.skipsHiddenFiles]
-              ) else {
+        guard pendingShare == nil else {
             processPendingShareIfReady()
             return
         }
-        let payloadURLs = urls
-            .filter { $0.pathExtension == "json" }
-            .sorted { lhs, rhs in
-                let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                return lhsDate < rhsDate
-            }
-        for url in payloadURLs {
-            if loadPendingShare(from: url, autoSend: nil, showsToast: false) {
-                return
-            }
+        guard pendingShareReadTask == nil else {
+            pendingShareRescanRequested = true
+            return
         }
-        processPendingShareIfReady()
+        readPendingShare()
     }
 
-    @discardableResult
-    private func loadPendingShare(from url: URL, autoSend: Bool?, showsToast: Bool) -> Bool {
-        do {
-            let data = try Data(contentsOf: url)
-            let decoded = try JSONDecoder().decode(PendingShare.self, from: data)
-            let share = decoded.withAutoSend(autoSend == true)
-            pendingShare = share
-            pendingSharePayloadURLs[share.id] = url
-            dispatchToRust(.updateScreenStack(stack: []))
-            processPendingShareIfReady()
-            return true
-        } catch {
-            if showsToast {
-                showToast("Sharing unavailable")
+    private func readPendingShare(id: String? = nil, autoSend: Bool = false) {
+        let inbox = pendingShares
+        let generation = reconciliationGeneration
+        let consumedIDs = consumedPendingShareIDs
+        pendingShareReadTask = Task { [weak self] in
+            let share: PendingShare?
+            if let id {
+                share = try? await inbox.load(id: id)
+            } else {
+                share = await inbox.next(excluding: consumedIDs)
             }
-            return false
+            guard let self, !Task.isCancelled, generation == self.reconciliationGeneration else { return }
+            self.pendingShareReadTask = nil
+            let rescan = self.pendingShareRescanRequested
+            self.pendingShareRescanRequested = false
+            // A share URL and the extension notification can announce the same
+            // file. A read already in flight must not resurrect a completed send.
+            if let share, self.consumedPendingShareIDs.contains(share.id) { return }
+            if let share, id != nil || self.pendingShare == nil {
+                self.pendingShareSendTask?.cancel()
+                self.pendingShareSendTask = nil
+                self.pendingShare = share.withAutoSend(autoSend)
+                self.dispatchToRust(.updateScreenStack(stack: []))
+                self.processPendingShareIfReady()
+            } else if id != nil {
+                self.showToast("Sharing unavailable")
+            } else if rescan {
+                self.processPendingShareFilesIfNeeded()
+            }
         }
     }
 
@@ -1919,29 +1959,12 @@ final class AppManager: ObservableObject {
     }
 
     private func removePendingShareFiles(for share: PendingShare) {
-        if let url = pendingSharePayloadURLs.removeValue(forKey: share.id) {
-            try? fileManager.removeItem(at: url)
-        } else if let url = pendingShareURL(id: share.id) {
-            try? fileManager.removeItem(at: url)
+        consumedPendingShareIDs.insert(share.id)
+        let inbox = pendingShares
+        Task { [weak self] in
+            await inbox.remove(share)
+            self?.processPendingShareFilesIfNeeded()
         }
-        if let filesURL = pendingSharesDirectory()?.appendingPathComponent("\(share.id)-files", isDirectory: true) {
-            try? fileManager.removeItem(at: filesURL)
-        }
-    }
-
-    private func pendingShareURL(id: String) -> URL? {
-        pendingSharesDirectory()?.appendingPathComponent(id).appendingPathExtension("json")
-    }
-
-    private func pendingSharesDirectory() -> URL? {
-        shareContainerURL()?.appendingPathComponent("pending-shares", isDirectory: true)
-    }
-
-    private func shareContainerURL() -> URL? {
-        if let sharedContainerOverride {
-            return sharedContainerOverride
-        }
-        return fileManager.containerURL(forSecurityApplicationGroupIdentifier: AppPaths.appGroupIdentifier)
     }
 #endif
 
@@ -2399,6 +2422,8 @@ final class AppManager: ObservableObject {
         let generation = reconciliationGeneration
         reviewDemoTask = Task { [weak self] in
             let preparation = Task.detached(priority: .userInitiated) {
+                await live.waitForFipsBleDisabled()
+                try Task.checkCancellation()
                 try await IosReviewDemo.populate(primary: ffi, directory: directory)
             }
             let result = await withTaskCancellationHandler {
@@ -2559,31 +2584,6 @@ final class AppManager: ObservableObject {
         }
     }
 
-    func sendAttachment(chatId: String, fileURL: URL, caption: String) {
-        let trimmedChatId = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedChatId.isEmpty else {
-            return
-        }
-        guard !shouldBlockOutgoingChat(chatId: trimmedChatId) else {
-            showToast("User is blocked")
-            return
-        }
-
-        do {
-            let staged = try stageOutgoingAttachment(fileURL)
-            dispatchToRust(
-                .sendAttachment(
-                    chatId: trimmedChatId,
-                    filePath: staged.path,
-                    filename: staged.filename,
-                    caption: caption.trimmingCharacters(in: .whitespacesAndNewlines)
-                )
-            )
-        } catch {
-            showToast("Attachment could not be opened")
-        }
-    }
-
     func sendAttachments(chatId: String, attachments: [StagedAttachment], caption: String) {
         let trimmedChatId = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedChatId.isEmpty, !attachments.isEmpty else {
@@ -2604,23 +2604,24 @@ final class AppManager: ObservableObject {
         )
     }
 
-    func updateGroupPicture(groupId: String, fileURL: URL) {
-        do {
-            let staged = try stageOutgoingAttachment(fileURL)
-            dispatchToRust(.updateGroupPicture(
-                groupId: groupId,
-                filePath: staged.path,
-                filename: staged.filename
-            ))
-        } catch {
-            showToast("Image could not be opened")
-        }
+    func updateGroupPicture(groupId: String, loadFile: () async -> URL?) async {
+        guard let staged = await stageGroupPicture(loadFile: loadFile) else { return }
+        dispatchToRust(.updateGroupPicture(
+            groupId: groupId,
+            filePath: staged.path,
+            filename: staged.filename
+        ))
     }
 
-    func stageGroupPicture(fileURL: URL) -> StagedAttachment? {
+    func stageGroupPicture(loadFile: () async -> URL?) async -> StagedAttachment? {
         do {
-            let staged = try stageOutgoingAttachment(fileURL)
-            return StagedAttachment(path: staged.path, filename: staged.filename)
+            let staged = try await stageOutgoingAttachmentsAsync {
+                guard let url = await loadFile() else { return [] }
+                return [url]
+            }
+            return staged.first
+        } catch is CancellationError {
+            return nil
         } catch {
             showToast("Image could not be opened")
             return nil
@@ -2656,24 +2657,39 @@ final class AppManager: ObservableObject {
         ))
     }
 
-    func uploadProfilePicture(fileURL: URL) {
-        irisDebugLog("[upload-profile-picture] picked: %@", fileURL.path)
-        do {
-            let staged = try stageOutgoingAttachment(fileURL)
-            irisDebugLog("[upload-profile-picture] staged: %@", staged.path)
-            dispatchToRust(.uploadProfilePicture(filePath: staged.path))
-        } catch {
-            irisDebugLog("[upload-profile-picture] stage failed: %@", "\(error)")
-            showToast("Image could not be opened: \(error.localizedDescription)")
-        }
-    }
-
-    func stageOutgoingAttachments(_ sourceURLs: [URL]) throws -> [StagedAttachment] {
-        try IrisAttachmentStaging(dataDir: dataDir, fileManager: fileManager).stage(sourceURLs)
+    func uploadProfilePicture(loadFile: () async -> URL?) async {
+        guard let staged = await stageGroupPicture(loadFile: loadFile) else { return }
+        dispatchToRust(.uploadProfilePicture(filePath: staged.path))
     }
 
     func stageOutgoingAttachmentsAsync(_ sourceURLs: [URL]) async throws -> [StagedAttachment] {
-        try await IrisAttachmentStaging(dataDir: dataDir, fileManager: fileManager).stageAsync(sourceURLs)
+        try await stageOutgoingAttachmentsAsync { sourceURLs }
+    }
+
+    func stageOutgoingAttachmentsAsync(_ loadSourceURLs: () async -> [URL]) async throws -> [StagedAttachment] {
+        let generation = reconciliationGeneration
+        try Task.checkCancellation()
+        let sourceURLs = await loadSourceURLs()
+        try Task.checkCancellation()
+        guard generation == reconciliationGeneration else { throw CancellationError() }
+        let staged: [StagedAttachment]
+        do {
+            staged = try await IrisAttachmentStaging(dataDir: dataDir, fileManager: fileManager).stageAsync(sourceURLs)
+        } catch {
+            try Task.checkCancellation()
+            guard generation == reconciliationGeneration else { throw CancellationError() }
+            throw error
+        }
+        guard !Task.isCancelled, generation == reconciliationGeneration else {
+            await discardOutgoingAttachments(staged)
+            throw CancellationError()
+        }
+        return staged
+    }
+
+    func discardOutgoingAttachments(_ attachments: [StagedAttachment]) async {
+        let staging = IrisAttachmentStaging(dataDir: dataDir, fileManager: fileManager)
+        await Task.detached(priority: .utility) { staging.discard(attachments) }.value
     }
 
     func supportBundleJson() -> String {
@@ -2736,6 +2752,7 @@ final class AppManager: ObservableObject {
     }
 
     func logout() {
+        guard !localResetInFlight else { return }
 #if os(iOS)
         guard !reviewDemoPreparing else { showToast("Please wait for demo setup."); return }
         reviewDemoTask?.cancel()
@@ -2743,7 +2760,12 @@ final class AppManager: ObservableObject {
 #endif
         // Logout ownership stays in Rust. The shell clears native secrets and local files only.
         automaticRevocationLogoutInFlight = true
+        pendingShareSendTask?.cancel()
+        pendingShareSendTask = nil
 #if os(iOS)
+        pendingShareReadTask?.cancel()
+        pendingShareReadTask = nil
+        pendingShareRescanRequested = false
         // Account-nil startup snapshots are ambiguous; logout is the deterministic
         // session boundary for discarding deferred notification navigation.
         pendingPushChatID = nil
@@ -2766,11 +2788,15 @@ final class AppManager: ObservableObject {
     }
 
     private func replaceRustCoreAfterLocalReset() {
+        guard !localResetInFlight else { return }
+        localResetInFlight = true
+        bootstrapInFlight = true
+        // Invalidate old snapshots and in-flight attachment work before yielding
+        // to bridge/core shutdown, not after the replacement has been created.
+        reconciliationGeneration &+= 1
+        let generation = reconciliationGeneration
         let previousRust = rust
-        previousRust.shutdown()
-        try? fileManager.removeItem(at: dataDir)
-        try? fileManager.createDirectory(at: dataDir, withIntermediateDirectories: true)
-        AppPaths.prepareDataDirForBackgroundNotificationReads(dataDir, fileManager: fileManager)
+        let files = LocalRustDataResetRunner(directory: dataDir, fileManager: fileManager)
         pendingNavigationOverride = nil
         olderChatPageLoads.removeAll()
         exhaustedOlderChatPages.removeAll()
@@ -2779,20 +2805,20 @@ final class AppManager: ObservableObject {
         chatSnapshotCache.removeAll()
         chatSnapshotCacheOrder.removeAll()
         persistedRestoreInFlight = false
-        bootstrapInFlight = false
         lastSyncedDeviceLabelsKey = nil
-        let nextRust = makeRustClient()
-        reconciliationGeneration &+= 1
-        let nextReconciler = UpdateBridge(
-            owner: self,
-            generation: reconciliationGeneration
-        )
-        reconciler = nextReconciler
-        rust = nextRust
-        profileReadRunner = ProfileReadRunner(rust: nextRust)
-        nextRust.listenForUpdates(reconciler: nextReconciler)
-        applyFullState(nextRust.state(), force: true)
-        automaticRevocationLogoutInFlight = false
+        Task {
+            await previousRust.shutdown()
+            await Task.detached(priority: .userInitiated) { files.reset() }.value
+            let nextRust = makeRustClient()
+            let nextReconciler = UpdateBridge(owner: self, generation: generation)
+            reconciler = nextReconciler
+            rust = nextRust
+            profileReadRunner = ProfileReadRunner(rust: nextRust)
+            nextRust.listenForUpdates(reconciler: nextReconciler)
+            localResetInFlight = false
+            applyFullState(nextRust.state(), force: true)
+            automaticRevocationLogoutInFlight = false
+        }
     }
 
     private func syncCurrentDeviceLabelsIfNeeded(state: AppState) {
@@ -2949,7 +2975,7 @@ final class AppManager: ObservableObject {
         }
         runPendingTestSeedIfNeeded()
 #if os(iOS)
-        processPendingShareFilesIfNeeded()
+        processPendingShareIfReady()
         startReviewDemoIfNeeded()
 #endif
     }
@@ -3098,6 +3124,7 @@ final class AppManager: ObservableObject {
 #endif
 
     private func restorePersistedSession() {
+        guard !localResetInFlight else { return }
         // Native restore only rehydrates secure inputs. Rust rebuilds the authoritative app state.
         if let link = pendingDeviceLinkSecretStore.loadPendingDeviceLink() {
             persistedRestoreInFlight = true
@@ -3141,6 +3168,7 @@ final class AppManager: ObservableObject {
     }
 
     private func settleBootstrapIfNeeded(with nextState: AppState) {
+        guard !localResetInFlight else { return }
         guard persistedRestoreInFlight else {
             bootstrapInFlight = false
             return
@@ -3225,6 +3253,13 @@ final class AppManager: ObservableObject {
         existing: [ChatMessageSnapshot],
         page: [ChatMessageSnapshot]
     ) -> [ChatMessageSnapshot] {
+        // Drafts and typing updates usually repeat the unchanged latest page.
+        // Retain the browsed history's storage instead of rebuilding and
+        // sorting every loaded page on the UI actor for those updates.
+        if existing.count >= page.count,
+           existing.suffix(page.count).elementsEqual(page) {
+            return existing
+        }
         var byID: [String: ChatMessageSnapshot] = [:]
         var orderByID: [String: Int] = [:]
         byID.reserveCapacity(existing.count + page.count)
@@ -3284,14 +3319,7 @@ final class AppManager: ObservableObject {
         nextState.router = Router(defaultScreen: nextState.router.defaultScreen, screenStack: stack)
         let activeScreen = stack.last ?? nextState.router.defaultScreen
         switch activeScreen {
-        case .chat(let chatId):
-            if nextState.currentChat?.chatId != chatId {
-                nextState.currentChat = cachedChatSnapshot(chatId: chatId)
-            } else {
-                rememberChatSnapshot(nextState.currentChat)
-            }
-            nextState.groupDetails = nil
-        case .directChatInfo(let chatId):
+        case .chat(let chatId), .directChatInfo(let chatId):
             if nextState.currentChat?.chatId != chatId {
                 nextState.currentChat = cachedChatSnapshot(chatId: chatId)
             } else {
@@ -3320,7 +3348,13 @@ final class AppManager: ObservableObject {
     }
 
     private func rememberChatSnapshot(_ snapshot: CurrentChatSnapshot?) {
-        guard let snapshot else { return }
+        guard var snapshot else { return }
+        // Keep all loaded history in the active chat, but reopening starts at
+        // the latest page. Caching every browsed page makes the eager timeline
+        // lay out the whole history again before the fresh page read returns.
+        if snapshot.messages.count > Int(Self.chatPageSize) {
+            snapshot.messages = Array(snapshot.messages.suffix(Int(Self.chatPageSize)))
+        }
         chatSnapshotCache[snapshot.chatId] = snapshot
         touchCachedChatSnapshot(snapshot.chatId)
         while chatSnapshotCacheOrder.count > Self.chatSnapshotCacheLimit {
@@ -3371,6 +3405,7 @@ final class AppManager: ObservableObject {
         showsToastOnFailure: Bool = true,
         preservesPendingNavigation: Bool = false
     ) -> Bool {
+        guard !localResetInFlight else { return false }
         if !preservesPendingNavigation, actionClearsPendingNavigation(action) {
             pendingNavigationOverride = nil
         }
@@ -3387,6 +3422,7 @@ final class AppManager: ObservableObject {
         _ action: AppAction,
         showsToastOnFailure: Bool
     ) {
+        guard !localResetInFlight else { return }
         let runner = RustDispatchRunner(rust: rust)
         Self.optimisticNavigationDispatchQueue.async { [weak self] in
             do {
@@ -3545,10 +3581,6 @@ final class AppManager: ObservableObject {
         return false
     }
 
-    private func stageOutgoingAttachment(_ sourceURL: URL) throws -> (path: String, filename: String) {
-        let staged = try IrisAttachmentStaging(dataDir: dataDir, fileManager: fileManager).stage(sourceURL)
-        return (staged.path, staged.filename)
-    }
 }
 
 #if os(macOS)

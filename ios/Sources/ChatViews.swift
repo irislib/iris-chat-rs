@@ -579,11 +579,13 @@ struct ChatScreen: View {
                                                     manager.dispatch(.setChatDraft(chatId: chatId, text: text))
                                                 }
                                             },
-                                            onAttach: { urls in
+                                            onAttach: { loadURLs in
                                                 do {
                                                     selectedAttachments.append(
-                                                        contentsOf: try manager.stageOutgoingAttachments(urls)
+                                                        contentsOf: try await manager.stageOutgoingAttachmentsAsync(loadURLs)
                                                     )
+                                                } catch is CancellationError {
+                                                    // Leaving the chat discards an unfinished selection.
                                                 } catch {
                                                     manager.showAttachmentOpenError()
                                                 }

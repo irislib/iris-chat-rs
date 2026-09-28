@@ -93,6 +93,111 @@ fn route_chat_snapshot_requires_account() {
 }
 
 #[test]
+fn ffi_chat_snapshot_bounds_active_history_without_losing_metadata() {
+    let app = ffi_app_failure(String::new());
+    let mut state = build_large_test_app_state(80, 20, 1_200);
+    let current = state.current_chat.as_mut().unwrap();
+    current.draft = "Keep this draft".to_string();
+    current.message_ttl_seconds = Some(86_400);
+    let chat_id = current.chat_id.clone();
+    let mut expected = current.clone();
+    expected.messages = expected.messages.split_off(expected.messages.len() - 3);
+    *app.shared_state.write().unwrap() = state;
+
+    let snapshot = app.chat_snapshot(chat_id.clone(), 3).unwrap();
+
+    assert_eq!(
+        snapshot.messages.len(),
+        3,
+        "first paint must respect its requested page size"
+    );
+    assert_eq!(snapshot, expected);
+    let single = app.chat_snapshot(chat_id, 0).unwrap();
+    assert_eq!(single.messages, expected.messages[2..]);
+    assert_eq!(
+        app.shared_state
+            .read()
+            .unwrap()
+            .current_chat
+            .as_ref()
+            .unwrap()
+            .messages
+            .len(),
+        1_200,
+        "the bounded FFI read must leave the core's loaded history intact",
+    );
+}
+
+#[test]
+fn ffi_chat_pages_keep_participants_and_load_requested_database_range() {
+    let app = ffi_app_failure(String::new());
+    let directory = tempfile::tempdir().unwrap();
+    let core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        directory.path().to_string_lossy().to_string(),
+        app.shared_state.clone(),
+    );
+    let mut state = build_large_test_app_state(80, 20, 1_200);
+    let current = state.current_chat.as_mut().unwrap();
+    let chat_id = current.chat_id.clone();
+    let participants = vec![ChatParticipantSnapshot {
+        owner_pubkey_hex: chat_id.clone(),
+        display_name: "Page author".to_string(),
+        picture_url: None,
+        is_local_owner: false,
+    }];
+    current.participants = participants.clone();
+    let database = core.shared_db();
+    {
+        let connection = database.lock().unwrap();
+        connection.execute(
+            "INSERT INTO threads(chat_id, unread_count, updated_at_secs, draft) VALUES (?1, 0, 10, '')",
+            [&chat_id],
+        ).unwrap();
+        for index in 0..6 {
+            connection.execute(
+                "INSERT INTO messages(chat_id, id, kind, author, body, is_outgoing, created_at_secs, delivery)
+                 VALUES (?1, ?2, 'user', 'Original author', 'Stored message', 0, ?3, 'received')",
+                rusqlite::params![chat_id, format!("stored-{index}"), index + 1],
+            ).unwrap();
+        }
+    }
+    *app.shared_db.write().unwrap() = Some(database);
+    *app.shared_state.write().unwrap() = state;
+
+    let before = app
+        .chat_snapshot_before(chat_id.clone(), "stored-4".to_string(), 2)
+        .unwrap();
+    assert_eq!(
+        before
+            .messages
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>(),
+        ["stored-2", "stored-3"]
+    );
+    let around = app
+        .chat_snapshot_around_message(chat_id, "stored-3".to_string(), 1, 1)
+        .unwrap();
+    assert_eq!(
+        around
+            .messages
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>(),
+        ["stored-2", "stored-3", "stored-4"]
+    );
+    for page in [before, around] {
+        assert_eq!(page.participants, participants);
+        assert!(page
+            .messages
+            .iter()
+            .all(|message| message.author == "Page author"));
+    }
+}
+
+#[test]
 fn search_preserves_thread_results_with_large_active_history() {
     let app = ffi_app_failure(String::new());
     let mut state = build_large_test_app_state(80, 20, 1_200);

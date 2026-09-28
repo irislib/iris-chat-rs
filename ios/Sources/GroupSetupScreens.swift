@@ -28,6 +28,7 @@ struct NewGroupScreen: View {
     @State private var showingGroupPicturePicker = false
     @State private var showingGroupPictureSourceMenu = false
     @State private var groupPhoto: StagedAttachment?
+    @State private var groupPictureTask: Task<Void, Never>?
     #if os(iOS)
     @State private var showingGroupPictureCamera = false
     #endif
@@ -57,7 +58,7 @@ struct NewGroupScreen: View {
 
     private var canCreate: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !manager.state.busy.creatingGroup
+        !manager.state.busy.creatingGroup && groupPictureTask == nil
     }
 
     private func ownerPresentation(for owner: String) -> OwnerPresentation {
@@ -98,7 +99,7 @@ struct NewGroupScreen: View {
             guard case let .success(urls) = result, let url = urls.first else {
                 return
             }
-            groupPhoto = manager.stageGroupPicture(fileURL: url)
+            selectGroupPicture { url }
         }
         .confirmationDialog(
             "Choose a group photo",
@@ -119,11 +120,15 @@ struct NewGroupScreen: View {
         #if os(iOS)
         .sheet(isPresented: $showingGroupPictureCamera) {
             IrisCameraImagePicker { url in
-                groupPhoto = manager.stageGroupPicture(fileURL: url)
+                selectGroupPicture { url }
             }
             .ignoresSafeArea()
         }
         #endif
+        .onDisappear {
+            groupPictureTask?.cancel()
+            groupPictureTask = nil
+        }
         #if canImport(PhotosUI)
         .photosPicker(
             isPresented: $showingGroupPicturePhotoPicker,
@@ -190,7 +195,7 @@ struct NewGroupScreen: View {
                     IrisAvatar(label: name.isEmpty ? "Group" : name, size: 56, emphasize: true)
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Button(groupPhoto == nil ? "Photo" : "Change photo") {
+                        Button(groupPictureTask != nil ? "Adding photo…" : (groupPhoto == nil ? "Photo" : "Change photo")) {
                             presentGroupPictureSource()
                         }
                         .buttonStyle(IrisSecondaryButtonStyle(compact: true))
@@ -204,6 +209,8 @@ struct NewGroupScreen: View {
                                     .lineLimit(1)
 
                                 Button("Remove") {
+                                    groupPictureTask?.cancel()
+                                    groupPictureTask = nil
                                     self.groupPhoto = nil
                                 }
                                 .buttonStyle(IrisSecondaryButtonStyle(compact: true))
@@ -320,15 +327,25 @@ struct NewGroupScreen: View {
         #endif
     }
 
+    private func selectGroupPicture(loadFile: @escaping () async -> URL?) {
+        groupPictureTask?.cancel()
+        groupPictureTask = Task {
+            defer { if !Task.isCancelled { groupPictureTask = nil } }
+            guard let staged = await manager.stageGroupPicture(loadFile: loadFile) else { return }
+            guard !Task.isCancelled else {
+                await manager.discardOutgoingAttachments([staged])
+                return
+            }
+            groupPhoto = staged
+        }
+    }
+
     #if canImport(PhotosUI)
     private func handlePickedGroupPicturePhotos(_ items: [PhotosPickerItem]) {
         guard let item = items.first else { return }
         pickedGroupPicturePhotos = []
-        Task {
-            guard let url = await loadPickedPhotoItem(item, directoryName: "iris-group-picks") else { return }
-            await MainActor.run {
-                groupPhoto = manager.stageGroupPicture(fileURL: url)
-            }
+        selectGroupPicture {
+            await loadPickedPhotoItem(item, directoryName: "iris-group-picks")
         }
     }
     #endif

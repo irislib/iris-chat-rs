@@ -18,6 +18,7 @@ final class MockRustApp: RustAppClient {
     var chatSnapshotGate: DispatchSemaphore?
     var chatSnapshotOverride: CurrentChatSnapshot?
     var onSearch: (() -> Void)?
+    var onShutdown: (() -> Void)?
     private var dispatchedActionsStorage: [AppAction] = []
     private let dispatchedActionsLock = NSLock()
     private var chatSnapshotCallCountStorage = 0
@@ -230,10 +231,9 @@ final class MockRustApp: RustAppClient {
         callback?()
     }
 
-    func shutdown() {
-        shutdownLock.lock()
-        shutdownCalls += 1
-        shutdownLock.unlock()
+    func shutdown() async {
+        shutdownLock.withLock { shutdownCalls += 1 }
+        onShutdown?()
     }
 
     func listenForUpdates(reconciler: AppReconciler) {
@@ -244,4 +244,3 @@ final class MockRustApp: RustAppClient {
         reconciler?.reconcile(update: update)
     }
 }
-

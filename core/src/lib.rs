@@ -23,7 +23,7 @@ mod updates;
 
 use std::any::Any;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 use std::{panic, panic::AssertUnwindSafe};
@@ -200,6 +200,7 @@ pub struct FfiApp {
     /// Shared SQLite handle used by direct read FFI calls. The core
     /// supervisor swaps this when it recreates `AppCore` after a panic.
     shared_db: Arc<RwLock<Option<crate::core::SharedConnection>>>,
+    core_worker: Mutex<Option<thread::JoinHandle<()>>>,
     perf: FfiPerfCounters,
     queue_metrics: Arc<CoreQueueMetrics>,
     recovery: Arc<CoreRecoveryState>,
@@ -453,7 +454,7 @@ impl FfiApp {
                 } else {
                     search::filter_threads_for_search(&chat_list, trimmed)
                 };
-                let shared_db = self.shared_db_snapshot();
+                let shared_db = self.shared_db_read();
                 let mut excluded_people = chat_list
                     .iter()
                     .filter(|chat| chat.kind == ChatKind::Direct)
@@ -528,13 +529,11 @@ impl FfiApp {
     /// `OpenChat` for unread clearing, subscriptions, and side effects.
     pub fn chat_snapshot(&self, chat_id: String, limit: u32) -> Option<CurrentChatSnapshot> {
         ffi_or("ffiapp.chat_snapshot", None, || {
-            let state_snapshot = match self.shared_state.read() {
-                Ok(slot) => slot.clone(),
-                Err(poison) => poison.into_inner().clone(),
-            };
+            let state_snapshot = self.chat_read_state(&chat_id, Some(limit.max(1) as usize));
+            let shared_db = self.shared_db_read();
             crate::core::chat_snapshot_from_state_and_db(
                 &state_snapshot,
-                self.shared_db_snapshot().as_ref(),
+                shared_db.as_ref(),
                 &chat_id,
                 limit.max(1) as usize,
             )
@@ -548,13 +547,11 @@ impl FfiApp {
         limit: u32,
     ) -> Option<CurrentChatSnapshot> {
         ffi_or("ffiapp.chat_snapshot_before", None, || {
-            let state_snapshot = match self.shared_state.read() {
-                Ok(slot) => slot.clone(),
-                Err(poison) => poison.into_inner().clone(),
-            };
+            let state_snapshot = self.chat_read_state(&chat_id, None);
+            let shared_db = self.shared_db_read();
             crate::core::chat_snapshot_before_from_state_and_db(
                 &state_snapshot,
-                self.shared_db_snapshot().as_ref(),
+                shared_db.as_ref(),
                 &chat_id,
                 &before_message_id,
                 limit.max(1) as usize,
@@ -570,13 +567,11 @@ impl FfiApp {
         after_limit: u32,
     ) -> Option<CurrentChatSnapshot> {
         ffi_or("ffiapp.chat_snapshot_around_message", None, || {
-            let state_snapshot = match self.shared_state.read() {
-                Ok(slot) => slot.clone(),
-                Err(poison) => poison.into_inner().clone(),
-            };
+            let state_snapshot = self.chat_read_state(&chat_id, None);
+            let shared_db = self.shared_db_read();
             crate::core::chat_snapshot_around_message_from_state_and_db(
                 &state_snapshot,
-                self.shared_db_snapshot().as_ref(),
+                shared_db.as_ref(),
                 &chat_id,
                 &message_id,
                 before_limit as usize,
@@ -656,17 +651,7 @@ impl FfiApp {
     }
 
     pub fn shutdown(&self) {
-        ffi_or("ffiapp.shutdown", (), || {
-            let (reply_tx, reply_rx) = flume::bounded(1);
-            if self
-                .foreground_tx
-                .send(CoreMsg::Shutdown(Some(reply_tx)))
-                .is_err()
-            {
-                return;
-            }
-            let _ = reply_rx.recv_timeout(Duration::from_secs(2));
-        })
+        self.shutdown_inner(cfg!(any(target_os = "ios", target_os = "macos")));
     }
 
     fn support_bundle_json_with_ffi_diagnostics(
@@ -816,13 +801,46 @@ impl FfiApp {
 }
 
 impl FfiApp {
+    fn shutdown_inner(&self, wait_for_completion: bool) {
+        ffi_or("ffiapp.shutdown", (), || {
+            let mut worker = self
+                .core_worker
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if worker.is_none() {
+                return;
+            }
+            let (reply_tx, reply_rx) = flume::bounded(1);
+            let _ = self.foreground_tx.send(CoreMsg::Shutdown(Some(reply_tx)));
+            if wait_for_completion {
+                // Apple shells await this on a worker before resetting local files.
+                // The message acknowledgement precedes AppCore/runtime destruction;
+                // only joining guarantees the old core has released its directory.
+                if let Some(worker) = worker.take() {
+                    let _ = worker.join();
+                }
+            } else {
+                // Other shells still call this synchronously on their UI thread.
+                let _ = reply_rx.recv_timeout(Duration::from_secs(2));
+            }
+        })
+    }
+
+    fn chat_read_state(&self, chat_id: &str, latest_limit: Option<usize>) -> AppState {
+        let state = self
+            .shared_state
+            .read()
+            .unwrap_or_else(|poison| poison.into_inner());
+        crate::core::chat_read_state(&state, chat_id, latest_limit)
+    }
+
     fn prepare_for_suspend_inner(&self, wait_for_completion: bool) {
         self.perf
             .prepare_for_suspend
             .fetch_add(1, Ordering::Relaxed);
         ffi_or("ffiapp.prepare_for_suspend", (), || {
             // A failed startup has no worker to acknowledge this request.
-            if self.shared_db_snapshot().is_none() {
+            if self.shared_db_read().is_none() {
                 return;
             }
             let (reply_tx, reply_rx) = flume::bounded(1);
@@ -845,11 +863,14 @@ impl FfiApp {
         })
     }
 
-    fn shared_db_snapshot(&self) -> Option<crate::core::SharedConnection> {
-        match self.shared_db.read() {
-            Ok(slot) => slot.clone(),
-            Err(poison) => poison.into_inner().clone(),
-        }
+    // Keep the slot guard through each direct query so teardown also drains
+    // readers before the Apple shell removes/recreates the data directory.
+    fn shared_db_read(
+        &self,
+    ) -> std::sync::RwLockReadGuard<'_, Option<crate::core::SharedConnection>> {
+        self.shared_db
+            .read()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 }
 
@@ -861,6 +882,7 @@ fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
     let queue_metrics = Arc::new(CoreQueueMetrics::default());
     let recovery = Arc::new(CoreRecoveryState::default());
     let shared_db = Arc::new(RwLock::new(None));
+    let mut core_worker = None;
 
     let update_tx_for_error = update_tx.clone();
     match AppCore::try_new_with_priority_sender(
@@ -887,12 +909,16 @@ fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
                     recovery: recovery.clone(),
                 },
             );
-            if let Err(error) = spawn_result {
-                publish_core_failure_state(
-                    &shared_state,
-                    &update_tx_for_error,
-                    format!("Iris could not start: {error}"),
-                );
+            match spawn_result {
+                Ok(worker) => core_worker = Some(worker),
+                Err(error) => {
+                    set_shared_db(&shared_db, None);
+                    publish_core_failure_state(
+                        &shared_state,
+                        &update_tx_for_error,
+                        format!("Iris could not start: {error}"),
+                    );
+                }
             }
         }
         Err(error) => {
@@ -909,6 +935,7 @@ fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
         listening: AtomicBool::new(false),
         shared_state,
         shared_db,
+        core_worker: Mutex::new(core_worker),
         perf: FfiPerfCounters::default(),
         queue_metrics,
         recovery,
@@ -932,6 +959,7 @@ fn ffi_app_failure(message: String) -> Arc<FfiApp> {
         listening: AtomicBool::new(false),
         shared_state,
         shared_db: Arc::new(RwLock::new(None)),
+        core_worker: Mutex::new(None),
         perf: FfiPerfCounters::default(),
         queue_metrics: Arc::new(CoreQueueMetrics::default()),
         recovery: Arc::new(CoreRecoveryState::default()),
@@ -1014,6 +1042,8 @@ fn spawn_core_supervisor(
                     }
                 }
             }
+            set_shared_db(&supervisor.shared_db, None);
+            drop(core_slot);
         })
 }
 
@@ -1257,6 +1287,8 @@ fn is_foreground_core_msg(message: &CoreMsg) -> bool {
 
 #[cfg(test)]
 mod core_queue_tests;
+#[cfg(test)]
+mod ffi_lifecycle_tests;
 
 fn enrich_message_hits(
     hits: Vec<crate::core::PersistedMessageSearchHit>,
@@ -1827,43 +1859,6 @@ mod ffi_hardening_tests {
             .collect::<Vec<_>>();
 
         assert_eq!(order, vec!["persist", "state:3", "nearby"]);
-    }
-
-    #[test]
-    fn suspend_waits_for_database_work_before_releasing_ios_background_time() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let app = new_ffi_app_inner(temp_dir.path().to_string_lossy().to_string());
-        let db = app.shared_db_snapshot().unwrap();
-        let database_work = db.lock().unwrap();
-        let (finished_tx, finished_rx) = flume::bounded(1);
-        let worker_app = app.clone();
-        let worker = thread::spawn(move || {
-            worker_app.prepare_for_suspend_inner(true);
-            finished_tx.send(()).unwrap();
-        });
-        // The previous two-second FFI timeout reported completion even while
-        // the core was still waiting for its database lock.
-        let returned_while_busy = finished_rx
-            .recv_timeout(Duration::from_millis(2300))
-            .is_ok();
-        drop(database_work);
-        worker.join().unwrap();
-        app.shutdown();
-        assert!(
-            !returned_while_busy,
-            "suspend returned before database work finished"
-        );
-    }
-
-    #[test]
-    fn suspend_returns_when_startup_failed_without_a_core_worker() {
-        let app = ffi_app_failure("startup failed".into());
-        let (finished_tx, finished_rx) = flume::bounded(1);
-        thread::spawn(move || {
-            app.prepare_for_suspend_inner(true);
-            let _ = finished_tx.send(());
-        });
-        assert!(finished_rx.recv_timeout(Duration::from_secs(1)).is_ok());
     }
 
     #[test]

@@ -177,6 +177,64 @@ pub use storage::validate_account_storage;
 use storage::{open_database, AppStore, DataDirLock, SqliteStorageAdapter};
 pub(crate) use storage::{search_messages_fts, PersistedMessageSearchHit, SharedConnection};
 
+/// Copy only the data needed by a direct chat read while holding shared state.
+/// Paging does not need the active history; first paint needs only its last page.
+pub(crate) fn chat_read_state(
+    state: &AppState,
+    chat_id: &str,
+    latest_limit: Option<usize>,
+) -> AppState {
+    let chat_id = chat_id.trim();
+    AppState {
+        account: state.account.clone(),
+        chat_list: state
+            .chat_list
+            .iter()
+            .find(|chat| chat.chat_id == chat_id)
+            .cloned()
+            .into_iter()
+            .collect(),
+        current_chat: state
+            .current_chat
+            .as_ref()
+            .filter(|chat| chat.chat_id == chat_id)
+            .map(|chat| {
+                let start = latest_limit
+                    .map(|limit| chat.messages.len().saturating_sub(limit.max(1)))
+                    .unwrap_or(chat.messages.len());
+                clone_chat_with_messages(chat, chat.messages.get(start..).unwrap_or_default())
+            }),
+        ..AppState::empty()
+    }
+}
+
+fn clone_chat_with_messages(
+    chat: &CurrentChatSnapshot,
+    messages: &[ChatMessageSnapshot],
+) -> CurrentChatSnapshot {
+    CurrentChatSnapshot {
+        chat_id: chat.chat_id.clone(),
+        kind: chat.kind.clone(),
+        display_name: chat.display_name.clone(),
+        nickname: chat.nickname.clone(),
+        contact_note: chat.contact_note.clone(),
+        profile_name: chat.profile_name.clone(),
+        subtitle: chat.subtitle.clone(),
+        picture_url: chat.picture_url.clone(),
+        about: chat.about.clone(),
+        group_id: chat.group_id.clone(),
+        member_count: chat.member_count,
+        message_ttl_seconds: chat.message_ttl_seconds,
+        is_muted: chat.is_muted,
+        participants: chat.participants.clone(),
+        messages: messages.to_vec(),
+        typing_indicators: chat.typing_indicators.clone(),
+        draft: chat.draft.clone(),
+        is_request: chat.is_request,
+        direct_chat_capability: chat.direct_chat_capability.clone(),
+    }
+}
+
 pub(crate) fn chat_snapshot_from_state_and_db(
     state: &AppState,
     shared_db: Option<&SharedConnection>,
@@ -192,7 +250,11 @@ pub(crate) fn chat_snapshot_from_state_and_db(
         .as_ref()
         .filter(|chat| chat.chat_id == chat_id)
     {
-        return Some(current.clone());
+        let start = current.messages.len().saturating_sub(limit.max(1));
+        return Some(clone_chat_with_messages(
+            current,
+            current.messages.get(start..).unwrap_or_default(),
+        ));
     }
 
     build_chat_snapshot_with_messages(

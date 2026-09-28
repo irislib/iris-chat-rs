@@ -503,6 +503,7 @@ struct ProfileEditorCard: View {
     let showQrCode: () -> Void
     @State private var showingProfilePicturePicker = false
     @State private var showingProfilePictureSourceMenu = false
+    @State private var profilePictureTask: Task<Void, Never>?
     #if os(iOS)
     @State private var showingProfilePictureCamera = false
     #endif
@@ -604,7 +605,7 @@ struct ProfileEditorCard: View {
             allowsMultipleSelection: false
         ) { result in
             if case let .success(urls) = result, let url = urls.first {
-                manager.uploadProfilePicture(fileURL: url)
+                selectProfilePicture { url }
             }
         }
         .confirmationDialog(
@@ -626,7 +627,7 @@ struct ProfileEditorCard: View {
         #if os(iOS)
         .sheet(isPresented: $showingProfilePictureCamera) {
             IrisCameraImagePicker { url in
-                manager.uploadProfilePicture(fileURL: url)
+                selectProfilePicture { url }
             }
             .ignoresSafeArea()
         }
@@ -642,12 +643,16 @@ struct ProfileEditorCard: View {
             handlePickedProfilePicturePhotos(items)
         }
         #endif
+        .onDisappear {
+            profilePictureTask?.cancel()
+            profilePictureTask = nil
+        }
     }
 
     private func presentProfilePictureSource() {
         if let testPath = ProcessInfo.processInfo.environment["IRIS_UI_TEST_PROFILE_PICTURE_PATH"],
            !testPath.isEmpty {
-            manager.uploadProfilePicture(fileURL: URL(fileURLWithPath: testPath))
+            selectProfilePicture { URL(fileURLWithPath: testPath) }
             return
         }
         #if canImport(PhotosUI)
@@ -657,15 +662,20 @@ struct ProfileEditorCard: View {
         #endif
     }
 
+    private func selectProfilePicture(loadFile: @escaping () async -> URL?) {
+        profilePictureTask?.cancel()
+        profilePictureTask = Task {
+            defer { if !Task.isCancelled { profilePictureTask = nil } }
+            await manager.uploadProfilePicture(loadFile: loadFile)
+        }
+    }
+
     #if canImport(PhotosUI)
     private func handlePickedProfilePicturePhotos(_ items: [PhotosPickerItem]) {
         guard let item = items.first else { return }
         pickedProfilePicturePhotos = []
-        Task {
-            guard let url = await loadPickedPhotoItem(item, directoryName: "iris-profile-picks") else { return }
-            await MainActor.run {
-                manager.uploadProfilePicture(fileURL: url)
-            }
+        selectProfilePicture {
+            await loadPickedPhotoItem(item, directoryName: "iris-profile-picks")
         }
     }
     #endif

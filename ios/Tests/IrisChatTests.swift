@@ -772,7 +772,8 @@ final class IrisChatTests: XCTestCase {
         )
 
         XCTAssertTrue(manager.handleShareURL(URL(string: "irischat://share/\(shareID)?send=1")!))
-        XCTAssertNotNil(manager.pendingShare)
+        let loaded = await waitUntil { manager.pendingShare != nil }
+        XCTAssertTrue(loaded)
         XCTAssertFalse(rust.dispatchedActions.contains(.sendMessage(chatId: "owner", text: "hello from share")))
 
         rust.emit(.fullState(makeLargeFixtureState(rev: 2, account: makeAccount())))
@@ -783,7 +784,8 @@ final class IrisChatTests: XCTestCase {
         XCTAssertTrue(sentAfterRestore)
         XCTAssertTrue(rust.dispatchedActions.contains(.openChat(chatId: "owner")))
         XCTAssertNil(manager.pendingShare)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: payloadURL.path))
+        let removed = await waitUntil { !FileManager.default.fileExists(atPath: payloadURL.path) }
+        XCTAssertTrue(removed)
     }
 
     @MainActor
@@ -817,7 +819,8 @@ final class IrisChatTests: XCTestCase {
         XCTAssertTrue(sentOnLaunch)
         XCTAssertTrue(rust.dispatchedActions.contains(.openChat(chatId: "owner")))
         XCTAssertNil(manager.pendingShare)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: payloadURL.path))
+        let removed = await waitUntil { !FileManager.default.fileExists(atPath: payloadURL.path) }
+        XCTAssertTrue(removed)
     }
 
     @MainActor
@@ -847,7 +850,7 @@ final class IrisChatTests: XCTestCase {
             ]
         )
         let rust = MockRustApp(state: makeLargeFixtureState(rev: 1, account: makeAccount()))
-        _ = AppManager(
+        let manager = AppManager(
             rust: rust,
             secretStore: InMemorySecretStore(),
             dataDir: dataDir,
@@ -868,8 +871,12 @@ final class IrisChatTests: XCTestCase {
             }
         }
         XCTAssertTrue(sentOnLaunch)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: payloadURL.path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: filesDir.path))
+        let removed = await waitUntil {
+            !FileManager.default.fileExists(atPath: payloadURL.path)
+                && !FileManager.default.fileExists(atPath: filesDir.path)
+        }
+        XCTAssertTrue(removed)
+        XCTAssertNil(manager.pendingShare)
     }
 
     @MainActor
@@ -1442,6 +1449,7 @@ final class IrisChatTests: XCTestCase {
         let manager = AppManager(
             rust: rust,
             secretStore: store,
+            pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
             dataDir: tempDir,
             environment: [:]
         )
@@ -1449,6 +1457,8 @@ final class IrisChatTests: XCTestCase {
         await Task.yield()
         manager.logout()
 
+        let resetCompleted = await waitUntil { !manager.bootstrapInFlight && manager.state.rev == 2 }
+        XCTAssertTrue(resetCompleted)
         XCTAssertTrue(rust.dispatchedActions.contains(.logout))
         XCTAssertEqual(rust.shutdownCallCount, 1)
         XCTAssertNil(store.load())
@@ -1477,6 +1487,7 @@ final class IrisChatTests: XCTestCase {
         let manager = AppManager(
             rust: firstRust,
             secretStore: store,
+            pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
             dataDir: tempDir,
             environment: [:],
             rustFactory: { freshRust }
@@ -1488,7 +1499,8 @@ final class IrisChatTests: XCTestCase {
             router: Router(defaultScreen: .deviceRevoked, screenStack: []),
             account: makeAccount(hasOwnerSigningAuthority: false, authorizationState: .revoked)
         )))
-        await Task.yield()
+        let resetCompleted = await waitUntil { !manager.bootstrapInFlight && manager.state.rev == 0 }
+        XCTAssertTrue(resetCompleted)
 
         XCTAssertTrue(firstRust.dispatchedActions.contains(.logout))
         XCTAssertEqual(firstRust.shutdownCallCount, 1)
@@ -1521,6 +1533,7 @@ final class IrisChatTests: XCTestCase {
         let manager = AppManager(
             rust: firstRust,
             secretStore: store,
+            pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
             dataDir: tempDir,
             environment: [:],
             rustFactory: { freshRust }
@@ -1528,6 +1541,8 @@ final class IrisChatTests: XCTestCase {
 
         await Task.yield()
         manager.logout()
+        let resetCompleted = await waitUntil { !manager.bootstrapInFlight && manager.state.rev == 0 }
+        XCTAssertTrue(resetCompleted)
         manager.restoreSession(ownerNsec: "nsec1restored")
 
         XCTAssertTrue(firstRust.dispatchedActions.contains(.logout))
@@ -1554,6 +1569,7 @@ final class IrisChatTests: XCTestCase {
         let manager = AppManager(
             rust: firstRust,
             secretStore: store,
+            pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
             dataDir: tempDir,
             environment: [:],
             rustFactory: { freshRust }
@@ -1562,6 +1578,8 @@ final class IrisChatTests: XCTestCase {
         await Task.yield()
         manager.logout()
 
+        let resetCompleted = await waitUntil { !manager.bootstrapInFlight && manager.state.rev == 0 }
+        XCTAssertTrue(resetCompleted)
         firstRust.emit(.fullState(makeAppState(rev: 99)))
         await Task.yield()
 
@@ -1601,6 +1619,7 @@ final class IrisChatTests: XCTestCase {
         let manager = AppManager(
             rust: rust,
             secretStore: store,
+            pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
             dataDir: tempDir,
             environment: [:]
         )
@@ -1644,6 +1663,7 @@ final class IrisChatTests: XCTestCase {
         let manager = AppManager(
             rust: rust,
             secretStore: store,
+            pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
             dataDir: tempDir,
             environment: [:]
         )
@@ -1651,6 +1671,8 @@ final class IrisChatTests: XCTestCase {
         await Task.yield()
         manager.deleteProfileAndLocalData()
         await fulfillment(of: [logoutExpectation], timeout: 2)
+        let resetCompleted = await waitUntil { !manager.bootstrapInFlight && manager.state.rev == 3 }
+        XCTAssertTrue(resetCompleted)
 
         let deletionFlowActions = rust.dispatchedActions.filter { action in
             switch action {

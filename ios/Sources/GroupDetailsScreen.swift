@@ -26,6 +26,7 @@ struct GroupDetailsScreen: View {
     @State private var showingGroupPicturePicker = false
     @State private var showingGroupPictureSourceMenu = false
     @State private var groupPictureViewerItem: IrisProfilePictureViewerItem?
+    @State private var groupPictureTask: Task<Void, Never>?
     #if os(iOS)
     @State private var showingGroupPictureCamera = false
     #endif
@@ -368,7 +369,7 @@ struct GroupDetailsScreen: View {
             allowsMultipleSelection: false
         ) { result in
             if case let .success(urls) = result, let url = urls.first {
-                manager.updateGroupPicture(groupId: groupId, fileURL: url)
+                selectGroupPicture { url }
             }
         }
         .confirmationDialog(
@@ -390,7 +391,7 @@ struct GroupDetailsScreen: View {
         #if os(iOS)
         .sheet(isPresented: $showingGroupPictureCamera) {
             IrisCameraImagePicker { url in
-                manager.updateGroupPicture(groupId: groupId, fileURL: url)
+                selectGroupPicture { url }
             }
             .ignoresSafeArea()
         }
@@ -406,6 +407,10 @@ struct GroupDetailsScreen: View {
             handlePickedGroupPicturePhotos(items)
         }
         #endif
+        .onDisappear {
+            groupPictureTask?.cancel()
+            groupPictureTask = nil
+        }
     }
 
     private func presentGroupPictureSource() {
@@ -416,15 +421,20 @@ struct GroupDetailsScreen: View {
         #endif
     }
 
+    private func selectGroupPicture(loadFile: @escaping () async -> URL?) {
+        groupPictureTask?.cancel()
+        groupPictureTask = Task {
+            defer { if !Task.isCancelled { groupPictureTask = nil } }
+            await manager.updateGroupPicture(groupId: groupId, loadFile: loadFile)
+        }
+    }
+
     #if canImport(PhotosUI)
     private func handlePickedGroupPicturePhotos(_ items: [PhotosPickerItem]) {
         guard let item = items.first else { return }
         pickedGroupPicturePhotos = []
-        Task {
-            guard let url = await loadPickedPhotoItem(item, directoryName: "iris-group-picks") else { return }
-            await MainActor.run {
-                manager.updateGroupPicture(groupId: groupId, fileURL: url)
-            }
+        selectGroupPicture {
+            await loadPickedPhotoItem(item, directoryName: "iris-group-picks")
         }
     }
     #endif

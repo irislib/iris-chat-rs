@@ -6,9 +6,11 @@ import XCTest
 
 private final class StagingProbeFileManager: FileManager, @unchecked Sendable {
     var onCopy: (() -> Void)?
+    var onCopySource: ((URL) -> Void)?
 
     override func copyItem(at srcURL: URL, to dstURL: URL) throws {
         onCopy?()
+        onCopySource?(srcURL)
         try super.copyItem(at: srcURL, to: dstURL)
     }
 }
@@ -47,6 +49,7 @@ final class AttachmentStagingTests: XCTestCase {
         let manager = AppManager(
             rust: rust,
             secretStore: InMemorySecretStore(),
+            pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
             dataDir: dataDir,
             fileManager: files,
             environment: [:]
@@ -101,6 +104,7 @@ final class AttachmentStagingTests: XCTestCase {
         let manager = AppManager(
             rust: MockRustApp(state: makeAppState(rev: 1)),
             secretStore: InMemorySecretStore(),
+            pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
             dataDir: directory,
             fileManager: files,
             environment: [:]
@@ -129,7 +133,7 @@ final class AttachmentStagingTests: XCTestCase {
     }
 
     @MainActor
-    func testBundledIrisLogoIsStagedAndDispatchedAsAnAttachment() throws {
+    func testBundledIrisLogoIsStagedAndDispatchedAsAnAttachment() async throws {
         let dataDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let sourceDir = FileManager.default.temporaryDirectory
@@ -147,10 +151,12 @@ final class AttachmentStagingTests: XCTestCase {
         let manager = AppManager(
             rust: rust,
             secretStore: InMemorySecretStore(),
+            pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
             dataDir: dataDir,
             environment: [:]
         )
-        let staged = try XCTUnwrap(manager.stageOutgoingAttachments([sourceURL]).first)
+        let attachments = try await manager.stageOutgoingAttachmentsAsync([sourceURL])
+        let staged = try XCTUnwrap(attachments.first)
 
         XCTAssertTrue(staged.path.contains("/attachments/outgoing/"))
         XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: staged.path)), logo)
@@ -170,6 +176,146 @@ final class AttachmentStagingTests: XCTestCase {
             }
             return false
         })
+    }
+
+    @MainActor
+    func testProfilePictureStagesOffMainBeforeDispatching() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let source = directory.appendingPathComponent("profile.png")
+        let bytes = Data("profile picture".utf8)
+        try bytes.write(to: source)
+        let rust = MockRustApp(state: makeAppState(rev: 1))
+        let files = StagingProbeFileManager()
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(),
+                                 pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(), dataDir: directory,
+                                 fileManager: files, environment: [:])
+        let started = expectation(description: "profile copy started")
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        files.onCopy = {
+            XCTAssertFalse(Thread.isMainThread)
+            started.fulfill()
+            XCTAssertEqual(gate.wait(timeout: .now() + 3), .success)
+        }
+        let upload = Task { await manager.uploadProfilePicture { source } }
+        await fulfillment(of: [started], timeout: 2)
+        XCTAssertFalse(rust.dispatchedActions.contains {
+            if case .uploadProfilePicture = $0 { return true }
+            return false
+        })
+        gate.signal()
+        await upload.value
+        let paths = rust.dispatchedActions.compactMap { action -> String? in
+            if case let .uploadProfilePicture(path) = action { return path }
+            return nil
+        }
+        XCTAssertEqual(paths.count, 1)
+        let path = try XCTUnwrap(paths.first)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), bytes)
+    }
+
+    @MainActor
+    func testCancelledOlderGroupPictureCannotReplaceNewerSelection() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let oldSource = directory.appendingPathComponent("old.png")
+        let newSource = directory.appendingPathComponent("new.png")
+        try Data("old picture".utf8).write(to: oldSource)
+        let newBytes = Data("new picture".utf8)
+        try newBytes.write(to: newSource)
+        let rust = MockRustApp(state: makeAppState(rev: 1))
+        let files = StagingProbeFileManager()
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(),
+                                 pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(), dataDir: directory,
+                                 fileManager: files, environment: [:])
+        let started = expectation(description: "old picture copy started")
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        files.onCopySource = { source in
+            XCTAssertFalse(Thread.isMainThread)
+            if source == oldSource {
+                started.fulfill()
+                XCTAssertEqual(gate.wait(timeout: .now() + 3), .success)
+            }
+        }
+        let oldSelection = Task { await manager.updateGroupPicture(groupId: "group-test") { oldSource } }
+        await fulfillment(of: [started], timeout: 2)
+        oldSelection.cancel()
+        await manager.updateGroupPicture(groupId: "group-test") { newSource }
+        gate.signal()
+        await oldSelection.value
+
+        let paths = rust.dispatchedActions.compactMap { action -> String? in
+            if case let .updateGroupPicture(groupId, path, filename) = action {
+                XCTAssertEqual(groupId, "group-test")
+                XCTAssertEqual(filename, "new.png")
+                return path
+            }
+            return nil
+        }
+        XCTAssertEqual(paths.count, 1)
+        let path = try XCTUnwrap(paths.first)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), newBytes)
+        let outgoing = directory.appendingPathComponent("attachments/outgoing")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: outgoing.path).count, 1)
+    }
+
+    @MainActor
+    func testLogoutDuringPhotoExportPreventsCopyAndUploadIntoNextSession() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let rust = MockRustApp(state: makeAppState(rev: 1))
+        let freshRust = MockRustApp(state: makeAppState(rev: 0))
+        let files = StagingProbeFileManager()
+        files.onCopy = { XCTFail("An old session's photo must not be staged") }
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(),
+                                 pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(), dataDir: directory,
+                                 fileManager: files, environment: [:], rustFactory: { freshRust })
+        let marker = directory.appendingPathComponent("old-core-data")
+        try Data("must survive until shutdown completes".utf8).write(to: marker)
+        let shutdownStarted = expectation(description: "old core shutting down off the UI thread")
+        let shutdownGate = DispatchSemaphore(value: 0)
+        defer { shutdownGate.signal() }
+        rust.onShutdown = {
+            XCTAssertFalse(Thread.isMainThread)
+            shutdownStarted.fulfill()
+            XCTAssertEqual(shutdownGate.wait(timeout: .now() + 3), .success)
+        }
+        let started = expectation(description: "photo export started")
+        var completion: CheckedContinuation<URL?, Never>?
+        let upload = Task {
+            await manager.uploadProfilePicture {
+                await withCheckedContinuation { continuation in
+                    completion = continuation
+                    started.fulfill()
+                }
+            }
+        }
+        await fulfillment(of: [started], timeout: 2)
+        manager.logout()
+        await fulfillment(of: [shutdownStarted], timeout: 2)
+        // The UI actor can resume while shutdown is blocked, but the old
+        // core's files cannot be removed and its pending export is invalid.
+        XCTAssertTrue(manager.bootstrapInFlight)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
+        completion?.resume(returning: directory.appendingPathComponent("old-session.png"))
+        await upload.value
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
+        shutdownGate.signal()
+        let resetCompleted = await waitUntil { !manager.bootstrapInFlight && manager.state.rev == 0 }
+        XCTAssertTrue(resetCompleted)
+        XCTAssertEqual(rust.shutdownCallCount, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+        for client in [rust, freshRust] {
+            XCTAssertFalse(client.dispatchedActions.contains {
+                if case .uploadProfilePicture = $0 { return true }
+                return false
+            })
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("attachments/outgoing").path))
     }
 }
 #endif
