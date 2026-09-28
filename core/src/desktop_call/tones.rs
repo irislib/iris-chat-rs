@@ -111,7 +111,10 @@ fn sample(tone: u8, position: usize) -> f32 {
     };
     // Canonical mono 16-bit PCM files from scripts/generate-call-tones.py.
     let index = 44 + (position % ((wav.len() - 44) / 2)) * 2;
-    f32::from(i16::from_le_bytes([wav[index], wav[index + 1]])) / 32768.0
+    let Some(&[low, high]) = wav.get(index..index + 2) else {
+        return 0.0;
+    };
+    f32::from(i16::from_le_bytes([low, high])) / 32768.0
 }
 
 #[cfg(test)]

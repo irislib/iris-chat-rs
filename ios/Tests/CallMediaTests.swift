@@ -89,9 +89,11 @@ final class CallMediaTests: XCTestCase {
         var sent: UInt32 = 0
         var audible = 0
         for batch in 0..<20 {
-            let frames = (0..<5).map { frame in
-                (0..<960).map { sample in
-                    Int16(sin(Double((batch * 5 + frame) * 960 + sample) * 440 * 2 * .pi / 48_000) * 12_000)
+            let frames: [[Int16]] = (0..<5).map { frame -> [Int16] in
+                let firstSample = (batch * 5 + frame) * 960
+                return (0..<960).map { sample -> Int16 in
+                    let phase = Double(firstSample + sample) * 440.0 * 2.0 * Double.pi / 48_000.0
+                    return Int16(sin(phase) * 12_000.0)
                 }
             }
             queue.suspend()
