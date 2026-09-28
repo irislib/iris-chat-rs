@@ -113,7 +113,7 @@ pub(super) async fn start_same_host_attachment_reuse(
     endpoint: Arc<FipsEndpoint>,
     peers: Vec<fips_core::PeerIdentity>,
 ) -> anyhow::Result<Arc<AttachmentBlobRuntime>> {
-    let standalone: Arc<dyn BlobRoute> = Arc::new(StoreBlobRoute::new(blossom_read_store()));
+    let standalone: Arc<dyn BlobRoute> = Arc::new(StoreBlobRoute::new(blossom_read_store()?));
     bind_same_host_attachment_store(endpoint, standalone, peers).await
 }
 
@@ -407,7 +407,7 @@ pub(super) async fn upload_file_to_hashtree(
         read_servers,
         write_servers,
         progress,
-    ));
+    )?);
     let tree = HashTree::new(HashTreeConfig::new(store));
     let file = tokio::fs::File::open(path).await?;
     let (cid, _size) = tree
@@ -486,7 +486,7 @@ async fn download_hashtree_attachment_base64_with_limit(
     let bytes = if let Some(store) = active_attachment_blob_store() {
         read_hashtree_attachment(&cid, store, max_bytes).await?
     } else {
-        read_hashtree_attachment(&cid, blossom_read_store(), max_bytes).await?
+        read_hashtree_attachment(&cid, blossom_read_store()?, max_bytes).await?
     };
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
@@ -505,14 +505,14 @@ async fn read_hashtree_attachment<S: Store + 'static>(
     Ok(bytes)
 }
 
-fn blossom_read_store() -> Arc<UploadingBlossomStore> {
+fn blossom_read_store() -> anyhow::Result<Arc<UploadingBlossomStore>> {
     let (read_servers, write_servers) = blossom_servers_from_config();
-    Arc::new(UploadingBlossomStore::new(
+    Ok(Arc::new(UploadingBlossomStore::new(
         nostr::Keys::generate(),
         merge_read_servers(read_servers, &write_servers),
         Vec::new(),
         None,
-    ))
+    )?))
 }
 
 fn blossom_servers_from_config() -> (Vec<String>, Vec<String>) {
@@ -606,19 +606,18 @@ impl UploadingBlossomStore {
         read_servers: Vec<String>,
         write_servers: Vec<String>,
         progress: Option<Arc<AtomicU64>>,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let client = BlossomClient::new_empty(keys)
             .with_read_servers(read_servers)
             .with_write_servers(write_servers);
-        Self {
+        Ok(Self {
             client,
             download_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
-                .build()
-                .expect("attachment HTTP client"),
+                .build()?,
             uploaded: AsyncRwLock::new(HashSet::new()),
             progress,
-        }
+        })
     }
 }
 

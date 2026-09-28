@@ -58,7 +58,8 @@ async fn rejected_blossom_upload_is_not_reported_as_stored() {
     let hash_hex = to_hex(&hash);
     shared_chunk_cache_write().remove(&hash_hex);
     let (server_url, server) = serve_one_blossom_upload("403 Forbidden");
-    let store = UploadingBlossomStore::new(nostr::Keys::generate(), vec![], vec![server_url], None);
+    let store = UploadingBlossomStore::new(nostr::Keys::generate(), vec![], vec![server_url], None)
+        .unwrap();
 
     let result = store.put(hash, IRIS_LOGO_PNG.to_vec()).await;
 
@@ -74,7 +75,8 @@ async fn retryable_blossom_failure_is_not_hidden_behind_long_retries() {
     logo_with_marker.extend_from_slice(b"-retry-test");
     let hash = hashtree_core::sha256(&logo_with_marker);
     let (server_url, server) = serve_one_blossom_upload("503 Service Unavailable");
-    let store = UploadingBlossomStore::new(nostr::Keys::generate(), vec![], vec![server_url], None);
+    let store = UploadingBlossomStore::new(nostr::Keys::generate(), vec![], vec![server_url], None)
+        .unwrap();
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -102,7 +104,8 @@ async fn confirmed_blossom_upload_is_cached_with_matching_bytes() {
         vec![],
         vec![server_url],
         Some(progress.clone()),
-    );
+    )
+    .unwrap();
 
     let result = store.put(hash, IRIS_LOGO_SVG.to_vec()).await;
 
@@ -216,6 +219,20 @@ async fn attachment_limit_cannot_be_raised_by_a_preview_caller() {
     assert_eq!(store.reads.load(Ordering::Relaxed), 1);
 }
 
+fn read_download_request_headers(stream: &mut impl Read) {
+    let mut request = Vec::new();
+    let mut buffer = [0u8; 4096];
+    while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+        let count = stream.read(&mut buffer).unwrap();
+        assert!(count > 0, "connection closed before request headers");
+        request.extend_from_slice(&buffer[..count]);
+        assert!(
+            request.len() <= 16 * 1024,
+            "test request headers are too large"
+        );
+    }
+}
+
 #[tokio::test]
 async fn attachment_limit_bounds_http_with_and_without_content_length() {
     for headers in ["Content-Length: 1024\r\n", ""] {
@@ -226,8 +243,7 @@ async fn attachment_limit_bounds_http_with_and_without_content_length() {
             stream
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
-            let mut request = [0u8; 4096];
-            let _ = stream.read(&mut request).unwrap();
+            read_download_request_headers(&mut stream);
             let _ = stream.write_all(
                 format!("HTTP/1.1 200 OK\r\n{headers}Connection: close\r\n\r\n").as_bytes(),
             );
@@ -257,8 +273,7 @@ async fn attachment_download_accepts_exact_limit_and_checks_hash() {
             stream
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
-            let mut request = [0u8; 4096];
-            stream.read(&mut request).unwrap();
+            read_download_request_headers(&mut stream);
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nclip")
                 .unwrap();
