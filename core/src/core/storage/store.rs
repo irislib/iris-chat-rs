@@ -373,7 +373,6 @@ impl AppStore {
         load_messages_before(&conn, chat_id, before_message_id, limit)
     }
 
-    #[cfg(test)]
     pub(crate) fn load_messages_around(
         &self,
         chat_id: &str,

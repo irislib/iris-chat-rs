@@ -154,6 +154,12 @@ The `iris` command is useful for humans, agents, scripts, and local devices
 that need to send, search, or listen for messages and trigger normal iris chat
 notifications.
 
+CLI reads (`read`, `chat open`, `chat read`, `group read`, `tail`, and `search`)
+and listeners do not mark messages seen. Agents should call
+`iris seen <chat> <message-id>...` when they start processing those messages.
+Delivery receipts remain automatic for accepted conversations when receipts
+are enabled. Interactive apps retain their normal read behavior.
+
 Messages can travel over Nostr relays, and nearby transports can keep local
 device messages off a remote server when the devices are close enough.
 

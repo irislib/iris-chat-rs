@@ -387,3 +387,21 @@ fn chat_read_sync_merges_device_alias_progress_without_reviving_old_chat() {
     assert!(!pair.b.threads.contains_key(&alias_id));
     assert_eq!(pair.b.chat_read_states[&owner_id], expected);
 }
+
+#[test]
+fn chat_read_explicit_seen_hydrates_only_requested_stored_messages_without_opening_chat() {
+    let mut pair = chat_read_sync_pair("passive-seen-stored");
+    let peer = Keys::generate();
+    let chat_id = peer.public_key().to_hex();
+    chat_read_sync_incoming(&mut pair.a, &peer, "requested", 200);
+    chat_read_sync_incoming(&mut pair.a, &peer, "still-unread", 201);
+    pair.a.persist_best_effort();
+    // An inactive conversation restores only its latest message into memory.
+    pair.a.threads.get_mut(&chat_id).unwrap().messages.remove(0);
+    assert!(!pair.a.is_chat_visible(&chat_id));
+    pair.a
+        .mark_messages_seen(&chat_id, &["requested".to_string()]);
+    assert_chat_read_delivery(&pair.a, &chat_id, "requested", true);
+    assert_chat_read_delivery(&pair.a, &chat_id, "still-unread", false);
+    assert!(!pair.a.is_chat_visible(&chat_id));
+}

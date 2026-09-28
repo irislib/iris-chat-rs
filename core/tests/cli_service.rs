@@ -227,3 +227,140 @@ fn service_receives_and_replies_without_stopping_listener() {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
+
+fn wait_delivery(path: &Path, peer: &str, id: &str, expected: &str) {
+    let end = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let read = run(path, &["read", peer]);
+        let message = read["data"]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["id"] == id)
+            .cloned();
+        if message.as_ref().is_some_and(|m| m["delivery"] == expected) {
+            return;
+        }
+        assert!(
+            expected == "seen" || !message.as_ref().is_some_and(|m| m["delivery"] == "seen"),
+            "passive CLI activity sent seen: {message:?}"
+        );
+        assert!(
+            std::time::Instant::now() < end,
+            "expected {expected}: {message:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn passive_cli_reads_and_listeners_only_deliver_until_exact_seen() {
+    use iris_chat_core::local_relay::TestRelay;
+    let relay = TestRelay::start();
+    let alice = TempDir::new().unwrap();
+    let bob = TempDir::new().unwrap();
+    let mut accounts = Vec::new();
+    for (dir, name) in [(&alice, "Alice"), (&bob, "Bob")] {
+        run(dir.path(), &["relay", "set", relay.url()]);
+        accounts.push(run(dir.path(), &["account", "create", "--name", name]));
+        run(dir.path(), &["relay", "set", relay.url()]);
+        // Receipts are opt-in. Configure only these temporary test profiles
+        // before starting their owners (the CLI has no preference command).
+        let db = rusqlite::Connection::open(dir.path().join("core.sqlite3")).unwrap();
+        assert_eq!(
+            db.execute("UPDATE preferences SET send_read_receipts = 1", [])
+                .unwrap(),
+            1
+        );
+    }
+    let aid = accounts[0]["data"]["user_id"].as_str().unwrap();
+    let bid = accounts[1]["data"]["user_id"].as_str().unwrap();
+    let _aservice = start(alice.path());
+    let mut bservice = start(bob.path());
+    // Replying accepts the peer, so receipt privacy for message requests cannot
+    // accidentally make the test pass. Sending also leaves a current chat.
+    run(bob.path(), &["send", aid, "accepted conversation"]);
+    let mut listener = Service(
+        cmd(
+            bob.path(),
+            &["listen", "--chat", aid, "--interval-ms", "100"],
+        )
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap(),
+    );
+    let rx = lines(&mut listener.0);
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(10)).unwrap()["data"]["ready"],
+        true
+    );
+    let mut ids = Vec::new();
+    for body in ["first pending message", "second pending message"] {
+        let sent = run(alice.path(), &["send", bid, body]);
+        ids.push(sent["data"]["id"].as_str().unwrap().to_string());
+        let incoming = rx.recv_timeout(Duration::from_secs(30)).unwrap();
+        assert_eq!(incoming["data"]["body"], body);
+        wait_delivery(alice.path(), bid, ids.last().unwrap(), "received");
+    }
+    for args in [
+        vec!["chat", "list"],
+        vec!["tail", "--chat", aid],
+        vec!["search", "pending"],
+        vec!["read", aid],
+        vec!["chat", "read", aid],
+        vec!["chat", "open", aid],
+    ] {
+        run(bob.path(), &args);
+    }
+    std::thread::sleep(Duration::from_secs(2));
+    for id in &ids {
+        wait_delivery(alice.path(), bid, id, "received");
+    }
+    run(bob.path(), &["seen", aid, &ids[0]]);
+    wait_delivery(alice.path(), bid, &ids[0], "seen");
+    wait_delivery(alice.path(), bid, &ids[1], "received");
+    let third = run(alice.path(), &["send", bid, "arrives after explicit seen"]);
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(30)).unwrap()["data"]["body"],
+        "arrives after explicit seen"
+    );
+    wait_delivery(
+        alice.path(),
+        bid,
+        third["data"]["id"].as_str().unwrap(),
+        "received",
+    );
+    assert!(listener.0.try_wait().unwrap().is_none());
+    drop(listener);
+    run(bob.path(), &["service", "stop"]);
+    assert!(bservice.0.wait().unwrap().success());
+    // Standalone reads and a filtered listener must also stay passive after
+    // restoring a profile whose last action selected this conversation.
+    run(bob.path(), &["read", aid]);
+    let mut standalone = Service(
+        cmd(
+            bob.path(),
+            &["listen", "--chat", aid, "--interval-ms", "100"],
+        )
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap(),
+    );
+    let standalone_rx = lines(&mut standalone.0);
+    assert_eq!(
+        standalone_rx.recv_timeout(Duration::from_secs(65)).unwrap()["data"]["ready"],
+        true
+    );
+    let fourth = run(alice.path(), &["send", bid, "standalone listener arrival"]);
+    assert_eq!(
+        standalone_rx.recv_timeout(Duration::from_secs(30)).unwrap()["data"]["body"],
+        "standalone listener arrival"
+    );
+    wait_delivery(
+        alice.path(),
+        bid,
+        fourth["data"]["id"].as_str().unwrap(),
+        "received",
+    );
+    wait_delivery(alice.path(), bid, &ids[1], "received");
+}

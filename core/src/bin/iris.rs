@@ -801,7 +801,7 @@ fn handle_message_top_command(cli: &CliApp, command: MessageTopCommands) -> Resu
             send_message(cli, &chat, &message, expires_at)
         }
         MessageTopCommands::Read { chat, limit } => {
-            open_chat(cli, &chat).map(|chat| chat_json(&chat, limit))
+            read_chat(cli, &chat).map(|chat| chat_json(&chat, limit))
         }
         MessageTopCommands::Seen { chat, message_ids } => mark_seen(cli, &chat, message_ids),
         MessageTopCommands::React {
@@ -828,10 +828,10 @@ fn handle_chat_command(cli: &CliApp, command: ChatCommands) -> Result<Value> {
         ChatCommands::List => Ok(json!({ "chats": chat_list_json(&cli.app.state()) })),
         ChatCommands::Create { user_id } => create_chat(cli, &user_id),
         ChatCommands::Open { chat } => {
-            open_chat(cli, &chat).map(|chat| chat_json(&chat, usize::MAX))
+            read_chat(cli, &chat).map(|chat| chat_json(&chat, usize::MAX))
         }
         ChatCommands::Read { chat, limit } => {
-            open_chat(cli, &chat).map(|chat| chat_json(&chat, limit))
+            read_chat(cli, &chat).map(|chat| chat_json(&chat, limit))
         }
         ChatCommands::Send {
             chat,
@@ -970,7 +970,7 @@ fn handle_group_command(cli: &CliApp, command: GroupCommands) -> Result<Value> {
             send_message(cli, &normalize_group_chat(&group), &message, None)
         }
         GroupCommands::Read { group, limit } => {
-            open_chat(cli, &normalize_group_chat(&group)).map(|chat| chat_json(&chat, limit))
+            read_chat(cli, &normalize_group_chat(&group)).map(|chat| chat_json(&chat, limit))
         }
         GroupCommands::Add { group, members } => {
             let group_id = resolve_group_id(&cli.app.state(), &group)?;
@@ -1157,15 +1157,14 @@ fn create_chat(cli: &CliApp, user_id: &str) -> Result<Value> {
     Ok(chat_json(&chat, usize::MAX))
 }
 
-fn open_chat(cli: &CliApp, chat: &str) -> Result<CurrentChatSnapshot> {
+// CLI reads are snapshots, not interactive navigation. OpenChat clears unread
+// state and emits seen receipts, including for messages outside an explicit
+// `seen` request.
+fn read_chat(cli: &CliApp, chat: &str) -> Result<CurrentChatSnapshot> {
     let chat_id = chat_action_input(&cli.app.state(), chat);
-    cli.dispatch_and_wait(
-        AppAction::OpenChat {
-            chat_id: chat_id.clone(),
-        },
-        Duration::from_secs(2),
-    )?;
-    cli.wait_for_current_chat(&chat_id, Duration::from_secs(2))
+    cli.app
+        .chat_snapshot(chat_id, 80)
+        .context("Chat not found.")
 }
 
 fn send_message(
@@ -1240,7 +1239,7 @@ fn react(cli: &CliApp, chat: &str, message_id: &str, emoji: &str) -> Result<Valu
         },
         Duration::from_secs(2),
     )?;
-    let current = open_chat(cli, &chat_id)?;
+    let current = read_chat(cli, &chat_id)?;
     let message = current
         .messages
         .iter()
@@ -1298,7 +1297,7 @@ fn receipt(
 }
 
 fn mark_seen(cli: &CliApp, chat: &str, message_ids: Vec<String>) -> Result<Value> {
-    let current = open_chat(cli, chat)?;
+    let current = read_chat(cli, chat)?;
     let ids = if message_ids.is_empty() {
         current
             .messages
@@ -1451,15 +1450,6 @@ fn listen(data_dir: &Path, chat: Option<&str>, interval_ms: u64, nearby_lan: boo
     fail_on_toast(&state)?;
     let owner = require_account(&state)?.public_key_hex;
     let chat_filter = normalize_chat_filter(&state, chat);
-    if let Some(chat_id) = chat_filter.as_ref() {
-        cli.dispatch_and_wait(
-            AppAction::OpenChat {
-                chat_id: chat_id.clone(),
-            },
-            Duration::from_secs(2),
-        )?;
-        fail_on_toast(&cli.app.state())?;
-    }
     let mut seen = latest_message_keys(data_dir, chat_filter.as_deref(), &owner)?;
     let _nearby = if nearby_lan {
         let service = FfiDesktopNearby::new(cli.app.clone(), Box::new(CliNearbyObserver));
