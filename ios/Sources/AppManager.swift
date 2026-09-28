@@ -2312,6 +2312,7 @@ final class AppManager: ObservableObject {
             return
         }
         backgroundSuspendPrepared = true
+        let backgroundTask = IrisSuspendBackgroundTask()
 
         setNearbyBluetoothTransportVisible(false)
         if nearbyIris.isLanVisible {
@@ -2319,7 +2320,6 @@ final class AppManager: ObservableObject {
         }
 
         let runner = SuspendPreparationRunner(rust: rust)
-        let taskID = UIApplication.shared.beginBackgroundTask(withName: "IrisSuspend") {}
         DispatchQueue.global(qos: .utility).async { [weak self] in
             runner.prepareForSuspend()
             DispatchQueue.main.async { [weak self] in
@@ -2329,9 +2329,7 @@ final class AppManager: ObservableObject {
                 if let self, !self.appIsBackgrounded || (self.calls.call != nil && self.calls.call?.phase != "ended") {
                     self.dispatchToRust(.appForegrounded)
                 }
-                if taskID != .invalid {
-                    UIApplication.shared.endBackgroundTask(taskID)
-                }
+                backgroundTask.finish()
             }
         }
 #endif

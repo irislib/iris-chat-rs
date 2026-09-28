@@ -31,8 +31,8 @@ use std::{panic, panic::AssertUnwindSafe};
 use flume::{Receiver, Sender};
 
 pub use actions::AppAction;
-pub use core::{download_hashtree_attachment, download_hashtree_attachment_with_limit};
 pub use core::validate_account_storage;
+pub use core::{download_hashtree_attachment, download_hashtree_attachment_with_limit};
 #[cfg(feature = "stack-fixture")]
 #[doc(hidden)]
 pub mod stack_mesh_fixture;
@@ -652,20 +652,7 @@ impl FfiApp {
     }
 
     pub fn prepare_for_suspend(&self) {
-        self.perf
-            .prepare_for_suspend
-            .fetch_add(1, Ordering::Relaxed);
-        ffi_or("ffiapp.prepare_for_suspend", (), || {
-            let (reply_tx, reply_rx) = flume::bounded(1);
-            if self
-                .foreground_tx
-                .send(CoreMsg::PrepareForSuspend(reply_tx))
-                .is_err()
-            {
-                return;
-            }
-            let _ = reply_rx.recv_timeout(Duration::from_secs(2));
-        })
+        self.prepare_for_suspend_inner(cfg!(target_os = "ios"));
     }
 
     pub fn shutdown(&self) {
@@ -829,6 +816,35 @@ impl FfiApp {
 }
 
 impl FfiApp {
+    fn prepare_for_suspend_inner(&self, wait_for_completion: bool) {
+        self.perf
+            .prepare_for_suspend
+            .fetch_add(1, Ordering::Relaxed);
+        ffi_or("ffiapp.prepare_for_suspend", (), || {
+            // A failed startup has no worker to acknowledge this request.
+            if self.shared_db_snapshot().is_none() {
+                return;
+            }
+            let (reply_tx, reply_rx) = flume::bounded(1);
+            if self
+                .foreground_tx
+                .send(CoreMsg::PrepareForSuspend(reply_tx))
+                .is_err()
+            {
+                return;
+            }
+            if wait_for_completion {
+                // iOS calls this off the main thread under a background task.
+                // A timeout is not an acknowledgement: releasing that task
+                // while SQLite still holds a lock causes RUNNINGBOARD 0xdead10cc.
+                let _ = reply_rx.recv();
+            } else {
+                // Other shells currently call this synchronously on their UI thread.
+                let _ = reply_rx.recv_timeout(Duration::from_secs(2));
+            }
+        })
+    }
+
     fn shared_db_snapshot(&self) -> Option<crate::core::SharedConnection> {
         match self.shared_db.read() {
             Ok(slot) => slot.clone(),
@@ -1811,6 +1827,43 @@ mod ffi_hardening_tests {
             .collect::<Vec<_>>();
 
         assert_eq!(order, vec!["persist", "state:3", "nearby"]);
+    }
+
+    #[test]
+    fn suspend_waits_for_database_work_before_releasing_ios_background_time() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let app = new_ffi_app_inner(temp_dir.path().to_string_lossy().to_string());
+        let db = app.shared_db_snapshot().unwrap();
+        let database_work = db.lock().unwrap();
+        let (finished_tx, finished_rx) = flume::bounded(1);
+        let worker_app = app.clone();
+        let worker = thread::spawn(move || {
+            worker_app.prepare_for_suspend_inner(true);
+            finished_tx.send(()).unwrap();
+        });
+        // The previous two-second FFI timeout reported completion even while
+        // the core was still waiting for its database lock.
+        let returned_while_busy = finished_rx
+            .recv_timeout(Duration::from_millis(2300))
+            .is_ok();
+        drop(database_work);
+        worker.join().unwrap();
+        app.shutdown();
+        assert!(
+            !returned_while_busy,
+            "suspend returned before database work finished"
+        );
+    }
+
+    #[test]
+    fn suspend_returns_when_startup_failed_without_a_core_worker() {
+        let app = ffi_app_failure("startup failed".into());
+        let (finished_tx, finished_rx) = flume::bounded(1);
+        thread::spawn(move || {
+            app.prepare_for_suspend_inner(true);
+            let _ = finished_tx.send(());
+        });
+        assert!(finished_rx.recv_timeout(Duration::from_secs(1)).is_ok());
     }
 
     #[test]

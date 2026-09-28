@@ -217,17 +217,17 @@ impl AppStore {
     }
 
     pub(crate) fn prepare_for_suspend(&mut self) -> anyhow::Result<()> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
-        #[cfg(target_os = "ios")]
-        conn.execute_batch("PRAGMA optimize;")?;
+        // Saves already commit their transactions. Never run PRAGMA optimize
+        // here: it can start ANALYZE writes just as iOS is about to suspend us.
+        // iOS uses DELETE journaling and has no WAL to checkpoint.
         #[cfg(not(target_os = "ios"))]
-        conn.execute_batch(
-            "PRAGMA wal_checkpoint(TRUNCATE);
-             PRAGMA optimize;",
-        )?;
+        {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        }
         Ok(())
     }
 
@@ -2638,5 +2638,45 @@ mod tests {
         // a real write again rather than a no-op.
         let plan = SavePlan::compute(&store.cache, &snapshot);
         assert!(!plan.is_empty(), "cache must be reset on clear");
+    }
+}
+
+#[cfg(test)]
+mod suspension_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn suspend_does_not_start_database_analysis() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE suspend_probe(id INTEGER, body TEXT);
+             CREATE INDEX suspend_probe_id ON suspend_probe(id);
+             WITH RECURSIVE numbers(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM numbers WHERE n<1000)
+             INSERT INTO suspend_probe SELECT n, 'message' FROM numbers;",
+        )
+        .unwrap();
+        // Querying an unanalyzed index makes PRAGMA optimize run ANALYZE.
+        let _: i64 = conn
+            .query_row("SELECT count(*) FROM suspend_probe WHERE id=1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let db = Arc::new(Mutex::new(conn));
+        let mut store = AppStore::new(db.clone());
+        store.prepare_for_suspend().unwrap();
+        let analyzed: bool = db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            !analyzed,
+            "suspension must not start optional SQLite analysis writes"
+        );
     }
 }
