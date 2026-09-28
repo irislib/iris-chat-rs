@@ -2,6 +2,30 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.29
+
+### GitHub
+
+- Keep Apple chat interactions responsive by bounding chat snapshots and navigation caches, reusing unchanged message history, and avoiding repeated GIF reloads.
+- Move Apple file staging, share-inbox scans, camera startup, and Bluetooth bridge lifecycle work away from the UI thread.
+- Wait for Apple core shutdown and active database readers before resetting local storage, and cancel stale attachment work safely.
+- Support explicit browser-to-native chat links on iOS, macOS, and Android, preserving the destination until account setup and device approval finish.
+- Simplify attachment preparation and keep sending controls consistent while files are prepared.
+
+### Apple
+
+- Improve responsiveness when typing and opening chats.
+- Make photo sharing, camera startup, and nearby connections smoother.
+- Keep animated images playing during chat updates.
+- Open chat links from the browser and keep the destination while you finish setup.
+- Improve reliability when signing out or preparing attachments.
+
+### Zapstore
+
+- Open chat links directly from the web app.
+- Keep your chat link ready while you finish setup or approve a linked device.
+- Reduce unnecessary work when opening chats.
+
 ## v2026.9.28.3
 
 ### GitHub
