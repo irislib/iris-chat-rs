@@ -28,8 +28,6 @@ import kotlinx.coroutines.withContext
 import to.iris.chat.core.AppContainer
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.OutgoingAttachment
-import to.iris.chat.rust.isValidPeerInput
-import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.ui.navigation.NdrApp
 import to.iris.chat.ui.screens.copySharedAttachmentToCache
 import to.iris.chat.ui.theme.IrisChatTheme
@@ -227,75 +225,8 @@ class MainActivity : ComponentActivity() {
         }
 
     private fun handleChatLink(uri: Uri?) {
-        val raw = uri?.toString()?.trim().orEmpty()
-        if (raw.isEmpty()) {
-            return
-        }
-        val host = uri?.host?.lowercase()
-        val scheme = uri?.scheme?.lowercase()
-        if (scheme != "https" || host != "chat.iris.to") {
-            return
-        }
-
-        val inviteInput = inviteInputFromChatLink(uri)
-        if (inviteInput != null) {
-            container.appManager.dispatch(AppAction.AcceptInvite(inviteInput))
-            return
-        }
-
-        val peerInput = peerInputFromChatLink(uri)
-        if (peerInput != null) {
-            container.appManager.createChat(peerInput)
-        }
+        container.appManager.receiveChatLink(uri?.toString().orEmpty())
     }
-
-    private fun inviteInputFromChatLink(uri: Uri): String? {
-        val pathSegments = uri.pathSegments
-        if (pathSegments.firstOrNull()?.lowercase() == "invite" && pathSegments.size >= 2) {
-            return uri.toString()
-        }
-
-        val fragmentSegments = uri.fragmentSegments()
-        if (fragmentSegments.firstOrNull()?.lowercase() == "invite" && fragmentSegments.size >= 2) {
-            return uri.toString()
-        }
-
-        val decodedFragment = Uri.decode(uri.fragment.orEmpty())
-        if (
-            decodedFragment.contains("\"ephemeralKey\"") &&
-            decodedFragment.contains("\"sharedSecret\"")
-        ) {
-            return uri.toString()
-        }
-
-        return null
-    }
-
-    private fun peerInputFromChatLink(uri: Uri): String? {
-        val candidates =
-            listOfNotNull(
-                uri.lastPathSegment,
-                uri.fragmentSegments().firstOrNull(),
-                uri.fragment,
-            )
-
-        for (candidate in candidates) {
-            val normalized = normalizePeerInput(candidate)
-            if (normalized.isNotBlank() && isValidPeerInput(normalized)) {
-                return normalized
-            }
-        }
-
-        return null
-    }
-
-    private fun Uri.fragmentSegments(): List<String> =
-        fragment
-            ?.trim()
-            ?.removePrefix("/")
-            ?.split("/")
-            ?.filter(String::isNotBlank)
-            .orEmpty()
 
     private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {

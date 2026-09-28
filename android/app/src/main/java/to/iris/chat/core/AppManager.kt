@@ -328,6 +328,7 @@ class AppManager(
     private var mobilePushRetryAttempt = 0
     private var lastSyncedDeviceLabelsKey: String? = null
     private var automaticRevocationLogoutInFlight = false
+    private val pendingChatLink = PendingChatLink()
     private var pendingNavigationOverride: PendingNavigationOverride? = null
     @Volatile private var callMediaReceiver: ((AppUpdate.CallMedia) -> Unit)? = null
     private var fipsNearbyPeersPublisher:
@@ -474,6 +475,11 @@ class AppManager(
             return
         }
         dispatchToRust(action)
+    }
+
+    fun receiveChatLink(input: String) {
+        pendingChatLink.offer(input)
+        if (!automaticRevocationLogoutInFlight) pendingChatLink.takeWhenAuthorized(mutableState.value.account?.authorizationState)?.let(::dispatch)
     }
 
     fun setCallMediaReceiver(receiver: (AppUpdate.CallMedia) -> Unit) { callMediaReceiver = receiver }
@@ -1060,6 +1066,7 @@ class AppManager(
         }
 
     fun logout() {
+        pendingChatLink.clear()
         signer.cancel()
         automaticRevocationLogoutInFlight = true
         applicationScope.launch(ioDispatcher) {
@@ -1133,6 +1140,7 @@ class AppManager(
     }
 
     fun resetForUiTestsBlocking() {
+        pendingChatLink.clear()
         runBlocking(ioDispatcher) {
             val stateBeforeReset = mutableState.value
             val persistedBundle = loadPersistedBundle()
@@ -1740,6 +1748,7 @@ class AppManager(
     }
 
     private fun replaceRustCoreAfterReset() {
+        pendingChatLink.clear()
         signer.cancel()
         val previous = rust
         previous.shutdown()
@@ -1899,6 +1908,7 @@ class AppManager(
             return
         }
         syncCurrentDeviceLabelsIfNeeded(snapshot)
+        if (!automaticRevocationLogoutInFlight) pendingChatLink.takeWhenAuthorized(snapshot.account?.authorizationState)?.let(::dispatch)
         if (!restoreCheckComplete) {
             mutableBootstrapState.value = AccountBootstrapState.Loading
             return

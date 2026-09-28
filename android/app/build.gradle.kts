@@ -479,6 +479,7 @@ tasks.withType<KotlinCompile>().configureEach {
 
 tasks.withType<Test>().configureEach {
     failOnNoDiscoveredTests = false
+    systemProperty("jna.library.path", hostLibraryFile.parentFile.absolutePath)
 }
 
 tasks.named("preBuild").configure {
@@ -527,6 +528,8 @@ dependencies {
     implementation("io.github.webrtc-sdk:android:150.7871.01")
 
     testImplementation(libs.junit)
+    // The Android AAR has no desktop JNA loader for production Rust calls in JVM tests.
+    testRuntimeOnly("net.java.dev.jna:jna:5.12.0@jar")
     testImplementation(libs.kotlinx.coroutines.test)
 
     androidTestImplementation(libs.androidx.junit)
