@@ -195,6 +195,57 @@ final class IrisChatUITests: IrisChatUITestCase {
 #endif
     }
 
+    func testChatListSearchXClearsQueryAndResults() throws {
+        continueAfterFailure = false
+#if os(macOS)
+        throw XCTSkip("UIKit search control is iOS-only")
+#else
+        let app = launchCleanApp(seedPeer: validPeerNpub, seedCount: 3)
+        submitWelcomeName(app)
+        XCTAssertTrue(waitForChatList(app, timeout: 60))
+
+        let searchField = editableElement(app, "chatListSearchField")
+        let searchHit = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'messageHit-'")
+        ).firstMatch
+        let chatRow = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'chatRow-'")
+        ).firstMatch
+        let clearButton = element(app, "chatListSearchCloseButton")
+        typeText("FIRST_SCROLL_SENTINEL", into: searchField, app: app)
+        XCTAssertTrue(searchHit.waitForExistence(timeout: 15))
+        captureSearch(app, named: "search-query-before-clear")
+        clearButton.tap()
+        captureSearch(app, named: "search-query-after-clear")
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            (searchField.value as? String ?? "") == (searchField.placeholderValue ?? "")
+                || (searchField.value as? String ?? "").isEmpty
+        }, "X must clear the entered search text")
+        XCTAssertTrue(waitUntil(timeout: 5) { !searchHit.exists })
+        XCTAssertTrue(chatRow.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "Clearing should keep the keyboard ready")
+
+        typeText("FIRST_SCROLL_SENTINEL", into: searchField, app: app)
+        XCTAssertTrue(searchHit.waitForExistence(timeout: 15))
+        searchField.typeText("\n")
+        XCTAssertTrue(waitUntil(timeout: 5) { !app.keyboards.firstMatch.exists })
+        XCTAssertTrue(clearButton.exists, "A submitted query must still have a clear button")
+        clearButton.tap()
+        XCTAssertTrue(waitUntil(timeout: 5) { !searchHit.exists })
+        XCTAssertTrue(chatRow.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        XCTAssertFalse(clearButton.exists)
+        captureSearch(app, named: "search-submitted-query-cleared")
+#endif
+    }
+
+    private func captureSearch(_ app: XCUIApplication, named name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     func testCreateChatAndSendMessageLocally() {
         let app = launchCleanApp()
 

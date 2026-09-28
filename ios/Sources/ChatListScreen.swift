@@ -340,6 +340,7 @@ struct IrisChatListSearchBar: UIViewRepresentable {
 
     final class Coordinator: NSObject, UISearchBarDelegate {
         @Binding private var text: String
+        private weak var searchBar: UISearchBar?
         private var isFocused = false
         private lazy var closeButton: UIButton = {
             let button = UIButton(type: .system)
@@ -347,7 +348,7 @@ struct IrisChatListSearchBar: UIViewRepresentable {
             button.tintColor = .secondaryLabel
             button.accessibilityLabel = "Close search"
             button.accessibilityIdentifier = "chatListSearchCloseButton"
-            button.addTarget(self, action: #selector(closeSearch), for: .touchUpInside)
+            button.addTarget(self, action: #selector(clearOrCloseSearch), for: .touchUpInside)
             button.frame = CGRect(x: 0, y: 0, width: 28, height: 28)
             return button
         }()
@@ -357,14 +358,17 @@ struct IrisChatListSearchBar: UIViewRepresentable {
         }
 
         func attach(to searchBar: UISearchBar) {
+            self.searchBar = searchBar
             updateCloseButton(for: searchBar, isDark: searchBar.traitCollection.userInterfaceStyle == .dark)
         }
 
         func updateCloseButton(for searchBar: UISearchBar, isDark: Bool) {
             closeButton.overrideUserInterfaceStyle = isDark ? .dark : .light
             closeButton.tintColor = .secondaryLabel
-            searchBar.searchTextField.rightView = isFocused ? closeButton : nil
-            searchBar.searchTextField.rightViewMode = isFocused ? .always : .never
+            closeButton.accessibilityLabel = text.isEmpty ? "Close search" : "Clear search"
+            let showsButton = isFocused || !text.isEmpty
+            searchBar.searchTextField.rightView = showsButton ? closeButton : nil
+            searchBar.searchTextField.rightViewMode = showsButton ? .always : .never
         }
 
         func searchBarTextDidBeginEditing(_ searchBar: UISearchBar) {
@@ -385,8 +389,15 @@ struct IrisChatListSearchBar: UIViewRepresentable {
             searchBar.resignFirstResponder()
         }
 
-        @objc private func closeSearch(_ sender: UIButton) {
-            sender.window?.endEditing(true)
+        @objc private func clearOrCloseSearch() {
+            guard let searchBar else { return }
+            if !text.isEmpty {
+                text = ""
+                searchBar.text = ""
+                updateCloseButton(for: searchBar, isDark: searchBar.overrideUserInterfaceStyle == .dark)
+            } else {
+                searchBar.resignFirstResponder()
+            }
         }
     }
 }
