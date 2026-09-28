@@ -27,6 +27,7 @@ public sealed class CallController : IDisposable
     {
         if (Call?.callId != call?.callId) { StopTone(); StopMedia(); _ending = null; }
         Call = call;
+        AudioMessagePlayback.SetCallActive(call != null && call.phase != "ended" && _ending != call.callId);
         if (call?.outgoing == true && _ending != call.callId && call.phase is "outgoing" or "ringing")
         {
             _tone ??= new DesktopCallTone(call.phase == "ringing");
@@ -50,6 +51,7 @@ public sealed class CallController : IDisposable
     {
         if (Call == null) return;
         _ending = Call.callId;
+        AudioMessagePlayback.SetCallActive(false);
         StopTone();
         StopMedia();
         _manager.DispatchCall(new AppAction.EndCall(Call.callId));
@@ -83,5 +85,5 @@ public sealed class CallController : IDisposable
     }
     private void StopMedia() { _media?.Stop(); _media?.Dispose(); _media = null; }
     private void StopTone() { _tone?.Stop(); _tone?.Dispose(); _tone = null; }
-    public void Dispose() { _timer.Stop(); StopTone(); StopMedia(); }
+    public void Dispose() { AudioMessagePlayback.SetCallActive(false); _timer.Stop(); StopTone(); StopMedia(); }
 }

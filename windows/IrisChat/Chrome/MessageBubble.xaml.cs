@@ -284,6 +284,15 @@ public partial class MessageBubble : UserControl
             return btn;
         }
 
+        if (AudioMessagePlayback.IsAudio(att.isAudio, att.filename))
+        {
+            var audio = new AudioMessageControl($"{_message?.id}:{att.htreeUrl}", att.filename,
+                () => Application.Current is App app
+                    ? app.Manager.DownloadAttachmentAsync(att) : Task.FromResult<byte[]?>(null));
+            audio.ContextMenu = BuildAttachmentContextMenu(att);
+            return audio;
+        }
+
         var fileBtn = new Button
         {
             Style = (Style)FindResource("SecondaryButton"),

@@ -18,6 +18,9 @@ adw = { package = "libadwaita", version = "0.7", features = ["v1_5"] }
 glib = "0.20"
 gio = "0.20"
 async-channel = "2"
+gstreamer = "0.23"
+base64 = "0.22"
+tempfile = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 qrcode = { version = "0.14", default-features = false }
@@ -34,6 +37,7 @@ maintainer = "Iris <hi@iris.to>"
 copyright = "Iris"
 extended-description = "Iris Chat — encrypted Nostr messenger."
 section = "net"
+depends = "$auto, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-libav"
 priority = "optional"
 assets = [
     ["../DESKTOP_MEDIA_LICENSES.txt", "usr/share/doc/iris-chat/DESKTOP_MEDIA_LICENSES.txt", "644"],
@@ -50,11 +54,14 @@ assets = [
     ["resources/iris-chat.desktop", "usr/share/applications/iris-chat.desktop", "644"],
 ]
 
-[dev-dependencies]
-tempfile = "3"
-
 [[test]]
 name = "composer"
 path = "tests/composer.rs"
+harness = false
+required-features = ["ui-tests"]
+
+[[test]]
+name = "audio"
+path = "tests/audio.rs"
 harness = false
 required-features = ["ui-tests"]

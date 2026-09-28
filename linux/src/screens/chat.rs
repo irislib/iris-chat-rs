@@ -13,7 +13,7 @@ use iris_chat_core::{
 
 use crate::app_manager::AppManager;
 use crate::screens::chat_list::{relative_time, unix_now};
-use crate::widgets::image_cache;
+use crate::widgets::{audio_message, image_cache};
 
 mod chat_links;
 mod contact_details;
@@ -968,8 +968,11 @@ fn render_message(
         .filter(|a| a.is_image)
         .cloned()
         .collect();
-    let other_attachments: Vec<&MessageAttachmentSnapshot> =
-        message.attachments.iter().filter(|a| !a.is_image).collect();
+    let other_attachments: Vec<&MessageAttachmentSnapshot> = message
+        .attachments
+        .iter()
+        .filter(|a| !a.is_image && !audio_message::is_audio(a))
+        .collect();
 
     if !image_attachments.is_empty() {
         bubble.append(&image_album(&image_attachments, prefs, manager));
@@ -977,6 +980,14 @@ fn render_message(
 
     if !message.body.is_empty() {
         append_truncatable_body(&bubble, &message.body);
+    }
+
+    for attachment in message
+        .attachments
+        .iter()
+        .filter(|a| !a.is_image && audio_message::is_audio(a))
+    {
+        bubble.append(&audio_message::widget(&message.id, attachment));
     }
 
     if !other_attachments.is_empty() {

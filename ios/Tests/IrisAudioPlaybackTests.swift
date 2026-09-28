@@ -24,6 +24,7 @@ final class IrisAudioPlaybackTests: XCTestCase {
         await waitForPlayback(playback)
         XCTAssertEqual(playback.duration, 4, accuracy: 0.15)
         XCTAssertNil(playback.errorMessage)
+        XCTAssertEqual(playback.waveform.count, 47)
 
         playback.pause()
         XCTAssertFalse(playback.isPlaying)
@@ -95,7 +96,21 @@ final class IrisAudioPlaybackTests: XCTestCase {
         observation.cancel()
     }
 
-    private func silentM4A() async throws -> URL {
+    func testWaveformReflectsDecodedAudioAndSilence() async throws {
+        let url = try await silentM4A(varying: true)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let peaks = await IrisAudioWaveform.decode(url)
+        XCTAssertEqual(peaks.count, 47)
+        XCTAssertTrue(peaks[3..<10].allSatisfy { $0 < 0.02 })
+        XCTAssertTrue(peaks[20..<40].contains { $0 > 0.5 })
+        let silent = try await silentM4A()
+        defer { try? FileManager.default.removeItem(at: silent) }
+        let quiet = await IrisAudioWaveform.decode(silent)
+        XCTAssertEqual(quiet.count, 47)
+        XCTAssertTrue(quiet.allSatisfy { $0 < 0.02 })
+    }
+
+    private func silentM4A(varying: Bool = false) async throws -> URL {
         try await Task.detached {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("audio-test-\(UUID().uuidString).m4a")
             let file = try AVAudioFile(forWriting: url, settings: [
@@ -106,6 +121,12 @@ final class IrisAudioPlaybackTests: XCTestCase {
             let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frames))
             let channel = try XCTUnwrap(buffer.floatChannelData?[0])
             channel.initialize(repeating: 0, count: Int(frames))
+            if varying {
+                for i in 44_100..<Int(frames) {
+                    let t = Double(i) / 44_100
+                    channel[i] = Float(sin(t * 440 * 2 * .pi) * (0.1 + 0.6 * pow(sin(t * 7), 2)))
+                }
+            }
             buffer.frameLength = frames
             try file.write(from: buffer)
             return url

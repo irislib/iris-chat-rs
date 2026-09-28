@@ -128,6 +128,7 @@ impl Calls {
             },
             2 => {
                 self.ending = Some(call.call_id.clone());
+                crate::widgets::audio_message::set_call_active(false);
                 self.stop();
                 self.window.set_visible(false);
                 AppAction::EndCall {
@@ -142,6 +143,9 @@ impl Calls {
         self.manager.dispatch(action);
     }
     pub fn sync(&mut self, call: Option<CallSnapshot>) {
+        crate::widgets::audio_message::set_call_active(call.as_ref().is_some_and(|call| {
+            call.phase != "ended" && self.ending.as_ref() != Some(&call.call_id)
+        }));
         let changed = self.call.as_ref().map(|c| &c.call_id) != call.as_ref().map(|c| &c.call_id);
         if changed {
             self.ending = None;

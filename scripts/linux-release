@@ -184,7 +184,9 @@ Manual install:
   cp iris-chat /usr/local/bin/
 
 Runtime dependencies (Debian/Ubuntu): libgtk-4-1, libadwaita-1-0,
-libsecret-1-0, libsoup-3.0-0, libv4l-0, libasound2t64.
+libsecret-1-0, libsoup-3.0-0, libv4l-0, libasound2t64,
+libgstreamer1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good,
+gstreamer1.0-libav.
 README
 
     tar -czf "$OUT/${ARTIFACT_BASENAME}.tar.gz" -C "$STAGE" iris-chat

@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF><Nullable>enable</Nullable><PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier><SelfContained>true</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../IrisChat/AudioWaveform.cs" Link="AudioWaveform.cs" />
+    <Compile Include="../IrisChat/Chrome/WaveformSlider.cs" Link="WaveformSlider.cs" />
+    <Compile Include="../IrisChat/AudioMessagePlayback.cs" Link="AudioMessagePlayback.cs" />
+    <Compile Include="../IrisChat/Chrome/AudioMessageControl.cs" Link="AudioMessageControl.cs" />
+    <Content Include="../IrisChat/App.xaml" Link="App.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../test-fixtures/voice-message.m4a" Link="voice-message.m4a" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+  </ItemGroup>
+</Project>

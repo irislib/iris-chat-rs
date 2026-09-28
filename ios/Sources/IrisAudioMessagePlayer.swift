@@ -9,6 +9,7 @@ import AppKit
 
 @MainActor
 final class IrisAudioPlayback: ObservableObject {
+    @Published private(set) var waveform: [Float] = []
     @Published private(set) var isPlaying = false
     @Published private(set) var isLoading = false
     @Published private(set) var elapsed: TimeInterval = 0
@@ -108,10 +109,13 @@ final class IrisAudioPlayback: ObservableObject {
                 let assetDuration = try await asset.load(.duration)
                 try Task.checkCancellation()
                 guard playable else { throw AudioLoadError.unavailable }
+                let waveform = await IrisAudioWaveform.decode(url)
+                try Task.checkCancellation()
                 guard let self, self.loadID == requestID, self.wantsToPlay, self.canPlay else {
                     if let ownedURL { Self.removeTemporaryAudio(ownedURL) }
                     return
                 }
+                self.waveform = waveform
                 self.temporaryURL = ownedURL
                 self.duration = Self.validTime(assetDuration.seconds)
                 self.installPlayer(asset: asset)
@@ -367,13 +371,10 @@ struct IrisAudioPlaybackControl: View {
             .accessibilityIdentifier("chatAudioPlayButton")
 
             VStack(alignment: .leading, spacing: 0) {
-                Slider(value: Binding(get: { playback.elapsed }, set: { playback.seek(to: $0) }),
-                       in: 0...max(1, playback.duration))
-                    .tint(color)
-                    .disabled(playback.duration <= 0 || playback.isLoading)
-                    .accessibilityLabel("Audio position")
-                    .accessibilityValue("\(time(playback.elapsed)) of \(time(playback.duration))")
-                    .accessibilityIdentifier("chatAudioProgress")
+                IrisWaveformSlider(value: Binding(get: { playback.elapsed }, set: { playback.seek(to: $0) }),
+                                   duration: playback.duration, peaks: playback.waveform, color: color,
+                                   enabled: playback.duration > 0 && !playback.isLoading && playback.errorMessage == nil)
+                    .frame(height: 32)
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(playback.errorMessage ?? durationLabel)
                         .foregroundStyle(color.opacity(0.7))

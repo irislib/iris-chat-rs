@@ -79,7 +79,6 @@ mod remote_signer;
 mod remote_signer_rpc;
 mod remote_signer_transport;
 mod remote_signer_uri;
-#[cfg(feature = "stack-fixture")]
 pub use attachment_upload::download_hashtree_attachment;
 mod attachments;
 mod calls;

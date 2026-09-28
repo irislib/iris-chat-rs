@@ -656,6 +656,11 @@ internal fun AttachmentChip(
         )
     }
 
+    if (type == ChatAttachmentType.AUDIO) {
+        ChatAudioMessage(attachment, foreground, downloadAttachment, onLongClick = { actionsOpen = true })
+        return
+    }
+
     suspend fun loadImageIfNeeded(): ByteArray? {
         localImageData?.let { return it }
         if (!attachment.isImage || imageLoading) {

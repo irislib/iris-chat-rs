@@ -75,6 +75,7 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
             pushRecoveryJob?.cancel()
         }
         current = call
+        to.iris.chat.audio.VoiceMessagePlayback.setCallActive(call != null && call.phase != "ended")
         if (call == null || call.phase == "ended") {
             mutableAnswerRequest.value = null
             stopMedia()

@@ -76,7 +76,14 @@ final class IrisAudioMessageUITests: IrisChatUITestCase {
         let channel = try XCTUnwrap(buffer.floatChannelData?[0])
         channel.initialize(repeating: 0, count: 44_100)
         buffer.frameLength = 44_100
-        for _ in 0..<60 { try file.write(from: buffer) }
+        for second in 0..<60 {
+            for frame in 0..<44_100 {
+                let t = Double(second) + Double(frame) / 44_100
+                let amplitude = second % 9 < 2 ? 0 : 0.1 + 0.6 * pow(sin(t * 0.6), 2)
+                channel[frame] = Float(sin(t * 440 * 2 * .pi) * amplitude)
+            }
+            try file.write(from: buffer)
+        }
     }
 }
 #endif
