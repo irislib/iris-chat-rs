@@ -92,7 +92,9 @@ final class IrisChatAppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         for url in urls {
-            _ = manager.handleShareURL(url)
+            if !manager.handleShareURL(url) {
+                manager.handleChatLink(url)
+            }
         }
         if activate {
             showMainWindow()
