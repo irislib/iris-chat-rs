@@ -2,6 +2,32 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.28.2
+
+### GitHub
+
+- Preserve complete Apple microphone capture batches and drive Apple/Android call playback from device consumption to prevent dropped speech and scheduling gaps.
+- Fix iOS suspension crashes by waiting for database shutdown and avoiding SQLite analysis during suspension.
+- Add per-device audio auto-download settings, bounded attachment downloads, and cached waveforms before playback on Apple platforms.
+- Improve quoted-message bubble sizing and separate clearing chat search from closing it on iOS.
+- Keep CLI message reads passive until explicitly marked seen.
+- Propagate attachment HTTP client errors instead of panicking, and update FIPS dependencies to 0.4.83.
+
+### Apple
+
+- Improve call audio to reduce broken speech and playback stutters.
+- Fix a crash when the app moves into the background.
+- Choose when voice messages download automatically.
+- Show audio waveforms before playback and reduce repeated audio processing.
+- Improve quoted-message layout and make chat search easier to clear or close.
+- More reliable attachment downloads.
+
+### Zapstore
+
+- Improve call playback timing to reduce stutters.
+- Improve attachment download limits and error handling.
+- Update networking components.
+
 ## v2026.9.28.1
 
 ### GitHub

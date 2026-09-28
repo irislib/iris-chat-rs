@@ -96,11 +96,9 @@ internal class CallAudio(
         playback = Thread({
             Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
             try {
-                var due = System.nanoTime()
                 while (!closed.get()) {
-                    val remaining = due - System.nanoTime()
-                    if (remaining > 0) java.util.concurrent.locks.LockSupport.parkNanos(remaining)
-                    if (closed.get()) break
+                    // Like WebRTC's AudioTrack thread, let blocking device writes
+                    // drive playout and refill available output after scheduling jitter.
                     val samples = codec.playout().toShortArray()
                     var offset = 0
                     while (offset < samples.size && !closed.get()) {
@@ -110,7 +108,6 @@ internal class CallAudio(
                         offset += count
                     }
                     if (!closed.get()) played(samples)
-                    due = maxOf(due + 20_000_000, System.nanoTime())
                 }
             } catch (_: Exception) { if (!closed.get()) failed() }
         }, "Iris-speaker").apply { start() }

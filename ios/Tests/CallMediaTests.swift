@@ -81,6 +81,36 @@ final class CallMediaTests: XCTestCase {
         XCTAssertFalse(decoder.decode(Data([0, 0, 0, 1, 0x65, 1]), timestampUs: 1, keyFrame: true))
     }
 
+    func testBatchedMicrophoneFramesReachRemoteOpusDecoderWithoutDroppingSpeech() throws {
+        let queue = DispatchQueue(label: "test.audio.opus.batch")
+        let capture = IrisCallAudioCaptureQueue(queue: queue)
+        let encoder = try CallAudioCodec()
+        let decoder = try CallAudioCodec()
+        var sent: UInt32 = 0
+        var audible = 0
+        for batch in 0..<20 {
+            let frames = (0..<5).map { frame in
+                (0..<960).map { sample in
+                    Int16(sin(Double((batch * 5 + frame) * 960 + sample) * 440 * 2 * .pi / 48_000) * 12_000)
+                }
+            }
+            queue.suspend()
+            capture.submit(frames, timestampUs: UInt64(batch) * 100_000) { frame, _ in
+                do {
+                    decoder.queue(sequence: sent, data: try encoder.encode(samples: frame))
+                    sent += 1
+                } catch { XCTFail("Opus capture failed: \(error)") }
+            }
+            queue.resume()
+            queue.sync {}
+            for _ in 0..<5 {
+                if decoder.playout().contains(where: { abs(Int($0)) > 100 }) { audible += 1 }
+            }
+        }
+        XCTAssertEqual(sent, 100)
+        XCTAssertEqual(audible, 97, "only the initial three jitter-buffer priming frames are silent")
+    }
+
     func testHardwareEncoderPreservesOriginalCapturePermission() throws {
         let gate = IrisCallSendGate()
         gate.update(callID: "video", muted: false, video: true)
