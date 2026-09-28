@@ -228,14 +228,35 @@ struct ChatListSearchField: View {
     @Environment(\.irisPalette) private var palette
     @Binding var text: String
     @FocusState private var isFocused: Bool
+#if os(iOS)
+    @State private var isEditing = false
+#endif
 
     var body: some View {
 #if os(iOS)
-        IrisChatListSearchBar(text: $text)
-            .frame(height: 52)
-            .padding(.horizontal, 8)
-            .padding(.top, 4)
-            .padding(.bottom, 2)
+        HStack(spacing: 0) {
+            IrisChatListSearchBar(text: $text, isEditing: $isEditing)
+            if isEditing || !text.isEmpty {
+                Button {
+                    text = ""
+                    isEditing = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                        .frame(width: 44, height: 44)
+                        .background(palette.panelAlt, in: Circle())
+                }
+                .buttonStyle(.irisPlain)
+                .accessibilityLabel("Close search")
+                .accessibilityIdentifier("chatListSearchCloseButton")
+                .padding(.trailing, 4)
+            }
+        }
+        .frame(height: 52)
+        .padding(.horizontal, 8)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
 #else
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
@@ -287,13 +308,14 @@ struct ChatListSearchField: View {
 struct IrisChatListSearchBar: UIViewRepresentable {
     @Environment(\.colorScheme) private var colorScheme
     @Binding var text: String
+    @Binding var isEditing: Bool
 
     private var isDark: Bool {
         colorScheme == .dark
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(text: $text, isEditing: $isEditing)
     }
 
     func makeUIView(context: Context) -> UISearchBar {
@@ -308,9 +330,8 @@ struct IrisChatListSearchBar: UIViewRepresentable {
         searchBar.backgroundColor = .clear
         searchBar.backgroundImage = UIImage()
         searchBar.searchTextField.accessibilityIdentifier = "chatListSearchField"
-        searchBar.searchTextField.clearButtonMode = .never
+        searchBar.searchTextField.clearButtonMode = .always
         Self.applyAppearance(to: searchBar, isDark: isDark)
-        context.coordinator.attach(to: searchBar)
         return searchBar
     }
 
@@ -319,7 +340,9 @@ struct IrisChatListSearchBar: UIViewRepresentable {
             searchBar.text = text
         }
         Self.applyAppearance(to: searchBar, isDark: isDark)
-        context.coordinator.updateCloseButton(for: searchBar, isDark: isDark)
+        if !isEditing, searchBar.isFirstResponder {
+            searchBar.resignFirstResponder()
+        }
     }
 
     private static func applyAppearance(to searchBar: UISearchBar, isDark: Bool) {
@@ -340,45 +363,19 @@ struct IrisChatListSearchBar: UIViewRepresentable {
 
     final class Coordinator: NSObject, UISearchBarDelegate {
         @Binding private var text: String
-        private weak var searchBar: UISearchBar?
-        private var isFocused = false
-        private lazy var closeButton: UIButton = {
-            let button = UIButton(type: .system)
-            button.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
-            button.tintColor = .secondaryLabel
-            button.accessibilityLabel = "Close search"
-            button.accessibilityIdentifier = "chatListSearchCloseButton"
-            button.addTarget(self, action: #selector(clearOrCloseSearch), for: .touchUpInside)
-            button.frame = CGRect(x: 0, y: 0, width: 28, height: 28)
-            return button
-        }()
+        @Binding private var isEditing: Bool
 
-        init(text: Binding<String>) {
+        init(text: Binding<String>, isEditing: Binding<Bool>) {
             self._text = text
-        }
-
-        func attach(to searchBar: UISearchBar) {
-            self.searchBar = searchBar
-            updateCloseButton(for: searchBar, isDark: searchBar.traitCollection.userInterfaceStyle == .dark)
-        }
-
-        func updateCloseButton(for searchBar: UISearchBar, isDark: Bool) {
-            closeButton.overrideUserInterfaceStyle = isDark ? .dark : .light
-            closeButton.tintColor = .secondaryLabel
-            closeButton.accessibilityLabel = text.isEmpty ? "Close search" : "Clear search"
-            let showsButton = isFocused || !text.isEmpty
-            searchBar.searchTextField.rightView = showsButton ? closeButton : nil
-            searchBar.searchTextField.rightViewMode = showsButton ? .always : .never
+            self._isEditing = isEditing
         }
 
         func searchBarTextDidBeginEditing(_ searchBar: UISearchBar) {
-            isFocused = true
-            updateCloseButton(for: searchBar, isDark: searchBar.overrideUserInterfaceStyle == .dark)
+            isEditing = true
         }
 
         func searchBarTextDidEndEditing(_ searchBar: UISearchBar) {
-            isFocused = false
-            updateCloseButton(for: searchBar, isDark: searchBar.overrideUserInterfaceStyle == .dark)
+            isEditing = false
         }
 
         func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
@@ -389,16 +386,6 @@ struct IrisChatListSearchBar: UIViewRepresentable {
             searchBar.resignFirstResponder()
         }
 
-        @objc private func clearOrCloseSearch() {
-            guard let searchBar else { return }
-            if !text.isEmpty {
-                text = ""
-                searchBar.text = ""
-                updateCloseButton(for: searchBar, isDark: searchBar.overrideUserInterfaceStyle == .dark)
-            } else {
-                searchBar.resignFirstResponder()
-            }
-        }
     }
 }
 #endif

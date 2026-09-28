@@ -211,7 +211,7 @@ final class IrisChatUITests: IrisChatUITestCase {
         let chatRow = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH 'chatRow-'")
         ).firstMatch
-        let clearButton = element(app, "chatListSearchCloseButton")
+        let clearButton = searchField.buttons["Clear text"]
         typeText("FIRST_SCROLL_SENTINEL", into: searchField, app: app)
         XCTAssertTrue(searchHit.waitForExistence(timeout: 15))
         captureSearch(app, named: "search-query-before-clear")
@@ -236,6 +236,16 @@ final class IrisChatUITests: IrisChatUITestCase {
         XCTAssertFalse(app.keyboards.firstMatch.exists)
         XCTAssertFalse(clearButton.exists)
         captureSearch(app, named: "search-submitted-query-cleared")
+
+        typeText("FIRST_SCROLL_SENTINEL", into: searchField, app: app)
+        XCTAssertTrue(searchHit.waitForExistence(timeout: 15))
+        let closeButton = element(app, "chatListSearchCloseButton")
+        XCTAssertGreaterThanOrEqual(closeButton.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(closeButton.frame.minX, searchField.frame.maxX)
+        closeButton.tap()
+        XCTAssertTrue(waitUntil(timeout: 5) { !searchHit.exists && !app.keyboards.firstMatch.exists })
+        XCTAssertTrue(chatRow.waitForExistence(timeout: 5))
+        XCTAssertFalse(closeButton.exists)
 #endif
     }
 
