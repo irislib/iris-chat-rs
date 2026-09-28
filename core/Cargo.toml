@@ -53,14 +53,14 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 flume = "0.11"
-fips-core = { package = "nvpn-fips-core", version = "=0.4.81", features = ["webrtc-transport", "host-ble-transport"] }
-fips-endpoint = { package = "nvpn-fips-endpoint", version = "=0.4.81" }
+fips-core = { package = "nvpn-fips-core", version = "=0.4.83", features = ["webrtc-transport", "host-ble-transport"] }
+fips-endpoint = { package = "nvpn-fips-endpoint", version = "=0.4.83" }
 fips-tcp = { package = "nvpn-fips-tcp", version = "=0.2.2" }
-fips-tcp-endpoint = { package = "nvpn-fips-tcp-endpoint", version = "=0.2.16" }
+fips-tcp-endpoint = { package = "nvpn-fips-tcp-endpoint", version = "=0.2.18" }
 hashtree-blossom = { version = "=0.2.83", default-features = false, features = ["store"] }
 hashtree-config = "=0.2.83"
 hashtree-core = "=0.2.89"
-hashtree-fips-transport = "=0.4.19"
+hashtree-fips-transport = "=0.4.20"
 hashtree-index = "=0.2.84"
 hashtree-network = "=0.2.88"
 hashtree-resolver = { version = "=0.2.85", features = ["nostr"] }
@@ -69,8 +69,8 @@ hmac = "0.12"
 iris-chat-protocol = { version = "=0.1.10", path = "../chat-protocol" }
 nostr = { version = "0.44.7", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
-nostr-pubsub = "=0.1.14"
-nostr-pubsub-fips = "=0.5.4"
+nostr-pubsub = "=0.1.15"
+nostr-pubsub-fips = "=0.5.6"
 nostr-pubsub-relay = "=0.1.11"
 nostr-social-graph = "=0.1.4"
 nostr-identity = "=0.4.0"
