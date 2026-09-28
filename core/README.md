@@ -36,6 +36,34 @@ iris --data-dir /path/to/bot-chat restore <bot-secret-key>
 iris --data-dir /path/to/bot-chat listen
 ```
 
+### Persistent CLI service
+
+On macOS, Linux and Windows, run one foreground service for a profile:
+
+```sh
+iris --data-dir /path/to/bot-chat service run
+```
+
+Other CLI invocations with that same data directory automatically use its private
+local endpoint. `listen` can stay connected while `send`, `read`, `sync` and other
+commands use the same encryption runtime. The existing profile lock remains held
+by the service. Different profiles remain independent. Use `service status` for
+connection health and `service stop` for a graceful shutdown. A process supervisor
+may restart `service run` after a crash; stale endpoints are reclaimed only after
+acquiring the exclusive profile lock.
+
+The transport uses a private Unix socket on macOS/Linux and an owner-only named
+pipe on Windows, with same-user peer verification in both directions. It does not
+open a TCP port. Set `IRIS_REQUIRE_SERVICE=1` in supervised scripts to fail closed
+when the service is unavailable. A failed or disconnected send is never retried
+automatically; inspect message/delivery state first. Stream consumers must retain
+handled message IDs and reconcile history after reconnecting. `ready` means the
+local subscription is established; `service status` reports network readiness.
+
+Without a running service, standalone commands continue to work as before.
+The service is a desktop CLI feature; iOS and Android apps continue to own their
+existing in-process core and platform push/background lifecycle.
+
 Set `IRIS_CHAT_SAME_HOST_HASHTREE=1` to let the logged-in Chat FIPS endpoint
 discover authenticated `hashtree.blob/1` providers over fixed loopback UDP.
 Chat's local cache, one composite FIPS provider route, and its configured

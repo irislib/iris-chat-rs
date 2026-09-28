@@ -272,3 +272,30 @@ jobs:
 
       - name: iOS simulator build
         run: ./scripts/ios-build ios-build-sim
+
+  cli-service:
+    name: CLI service (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      IRIS_DEFAULT_RELAYS: ""
+      IRIS_FIPS_WEBSOCKET_SEED_URLS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            core/target
+          key: cli-service-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('core/Cargo.lock') }}
+      - name: Exercise service ownership, IPC, restart and live replies
+        run: cargo test --manifest-path core/Cargo.toml --test cli_service --locked

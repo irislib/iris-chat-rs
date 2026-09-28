@@ -18,6 +18,10 @@ use iris_chat_core::{
 use serde::Serialize;
 use serde_json::{json, Value};
 
+mod iris_cli_run;
+mod iris_service;
+mod iris_service_transport;
+use iris_cli_run::run;
 mod iris_message_rows;
 mod iris_updater;
 mod iris_wait_helpers;
@@ -65,6 +69,7 @@ Maintenance:
   state      Show local state
   sync       Sync now
   privacy    Privacy tools
+  service    Keep this profile online
   update     Update iris
   help       Print help";
 const CLI_APP_DIR_NAME: &str = "Iris Chat CLI";
@@ -206,6 +211,8 @@ enum MessageServerTopCommands {
 
 #[derive(Subcommand)]
 enum MaintenanceTopCommands {
+    #[command(subcommand)]
+    Service(iris_service::ServiceCommands),
     State,
     Debug {
         #[arg(long, default_value_t = 0)]
@@ -444,61 +451,6 @@ fn main() {
     }
 }
 
-fn run(cli: Cli) -> Result<()> {
-    let Cli {
-        json: json_output,
-        data_dir,
-        command,
-    } = cli;
-    let command = match command {
-        Commands::Maintenance(MaintenanceTopCommands::Update(cmd)) => {
-            return run_iris_update(cmd, json_output);
-        }
-        other => other,
-    };
-
-    let data_dir = data_dir.unwrap_or_else(default_data_dir);
-    ensure_private_data_dir(&data_dir)?;
-    let command_name = command_name(&command).to_string();
-    let data = match command {
-        Commands::Messages(MessageTopCommands::Search { query, limit }) => {
-            search_messages(&data_dir, &query, limit)?
-        }
-        Commands::Messages(MessageTopCommands::Tail {
-            limit,
-            follow,
-            chat,
-            interval_ms,
-        }) => {
-            if follow {
-                follow_messages(&data_dir, chat.as_deref(), interval_ms, "tail")?;
-                return Ok(());
-            }
-            tail_messages(&data_dir, limit, chat.as_deref())?
-        }
-        Commands::Messages(MessageTopCommands::Listen {
-            chat,
-            interval_ms,
-            nearby_lan,
-        }) => {
-            listen(&data_dir, chat.as_deref(), interval_ms, nearby_lan)?;
-            return Ok(());
-        }
-        command => {
-            let cli_app = CliApp::open(&data_dir)?;
-            let data = handle_command(&cli_app, &data_dir, command)?;
-            let background_sync = should_spawn_background_sync(&cli_app.app.state(), &data);
-            cli_app.app.shutdown();
-            drop(cli_app);
-            print_output(json_output, &command_name, data)?;
-            if background_sync {
-                spawn_background_sync(&data_dir);
-            }
-            return Ok(());
-        }
-    };
-    print_output(json_output, &command_name, data)
-}
 
 impl CliApp {
     fn open(data_dir: &Path) -> Result<Self> {
@@ -1149,6 +1101,7 @@ fn handle_privacy_command(cli: &CliApp, command: PrivacyCommands) -> Result<Valu
 
 fn handle_maintenance_command(cli: &CliApp, command: MaintenanceTopCommands) -> Result<Value> {
     match command {
+        MaintenanceTopCommands::Service(_) => anyhow::bail!("Service commands require the service entry point"),
         MaintenanceTopCommands::State => Ok(state_json(&cli.app.state())),
         MaintenanceTopCommands::Debug { wait_ms } => {
             if wait_ms > 0 {
@@ -1677,6 +1630,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::MessageServers(_) => "relay",
         Commands::Privacy(_) => "privacy",
         Commands::Maintenance(command) => match command {
+            MaintenanceTopCommands::Service(_) => "service",
             MaintenanceTopCommands::State => "state",
             MaintenanceTopCommands::Debug { .. } => "debug",
             MaintenanceTopCommands::Sync { .. } => "sync",
