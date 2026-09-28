@@ -1065,6 +1065,7 @@ final class AppManager: ObservableObject {
     private var persistedRestoreInFlight = false
     private var automaticRevocationLogoutInFlight = false
     private var localResetInFlight = false
+    private var pendingChatLinkAction: AppAction?
     // UI-test escape hatch: when IRIS_UI_TEST_SEED_PEER + IRIS_UI_TEST_SEED_COUNT
     // are set, AppManager auto-creates a chat with that peer once the account
     // is ready, then dispatches `count` outgoing messages back-to-back. Lets
@@ -1737,23 +1738,17 @@ final class AppManager: ObservableObject {
     }
 
     func handleChatLink(_ url: URL) {
-        guard url.scheme?.lowercased() == "https",
-              url.host?.lowercased() == "chat.iris.to" else {
-            return
-        }
+        guard let action = IrisChatLinks.action(for: url) else { return }
+        pendingChatLinkAction = action
+        openPendingChatLinkIfReady()
+    }
 
-        if isInviteChatLink(url) {
-            dispatchToRust(.acceptInvite(inviteInput: url.absoluteString))
-            return
-        }
-
-        for candidate in chatLinkPeerCandidates(url) {
-            let normalized = normalizePeerInput(input: candidate)
-            if !normalized.isEmpty, isValidPeerInput(input: normalized) {
-                dispatchToRust(.createChat(peerInput: normalized))
-                return
-            }
-        }
+    private func openPendingChatLinkIfReady() {
+        guard !bootstrapInFlight, !localResetInFlight,
+              state.account?.authorizationState == .authorized,
+              let action = pendingChatLinkAction else { return }
+        pendingChatLinkAction = nil
+        dispatchToRust(action)
     }
 
     func handleShareURL(_ url: URL) -> Bool {
@@ -2753,6 +2748,7 @@ final class AppManager: ObservableObject {
 
     func logout() {
         guard !localResetInFlight else { return }
+        pendingChatLinkAction = nil
 #if os(iOS)
         guard !reviewDemoPreparing else { showToast("Please wait for demo setup."); return }
         reviewDemoTask?.cancel()
@@ -2970,6 +2966,7 @@ final class AppManager: ObservableObject {
         syncIosStateSideEffects(for: reconciledState)
 #endif
         settleBootstrapIfNeeded(with: reconciledState)
+        openPendingChatLinkIfReady()
         if let toast = reconciledState.toast, !toast.isEmpty {
             showToast(toast)
         }
@@ -3667,56 +3664,6 @@ private func irisUpdateInstallScript() throws -> URL {
 }
 #endif
 
-private func isInviteChatLink(_ url: URL) -> Bool {
-    if url.pathComponents.dropFirst().first?.lowercased() == "invite",
-       url.pathComponents.count >= 3 {
-        return true
-    }
-
-    let fragmentComponents = chatLinkFragmentComponents(url)
-    if fragmentComponents.first?.lowercased() == "invite" && fragmentComponents.count >= 2 {
-        return true
-    }
-
-    guard let fragment = url.fragment else {
-        return false
-    }
-    let decoded = fragment.removingPercentEncoding ?? fragment
-    return decoded.contains("\"ephemeralKey\"") && decoded.contains("\"sharedSecret\"")
-}
-
-private func chatLinkPeerCandidates(_ url: URL) -> [String] {
-    var candidates: [String] = []
-
-    if let lastPathComponent = url.pathComponents.last,
-       lastPathComponent != "/" {
-        candidates.append(lastPathComponent)
-    }
-
-    if let firstFragmentComponent = chatLinkFragmentComponents(url).first {
-        candidates.append(firstFragmentComponent)
-    }
-
-    if let fragment = url.fragment,
-       !fragment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        candidates.append(fragment)
-    }
-
-    return candidates
-}
-
-private func chatLinkFragmentComponents(_ url: URL) -> [String] {
-    guard let fragment = url.fragment else {
-        return []
-    }
-
-    return fragment
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-        .drop(while: { $0 == "/" })
-        .split(separator: "/")
-        .map(String.init)
-        .filter { !$0.isEmpty }
-}
 
 #if os(iOS)
 private let foregroundDecryptedPushMarkerKey = "iris_foreground_decrypted_push"
