@@ -1,0 +1,17 @@
+Review access (iPhone and iPad)
+Iris Chat is permissionless: there is no email/password sign-in, paid account tier, or account approval. All features are available to a newly created profile.
+
+For pre-populated review content:
+1. On the welcome screen, tap Create profile.
+2. Enter AppStoreDemoUserMode as the name, accept the terms, and tap Create profile.
+3. Wait a few seconds for the sample messages to finish preparing. Open Sample conversation for incoming/outgoing messages and playable sample audio. Sample group contains a group conversation. Long-press messages to try message actions. Use the microphone in a chat to record a voice message.
+
+This iOS demo entry creates a fresh secret key on each device. No password or shared account key is required. The sample contact is offline after setup; it will not answer calls or new messages. The rest of the app uses normal live functionality.
+
+To review two-way messaging, voice/video calls, and CallKit:
+1. Create a profile on a second iPhone or iPad. You may use the same AppStoreDemoUserMode name on both; they will be separate profiles with different user IDs.
+2. On one device, open the profile from the chat-list avatar and copy its user ID. On the other device, tap New chat and paste that user ID. Send a message and accept the incoming message request on the receiving device.
+3. Open that live conversation and tap the phone or video icon. Allow microphone/camera access when prompted and answer on the other device. To review incoming CallKit and background audio, allow notifications, move the receiving app to the background or lock that device, and call it. Background audio continues while an active call is in progress. End the call from the app or system call controls.
+4. Exchange text, attachments, and recorded voice messages in the live conversation. Add the other profile to Sample group from the group details to review group messaging.
+
+Guideline 5: China mainland has been removed from the app's available App Store territories. CallKit remains available in the other selected territories.

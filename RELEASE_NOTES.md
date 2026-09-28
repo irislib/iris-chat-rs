@@ -2,6 +2,32 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.28
+
+### GitHub
+
+- Add iOS review onboarding with fresh per-device identities, real sample chat history, a sample group, and bundled playable audio. Include review instructions in Apple submissions.
+- Add inline voice-message playback, seeking, waveforms, and playback speed controls across native apps.
+- Add private contact nicknames and notes, improve name search, and label forwarded messages consistently.
+- Preserve direct-message IDs from queued sending through delivery.
+- Add a single-owner CLI service and improve Android invite layouts with large text.
+
+### Apple
+
+- Play voice messages inside chats, seek through audio, and adjust playback speed.
+- Add private nicknames and notes for contacts.
+- Improved name search and clearer forwarded messages.
+- More reliable queued-message delivery.
+- Add a demo profile with sample conversations on iPhone and iPad.
+
+### Zapstore
+
+- Play voice messages inside chats and seek through audio.
+- Add private nicknames and notes for contacts.
+- Improved name search and clearer forwarded messages.
+- More reliable queued-message delivery.
+- Easier-to-use invite screens with large text.
+
 ## v2026.9.26
 
 ### GitHub

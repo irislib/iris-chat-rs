@@ -451,7 +451,6 @@ fn main() {
     }
 }
 
-
 impl CliApp {
     fn open(data_dir: &Path) -> Result<Self> {
         let app = FfiApp::new(
@@ -1101,7 +1100,9 @@ fn handle_privacy_command(cli: &CliApp, command: PrivacyCommands) -> Result<Valu
 
 fn handle_maintenance_command(cli: &CliApp, command: MaintenanceTopCommands) -> Result<Value> {
     match command {
-        MaintenanceTopCommands::Service(_) => anyhow::bail!("Service commands require the service entry point"),
+        MaintenanceTopCommands::Service(_) => {
+            anyhow::bail!("Service commands require the service entry point")
+        }
         MaintenanceTopCommands::State => Ok(state_json(&cli.app.state())),
         MaintenanceTopCommands::Debug { wait_ms } => {
             if wait_ms > 0 {

@@ -312,6 +312,21 @@ extension RustAppClient {
 
 final class LiveRustAppClient: RustAppClient {
     private let ffi: FfiApp
+#if os(iOS)
+    private var reviewDemoLinkActive = false
+
+    func beginReviewDemoLink() -> FfiApp {
+        setFipsBleEnabled(false)
+        reviewDemoLinkActive = true
+        return ffi
+    }
+
+    func endReviewDemoLink() {
+        reviewDemoLinkActive = false
+        let snapshot = state()
+        setFipsBleEnabled(snapshot.account != nil && snapshot.preferences.nearbyBluetoothEnabled)
+    }
+#endif
 #if os(iOS) || os(macOS)
     private var fipsBle: IrisFipsBleRuntime?
 #endif
@@ -366,6 +381,9 @@ final class LiveRustAppClient: RustAppClient {
     }
 
     func setFipsBleEnabled(_ enabled: Bool) {
+#if os(iOS)
+        guard !enabled || !reviewDemoLinkActive else { return }
+#endif
 #if os(iOS) || os(macOS)
         if enabled, fipsBle == nil {
             fipsBle = IrisFipsBleRuntime(app: ffi)
@@ -1002,6 +1020,11 @@ final class AppManager: ObservableObject {
     )
     private var iosSideEffectGate = IosStateSideEffectGate()
     private let isUiTestRun: Bool
+    @Published private(set) var isReviewDemo = false
+    @Published private(set) var reviewDemoPreparing = false
+    @Published private(set) var reviewDemoFailed = false
+    private var reviewDemoTask: Task<Void, Never>?
+    private var reviewDemoAttempted = false
     private var pendingPushChatID: String?
 #endif
     private var clientDebugLog: [ClientDebugLogEntry] = []
@@ -1112,6 +1135,12 @@ final class AppManager: ObservableObject {
         self.desktopNotifications = desktopNotifications ?? SystemDesktopNotificationPoster(environment: environment)
 #endif
         self.dataDir = resolvedDataDir
+#if os(iOS)
+        self.isReviewDemo = IosReviewDemo.isEnabled(in: resolvedDataDir)
+        if IosReviewDemo.needsPreparation(in: resolvedDataDir), let live = resolvedRust as? LiveRustAppClient {
+            _ = live.beginReviewDemoLink()
+        }
+#endif
 #if os(macOS)
         self.currentAppVersion = appVersion
         self.updates = DesktopUpdateController()
@@ -2338,8 +2367,54 @@ final class AppManager: ObservableObject {
 
     func createAccount(name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+#if os(iOS)
+        if IosReviewDemo.matches(trimmed), state.account == nil {
+            do {
+                try IosReviewDemo.enable(in: dataDir)
+                isReviewDemo = true
+                _ = (rust as? LiveRustAppClient)?.beginReviewDemoLink()
+                dispatchToRust(.createAccount(name: IosReviewDemo.profileName))
+            } catch {
+                showToast("Could not prepare demo profile.")
+            }
+            return
+        }
+#endif
         dispatchToRust(.createAccount(name: trimmed))
     }
+
+#if os(iOS)
+    func retryReviewDemo() {
+        reviewDemoAttempted = false
+        startReviewDemoIfNeeded()
+    }
+
+    private func startReviewDemoIfNeeded() {
+        guard isReviewDemo, state.account != nil, !reviewDemoAttempted,
+              IosReviewDemo.needsPreparation(in: dataDir),
+              let live = rust as? LiveRustAppClient else { return }
+        reviewDemoAttempted = true
+        reviewDemoPreparing = true
+        reviewDemoFailed = false
+        let ffi = live.beginReviewDemoLink()
+        let directory = dataDir
+        let generation = reconciliationGeneration
+        reviewDemoTask = Task { [weak self] in
+            let preparation = Task.detached(priority: .userInitiated) {
+                try await IosReviewDemo.populate(primary: ffi, directory: directory)
+            }
+            let result = await withTaskCancellationHandler {
+                await preparation.result
+            } onCancel: { preparation.cancel() }
+            guard let self, generation == self.reconciliationGeneration, !Task.isCancelled else { return }
+            live.endReviewDemoLink()
+            self.reviewDemoPreparing = false
+            if case .failure = result { self.reviewDemoFailed = true }
+            self.reviewDemoTask = nil
+            if self.reviewDemoFailed { self.showToast("Demo setup failed. Tap Retry.") }
+        }
+    }
+#endif
 
     func updateProfileMetadata(name: String, pictureURL: String?, about: String?) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2412,6 +2487,14 @@ final class AppManager: ObservableObject {
         if let cached = await attachmentCache.data(for: key) {
             return cached
         }
+#if os(iOS)
+        if isReviewDemo, attachment.nhash == IosReviewDemo.audioHash,
+           attachment.filename == IosReviewDemo.audioFilename,
+           let data = await IosReviewDemo.bundledAudio() {
+            _ = try? await attachmentCache.store(data, for: key)
+            return data
+        }
+#endif
         guard !Task.isCancelled,
               let data = await downloadHashtreeBytes(nhash: attachment.nhash) else { return nil }
         _ = try? await attachmentCache.store(data, for: key)
@@ -2643,6 +2726,11 @@ final class AppManager: ObservableObject {
     }
 
     func logout() {
+#if os(iOS)
+        guard !reviewDemoPreparing else { showToast("Please wait for demo setup."); return }
+        reviewDemoTask?.cancel()
+        reviewDemoTask = nil
+#endif
         // Logout ownership stays in Rust. The shell clears native secrets and local files only.
         automaticRevocationLogoutInFlight = true
 #if os(iOS)
@@ -2657,6 +2745,11 @@ final class AppManager: ObservableObject {
             showToast("Could not clear secret key.")
             return
         }
+#if os(iOS)
+        isReviewDemo = false
+        reviewDemoAttempted = false
+        reviewDemoFailed = false
+#endif
         dispatchToRust(.logout)
         storedAccountBundle = nil
         replaceRustCoreAfterLocalReset()
@@ -2847,6 +2940,7 @@ final class AppManager: ObservableObject {
         runPendingTestSeedIfNeeded()
 #if os(iOS)
         processPendingShareFilesIfNeeded()
+        startReviewDemoIfNeeded()
 #endif
     }
 

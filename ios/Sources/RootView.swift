@@ -53,6 +53,22 @@ struct RootView: View {
                     .zIndex(20)
             }
 #if os(iOS)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if manager.isReviewDemo {
+                    HStack(spacing: 8) {
+                        if manager.reviewDemoPreparing { ProgressView() }
+                        Text(manager.reviewDemoPreparing ? "Preparing sample messages…" : (manager.reviewDemoFailed ? "Demo setup failed" : "Demo profile · Sample messages"))
+                            .font(.caption)
+                        if manager.reviewDemoFailed {
+                            Button("Retry") { manager.retryReviewDemo() }
+                        }
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity)
+                    .background(.regularMaterial)
+                    .accessibilityIdentifier("reviewDemoBanner")
+                }
+            }
             .sheet(isPresented: $showingSettingsSheet) {
                 SettingsScreen(
                     manager: manager,

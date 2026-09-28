@@ -288,10 +288,10 @@ run_ios_ui_test_shard() {
       tests=(IrisChatUITests MessageBodyUITests IrisChatTimelineUITests)
       ;;
     2:2)
-      tests=(IrisChatComposerUITests IrisChatFlowUITests ContactDetailsUITests ScreenshotTests AppStoreReviewUITests FipsBlePhysicalUITests)
+      tests=(IrisChatComposerUITests IrisChatFlowUITests ContactDetailsUITests ScreenshotTests AppStoreReviewUITests IosReviewDemoUITests FipsBlePhysicalUITests)
       ;;
     3:1)
-      tests=(IrisChatUITests MessageBodyUITests ScreenshotTests AppStoreReviewUITests FipsBlePhysicalUITests)
+      tests=(IrisChatUITests MessageBodyUITests ScreenshotTests AppStoreReviewUITests IosReviewDemoUITests FipsBlePhysicalUITests)
       ;;
     3:2)
       tests=(IrisChatComposerUITests IrisChatFlowUITests ContactDetailsUITests)
@@ -309,7 +309,7 @@ run_ios_ui_test_shard() {
       tests=(IrisChatTimelineUITests)
       ;;
     4:4)
-      tests=(IrisChatFlowUITests ContactDetailsUITests ScreenshotTests AppStoreReviewUITests FipsBlePhysicalUITests)
+      tests=(IrisChatFlowUITests ContactDetailsUITests ScreenshotTests AppStoreReviewUITests IosReviewDemoUITests FipsBlePhysicalUITests)
       ;;
     *)
       echo "Unsupported iOS test shard ${shard}/${worker_count}." >&2

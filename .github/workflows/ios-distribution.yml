@@ -224,6 +224,7 @@ jobs:
           APP_VERSION: ${{ steps.ipa.outputs.version }}
           BUILD_NUMBER: ${{ steps.ipa.outputs.build }}
           RELEASE_NOTES_PATH: ${{ steps.notes.outputs.path }}
+          APP_REVIEW_NOTES_PATH: ${{ github.workspace }}/source/ios/app-review-notes.txt
           DISTRIBUTION_TARGET: ${{ inputs.target }}
           RELEASE_MODE: ${{ inputs.release_mode }}
           IRIS_TESTFLIGHT_GROUPS: ${{ vars.IRIS_TESTFLIGHT_GROUPS }}
@@ -412,6 +413,12 @@ jobs:
                 },
                 force: true
               }
+              review_notes_path = ENV.fetch("APP_REVIEW_NOTES_PATH")
+              if File.file?(review_notes_path)
+                release_options[:app_review_information] = {
+                  notes: File.read(review_notes_path).strip
+                }
+              end
               if existing_build
                 release_options[:skip_binary_upload] = true
                 release_options[:build_number] = build_number

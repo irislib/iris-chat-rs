@@ -42,6 +42,8 @@ targets:
       - path: ../core/assets/call-audio
         buildPhase: resources
       - path: Assets.xcassets
+      - path: DemoAssets
+        buildPhase: resources
       - path: Sources
       - path: Bindings
         excludes:

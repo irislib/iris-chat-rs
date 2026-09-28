@@ -162,6 +162,14 @@ struct CreateAccountScreen: View {
                     .onSubmit(submitCreateAccount)
                     .accessibilityIdentifier("signupNameField")
 
+#if os(iOS)
+                if IosReviewDemo.matches(trimmedDisplayName) {
+                    Text("Demo profile with sample messages. A new secret key is created on this device.")
+                        .font(.caption)
+                        .accessibilityIdentifier("reviewDemoExplanation")
+                }
+#endif
+
                 if requiresTermsAcceptance {
                     OnboardingTermsAgreement(accepted: $termsAccepted)
                 }
