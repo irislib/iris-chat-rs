@@ -67,6 +67,8 @@ internal static class Program
             Check(microphones.Items.Count==1 && microphones.SelectedValue?.ToString()=="","Hotplug refresh removes unplugged headset");
             manager.Calls.Update(null);Pump();
             Check(view.Visibility==Visibility.Collapsed,"Logout removes call UI");
+            NotificationNavigationTests.Run(manager, output);
+            AttachmentCacheTests.Run();
             Console.WriteLine("PASS: WPF incoming, decline, stale-state device privacy, ended, audio selectors, hotplug, and logout");
             return 0;
         }
@@ -88,5 +90,5 @@ internal static class Program
         var png=new PngBitmapEncoder();png.Frames.Add(BitmapFrame.Create(bitmap));
         using var stream=File.Create(path);png.Save(stream);
     }
-    private sealed class SilentNotifications : IDesktopNotificationPoster {public void Post(string title,string body) {}}
+    private sealed class SilentNotifications : IDesktopNotificationPoster {public void Post(string title,string body,DesktopNotificationTarget target) {} public void Clear() {}}
 }

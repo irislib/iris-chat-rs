@@ -68,8 +68,8 @@ function Get-CargoTargetDirectory {
 function Get-PublishDirectory {
     $projectDir = Split-Path -Parent $Project
     $candidates = @(
-        (Join-Path $projectDir "bin\x64\$Configuration\net8.0-windows\win-x64\publish"),
-        (Join-Path $projectDir "bin\$Configuration\net8.0-windows\win-x64\publish")
+        (Join-Path $projectDir "bin\x64\$Configuration\net8.0-windows10.0.17763.0\win-x64\publish"),
+        (Join-Path $projectDir "bin\$Configuration\net8.0-windows10.0.17763.0\win-x64\publish")
     )
     foreach ($candidate in $candidates) {
         if (Test-Path $candidate) { return $candidate }

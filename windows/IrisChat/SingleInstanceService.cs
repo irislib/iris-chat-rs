@@ -26,7 +26,7 @@ public sealed class SingleInstanceService : IDisposable
         _pipeName = pipeName;
     }
 
-    public static SingleInstanceService? ClaimOrSignal(string[] args)
+    public static SingleInstanceService? ClaimOrSignal(string[] args, bool signalExisting = true)
     {
         var (mutexName, pipeName) = InstanceNames();
         var mutex = new Mutex(initiallyOwned: true, mutexName, out var ownsMutex);
@@ -36,7 +36,7 @@ public sealed class SingleInstanceService : IDisposable
         }
 
         mutex.Dispose();
-        SignalPrimary(args, pipeName);
+        if (signalExisting) SignalPrimary(args, pipeName);
         return null;
     }
 
@@ -69,6 +69,8 @@ public sealed class SingleInstanceService : IDisposable
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(testRunId)))[..16];
         return ($@"{BaseMutexName}.{digest}", $"{BasePipeName}.{digest}");
     }
+
+    public static void ForwardToPrimary(string[] args) => SignalPrimary(args, InstanceNames().PipeName);
 
     private static void SignalPrimary(string[] args, string pipeName)
     {

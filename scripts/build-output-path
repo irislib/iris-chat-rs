@@ -67,7 +67,7 @@ case "$(uname -s)" in
     print_one "iris-chat-linux-dev:/workspace/iris-chat-rs/linux/target/debug/iris-chat"
     ;;
   MINGW*|MSYS*|CYGWIN*)
-    print_one "$ROOT/windows/IrisChat/bin/x64/${IRIS_WINDOWS_DOTNET_CONFIG:-Debug}/net8.0-windows/win-x64/publish/IrisChat.exe"
+    print_one "$ROOT/windows/IrisChat/bin/x64/${IRIS_WINDOWS_DOTNET_CONFIG:-Debug}/net8.0-windows10.0.17763.0/win-x64/publish/IrisChat.exe"
     ;;
   *)
     echo "No local build output path for $(uname -s)." >&2

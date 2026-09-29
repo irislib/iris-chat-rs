@@ -38,6 +38,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
     private readonly WindowsCredentialStore _secretStore;
     private readonly WindowsCredentialStore _pendingDeviceLinkSecretStore;
     private readonly IDesktopNotificationPoster _notifier;
+    private readonly DesktopNotificationNavigation _notificationNavigation;
     private readonly HashtreeAttachmentCache _cache;
     private readonly UpdateService _updateService = new();
     private readonly string _dataDir;
@@ -76,6 +77,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
             filePath: testSecretPath is null ? null : testSecretPath + ".pending-link"
         );
         _notifier = notifier ?? new SystemDesktopNotificationPoster();
+        _notificationNavigation = new DesktopNotificationNavigation(dataDir);
         _cache = new HashtreeAttachmentCache(dataDir);
         _ui = Application.Current.Dispatcher;
 
@@ -300,9 +302,15 @@ public sealed partial class AppManager : INotifyPropertyChanged
             ShowToast("Could not clear secret key.");
             return;
         }
+        _notificationNavigation.ClearPending();
+        _notifier.Clear();
+        _cache.Invalidate();
+        Chrome.Avatar.ClearImageCache();
+        Chrome.MessageBubble.ClearImageCache();
         DispatchToRust(new AppAction.Logout());
         try { Directory.Delete(_dataDir, recursive: true); } catch { }
         Directory.CreateDirectory(_dataDir);
+        _notificationNavigation.Invalidate();
     }
 
     public void Shutdown()
@@ -387,10 +395,24 @@ public sealed partial class AppManager : INotifyPropertyChanged
     {
         var trimmed = chatId.Trim();
         if (string.IsNullOrEmpty(trimmed)) return;
+        _notificationNavigation.ClearPending();
         NavigateOptimistically(
             new Screen[] { new Screen.Chat(trimmed) },
             new AppAction.OpenChat(trimmed)
         );
+    }
+
+    public void OpenNotification(string payload)
+    {
+        if (_notificationNavigation.Accept(payload)) TryOpenPendingNotification();
+    }
+
+    private void TryOpenPendingNotification()
+    {
+        if (_state.account?.authorizationState == DeviceAuthorizationState.Revoked) return;
+        var chatId = _notificationNavigation.TakeForAccount(_state.account?.publicKeyHex,
+            (_state.chatList ?? Array.Empty<ChatThreadSnapshot>()).Select(chat => chat.chatId));
+        if (chatId != null) OpenChat(chatId);
     }
 
     public void RetryDirectChatCapability(string chatId)
@@ -464,11 +486,14 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
     public async Task<bool> OpenAttachmentAsync(MessageAttachmentSnapshot attachment)
     {
+        var generation = _cache.Generation;
         var data = await DownloadAttachmentAsync(attachment).ConfigureAwait(false);
+        if (!_cache.IsCurrent(generation)) return false;
         if (data == null) { ShowToast("Attachment could not be opened"); return false; }
         try
         {
-            var path = _cache.GetCachedAttachmentPath(attachment, data);
+            var path = _cache.GetCachedAttachmentPath(attachment, data, generation);
+            if (path == null) return false;
             if (!PlatformDocumentOpener.Open(path))
             {
                 ShowToast("Attachment could not be opened");
@@ -803,8 +828,9 @@ public sealed partial class AppManager : INotifyPropertyChanged
                 var next = StateByReconcilingPendingNavigation(f.v1);
                 _state = next;
                 Calls.Update(next.account != null ? next.call : null);
-                if (next.call?.phase == "incoming" && (prev.call?.callId != next.call.callId || prev.call.phase != "incoming"))
-                { try { _notifier.Post(next.call.peerName, next.call.videoCapable ? "Incoming video call" : "Incoming voice call"); } catch { } }
+                if (next.account != null && next.call?.phase == "incoming" && (prev.call?.callId != next.call.callId || prev.call.phase != "incoming"))
+                { try { _notifier.Post(next.call.peerName, next.call.videoCapable ? "Incoming video call" : "Incoming voice call",
+                    _notificationNavigation.Target(next.account!.publicKeyHex, next.call.chatId)); } catch { } }
                 _lastRevApplied = f.v1.rev;
                 if (next.account?.authorizationState != DeviceAuthorizationState.Revoked)
                 {
@@ -819,6 +845,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
                 SyncCurrentDeviceLabels(next);
                 SyncNearbyPreference(prev, next);
                 PostDesktopNotifications(prev, next);
+                TryOpenPendingNotification();
                 NotifyAll();
                 if (!string.IsNullOrEmpty(next.toast))
                 {
@@ -1201,7 +1228,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
     private void PostDesktopNotifications(AppState old, AppState next)
     {
-        if (old.account == null) return;
+        if (old.account == null || next.account == null || old.account.publicKeyHex != next.account.publicKeyHex) return;
 
         var mainWindow = Application.Current?.MainWindow;
         var appForeground = mainWindow?.IsActive ?? false;
@@ -1216,7 +1243,8 @@ public sealed partial class AppManager : INotifyPropertyChanged
         );
         foreach (var candidate in candidates)
         {
-            try { _notifier.Post(candidate.title, candidate.body); } catch { }
+            try { _notifier.Post(candidate.title, candidate.body,
+                _notificationNavigation.Target(next.account.publicKeyHex, candidate.chatId)); } catch { }
         }
     }
 

@@ -58,9 +58,26 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
-        _singleInstance = SingleInstanceService.ClaimOrSignal(e.Args);
+        // Register before singleton arbitration: a COM-launched secondary must
+        // stay alive long enough to receive and forward the actual toast target.
+        SystemDesktopNotificationPoster.Register(payload => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (_singleInstance is null)
+            {
+                SingleInstanceService.ForwardToPrimary(new[] { DesktopNotificationNavigation.LaunchArgument, payload });
+                Shutdown();
+            }
+            else
+            {
+                Manager.OpenNotification(payload);
+                ShowMainWindow();
+            }
+        })));
+        var toastActivated = SystemDesktopNotificationPoster.WasToastActivated;
+        _singleInstance = SingleInstanceService.ClaimOrSignal(e.Args, signalExisting: !toastActivated);
         if (_singleInstance is null)
         {
+            if (toastActivated) { ShutdownMode = ShutdownMode.OnExplicitShutdown; return; }
             Shutdown();
             return;
         }
@@ -100,6 +117,7 @@ public partial class App : Application
         MainWindow = window;
         _singleInstance.Start(args => Dispatcher.Invoke(() => HandleLaunchArgs(args)));
         window.Show();
+        HandleLaunchArgs(e.Args);
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -114,6 +132,9 @@ public partial class App : Application
 
     private void HandleLaunchArgs(IEnumerable<string> args)
     {
+        var values = args.ToArray();
+        var index = Array.IndexOf(values, DesktopNotificationNavigation.LaunchArgument);
+        if (index >= 0 && index + 1 < values.Length) Manager.OpenNotification(values[index + 1]);
         if (!IsBackgroundLaunch(args))
         {
             ShowMainWindow();

@@ -63,7 +63,7 @@ inside the VM (handled by the Parallels Tools install plus the user's prior
 
 Once those are present, `just windows-build` produces a self-contained
 `IrisChat.exe` under
-`windows/IrisChat/bin/Debug/net8.0-windows/win-x64/publish/`.
+`windows/IrisChat/bin/Debug/net8.0-windows10.0.17763.0/win-x64/publish/`.
 
 ## Keyboard regression
 

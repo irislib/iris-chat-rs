@@ -149,37 +149,6 @@ public static class PlatformStartupAtLogin
 
 public interface IDesktopNotificationPoster
 {
-    void Post(string title, string body);
-}
-
-/// Best-effort Windows notification poster. Uses WPF + balloon-via-shell as a
-/// simple fallback. Production-grade toasts would use Windows.UI.Notifications,
-/// which requires Windows.winmd interop — out of scope for the first version.
-public sealed class SystemDesktopNotificationPoster : IDesktopNotificationPoster
-{
-    public void Post(string title, string body)
-    {
-        try
-        {
-            var notify = new System.Windows.Forms.NotifyIcon
-            {
-                Icon = System.Drawing.SystemIcons.Information,
-                Visible = true,
-                BalloonTipTitle = title,
-                BalloonTipText = body,
-            };
-            notify.ShowBalloonTip(4000);
-            // Dispose after the balloon has had a chance to show.
-            var timer = new System.Windows.Threading.DispatcherTimer
-            {
-                Interval = TimeSpan.FromSeconds(6),
-            };
-            timer.Tick += (_, _) => { timer.Stop(); notify.Dispose(); };
-            timer.Start();
-        }
-        catch
-        {
-            // Notifications are best-effort.
-        }
-    }
+    void Post(string title, string body, DesktopNotificationTarget target);
+    void Clear();
 }
