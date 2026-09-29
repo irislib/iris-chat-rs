@@ -13,6 +13,9 @@ protocol IrisCallMediaHandling: AnyObject {
     func adapt(targetBitrate: UInt32, keyFrameGeneration: UInt32)
     func receive(callID: String, kind: UInt8, sequence: UInt32, timestampUs: UInt64, keyFrame: Bool, data: Data)
     func stop()
+#if os(macOS)
+    func setAudioDevices(_ selection: IrisMacAudioDeviceSelection, completion: @escaping (Bool) -> Void)
+#endif
 }
 
 /// No sockets or network stack live in the media engine. Only authenticated
@@ -40,6 +43,9 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
     private var keyFrameGeneration: UInt32 = 0
     private var ready = false
     private var receivedVideo = false
+#if os(macOS)
+    private var audioDevices = IrisMacAudioDeviceSelection()
+#endif
     private let send: (String, UInt8, UInt64, Bool, Data, @escaping () -> Bool) -> Void
     private let frame: (String, Bool, CVPixelBuffer) -> Void
     private let connectionChanged: (String, Bool) -> Void
@@ -127,6 +133,9 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
                 return
             }
             do {
+#if os(macOS)
+                try self.audio?.setDevices(self.audioDevices)
+#endif
                 try self.audio?.start()
                 self.audio?.setMuted(muted)
                 if video && session.videoCapable { try self.camera?.start(height: self.quality.captureHeight) }
@@ -139,6 +148,19 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
     func setQuality(_ quality: IrisCallQuality, customKilobits: Int) {
         queue.async { [weak self] in self?.quality = quality }
     }
+
+#if os(macOS)
+    func setAudioDevices(_ selection: IrisMacAudioDeviceSelection, completion: @escaping (Bool) -> Void) {
+        queue.async { [weak self] in
+            guard let self else { completion(false); return }
+            do {
+                try self.audio?.setDevices(selection)
+                self.audioDevices = selection
+                completion(true)
+            } catch { completion(false) }
+        }
+    }
+#endif
 
     func adapt(targetBitrate: UInt32, keyFrameGeneration: UInt32) {
         queue.async { [weak self] in

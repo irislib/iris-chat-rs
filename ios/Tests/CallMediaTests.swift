@@ -10,14 +10,43 @@ private final class CallAudioProbe: IrisCallAudioHandling {
     var started = false
     var muted = false
     var error: Error?
+    var startCount = 0
     var stopped: (() -> Void)?
-    func start() throws { if let error { throw error }; started = true }
+    func start() throws { if let error { throw error }; started = true; startCount += 1 }
     func setMuted(_ muted: Bool) { self.muted = muted }
     func receive(sequence: UInt32, data: Data) {}
     func stop() { stopped?() }
+#if os(macOS)
+    var selections: [IrisMacAudioDeviceSelection] = []
+    func setDevices(_ selection: IrisMacAudioDeviceSelection) throws {
+        if let error { throw error }
+        selections.append(selection)
+    }
+#endif
 }
 
 final class CallMediaTests: XCTestCase {
+#if os(macOS)
+    func testChangingAudioDevicesDoesNotRestartCallOrTransport() {
+        let ready = expectation(description: "call ready")
+        let switched = expectation(description: "devices changed")
+        let audio = CallAudioProbe()
+        let engine = IrisCallMediaEngine(send: { _, _, _, _, _, _ in }, frame: { _, _, _ in },
+            connectionChanged: { _, _ in ready.fulfill() }, requestKeyFrame: { _ in },
+            failed: { _, message in XCTFail(message) }, audioForTesting: audio)
+        engine.start(.init(callID: "devices", videoCapable: false))
+        engine.configure(callID: "devices", muted: true, video: false)
+        wait(for: [ready], timeout: 2)
+        engine.setAudioDevices(.init(input: 10, output: 20)) { succeeded in
+            XCTAssertTrue(succeeded)
+            switched.fulfill()
+        }
+        wait(for: [switched], timeout: 2)
+        XCTAssertEqual(audio.startCount, 1)
+        XCTAssertEqual(audio.selections.last, .init(input: 10, output: 20))
+        engine.stop()
+    }
+#endif
     func testMutedVoiceCallIsReadyAfterLocalAudioInitialization() {
         let ready = expectation(description: "muted voice call ready without incoming media")
         let stopped = expectation(description: "audio cleaned up")

@@ -23,6 +23,9 @@ private final class CallMediaProbe: IrisCallMediaHandling {
     }
     func setQuality(_ quality: IrisCallQuality, customKilobits: Int) {}
     func stop() { stopCount += 1 }
+#if os(macOS)
+    func setAudioDevices(_ selection: IrisMacAudioDeviceSelection, completion: @escaping (Bool) -> Void) { completion(true) }
+#endif
 }
 
 @MainActor

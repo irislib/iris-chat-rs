@@ -7,6 +7,9 @@ protocol IrisCallAudioHandling: AnyObject {
     func setMuted(_ muted: Bool)
     func receive(sequence: UInt32, data: Data)
     func stop()
+#if os(macOS)
+    func setDevices(_ selection: IrisMacAudioDeviceSelection) throws
+#endif
 }
 
 final class IrisCallAudio: IrisCallAudioHandling {
@@ -24,6 +27,9 @@ final class IrisCallAudio: IrisCallAudioHandling {
     private var loggedCapture = false
     private var loggedPlayback = false
     private var loggedPlayed = false
+#if os(macOS)
+    private var deviceSelection = IrisMacAudioDeviceSelection()
+#endif
 
     init(queue: DispatchQueue, permission: @escaping (UInt64) -> (() -> Bool), failed: @escaping (Error) -> Void,
          send: @escaping (Data, UInt64, @escaping () -> Bool) -> Void) {
@@ -36,10 +42,13 @@ final class IrisCallAudio: IrisCallAudioHandling {
 
     func start() throws {
         guard engine == nil else { return }
-        let codec = try CallAudioCodec()
+        let codec = try self.codec ?? CallAudioCodec()
         let engine = AVAudioEngine()
         let input = engine.inputNode
         try input.setVoiceProcessingEnabled(true)
+#if os(macOS)
+        try deviceSelection.apply(to: engine)
+#endif
         input.isVoiceProcessingInputMuted = muted
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0,
@@ -142,6 +151,28 @@ final class IrisCallAudio: IrisCallAudioHandling {
         self.muted = muted
         engine?.inputNode.isVoiceProcessingInputMuted = muted
     }
+
+#if os(macOS)
+    func setDevices(_ selection: IrisMacAudioDeviceSelection) throws {
+        guard selection != deviceSelection else { return }
+        let previous = deviceSelection
+        deviceSelection = selection
+        guard engine != nil else { return }
+        // Only the hardware graph changes. Preserve the codec and the live
+        // call/transport, and rebuild the tap/converter for the new sample rate.
+        let codec = self.codec
+        stop()
+        self.codec = codec
+        do { try start() }
+        catch {
+            deviceSelection = previous
+            self.codec = codec
+            do { try start() }
+            catch { failed(error) }
+            throw error
+        }
+    }
+#endif
 
     func receive(sequence: UInt32, data: Data) {
         guard !data.isEmpty, data.count <= 1_275 else { return }

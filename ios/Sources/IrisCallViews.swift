@@ -61,6 +61,9 @@ struct IrisCallScreen: View {
     let call: CallSnapshot
     let voiceEnabled: Bool
     @State private var showsQuality = false
+#if os(macOS)
+    @State private var showsAudioDevices = false
+#endif
 
     var body: some View {
         GeometryReader { geometry in
@@ -134,6 +137,9 @@ struct IrisCallScreen: View {
             .ignoresSafeArea()
             .accessibilityIdentifier("callScreen")
             .sheet(isPresented: $showsQuality) { IrisCallQualitySheet(controller: controller) }
+#if os(macOS)
+            .sheet(isPresented: $showsAudioDevices) { IrisCallAudioDevicesSheet(devices: controller.audioDevices) }
+#endif
         }
     }
 
@@ -174,8 +180,22 @@ struct IrisCallScreen: View {
                                color: .white.opacity(0.16), id: "callCameraButton") { controller.toggleCamera() }
                 }
 #if os(iOS)
-                callButton("Speaker", icon: controller.speakerEnabled ? "speaker.wave.3.fill" : "speaker.fill",
-                           color: controller.speakerEnabled ? .white.opacity(0.35) : .white.opacity(0.16), id: "callSpeakerButton") { controller.toggleSpeaker() }
+                if controller.audioRoute.external {
+                    VStack(spacing: 8) {
+                        IrisCallRoutePicker(routeName: controller.audioRoute.name)
+                            .frame(width: 58, height: 58)
+                            .background(.white.opacity(0.16), in: Circle())
+                        Text("Audio").font(.caption)
+                    }
+                } else {
+                    callButton("Speaker", icon: controller.audioRoute.speaker ? "speaker.wave.3.fill" : "speaker.fill",
+                               color: controller.audioRoute.speaker ? .white.opacity(0.35) : .white.opacity(0.16), id: "callSpeakerButton") { controller.toggleSpeaker() }
+                }
+#endif
+#if os(macOS)
+                callButton("Audio", icon: "speaker.wave.2.fill", color: .white.opacity(0.16), id: "callAudioDevicesButton") {
+                    showsAudioDevices = true
+                }
 #endif
                 callButton("End", icon: "phone.down.fill", color: .red, id: "endCallButton") { controller.end() }
             }

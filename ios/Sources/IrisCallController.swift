@@ -37,7 +37,10 @@ final class IrisCallController: NSObject, ObservableObject {
     nonisolated let remoteSurface = IrisCallVideoSurface()
     @Published private(set) var quality = IrisCallQuality.automatic
     @Published private(set) var customKilobits = 2_000
-    @Published private(set) var speakerEnabled = false
+#if os(iOS)
+    @Published private(set) var audioRoute = IrisCallAudioRoute()
+    private let audioRouting: IrisCallAudioRouting?
+#endif
     @Published private(set) var presentedCall: CallSnapshot?
     @Published private(set) var startingVideo: Bool?
     private var dismissalTask: Task<Void, Never>?
@@ -61,6 +64,15 @@ final class IrisCallController: NSObject, ObservableObject {
     private let mediaForTesting: IrisCallMediaHandling?
 #if os(macOS)
     private let desktopAlerts = IrisDesktopCallAlerts()
+    lazy var audioDevices = IrisMacCallAudioDevices { [weak self] selection, completion in
+        guard let self else { completion(false); return }
+        self.media.setAudioDevices(selection) { [weak self] succeeded in
+            Task { @MainActor in
+                if !succeeded { self?.showError("Couldn’t change the audio device.") }
+                completion(succeeded)
+            }
+        }
+    }
 #endif
     private lazy var media: IrisCallMediaHandling = mediaForTesting ?? IrisCallMediaEngine(
         send: { [weak self, outgoingSlots, sendGate] id, kind, timestamp, key, data, captureAllowed in
@@ -127,7 +139,14 @@ final class IrisCallController: NSObject, ObservableObject {
         self.mediaForTesting = mediaForTesting
         self.tones = tonesForTesting ?? (mediaForTesting == nil ? IrisCallTones() : nil)
         self.permissionAccess = permissionAccess ?? IrisCallPermissions()
+#if os(iOS)
+        self.audioRouting = mediaForTesting == nil ? IrisCallAudioRouting() : nil
+#endif
         super.init()
+#if os(iOS)
+        audioRouting?.onChange = { [weak self] in self?.audioRoute = $0 }
+        audioRouting?.refresh()
+#endif
 #if os(iOS) && !targetEnvironment(simulator)
         guard mediaForTesting == nil else { return }
         let configuration = CXProviderConfiguration()
@@ -256,10 +275,8 @@ final class IrisCallController: NSObject, ObservableObject {
 
     func toggleSpeaker() {
 #if os(iOS)
-        do {
-            try AVAudioSession.sharedInstance().overrideOutputAudioPort(speakerEnabled ? .none : .speaker)
-            speakerEnabled.toggle()
-        } catch { showError("Couldn’t change the speaker.") }
+        do { try audioRouting?.toggleSpeaker() }
+        catch { showError("Couldn’t change the speaker.") }
 #endif
     }
 
@@ -318,6 +335,7 @@ final class IrisCallController: NSObject, ObservableObject {
         updateSystemCall(snapshot?.callId == endingCallID ? nil : snapshot)
 #elseif os(macOS)
         if mediaForTesting == nil {
+            if snapshot != nil && snapshot?.phase != "ended" { audioDevices.start() }
             desktopAlerts.update(snapshot?.callId == endingCallID ? nil : snapshot)
         }
 #endif
@@ -399,7 +417,7 @@ final class IrisCallController: NSObject, ObservableObject {
             mode: video ? .videoChat : .voiceChat, options: [.allowBluetooth])
         try AVAudioSession.sharedInstance().setPreferredSampleRate(48_000)
         try AVAudioSession.sharedInstance().setPreferredIOBufferDuration(0.02)
-        speakerEnabled = video
+        audioRouting?.refresh()
     }
 
     func receivePushInvite(_ invite: CallSnapshot?, completion: @escaping () -> Void) {
@@ -454,7 +472,7 @@ final class IrisCallController: NSObject, ObservableObject {
                     try configureAudioSession(video: snapshot.videoCapable)
                     try AVAudioSession.sharedInstance().setActive(true)
                     fallbackAudioSessionActive = true
-                    if speakerEnabled { try AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker) }
+                    audioRouting?.refresh()
                 } catch { showError("Couldn’t start call audio.") }
             } else if fallbackAudioSessionActive && (snapshot == nil || snapshot?.phase == "ended") {
                 fallbackAudioSessionActive = false
@@ -573,7 +591,7 @@ extension IrisCallController: @preconcurrency CXProviderDelegate {
     func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
         audioActive = true
         toneAudioReady = true
-        if speakerEnabled { try? audioSession.overrideOutputAudioPort(.speaker) }
+        audioRouting?.refresh()
         updateHardware()
     }
 
