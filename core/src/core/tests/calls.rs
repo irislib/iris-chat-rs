@@ -534,3 +534,5 @@ fn device_sync_keeps_fixed_websocket_listener_after_roster_refresh() {
     }
     core.stop_device_sync_now();
 }
+
+include!("call_media_congestion.rs");

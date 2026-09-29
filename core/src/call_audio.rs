@@ -209,3 +209,7 @@ mod tests {
         assert!(codec.playout.lock().unwrap().packets.len() <= 12);
     }
 }
+
+#[cfg(test)]
+#[path = "call_audio/sustained_tests.rs"]
+mod sustained_tests;
