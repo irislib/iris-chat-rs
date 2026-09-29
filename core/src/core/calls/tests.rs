@@ -279,6 +279,70 @@ fn calls_first_answer_wins_and_other_device_cannot_downgrade_or_end_call() {
 }
 
 #[test]
+fn blocking_a_caller_immediately_ends_pending_and_connected_calls() {
+    for phase in ["incoming", "outgoing", "connected"] {
+        let mut f = Fixture::new();
+        match phase {
+            "outgoing" => f.outgoing(true),
+            "connected" => f.connected_incoming(true),
+            _ => f.receive(0, "offer", true),
+        }
+        assert_eq!(f.snapshot().phase, phase);
+        f._updates.try_iter().for_each(drop);
+        f.core.handle_action(AppAction::SetUserBlocked {
+            owner_pubkey_hex: f.owner.clone(),
+            blocked: true,
+        });
+        assert!(
+            f.core.calls.active.is_none(),
+            "blocking must end a {phase} call before the next timer or media callback"
+        );
+        assert_eq!(f.snapshot().phase, "ended");
+        assert_eq!(f.core.shared_state.read().unwrap().call, f.core.state.call);
+        assert!(f
+            .core
+            .build_mobile_push_sync_snapshot()
+            .call_author_pubkeys
+            .is_empty());
+
+        // Answer actions and both devices' queued signals cannot revive it.
+        f.core.handle_action(AppAction::AnswerCall {
+            call_id: CALL_ID.into(),
+        });
+        for device in 0..f.devices.len() {
+            for kind in ["offer", "answer", "ping"] {
+                f.receive(device, kind, true);
+            }
+        }
+        assert!(f.core.calls.active.is_none());
+        assert_eq!(f.snapshot().phase, "ended");
+        f.core.handle_action(AppAction::EndCall {
+            call_id: CALL_ID.into(),
+        });
+        for device in 0..f.devices.len() {
+            f.core.handle_call_packet(
+                &f.devices[device],
+                PORT,
+                &serde_json::to_vec(&Signal::new("offer", NEXT_CALL_ID, true, false)).unwrap(),
+            );
+        }
+        assert!(f.core.state.call.is_none());
+    }
+}
+
+#[test]
+fn blocking_another_contact_does_not_interrupt_a_call() {
+    let mut f = Fixture::new();
+    f.connected_incoming(false);
+    f.core.handle_action(AppAction::SetUserBlocked {
+        owner_pubkey_hex: Keys::generate().public_key().to_hex(),
+        blocked: true,
+    });
+    assert_eq!(f.snapshot().phase, "connected");
+    assert!(f.core.calls.active.is_some());
+}
+
+#[test]
 fn calls_revocation_or_blocking_drops_media_and_cleans_up_on_tick() {
     for change in [
         "remote-device-revoked",

@@ -53,6 +53,7 @@ final class IrisCallController: NSObject, ObservableObject {
     private var pendingMuted: Bool?
     private var pendingVideo: Bool?
     private var permissionRequestID: UUID?
+    private var callPreferences: PreferencesSnapshot?
     private var startDispatched = false
     private let tones = IrisCallTones()
     private let permissionAccess: IrisCallPermissions
@@ -263,6 +264,13 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
     func update(_ snapshot: CallSnapshot?, preferences: PreferencesSnapshot? = nil, error: String? = nil) {
+        if let preferences { callPreferences = preferences }
+        var snapshot = snapshot
+        if let candidate = snapshot ?? call, !allowsCall(candidate) {
+            if call?.callId == candidate.callId { end() }
+            else { dispatch(.endCall(callId: candidate.callId)) }
+            snapshot = nil
+        }
 #if os(iOS)
         if pendingPushCallID != nil {
             // Startup may emit several empty snapshots before the queued push
@@ -310,6 +318,14 @@ final class IrisCallController: NSObject, ObservableObject {
 #endif
         updateHardware()
         updatePresentation(snapshot, previousID: previousID)
+    }
+
+    private func allowsCall(_ snapshot: CallSnapshot) -> Bool {
+        guard let preferences = callPreferences else { return true }
+        guard !preferences.blockedOwnerPubkeys.contains(snapshot.chatId) else { return false }
+        // Accepted-contact eligibility is checked by the shared core, including
+        // outgoing chat history. The shell only applies these immediate vetoes.
+        return snapshot.videoCapable ? preferences.videoCallsEnabled : preferences.voiceCallsEnabled
     }
 
     private func updatePresentation(_ snapshot: CallSnapshot?, previousID: String?) {
@@ -374,7 +390,7 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
     func receivePushInvite(_ invite: CallSnapshot?, completion: @escaping () -> Void) {
-        guard let invite else {
+        guard let invite, allowsCall(invite) else {
             // iOS requires every delivered VoIP push to be reported, even if it
             // expired or the sender was blocked since subscription registration.
             reportUnavailablePush(completion: completion)

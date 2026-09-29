@@ -1301,6 +1301,7 @@ final class AppManager: ObservableObject {
         // subscription filters and the local-ingest guard. The UI
         // toast still fires here so the user sees immediate feedback
         // before the state round-trip lands.
+        if blocked, calls.call?.chatId == normalized { calls.end() }
         dispatch(.setUserBlocked(ownerPubkeyHex: normalized, blocked: blocked))
         showToast(blocked ? "User blocked" : "User unblocked")
     }
@@ -2941,7 +2942,9 @@ final class AppManager: ObservableObject {
         reconciledState = stateByApplyingScreenshotFixture(reconciledState)
         lastRevApplied = nextState.rev
         state = reconciledState
-        calls.update(reconciledState.call, preferences: reconciledState.preferences, error: reconciledState.toast)
+        calls.update(reconciledState.call,
+                     preferences: reconciledState.account == nil ? nil : reconciledState.preferences,
+                     error: reconciledState.toast)
 #if os(iOS)
         if appIsBackgrounded, oldState.call != nil,
            reconciledState.call == nil || reconciledState.call?.phase == "ended" {

@@ -294,9 +294,22 @@ impl AppCore {
             return;
         }
         if blocked {
-            self.preferences.blocked_owner_pubkeys.push(normalized);
+            self.preferences
+                .blocked_owner_pubkeys
+                .push(normalized.clone());
             self.preferences.blocked_owner_pubkeys.sort();
             self.preferences.blocked_owner_pubkeys.dedup();
+            // Stop ringing and media now, before any queued answer or frame
+            // can run; the periodic call tick is only a fallback.
+            if self.calls.active.is_some()
+                && self
+                    .state
+                    .call
+                    .as_ref()
+                    .is_some_and(|call| call.chat_id == normalized)
+            {
+                self.finish_call("Call ended");
+            }
         } else {
             self.preferences
                 .blocked_owner_pubkeys

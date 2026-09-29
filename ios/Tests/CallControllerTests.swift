@@ -247,6 +247,43 @@ final class CallControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testBlockedPreferenceDismissesPushBeforeCoreRecoveryAndCannotBeAnswered() async {
+        var actions: [AppAction] = []
+        let controller = IrisCallController(dispatch: { actions.append($0) }, showError: { _ in },
+                                            mediaForTesting: CallMediaProbe())
+        var invite = connectedCall(id: "blocked-push")
+        invite.phase = "incoming"
+        controller.receivePushInvite(invite) {}
+        var preferences = makeAppState(rev: 1).preferences
+        preferences.blockedOwnerPubkeys = [invite.chatId]
+        controller.update(nil, preferences: preferences)
+        XCTAssertNil(controller.call)
+        XCTAssertNil(controller.presentedCall)
+        controller.answer()
+        await Task.yield()
+        XCTAssertEqual(actions, [.endCall(callId: invite.callId)])
+        // Even a queued pre-block snapshot must not revive the native call.
+        controller.update(invite)
+        XCTAssertNil(controller.call)
+        XCTAssertNil(controller.presentedCall)
+    }
+
+    @MainActor
+    func testCallsDisabledDuringPushRecoveryDismissesPendingCall() {
+        let controller = IrisCallController(dispatch: { _ in }, showError: { _ in },
+                                            mediaForTesting: CallMediaProbe())
+        var invite = connectedCall(id: "disabled-push")
+        invite.phase = "incoming"
+        controller.receivePushInvite(invite) {}
+        var preferences = makeAppState(rev: 1).preferences
+        preferences.voiceCallsEnabled = false
+        preferences.videoCallsEnabled = false
+        controller.update(nil, preferences: preferences)
+        XCTAssertNil(controller.call)
+        XCTAssertNil(controller.presentedCall)
+    }
+
+    @MainActor
     func testDecliningPushInviteClearsPendingStartupProtection() {
         let controller = IrisCallController(dispatch: { _ in }, showError: { _ in }, mediaForTesting: CallMediaProbe())
         var invite = connectedCall(id: "push-decline")
@@ -258,6 +295,49 @@ final class CallControllerTests: XCTestCase {
         XCTAssertNil(controller.presentedCall)
     }
 #endif
+
+    @MainActor
+    func testVideoCallWithCameraOffDoesNotBecomeADisallowedVoiceCall() {
+        var actions: [AppAction] = []
+        let media = CallMediaProbe()
+        let controller = IrisCallController(dispatch: { actions.append($0) }, showError: { _ in },
+                                            mediaForTesting: media)
+        var preferences = makeAppState(rev: 1).preferences
+        preferences.voiceCallsEnabled = false
+        preferences.videoCallsEnabled = true
+        var call = connectedCall(id: "video-camera-off")
+        call.video = false
+        controller.update(call, preferences: preferences)
+        XCTAssertEqual(controller.call?.callId, call.callId)
+        XCTAssertEqual(media.started.map(\.callID), [call.callId])
+        XCTAssertTrue(actions.isEmpty)
+    }
+
+    @MainActor
+    func testBlockingWhileAnswerPermissionIsPendingCannotAnswer() async {
+        let prompted = expectation(description: "permission pending")
+        var resume: CheckedContinuation<Bool, Never>?
+        var actions: [AppAction] = []
+        let controller = IrisCallController(dispatch: { actions.append($0) }, showError: { _ in },
+            mediaForTesting: CallMediaProbe(), permissionAccess: IrisCallPermissions(
+                status: { _ in .notDetermined }, request: { _ in
+                    await withCheckedContinuation { resume = $0; prompted.fulfill() }
+                }))
+        var invite = connectedCall(id: "blocked-during-permission")
+        invite.phase = "incoming"
+        invite.video = false
+        controller.update(invite)
+        controller.answer(voiceOnly: true)
+        await fulfillment(of: [prompted], timeout: 1)
+        var preferences = makeAppState(rev: 1).preferences
+        preferences.blockedOwnerPubkeys = [invite.chatId]
+        controller.update(nil, preferences: preferences)
+        resume?.resume(returning: true)
+        await Task.yield()
+        XCTAssertNil(controller.call)
+        XCTAssertFalse(actions.contains { if case .answerCall = $0 { return true }; return false })
+        XCTAssertFalse(actions.contains { if case .answerCallWithVoice = $0 { return true }; return false })
+    }
 
     @MainActor
     func testDeclineImmediatelyDismissesAndDoesNotReappearFromQueuedState() {
