@@ -36,13 +36,13 @@ class IrisFirebaseMessagingService : FirebaseMessagingService() {
         // is the right shape for "load secrets + decrypt + post" in
         // background or killed-app states. Decrypt + filesystem reads are
         // a few ms; any longer and we fall through anyway.
-        val resolution =
+        val (resolution, notificationOwner) =
             runCatching {
                 if (appManager != null) {
-                    runBlocking { appManager.decryptOrResolveNotificationPayload(payloadJson) }
+                    runBlocking { appManager.resolveNotificationWithOwner(payloadJson) }
                 } else {
                     to.iris.chat.rust
-                        .resolveMobilePushNotificationPayload(payloadJson)
+                        .resolveMobilePushNotificationPayload(payloadJson) to null
                 }
             }.getOrElse { error ->
                 Log.w(TAG, "Failed to resolve FCM push payload", error)
@@ -59,7 +59,7 @@ class IrisFirebaseMessagingService : FirebaseMessagingService() {
             PushNotificationProbe.recordNotificationBlocked(this, "active_chat_open")
             return
         }
-        MobilePushNotifier.show(this, resolution)
+        MobilePushNotifier.show(this, resolution, notificationOwner)
     }
 
     private companion object {

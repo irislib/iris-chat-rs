@@ -38,25 +38,40 @@ private fun decodeLinkPart(value: String): String =
 /** An Activity can be recreated during onboarding; the AppManager retains its link. */
 internal class PendingChatLink {
     private var action: AppAction? = null
+    private var notificationOwner: String? = null
 
     @Synchronized
     fun offer(input: String) {
-        parseChatLink(input)?.let { action = it }
+        parseChatLink(input)?.let { action = it; notificationOwner = null }
     }
 
     @Synchronized
-    fun offerChat(chatId: String) {
-        chatId.trim().takeIf(String::isNotEmpty)?.let { action = AppAction.OpenChat(it) }
+    fun offerChat(chatId: String, owner: String?) {
+        val targetOwner = owner?.trim()?.takeIf(String::isNotEmpty) ?: return
+        chatId.trim().takeIf(String::isNotEmpty)?.let {
+            action = AppAction.OpenChat(it)
+            notificationOwner = targetOwner
+        }
     }
 
     @Synchronized
-    fun takeWhenAuthorized(state: DeviceAuthorizationState?): AppAction? =
-        when (state) {
-            DeviceAuthorizationState.AUTHORIZED -> action.also { action = null }
-            DeviceAuthorizationState.REVOKED -> null.also { action = null }
+    fun takeWhenAuthorized(state: DeviceAuthorizationState?, owner: String? = null): AppAction? {
+        // Keep a cold-start tap while secrets load, but never carry a banner
+        // into another account (including after logout and a fresh login).
+        if (notificationOwner != null && owner != null && notificationOwner != owner) {
+            clear()
+            return null
+        }
+        return when (state) {
+            DeviceAuthorizationState.AUTHORIZED -> {
+                if (notificationOwner != null && owner == null) null
+                else action.also { clear() }
+            }
+            DeviceAuthorizationState.REVOKED -> null.also { clear() }
             else -> null
         }
+    }
 
     @Synchronized
-    fun clear() { action = null }
+    fun clear() { action = null; notificationOwner = null }
 }

@@ -285,6 +285,7 @@ class AppManager(
     dataStoreName: String = DATASTORE_NAME,
     dataStore: DataStore<Preferences>? = null,
     private val rustFactory: ((dataDir: String, appVersion: String) -> RustAppClient)? = null,
+    private val clearDeliveredNotifications: (Context) -> Unit = to.iris.chat.push.MobilePushNotifier::dismissAll,
 ) {
     private val appContext = context.applicationContext
     private val rustDataDir = appContext.filesDir.absolutePath
@@ -476,15 +477,15 @@ class AppManager(
         dispatchToRust(action)
     }
 
-    fun receiveNotificationChat(chatId: String) {
+    fun receiveNotificationChat(chatId: String, owner: String?) {
         if (automaticRevocationLogoutInFlight) return
-        pendingChatLink.offerChat(chatId)
-        if (!automaticRevocationLogoutInFlight) pendingChatLink.takeWhenAuthorized(mutableState.value.account?.authorizationState)?.let(::dispatch)
+        pendingChatLink.offerChat(chatId, owner)
+        if (!automaticRevocationLogoutInFlight) pendingChatLink.takeWhenAuthorized(mutableState.value.account?.authorizationState, mutableState.value.account?.publicKeyHex)?.let(::dispatch)
     }
 
     fun receiveChatLink(input: String) {
         pendingChatLink.offer(input)
-        if (!automaticRevocationLogoutInFlight) pendingChatLink.takeWhenAuthorized(mutableState.value.account?.authorizationState)?.let(::dispatch)
+        if (!automaticRevocationLogoutInFlight) pendingChatLink.takeWhenAuthorized(mutableState.value.account?.authorizationState, mutableState.value.account?.publicKeyHex)?.let(::dispatch)
     }
 
     fun setCallMediaReceiver(receiver: (AppUpdate.CallMedia) -> Unit) { callMediaReceiver = receiver }
@@ -1559,18 +1560,22 @@ class AppManager(
 
     suspend fun decryptOrResolveNotificationPayload(
         payloadJson: String,
-    ): to.iris.chat.rust.MobilePushNotificationResolution {
+    ): to.iris.chat.rust.MobilePushNotificationResolution = resolveNotificationWithOwner(payloadJson).first
+
+    suspend fun resolveNotificationWithOwner(
+        payloadJson: String,
+    ): Pair<to.iris.chat.rust.MobilePushNotificationResolution, String?> {
         dispatchToRust(AppAction.IngestMobilePushPayload(payloadJson), showsToastOnFailure = false)
         val bundle = loadPersistedBundle()
         if (bundle == null) {
-            return to.iris.chat.rust.resolveMobilePushNotificationPayload(payloadJson)
+            return to.iris.chat.rust.resolveMobilePushNotificationPayload(payloadJson) to null
         }
         return to.iris.chat.rust.decryptMobilePushNotificationPayload(
             dataDir = rustDataDir,
             ownerPubkeyHex = bundle.ownerPubkeyHex,
             deviceNsec = bundle.deviceNsec,
             rawPayloadJson = payloadJson,
-        )
+        ) to bundle.ownerPubkeyHex
     }
 
     fun shouldSuppressNotificationForActiveChat(
@@ -1757,6 +1762,7 @@ class AppManager(
         signer.cancel()
         val previous = rust
         previous.shutdown()
+        clearDeliveredNotifications(appContext)
         wipeAppStorage()
         pendingNavigationOverride = null
         lastSyncedDeviceLabelsKey = null
@@ -1769,6 +1775,8 @@ class AppManager(
     private fun wipeAppStorage() {
         wipeDirectoryContents(appContext.filesDir)
         wipeDirectoryContents(appContext.noBackupFilesDir)
+        wipeDirectoryContents(appContext.cacheDir)
+        appContext.externalCacheDirs.forEach(::wipeDirectoryContents)
         appContext.getExternalFilesDirs(null).forEach { dir ->
             if (dir != null) {
                 wipeDirectoryContents(dir)
@@ -1913,7 +1921,7 @@ class AppManager(
             return
         }
         syncCurrentDeviceLabelsIfNeeded(snapshot)
-        if (!automaticRevocationLogoutInFlight) pendingChatLink.takeWhenAuthorized(snapshot.account?.authorizationState)?.let(::dispatch)
+        if (!automaticRevocationLogoutInFlight) pendingChatLink.takeWhenAuthorized(snapshot.account?.authorizationState, snapshot.account?.publicKeyHex)?.let(::dispatch)
         if (!restoreCheckComplete) {
             mutableBootstrapState.value = AccountBootstrapState.Loading
             return

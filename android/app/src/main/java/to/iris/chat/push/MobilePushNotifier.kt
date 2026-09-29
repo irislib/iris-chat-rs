@@ -25,6 +25,7 @@ object MobilePushNotifier {
     fun show(
         context: Context,
         resolution: MobilePushNotificationResolution,
+        owner: String?,
     ) {
         if (!notificationsAllowed(context)) {
             PushNotificationProbe.recordNotificationBlocked(context, "permission_denied")
@@ -35,7 +36,7 @@ object MobilePushNotifier {
 
         val title = resolution.title.ifBlank { "Iris Chat" }
         val body = resolution.body.ifBlank { "New message" }
-        val intent = launchIntent(context, resolution.payloadJson)
+        val intent = launchIntent(context, resolution.payloadJson, owner)
         val pendingIntent =
             PendingIntent.getActivity(
                 context,
@@ -63,25 +64,32 @@ object MobilePushNotifier {
             }
     }
 
-    internal fun launchIntent(context: Context, payload: String): Intent {
+    internal fun launchIntent(context: Context, payload: String, owner: String?): Intent {
         val chatId = runCatching { pushNotificationChatCandidates(JSONObject(payload)).firstOrNull() }.getOrNull()
         return Intent(context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             .apply {
-                if (chatId == null) {
+                if (chatId == null || owner.isNullOrBlank()) {
                     action = "to.iris.chat.OPEN_CHAT_LIST"
                 } else {
                     action = ACTION_OPEN_CHAT
                     // PendingIntent identity excludes extras. Give each chat its
                     // own URI so a newer banner cannot redirect an older one.
-                    data = Uri.Builder().scheme("irischat").authority("notification").appendPath(chatId).build()
+                    data = Uri.Builder().scheme("irischat").authority("notification").appendPath(owner).appendPath(chatId).build()
                     putExtra(CHAT_ID_EXTRA, chatId)
+                    putExtra(OWNER_EXTRA, owner)
                 }
             }
     }
 
     const val ACTION_OPEN_CHAT = "to.iris.chat.OPEN_NOTIFICATION_CHAT"
     const val CHAT_ID_EXTRA = "notificationChatId"
+    const val OWNER_EXTRA = "notificationOwner"
+
+    fun dismissAll(context: Context) {
+        runCatching { context.getSystemService(NotificationManager::class.java)?.cancelAll() }
+            .onFailure { Log.w(TAG, "Failed to clear notifications", it) }
+    }
 
     fun dismissRead(context: Context, dataDir: String, owner: String, device: String) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return

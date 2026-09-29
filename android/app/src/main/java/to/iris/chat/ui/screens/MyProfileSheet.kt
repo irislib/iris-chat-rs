@@ -116,7 +116,7 @@ private enum class SettingsPage(
     Security("Keys", "settingsSecurityRow"),
     About("About", "settingsAboutRow"),
     Support("Support", "settingsSupportRow"),
-    AccountData("Account data", "settingsAccountDataRow"),
+    AccountData("Log out", "settingsAccountDataRow"),
     ;
 
     companion object {
@@ -193,7 +193,6 @@ fun MyProfileSheet(
     var supportBusy by remember { mutableStateOf(false) }
     var pendingSecretExport by remember { mutableStateOf<SecretExportKind?>(null) }
     var showLogoutConfirmation by remember { mutableStateOf(false) }
-    var showDeleteAllConfirmation by remember { mutableStateOf(false) }
     var profileName by remember(displayName) { mutableStateOf(displayName) }
     var profileAbout by remember(about) { mutableStateOf(about.orEmpty()) }
     var showProfilePicture by remember { mutableStateOf(false) }
@@ -825,36 +824,24 @@ fun MyProfileSheet(
                         SettingsPage.AccountData -> {
                             SettingsFormSection {
                                 Text(
-                                    text = "Remove this profile from this device.",
+                                    text = "Log out of this device.",
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.error,
                                 )
                                 Text(
-                                    text = "Your account, secret keys, messages, and cached files are removed from this device.",
+                                    text = "Your secret keys, messages, and cached files will be deleted from this device. Your other devices keep their data.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = IrisTheme.palette.muted,
                                     modifier = Modifier.testTag("myProfileDangerZoneText"),
                                 )
                                 IrisSecondaryButton(
-                                    text = "Logout",
+                                    text = "Log out",
                                     onClick = { showLogoutConfirmation = true },
                                     modifier = Modifier.testTag("myProfileLogoutButton"),
                                     icon = {
                                         Icon(
                                             imageVector = IrisIcons.Logout,
                                             contentDescription = null,
-                                        )
-                                    },
-                                )
-                                IrisSecondaryButton(
-                                    text = "Delete all local data",
-                                    onClick = { showDeleteAllConfirmation = true },
-                                    modifier = Modifier.testTag("myProfileDeleteAllDataButton"),
-                                    icon = {
-                                        Icon(
-                                            imageVector = IrisIcons.DeleteForever,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.error,
                                         )
                                     },
                                 )
@@ -900,17 +887,6 @@ fun MyProfileSheet(
         )
     }
 
-    if (showDeleteAllConfirmation) {
-        DeleteAppDataConfirmationDialog(
-            onDismiss = { showDeleteAllConfirmation = false },
-            onConfirm = {
-                showDeleteAllConfirmation = false
-                onDismiss()
-                appManager.resetAppState()
-            },
-            confirmTag = "myProfileConfirmDeleteAllDataButton",
-        )
-    }
 
     pendingSecretExport?.let { _ ->
         AlertDialog(

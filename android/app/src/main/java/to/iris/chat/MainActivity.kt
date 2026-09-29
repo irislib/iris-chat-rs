@@ -147,8 +147,11 @@ class MainActivity : ComponentActivity() {
 
     private fun handleLaunchIntent(intent: Intent?) {
         if (intent?.action == to.iris.chat.push.MobilePushNotifier.ACTION_OPEN_CHAT) {
-            intent.getStringExtra(to.iris.chat.push.MobilePushNotifier.CHAT_ID_EXTRA)?.let(container.appManager::receiveNotificationChat)
+            intent.getStringExtra(to.iris.chat.push.MobilePushNotifier.CHAT_ID_EXTRA)?.let { chatId ->
+                container.appManager.receiveNotificationChat(chatId, intent.getStringExtra(to.iris.chat.push.MobilePushNotifier.OWNER_EXTRA))
+            }
             intent.removeExtra(to.iris.chat.push.MobilePushNotifier.CHAT_ID_EXTRA)
+            intent.removeExtra(to.iris.chat.push.MobilePushNotifier.OWNER_EXTRA)
             intent.action = null
             intent.data = null
             return

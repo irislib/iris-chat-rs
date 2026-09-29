@@ -19,9 +19,9 @@ fun DeleteAppDataConfirmationDialog(
     val haptics = rememberIrisHapticFeedback()
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Delete all local data?") },
+        title = { Text("Log out and delete local data?") },
         text = {
-            Text("This removes your secret keys, messages, and cached files from this device.")
+            Text("This removes your secret keys, messages, and cached files from this device. Your other devices keep their data.")
         },
         dismissButton = {
             TextButton(
@@ -43,7 +43,7 @@ fun DeleteAppDataConfirmationDialog(
                 modifier = Modifier.testTag(confirmTag),
                 colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
             ) {
-                Text("Delete")
+                Text("Log out")
             }
         },
     )

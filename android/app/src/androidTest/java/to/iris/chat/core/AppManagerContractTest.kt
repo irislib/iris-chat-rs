@@ -1,6 +1,8 @@
 package to.iris.chat.core
 
 import android.content.Context
+import android.content.ContextWrapper
+import java.io.File
 import android.os.SystemClock
 import android.util.Base64
 import androidx.datastore.core.DataStore
@@ -61,17 +63,30 @@ import to.iris.chat.rust.buildLargeTestSearchResult
 @RunWith(AndroidJUnit4::class)
 class AppManagerContractTest {
     private lateinit var appContext: Context
+    private lateinit var storageRoot: File
     private lateinit var applicationScope: CoroutineScope
     private lateinit var secureSecretStore: RecordingSecureSecretStore
     private lateinit var rustFactory: RecordingRustFactory
     private lateinit var dataStoreName: String
     private lateinit var sharedDataStore: DataStore<Preferences>
     private var manager: AppManager? = null
+    private var notificationClearCount = 0
 
     @Before
     fun setUp() {
-        appContext = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+        val base = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+        storageRoot = File(base.cacheDir, "manager-contract-${UUID.randomUUID()}").apply { mkdirs() }
+        appContext = object : ContextWrapper(base) {
+            private fun directory(name: String) = File(storageRoot, name).apply { mkdirs() }
+            override fun getApplicationContext(): Context = this
+            override fun getFilesDir() = directory("files")
+            override fun getNoBackupFilesDir() = directory("no-backup")
+            override fun getCacheDir() = directory("cache")
+            override fun getExternalFilesDirs(type: String?) = arrayOf(directory("external-files"))
+            override fun getExternalCacheDirs() = arrayOf(directory("external-cache"))
+        }
         applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        notificationClearCount = 0
         secureSecretStore = RecordingSecureSecretStore()
         rustFactory = RecordingRustFactory()
         dataStoreName = "app-manager-contract-${UUID.randomUUID()}.preferences_pb"
@@ -88,6 +103,7 @@ class AppManagerContractTest {
         manager = null
         applicationScope.cancel()
         runCatching { appContext.preferencesDataStoreFile(dataStoreName).delete() }
+        storageRoot.deleteRecursively()
     }
 
     @Test
@@ -583,6 +599,8 @@ class AppManagerContractTest {
         )
         val staleFile = appContext.filesDir.resolve("contract-logout-${UUID.randomUUID()}.txt")
         staleFile.writeText("stale")
+        val cachedImage = appContext.cacheDir.resolve("private-image.png").apply { writeText("private pixels") }
+        val externalCache = appContext.externalCacheDirs.first().resolve("shared-image.png").apply { writeText("shared pixels") }
 
         appManager.logout()
 
@@ -596,6 +614,9 @@ class AppManagerContractTest {
         assertEquals(1, secureSecretStore.clearCount)
         assertNull(loadPersistedBundle())
         assertFalse(staleFile.exists())
+        assertEquals("Delivered notifications must be cleared", 1, notificationClearCount)
+        assertFalse("Downloaded images must be removed", cachedImage.exists())
+        assertFalse("External cached images must be removed", externalCache.exists())
         assertNull(appManager.state.value.account)
         assertEquals(secondRust.currentState, appManager.state.value)
         assertTrue(appManager.bootstrapState.value is AccountBootstrapState.NeedsLogin)
@@ -660,6 +681,7 @@ class AppManagerContractTest {
         assertEquals(1, rustFactory.instances.size)
         assertEquals(0, firstRust.shutdownCount)
         assertTrue(staleFile.exists())
+        assertEquals(0, notificationClearCount)
         assertEquals("nsec1device", loadPersistedBundle()?.deviceNsec)
         assertEquals(makeLoggedInState(rev = 5u).account, appManager.state.value.account)
         secureSecretStore.clearSucceeds = true
@@ -704,6 +726,7 @@ class AppManagerContractTest {
                 dataStoreName = dataStoreName,
                 dataStore = sharedDataStore,
                 rustFactory = { _, _ -> rustFactory.create() },
+                clearDeliveredNotifications = { notificationClearCount += 1 },
             )
         manager = appManager
         return appManager

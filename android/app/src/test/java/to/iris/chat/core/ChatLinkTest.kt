@@ -54,14 +54,25 @@ class ChatLinkTest {
     @Test
     fun notificationWaitsForAuthorizationAndOpensExistingGroupOnce() {
         val pending = PendingChatLink()
-        pending.offerChat("group:team")
+        pending.offerChat("group:team", "owner-a")
         assertNull(pending.takeWhenAuthorized(null))
         assertNull(pending.takeWhenAuthorized(DeviceAuthorizationState.AWAITING_APPROVAL))
-        assertEquals(AppAction.OpenChat("group:team"), pending.takeWhenAuthorized(DeviceAuthorizationState.AUTHORIZED))
+        assertEquals(AppAction.OpenChat("group:team"), pending.takeWhenAuthorized(DeviceAuthorizationState.AUTHORIZED, "owner-a"))
         assertNull(pending.takeWhenAuthorized(DeviceAuthorizationState.AUTHORIZED))
-        pending.offerChat("old-account")
+        pending.offerChat("old-account", "owner-a")
         pending.clear()
         assertNull(pending.takeWhenAuthorized(DeviceAuthorizationState.AUTHORIZED))
+    }
+
+    @Test
+    fun oldAccountNotificationsCannotNavigateAfterAnAccountChange() {
+        val pending = PendingChatLink()
+        pending.offerChat("private-chat", "owner-a")
+        assertNull(pending.takeWhenAuthorized(null))
+        assertNull(pending.takeWhenAuthorized(DeviceAuthorizationState.AUTHORIZED, "owner-b"))
+        assertNull(pending.takeWhenAuthorized(DeviceAuthorizationState.AUTHORIZED, "owner-a"))
+        pending.offerChat("old-unbound-notification", null)
+        assertNull(pending.takeWhenAuthorized(DeviceAuthorizationState.AUTHORIZED, "owner-b"))
     }
 
     @Test
