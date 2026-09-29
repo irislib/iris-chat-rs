@@ -12,7 +12,7 @@ Renaming an existing profile does not enable the demo. To start over with a disp
 
 Live messaging, voice/video calls, CallKit and background audio:
 Use TWO iPhones/iPads, each with its own newly created profile. You can enter AppStoreDemoUserMode on both; each creates a different user ID and secret key. No shared credentials are needed.
-1. On the first device, open its profile from the chat-list avatar and copy its user ID. On the second device, tap New chat and paste that ID. Send a message, then accept the incoming message request on the first device.
+1. Tap New chat on both devices. On the first, tap Show under Create chat. On the second, tap Scan code under Join Chat and scan the code displayed on the first device. Alternatively, use Copy or Share on the first device to send its chat link, then paste that link into "Paste invite or user ID" on the second. The chat opens on the joining device after verification. On the first device, return to the chat list and open the new conversation.
 2. In this live conversation, tap the phone or video icon. Allow microphone/camera access and answer on the other device. Exchange messages, attachments and voice recordings in either direction.
 3. For incoming CallKit, allow notifications, background or lock the receiving device, then call it. For background audio, background or lock a device during an active call. End the call using the app or system controls.
 4. Add the other profile to Sample group from its group details to test live group delivery.

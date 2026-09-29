@@ -19,7 +19,7 @@ enum IosReviewDemo {
 
     static let sampleName = "Sample conversation"
     static let welcome = "This is a sample conversation. You can reply, react, record a voice message, or attach a photo."
-    static let twoDeviceInstructions = "To test live messages and calls, create a profile on a second device. Open your profile, copy your user ID, and paste it into New chat on the other device. Each device has its own secret key."
+    static let twoDeviceInstructions = "To test live messages and calls, create a profile on a second device. Open New chat on both. Tap Show on one and Scan code on the other, or use Copy or Share to send a chat link and paste it on the other device. Each device has its own secret key."
 
     static func matches(_ name: String) -> Bool {
         name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(username) == .orderedSame
