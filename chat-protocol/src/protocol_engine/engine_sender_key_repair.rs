@@ -317,6 +317,35 @@ impl ProtocolEngine {
         &mut self,
         message: GroupSenderKeyMessage,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
+        // Our publishing chain has already advanced, so decrypting its relay echo
+        // searches every skipped key and starts a pointless repair. This durable
+        // secret identifies this device's own stream, including after restart.
+        if self
+            .group_manager
+            .snapshot()
+            .sender_keys
+            .iter()
+            .any(|record| {
+                record.group_id == message.group_id
+                    && record.sender_event_pubkey == message.sender_event_pubkey
+                    && record.sender_owner == self.local_owner
+                    && record.sender_device == self.local_device
+                    && record.sender_event_secret_key.is_some()
+            })
+        {
+            if self.clear_group_sender_key_repairs(
+                &message.group_id,
+                message.sender_event_pubkey,
+                None,
+                None,
+            ) {
+                self.persist()?;
+            }
+            return Ok(ProtocolGroupIncomingResult {
+                consumed: true,
+                ..Default::default()
+            });
+        }
         let message_repair_group_id = message.group_id.clone();
         let message_repair_sender = message.sender_event_pubkey;
         let message_repair_key_id = message.encrypted_header.is_none().then_some(message.key_id);

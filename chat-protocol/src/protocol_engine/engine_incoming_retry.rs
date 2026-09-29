@@ -1,4 +1,22 @@
 impl ProtocolEngine {
+    /// Shared bootstrap authors can expose ciphertext addressed to other devices.
+    /// Untargeted legacy messages and group broadcasts remain eligible.
+    pub fn message_targets_another_device(&self, event: &Event) -> bool {
+        if event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
+            || !protocol_event_has_tag(event, "header")
+        {
+            return false;
+        }
+        let mut has_recipient = false;
+        for recipient in event.tags.public_keys() {
+            has_recipient = true;
+            if *recipient == self.owner_pubkey || ndr_device(*recipient) == self.local_device {
+                return false;
+            }
+        }
+        has_recipient
+    }
+
     pub fn has_due_pending_retry_work(&self, now: NdrUnixSeconds) -> bool {
         let now_secs = now.get();
         self.pending_remote_sends
@@ -31,6 +49,9 @@ impl ProtocolEngine {
         event: &Event,
     ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
         let envelope = parse_message_event(event)?;
+        if self.message_targets_another_device(event) {
+            return Ok(None);
+        }
         let resolution = self.resolve_message_sender_owner(&envelope);
         match resolution {
             ProtocolSenderOwnerResolution::Verified { .. }
@@ -108,6 +129,12 @@ impl ProtocolEngine {
         &mut self,
         event: &Event,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
+        if self.message_targets_another_device(event) {
+            return Ok(ProtocolGroupIncomingResult {
+                consumed: true,
+                ..Default::default()
+            });
+        }
         let has_header = protocol_event_has_tag(event, "header");
         let parsed = if has_header {
             parse_group_sender_key_message_event_unchecked(event)
@@ -358,6 +385,32 @@ impl ProtocolEngine {
             self.subscription_generation = self.subscription_generation.wrapping_add(1);
         }
         Ok(batch)
+    }
+
+    fn discard_pending_messages_for_other_devices(&mut self) -> anyhow::Result<()> {
+        let foreign_events = self
+            .pending_inbound
+            .iter()
+            .filter(|pending| self.message_targets_another_device(&pending.event))
+            .map(|pending| pending.event.clone())
+            .collect::<Vec<_>>();
+        if foreign_events.is_empty() {
+            return Ok(());
+        }
+        let ids = foreign_events
+            .iter()
+            .map(|event| event.id)
+            .collect::<HashSet<_>>();
+        self.with_state_checkpoint(|engine| {
+            engine
+                .pending_inbound
+                .retain(|pending| !ids.contains(&pending.event.id));
+            // Older clients also tried these packets as camouflaged group messages.
+            for event in &foreign_events {
+                engine.clear_pending_group_sender_key_candidate_for_direct_event(event);
+            }
+            engine.persist()
+        })
     }
 
     pub fn ack_pending_decrypted_deliveries(&mut self) -> anyhow::Result<()> {
@@ -638,9 +691,20 @@ impl ProtocolEngine {
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
-        if self.pending_group_fanouts.is_empty() {
+        if !self
+            .pending_group_fanouts
+            .iter()
+            .any(|pending| pending.next_retry_at_secs <= now.get())
+        {
             return Ok(ProtocolGroupIncomingResult::default());
         }
+        self.with_state_checkpoint(|engine| engine.retry_pending_group_fanouts_inner(now))
+    }
+
+    fn retry_pending_group_fanouts_inner(
+        &mut self,
+        now: NdrUnixSeconds,
+    ) -> anyhow::Result<ProtocolGroupIncomingResult> {
         let pending = std::mem::take(&mut self.pending_group_fanouts);
         let mut still_pending = Vec::new();
         let mut effects = Vec::new();
@@ -659,23 +723,62 @@ impl ProtocolEngine {
             processed_due = processed_due.saturating_add(1);
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(now, &mut rng);
-            let prepared = match &pending.fanout {
-                GroupPendingFanout::Remote {
-                    recipient_owner,
-                    payload,
-                } => self
+            if let Some(devices) = pending.remaining_devices.as_mut() {
+                let owner = match pending.fanout {
+                    GroupPendingFanout::Remote {
+                        recipient_owner, ..
+                    } => recipient_owner,
+                    GroupPendingFanout::LocalSiblings { .. } => self.local_owner,
+                };
+                if let Some(current) = user_record_snapshot(&self.session_manager.snapshot(), owner)
+                    .and_then(roster_device_pubkeys)
+                {
+                    devices.retain(|device| current.contains(device));
+                }
+                if devices.is_empty() {
+                    persist_needed = true;
+                    continue;
+                }
+            }
+            // The original send already reached every device absent from this
+            // set. Retrying the entire owner causes duplicate encryption and
+            // relay traffic for each unavailable linked device.
+            let prepared = match (&pending.fanout, &pending.remaining_devices) {
+                (
+                    GroupPendingFanout::Remote {
+                        recipient_owner,
+                        payload,
+                    },
+                    Some(devices),
+                ) => self.session_manager.prepare_remote_send_to_devices(
+                    &mut ctx,
+                    *recipient_owner,
+                    devices.iter().copied(),
+                    payload.clone(),
+                ),
+                (GroupPendingFanout::LocalSiblings { payload }, Some(devices)) => {
+                    self.session_manager.prepare_local_sibling_send_to_devices(
+                        &mut ctx,
+                        devices.iter().copied(),
+                        payload.clone(),
+                    )
+                }
+                (
+                    GroupPendingFanout::Remote {
+                        recipient_owner,
+                        payload,
+                    },
+                    None,
+                ) => self.session_manager.prepare_remote_send(
+                    &mut ctx,
+                    *recipient_owner,
+                    payload.clone(),
+                ),
+                (GroupPendingFanout::LocalSiblings { payload }, None) => self
                     .session_manager
-                    .prepare_remote_send(&mut ctx, *recipient_owner, payload.clone())
-                    .map(|prepared| {
-                        group_publish_from_prepared_send(prepared, pending.fanout.clone())
-                    }),
-                GroupPendingFanout::LocalSiblings { payload } => self
-                    .session_manager
-                    .prepare_local_sibling_send_reusing_all_sessions(&mut ctx, payload.clone())
-                    .map(|prepared| {
-                        group_publish_from_prepared_send(prepared, pending.fanout.clone())
-                    }),
-            };
+                    .prepare_local_sibling_send_reusing_all_sessions(&mut ctx, payload.clone()),
+            }
+            .map(|prepared| group_publish_from_prepared_send(prepared, pending.fanout.clone()));
             let prepared = match prepared {
                 Ok(prepared) => {
                     if !prepared.deliveries.is_empty()
@@ -683,7 +786,6 @@ impl ProtocolEngine {
                         || !prepared.sender_key_messages.is_empty()
                     {
                         session_changed = true;
-                        persist_needed = true;
                     }
                     prepared
                 }
@@ -694,6 +796,11 @@ impl ProtocolEngine {
                     continue;
                 }
             };
+            pending.remaining_devices =
+                self.group_fanout_missing_devices(&pending.fanout, &prepared.relay_gaps);
+            // Persist both progress and discarded revoked targets even when no
+            // new encrypted delivery was necessary.
+            persist_needed = true;
             let still_has_gap = !prepared.relay_gaps.is_empty();
             let mut event_ids = Vec::new();
             let chat_id = group_chat_id(&pending.group_id);

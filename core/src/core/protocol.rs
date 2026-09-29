@@ -136,15 +136,27 @@ impl AppCore {
         self.process_protocol_engine_effects(batch.group_result.effects);
         self.process_protocol_engine_effects(batch.effects);
         for decrypted in batch.direct_messages {
+            // Catch-up batches keep the journal until the app snapshot commits.
+            // Retrying another event in the same batch must not apply and fan out
+            // an already-applied group control a second time.
+            if decrypted
+                .event_id
+                .as_ref()
+                .is_some_and(|id| self.pending_decrypted_delivery_acks.contains(id))
+            {
+                continue;
+            }
             let event_id = decrypted.event_id.clone();
-            self.apply_decrypted_runtime_message_with_metadata(
+            if !self.apply_decrypted_runtime_message_with_metadata(
                 decrypted.sender,
                 decrypted.sender_device,
                 decrypted.conversation_owner,
                 decrypted.content,
                 decrypted.event_id,
                 decrypted.created_at_secs,
-            );
+            ) {
+                continue;
+            }
             if let Some(event_id) = event_id {
                 self.pending_decrypted_delivery_acks
                     .insert(event_id.clone());
@@ -695,6 +707,11 @@ impl AppCore {
 
     fn protocol_invite_author_pubkeys(&self, owners: &[PublicKey]) -> Vec<PublicKey> {
         let mut authors = Vec::new();
+        // Snapshots clone every session's ratchet state; reuse one for all owners.
+        let engine_snapshot = self
+            .protocol_engine
+            .as_ref()
+            .map(|engine| (engine, engine.session_manager_snapshot()));
         for owner in owners {
             if let Some(known) = self.app_keys.get(&owner.to_hex()) {
                 for device in &known.devices {
@@ -703,8 +720,10 @@ impl AppCore {
                     }
                 }
             }
-            if let Some(protocol_engine) = self.protocol_engine.as_ref() {
-                authors.extend(protocol_engine.known_device_identity_pubkeys_for_owner(*owner));
+            if let Some((engine, snapshot)) = engine_snapshot.as_ref() {
+                authors.extend(
+                    engine.known_device_identity_pubkeys_for_owner_with_snapshot(snapshot, *owner),
+                );
             }
         }
         authors.sort_by_key(|pubkey| pubkey.to_hex());
@@ -733,10 +752,14 @@ impl AppCore {
         let Some(engine) = self.protocol_engine.as_ref() else {
             return false;
         };
+        let snapshot = engine.session_manager_snapshot();
         self.tracked_peer_owner_hexes().iter().any(|owner_hex| {
             self.app_keys.get(owner_hex).is_some_and(|known| {
                 PublicKey::parse(owner_hex).is_ok_and(|owner_pubkey| {
-                    engine.active_roster_session_count_for_owner(owner_pubkey) < known.devices.len()
+                    engine.active_roster_session_count_for_owner_with_snapshot(
+                        &snapshot,
+                        owner_pubkey,
+                    ) < known.devices.len()
                 })
             })
         })

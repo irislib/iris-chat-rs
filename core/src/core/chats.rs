@@ -1302,6 +1302,7 @@ impl AppCore {
         );
     }
 
+    // True means applied or intentionally discarded; false keeps the durable delivery retryable.
     pub(super) fn apply_decrypted_runtime_message_with_metadata(
         &mut self,
         sender_owner: PublicKey,
@@ -1310,22 +1311,27 @@ impl AppCore {
         content: String,
         outer_event_id: Option<String>,
         outer_created_at_secs: u64,
-    ) {
+    ) -> bool {
         let is_supported_group_pairwise_payload =
             is_supported_group_pairwise_payload(content.as_bytes());
         let should_try_group_pairwise_payload = !looks_like_runtime_rumor(&content)
             || is_supported_group_pairwise_payload
             || self.is_local_sibling_group_runtime_payload(sender_owner, sender_device, &content);
-        if should_try_group_pairwise_payload
-            && self.try_apply_group_pairwise_payload(
+        if should_try_group_pairwise_payload {
+            match self.try_apply_group_pairwise_payload(
                 content.as_bytes(),
                 sender_owner,
                 sender_device,
                 conversation_owner.is_some(),
-                true,
-            )
-        {
-            return;
+            ) {
+                Ok(true) => return true,
+                Ok(false) => {}
+                Err(error) => {
+                    self.push_debug_log("appcore.protocol.group.payload.error", error.to_string());
+                    // Keep storage failures retryable, but do not replay invalid controls forever.
+                    return !error.is::<StorageError>();
+                }
+            }
         }
 
         let effective_sender_owner = self.direct_message_display_sender_owner(
@@ -1344,7 +1350,7 @@ impl AppCore {
                         content.len()
                     ),
                 );
-                return;
+                return true;
             }
             let chat_id = self.logged_in.as_ref().and_then(|logged_in| {
                 direct_self_sync_chat_id(
@@ -1356,7 +1362,7 @@ impl AppCore {
             if !self
                 .should_accept_direct_runtime_message(effective_sender_owner, chat_id.as_deref())
             {
-                return;
+                return true;
             }
             self.apply_runtime_text_message(
                 effective_sender_owner,
@@ -1367,7 +1373,7 @@ impl AppCore {
                 outer_event_id.clone(),
                 outer_event_id,
             );
-            return;
+            return true;
         };
         if !self.runtime_rumor_pubkey_matches_authenticated_sender(
             effective_sender_owner,
@@ -1382,7 +1388,7 @@ impl AppCore {
                     runtime_rumor.pubkey.to_hex()
                 ),
             );
-            return;
+            return true;
         }
 
         let kind = runtime_rumor.kind;
@@ -1393,7 +1399,7 @@ impl AppCore {
             .as_ref()
             .map(|logged_in| logged_in.owner_pubkey)
         else {
-            return;
+            return true;
         };
         let chat_id = chat_id_for_runtime_message(
             effective_sender_owner,
@@ -1406,7 +1412,7 @@ impl AppCore {
             && !is_group_chat_id(&chat_id)
             && !self.should_accept_direct_runtime_message(effective_sender_owner, Some(&chat_id))
         {
-            return;
+            return true;
         }
         let inner_event_id = runtime_rumor.id.clone();
         self.acknowledge_delivered_group_runtime_rumor(
@@ -1483,6 +1489,7 @@ impl AppCore {
             }
             _ => {}
         }
+        true
     }
 
     fn try_apply_group_pairwise_payload(
@@ -1491,12 +1498,11 @@ impl AppCore {
         sender_owner: PublicKey,
         sender_device: Option<PublicKey>,
         from_local_sibling: bool,
-        log_errors: bool,
-    ) -> bool {
+    ) -> anyhow::Result<bool> {
         let Some(protocol_engine) = self.protocol_engine.as_mut() else {
-            return false;
+            return Ok(false);
         };
-        let group_outcome = match if from_local_sibling {
+        let group_outcome = if from_local_sibling {
             protocol_engine.process_local_sibling_group_pairwise_payload(
                 payload,
                 sender_owner,
@@ -1504,20 +1510,12 @@ impl AppCore {
             )
         } else {
             protocol_engine.process_group_pairwise_payload(payload, sender_owner, sender_device)
-        } {
-            Ok(group_outcome) => group_outcome,
-            Err(error) => {
-                if log_errors {
-                    self.push_debug_log("appcore.protocol.group.payload.error", error.to_string());
-                }
-                return log_errors;
-            }
-        };
+        }?;
         if !group_outcome.consumed
             && group_outcome.events.is_empty()
             && group_outcome.effects.is_empty()
         {
-            return false;
+            return Ok(false);
         }
         for group_event in group_outcome.events {
             self.apply_group_decrypted_event(group_event);
@@ -1525,7 +1523,7 @@ impl AppCore {
         self.process_protocol_engine_effects(group_outcome.effects);
         self.request_protocol_subscription_refresh();
         self.schedule_fast_protocol_retry_if_pending();
-        true
+        Ok(true)
     }
 
     pub(super) fn acknowledge_delivered_group_runtime_rumor(

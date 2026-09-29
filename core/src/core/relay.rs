@@ -11,6 +11,15 @@ impl AppCore {
         if event.verify().is_err() {
             return;
         }
+        // A shared bootstrap author can match another device's subscription.
+        // Route explicit recipients before owner resolution or group fallback.
+        if self
+            .protocol_engine
+            .as_ref()
+            .is_some_and(|engine| engine.message_targets_another_device(&event))
+        {
+            return;
+        }
         // Backfill signed identity records on upgrade even when the event was
         // already seen. Linked devices need the original signatures offline.
         self.cache_local_fips_identity(&event);
@@ -326,14 +335,17 @@ impl AppCore {
                 match protocol_engine.process_direct_message_event(&event) {
                     Ok(Some(decrypted)) => {
                         let event_id = decrypted.event_id.clone();
-                        self.apply_decrypted_runtime_message_with_metadata(
+                        if !self.apply_decrypted_runtime_message_with_metadata(
                             decrypted.sender,
                             decrypted.sender_device,
                             decrypted.conversation_owner,
                             decrypted.content,
                             decrypted.event_id,
                             decrypted.created_at_secs,
-                        );
+                        ) {
+                            self.schedule_fast_protocol_retry_if_pending();
+                            return;
+                        }
                         if let Some(event_id) = event_id {
                             self.pending_decrypted_delivery_acks
                                 .insert(event_id.clone());

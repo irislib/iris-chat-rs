@@ -228,3 +228,307 @@ fn remote_direct_pending_payload_is_discarded_when_local_device_is_revoked() {
             .is_empty()
     );
 }
+
+#[test]
+fn group_fanout_retries_only_missing_devices_after_restart() {
+    let mut f = remote_send_fixture();
+    let created = f
+        .sender
+        .create_group(
+            "partial group".into(),
+            vec![f.peer_owner.public_key()],
+            unix_now(),
+        )
+        .unwrap();
+    let group_id = created.snapshot.unwrap().group_id;
+    let delivered = decrypt_own_sync_effects(&mut f.ready, created.effects);
+    assert!(
+        !delivered.is_empty(),
+        "ready recipient gets group metadata immediately"
+    );
+    let retry = f
+        .sender
+        .retry_pending_protocol(NdrUnixSeconds(unix_now().get() + 60))
+        .unwrap();
+    assert!(
+        retry.group_result.effects.is_empty(),
+        "unavailable sibling must not repeatedly encrypt and send to completed devices"
+    );
+    f.sender =
+        ProtocolEngine::load_or_create_for_local_device(f.store, f.owner.public_key(), &f.device)
+            .unwrap();
+    let retry = observe_sibling_invite(&mut f.sender, &f.late, &f.late_device);
+    let recovered = decrypt_own_sync_effects(&mut f.late, retry.group_result.effects);
+    assert_eq!(
+        recovered.len(),
+        delivered.len(),
+        "late device receives exactly the original controls"
+    );
+    for message in recovered {
+        f.late
+            .process_group_pairwise_payload(
+                message.content.as_bytes(),
+                message.sender,
+                message.sender_device,
+            )
+            .unwrap();
+    }
+    assert!(f.late.group_manager.group(&group_id).is_some());
+    assert_eq!(f.sender.debug_snapshot().pending_group_fanout_count, 0);
+}
+
+#[test]
+fn group_fanout_drops_revoked_targets_and_never_adds_new_devices_to_pending_history() {
+    let mut f = remote_send_fixture();
+    f.sender
+        .create_group(
+            "pending history".into(),
+            vec![f.peer_owner.public_key()],
+            unix_now(),
+        )
+        .unwrap();
+    let added_key = Keys::generate();
+    let added = test_engine(&f.peer_owner, &added_key);
+    f.sender
+        .ingest_app_keys_event(&signed_app_keys(
+            &f.peer_owner,
+            &[
+                f.ready_device.public_key(),
+                f.late_device.public_key(),
+                added_key.public_key(),
+            ],
+            2,
+        ))
+        .unwrap();
+    let retry = observe_sibling_invite(&mut f.sender, &added, &added_key);
+    assert!(
+        retry.group_result.effects.is_empty(),
+        "new devices do not inherit pending history"
+    );
+    let retry = f
+        .sender
+        .ingest_app_keys_event(&signed_app_keys(
+            &f.peer_owner,
+            &[f.ready_device.public_key(), added_key.public_key()],
+            3,
+        ))
+        .unwrap();
+    assert!(retry.group_result.effects.is_empty());
+    assert_eq!(
+        f.sender.debug_snapshot().pending_group_fanout_count,
+        0,
+        "revoked targets are pruned durably"
+    );
+    f.sender =
+        ProtocolEngine::load_or_create_for_local_device(f.store, f.owner.public_key(), &f.device)
+            .unwrap();
+    assert_eq!(f.sender.debug_snapshot().pending_group_fanout_count, 0);
+}
+
+#[test]
+fn group_fanout_save_failure_keeps_unsent_targets_and_ratchets_retryable() {
+    struct ReadOnlyStorage(Arc<InMemoryStorage>);
+    impl StorageAdapter for ReadOnlyStorage {
+        fn get(&self, key: &str) -> StorageResult<Option<String>> {
+            self.0.get(key)
+        }
+        fn put(&self, _: &str, _: String) -> StorageResult<()> {
+            Err(StorageError::new("injected disk write failure"))
+        }
+        fn del(&self, key: &str) -> StorageResult<()> {
+            self.0.del(key)
+        }
+        fn list(&self, prefix: &str) -> StorageResult<Vec<String>> {
+            self.0.list(prefix)
+        }
+    }
+    let mut f = remote_send_fixture();
+    f.sender
+        .create_group(
+            "durable fanout".into(),
+            vec![f.peer_owner.public_key()],
+            unix_now(),
+        )
+        .unwrap();
+    // Install the late device's invitation without executing the queued sends.
+    let pending = std::mem::take(&mut f.sender.pending_group_fanouts);
+    observe_sibling_invite(&mut f.sender, &f.late, &f.late_device);
+    f.sender.pending_group_fanouts = pending.clone();
+    let before = serde_json::to_value(f.sender.session_manager_snapshot()).unwrap();
+    f.sender.storage = Arc::new(ReadOnlyStorage(f.store.clone()));
+    assert!(f
+        .sender
+        .retry_pending_protocol(NdrUnixSeconds(unix_now().get() + 60))
+        .is_err());
+    assert!(
+        f.sender.pending_group_fanouts == pending,
+        "failed persistence must not acknowledge unpublished controls"
+    );
+    assert!(
+        serde_json::to_value(f.sender.session_manager_snapshot()).unwrap() == before,
+        "failed publication preparation must not advance ratchets"
+    );
+    f.sender.storage = f.store;
+    let retry = f
+        .sender
+        .retry_pending_protocol(NdrUnixSeconds(unix_now().get() + 60))
+        .unwrap();
+    assert!(!decrypt_own_sync_effects(&mut f.late, retry.group_result.effects).is_empty());
+    assert_eq!(f.sender.debug_snapshot().pending_group_fanout_count, 0);
+}
+
+#[test]
+fn direct_foreign_recipient_does_not_enter_retry_queues() {
+    let mut f = remote_send_fixture();
+    let peer = f.peer_owner.public_key();
+    let sent = f
+        .sender
+        .send_direct_text(
+            peer,
+            &peer.to_hex(),
+            "for the ready device",
+            None,
+            UnixSeconds(10),
+        )
+        .unwrap();
+    let event = sent
+        .effects
+        .iter()
+        .map(|ProtocolEffect::Publish(publish)| &publish.event)
+        .find(|event| event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND)
+        .unwrap();
+    assert_eq!(
+        parse_message_event(event).unwrap().recipient,
+        Some(ndr_device(f.ready_device.public_key()))
+    );
+    assert!(f
+        .late
+        .process_direct_message_event(event)
+        .unwrap()
+        .is_none());
+    assert!(
+        f.late.pending_inbound.is_empty(),
+        "a sibling's ciphertext is not a missing local session"
+    );
+    assert!(
+        f.late.pending_group_sender_key_messages.is_empty(),
+        "a targeted direct message is not a group candidate"
+    );
+    assert_eq!(
+        decrypt_own_sync_effects(&mut f.ready, sent.effects).len(),
+        1
+    );
+}
+
+#[test]
+fn direct_foreign_recipient_is_pruned_from_persisted_retry_queues() {
+    let mut f = remote_send_fixture();
+    let peer = f.peer_owner.public_key();
+    let sent = f
+        .sender
+        .send_direct_text(
+            peer,
+            &peer.to_hex(),
+            "legacy queued foreign delivery",
+            None,
+            UnixSeconds(10),
+        )
+        .unwrap();
+    let event = sent
+        .effects
+        .iter()
+        .map(|ProtocolEffect::Publish(publish)| &publish.event)
+        .find(|event| event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND)
+        .unwrap()
+        .clone();
+    // Reproduce an older client's durable queue, then upgrade/restart.
+    let envelope = parse_message_event(&event).unwrap();
+    f.late
+        .queue_header_group_sender_key_candidate(&event)
+        .unwrap();
+    f.late
+        .queue_pending_inbound_direct_event(event, 10, Some(&envelope), None)
+        .unwrap();
+    assert!(!f.late.pending_inbound.is_empty());
+    assert!(!f.late.pending_group_sender_key_messages.is_empty());
+    let storage = f.late.storage.clone();
+    f.late = ProtocolEngine::load_or_create_for_local_device(storage.clone(), peer, &f.late_device)
+        .unwrap();
+    let retry = f
+        .late
+        .retry_pending_protocol(NdrUnixSeconds(unix_now().get() + 60))
+        .unwrap();
+    assert!(retry.is_empty());
+    assert!(
+        f.late.pending_inbound.is_empty(),
+        "foreign ciphertext must not retry forever after upgrade"
+    );
+    assert!(f.late.pending_group_sender_key_messages.is_empty());
+    let restored =
+        ProtocolEngine::load_or_create_for_local_device(storage, peer, &f.late_device).unwrap();
+    assert!(restored.pending_inbound.is_empty());
+    assert!(restored.pending_group_sender_key_messages.is_empty());
+}
+
+#[test]
+fn direct_recipient_routing_preserves_legacy_owner_and_multi_recipient_messages() {
+    for variant in ["legacy", "device", "owner", "multi-device", "multi-owner"] {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let peer_owner = Keys::generate();
+        let peer_device = Keys::generate();
+        let mut receiver = test_engine(&owner, &device);
+        receiver
+            .ingest_app_keys_event(&signed_app_keys(
+                &peer_owner,
+                &[peer_device.public_key()],
+                10,
+            ))
+            .unwrap();
+        let (mut session, response) = receiver
+            .local_invite()
+            .unwrap()
+            .accept_with_owner(
+                peer_device.public_key(),
+                peer_device.secret_key().to_secret_bytes(),
+                Some(peer_device.public_key().to_hex()),
+                Some(peer_owner.public_key()),
+            )
+            .unwrap();
+        receiver
+            .observe_invite_response_event(&invite_response_event(&response).unwrap())
+            .unwrap();
+        let plan = session
+            .plan_send(variant.as_bytes(), NdrUnixSeconds(20))
+            .unwrap();
+        let mut envelope = session.apply_send(plan).envelope;
+        envelope.recipient = match variant {
+            "legacy" => None,
+            "device" => Some(ndr_device(device.public_key())),
+            "owner" => Some(ndr_device(owner.public_key())),
+            _ => Some(ndr_device(Keys::generate().public_key())),
+        };
+        let mut event = nostr_double_ratchet::message_event(&envelope).unwrap();
+        if variant.starts_with("multi-") {
+            let local = if variant == "multi-device" {
+                device.public_key()
+            } else {
+                owner.public_key()
+            };
+            event = nostr::EventBuilder::new(event.kind, event.content.clone())
+                .tags(event.tags.iter().cloned())
+                .tag(nostr::Tag::public_key(local))
+                .custom_created_at(event.created_at)
+                .sign_with_keys(&Keys::new(
+                    nostr::SecretKey::from_slice(&envelope.signer_secret_key).unwrap(),
+                ))
+                .unwrap();
+        }
+        let received = receiver
+            .process_direct_message_event(&event)
+            .unwrap()
+            .expect(variant);
+        assert_eq!(received.content, variant);
+        assert_eq!(received.sender, peer_owner.public_key());
+    }
+}

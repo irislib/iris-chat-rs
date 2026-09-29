@@ -269,8 +269,15 @@ impl ProtocolEngine {
         let mut event_ids = Vec::new();
         let mut effects = Vec::new();
         let chat_id = group_chat_id(&prepared.group_id);
+        // A sender-key broadcast serves remote members and linked devices.
+        // Encoding the same envelope twice randomizes its header twice, so
+        // receivers cannot deduplicate the second copy by event ID.
+        let mut local_sibling = prepared.local_sibling.clone();
+        local_sibling
+            .sender_key_messages
+            .retain(|message| !prepared.remote.sender_key_messages.contains(message));
         effects.extend(protocol_effects_from_group_prepared_publish(
-            &prepared.local_sibling,
+            &local_sibling,
             self.local_handshake_owner_proof(),
             inner_event_id.clone(),
             chat_id.clone(),
@@ -368,6 +375,7 @@ impl ProtocolEngine {
             let pending = ProtocolPendingGroupFanout {
                 group_id: group_id.to_string(),
                 fanout: fanout.clone(),
+                remaining_devices: self.group_fanout_missing_devices(fanout, &prepared.relay_gaps),
                 inner_event_id: inner_event_id.clone(),
                 created_at_secs: unix_now().get(),
                 next_retry_at_secs: unix_now().get().saturating_add(PENDING_RETRY_DELAY_SECS),
@@ -379,6 +387,34 @@ impl ProtocolEngine {
         if inner_event_id.is_none() {
             self.prune_superseded_local_group_sync_fanouts();
         }
+    }
+
+    fn group_fanout_missing_devices(
+        &self,
+        fanout: &GroupPendingFanout,
+        gaps: &[nostr_double_ratchet::RelayGap],
+    ) -> Option<BTreeSet<NdrDevicePubkey>> {
+        use nostr_double_ratchet::RelayGap;
+        let owner = match fanout {
+            GroupPendingFanout::Remote {
+                recipient_owner, ..
+            } => *recipient_owner,
+            GroupPendingFanout::LocalSiblings { .. } => self.local_owner,
+        };
+        let mut devices = BTreeSet::new();
+        for gap in gaps {
+            match gap {
+                RelayGap::MissingRoster { owner_pubkey } if *owner_pubkey == owner => return None,
+                RelayGap::MissingDeviceInvite {
+                    owner_pubkey,
+                    device_pubkey,
+                } if *owner_pubkey == owner => {
+                    devices.insert(*device_pubkey);
+                }
+                _ => {}
+            }
+        }
+        Some(devices)
     }
 
     fn queued_group_targets(&self) -> Vec<String> {
@@ -595,6 +631,4 @@ impl ProtocolEngine {
         }
         Ok(())
     }
-
-
 }

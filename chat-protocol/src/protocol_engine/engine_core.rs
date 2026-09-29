@@ -141,6 +141,8 @@ impl ProtocolEngine {
         local_invite_created_at: NdrUnixSeconds,
     ) -> anyhow::Result<()> {
         self.ensure_local_roster(local_invite_created_at);
+        // Keep the signed envelope until its legacy group candidate is removed.
+        self.discard_pending_messages_for_other_devices()?;
         self.hydrate_pending_inbound_metadata();
         self.prune_untracked_pending_inbound();
         self.prune_superseded_local_group_sync_fanouts();
@@ -538,7 +540,7 @@ impl ProtocolEngine {
             }
         }
         let mut authors = authors.into_iter().collect::<Vec<_>>();
-        authors.sort_by_key(|pubkey| pubkey.to_hex());
+        authors.sort_unstable();
         authors
     }
 
@@ -563,9 +565,7 @@ impl ProtocolEngine {
         self.known_message_author_cache_build_count
             .set(self.known_message_author_cache_build_count.get() + 1);
 
-        let mut pubkeys = self.message_author_pubkeys_filtered(|_| true);
-        pubkeys.sort_by_key(|pubkey| pubkey.to_hex());
-        pubkeys.dedup();
+        let pubkeys = self.message_author_pubkeys_filtered(|_| true);
         KnownMessageAuthorCache {
             pubkey_set: pubkeys.iter().copied().collect(),
             hexes: pubkeys.iter().map(|pubkey| pubkey.to_hex()).collect(),
@@ -671,15 +671,24 @@ impl ProtocolEngine {
         &self,
         owner_pubkey: PublicKey,
     ) -> Vec<PublicKey> {
+        self.known_device_identity_pubkeys_for_owner_with_snapshot(
+            &self.session_manager.snapshot(),
+            owner_pubkey,
+        )
+    }
+
+    pub fn known_device_identity_pubkeys_for_owner_with_snapshot(
+        &self,
+        snapshot: &SessionManagerSnapshot,
+        owner_pubkey: PublicKey,
+    ) -> Vec<PublicKey> {
         let owner = ndr_owner(owner_pubkey);
-        let mut devices = self
-            .session_manager
-            .snapshot()
+        let mut devices = snapshot
             .users
-            .into_iter()
+            .iter()
             .find(|user| user.owner_pubkey == owner)
             .and_then(|user| {
-                user.roster.map(|roster| {
+                user.roster.as_ref().map(|roster| {
                     roster
                         .devices()
                         .iter()
@@ -687,7 +696,7 @@ impl ProtocolEngine {
                             self.owner_device_binding_is_verified_in_roster(
                                 owner,
                                 device.device_pubkey,
-                                Some(&roster),
+                                Some(roster),
                             )
                         })
                         .filter_map(|device| public_device(device.device_pubkey).ok())
@@ -837,14 +846,24 @@ impl ProtocolEngine {
     }
 
     pub fn active_roster_session_count_for_owner(&self, owner_pubkey: PublicKey) -> usize {
+        self.active_roster_session_count_for_owner_with_snapshot(
+            &self.session_manager.snapshot(),
+            owner_pubkey,
+        )
+    }
+
+    pub fn active_roster_session_count_for_owner_with_snapshot(
+        &self,
+        snapshot: &SessionManagerSnapshot,
+        owner_pubkey: PublicKey,
+    ) -> usize {
         let owner = ndr_owner(owner_pubkey);
-        self.session_manager
-            .snapshot()
+        snapshot
             .users
-            .into_iter()
+            .iter()
             .find(|user| user.owner_pubkey == owner)
             .and_then(|user| {
-                let roster = user.roster?;
+                let roster = user.roster.as_ref()?;
                 Some(
                     user.devices
                         .iter()
@@ -855,7 +874,7 @@ impl ProtocolEngine {
                                 && self.owner_device_binding_is_verified_in_roster(
                                     owner,
                                     device.device_pubkey,
-                                    Some(&roster),
+                                    Some(roster),
                                 )
                                 && roster.devices().iter().any(|entry| {
                                     entry.device_pubkey == device.device_pubkey

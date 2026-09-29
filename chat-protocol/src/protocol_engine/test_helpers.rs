@@ -9,6 +9,7 @@ fn pending_local_group_fanout(
         fanout: GroupPendingFanout::LocalSiblings {
             payload: payload.to_vec(),
         },
+        remaining_devices: None,
         inner_event_id: inner_event_id.map(str::to_string),
         created_at_secs,
         next_retry_at_secs: created_at_secs,

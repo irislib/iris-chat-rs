@@ -526,3 +526,173 @@ fn legacy_message_journal_replay_keeps_original_time() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].created_at_secs, 200);
 }
+
+#[test]
+fn failed_group_control_apply_remains_unacknowledged_and_recovers_after_restart() {
+    for restart in [false, true] {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let sender_owner = Keys::generate();
+        let sender_device = Keys::generate();
+        let storage = Arc::new(SwitchableFailStorage::new());
+        let mut core = logged_in_test_core_with_storage(
+            "group-control-apply-failure",
+            &owner,
+            &device,
+            storage.clone(),
+        );
+        observe_peer_appkeys_for_test(
+            core.protocol_engine.as_mut().unwrap(),
+            &sender_owner,
+            &[sender_device.public_key()],
+            1,
+        );
+        let mut sender = test_protocol_engine(&sender_owner, &sender_device);
+        let group = sender
+            .create_group(
+                "Recover the invitation".into(),
+                vec![owner.public_key()],
+                unix_now(),
+            )
+            .unwrap()
+            .snapshot
+            .unwrap();
+        let group_id = group.group_id.clone();
+        let payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
+            &nostr_double_ratchet::JsonGroupPayloadCodecV1,
+            nostr_double_ratchet::GroupPayloadEncodeContext {
+                local_device_pubkey: ndr_device_pubkey(sender_device.public_key()),
+                created_at: NdrUnixSeconds(unix_now().get()),
+            },
+            &nostr_double_ratchet::GroupPairwiseCommand::MetadataSnapshot { snapshot: group },
+        )
+        .unwrap();
+        let invite = core
+            .protocol_engine
+            .as_ref()
+            .unwrap()
+            .local_invite()
+            .unwrap();
+        let (mut session, response) = invite
+            .accept_with_owner(
+                sender_device.public_key(),
+                sender_device.secret_key().to_secret_bytes(),
+                Some(sender_device.public_key().to_hex()),
+                Some(sender_owner.public_key()),
+            )
+            .unwrap();
+        core.protocol_engine
+            .as_mut()
+            .unwrap()
+            .observe_invite_response_event(&invite_response_event(&response).unwrap())
+            .unwrap();
+        let plan = session
+            .plan_send(&payload, NdrUnixSeconds(unix_now().get()))
+            .unwrap();
+        let event = message_event(&session.apply_send(plan).envelope).unwrap();
+        core.protocol_engine
+            .as_mut()
+            .unwrap()
+            .process_direct_message_event(&event)
+            .unwrap()
+            .expect("durable plaintext");
+
+        // The outer message is durable; applying its group control now fails.
+        storage.set_fail_puts(true);
+        core.retry_protocol_engine_pending_work("group-apply-failure");
+        assert!(!core.groups.contains_key(&group_id));
+        assert!(
+            !core
+                .pending_decrypted_delivery_acks
+                .contains(&event.id.to_hex()),
+            "an unapplied group control must not be acknowledged"
+        );
+        assert!(!core.has_seen_event(&event.id.to_hex()));
+        storage.set_fail_puts(false);
+        core.persist_best_effort();
+        assert_eq!(
+            core.protocol_engine
+                .as_ref()
+                .unwrap()
+                .pending_decrypted_deliveries_len_for_test(),
+            1,
+            "an unrelated successful app save must retain the failed control"
+        );
+        let mut restored = if restart {
+            drop(core);
+            logged_in_test_core_with_storage(
+                "group-control-apply-failure",
+                &owner,
+                &device,
+                storage,
+            )
+        } else {
+            core
+        };
+        restored.retry_protocol_engine_pending_work("group-apply-recovery");
+        assert_eq!(restored.groups[&group_id].name, "Recover the invitation");
+        assert_eq!(
+            restored
+                .protocol_engine
+                .as_ref()
+                .unwrap()
+                .pending_decrypted_deliveries_len_for_test(),
+            0
+        );
+        assert!(restored.pending_decrypted_delivery_acks.is_empty());
+    }
+}
+
+#[test]
+fn session_projection_reset_replays_unacknowledged_delivery() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let storage = Arc::new(SwitchableFailStorage::new());
+    let mut core = logged_in_test_core_with_storage(
+        "reset-before-delivery-ack",
+        &owner,
+        &device,
+        storage.clone(),
+    );
+    let event = appcore_direct_message_event_for_test(
+        core.protocol_engine.as_mut().unwrap(),
+        &sender,
+        "replay after session reset",
+        200,
+    );
+    core.protocol_engine
+        .as_mut()
+        .unwrap()
+        .process_direct_message_event(&event)
+        .unwrap()
+        .unwrap();
+    storage.set_fail_puts(true);
+    core.retry_protocol_engine_pending_work("failed-ack-before-reset");
+    assert!(core
+        .pending_decrypted_delivery_acks
+        .contains(&event.id.to_hex()));
+    assert_eq!(
+        core.threads[&sender.public_key().to_hex()].messages.len(),
+        1
+    );
+
+    // Session start and logout share this reset; an old projection's acknowledgment
+    // must not suppress replay into the replacement application state.
+    core.clear_chats_and_deletions();
+    storage.set_fail_puts(false);
+    install_test_protocol_engine(&mut core, &owner, &device, storage, None, None);
+    core.retry_protocol_engine_pending_work("retry-after-session-reset");
+    assert_eq!(
+        core.threads[&sender.public_key().to_hex()].messages[0].body,
+        "replay after session reset"
+    );
+    assert!(core.pending_decrypted_delivery_acks.is_empty());
+    assert_eq!(
+        core.protocol_engine
+            .as_ref()
+            .unwrap()
+            .pending_decrypted_deliveries_len_for_test(),
+        0
+    );
+}

@@ -5,6 +5,7 @@ impl AppCore {
         self.threads.clear();
         self.chat_deletions.clear();
         self.chat_read_states.clear();
+        self.pending_decrypted_delivery_acks.clear();
     }
 
     pub(super) fn chat_activity_is_deleted(&self, chat_id: &str, created_at: u64) -> bool {

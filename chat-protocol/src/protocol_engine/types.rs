@@ -112,6 +112,9 @@ pub struct ProtocolPendingInboundTestDebug {
 struct ProtocolPendingGroupFanout {
     group_id: String,
     fanout: GroupPendingFanout,
+    // None until the roster is known (also for legacy persisted queues).
+    #[serde(default)]
+    remaining_devices: Option<BTreeSet<NdrDevicePubkey>>,
     inner_event_id: Option<String>,
     created_at_secs: u64,
     next_retry_at_secs: u64,

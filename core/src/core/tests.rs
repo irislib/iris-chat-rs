@@ -143,6 +143,7 @@ include!("tests/direct_messages_runtime_regressions.rs");
 include!("tests/direct_group_sender_key_ack.rs");
 include!("tests/groups_sender_key.rs");
 include!("tests/groups_sender_key_retry.rs");
+include!("tests/groups_scale.rs");
 include!("tests/groups_persistence_helpers.rs");
 include!("tests/groups_persistence_more.rs");
 include!("tests/device_sync.rs");
