@@ -436,6 +436,11 @@ impl AppManager {
     pub fn apply_update(&self, update: AppUpdate) -> Option<AppUpdate> {
         match update {
             AppUpdate::FullState(state) => {
+                // Ignore snapshots queued before logout until the core confirms
+                // the account is gone; they must not restore calls or alerts.
+                if self.automatic_revocation_logout_in_flight.get() && state.account.is_some() {
+                    return None;
+                }
                 if state.rev <= self.last_rev_applied.get() {
                     let local = self.local_state.borrow();
                     if state.rev == local.rev && state.router == local.router {
@@ -447,7 +452,7 @@ impl AppManager {
                 let reconciled = self.state_by_reconciling_pending_navigation(state);
                 self.last_rev_applied.set(rev);
                 *self.local_state.borrow_mut() = reconciled.clone();
-                if !current_device_revoked(&reconciled) {
+                if reconciled.account.is_none() {
                     self.automatic_revocation_logout_in_flight.set(false);
                 }
                 if self.logout_if_current_device_revoked(&reconciled) {

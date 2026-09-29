@@ -438,6 +438,50 @@ pub fn run() {
             .render_texture(node.as_ref().unwrap(), None);
         texture.save_to_png(path).unwrap();
     }
+    // A core update already queued before logout must not restore the old call
+    // or allow notifications to use the newly rotated local session.
+    let before_logout = manager.current_state();
+    manager.logout();
+    let mut stale = before_logout.clone();
+    stale.rev += 1;
+    stale.toast = Some("Queued before logout".into());
+    stale.call = Some(iris_chat_core::CallSnapshot {
+        outgoing: false,
+        target_bitrate_bps: 150_000,
+        key_frame_generation: 0,
+        media_connected: false,
+        max_bitrate_bps: 1_200_000,
+        call_id: "stale-logout-call".into(),
+        chat_id: notification_chat,
+        peer_name: "Alex".into(),
+        phase: "incoming".into(),
+        video: true,
+        video_capable: true,
+        muted: false,
+        remote_video: true,
+        remote_muted: false,
+        started_at_secs: 0,
+        connected_at_secs: None,
+        end_reason: None,
+    });
+    assert!(
+        manager.apply_update(AppUpdate::FullState(stale.clone())).is_none(),
+        "queued authorized snapshot must not reach call or notification rendering during logout"
+    );
+    assert_eq!(manager.current_state(), before_logout);
+    // Earlier fixture states intentionally advanced beyond real core revisions.
+    // Deliver its logged-out acknowledgement at the next accepted revision.
+    let mut logged_out = stale;
+    logged_out.account = None;
+    logged_out.call = None;
+    logged_out.toast = None;
+    assert!(manager.apply_update(AppUpdate::FullState(logged_out)).is_some());
+    assert!(manager.current_state().account.is_none());
+    let mut next_login = before_logout;
+    next_login.rev = manager.current_state().rev + 1;
+    assert!(manager.apply_update(AppUpdate::FullState(next_login)).is_some());
+    assert!(manager.current_state().account.is_some(), "logout acknowledgement permits a later login");
+    println!("PASS: logout ignores queued authorized state until logged-out acknowledgement");
     window.close();
     println!("PASS: message input survives a real persisted-draft update with focus intact");
 }

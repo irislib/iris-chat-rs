@@ -49,6 +49,23 @@ internal static class NotificationNavigationTests
         var payload = DesktopNotificationNavigation.Encode(liveRouter.Target(manager.Account!.publicKeyHex, peer));
         manager.OpenNotification(payload);
         Check(Native.RouterOpenChatId(manager.State.router) == peer, "real AppManager opens matching notification chat");
+        var beforeLogout = manager.State;
+        manager.Logout();
+        var stale = beforeLogout with {
+            rev = beforeLogout.rev + 1,
+            toast = "Queued before logout",
+            call = new CallSnapshot(false,150000,0,false,1200000,"stale-logout-call",peer,"Alex","incoming",true,true,false,true,false,0,null,null)
+        };
+        typeof(AppManager).GetMethod("Apply", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(manager, new object[] { new AppUpdate.FullState(stale) });
+        Check(manager.State.rev == beforeLogout.rev, "queued authorized snapshot cannot replace state while logout is pending");
+        Check(manager.Calls.Call == null && manager.ToastMessage != stale.toast,
+            "queued snapshot cannot revive a call or toast after logout");
+        var logoutPending = typeof(AppManager).GetField("_automaticRevocationLogoutInFlight", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        Check((bool)logoutPending.GetValue(manager)!, "authorized snapshot cannot acknowledge logout");
+        PumpUntil(() => manager.Account == null);
+        Check(!(bool)logoutPending.GetValue(manager)!, "logged-out core snapshot acknowledges logout");
+        Check(manager.Calls.Call == null, "logout acknowledgement keeps the call closed");
         Console.WriteLine("PASS: Windows notification warm/cold routing, pending auth, exact target, stale-account/logout safeguards");
     }
 

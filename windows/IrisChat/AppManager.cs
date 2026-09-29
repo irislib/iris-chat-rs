@@ -823,6 +823,9 @@ public sealed partial class AppManager : INotifyPropertyChanged
                 Calls.Receive(frame);
                 break;
             case AppUpdate.FullState f:
+                // Updates queued before Logout must not revive calls or post
+                // notifications while waiting for its logged-out acknowledgement.
+                if (_automaticRevocationLogoutInFlight && f.v1.account != null) return;
                 if (f.v1.rev <= _lastRevApplied) return;
                 var prev = _state;
                 var next = StateByReconcilingPendingNavigation(f.v1);
@@ -832,7 +835,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
                 { try { _notifier.Post(next.call.peerName, next.call.videoCapable ? "Incoming video call" : "Incoming voice call",
                     _notificationNavigation.Target(next.account!.publicKeyHex, next.call.chatId)); } catch { } }
                 _lastRevApplied = f.v1.rev;
-                if (next.account?.authorizationState != DeviceAuthorizationState.Revoked)
+                if (next.account == null)
                 {
                     _automaticRevocationLogoutInFlight = false;
                 }
