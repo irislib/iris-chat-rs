@@ -600,16 +600,16 @@ pub(super) fn verify_capture_ui() {
         if accept {
             if let Some(path) = std::env::var_os("IRIS_SCREEN_PICKER_SNAPSHOT") {
                 let mut node = None;
+                let surface = dialog.native().expect("screen picker surface");
+                let widget = surface.clone().dynamic_cast::<gtk::Widget>().unwrap();
                 pump(|| {
-                    let paintable = gtk::WidgetPaintable::new(Some(&dialog));
+                    let paintable = gtk::WidgetPaintable::new(Some(&widget));
                     let snapshot = gtk::Snapshot::new();
-                    paintable.snapshot(&snapshot, dialog.width() as f64, dialog.height() as f64);
+                    paintable.snapshot(&snapshot, widget.width() as f64, widget.height() as f64);
                     node = snapshot.to_node();
                     node.is_some() && dialog.width() > 0
                 });
-                dialog
-                    .native()
-                    .expect("screen picker surface")
+                surface
                     .renderer()
                     .expect("screen picker renderer")
                     .render_texture(node.as_ref().unwrap(), None)
