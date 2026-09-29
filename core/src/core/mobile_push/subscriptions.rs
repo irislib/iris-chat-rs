@@ -54,6 +54,7 @@ pub(crate) fn build_mobile_push_create_subscription_request(
     invite_response_pubkeys: Vec<String>,
     is_release: bool,
     server_url_override: Option<String>,
+    delayed_message_authors: Vec<MobilePushDelayedAuthor>,
 ) -> Option<MobilePushSubscriptionRequest> {
     let body_json = mobile_push_subscription_body_json(
         &platform_key,
@@ -62,6 +63,7 @@ pub(crate) fn build_mobile_push_create_subscription_request(
         message_author_pubkeys,
         background_message_author_pubkeys,
         invite_response_pubkeys,
+        delayed_message_authors,
         is_release,
     )?;
     build_mobile_push_subscription_request(
@@ -87,6 +89,7 @@ pub(crate) fn build_mobile_push_update_subscription_request(
     invite_response_pubkeys: Vec<String>,
     is_release: bool,
     server_url_override: Option<String>,
+    delayed_message_authors: Vec<MobilePushDelayedAuthor>,
 ) -> Option<MobilePushSubscriptionRequest> {
     let subscription_id = normalize_path_component(&subscription_id)?;
     let body_json = mobile_push_subscription_body_json(
@@ -96,6 +99,7 @@ pub(crate) fn build_mobile_push_update_subscription_request(
         message_author_pubkeys,
         background_message_author_pubkeys,
         invite_response_pubkeys,
+        delayed_message_authors,
         is_release,
     )?;
     build_mobile_push_subscription_request(
@@ -167,6 +171,7 @@ fn mobile_push_subscription_body_json(
     message_author_pubkeys: Vec<String>,
     background_message_author_pubkeys: Vec<String>,
     invite_response_pubkeys: Vec<String>,
+    delayed_message_authors: Vec<MobilePushDelayedAuthor>,
     is_release: bool,
 ) -> Option<String> {
     let platform = normalize_platform_key(platform_key);
@@ -180,7 +185,10 @@ fn mobile_push_subscription_body_json(
         .filter(|author| authors.contains(author))
         .collect::<Vec<_>>();
     let invite_response_pubkeys = normalize_hex_list(invite_response_pubkeys);
-    if authors.is_empty() && invite_response_pubkeys.is_empty() {
+    if authors.is_empty()
+        && invite_response_pubkeys.is_empty()
+        && delayed_message_authors.is_empty()
+    {
         return None;
     }
     let mut filters = Vec::new();
@@ -189,6 +197,14 @@ fn mobile_push_subscription_body_json(
             "kinds": [MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND],
             "authors": authors,
         }));
+    }
+    for delayed in delayed_message_authors {
+        if let Ok(author) = PublicKey::from_hex(&delayed.author_pubkey) {
+            filters.push(serde_json::json!({
+                "kinds": [MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND],
+                "authors": [author.to_hex()], "since": delayed.since_secs,
+            }));
+        }
     }
     if !invite_response_pubkeys.is_empty() {
         filters.push(serde_json::json!({

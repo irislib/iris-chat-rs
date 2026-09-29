@@ -15,6 +15,7 @@ impl AppCore {
         self.pending_private_invite_responses.clear();
         self.pending_private_invite_cleanup_retry = false;
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
+        self.chat_mute_expiry_token = self.chat_mute_expiry_token.wrapping_add(1);
         self.message_expiry_token = self.message_expiry_token.wrapping_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);

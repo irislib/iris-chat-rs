@@ -110,6 +110,7 @@ impl AppCore {
             device_invite_poll_token: 0,
             pending_device_link_poll_token: 0,
             message_expiry_token: 0,
+            chat_mute_expiry_token: 0,
             protocol_reconnect_token: 0,
             protocol_liveness_token: 0,
             defer_owner_app_keys_publish: false,
@@ -221,6 +222,7 @@ impl AppCore {
                     "PendingDeviceLinkRefreshFinished"
                 }
                 InternalEvent::PruneExpiredMessages { .. } => "PruneExpiredMessages",
+                InternalEvent::ExpireChatMutes { .. } => "ExpireChatMutes",
                 InternalEvent::RelayStatusChanged { .. } => "RelayStatusChanged",
                 InternalEvent::ProtocolSubscriptionReconcileCompleted { .. } => {
                     "ProtocolSubscriptionReconcileCompleted"
@@ -393,6 +395,7 @@ impl AppCore {
         self.stop_device_sync();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.message_expiry_token = self.message_expiry_token.saturating_add(1);
+        self.chat_mute_expiry_token = self.chat_mute_expiry_token.wrapping_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
         self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
@@ -553,6 +556,7 @@ impl AppCore {
                     PENDING_DEVICE_LINK_RETRY_SECS,
                 ));
             }
+            InternalEvent::ExpireChatMutes { token } => self.handle_chat_mute_expiry(token),
             InternalEvent::PruneExpiredMessages { token } => {
                 self.handle_prune_expired_messages(token);
             }

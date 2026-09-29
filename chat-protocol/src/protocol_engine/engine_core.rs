@@ -601,6 +601,20 @@ impl ProtocolEngine {
             .collect()
     }
 
+    pub fn group_sender_event_pubkeys_for_group(&self, group_id: &str) -> Vec<PublicKey> {
+        self.group_manager
+            .known_sender_event_pubkeys()
+            .into_iter()
+            .filter(|author| {
+                self.group_manager
+                    .group_id_for_sender_event_pubkey(*author)
+                    .as_deref()
+                    == Some(group_id)
+            })
+            .filter_map(|author| public_device(author).ok())
+            .collect()
+    }
+
     pub fn is_known_group_sender_event_author(&self, author: PublicKey) -> bool {
         self.group_manager
             .group_id_for_sender_event_pubkey(ndr_device(author))

@@ -92,6 +92,9 @@ impl AppCore {
             self.threads.remove(chat_id);
             self.chat_message_ttl_seconds.remove(chat_id);
             self.preferences.muted_chat_ids.retain(|id| id != chat_id);
+            self.preferences
+                .timed_chat_mutes
+                .retain(|mute| mute.chat_id != chat_id);
             self.preferences.pinned_chat_ids.retain(|id| id != chat_id);
             self.typing_indicators
                 .retain(|_, indicator| indicator.chat_id != chat_id);

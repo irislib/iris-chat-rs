@@ -181,6 +181,12 @@ impl AppCore {
         }
         self.preferences.muted_chat_ids.sort();
         self.preferences.muted_chat_ids.dedup();
+        for mute in &mut self.preferences.timed_chat_mutes {
+            if mute.chat_id == from_chat_id {
+                mute.chat_id = to_chat_id.to_string();
+            }
+        }
+        chat_settings::normalize_timed_chat_mutes(&mut self.preferences.timed_chat_mutes);
         for pinned in &mut self.preferences.pinned_chat_ids {
             if pinned == from_chat_id {
                 *pinned = to_chat_id.to_string();

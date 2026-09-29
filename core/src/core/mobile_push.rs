@@ -56,32 +56,51 @@ impl AppCore {
         // per call on Android debug, dominating the per-emit
         // `rebuild_state` cost — and nothing on the shell side ever
         // read it. Leave the vec empty; the schema stays stable.
-        let muted_direct_chat_ids: HashSet<String> = self
-            .preferences
-            .muted_chat_ids
-            .iter()
-            .filter(|chat_id| !is_group_chat_id(chat_id))
-            .cloned()
+        let mut message_author_pubkeys: HashSet<String> = self
+            .subscribable_message_author_hexes()
+            .into_iter()
             .collect();
-        // `subscribable_message_author_hexes` already excludes blocked
-        // peers and (when the unknown-users toggle is off) non-accepted
-        // peers; here we additionally drop muted threads so the push
-        // server doesn't wake the device for chats the user has
-        // silenced (the relay sub still carries them so the local app
-        // updates when foregrounded).
-        let mut message_author_pubkeys = HashSet::new();
-        message_author_pubkeys.extend(
-            self.subscribable_message_author_hexes()
-                .into_iter()
-                .filter(|author| !muted_direct_chat_ids.contains(author)),
-        );
-        if let Some(protocol_engine) = self.protocol_engine.as_ref() {
+        let mut delayed_message_authors = Vec::new();
+        if let Some(engine) = self.protocol_engine.as_ref() {
             message_author_pubkeys.extend(
-                protocol_engine
+                engine
                     .known_group_sender_event_pubkeys()
                     .into_iter()
-                    .map(|pubkey| pubkey.to_hex()),
+                    .map(|key| key.to_hex()),
             );
+            let now = unix_now().get();
+            let muted_authors = |chat_id: &str| -> Vec<PublicKey> {
+                if let Some(group_id) = parse_group_id_from_chat_id(chat_id) {
+                    engine.group_sender_event_pubkeys_for_group(&group_id)
+                } else {
+                    PublicKey::from_hex(chat_id)
+                        .ok()
+                        .map(|owner| engine.message_author_pubkeys_for_owner(owner))
+                        .unwrap_or_default()
+                }
+            };
+            // Map chat owners to their rotating event keys, not the owner's public key.
+            for chat_id in &self.preferences.muted_chat_ids {
+                for key in muted_authors(chat_id) {
+                    message_author_pubkeys.remove(&key.to_hex());
+                }
+            }
+            for mute in &self.preferences.timed_chat_mutes {
+                if mute.until_secs <= now || self.preferences.muted_chat_ids.contains(&mute.chat_id)
+                {
+                    continue;
+                }
+                for key in muted_authors(&mute.chat_id) {
+                    let author_pubkey = key.to_hex();
+                    if message_author_pubkeys.remove(&author_pubkey) {
+                        delayed_message_authors.push(MobilePushDelayedAuthor {
+                            author_pubkey,
+                            since_secs: mute.until_secs,
+                        });
+                    }
+                }
+            }
+            delayed_message_authors.sort_by(|a, b| a.author_pubkey.cmp(&b.author_pubkey));
         }
         let background_message_author_pubkeys = self
             .protocol_engine
@@ -137,6 +156,7 @@ impl AppCore {
             },
             owner_pubkey_hex: Some(logged_in.owner_pubkey.to_string()),
             message_author_pubkeys,
+            delayed_message_authors,
             background_message_author_pubkeys,
             invite_response_pubkeys,
             sessions: Vec::new(),
@@ -825,21 +845,27 @@ fn is_chat_muted_in_data_dir(data_dir: &str, chat_id: &str) -> bool {
         .is_some_and(|conn| is_chat_muted_in(conn, chat_id))
 }
 
-fn is_chat_muted_in(conn: &rusqlite::Connection, chat_id: &str) -> bool {
-    let muted_json: Option<String> = conn
+pub(super) fn is_chat_muted_in(conn: &rusqlite::Connection, chat_id: &str) -> bool {
+    let indefinite = conn
         .query_row(
             "SELECT muted_chat_ids_json FROM preferences WHERE id = 1",
             [],
-            |row| row.get(0),
+            |row| row.get::<_, String>(0),
         )
-        .optional()
         .ok()
-        .flatten();
-    let Some(muted_json) = muted_json else {
-        return false;
-    };
-    let muted_chat_ids: Vec<String> = serde_json::from_str(&muted_json).unwrap_or_default();
-    muted_chat_ids.iter().any(|muted| muted == chat_id)
+        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+        .unwrap_or_default();
+    // Older databases have no timed column; their existing indefinite mutes still apply.
+    let timed = conn
+        .query_row(
+            "SELECT timed_chat_mutes_json FROM preferences WHERE id = 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|json| serde_json::from_str::<Vec<ChatMuteDeadline>>(&json).ok())
+        .unwrap_or_default();
+    super::chat_settings::chat_is_muted_at(&indefinite, &timed, chat_id, unix_now().get())
 }
 
 struct NotificationPreviewStorage {

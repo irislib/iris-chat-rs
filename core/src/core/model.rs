@@ -543,6 +543,8 @@ pub(super) struct PersistedPreferences {
     #[serde(default)]
     pub(super) muted_chat_ids: Vec<String>,
     #[serde(default)]
+    pub(super) timed_chat_mutes: Vec<ChatMuteDeadline>,
+    #[serde(default)]
     pub(super) pinned_chat_ids: Vec<String>,
     #[serde(default)]
     pub(super) blocked_owner_pubkeys: Vec<String>,
@@ -581,6 +583,7 @@ impl Default for PersistedPreferences {
             image_proxy_salt_hex: defaults.image_proxy_salt_hex,
             mobile_push_server_url: defaults.mobile_push_server_url,
             muted_chat_ids: defaults.muted_chat_ids,
+            timed_chat_mutes: defaults.timed_chat_mutes,
             pinned_chat_ids: defaults.pinned_chat_ids,
             blocked_owner_pubkeys: defaults.blocked_owner_pubkeys,
             accepted_owner_pubkeys: defaults.accepted_owner_pubkeys,

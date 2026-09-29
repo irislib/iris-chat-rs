@@ -158,3 +158,5 @@ include!("tests/call_quality.rs");
 include!("tests/call_history_multi_device.rs");
 
 include!("tests/contact_details.rs");
+
+include!("tests/timed_mute.rs");

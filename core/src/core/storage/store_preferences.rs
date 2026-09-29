@@ -63,6 +63,7 @@ pub(super) fn hash_preferences(preferences: &PreferencesSnapshot) -> u64 {
     preferences.image_proxy_salt_hex.hash(&mut hasher);
     preferences.mobile_push_server_url.hash(&mut hasher);
     preferences.muted_chat_ids.hash(&mut hasher);
+    preferences.timed_chat_mutes.hash(&mut hasher);
     preferences.pinned_chat_ids.hash(&mut hasher);
     preferences.debug_logging_enabled.hash(&mut hasher);
     preferences.accept_unknown_direct_messages.hash(&mut hasher);
@@ -87,7 +88,7 @@ pub(super) fn load_preferences(
                     debug_logging_enabled, accept_unknown_direct_messages,
                     nearby_enabled,
                     blocked_owner_pubkeys_json, accepted_owner_pubkeys_json,
-                    nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps
+                    nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps, timed_chat_mutes_json
              FROM preferences WHERE id = 1",
             [],
             |row| {
@@ -124,6 +125,7 @@ pub(super) fn load_preferences(
                     video_calls_enabled: row.get::<_, i64>(24)? != 0,
                     call_quality: row.get(25)?,
                     call_max_bitrate_bps: row.get(26)?,
+                    timed_chat_mutes: serde_json::from_str(&row.get::<_, String>(27)?).unwrap_or_default(),
                 })
             },
         )
@@ -145,8 +147,8 @@ pub(super) fn write_preferences(
             mobile_push_server_url, muted_chat_ids_json, pinned_chat_ids_json,
             debug_logging_enabled, accept_unknown_direct_messages, nearby_enabled,
             blocked_owner_pubkeys_json, accepted_owner_pubkeys_json,
-            nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps
-         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
+            nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps, timed_chat_mutes_json
+         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)
          ON CONFLICT(id) DO UPDATE SET
             voice_calls_enabled = excluded.voice_calls_enabled,
             video_calls_enabled = excluded.video_calls_enabled,
@@ -167,6 +169,7 @@ pub(super) fn write_preferences(
             image_proxy_salt_hex = excluded.image_proxy_salt_hex,
             mobile_push_server_url = excluded.mobile_push_server_url,
             muted_chat_ids_json = excluded.muted_chat_ids_json,
+            timed_chat_mutes_json = excluded.timed_chat_mutes_json,
             pinned_chat_ids_json = excluded.pinned_chat_ids_json,
             debug_logging_enabled = excluded.debug_logging_enabled,
             accept_unknown_direct_messages = excluded.accept_unknown_direct_messages,
@@ -203,6 +206,7 @@ pub(super) fn write_preferences(
             preferences.video_calls_enabled as i64,
             preferences.call_quality,
             preferences.call_max_bitrate_bps,
+            serde_json::to_string(&preferences.timed_chat_mutes)?,
         ],
     )?;
     Ok(())

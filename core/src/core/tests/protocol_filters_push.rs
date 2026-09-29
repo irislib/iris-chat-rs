@@ -237,6 +237,21 @@ fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys
         1,
         "known author membership should reuse the cached author set"
     );
+    let mut core = logged_in_test_core("timed-mute-ratchet-authors", &owner, &device);
+    core.protocol_engine = Some(engine);
+    let chat_id = peer_owner.public_key().to_hex();
+    let until = unix_now().get() + 3600;
+    core.handle_action(AppAction::SetChatMuteUntil { chat_id: chat_id.clone(), until_secs: until });
+    let push = core.build_mobile_push_sync_snapshot();
+    for author in &authors {
+        assert!(!push.message_author_pubkeys.contains(&author.to_hex()));
+        assert!(push.delayed_message_authors.iter().any(|entry| entry.author_pubkey == author.to_hex() && entry.since_secs == until));
+    }
+    core.handle_action(AppAction::SetChatMuted { chat_id, muted: true });
+    let push = core.build_mobile_push_sync_snapshot();
+    assert!(push.delayed_message_authors.is_empty());
+    for author in &authors { assert!(!push.message_author_pubkeys.contains(&author.to_hex())); }
+
 }
 
 #[test]
@@ -2365,6 +2380,7 @@ fn mobile_push_subscription_body_includes_invite_response_filter() {
         vec![invite_response_pubkey.clone()],
         true,
         None,
+        Vec::new(),
     )
     .expect("subscription request");
     let body: serde_json::Value =
@@ -2396,6 +2412,7 @@ fn mobile_push_subscription_body_includes_invite_response_filter() {
         Vec::new(),
         false,
         Some("https://notifications.iris.to".to_string()),
+        Vec::new(),
     )
     .expect("development subscription request");
     let development_body: serde_json::Value = serde_json::from_str(

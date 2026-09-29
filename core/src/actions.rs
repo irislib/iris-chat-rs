@@ -129,6 +129,10 @@ pub enum AppAction {
         chat_id: String,
         muted: bool,
     },
+    SetChatMuteUntil {
+        chat_id: String,
+        until_secs: u64,
+    },
     SetChatPinned {
         chat_id: String,
         pinned: bool,

@@ -110,6 +110,10 @@ impl AppCore {
                 ttl_seconds,
             } => self.set_chat_message_ttl(&chat_id, ttl_seconds),
             AppAction::SetChatMuted { chat_id, muted } => self.set_chat_muted(&chat_id, muted),
+            AppAction::SetChatMuteUntil {
+                chat_id,
+                until_secs,
+            } => self.set_chat_mute_until(&chat_id, until_secs),
             AppAction::SetChatPinned { chat_id, pinned } => self.set_chat_pinned(&chat_id, pinned),
             AppAction::SetChatUnread { chat_id, unread } => self.set_chat_unread(&chat_id, unread),
             AppAction::SendAttachment {

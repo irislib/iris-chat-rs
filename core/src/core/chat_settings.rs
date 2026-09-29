@@ -95,45 +95,87 @@ impl AppCore {
     }
 
     pub(super) fn set_chat_muted(&mut self, chat_id: &str, muted: bool) {
-        let Some(normalized_chat_id) = self.normalize_local_chat_setting_id(chat_id) else {
+        self.update_chat_mute(chat_id, muted, None);
+    }
+
+    pub(super) fn set_chat_mute_until(&mut self, chat_id: &str, until_secs: u64) {
+        self.update_chat_mute(
+            chat_id,
+            false,
+            (until_secs > unix_now().get()).then_some(until_secs),
+        );
+    }
+
+    fn update_chat_mute(&mut self, chat_id: &str, indefinite: bool, until_secs: Option<u64>) {
+        let Some(chat_id) = self.normalize_local_chat_setting_id(chat_id) else {
             return;
         };
-
-        let mut muted_chat_ids = self.preferences.muted_chat_ids.clone();
-        muted_chat_ids.sort();
-        muted_chat_ids.dedup();
-        let had_muted = muted_chat_ids
-            .iter()
-            .any(|existing| existing == &normalized_chat_id);
-
-        if muted == had_muted {
-            if muted_chat_ids != self.preferences.muted_chat_ids {
-                self.preferences.muted_chat_ids = muted_chat_ids;
-                self.persist_best_effort();
-            }
-            return;
+        self.preferences.muted_chat_ids.retain(|id| id != &chat_id);
+        self.preferences
+            .timed_chat_mutes
+            .retain(|mute| mute.chat_id != chat_id);
+        if indefinite {
+            self.preferences.muted_chat_ids.push(chat_id);
+            self.preferences.muted_chat_ids.sort();
+            self.preferences.muted_chat_ids.dedup();
+        } else if let Some(until_secs) = until_secs {
+            self.preferences.timed_chat_mutes.push(ChatMuteDeadline {
+                chat_id,
+                until_secs,
+            });
+            self.preferences
+                .timed_chat_mutes
+                .sort_by(|a, b| a.chat_id.cmp(&b.chat_id));
         }
-
-        if muted {
-            muted_chat_ids.push(normalized_chat_id.clone());
-            muted_chat_ids.sort();
-            muted_chat_ids.dedup();
-        } else {
-            muted_chat_ids.retain(|existing| existing != &normalized_chat_id);
-        }
-        self.preferences.muted_chat_ids = muted_chat_ids;
+        self.schedule_chat_mute_expiry();
         self.mark_mobile_push_dirty();
         self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn is_chat_muted(&self, chat_id: &str) -> bool {
         self.normalize_local_chat_setting_id(chat_id)
-            .is_some_and(|normalized| {
-                self.preferences
-                    .muted_chat_ids
-                    .iter()
-                    .any(|chat_id| chat_id == &normalized)
+            .is_some_and(|id| {
+                chat_is_muted_at(
+                    &self.preferences.muted_chat_ids,
+                    &self.preferences.timed_chat_mutes,
+                    &id,
+                    unix_now().get(),
+                )
             })
+    }
+
+    pub(super) fn schedule_chat_mute_expiry(&mut self) {
+        self.chat_mute_expiry_token = self.chat_mute_expiry_token.wrapping_add(1);
+        let token = self.chat_mute_expiry_token;
+        let now = unix_now().get();
+        let Some(next) = self
+            .preferences
+            .timed_chat_mutes
+            .iter()
+            .map(|mute| mute.until_secs)
+            .min()
+        else {
+            return;
+        };
+        let tx = self.core_sender.clone();
+        self.runtime.spawn(async move {
+            sleep(Duration::from_secs(next.saturating_sub(now))).await;
+            let _ = tx.send(CoreMsg::Internal(Box::new(
+                InternalEvent::ExpireChatMutes { token },
+            )));
+        });
+    }
+
+    pub(super) fn handle_chat_mute_expiry(&mut self, token: u64) {
+        if token != self.chat_mute_expiry_token {
+            return;
+        }
+        self.preferences
+            .timed_chat_mutes
+            .retain(|mute| mute.until_secs > unix_now().get());
+        self.schedule_chat_mute_expiry();
+        self.mark_mobile_push_dirty();
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn set_chat_pinned(&mut self, chat_id: &str, pinned: bool) {
@@ -678,4 +720,26 @@ fn normalized_setting(value: &str, fallback: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+/// Shared by foreground state and the independent background notification resolver.
+pub(super) fn chat_is_muted_at(
+    indefinite: &[String],
+    timed: &[ChatMuteDeadline],
+    chat_id: &str,
+    now: u64,
+) -> bool {
+    indefinite.iter().any(|id| id == chat_id)
+        || timed
+            .iter()
+            .any(|mute| mute.chat_id == chat_id && mute.until_secs > now)
+}
+
+pub(super) fn normalize_timed_chat_mutes(mutes: &mut Vec<ChatMuteDeadline>) {
+    mutes.sort_by(|a, b| {
+        a.chat_id
+            .cmp(&b.chat_id)
+            .then(b.until_secs.cmp(&a.until_secs))
+    });
+    mutes.dedup_by(|a, b| a.chat_id == b.chat_id);
 }

@@ -53,6 +53,11 @@ impl AppCore {
         }
 
         let now = unix_now();
+        self.preferences
+            .timed_chat_mutes
+            .retain(|mute| mute.until_secs > now.get());
+        self.schedule_chat_mute_expiry();
+        self.mark_mobile_push_dirty();
         let expired = self.prune_expired_messages(now.get());
         if expired > 0 {
             self.push_debug_log("messages.expired", format!("removed={expired}"));
@@ -782,6 +787,7 @@ impl AppCore {
         self.retry_protocol_engine_pending_work("session_start");
         self.retry_pending_relay_publishes("session_start");
         self.schedule_next_message_expiry();
+        self.schedule_chat_mute_expiry();
         self.request_protocol_subscription_refresh();
         self.fetch_recent_protocol_state();
         self.refresh_protocol_sync_busy();

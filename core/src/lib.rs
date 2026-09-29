@@ -1636,6 +1636,7 @@ pub fn build_mobile_push_create_subscription_request(
     invite_response_pubkeys: Vec<String>,
     is_release: bool,
     server_url_override: Option<String>,
+    delayed_message_authors: Vec<MobilePushDelayedAuthor>,
 ) -> Option<MobilePushSubscriptionRequest> {
     ffi_or(
         "build_mobile_push_create_subscription_request",
@@ -1651,6 +1652,7 @@ pub fn build_mobile_push_create_subscription_request(
                 invite_response_pubkeys,
                 is_release,
                 server_url_override,
+                delayed_message_authors,
             )
         },
     )
@@ -1669,6 +1671,7 @@ pub fn build_mobile_push_update_subscription_request(
     invite_response_pubkeys: Vec<String>,
     is_release: bool,
     server_url_override: Option<String>,
+    delayed_message_authors: Vec<MobilePushDelayedAuthor>,
 ) -> Option<MobilePushSubscriptionRequest> {
     ffi_or(
         "build_mobile_push_update_subscription_request",
@@ -1685,6 +1688,7 @@ pub fn build_mobile_push_update_subscription_request(
                 invite_response_pubkeys,
                 is_release,
                 server_url_override,
+                delayed_message_authors,
             )
         },
     )
@@ -1927,4 +1931,29 @@ pub fn resolve_call_push_invite(
     ffi_or("resolve_call_push_invite", None, || {
         crate::core::resolve_call_push_invite(data_dir, device_nsec, payload_json)
     })
+}
+
+/// Legacy notification servers reject time bounds. Retry with muted authors excluded
+/// entirely, never by dropping the bound while keeping those authors subscribed.
+#[uniffi::export]
+pub fn mobile_push_request_without_timed_filters(
+    mut request: MobilePushSubscriptionRequest,
+) -> Option<MobilePushSubscriptionRequest> {
+    let mut body: serde_json::Value = serde_json::from_str(request.body_json.as_deref()?).ok()?;
+    let filters = body.get("filters")?.as_array()?;
+    if !filters.iter().any(|filter| filter.get("since").is_some()) {
+        return None;
+    }
+    let mut remaining: Vec<_> = filters
+        .iter()
+        .filter(|filter| filter.get("since").is_none())
+        .cloned()
+        .collect();
+    if remaining.is_empty() {
+        remaining.push(serde_json::json!({"kinds": [1060], "authors": []}));
+    }
+    body["filter"] = remaining[0].clone();
+    body["filters"] = serde_json::Value::Array(remaining);
+    request.body_json = Some(body.to_string());
+    Some(request)
 }

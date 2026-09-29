@@ -1,11 +1,11 @@
 use crate::actions::AppAction;
 use crate::state::{
-    AccountSnapshot, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot,
+    AccountSnapshot, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot, ChatMuteDeadline,
     ChatParticipantSnapshot, ChatThreadSnapshot, CurrentChatSnapshot, DeliveryState,
     DeviceAuthorizationState, DeviceEntrySnapshot, DeviceRosterSnapshot, DirectChatCapabilityState,
     GroupDetailsSnapshot, GroupMemberSnapshot, LinkDeviceSnapshot, MessageAttachmentSnapshot,
     MessageDeliveryTraceSnapshot, MessageReactionSnapshot, MessageReactor,
-    MessageRecipientDeliverySnapshot, MobilePushNotificationResolution,
+    MessageRecipientDeliverySnapshot, MobilePushDelayedAuthor, MobilePushNotificationResolution,
     MobilePushSubscriptionRequest, MobilePushSyncSnapshot, NetworkStatusSnapshot,
     OutgoingAttachment, PeerProfileDebugSnapshot, PreferencesSnapshot, PublicInviteSnapshot,
     RelayConnectionSnapshot, Router, Screen, TypingIndicatorSnapshot,
@@ -620,6 +620,7 @@ pub struct AppCore {
     device_invite_poll_token: u64,
     pending_device_link_poll_token: u64,
     message_expiry_token: u64,
+    chat_mute_expiry_token: u64,
     protocol_reconnect_token: u64,
     protocol_liveness_token: u64,
     defer_owner_app_keys_publish: bool,

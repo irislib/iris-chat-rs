@@ -177,6 +177,9 @@ pub(crate) enum InternalEvent {
         token: u64,
         events: Vec<Event>,
     },
+    ExpireChatMutes {
+        token: u64,
+    },
     PruneExpiredMessages {
         token: u64,
     },

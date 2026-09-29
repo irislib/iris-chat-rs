@@ -49,6 +49,14 @@ pub struct UploadProgress {
     pub total_bytes: u64,
 }
 
+#[derive(
+    uniffi::Record, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub struct ChatMuteDeadline {
+    pub chat_id: String,
+    pub until_secs: u64,
+}
+
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct PreferencesSnapshot {
     pub voice_calls_enabled: bool,
@@ -76,6 +84,7 @@ pub struct PreferencesSnapshot {
     pub image_proxy_key_hex: String,
     pub image_proxy_salt_hex: String,
     pub muted_chat_ids: Vec<String>,
+    pub timed_chat_mutes: Vec<ChatMuteDeadline>,
     pub pinned_chat_ids: Vec<String>,
     /// Owner pubkeys (hex) the local user has blocked. Blocking drops
     /// the peer from the nostr relay subscription, the mobile push
@@ -121,6 +130,7 @@ impl Default for PreferencesSnapshot {
             image_proxy_key_hex: crate::image_proxy::DEFAULT_IMAGE_PROXY_KEY_HEX.to_string(),
             image_proxy_salt_hex: crate::image_proxy::DEFAULT_IMAGE_PROXY_SALT_HEX.to_string(),
             muted_chat_ids: Vec::new(),
+            timed_chat_mutes: Vec::new(),
             pinned_chat_ids: Vec::new(),
             blocked_owner_pubkeys: Vec::new(),
             accepted_owner_pubkeys: Vec::new(),
@@ -456,12 +466,19 @@ pub struct MobilePushSessionSnapshot {
     pub has_receiving_capability: bool,
 }
 
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct MobilePushDelayedAuthor {
+    pub author_pubkey: String,
+    pub since_secs: u64,
+}
+
 #[derive(uniffi::Record, Clone, Debug, Default, PartialEq, Eq)]
 pub struct MobilePushSyncSnapshot {
     pub call_device_pubkey_hex: Option<String>,
     pub call_author_pubkeys: Vec<String>,
     pub owner_pubkey_hex: Option<String>,
     pub message_author_pubkeys: Vec<String>,
+    pub delayed_message_authors: Vec<MobilePushDelayedAuthor>,
     pub background_message_author_pubkeys: Vec<String>,
     pub invite_response_pubkeys: Vec<String>,
     pub sessions: Vec<MobilePushSessionSnapshot>,
