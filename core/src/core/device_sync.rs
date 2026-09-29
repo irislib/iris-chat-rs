@@ -42,6 +42,7 @@ pub(super) struct DeviceSyncRuntime {
     pub(super) calls_tx: Option<Sender<super::calls::MediaSend>>,
     tcp: Option<DeviceSyncTcpSender>,
     siblings: Vec<FipsPeerIdentity>,
+    snapshot_pending: bool,
     pub(super) nearby_enabled: bool,
     pub(super) nearby_bootstrap_payloads: Arc<RwLock<Vec<Vec<u8>>>>,
     pub(super) nearby_outbox: Arc<RwLock<super::fips_nearby::FipsNearbyOutbox>>,
@@ -298,19 +299,28 @@ impl AppCore {
     }
 
     pub(super) fn broadcast_device_sync_snapshot(&mut self) {
+        let Some(runtime) = self.device_sync.as_mut() else {
+            return;
+        };
+        let Some(tcp) = runtime.tcp.clone().filter(|_| !runtime.siblings.is_empty()) else {
+            return;
+        };
+        if self.batch_depth > 0 {
+            runtime.snapshot_pending = true;
+            return;
+        }
+        let siblings = runtime.siblings.clone();
         let Some(roster_at) = self.device_sync_roster_at() else {
             return;
         };
         let packets = metadata_page_packets(self, roster_at, 0);
-        let Some((tcp, siblings)) = self.device_sync.as_ref().and_then(|runtime| {
-            runtime
-                .tcp
-                .clone()
-                .map(|tcp| (tcp, runtime.siblings.clone()))
-        }) else {
-            return;
-        };
         send_device_sync_packets(&tcp, &siblings, &packets);
+    }
+
+    pub(super) fn flush_device_sync_snapshot(&mut self) {
+        if self.device_sync.as_mut().is_some_and(|runtime| std::mem::take(&mut runtime.snapshot_pending)) {
+            self.broadcast_device_sync_snapshot();
+        }
     }
 
     pub(super) fn broadcast_device_sync_message(&mut self, message: &ChatMessageSnapshot) {
@@ -701,6 +711,7 @@ impl AppCore {
             endpoint,
             tcp: Some(tcp),
             siblings,
+            snapshot_pending: false,
             nearby_enabled: false,
             nearby_bootstrap_payloads: Arc::new(RwLock::new(Vec::new())),
             nearby_outbox: Arc::new(RwLock::new(super::fips_nearby::FipsNearbyOutbox::default())),

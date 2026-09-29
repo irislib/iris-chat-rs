@@ -600,6 +600,7 @@ impl AppCore {
             calls_tx,
             tcp,
             siblings: config.siblings,
+            snapshot_pending: false,
             nearby_enabled,
             nearby_bootstrap_payloads,
             nearby_outbox,

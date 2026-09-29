@@ -969,6 +969,7 @@ impl AppCore {
             self.rebuild_state_inner();
             self.emit_state_inner();
         }
+        self.flush_device_sync_snapshot();
         // Flush any receipts queued during the batch as one event per
         // (chat_id, receipt_type) so a 10-message catch-up sends one
         // `delivered` event with 10 e-tags instead of 10 separate events.

@@ -551,6 +551,51 @@ fn device_sync_bootstraps_missing_chats_groups_and_post_roster_messages_once() {
 }
 
 #[tokio::test]
+async fn sibling_metadata_broadcast_waits_for_the_outermost_batch_and_uses_latest_state() {
+    let owner = Keys::generate();
+    let local = Keys::generate();
+    let sibling = Keys::generate();
+    let (mut core, _, _dir) = logged_in_test_core_with_updates("batched-device-metadata", &owner, &local);
+    let owner_hex = owner.public_key().to_hex();
+    core.app_keys.insert(owner_hex.clone(), KnownAppKeys {
+        owner_pubkey_hex: owner_hex.clone(),
+        created_at_secs: 100,
+        devices: [&local, &sibling].into_iter().map(|key| KnownAppKeyDevice {
+            identity_pubkey_hex: key.public_key().to_hex(),
+            created_at_secs: 1, device_label: None, client_label: None, label_updated_at_secs: 0,
+        }).collect(),
+    });
+    let endpoint = Arc::new(fips_core::FipsEndpoint::builder()
+        .without_system_tun().bind().await.expect("bind test endpoint"));
+    let (tcp, records) = DeviceSyncTcpSender::test_channel(8, 1024);
+    let peer = fips_core::PeerIdentity::from_npub(&sibling.public_key().to_bech32().unwrap()).unwrap();
+    core.install_device_sync_sender_for_test(endpoint.clone(), tcp, vec![peer]);
+
+    core.enter_batch();
+    core.enter_batch();
+    for revision in 101..=200 {
+        core.app_keys.get_mut(&owner_hex).unwrap().created_at_secs = revision;
+        core.broadcast_device_sync_snapshot();
+    }
+    assert!(records.try_recv().is_err(), "metadata must wait until catch-up finishes");
+    core.exit_batch();
+    assert!(records.try_recv().is_err(), "nested batches must not flush early");
+    core.exit_batch();
+    let delivery = records.try_recv().expect("one final metadata snapshot");
+    assert_eq!(delivery.peer, peer);
+    assert!(!delivery.records.is_empty());
+    for bytes in delivery.records {
+        let packet: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(packet["rosterAt"], 200);
+    }
+    assert!(records.try_recv().is_err(), "intermediate snapshots must be coalesced");
+    core.broadcast_device_sync_snapshot();
+    assert!(records.try_recv().is_ok(), "unbatched updates remain immediate");
+    endpoint.shutdown().await.expect("shutdown test endpoint");
+    tokio::task::spawn_blocking(move || drop(core)).await.expect("drop test core outside async runtime");
+}
+
+#[tokio::test]
 async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     let owner = Keys::generate();
     let local_device = Keys::generate();
