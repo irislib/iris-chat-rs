@@ -831,24 +831,17 @@ fn chat_context_popover(chat: &ChatThreadSnapshot, manager: &Rc<AppManager>) -> 
         },
     ));
 
-    column.append(&context_button(
-        if chat.is_muted {
-            "Unmute chat"
-        } else {
-            "Mute chat"
-        },
-        {
-            let manager = manager.clone();
-            let chat_id = chat.chat_id.clone();
-            let muted = !chat.is_muted;
-            move || {
-                manager.dispatch(AppAction::SetChatMuted {
-                    chat_id: chat_id.clone(),
-                    muted,
-                });
-            }
-        },
-    ));
+    column.append(&context_button_with_widget("Mute notifications…", {
+        let manager = manager.clone();
+        let chat_id = chat.chat_id.clone();
+        let muted = chat.is_muted;
+        move |button| {
+            let parent = button
+                .root()
+                .and_then(|root| root.downcast::<gtk::Window>().ok());
+            super::show_chat_mute_options(parent.as_ref(), &manager, &chat_id, muted);
+        }
+    }));
 
     column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     let delete = context_button_with_widget("Delete", {

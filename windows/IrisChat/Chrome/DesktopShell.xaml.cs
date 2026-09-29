@@ -688,10 +688,7 @@ public partial class DesktopShell : UserControl
             chat.isPinned ? "Unpin chat" : "Pin chat",
             () => _manager.SetChatPinned(chat.chatId, !chat.isPinned)
         ));
-        menu.Items.Add(MenuItem(
-            chat.isMuted ? "Unmute chat" : "Mute chat",
-            () => _manager.SetChatMuted(chat.chatId, !chat.isMuted)
-        ));
+        menu.Items.Add(ChatMuteMenu.Create(_manager, chat.chatId, chat.isMuted));
         menu.Items.Add(new Separator());
         menu.Items.Add(MenuItem("Delete", () => ConfirmDeleteChat(chat)));
         return menu;

@@ -126,13 +126,13 @@ struct DirectChatInfoScreen: View {
                     }
 
                     IrisSectionCard {
-                        Button {
-                            manager.dispatch(.setChatMuted(chatId: chatId, muted: !chat.isMuted))
+                        Menu {
+                            ChatMuteOptions(manager: manager, chatId: chatId, muted: chat.isMuted)
                         } label: {
                             HStack(spacing: 12) {
                                 Image(systemName: chat.isMuted ? "bell.fill" : "bell.slash.fill")
                                     .frame(width: 24)
-                                Text(chat.isMuted ? "Unmute chat" : "Mute chat")
+                                Text("Mute notifications")
                                     .font(.system(.body, design: .rounded, weight: .semibold))
                                 Spacer(minLength: 0)
                             }

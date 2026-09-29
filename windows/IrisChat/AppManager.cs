@@ -439,6 +439,9 @@ public sealed partial class AppManager : INotifyPropertyChanged
     public void SetChatMuted(string chatId, bool muted) =>
         DispatchToRust(new AppAction.SetChatMuted(chatId, muted));
 
+    public void SetChatMuteUntil(string chatId, ulong untilSecs) =>
+        DispatchToRust(new AppAction.SetChatMuteUntil(chatId, untilSecs));
+
     public void SetContactDetails(string ownerPubkeyHex, string nickname, string note) =>
         DispatchToRust(new AppAction.SetContactDetails(ownerPubkeyHex.Trim(), nickname, note));
 
@@ -1371,7 +1374,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
         null,
         new MobilePushSyncSnapshot(
             null, Array.Empty<string>(),
-            null, Array.Empty<string>(), Array.Empty<string>(),
+            null, Array.Empty<string>(), Array.Empty<MobilePushDelayedAuthor>(), Array.Empty<string>(),
             Array.Empty<string>(),
             Array.Empty<MobilePushSessionSnapshot>()
         ),
@@ -1402,6 +1405,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
             imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
             imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
             mutedChatIds: Array.Empty<string>(),
+            timedChatMutes: Array.Empty<ChatMuteDeadline>(),
             pinnedChatIds: Array.Empty<string>(),
             blockedOwnerPubkeys: Array.Empty<string>(),
             acceptedOwnerPubkeys: Array.Empty<string>(),

@@ -180,6 +180,7 @@ final class MobilePushRuntime {
         let owner = state.mobilePush.ownerPubkeyHex?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let ownerSecret = ownerNsec?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let authors = state.mobilePush.messageAuthorPubkeys
+        let delayedAuthors = state.mobilePush.delayedMessageAuthors
         let backgroundAuthors = state.mobilePush.backgroundMessageAuthorPubkeys
         let inviteResponses = state.mobilePush.inviteResponsePubkeys
         let enabled = state.preferences.desktopNotificationsEnabled
@@ -190,6 +191,7 @@ final class MobilePushRuntime {
             owner ?? "",
             ownerSecret == nil ? "0" : "1",
             authors.joined(separator: ","),
+            delayedAuthors.map { "\($0.authorPubkey):\($0.sinceSecs)" }.joined(separator: ","),
             backgroundAuthors.joined(separator: ","),
             inviteResponses.joined(separator: ","),
             serverOverride ?? "",
@@ -205,6 +207,7 @@ final class MobilePushRuntime {
                 enabled: enabled,
                 ownerNsec: ownerSecret,
                 messageAuthorPubkeys: authors,
+                delayedMessageAuthors: delayedAuthors,
                 backgroundMessageAuthorPubkeys: backgroundAuthors,
                 inviteResponsePubkeys: inviteResponses,
                 serverOverride: serverOverride
@@ -234,6 +237,7 @@ final class MobilePushRuntime {
         enabled: Bool,
         ownerNsec: String?,
         messageAuthorPubkeys: [String],
+        delayedMessageAuthors: [MobilePushDelayedAuthor],
         backgroundMessageAuthorPubkeys: [String],
         inviteResponsePubkeys: [String],
         serverOverride: String?
@@ -241,7 +245,7 @@ final class MobilePushRuntime {
         let storageKey = mobilePushSubscriptionIdKey(platformKey: "ios")
         guard enabled,
               let ownerNsec,
-              !messageAuthorPubkeys.isEmpty || !inviteResponsePubkeys.isEmpty else {
+              !messageAuthorPubkeys.isEmpty || !inviteResponsePubkeys.isEmpty || !delayedMessageAuthors.isEmpty else {
             await disableStoredSubscription(ownerNsec: ownerNsec, storageKey: storageKey, serverOverride: serverOverride)
             return
         }
@@ -263,6 +267,7 @@ final class MobilePushRuntime {
                subscriptionId: existingId,
                pushToken: token,
                messageAuthorPubkeys: messageAuthorPubkeys,
+               delayedMessageAuthors: delayedMessageAuthors,
             backgroundMessageAuthorPubkeys: backgroundMessageAuthorPubkeys,
                inviteResponsePubkeys: inviteResponsePubkeys,
                storageKey: storageKey,
@@ -275,6 +280,7 @@ final class MobilePushRuntime {
             ownerNsec: ownerNsec,
             pushToken: token,
             messageAuthorPubkeys: messageAuthorPubkeys,
+            delayedMessageAuthors: delayedMessageAuthors,
             backgroundMessageAuthorPubkeys: backgroundMessageAuthorPubkeys,
             inviteResponsePubkeys: inviteResponsePubkeys,
             storageKey: storageKey,
@@ -358,6 +364,7 @@ final class MobilePushRuntime {
         subscriptionId: String,
         pushToken: String,
         messageAuthorPubkeys: [String],
+        delayedMessageAuthors: [MobilePushDelayedAuthor],
         backgroundMessageAuthorPubkeys: [String],
         inviteResponsePubkeys: [String],
         storageKey: String,
@@ -373,7 +380,8 @@ final class MobilePushRuntime {
             backgroundMessageAuthorPubkeys: backgroundMessageAuthorPubkeys,
             inviteResponsePubkeys: inviteResponsePubkeys,
             isRelease: isMobilePushReleaseBuild,
-            serverUrlOverride: serverOverride
+            serverUrlOverride: serverOverride,
+            delayedMessageAuthors: delayedMessageAuthors
         ) else {
             return false
         }
@@ -392,6 +400,7 @@ final class MobilePushRuntime {
         ownerNsec: String,
         pushToken: String,
         messageAuthorPubkeys: [String],
+        delayedMessageAuthors: [MobilePushDelayedAuthor],
         backgroundMessageAuthorPubkeys: [String],
         inviteResponsePubkeys: [String],
         storageKey: String,
@@ -406,7 +415,8 @@ final class MobilePushRuntime {
             backgroundMessageAuthorPubkeys: backgroundMessageAuthorPubkeys,
             inviteResponsePubkeys: inviteResponsePubkeys,
             isRelease: isMobilePushReleaseBuild,
-            serverUrlOverride: serverOverride
+            serverUrlOverride: serverOverride,
+            delayedMessageAuthors: delayedMessageAuthors
         ) else {
             return
         }
@@ -442,7 +452,22 @@ final class MobilePushRuntime {
         }
     }
 
-    private func perform(_ request: MobilePushSubscriptionRequest) async -> MobilePushHTTPResponse {
+    private func supportsTimedFilters(_ subscriptionUrl: String) async -> Bool {
+        guard let base = subscriptionUrl.components(separatedBy: "/subscriptions").first,
+              let url = URL(string: base + "/info"),
+              let (data, response) = try? await urlSession.data(from: url),
+              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return object["supports_timed_filters"] as? Bool == true
+    }
+
+    private func perform(_ original: MobilePushSubscriptionRequest) async -> MobilePushHTTPResponse {
+        var request = original
+        if let conservative = mobilePushRequestWithoutTimedFilters(request: original),
+           !(await supportsTimedFilters(original.url)) {
+            NSLog("Notification server needs an update for automatic background unmute; muted chats remain silent until app refresh")
+            request = conservative
+        }
         guard let url = URL(string: request.url) else {
             return MobilePushHTTPResponse(statusCode: 0, data: nil)
         }

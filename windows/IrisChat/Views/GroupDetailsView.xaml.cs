@@ -44,7 +44,7 @@ public partial class GroupDetailsView : UserControl
         GroupSubtitle.Text = $"{details.members.Length} members · created by {details.createdByDisplayName}";
         SaveNameButton.IsEnabled = details.canManage;
         AddMemberInput.IsEnabled = details.canManage;
-        MuteChatText.Text = details.isMuted ? "Unmute chat" : "Mute chat";
+        MuteChatText.Text = "Mute notifications…";
 
         var about = details.about ?? string.Empty;
         if (details.canManage)
@@ -382,6 +382,6 @@ public partial class GroupDetailsView : UserControl
     {
         var details = App.CurrentManager.GroupDetails;
         if (details == null) return;
-        App.CurrentManager.SetChatMuted($"group:{details.groupId}", !details.isMuted);
+        ChatMuteMenu.Show(this, App.CurrentManager, $"group:{details.groupId}", details.isMuted);
     }
 }

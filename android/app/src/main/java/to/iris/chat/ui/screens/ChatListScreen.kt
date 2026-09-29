@@ -76,6 +76,7 @@ import kotlin.math.roundToInt
 import java.util.concurrent.ConcurrentHashMap
 import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
+import to.iris.chat.ui.components.rememberChatMuteAction
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.ChatInputShortcut
@@ -836,11 +837,7 @@ private fun ChatListConversationRow(
                     AppAction.SetChatPinned(chat.chatId, !chat.isPinned),
                 )
             },
-            onToggleMute = {
-                appManager.dispatch(
-                    AppAction.SetChatMuted(chat.chatId, !chat.isMuted),
-                )
-            },
+            onToggleMute = rememberChatMuteAction(chat.chatId, chat.isMuted, appManager::dispatch),
             onDeleteRequest = { onDeleteRequest(chat) },
         ) {
             IrisChatListRow(

@@ -39,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import to.iris.chat.core.AppManager
+import to.iris.chat.ui.components.rememberChatMuteAction
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.GroupMemberSnapshot
@@ -258,18 +259,14 @@ fun GroupDetailsScreen(
                 val groupChatId = "group:$groupId"
                 IrisListSection {
                     IrisMenuRow(
-                        title = if (details.isMuted) "Unmute chat" else "Mute chat",
+                        title = "Mute notifications",
                         icon =
                             if (details.isMuted) {
                                 IrisIcons.Notifications
                             } else {
                                 IrisIcons.NotificationsOff
                             },
-                        onClick = {
-                            appManager.dispatch(
-                                AppAction.SetChatMuted(groupChatId, !details.isMuted),
-                            )
-                        },
+                        onClick = rememberChatMuteAction(groupChatId, details.isMuted, appManager::dispatch),
                         modifier = Modifier.testTag("groupDetailsMuteButton"),
                     )
                 }

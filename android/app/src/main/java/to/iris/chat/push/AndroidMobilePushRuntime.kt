@@ -19,6 +19,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import to.iris.chat.BuildConfig
+import to.iris.chat.rust.MobilePushDelayedAuthor
+import to.iris.chat.rust.mobilePushRequestWithoutTimedFilters
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.MobilePushSubscriptionRequest
 import to.iris.chat.rust.buildCallPushSubscriptionRequest
@@ -47,6 +49,7 @@ class AndroidMobilePushRuntime(
         val ownerSecret = ownerNsec?.trim()?.ifEmpty { null }
         callDevicePubkeyHex = state.mobilePush.callDevicePubkeyHex
         val authors = if (forCalls) state.mobilePush.callAuthorPubkeys else state.mobilePush.messageAuthorPubkeys
+        val delayedAuthors = if (forCalls) emptyList() else state.mobilePush.delayedMessageAuthors
         val backgroundAuthors = if (forCalls) emptyList() else state.mobilePush.backgroundMessageAuthorPubkeys
         val inviteResponses = if (forCalls) emptyList() else state.mobilePush.inviteResponsePubkeys
         val enabled = if (forCalls) state.preferences.voiceCallsEnabled || state.preferences.videoCallsEnabled else state.preferences.desktopNotificationsEnabled
@@ -61,6 +64,7 @@ class AndroidMobilePushRuntime(
                 if (forCalls) callDevicePubkeyHex.orEmpty() else "",
                 if (ownerSecret == null) "0" else "1",
                 authors.joinToString(","),
+                delayedAuthors.joinToString(",") { "${it.authorPubkey}:${it.sinceSecs}" },
                 backgroundAuthors.joinToString(","),
                 inviteResponses.joinToString(","),
                 serverOverride.orEmpty(),
@@ -71,7 +75,7 @@ class AndroidMobilePushRuntime(
 
         val storageKeyName = (mobilePushSubscriptionIdKey(PLATFORM_KEY) + if (forCalls) ".calls" else "")
         val storageKey = stringPreferencesKey(storageKeyName)
-        if (!enabled || ownerSecret == null || (authors.isEmpty() && inviteResponses.isEmpty())) {
+        if (!enabled || ownerSecret == null || (authors.isEmpty() && inviteResponses.isEmpty() && delayedAuthors.isEmpty())) {
             val disabled = disableStoredSubscription(ownerSecret, storageKey, serverOverride)
             if (disabled) {
                 lastSyncSignature = signature
@@ -94,11 +98,11 @@ class AndroidMobilePushRuntime(
         }
         val storedId = currentStoredId(storageKey)
         val existingId = resolveExistingSubscriptionId(ownerSecret, token, storedId, serverOverride)
-        if (existingId != null && updateSubscription(ownerSecret, existingId, token, authors, backgroundAuthors, inviteResponses, storageKey, serverOverride)) {
+        if (existingId != null && updateSubscription(ownerSecret, existingId, token, authors, backgroundAuthors, inviteResponses, delayedAuthors, storageKey, serverOverride)) {
             lastSyncSignature = signature
             return@withLock true
         }
-        val created = createSubscription(ownerSecret, token, authors, backgroundAuthors, inviteResponses, storageKey, serverOverride)
+        val created = createSubscription(ownerSecret, token, authors, backgroundAuthors, inviteResponses, delayedAuthors, storageKey, serverOverride)
         if (created) {
             lastSyncSignature = signature
         }
@@ -162,6 +166,7 @@ class AndroidMobilePushRuntime(
         authors: List<String>,
         backgroundAuthors: List<String>,
         inviteResponses: List<String>,
+        delayedAuthors: List<MobilePushDelayedAuthor>,
         storageKey: Preferences.Key<String>,
         serverOverride: String?,
     ): Boolean {
@@ -180,6 +185,7 @@ class AndroidMobilePushRuntime(
                 messageAuthorPubkeys = authors,
                 backgroundMessageAuthorPubkeys = backgroundAuthors,
                 inviteResponsePubkeys = inviteResponses,
+                delayedMessageAuthors = delayedAuthors,
                 isRelease = !BuildConfig.DEBUG,
                 serverUrlOverride = serverOverride,
             ) ?: return false
@@ -200,6 +206,7 @@ class AndroidMobilePushRuntime(
         authors: List<String>,
         backgroundAuthors: List<String>,
         inviteResponses: List<String>,
+        delayedAuthors: List<MobilePushDelayedAuthor>,
         storageKey: Preferences.Key<String>,
         serverOverride: String?,
     ): Boolean {
@@ -217,6 +224,7 @@ class AndroidMobilePushRuntime(
                 messageAuthorPubkeys = authors,
                 backgroundMessageAuthorPubkeys = backgroundAuthors,
                 inviteResponsePubkeys = inviteResponses,
+                delayedMessageAuthors = delayedAuthors,
                 isRelease = !BuildConfig.DEBUG,
                 serverUrlOverride = serverOverride,
             ) ?: return false
@@ -266,7 +274,12 @@ class AndroidMobilePushRuntime(
         return dataStore.awaitFirst()[storageKey]?.trim()?.ifEmpty { null }
     }
 
-    private fun perform(request: MobilePushSubscriptionRequest): MobilePushHttpResponse {
+    private fun perform(original: MobilePushSubscriptionRequest): MobilePushHttpResponse {
+        val conservative = mobilePushRequestWithoutTimedFilters(original)
+        val request = if (conservative != null && !supportsTimedFilters(original.url)) {
+            Log.w(TAG, "Notification server needs an update for automatic background unmute; muted chats remain silent until app refresh")
+            conservative
+        } else original
         val builder =
             Request.Builder()
                 .url(request.url)
@@ -288,6 +301,13 @@ class AndroidMobilePushRuntime(
             MobilePushHttpResponse(0, null)
         }
     }
+
+    private fun supportsTimedFilters(subscriptionUrl: String): Boolean = runCatching {
+        val infoUrl = subscriptionUrl.substringBefore("/subscriptions") + "/info"
+        httpClient.newCall(Request.Builder().url(infoUrl).build()).execute().use { response ->
+            response.isSuccessful && JSONObject(response.body.string()).optBoolean("supports_timed_filters", false)
+        }
+    }.getOrDefault(false)
 
     private fun userServerOverride(state: AppState): String? =
         state.preferences.mobilePushServerUrl.trim().ifEmpty { null }

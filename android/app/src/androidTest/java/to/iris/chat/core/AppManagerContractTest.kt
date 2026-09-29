@@ -864,7 +864,7 @@ class AppManagerContractTest {
             publicInvite = null,
             linkDevice = null, remoteSignerLogin = null,
             networkStatus = null,
-            mobilePush = MobilePushSyncSnapshot(null, emptyList(), null, emptyList(), emptyList(), emptyList(), emptyList()),
+            mobilePush = MobilePushSyncSnapshot(null, emptyList(), null, emptyList(), emptyList(), emptyList(), emptyList(), emptyList()),
             userDiscoveryRevision = 0u,
             userDiscoverySyncing = false,
             preferences = PreferencesSnapshot(
@@ -892,6 +892,7 @@ class AppManagerContractTest {
                     imageProxyKeyHex = "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
                     imageProxySaltHex = "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
                     mutedChatIds = emptyList(),
+                timedChatMutes = emptyList(),
                     pinnedChatIds = emptyList(),
                     blockedOwnerPubkeys = emptyList(),
                     acceptedOwnerPubkeys = emptyList(),

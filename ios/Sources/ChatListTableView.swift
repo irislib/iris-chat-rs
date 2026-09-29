@@ -373,11 +373,11 @@ struct ChatListTableView: UIViewRepresentable {
             let configuration = UISwipeActionsConfiguration(actions: [
                 deleteAction(chat: chat, presentingFrom: tableView),
                 contextualAction(
-                    accessibilityTitle: chat.isMuted ? "Unmute" : "Mute",
+                    accessibilityTitle: "Mute notifications",
                     systemImage: chat.isMuted ? "bell.fill" : "bell.slash.fill",
                     color: .signalIndigo
                 ) { [weak self] in
-                    self?.manager?.dispatch(.setChatMuted(chatId: chat.chatId, muted: !chat.isMuted))
+                    self?.presentMuteOptions(chat: chat, tableView: tableView)
                 },
             ])
             configuration.performsFirstActionWithFullSwipe = false
@@ -546,6 +546,28 @@ struct ChatListTableView: UIViewRepresentable {
             action.image = UIImage(systemName: systemImage)
             action.accessibilityLabel = accessibilityTitle
             return action
+        }
+
+        private func presentMuteOptions(chat: ChatThreadSnapshot, tableView: UITableView) {
+            guard let manager, let presenter = tableView.window?.rootViewController else { return }
+            let alert = UIAlertController(title: "Mute notifications", message: nil, preferredStyle: .actionSheet)
+            if chat.isMuted {
+                alert.addAction(UIAlertAction(title: "Unmute", style: .default) { _ in
+                    manager.dispatch(.setChatMuted(chatId: chat.chatId, muted: false))
+                })
+            }
+            for duration in chatMuteDurations {
+                alert.addAction(UIAlertAction(title: duration.label, style: .default) { _ in
+                    manager.dispatch(.setChatMuteUntil(chatId: chat.chatId, untilSecs: chatMuteDeadline(seconds: duration.seconds)))
+                })
+            }
+            alert.addAction(UIAlertAction(title: "Always", style: .default) { _ in
+                manager.dispatch(.setChatMuted(chatId: chat.chatId, muted: true))
+            })
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+            alert.popoverPresentationController?.sourceView = tableView
+            alert.popoverPresentationController?.sourceRect = tableView.bounds
+            presenter.present(alert, animated: true)
         }
 
         private func deleteAction(chat: ChatThreadSnapshot, presentingFrom tableView: UITableView) -> UIContextualAction {

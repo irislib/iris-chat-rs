@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import to.iris.chat.core.AppManager
+import to.iris.chat.ui.components.rememberChatMuteAction
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.PeerProfileDebugSnapshot
@@ -243,10 +244,8 @@ fun DirectChatInfoScreen(
                         Icon(imageVector = IrisIcons.Copy, contentDescription = null)
                     }
                     IrisInlineAction(
-                        text = if (chat.isMuted) "Unmute chat" else "Mute chat",
-                        onClick = {
-                            appManager.dispatch(AppAction.SetChatMuted(chatId, !chat.isMuted))
-                        },
+                        text = "Mute notifications",
+                        onClick = rememberChatMuteAction(chatId, chat.isMuted, appManager::dispatch),
                         modifier = Modifier.testTag("directChatMuteButton"),
                     ) {
                         Icon(

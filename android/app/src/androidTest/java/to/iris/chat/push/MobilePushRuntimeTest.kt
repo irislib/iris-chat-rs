@@ -27,6 +27,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import to.iris.chat.core.AppManagerContractDefaults
+import to.iris.chat.rust.MobilePushDelayedAuthor
 
 @RunWith(AndroidJUnit4::class)
 class MobilePushRuntimeTest {
@@ -35,6 +36,54 @@ class MobilePushRuntimeTest {
 
     @Test
     fun tokenRefreshDuringCallRegistrationIsNotLost() = tokenRefreshDuringRegistration(true)
+
+    @Test fun timedMuteUsesServerDeadlineWhenSupported() = timedMuteRegistration(true)
+
+    @Test fun timedMuteKeepsOldServersConservativelySilent() = timedMuteRegistration(false)
+
+    private fun timedMuteRegistration(supported: Boolean) = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val file = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "push-timed-${UUID.randomUUID()}.preferences_pb")
+        val dataStore = PreferenceDataStoreFactory.create(scope = scope, produceFile = { file })
+        val registered = mutableListOf<JSONObject>()
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            val body = when {
+                request.url.encodedPath.endsWith("/info") -> "{\"supports_timed_filters\":$supported}"
+                request.method == "GET" -> "{}"
+                else -> {
+                    val buffer = Buffer()
+                    requireNotNull(request.body).writeTo(buffer)
+                    registered.add(JSONObject(buffer.readUtf8()))
+                    "{\"id\":\"test-subscription\"}"
+                }
+            }
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(body.toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val runtime = AndroidMobilePushRuntime(dataStore, httpClient = http, fetchToken = { "test-token" })
+        val initial = AppManagerContractDefaults.initialState()
+        val author = "22".repeat(32)
+        val state = initial.copy(
+            preferences = initial.preferences.copy(mobilePushServerUrl = "https://notifications.invalid"),
+            mobilePush = initial.mobilePush.copy(ownerPubkeyHex = "11".repeat(32),
+                messageAuthorPubkeys = emptyList(), delayedMessageAuthors = listOf(MobilePushDelayedAuthor(author, 200uL))),
+        )
+        try {
+            assertTrue(runtime.sync(state, "nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw"))
+            val body = registered.single()
+            if (supported) {
+                assertEquals(200, body.getJSONObject("filter").getInt("since"))
+                assertEquals(author, body.getJSONObject("filter").getJSONArray("authors").getString(0))
+            } else {
+                assertEquals(0, body.getJSONObject("filter").getJSONArray("authors").length())
+                assertTrue(!body.toString().contains(author))
+            }
+        } finally {
+            scope.cancel(); file.delete()
+            http.dispatcher.executorService.shutdown(); http.connectionPool.evictAll()
+        }
+    }
 
     private fun tokenRefreshDuringRegistration(forCalls: Boolean) = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

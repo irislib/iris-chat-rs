@@ -643,11 +643,11 @@ func chatListItemContextMenu(
         )
     }
 
-    Button {
-        manager.dispatch(.setChatMuted(chatId: chat.chatId, muted: !chat.isMuted))
+    Menu {
+        ChatMuteOptions(manager: manager, chatId: chat.chatId, muted: chat.isMuted)
     } label: {
         IrisContextMenuLabel(
-            title: chat.isMuted ? "Unmute chat" : "Mute chat",
+            title: "Mute notifications",
             systemImage: chat.isMuted ? "bell.fill" : "bell.slash.fill"
         )
     }

@@ -210,11 +210,7 @@ fn settings_card(
     }
 
     let mute_row = adw::ActionRow::builder()
-        .title(if details.is_muted {
-            "Unmute chat"
-        } else {
-            "Mute chat"
-        })
+        .title("Mute notifications…")
         .activatable(true)
         .build();
     let mute_icon = gtk::Image::from_icon_name(if details.is_muted {
@@ -226,11 +222,16 @@ fn settings_card(
     let manager_for_mute = manager.clone();
     let chat_id_for_mute = format!("group:{group_id}");
     let muted_for_mute = details.is_muted;
-    mute_row.connect_activated(move |_| {
-        manager_for_mute.dispatch(AppAction::SetChatMuted {
-            chat_id: chat_id_for_mute.clone(),
-            muted: !muted_for_mute,
-        });
+    mute_row.connect_activated(move |row| {
+        let parent = row
+            .root()
+            .and_then(|root| root.downcast::<gtk::Window>().ok());
+        super::show_chat_mute_options(
+            parent.as_ref(),
+            &manager_for_mute,
+            &chat_id_for_mute,
+            muted_for_mute,
+        );
     });
     group.add(&mute_row);
 

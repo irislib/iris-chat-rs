@@ -2,12 +2,14 @@ package to.iris.chat.core
 
 import to.iris.chat.BuildConfig
 import to.iris.chat.rust.AppState
+import to.iris.chat.rust.MobilePushDelayedAuthor
 
 internal data class AndroidMobilePushSyncInput(
     val enabled: Boolean,
     val ownerPubkeyHex: String?,
     val ownerSecretAvailable: Boolean,
     val messageAuthorPubkeys: List<String>,
+    val delayedMessageAuthors: List<MobilePushDelayedAuthor>,
     val backgroundMessageAuthorPubkeys: List<String>,
     val inviteResponsePubkeys: List<String>,
     val serverOverride: String,
@@ -28,6 +30,7 @@ internal fun mobilePushSyncInput(
         ownerPubkeyHex = state.mobilePush.ownerPubkeyHex?.trim()?.ifEmpty { null },
         ownerSecretAvailable = !ownerNsec.isNullOrBlank(),
         messageAuthorPubkeys = state.mobilePush.messageAuthorPubkeys,
+        delayedMessageAuthors = state.mobilePush.delayedMessageAuthors,
         backgroundMessageAuthorPubkeys = state.mobilePush.backgroundMessageAuthorPubkeys,
         inviteResponsePubkeys = state.mobilePush.inviteResponsePubkeys,
         serverOverride =

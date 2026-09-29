@@ -121,7 +121,7 @@ public partial class ChatView : UserControl
         HeaderAvatar.Label = chat.displayName;
         HeaderAvatar.PictureUrl = chat.pictureUrl;
         MuteChatButton.Visibility = Visibility.Visible;
-        MuteChatText.Text = chat.isMuted ? "Unmute chat" : "Mute chat";
+        MuteChatText.Text = "Mute notifications…";
         GroupDetailsButton.Visibility = chat.kind == ChatKind.Group ? Visibility.Visible : Visibility.Collapsed;
         DeleteChatButton.Visibility = chat.kind == ChatKind.Direct ? Visibility.Visible : Visibility.Collapsed;
         BlockedPanel.Visibility = userBlocked ? Visibility.Visible : Visibility.Collapsed;
@@ -347,7 +347,7 @@ public partial class ChatView : UserControl
     {
         var chat = App.CurrentManager.CurrentChat;
         if (chat == null) return;
-        App.CurrentManager.SetChatMuted(chat.chatId, !chat.isMuted);
+        ChatMuteMenu.Show(this, App.CurrentManager, chat.chatId, chat.isMuted);
     }
 
     private void ShowDirectChatInfo(CurrentChatSnapshot chat)
@@ -384,8 +384,8 @@ public partial class ChatView : UserControl
 
         stack.Children.Add(BuildNicknameSection(chat));
         stack.Children.Add(BuildDirectInfoButton(
-            chat.isMuted ? "Unmute chat" : "Mute chat",
-            () => App.CurrentManager.SetChatMuted(chat.chatId, !chat.isMuted)
+            "Mute notifications…",
+            () => ChatMuteMenu.Show(window, App.CurrentManager, chat.chatId, chat.isMuted)
         ));
         var blocked = App.CurrentManager.IsUserBlocked(chat.chatId);
         stack.Children.Add(BuildDirectInfoButton(

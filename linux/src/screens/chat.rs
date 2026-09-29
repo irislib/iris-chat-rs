@@ -144,20 +144,21 @@ pub fn present_chat_info(
         content.append(&message);
     }
 
-    let mute = gtk::Button::with_label(if info.is_muted {
-        "Unmute chat"
-    } else {
-        "Mute chat"
-    });
+    let mute = gtk::Button::with_label("Mute notifications…");
     mute.set_halign(gtk::Align::Start);
     let manager_for_mute = manager.clone();
     let chat_id_for_mute = info.chat_id.clone();
     let muted_for_mute = info.is_muted;
-    mute.connect_clicked(move |_| {
-        manager_for_mute.dispatch(AppAction::SetChatMuted {
-            chat_id: chat_id_for_mute.clone(),
-            muted: !muted_for_mute,
-        });
+    mute.connect_clicked(move |button| {
+        let parent = button
+            .root()
+            .and_then(|root| root.downcast::<gtk::Window>().ok());
+        super::show_chat_mute_options(
+            parent.as_ref(),
+            &manager_for_mute,
+            &chat_id_for_mute,
+            muted_for_mute,
+        );
     });
     content.append(&mute);
 

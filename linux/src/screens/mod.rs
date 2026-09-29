@@ -174,6 +174,70 @@ pub(crate) fn confirm_delete_app_data(parent: Option<&gtk::Window>, manager: &Rc
     dialog.present(parent);
 }
 
+pub(crate) fn show_chat_mute_options(
+    parent: Option<&gtk::Window>,
+    manager: &Rc<AppManager>,
+    chat_id: &str,
+    muted: bool,
+) {
+    let dialog = adw::Dialog::builder()
+        .title("Mute notifications")
+        .content_width(300)
+        .build();
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    content.set_margin_top(20);
+    content.set_margin_bottom(20);
+    content.set_margin_start(20);
+    content.set_margin_end(20);
+    let title = gtk::Label::new(Some("Mute notifications"));
+    title.add_css_class("title-2");
+    content.append(&title);
+    let mut options = vec![
+        ("1 hour", Some(3_600)),
+        ("8 hours", Some(28_800)),
+        ("1 day", Some(86_400)),
+        ("1 week", Some(604_800)),
+        ("Always", None),
+    ];
+    if muted {
+        options.insert(0, ("Unmute", Some(0)));
+    }
+    for (label, seconds) in options {
+        let button = gtk::Button::with_label(label);
+        button.add_css_class("flat");
+        let manager = manager.clone();
+        let chat_id = chat_id.to_string();
+        let dialog = dialog.clone();
+        button.connect_clicked(move |_| {
+            let action = match seconds {
+                None => AppAction::SetChatMuted {
+                    chat_id: chat_id.clone(),
+                    muted: true,
+                },
+                Some(0) => AppAction::SetChatMuted {
+                    chat_id: chat_id.clone(),
+                    muted: false,
+                },
+                Some(duration) => AppAction::SetChatMuteUntil {
+                    chat_id: chat_id.clone(),
+                    until_secs: chat_list::unix_now().saturating_add(duration),
+                },
+            };
+            manager.dispatch(action);
+            dialog.close();
+        });
+        content.append(&button);
+    }
+    let cancel = gtk::Button::with_label("Cancel");
+    let closing = dialog.clone();
+    cancel.connect_clicked(move |_| {
+        closing.close();
+    });
+    content.append(&cancel);
+    dialog.set_child(Some(&content));
+    dialog.present(parent);
+}
+
 pub(crate) fn confirm_delete_chat(
     parent: Option<&gtk::Window>,
     manager: &Rc<AppManager>,

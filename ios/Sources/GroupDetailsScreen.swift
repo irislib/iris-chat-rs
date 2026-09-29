@@ -153,12 +153,12 @@ struct GroupDetailsScreen: View {
                 }
 
                 IrisSectionCard {
-                    Button {
-                        manager.dispatch(.setChatMuted(chatId: "group:\(groupId)", muted: !details.isMuted))
+                    Menu {
+                        ChatMuteOptions(manager: manager, chatId: "group:\(groupId)", muted: details.isMuted)
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: details.isMuted ? "bell.fill" : "bell.slash.fill")
-                            Text(details.isMuted ? "Unmute chat" : "Mute chat")
+                            Text("Mute notifications")
                             Spacer()
                         }
                         .foregroundStyle(palette.textPrimary)

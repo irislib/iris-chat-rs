@@ -8,6 +8,7 @@ final class MobilePushSyncInputTests: XCTestCase {
         state.mobilePush = MobilePushSyncSnapshot(
             callDevicePubkeyHex: nil, callAuthorPubkeys: [],
             ownerPubkeyHex: "owner", messageAuthorPubkeys: ["author"],
+            delayedMessageAuthors: [],
             backgroundMessageAuthorPubkeys: [], inviteResponsePubkeys: [], sessions: []
         )
         var gate = IosStateSideEffectGate()
@@ -15,6 +16,16 @@ final class MobilePushSyncInputTests: XCTestCase {
         XCTAssertFalse(gate.shouldSyncMobilePush(state: state, ownerNsec: "device-secret"))
         state.mobilePush.backgroundMessageAuthorPubkeys = ["author"]
         XCTAssertTrue(gate.shouldSyncMobilePush(state: state, ownerNsec: "device-secret"))
+    }
+
+    func testMuteDeadlineChangeRefreshesSubscription() {
+        var state = buildLargeTestAppState(directChatCount: 0, groupChatCount: 0, messagesInCurrentChat: 0)
+        state.mobilePush.delayedMessageAuthors = [MobilePushDelayedAuthor(authorPubkey: "author", sinceSecs: 100)]
+        var gate = IosStateSideEffectGate()
+        XCTAssertTrue(gate.shouldSyncMobilePush(state: state, ownerNsec: "secret"))
+        XCTAssertFalse(gate.shouldSyncMobilePush(state: state, ownerNsec: "secret"))
+        state.mobilePush.delayedMessageAuthors[0].sinceSecs = 200
+        XCTAssertTrue(gate.shouldSyncMobilePush(state: state, ownerNsec: "secret"))
     }
 
     func testLinkedDevicePushCredentialsSurvivePersistenceWithoutAccountSecret() throws {

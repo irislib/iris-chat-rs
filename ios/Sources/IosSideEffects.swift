@@ -130,6 +130,7 @@ struct IosMobilePushSyncInput: Equatable {
     let ownerPubkeyHex: String?
     let ownerSecretAvailable: Bool
     let messageAuthorPubkeys: [String]
+    let delayedMessageAuthors: [MobilePushDelayedAuthor]
     let backgroundMessageAuthorPubkeys: [String]
     let inviteResponsePubkeys: [String]
     let mobilePushServerUrl: String
@@ -139,6 +140,7 @@ struct IosMobilePushSyncInput: Equatable {
         self.ownerPubkeyHex = nonEmptyTrimmedString(state.mobilePush.ownerPubkeyHex)
         self.ownerSecretAvailable = nonEmptyTrimmedString(ownerNsec) != nil
         self.messageAuthorPubkeys = state.mobilePush.messageAuthorPubkeys
+        self.delayedMessageAuthors = state.mobilePush.delayedMessageAuthors
         self.backgroundMessageAuthorPubkeys = state.mobilePush.backgroundMessageAuthorPubkeys
         self.inviteResponsePubkeys = state.mobilePush.inviteResponsePubkeys
         self.mobilePushServerUrl = state.preferences.mobilePushServerUrl

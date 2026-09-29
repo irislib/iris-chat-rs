@@ -1415,6 +1415,7 @@ final class AppManager: ObservableObject {
              .stopTyping(let chatId),
              .deleteChat(let chatId),
              .setChatMuted(let chatId, _),
+             .setChatMuteUntil(let chatId, _),
              .setChatPinned(let chatId, _),
              .setChatUnread(let chatId, _),
              .setChatMessageTtl(let chatId, _),
