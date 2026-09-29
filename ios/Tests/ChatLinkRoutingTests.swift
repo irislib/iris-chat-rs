@@ -10,29 +10,58 @@ final class ChatLinkRoutingTests: XCTestCase {
 
     func testCustomSchemeRoutesToSameChatAsUniversalLink() throws {
         for scheme in ["https", "irischat"] {
-            let url = try XCTUnwrap(URL(string: "\(scheme)://chat.iris.to/#/\(peer)"))
-            guard case let .createChat(value) = IrisChatLinks.action(for: url) else {
-                return XCTFail("Expected a chat action")
+            for authority in ["chat.iris.to", "chat.iris.to:443", "CHAT.IRIS.TO:443"] {
+                for suffix in ["/\(peer)", "/#/\(peer)"] {
+                    let url = try XCTUnwrap(URL(string: "\(scheme)://\(authority)\(suffix)"))
+                    guard case let .createChat(value) = IrisChatLinks.action(for: url) else {
+                        return XCTFail("Expected a chat action for \(url)")
+                    }
+                    XCTAssertEqual(value, normalizePeerInput(input: peer))
+                }
             }
-            XCTAssertEqual(value, normalizePeerInput(input: peer))
         }
     }
 
     func testPrivateInviteFragmentSurvivesCustomSchemeWithoutReencoding() throws {
         let fragment = "/invite/%7B%22ephemeralKey%22%3A%22test%22%2C%22sharedSecret%22%3A%22a%2Fb%2B%3D%22%7D"
-        let url = try XCTUnwrap(URL(string: "irischat://chat.iris.to/#\(fragment)"))
-        guard case let .acceptInvite(value) = IrisChatLinks.action(for: url) else {
-            return XCTFail("Expected an invite action")
+        for scheme in ["https", "irischat"] {
+            for port in ["", ":443"] {
+                for suffix in ["/invite/token%2Fpart?source=web#secret%2Bvalue+tail", "/#\(fragment)"] {
+                    let url = try XCTUnwrap(URL(string: "\(scheme)://chat.iris.to\(port)\(suffix)"))
+                    guard case let .acceptInvite(value) = IrisChatLinks.action(for: url) else {
+                        return XCTFail("Expected an invite action for \(url)")
+                    }
+                    XCTAssertEqual(value, "https://chat.iris.to\(port)\(suffix)")
+                }
+            }
         }
-        XCTAssertEqual(value, "https://chat.iris.to/#\(fragment)")
+    }
+
+    func testNonCanonicalAuthoritiesAreRejectedForBothSchemes() throws {
+        for scheme in ["https", "irischat"] {
+            for authority in [
+                "other.example",
+                "chat.iris.to.other.example",
+                "chat.iris.to@other.example",
+                "user@chat.iris.to",
+                "user:password@chat.iris.to:443",
+                ":password@chat.iris.to:443",
+                "@chat.iris.to:443",
+                "chat.iris.to:80",
+                "chat.iris.to:8443",
+            ] {
+                for suffix in ["/\(peer)", "/invite/token"] {
+                    let url = try XCTUnwrap(URL(string: "\(scheme)://\(authority)\(suffix)"))
+                    XCTAssertNil(IrisChatLinks.action(for: url), "\(url)")
+                }
+            }
+        }
     }
 
     func testUnrelatedSchemesHostsAndSettingsAreIgnored() throws {
         for value in [
-            "irischat://share/example", "irischat://other.example/#/\(peer)",
+            "irischat://share/example",
             "http://chat.iris.to/#/\(peer)", "https://chat.iris.to/#settings",
-            "irischat://chat.iris.to@other.example/#/\(peer)",
-            "irischat://user@chat.iris.to/#/\(peer)",
         ] {
             XCTAssertNil(IrisChatLinks.action(for: try XCTUnwrap(URL(string: value))))
         }

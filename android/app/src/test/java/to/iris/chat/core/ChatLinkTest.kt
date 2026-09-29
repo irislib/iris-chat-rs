@@ -14,10 +14,12 @@ class ChatLinkTest {
     @Test
     fun bothSchemesUseProductionIdentityNormalization() {
         for (scheme in listOf("https", "irischat")) {
-            assertEquals(AppAction.CreateChat(hex), parseChatLink("$scheme://chat.iris.to/$hex"))
-            assertEquals(AppAction.CreateChat(npub), parseChatLink("$scheme://chat.iris.to/#/$npub"))
-            assertEquals(AppAction.CreateChat(npub), parseChatLink("$scheme://chat.iris.to/$profile"))
-            assertEquals(AppAction.CreateChat(npub), parseChatLink("$scheme://chat.iris.to/#nostr%3A$npub"))
+            for (authority in listOf("chat.iris.to", "chat.iris.to:443", "CHAT.IRIS.TO:443")) {
+                assertEquals(AppAction.CreateChat(hex), parseChatLink("$scheme://$authority/$hex"))
+                assertEquals(AppAction.CreateChat(npub), parseChatLink("$scheme://$authority/#/$npub"))
+                assertEquals(AppAction.CreateChat(npub), parseChatLink("$scheme://$authority/$profile"))
+                assertEquals(AppAction.CreateChat(npub), parseChatLink("$scheme://$authority/#nostr%3A$npub"))
+            }
         }
     }
 
@@ -28,20 +30,40 @@ class ChatLinkTest {
             "/#/invite/token%2Fpart",
             "/#%7B%22ephemeralKey%22%3A%22public%22%2C%22sharedSecret%22%3A%22fixture%2B%22%7D",
         )) {
-            val expected = AppAction.AcceptInvite("https://chat.iris.to$suffix")
-            assertEquals(expected, parseChatLink("irischat://chat.iris.to$suffix"))
-            assertEquals(expected, parseChatLink("https://chat.iris.to$suffix"))
+            for (port in listOf("", ":443")) {
+                val expected = AppAction.AcceptInvite("https://chat.iris.to$port$suffix")
+                assertEquals(expected, parseChatLink("irischat://chat.iris.to$port$suffix"))
+                assertEquals(expected, parseChatLink("https://chat.iris.to$port$suffix"))
+            }
         }
     }
 
     @Test
-    fun onlyExactCanonicalAuthorityAndSupportedSchemesAreAccepted() {
+    fun nonCanonicalAuthoritiesAreRejectedForBothSchemes() {
+        for (scheme in listOf("https", "irischat")) {
+            for (authority in listOf(
+                "other.example",
+                "chat.iris.to.other.example",
+                "chat.iris.to@other.example",
+                "user@chat.iris.to",
+                "user:password@chat.iris.to:443",
+                ":password@chat.iris.to:443",
+                "@chat.iris.to:443",
+                "chat.iris.to:80",
+                "chat.iris.to:8443",
+            )) {
+                for (suffix in listOf("/$hex", "/invite/token")) {
+                    val url = "$scheme://$authority$suffix"
+                    assertNull(url, parseChatLink(url))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun unsupportedSchemesAndMalformedLinksAreRejected() {
         for (url in listOf(
             "http://chat.iris.to/$hex",
-            "irischat://other.example/$hex",
-            "irischat://chat.iris.to.other.example/$hex",
-            "irischat://user@chat.iris.to/$hex",
-            "irischat://chat.iris.to:443/$hex",
             "irischat:chat.iris.to/$hex",
             "irischat://chat.iris.to/%zz",
             "irischat://chat.iris.to/not-a-user",

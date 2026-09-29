@@ -11,7 +11,9 @@ internal fun parseChatLink(input: String): AppAction? {
     val raw = input.trim()
     val uri = runCatching { URI(raw) }.getOrNull() ?: return null
     if (uri.scheme?.lowercase() !in setOf("https", "irischat") ||
-        !uri.rawAuthority.equals("chat.iris.to", ignoreCase = true)
+        !uri.host.equals("chat.iris.to", ignoreCase = true) ||
+        uri.rawUserInfo != null ||
+        (uri.port != -1 && uri.port != 443)
     ) return null
 
     // Change only the scheme: private invitation bytes must survive unchanged.
