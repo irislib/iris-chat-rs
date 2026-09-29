@@ -14,6 +14,7 @@ pub(super) struct MeshProtocolSubscriptions {
     publish_slots: Arc<tokio::sync::Semaphore>,
     outbox_cursor: Option<String>,
     retry_needed: bool,
+    reconcile_pending: bool,
 }
 
 impl Default for MeshProtocolSubscriptions {
@@ -24,6 +25,7 @@ impl Default for MeshProtocolSubscriptions {
             publish_slots: Arc::new(tokio::sync::Semaphore::new(64)),
             outbox_cursor: None,
             retry_needed: false,
+            reconcile_pending: false,
         }
     }
 }
@@ -57,6 +59,20 @@ impl MeshProtocolSubscriptions {
 
 impl AppCore {
     pub(super) fn reconcile_mesh_protocol_subscriptions(&mut self) {
+        let Some(mesh) = self
+            .device_sync
+            .as_mut()
+            .filter(|mesh| mesh.pubsub.is_some())
+        else {
+            return;
+        };
+        // Catch-up changes ratchet authors repeatedly. Subscribe to the final
+        // state once, instead of cloning and reconciling every intermediate state.
+        if self.batch_depth > 0 {
+            mesh.protocol_subscriptions.reconcile_pending = true;
+            return;
+        }
+        mesh.protocol_subscriptions.reconcile_pending = false;
         let filters = self
             .compute_protocol_subscription_plan()
             .as_ref()
@@ -77,6 +93,16 @@ impl AppCore {
         if let Err(error) = result {
             self.push_debug_log("mesh.subscription.error", error.to_string());
             self.schedule_fast_protocol_retry_if_pending();
+        }
+    }
+
+    pub(super) fn flush_mesh_protocol_subscriptions(&mut self) {
+        if self
+            .device_sync
+            .as_ref()
+            .is_some_and(|mesh| mesh.protocol_subscriptions.reconcile_pending)
+        {
+            self.reconcile_mesh_protocol_subscriptions();
         }
     }
 

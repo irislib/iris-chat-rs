@@ -1,4 +1,63 @@
 #[test]
+fn mesh_subscriptions_wait_for_the_outermost_catchup_batch() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let (mut core, _, _dir) =
+        logged_in_test_core_with_updates("batched-mesh-subscriptions", &owner, &device);
+    let mut config = fips_core::Config::new();
+    config.node.control.enabled = false;
+    config.node.discovery.nostr.enabled = false;
+    config.node.discovery.lan.enabled = false;
+    let endpoint = Arc::new(
+        core.runtime
+            .block_on(
+                fips_core::FipsEndpoint::builder()
+                    .config(config)
+                    .without_system_tun()
+                    .bind(),
+            )
+            .unwrap(),
+    );
+    let client = Arc::new(
+        core.runtime
+            .block_on(nostr_pubsub_fips::FipsPubsubClient::start(
+                endpoint.clone(),
+                nostr_pubsub_fips::FipsPubsubClientOptions::default(),
+            ))
+            .unwrap(),
+    );
+    let (tcp, _records) = DeviceSyncTcpSender::test_channel(1, 1024);
+    core.install_device_sync_sender_for_test(endpoint.clone(), tcp, Vec::new());
+    core.device_sync.as_mut().unwrap().pubsub = Some(client.clone());
+    let initial_subscriptions = client.active_subscription_count().unwrap();
+
+    core.enter_batch();
+    core.enter_batch();
+    for _ in 0..100 {
+        core.request_protocol_subscription_refresh();
+    }
+    assert_eq!(
+        client.active_subscription_count().unwrap(),
+        initial_subscriptions,
+        "catch-up must defer mesh subscriptions until the final protocol state"
+    );
+    core.exit_batch();
+    assert_eq!(
+        client.active_subscription_count().unwrap(),
+        initial_subscriptions,
+        "a nested batch must not flush subscriptions"
+    );
+    core.exit_batch();
+    assert!(
+        client.active_subscription_count().unwrap() > initial_subscriptions,
+        "the outermost batch must install the final subscriptions"
+    );
+    core.stop_device_sync_now();
+    core.runtime.block_on(client.shutdown_shared());
+    core.runtime.block_on(endpoint.shutdown()).unwrap();
+}
+
+#[test]
 fn encrypted_chat_crosses_uninterested_fips_transit_without_relays_or_sibling_sync() {
     use fips_core::config::{TransportInstances, WebSocketConfig};
     let alice_owner = Keys::generate();
