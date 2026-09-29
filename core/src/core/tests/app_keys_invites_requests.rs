@@ -159,6 +159,46 @@ fn seen_local_app_keys_event_repairs_missing_protocol_roster() {
 }
 
 #[test]
+fn identity_signed_removal_revokes_a_device_even_when_it_has_the_owner_key() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sibling = Keys::generate();
+    let temp = tempfile::tempdir().unwrap();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp.path().to_string_lossy().into_owned(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nostr_relay_urls.clear();
+    core.start_primary_session(owner.clone(), device.clone(), false, false).unwrap();
+    let created = core.app_keys[&owner.public_key().to_hex()].created_at_secs;
+    let registered = AppKeys::new(vec![
+        DeviceEntry::new(device.public_key(), created),
+        DeviceEntry::new(sibling.public_key(), created),
+    ]).get_event_at(owner.public_key(), created + 1).sign_with_keys(&owner).unwrap();
+    core.handle_relay_event(registered.clone());
+    let removal = AppKeys::new(vec![DeviceEntry::new(sibling.public_key(), created)])
+        .get_event_at(owner.public_key(), created + 2).sign_with_keys(&owner).unwrap();
+    let mut forged = removal.clone();
+    forged.content.push_str("tampered");
+    core.handle_relay_event(forged);
+    assert_eq!(core.logged_in.as_ref().unwrap().authorization_state, LocalAuthorizationState::Authorized);
+    core.handle_relay_event(removal);
+    assert_eq!(core.logged_in.as_ref().unwrap().authorization_state, LocalAuthorizationState::Revoked);
+    assert_eq!(core.state.account.as_ref().unwrap().authorization_state, DeviceAuthorizationState::Revoked);
+    core.handle_relay_event(registered);
+    assert_eq!(core.logged_in.as_ref().unwrap().authorization_state, LocalAuthorizationState::Revoked);
+    // Native shells route this state through their ordinary logout cleanup.
+    core.handle_action(AppAction::Logout);
+    assert!(core.logged_in.is_none());
+    assert!(core.protocol_engine.is_none());
+    assert!(core.app_keys.is_empty());
+    assert!(core.state.account.is_none());
+    assert!(core.app_store.load_state().unwrap().is_none());
+}
+
+#[test]
 fn restored_authorized_linked_device_is_not_revoked_by_cached_roster() {
     let owner = Keys::generate();
     let device = Keys::generate();

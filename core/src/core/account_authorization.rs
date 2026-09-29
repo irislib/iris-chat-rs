@@ -69,6 +69,18 @@ impl AppCore {
         allow_revoke: bool,
     ) -> LocalAuthorizationState {
         if owner_keys.is_some() {
+            // Possessing the identity key must not exempt an already registered
+            // device from a later identity-signed removal. Explicit sign-in with
+            // that key can register a new device; background refresh cannot.
+            if previous == Some(LocalAuthorizationState::Revoked)
+                || (allow_revoke
+                    && !self.defer_owner_app_keys_publish
+                    && previous == Some(LocalAuthorizationState::Authorized)
+                    && self.signed_local_device_authorization(owner_pubkey, device_pubkey)
+                        == Some(false))
+            {
+                return LocalAuthorizationState::Revoked;
+            }
             return LocalAuthorizationState::Authorized;
         }
 
