@@ -1421,6 +1421,7 @@ final class AppManager: ObservableObject {
              .setContactNickname(let chatId, _),
              .setContactDetails(let chatId, _, _),
              .setChatDraft(let chatId, _),
+             .setMessageRequestAccepted(let chatId),
              .toggleReaction(let chatId, _, _),
              .markMessagesSeen(let chatId, _),
              .sendReceipt(let chatId, _, _):

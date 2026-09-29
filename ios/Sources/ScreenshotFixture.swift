@@ -24,6 +24,7 @@ struct ScreenshotFixture {
     let timelines: [String: [Message]]
     /// Synthetic peers shown in the Nearby modal.
     let nearbyPeers: [NearbyPeer]
+    var messageRequestChatId: String? = nil
 
     struct NearbyPeer {
         let id: String
@@ -291,7 +292,10 @@ struct ScreenshotFixture {
 extension ScreenshotFixture {
     static func configured(environment: [String: String]) -> ScreenshotFixture? {
         guard enabled(environment: environment) else { return nil }
-        let fixture = environment["IRIS_UI_TEST_SCREENSHOT_STYLE"] == "marketing" ? Self.marketing : Self.default
+        var fixture = environment["IRIS_UI_TEST_SCREENSHOT_STYLE"] == "marketing" ? Self.marketing : Self.default
+        if environment["IRIS_UI_TEST_MESSAGE_REQUEST"] == "1" {
+            fixture.messageRequestChatId = "\(chatIdPrefix)1"
+        }
         fixture.prepareAvatars(environment: environment)
         var timelines = fixture.timelines
         if environment["IRIS_UI_TEST_AUDIO_MESSAGES"] == "1" {
@@ -315,7 +319,8 @@ extension ScreenshotFixture {
             ownerDisplayName: fixture.ownerDisplayName,
             threads: fixture.threads,
             timelines: timelines,
-            nearbyPeers: fixture.nearbyPeers
+            nearbyPeers: fixture.nearbyPeers,
+            messageRequestChatId: fixture.messageRequestChatId
         )
     }
 
@@ -401,7 +406,7 @@ extension ScreenshotFixture {
             isMuted: thread.isMuted,
             isPinned: thread.isPinned,
             draft: "",
-            isRequest: false
+            isRequest: messageRequestChatId == thread.chatId
         )
     }
 
@@ -438,7 +443,7 @@ extension ScreenshotFixture {
             messages: messages,
             typingIndicators: [],
             draft: "",
-            isRequest: false,
+            isRequest: messageRequestChatId == thread.chatId,
             directChatCapability: thread.kind == .direct ? .available : nil
         )
     }

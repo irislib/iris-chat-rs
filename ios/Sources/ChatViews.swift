@@ -149,11 +149,8 @@ struct ChatScreen: View {
     @State private var imageViewerItem: ImageViewerItem?
     @State private var messageInfoSelection: MessageInfoSelection?
     @State private var reactorsSelection: MessageReactorsSelection?
-    /// Session-scoped acceptance for message-request chats. While
-    /// `chat.isRequest` is still true at the model layer (Rust),
-    /// tapping Accept just hides the gate locally so the user can
-    /// reply; sending a message naturally clears `isRequest` for good
-    /// because there's now an outgoing message in the thread.
+    /// Hide the gate immediately while the core persists acceptance.
+    /// Queued snapshots must not bring the request buttons back.
     @State private var acceptedRequestChatId: String?
     @State private var messageRequestBlockChat: MessageRequestActionTarget?
     @State private var messageRequestReportChat: MessageRequestActionTarget?
@@ -547,7 +544,9 @@ struct ChatScreen: View {
                                             onAccept: {
                                                 acceptedRequestChatId = chat.chatId
                                                 manager.dispatch(.setMessageRequestAccepted(chatId: chat.chatId))
+#if os(macOS)
                                                 isComposerFocused = true
+#endif
                                             },
                                             onBlock: {
                                                 messageRequestBlockChat = MessageRequestActionTarget(

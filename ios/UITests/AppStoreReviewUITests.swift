@@ -36,6 +36,46 @@ final class AppStoreReviewUITests: XCTestCase {
 #endif
     }
 
+    func testAcceptingMessageRequestDoesNotOpenKeyboardAndStillAllowsReply() throws {
+#if os(macOS)
+        throw XCTSkip("Message request keyboard flow is iOS-only")
+#else
+        let app = XCUIApplication()
+        app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
+        app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = "request-accept-\(UUID().uuidString)"
+        app.launchEnvironment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] = "1"
+        app.launchEnvironment["IRIS_DISABLE_NOTIFICATIONS"] = "1"
+        app.launchEnvironment["IRIS_UI_TEST_SCREENSHOT_FIXTURE"] = "1"
+        app.launchEnvironment["IRIS_UI_TEST_MESSAGE_REQUEST"] = "1"
+        app.launchEnvironment["IRIS_DEMO_RELAYS"] = ""
+        app.launchEnvironment["IRIS_UI_TEST_MESSAGE_BODY"] = "Hello, want to chat?"
+        app.launch()
+        createProfile(app, name: "Request Tester")
+        let row = element(app, "chatRow-fx-chat-1")
+        XCTAssertTrue(row.waitForExistence(timeout: 20))
+        row.tap()
+        let accept = reportDialogButton(app, "messageRequestAcceptButton", fallbackLabel: "Accept")
+        XCTAssertTrue(accept.waitForExistence(timeout: 10))
+        XCTAssertFalse(element(app, "chatMessageInput").exists)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        let started = Date()
+        accept.tap()
+        let editor = element(app, "chatMessageInput")
+        XCTAssertTrue(editor.waitForExistence(timeout: 3))
+        print("REQUEST_ACCEPT_UI transition_ms=\(Date().timeIntervalSince(started) * 1000)")
+        XCTAssertFalse(accept.exists)
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "Accept must not pay keyboard startup cost")
+        let acceptedScreenshot = XCTAttachment(screenshot: app.screenshot())
+        acceptedScreenshot.name = "accepted-request-keyboard-closed"
+        acceptedScreenshot.lifetime = .keepAlways
+        add(acceptedScreenshot)
+        editor.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+        editor.typeText("Nice to meet you")
+        XCTAssertEqual(editor.value as? String, "Nice to meet you")
+#endif
+    }
+
     private func launchReviewApp(runID: String, reset: Bool) -> XCUIApplication {
         let app = XCUIApplication()
         if reset {
