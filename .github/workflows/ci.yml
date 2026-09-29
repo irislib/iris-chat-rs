@@ -75,10 +75,7 @@ jobs:
           cargo fmt --manifest-path linux/Cargo.toml -- --check
 
       - name: Rust tests
-        run: |
-          cargo test --manifest-path chat-protocol/Cargo.toml --locked
-          cargo test --manifest-path protocol-ffi/Cargo.toml --locked
-          cargo test --manifest-path core/Cargo.toml --locked
+        run: ./scripts/test_rust.sh
 
   android:
     name: Android build and unit tests

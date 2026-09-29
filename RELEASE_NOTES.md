@@ -2,6 +2,22 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.29.2
+
+### GitHub
+
+- Correct iOS demo guidance to connect review devices through New chat, scanning a code or sharing a chat link.
+- Clarify App Store demo setup, sample content, and live call review instructions.
+- Use the shared Rust test runner in CI so device-approval tests use a local test server.
+
+### Apple
+
+- Clearer demo instructions for starting chats and testing calls between devices.
+
+### Zapstore
+
+- No Android changes; this release updates iOS demo instructions.
+
 ## v2026.9.29.1
 
 ### GitHub
