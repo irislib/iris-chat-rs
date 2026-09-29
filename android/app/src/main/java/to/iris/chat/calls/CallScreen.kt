@@ -28,6 +28,9 @@ import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -102,7 +105,7 @@ fun CallOverlay(container: AppContainer) {
     val remote by container.callRuntime.remoteVideo.collectAsStateWithLifecycle()
     val local by container.callRuntime.localVideo.collectAsStateWithLifecycle()
     val error by container.callRuntime.error.collectAsStateWithLifecycle()
-    val speaker by container.callRuntime.speaker.collectAsStateWithLifecycle()
+    val audioDevices by container.callRuntime.audioDevices.collectAsStateWithLifecycle()
     val answerRequest by container.callRuntime.answerRequest.collectAsStateWithLifecycle()
     var dismissedId by remember { mutableStateOf<String?>(null) }
     val active = call ?: return
@@ -119,7 +122,7 @@ fun CallOverlay(container: AppContainer) {
         while (active.phase == "connected") { now = System.currentTimeMillis() / 1_000L; delay(1_000L) }
     }
     CallSurface(active, preferences.voiceCallsEnabled, preferences.videoCallsEnabled, remote, local, error,
-        speaker, now, permissions, app::dispatch, container.callRuntime::setSpeaker,
+        audioDevices, now, permissions, app::dispatch, container.callRuntime::selectAudioDevice,
         onDismiss = { dismissedId = active.callId }, quality = preferences.callQuality,
         customMaxBitrateBps = preferences.callMaxBitrateBps)
 }
@@ -132,16 +135,17 @@ internal fun CallSurface(
     remote: CallVideoStream?,
     local: CallVideoStream?,
     error: String?,
-    speaker: Boolean,
+    audioDevices: CallAudioDevices,
     now: Long,
     permissions: (Boolean, () -> Unit) -> Unit,
     onAction: (AppAction) -> Unit,
-    onSpeaker: (Boolean) -> Unit,
+    onAudioDevice: (String) -> Unit,
     onDismiss: () -> Unit,
     quality: String = "auto",
     customMaxBitrateBps: UInt = 2_000_000u,
 ) {
     var qualityOpen by remember(active.callId) { mutableStateOf(false) }
+    var audioOpen by remember(active.callId) { mutableStateOf(false) }
     Dialog(onDismissRequest = { if (active.phase == "ended") onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false, decorFitsSystemWindows = false)) {
         Box(Modifier.fillMaxSize().background(Color(0xFF14201F)).testTag("callScreen")) {
@@ -184,7 +188,12 @@ internal fun CallSurface(
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         CallControl(if (active.muted) "Unmute" else "Mute", if (active.muted) Icons.Filled.MicOff else Icons.Filled.Mic,
                             if (active.muted) Color(0xFF576B69) else Color(0xFF30413F)) { onAction(AppAction.SetCallMuted(!active.muted)) }
-                        CallControl("Speaker", Icons.Filled.VolumeUp, if (speaker) Color(0xFF576B69) else Color(0xFF30413F)) { onSpeaker(!speaker) }
+                        CallControl("Audio", Icons.Filled.VolumeUp) {
+                            val devices = audioDevices.available
+                            if (devices.size == 2 && devices.map { it.name }.toSet() == setOf("Phone", "Speaker")) {
+                                devices.firstOrNull { it.id != audioDevices.selectedId }?.let { onAudioDevice(it.id) }
+                            } else if (devices.isNotEmpty()) audioOpen = true
+                        }
                         if (active.videoCapable && videoAllowed) CallControl("Camera", if (active.video) Icons.Filled.Videocam else Icons.Filled.VideocamOff) {
                             if (active.video) onAction(AppAction.SetCallVideoEnabled(false))
                             else permissions(true) { onAction(AppAction.SetCallVideoEnabled(true)) }
@@ -198,6 +207,18 @@ internal fun CallSurface(
             }
             if (qualityOpen && active.videoCapable && active.phase == "connected") {
                 CallQualityDialog(quality, customMaxBitrateBps, onAction) { qualityOpen = false }
+            }
+            if (audioOpen && active.phase != "ended") {
+                AlertDialog(onDismissRequest = { audioOpen = false }, title = { Text("Audio") },
+                    text = { Column {
+                        audioDevices.available.forEach { device ->
+                            TextButton(onClick = { onAudioDevice(device.id); audioOpen = false }, modifier = Modifier.fillMaxWidth()) {
+                                RadioButton(selected = audioDevices.selectedId == device.id, onClick = null,
+                                    colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.onSurface))
+                                Text(device.name, Modifier.weight(1f).padding(start = 12.dp), color = MaterialTheme.colorScheme.onSurface)
+                            }
+                        }
+                    } }, confirmButton = { TextButton(onClick = { audioOpen = false }) { Text("Close", color = MaterialTheme.colorScheme.onSurface) } })
             }
         }
     }

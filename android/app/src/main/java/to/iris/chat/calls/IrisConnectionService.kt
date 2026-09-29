@@ -7,6 +7,9 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.OutcomeReceiver
+import android.telecom.CallEndpoint
+import android.telecom.CallEndpointException
 import android.telecom.Connection
 import android.telecom.CallAudioState
 import android.telecom.ConnectionRequest
@@ -53,6 +56,9 @@ class IrisConnectionService : ConnectionService() {
             @Suppress("DEPRECATION")
             override fun onCallAudioStateChanged(state: CallAudioState) {
                 super.onCallAudioStateChanged(state)
+                if (current === this && Build.VERSION.SDK_INT < 34) {
+                    container.callRuntime.audioDevicesChanged(legacyCallAudioDevices(state.supportedRouteMask, state.route))
+                }
                 // Android 8 has no service-focus callbacks. Its initial audio
                 // state arrives after Telecom admits and attaches the call.
                 // Telecom still owns focus; no competing focus request is made.
@@ -60,6 +66,16 @@ class IrisConnectionService : ConnectionService() {
                     legacyAudioReady = true
                     container.callRuntime.telecomFocusChanged(true)
                 }
+            }
+            override fun onAvailableCallEndpointsChanged(availableEndpoints: MutableList<CallEndpoint>) {
+                if (current !== this) return
+                endpoints = availableEndpoints.toList()
+                publishEndpoints(container.callRuntime)
+            }
+            override fun onCallEndpointChanged(endpoint: CallEndpoint) {
+                if (current !== this) return
+                selectedEndpoint = endpoint
+                publishEndpoints(container.callRuntime)
             }
             override fun onAnswer() { openCall() }
             override fun onAnswer(videoState: Int) { openCall() }
@@ -87,10 +103,35 @@ class IrisConnectionService : ConnectionService() {
     companion object {
         private var current: Connection? = null
         private var currentId: String? = null
+        private var endpoints: List<CallEndpoint> = emptyList()
+        private var selectedEndpoint: CallEndpoint? = null
+
+        private fun publishEndpoints(runtime: IrisCallRuntime) {
+            if (Build.VERSION.SDK_INT < 34) return
+            runtime.audioDevicesChanged(CallAudioDevices(endpoints.map { endpoint ->
+                CallAudioDevice(endpoint.identifier.toString(), when (endpoint.endpointType) {
+                    CallEndpoint.TYPE_EARPIECE -> "Phone"
+                    CallEndpoint.TYPE_SPEAKER -> "Speaker"
+                    CallEndpoint.TYPE_WIRED_HEADSET -> "Headphones"
+                    else -> endpoint.endpointName.toString()
+                })
+            }, selectedEndpoint?.identifier?.toString()))
+        }
 
         @Suppress("DEPRECATION")
-        fun setSpeaker(enabled: Boolean) {
-            current?.setAudioRoute(if (enabled) CallAudioState.ROUTE_SPEAKER else CallAudioState.ROUTE_WIRED_OR_EARPIECE)
+        fun selectAudioDevice(context: Context, id: String, failed: () -> Unit) {
+            val connection = current ?: return
+            if (Build.VERSION.SDK_INT >= 34) {
+                val endpoint = endpoints.firstOrNull { it.identifier.toString() == id } ?: return
+                connection.requestCallEndpointChange(endpoint, context.mainExecutor,
+                    object : OutcomeReceiver<Void, CallEndpointException> {
+                        override fun onResult(result: Void?) = Unit
+                        override fun onError(error: CallEndpointException) { if (current === connection) failed() }
+                    })
+            } else {
+                val route = id.toIntOrNull() ?: return
+                if ((connection.callAudioState?.supportedRouteMask ?: 0) and route != 0) connection.setAudioRoute(route)
+            }
         }
 
         @SuppressLint("MissingPermission")
@@ -104,6 +145,7 @@ class IrisConnectionService : ConnectionService() {
                 if (call.phase == "incoming") telecom.addNewIncomingCall(handle, Bundle())
                 else telecom.placeCall(Uri.fromParts("sip", call.callId, null), Bundle().apply {
                     putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, handle)
+                    putBoolean(TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE, call.video)
                 })
             }
         }
@@ -120,6 +162,8 @@ class IrisConnectionService : ConnectionService() {
             current?.apply { setDisconnected(DisconnectCause(DisconnectCause.LOCAL)); destroy() }
             current = null
             currentId = null
+            endpoints = emptyList()
+            selectedEndpoint = null
         }
     }
 }

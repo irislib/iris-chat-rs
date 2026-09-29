@@ -25,14 +25,30 @@ import to.iris.chat.ui.theme.IrisChatTheme
 class CallMediaTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun audioPickerSelectsAnAvailableHeadsetWithoutChangingCallState() {
+        val selections = mutableListOf<String>()
+        val devices = CallAudioDevices(listOf(CallAudioDevice("phone", "Phone"),
+            CallAudioDevice("speaker", "Speaker"), CallAudioDevice("headset", "Headphones")), "headset")
+        compose.setContent { IrisChatTheme {
+            CallSurface(call("connected"), true, true, null, null, null, devices, 80,
+                permissions = { _, next -> next() }, onAction = {}, onAudioDevice = { selections += it }, onDismiss = {})
+        } }
+        compose.onNodeWithContentDescription("Audio").performClick()
+        compose.onNodeWithText("Headphones").assertExists()
+        screenshot("call-audio-devices.png", waitForCallBackground = false)
+        compose.onNodeWithText("Speaker").performClick()
+        assertEquals(listOf("speaker"), selections)
+        compose.onNodeWithContentDescription("End call").assertExists()
+    }
+
     @Test fun incomingVideoCanBeAnsweredWithoutCameraPermission() {
         val actions = mutableListOf<AppAction>()
         val videoPermissions = mutableListOf<Boolean>()
         compose.setContent {
             IrisChatTheme {
-                CallSurface(call("incoming"), true, true, null, null, null, false, 0,
+                CallSurface(call("incoming"), true, true, null, null, null, CallAudioDevices(), 0,
                     permissions = { video, next -> videoPermissions += video; next() },
-                    onAction = { actions += it }, onSpeaker = {}, onDismiss = {})
+                    onAction = { actions += it }, onAudioDevice = {}, onDismiss = {})
             }
         }
         compose.onNodeWithText("Incoming video call").assertExists()
@@ -46,8 +62,8 @@ class CallMediaTest {
         val actions = mutableListOf<AppAction>()
         compose.setContent {
             IrisChatTheme {
-                CallSurface(call("connected"), true, true, null, null, null, true, 80,
-                    permissions = { _, next -> next() }, onAction = { actions += it }, onSpeaker = {}, onDismiss = {})
+                CallSurface(call("connected"), true, true, null, null, null, CallAudioDevices(), 80,
+                    permissions = { _, next -> next() }, onAction = { actions += it }, onAudioDevice = {}, onDismiss = {})
             }
         }
         screenshot("connected-video-call.png")
@@ -60,8 +76,8 @@ class CallMediaTest {
     @Test fun videoCallQualityCanChangeProfileAndBitrateDuringCall() {
         val actions = mutableListOf<AppAction>()
         compose.setContent { IrisChatTheme {
-            CallSurface(call("connected"), true, true, null, null, null, false, 80,
-                permissions = { _, next -> next() }, onAction = { actions += it }, onSpeaker = {}, onDismiss = {},
+            CallSurface(call("connected"), true, true, null, null, null, CallAudioDevices(), 80,
+                permissions = { _, next -> next() }, onAction = { actions += it }, onAudioDevice = {}, onDismiss = {},
                 quality = "high", customMaxBitrateBps = 750_000u)
         } }
         compose.onNodeWithContentDescription("Quality").performClick()
@@ -80,8 +96,8 @@ class CallMediaTest {
     @Test fun voiceCallDoesNotShowVideoQualityControl() {
         compose.setContent { IrisChatTheme {
             CallSurface(call("connected").copy(video = false, videoCapable = false, remoteVideo = false),
-                true, true, null, null, null, false, 80, permissions = { _, next -> next() },
-                onAction = {}, onSpeaker = {}, onDismiss = {})
+                true, true, null, null, null, CallAudioDevices(), 80, permissions = { _, next -> next() },
+                onAction = {}, onAudioDevice = {}, onDismiss = {})
         } }
         compose.onNodeWithContentDescription("Quality").assertDoesNotExist()
     }

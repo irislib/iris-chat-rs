@@ -20,19 +20,18 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
     private val mutableRemoteVideo = MutableStateFlow<CallVideoStream?>(null)
     private val mutableLocalVideo = MutableStateFlow<CallVideoStream?>(null)
     private val mutableError = MutableStateFlow<String?>(null)
-    private val mutableSpeaker = MutableStateFlow(false)
     private val mutableAnswerRequest = MutableStateFlow<String?>(null)
     val remoteVideo = mutableRemoteVideo.asStateFlow()
     val localVideo = mutableLocalVideo.asStateFlow()
     val error = mutableError.asStateFlow()
-    val speaker = mutableSpeaker.asStateFlow()
+    private val mutableAudioDevices = MutableStateFlow(CallAudioDevices())
+    val audioDevices = mutableAudioDevices.asStateFlow()
     val answerRequest = mutableAnswerRequest.asStateFlow()
     @Volatile private var current: CallSnapshot? = null
     @Volatile private var audio: CallAudio? = null
     @Volatile private var video: CallVideoMedia? = null
     private val tones = CallTones(context)
     private var connectedSent = false
-    private var audioRoute: CallAudioRoute? = null
     @Volatile private var mediaCallId: String? = null
     private var announcedId: String? = null
     @Volatile private var failedCallId: String? = null
@@ -84,13 +83,13 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
             announcedId = null
             serviceReady = false
             telecomReady = false
+            mutableAudioDevices.value = CallAudioDevices()
             return
         }
         if (announcedId != call.callId) {
             stopMedia()
             failedCallId = null
             mutableError.value = null
-            mutableSpeaker.value = call.video
             announcedId = call.callId
             IrisConnectionService.announce(context, call)
         }
@@ -109,7 +108,7 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
     internal fun serviceStopped() { serviceReady = false; stopMedia() }
     internal fun telecomFocusChanged(ready: Boolean) {
         telecomReady = ready
-        if (ready) IrisConnectionService.setSpeaker(mutableSpeaker.value)
+        // Telecom owns the initial route and preserves connected headsets.
         if (ready && serviceReady) syncMedia() else if (!ready) stopMedia()
     }
     internal fun snapshot() = current
@@ -124,8 +123,6 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
             mediaCallId = call.callId
             if (!granted(Manifest.permission.RECORD_AUDIO)) { fail("Microphone unavailable"); return }
             try {
-                audioRoute = CallAudioRoute(context, telecomManaged = true) { if (isActive(call.callId)) fail("Audio unavailable") }
-                audioRoute?.start(mutableSpeaker.value)
                 audio = CallAudio(context,
                     send = { bytes, timestamp -> if (isActive(call.callId)) {
                         if (sentAudio.compareAndSet(false, true)) to.iris.chat.IrisDebugLog.d("IrisCall", "First encoded microphone frame sent")
@@ -186,7 +183,15 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
         if (current?.video == true) app.dispatch(AppAction.SetCallVideoEnabled(false))
     } }
 
-    fun setSpeaker(enabled: Boolean) { mutableSpeaker.value = enabled; IrisConnectionService.setSpeaker(enabled) }
+    internal fun audioDevicesChanged(devices: CallAudioDevices) {
+        mutableAudioDevices.value = devices
+    }
+    fun selectAudioDevice(id: String) {
+        if (mutableAudioDevices.value.available.none { it.id == id }) return
+        IrisConnectionService.selectAudioDevice(context, id) {
+            android.widget.Toast.makeText(context, "Couldn’t switch audio", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
     fun requestAnswer(callId: String) { mutableAnswerRequest.value = callId }
     fun clearAnswerRequest() { mutableAnswerRequest.value = null }
     private fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
@@ -196,7 +201,6 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
         audio?.close(); audio = null
         video?.close(); video = null
         connectedSent = false
-        audioRoute?.close(); audioRoute = null
         mediaCallId = null
         receivedAudio.set(false); decodedVideo.set(false); sentAudio.set(false)
         receivedPacket.set(false)

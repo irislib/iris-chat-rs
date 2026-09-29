@@ -203,7 +203,7 @@ class NativeCallFipsE2eTest {
             }
             compose.runOnUiThread { screen.value = { to.iris.chat.ui.theme.IrisChatTheme {
                 CallSurface(checkNotNull(ffi.state().call).copy(peerName = "Alex"), true, true,
-                    video?.remoteVideo, video?.localVideo, null, false, System.currentTimeMillis() / 1_000,
+                    video?.remoteVideo, video?.localVideo, null, CallAudioDevices(), System.currentTimeMillis() / 1_000,
                     { _, next -> next() }, ffi::dispatch, {}, {})
             } } }
             compose.waitForIdle(); SystemClock.sleep(300)
