@@ -7,6 +7,71 @@ const IRIS_LOGO_PNG: &[u8] =
     include_bytes!("../../../../android/app/src/main/res/drawable-nodpi/iris_logo.png");
 const IRIS_LOGO_SVG: &[u8] = include_bytes!("../../../../assets/iris-chat-logo.svg");
 
+#[derive(Default)]
+struct RecordedAttachmentStore(std::sync::Mutex<HashMap<Hash, Vec<u8>>>);
+
+#[async_trait]
+impl Store for RecordedAttachmentStore {
+    async fn put(&self, hash: Hash, data: Vec<u8>) -> Result<bool, StoreError> {
+        Ok(self.0.lock().unwrap().insert(hash, data).is_none())
+    }
+    async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
+        Ok(self.0.lock().unwrap().get(hash).cloned())
+    }
+    async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
+        Ok(self.0.lock().unwrap().contains_key(hash))
+    }
+    async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
+        Ok(self.0.lock().unwrap().remove(hash).is_some())
+    }
+}
+
+#[tokio::test]
+async fn attachment_upload_encrypts_every_stored_chunk_and_requires_the_key() {
+    use hashtree_core::{decrypt_chk, try_decode_tree_node, DEFAULT_CHUNK_SIZE};
+    let dir = tempfile::tempdir().unwrap();
+    // Every native attachment, including voice messages, uses this upload path.
+    let large: Vec<u8> = (0..DEFAULT_CHUNK_SIZE * 2 + 123)
+        .map(|i| (i.wrapping_mul(37) ^ (i >> 8)) as u8).collect();
+    for (name, data) in [
+        ("photo.png", IRIS_LOGO_PNG),
+        ("drawing.svg", IRIS_LOGO_SVG),
+        ("voice.m4a", include_bytes!("../../../../test-fixtures/voice-message.m4a").as_slice()),
+        ("document.txt", b"Private attachment regression fixture".as_slice()),
+        ("large-video.mp4", large.as_slice()),
+        ("empty.txt", b"".as_slice()),
+    ] {
+        let path = dir.path().join(name);
+        fs::write(&path, data).unwrap();
+        let store = Arc::new(RecordedAttachmentStore::default());
+        let link = upload_file_to_store(&path, store.clone()).await.unwrap();
+        let decoded = nhash_decode(&link).unwrap();
+        let cid = Cid { hash: decoded.hash, key: decoded.decrypt_key };
+        assert!(cid.key.is_some(), "{name}: attachment link needs a decryption key");
+        assert_eq!(read_hashtree_attachment(&cid, store.clone(), MAX_ATTACHMENT_BYTES).await.unwrap(), data);
+        let ciphertext = store.0.lock().unwrap().clone();
+        let mut pending = vec![cid.clone()];
+        let mut visited = HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node.hash) { continue; }
+            let key = node.key.expect("every child and root must be encrypted");
+            let bytes = &ciphertext[&node.hash];
+            let plain = decrypt_chk(bytes, &key).expect("stored bytes must authenticate with their key");
+            assert_ne!(bytes, &plain, "{name}: plaintext reached the blob store");
+            let mut wrong_key = key;
+            wrong_key[0] ^= 1;
+            assert!(decrypt_chk(bytes, &wrong_key).is_err());
+            if let Some(tree) = try_decode_tree_node(&plain) {
+                pending.extend(tree.links.iter().map(|link| link.to_cid()));
+            }
+        }
+        assert_eq!(visited.len(), ciphertext.len(), "{name}: every stored chunk must be checked");
+        let without_key = Cid { hash: cid.hash, key: None };
+        let unkeyed = read_hashtree_attachment(&without_key, store, MAX_ATTACHMENT_BYTES).await;
+        assert!(unkeyed.is_err() || unkeyed.unwrap() != data, "{name}: hash alone exposed attachment");
+    }
+}
+
 fn serve_one_blossom_upload(status: &str) -> (String, thread::JoinHandle<Vec<u8>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local Blossom test server");
     let address = listener.local_addr().expect("local Blossom address");
