@@ -1,6 +1,10 @@
 package to.iris.chat.ui.screens
 
 import android.content.Context
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
@@ -995,6 +999,7 @@ internal fun ImageViewerDialog(
     onForward: (MessageAttachmentSnapshot) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
     val focusRequester = remember { FocusRequester() }
     val haptics = rememberIrisHapticFeedback()
     val scope = rememberCoroutineScope()
@@ -1128,6 +1133,15 @@ internal fun ImageViewerDialog(
                         data = data,
                         bitmap = bitmap,
                         filename = attachment.filename,
+                        onCopy = {
+                            if (data != null) scope.launch {
+                                val uri = withContext(Dispatchers.IO) {
+                                    imageAttachmentShareUri(context, DownloadedImageAttachment(data, attachment.filename))
+                                }
+                                if (uri != null) context.getSystemService(ClipboardManager::class.java)
+                                    ?.setPrimaryClip(ClipData.newUri(context.contentResolver, "Image", uri))
+                            }
+                        },
                         onTap = {
                             haptics.press()
                             onDismiss()
@@ -1296,13 +1310,16 @@ private val imageViewerDateFormatter = java.text.SimpleDateFormat("MMM d, h:mm a
 private fun formatImageViewerDate(secs: Long): String =
     imageViewerDateFormatter.format(java.util.Date(secs * 1000L))
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ImageViewerPage(
     data: ByteArray?,
     bitmap: Bitmap?,
     filename: String,
+    onCopy: () -> Unit,
     onTap: () -> Unit,
 ) {
+    var copyMenu by remember(filename) { mutableStateOf(false) }
     val interactionSource = remember(filename) { MutableInteractionSource() }
     val isAnimated = remember(data, filename) {
         data?.let { isAnimatedImage(it, filename) } ?: false
@@ -1310,13 +1327,20 @@ private fun ImageViewerPage(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .clickable(
+            .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = onTap,
+                onLongClick = { if (data != null) copyMenu = true },
+                onLongClickLabel = "Image options",
             ),
         contentAlignment = Alignment.Center,
     ) {
+        Box(Modifier.align(Alignment.Center)) {
+            DropdownMenu(expanded = copyMenu, onDismissRequest = { copyMenu = false }) {
+                DropdownMenuItem(text = { Text("Copy image") }, onClick = { copyMenu = false; onCopy() })
+            }
+        }
         when {
             data == null -> CircularProgressIndicator(color = Color.White)
             isAnimated -> AnimatedImageDataView(
@@ -1338,21 +1362,22 @@ private fun ImageViewerPage(
     }
 }
 
-private fun shareImageAttachment(
-    context: Context,
-    item: DownloadedImageAttachment,
-) {
+internal fun imageAttachmentShareUri(context: Context, item: DownloadedImageAttachment): android.net.Uri? =
     runCatching {
         val outputDir = File(context.cacheDir, "attachments/share").apply { mkdirs() }
         val safeName = safeAttachmentCacheComponent(item.filename.ifBlank { "image" })
         val outputFile = File(outputDir, "${UUID.randomUUID()}-$safeName")
         outputFile.writeBytes(item.data)
-        val uri =
-            FileProvider.getUriForFile(
+        FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",
                 outputFile,
             )
+    }.getOrNull()
+
+private fun shareImageAttachment(context: Context, item: DownloadedImageAttachment) {
+    runCatching {
+        val uri = imageAttachmentShareUri(context, item) ?: return
         val intent =
             Intent(Intent.ACTION_SEND).apply {
                 type = mimeTypeForFilename(item.filename)

@@ -398,6 +398,12 @@ fun ChatScreen(
     }
 
     Scaffold(
+        modifier = attachmentDropTarget(
+            enabled = chat != null && !isUserBlocked(preferences, chatId) &&
+                (chat.kind != ChatKind.DIRECT || chat.directChatCapability == null ||
+                    chat.directChatCapability == DirectChatCapabilityState.AVAILABLE),
+            onAttachments = { selectedAttachments = selectedAttachments + it },
+        ),
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
