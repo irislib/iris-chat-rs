@@ -204,5 +204,8 @@
                            TextWrapping="Wrap" />
             </DockPanel>
         </Border>
+        <Border x:Name="FileDropHighlight" Grid.RowSpan="4" Margin="4"
+                BorderBrush="{StaticResource Accent}" BorderThickness="2" CornerRadius="10"
+                Visibility="Collapsed" IsHitTestVisible="False" />
     </Grid>
 </UserControl>

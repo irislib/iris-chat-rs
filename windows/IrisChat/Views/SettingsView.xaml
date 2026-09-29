@@ -522,7 +522,7 @@
                         <Button Style="{StaticResource DangerButton}"
                                 Click="OnLogout"
                                 HorizontalAlignment="Left">
-                            <TextBlock Text="Sign out / reset device" />
+                            <TextBlock Text="Log out" />
                         </Button>
                     </StackPanel>
                 </Border>

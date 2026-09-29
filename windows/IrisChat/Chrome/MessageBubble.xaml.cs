@@ -279,7 +279,7 @@ public partial class MessageBubble : UserControl
                 Content = image,
                 Margin = new Thickness(0, 0, 0, 4),
             };
-            btn.Click += (_, _) => OpenAttachment(att);
+            btn.Click += async (_, _) => await OpenImageAsync(att);
             btn.ContextMenu = BuildAttachmentContextMenu(att);
             return btn;
         }
@@ -322,6 +322,17 @@ public partial class MessageBubble : UserControl
     private ContextMenu BuildAttachmentContextMenu(MessageAttachmentSnapshot attachment)
     {
         var menu = new ContextMenu();
+        if (attachment.isImage)
+        {
+            var copyImage = new MenuItem { Header = "Copy image" };
+            copyImage.Click += async (_, _) => {
+                var image = await LoadFullImageAsync(attachment);
+                if (image == null) return;
+                try { Clipboard.SetImage(image); }
+                catch { App.CurrentManager.ShowToast("Couldn’t copy image"); }
+            };
+            menu.Items.Add(copyImage);
+        }
         var forward = new MenuItem { Header = "Forward" };
         forward.Click += (_, _) => PresentForwardPicker(ForwardableAttachmentText(attachment));
         menu.Items.Add(forward);
@@ -390,6 +401,22 @@ public partial class MessageBubble : UserControl
                 control.Source = source;
             });
         }
+    }
+
+    private static async Task<BitmapSource?> LoadFullImageAsync(MessageAttachmentSnapshot attachment)
+    {
+        var data = await App.CurrentManager.DownloadAttachmentAsync(attachment);
+        var image = data == null ? null : await Task.Run(() => ImageViewerWindow.Decode(data));
+        if (image == null) App.CurrentManager.ShowToast("Couldn’t load image");
+        return image;
+    }
+
+    private async Task OpenImageAsync(MessageAttachmentSnapshot attachment)
+    {
+        var image = await LoadFullImageAsync(attachment);
+        if (image == null) return;
+        new ImageViewerWindow(image, attachment.filename, () => OpenAttachment(attachment), App.CurrentManager.ShowToast)
+            { Owner = Window.GetWindow(this) }.Show();
     }
 
     private static void OpenAttachment(MessageAttachmentSnapshot att)

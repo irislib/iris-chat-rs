@@ -27,6 +27,9 @@ public partial class ChatView : UserControl
     public ChatView()
     {
         InitializeComponent();
+        _ = new AttachmentDropTarget(this, CanAttachFiles,
+            files => Composer.AddAttachments(files),
+            active => FileDropHighlight.Visibility = active ? Visibility.Visible : Visibility.Collapsed);
         _capabilityTimer.Tick += (_, _) => { _capabilityTimer.Stop(); Refresh(); };
         PreviewKeyDown += OnUserActivity;
         PreviewMouseDown += OnUserActivity;
@@ -231,12 +234,24 @@ public partial class ChatView : UserControl
         }
     }
 
+    private bool CanAttachFiles()
+    {
+        var manager = App.CurrentManager;
+        var chat = manager.CurrentChat;
+        return IsLoaded && chat != null && chat.chatId == _focusedChatId &&
+            (ChatId == null || ChatId == chat.chatId) &&
+            !manager.Busy.sendingMessage && !manager.Busy.uploadingAttachment &&
+            !(chat.kind == ChatKind.Direct && (chat.isRequest || manager.IsUserBlocked(chat.chatId))) &&
+            (chat.directChatCapability == null || chat.directChatCapability == DirectChatCapabilityState.Available);
+    }
+
     private void OnAttach()
     {
         var chatId = App.CurrentManager.CurrentChat?.chatId;
-        if (string.IsNullOrEmpty(chatId)) return;
+        if (!CanAttachFiles()) return;
         var files = PlatformFilePicker.PickFiles("Attach files", multiselect: true);
-        if (files == null || files.Length == 0) return;
+        if (files == null || files.Length == 0 || !CanAttachFiles() ||
+            App.CurrentManager.CurrentChat?.chatId != chatId) return;
         Composer.AddAttachments(files);
     }
 

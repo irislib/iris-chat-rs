@@ -400,8 +400,8 @@ public partial class SettingsView : UserControl
     {
         var result = MessageBox.Show(
             Window.GetWindow(this),
-            "This removes your secret keys, messages, and cached files from this device.",
-            "Delete all local data?",
+            "This removes your secret keys, messages, and cached files from this device. Your other devices keep their data.",
+            "Log out and delete local data?",
             MessageBoxButton.OKCancel,
             MessageBoxImage.Warning
         );

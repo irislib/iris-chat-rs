@@ -5,6 +5,8 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier><SelfContained>true</SelfContained>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../IrisChat/AttachmentDropTarget.cs" Link="AttachmentDropTarget.cs" />
+    <Compile Include="../IrisChat/Chrome/ImageViewerWindow.cs" Link="ImageViewerWindow.cs" />
     <Compile Include="../IrisChat/AudioWaveform.cs" Link="AudioWaveform.cs" />
     <Compile Include="../IrisChat/Chrome/WaveformSlider.cs" Link="WaveformSlider.cs" />
     <Compile Include="../IrisChat/AudioMessagePlayback.cs" Link="AudioMessagePlayback.cs" />
