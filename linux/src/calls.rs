@@ -2,7 +2,8 @@ use crate::app_manager::AppManager;
 use adw::prelude::*;
 use gtk::{gdk, gio, glib};
 use iris_chat_core::{
-    AppAction, CallSnapshot, DesktopCallEvent, DesktopCallMedia, DesktopCallTone,
+    AppAction, CallSnapshot, DesktopAudioDevices, DesktopCallEvent, DesktopCallMedia,
+    DesktopCallTone,
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc, time::Duration};
 
@@ -18,6 +19,12 @@ pub struct Calls {
     end: gtk::Button,
     mute: gtk::Button,
     camera: gtk::Button,
+    audio: gtk::MenuButton,
+    microphones: gtk::ComboBoxText,
+    speakers: gtk::ComboBoxText,
+    audio_error: gtk::Label,
+    audio_devices: Option<DesktopAudioDevices>,
+    audio_refreshed: std::time::Instant,
     ending: Option<String>,
     last_ring: std::time::Instant,
     call: Option<CallSnapshot>,
@@ -61,9 +68,31 @@ impl Calls {
         end.add_css_class("destructive-action");
         let mute = gtk::Button::with_label("Mute");
         let camera = gtk::Button::with_label("Camera off");
+        let audio = gtk::MenuButton::builder().label("Audio").build();
+        let audio_popover = gtk::Popover::new();
+        let audio_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        audio_column.set_margin_top(12);
+        audio_column.set_margin_bottom(12);
+        audio_column.set_margin_start(12);
+        audio_column.set_margin_end(12);
+        let microphones = gtk::ComboBoxText::new();
+        let speakers = gtk::ComboBoxText::new();
+        for (label, selector) in [("Microphone", &microphones), ("Speaker", &speakers)] {
+            let label = gtk::Label::new(Some(label));
+            label.set_halign(gtk::Align::Start);
+            audio_column.append(&label);
+            audio_column.append(selector);
+        }
+        let audio_error = gtk::Label::new(None);
+        audio_error.set_wrap(true);
+        audio_error.set_max_width_chars(40);
+        audio_column.append(&audio_error);
+        audio_popover.set_child(Some(&audio_column));
+        audio.set_popover(Some(&audio_popover));
         for b in [&answer, &voice, &mute, &camera, &end] {
             row.append(b);
         }
+        row.insert_child_after(&audio, Some(&mute));
         column.append(&row);
         window.set_child(Some(&column));
         let calls = Rc::new(RefCell::new(Self {
@@ -78,12 +107,35 @@ impl Calls {
             end: end.clone(),
             mute: mute.clone(),
             camera: camera.clone(),
+            audio,
+            microphones: microphones.clone(),
+            speakers: speakers.clone(),
+            audio_error,
+            audio_devices: None,
+            audio_refreshed: std::time::Instant::now() - Duration::from_secs(3),
             ending: None,
             last_ring: std::time::Instant::now() - Duration::from_secs(5),
             call: None,
             media: None,
             tone: None,
         }));
+        for selector in [microphones, speakers] {
+            let weak = Rc::downgrade(&calls);
+            selector.connect_changed(move |_| {
+                let Some(calls) = weak.upgrade() else { return };
+                // Filling selectors also emits changed; ignore that synchronous refresh.
+                let Ok(calls) = calls.try_borrow() else {
+                    return;
+                };
+                if let (Some(media), Some(input), Some(output)) = (
+                    &calls.media,
+                    calls.microphones.active_id(),
+                    calls.speakers.active_id(),
+                ) {
+                    media.select_audio_devices(input.to_string(), output.to_string());
+                }
+            });
+        }
         for (button, action) in [(answer, 0), (voice, 1), (end, 2), (mute, 3), (camera, 4)] {
             let weak = Rc::downgrade(&calls);
             button.connect_clicked(move |_| {
@@ -205,6 +257,7 @@ impl Calls {
             "End call"
         });
         self.mute.set_visible(connected);
+        self.audio.set_visible(connected);
         self.mute
             .set_label(if call.muted { "Unmute" } else { "Mute" });
         self.camera.set_visible(connected && call.video_capable);
@@ -278,6 +331,12 @@ impl Calls {
             self.window.error_bell();
             self.last_ring = std::time::Instant::now();
         }
+        if self.audio_refreshed.elapsed() >= Duration::from_secs(1) {
+            self.audio_refreshed = std::time::Instant::now();
+            if let Some(devices) = self.media.as_ref().map(|m| m.audio_devices()) {
+                self.update_audio_devices(devices);
+            }
+        }
         let Some(media) = &self.media else { return };
         let events = media.poll();
         let Some(call) = self.call.clone() else {
@@ -337,7 +396,28 @@ impl Calls {
             }
         }
     }
+    fn update_audio_devices(&mut self, devices: DesktopAudioDevices) {
+        if self.audio_devices.as_ref() != Some(&devices) {
+            for (selector, options, selected) in [
+                (&self.microphones, &devices.microphones, &devices.microphone),
+                (&self.speakers, &devices.speakers, &devices.speaker),
+            ] {
+                selector.remove_all();
+                for device in options {
+                    selector.append(Some(&device.id), &device.name);
+                }
+                selector.set_active_id(Some(selected));
+            }
+            self.audio_error
+                .set_label(devices.error.as_deref().unwrap_or_default());
+            self.audio_error.set_visible(devices.error.is_some());
+            self.audio_devices = Some(devices);
+        }
+    }
     fn stop(&mut self) {
+        self.audio_devices = None;
+        self.microphones.remove_all();
+        self.speakers.remove_all();
         if let Some(tone) = self.tone.take() {
             tone.stop();
         }
@@ -406,6 +486,77 @@ pub fn verify_ui(manager: Rc<AppManager>) {
             .render_texture(&node, None);
         texture.save_to_png(path).expect("call UI screenshot");
     }
+    {
+        use iris_chat_core::DesktopAudioDevice;
+        let options = vec![
+            DesktopAudioDevice {
+                id: String::new(),
+                name: "System default".into(),
+            },
+            DesktopAudioDevice {
+                id: "headset".into(),
+                name: "USB headset".into(),
+            },
+        ];
+        let mut state = calls.borrow_mut();
+        state.update_audio_devices(DesktopAudioDevices {
+            microphones: options.clone(),
+            speakers: options.clone(),
+            microphone: "headset".into(),
+            speaker: String::new(),
+            error: None,
+        });
+        assert_eq!(state.microphones.active_id().as_deref(), Some("headset"));
+        assert_eq!(state.speakers.active_id().as_deref(), Some(""));
+        assert!(!state.audio_error.property::<bool>("visible"));
+        // A hotplug refresh must follow the engine's actual route and remove stale choices.
+        state.update_audio_devices(DesktopAudioDevices {
+            microphones: options[..1].to_vec(),
+            speakers: options[..1].to_vec(),
+            microphone: String::new(),
+            speaker: String::new(),
+            error: Some("Audio switched to system default.".into()),
+        });
+        assert_eq!(state.microphones.active_id().as_deref(), Some(""));
+        assert!(!state.microphones.set_active_id(Some("headset")));
+        assert!(state.audio_error.property::<bool>("visible"));
+        assert!(
+            state.media.is_none(),
+            "rendering device options must not start capture"
+        );
+        state.update_audio_devices(DesktopAudioDevices {
+            microphones: options.clone(),
+            speakers: options,
+            microphone: "headset".into(),
+            speaker: "headset".into(),
+            error: None,
+        });
+        state.audio.set_visible(true);
+        state.audio.popup();
+    }
+    if let Some(path) = std::env::var_os("IRIS_CALL_AUDIO_UI_SNAPSHOT") {
+        let context = glib::MainContext::default();
+        let deadline = std::time::Instant::now() + Duration::from_millis(300);
+        while std::time::Instant::now() < deadline {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let state = calls.borrow();
+        let window = &state.window;
+        let popover = state.audio.popover().expect("audio popover");
+        let paintable = gtk::WidgetPaintable::new(Some(&popover));
+        let snapshot = gtk::Snapshot::new();
+        paintable.snapshot(&snapshot, popover.width() as f64, popover.height() as f64);
+        let node = snapshot.to_node().expect("audio UI render node");
+        let texture = window
+            .renderer()
+            .expect("call renderer")
+            .render_texture(&node, None);
+        texture.save_to_png(path).expect("audio UI screenshot");
+    }
+    calls.borrow().audio.popdown();
     call.phase = "outgoing".into();
     calls.borrow_mut().sync(Some(call.clone()));
     assert_eq!(calls.borrow().status.text(), "Calling…");
@@ -424,5 +575,5 @@ pub fn verify_ui(manager: Rc<AppManager>) {
     assert!(calls.borrow().media.is_none());
     calls.borrow_mut().shutdown();
     parent.destroy();
-    println!("Desktop call UI: ringing, outgoing, declined, and device privacy passed");
+    println!("Desktop call UI: ringing, outgoing, declined, audio device refresh, and device privacy passed");
 }

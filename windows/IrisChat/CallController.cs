@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Windows.Threading;
 using IrisChat.Bindings;
 
@@ -13,9 +14,12 @@ public sealed class CallController : IDisposable
     private DesktopCallTone? _tone;
     private string? _ending;
     private DateTime _lastRing;
+    private DateTime _lastAudioDevices;
+    public DesktopAudioDevices? AudioDevices { get; private set; }
     public CallSnapshot? Call { get; private set; }
     public event Action? Changed;
     public event Action<DesktopCallEvent.Video>? Video;
+    public void SelectAudioDevices(string microphone, string speaker) => _media?.SelectAudioDevices(microphone, speaker);
 
     public CallController(AppManager manager)
     {
@@ -66,6 +70,19 @@ public sealed class CallController : IDisposable
             System.Media.SystemSounds.Exclamation.Play();
         }
         if (_media == null || Call == null) return;
+        if (DateTime.UtcNow - _lastAudioDevices > TimeSpan.FromSeconds(1))
+        {
+            _lastAudioDevices = DateTime.UtcNow;
+            var devices = _media.AudioDevices();
+            var old = AudioDevices;
+            if (old == null || old.microphone != devices.microphone || old.speaker != devices.speaker || old.error != devices.error ||
+                !old.microphones.SequenceEqual(devices.microphones) || !old.speakers.SequenceEqual(devices.speakers))
+            {
+                AudioDevices = devices;
+                if (devices.error != null && devices.error != old?.error) _manager.ShowToast(devices.error);
+                Changed?.Invoke();
+            }
+        }
         var id = Call.callId;
         foreach (var item in _media.Poll())
         {
@@ -83,7 +100,7 @@ public sealed class CallController : IDisposable
             }
         }
     }
-    private void StopMedia() { _media?.Stop(); _media?.Dispose(); _media = null; }
+    private void StopMedia() { _media?.Stop(); _media?.Dispose(); _media = null; AudioDevices = null; }
     private void StopTone() { _tone?.Stop(); _tone?.Dispose(); _tone = null; }
     public void Dispose() { AudioMessagePlayback.SetCallActive(false); _timer.Stop(); StopTone(); StopMedia(); }
 }

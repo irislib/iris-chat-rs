@@ -8,9 +8,26 @@ pub use tones::DesktopCallTone;
 #[cfg(feature = "desktop-media")]
 mod audio;
 #[cfg(feature = "desktop-media")]
+mod devices;
+#[cfg(feature = "desktop-media")]
 mod engine;
 #[cfg(feature = "desktop-media")]
 mod video;
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct DesktopAudioDevice {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, uniffi::Record)]
+pub struct DesktopAudioDevices {
+    pub microphones: Vec<DesktopAudioDevice>,
+    pub speakers: Vec<DesktopAudioDevice>,
+    pub microphone: String,
+    pub speaker: String,
+    pub error: Option<String>,
+}
 
 #[derive(Clone, Debug, uniffi::Enum)]
 pub enum DesktopCallEvent {
@@ -56,6 +73,23 @@ impl DesktopCallMedia {
         self.engine.configure(muted, video, bitrate, key_generation);
         #[cfg(not(feature = "desktop-media"))]
         let _ = (muted, video, bitrate, key_generation);
+    }
+    /// Device discovery and switching run on the audio worker, never on the UI thread.
+    pub fn audio_devices(&self) -> DesktopAudioDevices {
+        #[cfg(feature = "desktop-media")]
+        {
+            self.engine.audio_devices()
+        }
+        #[cfg(not(feature = "desktop-media"))]
+        {
+            DesktopAudioDevices::default()
+        }
+    }
+    pub fn select_audio_devices(&self, microphone: String, speaker: String) {
+        #[cfg(feature = "desktop-media")]
+        self.engine.select_audio_devices(microphone, speaker);
+        #[cfg(not(feature = "desktop-media"))]
+        let _ = (microphone, speaker);
     }
     pub fn receive(
         &self,

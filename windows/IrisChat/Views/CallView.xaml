@@ -5,7 +5,7 @@
     <Border Background="{StaticResource Background}" Padding="20">
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <StackPanel HorizontalAlignment="Center" Margin="0,8,0,12">
                 <TextBlock x:Name="Peer" FontSize="24" Foreground="{StaticResource TextPrimary}" HorizontalAlignment="Center"/>
@@ -18,10 +18,19 @@
                 </Border>
                 <Image x:Name="LocalVideo" Width="150" Height="90" Stretch="Uniform" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="12"/>
             </Grid>
-            <WrapPanel Grid.Row="2" HorizontalAlignment="Center" Margin="0,16,0,0">
+            <Grid x:Name="AudioSettings" Grid.Row="2" Visibility="Collapsed" Margin="0,12,0,0" MaxWidth="420">
+                <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <TextBlock Text="Microphone" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" Margin="0,4,12,4"/>
+                <ComboBox x:Name="Microphones" Grid.Column="1" DisplayMemberPath="name" SelectedValuePath="id" SelectionChanged="OnAudioDevice" Margin="0,4"/>
+                <TextBlock Grid.Row="1" Text="Speaker" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" Margin="0,4,12,4"/>
+                <ComboBox x:Name="Speakers" Grid.Row="1" Grid.Column="1" DisplayMemberPath="name" SelectedValuePath="id" SelectionChanged="OnAudioDevice" Margin="0,4"/>
+            </Grid>
+            <WrapPanel Grid.Row="3" HorizontalAlignment="Center" Margin="0,16,0,0">
                 <Button x:Name="Answer" Style="{StaticResource CompactPrimaryButton}" Content="Answer" Click="OnAnswer" Margin="4" Padding="14,10"/>
                 <Button x:Name="Voice" Style="{StaticResource CompactSecondaryButton}" Content="Voice only" Click="OnVoice" Margin="4" Padding="14,10"/>
                 <Button x:Name="Mute" Style="{StaticResource CompactSecondaryButton}" Content="Mute" Click="OnMute" Margin="4" Padding="14,10"/>
+                <Button x:Name="Audio" Style="{StaticResource CompactSecondaryButton}" Content="Audio" Click="OnAudio" Margin="4" Padding="14,10"/>
                 <Button x:Name="Camera" Style="{StaticResource CompactSecondaryButton}" Content="Camera off" Click="OnCamera" Margin="4" Padding="14,10"/>
                 <Button x:Name="End" Style="{StaticResource DangerButton}" Content="End call" Click="OnEnd" Margin="4" Padding="14,10"/>
             </WrapPanel>

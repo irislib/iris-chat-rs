@@ -1,10 +1,10 @@
 use super::audio::{Resampler, VoiceProcessing};
 use super::{
     video::{self, VideoDecoder, VideoEncoder},
-    DesktopCallEvent,
+    DesktopAudioDevices, DesktopCallEvent,
 };
 use crate::CallAudioCodec;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use nokhwa::{
     pixel_format::{FormatDecoder, RgbFormat},
     utils::{CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType},
@@ -28,11 +28,19 @@ struct Settings {
     key: u32,
     generation: u64,
 }
+#[derive(Clone, Default, PartialEq, Eq)]
+struct AudioSelection {
+    microphone: String,
+    speaker: String,
+    revision: u64,
+}
 struct Shared {
     stopped: AtomicBool,
     settings: Mutex<Settings>,
     output: Mutex<VecDeque<(u64, DesktopCallEvent)>>,
     force_key: AtomicBool,
+    audio_selection: Mutex<AudioSelection>,
+    audio_devices: Mutex<DesktopAudioDevices>,
 }
 impl Shared {
     fn settings(&self) -> Option<Settings> {
@@ -94,6 +102,8 @@ impl Engine {
             }),
             output: Mutex::new(VecDeque::new()),
             force_key: AtomicBool::new(true),
+            audio_selection: Mutex::new(AudioSelection::default()),
+            audio_devices: Mutex::new(DesktopAudioDevices::default()),
         });
         let (incoming, rx) = flume::bounded(16);
         let (video, video_rx) = flume::bounded(8);
@@ -129,6 +139,41 @@ impl Engine {
             s.video = video;
             s.bitrate = bitrate.clamp(100_000, 10_000_000);
             s.key = key;
+        }
+    }
+    pub(super) fn audio_devices(&self) -> DesktopAudioDevices {
+        self.shared
+            .audio_devices
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default()
+    }
+    pub(super) fn select_audio_devices(&self, microphone: String, speaker: String) {
+        let Ok(devices) = self.shared.audio_devices.lock() else {
+            return;
+        };
+        if !devices.microphones.iter().any(|d| d.id == microphone)
+            || !devices.speakers.iter().any(|d| d.id == speaker)
+        {
+            return;
+        }
+        let Ok(mut selection) = self.shared.audio_selection.lock() else {
+            return;
+        };
+        if selection.microphone == microphone
+            && selection.speaker == speaker
+            && devices.error.is_none()
+        {
+            return;
+        }
+        selection.microphone = microphone;
+        selection.speaker = speaker;
+        selection.revision = selection.revision.wrapping_add(1);
+        if let Ok(mut settings) = self.shared.settings.lock() {
+            // Drop capture queued before a user switches microphones. Video shares
+            // this generation, so replace any discarded references with a keyframe.
+            settings.generation = settings.generation.wrapping_add(1);
+            self.shared.force_key.store(true, Ordering::Release);
         }
     }
     pub(super) fn receive(&self, kind: u8, seq: u32, _timestamp: u64, key: bool, data: Vec<u8>) {
@@ -215,6 +260,7 @@ fn run_camera(shared: Arc<Shared>) {
     let mut pacer = video::FramePacer::default();
     let mut last_key = Instant::now() - Duration::from_secs(1);
     let mut generation = 0;
+    let mut capture_generation = u64::MAX;
     while !shared.stopped.load(Ordering::Acquire) {
         let Some(s) = shared.settings() else { break };
         if !s.video {
@@ -264,8 +310,12 @@ fn run_camera(shared: Arc<Shared>) {
         let scaled = image::imageops::resize(&rgb, w, h, image::imageops::FilterType::Triangle);
         let key = shared.force_key.swap(false, Ordering::AcqRel)
             || s.key != generation
+            || s.generation != capture_generation
             || last_key.elapsed() >= Duration::from_secs(1);
         generation = s.key;
+        // An old iteration may consume force_key after a microphone switch;
+        // the first retained frame of each capture generation must still be a key.
+        capture_generation = s.generation;
         if key {
             last_key = Instant::now();
         }
@@ -313,6 +363,8 @@ fn capture<T: cpal::SizedSample>(
     config: &cpal::StreamConfig,
     tx: flume::Sender<(u64, Vec<f32>)>,
     shared: Arc<Shared>,
+    failed: Arc<AtomicBool>,
+    audio_revision: u64,
 ) -> Result<cpal::Stream, String>
 where
     f32: cpal::FromSample<T>,
@@ -321,12 +373,18 @@ where
     let config_rate = config.sample_rate.0;
     let mut resampler = Resampler::new(config_rate, 48000);
     let mut generation = 0;
-    let errors = shared.clone();
     device
         .build_input_stream(
             config,
             move |data: &[T], _| {
                 let Some(s) = shared.settings() else { return };
+                if !shared
+                    .audio_selection
+                    .lock()
+                    .is_ok_and(|selection| selection.revision == audio_revision)
+                {
+                    return;
+                }
                 if generation != s.generation {
                     resampler = Resampler::new(config_rate, 48000);
                     generation = s.generation;
@@ -346,7 +404,9 @@ where
                     .collect();
                 let _ = tx.try_send((s.generation, resampler.process(&mono)));
             },
-            move |_| errors.fail("Microphone disconnected."),
+            move |_| {
+                failed.store(true, Ordering::Release);
+            },
             None,
         )
         .map_err(|_| "Couldn’t open the microphone.".into())
@@ -357,9 +417,9 @@ fn playback<T: cpal::SizedSample + cpal::FromSample<f32>>(
     pcm: Arc<Mutex<VecDeque<f32>>>,
     rendered: flume::Sender<Vec<f32>>,
     shared: Arc<Shared>,
+    failed: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String> {
     let channels = config.channels as usize;
-    let errors = shared.clone();
     let mut resampler = Resampler::new(config.sample_rate.0, 48000);
     device
         .build_output_stream(
@@ -386,7 +446,9 @@ fn playback<T: cpal::SizedSample + cpal::FromSample<f32>>(
                 }
                 let _ = rendered.try_send(resampler.process(&reference));
             },
-            move |_| errors.fail("Speakers disconnected."),
+            move |_| {
+                failed.store(true, Ordering::Release);
+            },
             None,
         )
         .map_err(|_| "Couldn’t open the speakers.".into())
@@ -408,10 +470,24 @@ fn run_video(shared: &Arc<Shared>, incoming: flume::Receiver<Incoming>) -> Resul
     }
     Ok(())
 }
-fn run_audio(shared: &Arc<Shared>, incoming: flume::Receiver<Incoming>) -> Result<(), String> {
-    let host = cpal::default_host();
-    let input = host.default_input_device().ok_or("No microphone found.")?;
-    let output = host.default_output_device().ok_or("No speakers found.")?;
+struct AudioIo {
+    _input: cpal::Stream,
+    _output: cpal::Stream,
+    failed: Arc<AtomicBool>,
+    captured: flume::Receiver<(u64, Vec<f32>)>,
+    rendered: flume::Receiver<Vec<f32>>,
+    pcm: Arc<Mutex<VecDeque<f32>>>,
+    rate: u32,
+    voice: VoiceProcessing,
+    resampler: Resampler,
+}
+fn open_audio(
+    shared: &Arc<Shared>,
+    input: &cpal::Device,
+    output: &cpal::Device,
+    audio_revision: u64,
+) -> Result<AudioIo, String> {
+    let failed = Arc::new(AtomicBool::new(false));
     let input_config = input
         .default_input_config()
         .map_err(|_| "Couldn’t open the microphone.")?;
@@ -422,33 +498,57 @@ fn run_audio(shared: &Arc<Shared>, incoming: flume::Receiver<Incoming>) -> Resul
     let pcm = Arc::new(Mutex::new(VecDeque::new()));
     let (render_tx, render_rx) = flume::bounded(16);
     let input_stream = match input_config.sample_format() {
-        cpal::SampleFormat::F32 => capture::<f32>(&input, &input_config.into(), tx, shared.clone()),
-        cpal::SampleFormat::I16 => capture::<i16>(&input, &input_config.into(), tx, shared.clone()),
-        cpal::SampleFormat::U16 => capture::<u16>(&input, &input_config.into(), tx, shared.clone()),
+        cpal::SampleFormat::F32 => capture::<f32>(
+            input,
+            &input_config.into(),
+            tx,
+            shared.clone(),
+            failed.clone(),
+            audio_revision,
+        ),
+        cpal::SampleFormat::I16 => capture::<i16>(
+            input,
+            &input_config.into(),
+            tx,
+            shared.clone(),
+            failed.clone(),
+            audio_revision,
+        ),
+        cpal::SampleFormat::U16 => capture::<u16>(
+            input,
+            &input_config.into(),
+            tx,
+            shared.clone(),
+            failed.clone(),
+            audio_revision,
+        ),
         _ => Err("Microphone format is unavailable.".into()),
     }?;
     let rate = output_config.sample_rate().0;
     let output_stream = match output_config.sample_format() {
         cpal::SampleFormat::F32 => playback::<f32>(
-            &output,
+            output,
             &output_config.into(),
             pcm.clone(),
             render_tx,
             shared.clone(),
+            failed.clone(),
         ),
         cpal::SampleFormat::I16 => playback::<i16>(
-            &output,
+            output,
             &output_config.into(),
             pcm.clone(),
             render_tx,
             shared.clone(),
+            failed.clone(),
         ),
         cpal::SampleFormat::U16 => playback::<u16>(
-            &output,
+            output,
             &output_config.into(),
             pcm.clone(),
             render_tx,
             shared.clone(),
+            failed.clone(),
         ),
         _ => Err("Speaker format is unavailable.".into()),
     }?;
@@ -458,29 +558,170 @@ fn run_audio(shared: &Arc<Shared>, incoming: flume::Receiver<Incoming>) -> Resul
     output_stream
         .play()
         .map_err(|_| "Couldn’t start the speakers.")?;
+    Ok(AudioIo {
+        _input: input_stream,
+        _output: output_stream,
+        failed,
+        captured: rx,
+        rendered: render_rx,
+        pcm,
+        rate,
+        voice: VoiceProcessing::new(),
+        resampler: Resampler::new(48000, rate),
+    })
+}
+fn run_audio(shared: &Arc<Shared>, incoming: flume::Receiver<Incoming>) -> Result<(), String> {
+    // Device enumeration may query slow drivers. Keep it off the codec/playout loop.
+    let (device_tx, device_rx) = flume::bounded(1);
+    let device_state = Arc::downgrade(shared);
+    thread::spawn(move || {
+        let host = cpal::default_host();
+        loop {
+            if device_state
+                .upgrade()
+                .is_none_or(|s| s.stopped.load(Ordering::Acquire))
+            {
+                return;
+            }
+            let _ = device_tx.try_send((
+                super::devices::Devices::scan(&host, true),
+                super::devices::Devices::scan(&host, false),
+            ));
+            for _ in 0..30 {
+                if device_tx.is_disconnected() {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+    });
+    let mut inventory = None;
     let codec = CallAudioCodec::new().map_err(|e| e.to_string())?;
     let start = Instant::now();
-    let mut voice = VoiceProcessing::new();
-    let mut output_resampler = Resampler::new(48000, rate);
+    let mut io: Option<AudioIo> = None;
     let mut capture_generation = 0;
     let mut captured = VecDeque::new();
     let mut ready = false;
+    let mut next_retry = Instant::now();
+    let mut applied_revision = u64::MAX;
+    let mut fingerprint = (String::new(), String::new());
+    let mut active_devices = (String::new(), String::new());
+    let mut device_error = None;
     while !shared.stopped.load(Ordering::Acquire) {
+        let selection = shared
+            .audio_selection
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default();
+        let device_failed = io
+            .as_ref()
+            .is_some_and(|io| io.failed.load(Ordering::Acquire));
+        let refreshed = match device_rx.try_recv() {
+            Ok(devices) => {
+                inventory = Some(devices);
+                true
+            }
+            Err(_) => false,
+        };
+        if let Some((microphones, speakers)) = inventory.as_ref().filter(|_| {
+            refreshed
+                || selection.revision != applied_revision
+                || ((device_failed || io.is_none()) && Instant::now() >= next_retry)
+        }) {
+            let next_fingerprint = (
+                microphones.fingerprint(&selection.microphone),
+                speakers.fingerprint(&selection.speaker),
+            );
+            let (mut microphone, mut input) = microphones.selected(&selection.microphone);
+            let (mut speaker, mut output) = speakers.selected(&selection.speaker);
+            if io.is_none()
+                || device_failed
+                || selection.revision != applied_revision
+                || fingerprint != next_fingerprint
+            {
+                // Release old handles before opening replacements (ALSA may be exclusive).
+                io = None;
+                captured.clear();
+                device_error = None;
+                let mut opened = input
+                    .zip(output)
+                    .ok_or_else(|| "Connect a microphone and speakers.".to_string())
+                    .and_then(|(input, output)| {
+                        open_audio(shared, input, output, selection.revision)
+                    });
+                if opened.is_err() && (!microphone.is_empty() || !speaker.is_empty()) {
+                    (microphone, input) = microphones.selected("");
+                    (speaker, output) = speakers.selected("");
+                    opened = input
+                        .zip(output)
+                        .ok_or_else(|| "Connect a microphone and speakers.".to_string())
+                        .and_then(|(input, output)| {
+                            open_audio(shared, input, output, selection.revision)
+                        });
+                    if opened.is_ok() {
+                        device_error = Some("Audio switched to system default.".into());
+                    }
+                }
+                match opened {
+                    Ok(opened) => {
+                        io = Some(opened);
+                        active_devices = (microphone, speaker);
+                    }
+                    Err(message) => device_error = Some(message),
+                }
+            }
+            if let Ok(mut state) = shared.audio_devices.lock() {
+                *state = DesktopAudioDevices {
+                    microphones: microphones.options(),
+                    speakers: speakers.options(),
+                    microphone: active_devices.0.clone(),
+                    speaker: active_devices.1.clone(),
+                    error: device_error.clone(),
+                };
+            }
+            fingerprint = next_fingerprint;
+            applied_revision = selection.revision;
+            next_retry = Instant::now() + Duration::from_secs(3);
+        }
+        for frame in incoming.try_iter().take(32) {
+            if frame.kind == 1 {
+                if !ready && opus::packet::get_nb_samples(&frame.data, 48000).ok() == Some(960) {
+                    ready = true;
+                    shared.emit(0, DesktopCallEvent::Ready);
+                }
+                codec.queue(frame.seq, frame.data);
+            }
+        }
+        let Some(io) = io.as_mut() else {
+            // Preserve the call and drain compressed media while a headset is unplugged.
+            let _ = codec.playout();
+            thread::sleep(Duration::from_millis(20));
+            continue;
+        };
         let Some(s) = shared.settings() else { break };
+        if !shared
+            .audio_selection
+            .lock()
+            .is_ok_and(|selection| selection.revision == applied_revision)
+        {
+            continue;
+        }
         if capture_generation != s.generation {
             captured.clear();
             capture_generation = s.generation;
         }
-        for (generation, samples) in rx.try_iter().take(8) {
+        for (generation, samples) in io.captured.try_iter().take(8) {
             if generation == s.generation && !s.muted {
                 captured.extend(samples);
             }
         }
-        for played in render_rx.try_iter().take(16) {
-            voice.render(&played)?;
+        for played in io.rendered.try_iter().take(16) {
+            io.voice.render(&played)?;
         }
         while captured.len() >= 960 {
-            let samples = voice.capture(&captured.drain(..960).collect::<Vec<_>>())?;
+            let samples = io
+                .voice
+                .capture(&captured.drain(..960).collect::<Vec<_>>())?;
             let data = codec.encode(samples).map_err(|e| e.to_string())?;
             shared.emit(
                 s.generation,
@@ -492,19 +733,11 @@ fn run_audio(shared: &Arc<Shared>, incoming: flume::Receiver<Incoming>) -> Resul
                 },
             );
         }
-        for frame in incoming.try_iter().take(32) {
-            if frame.kind == 1 {
-                if !ready && opus::packet::get_nb_samples(&frame.data, 48000).ok() == Some(960) {
-                    ready = true;
-                    shared.emit(0, DesktopCallEvent::Ready);
-                }
-                codec.queue(frame.seq, frame.data);
-            }
-        }
         // Device consumption drives playout: scheduler jitter cannot accumulate delay.
-        if pcm
+        if io
+            .pcm
             .lock()
-            .map(|p| p.len() < rate as usize / 50)
+            .map(|p| p.len() < io.rate as usize / 50)
             .unwrap_or(false)
         {
             let data: Vec<f32> = codec
@@ -512,11 +745,11 @@ fn run_audio(shared: &Arc<Shared>, incoming: flume::Receiver<Incoming>) -> Resul
                 .into_iter()
                 .map(|v| v as f32 / 32768.0)
                 .collect();
-            if let Ok(mut buffer) = pcm.lock() {
-                if buffer.len() > rate as usize / 10 {
+            if let Ok(mut buffer) = io.pcm.lock() {
+                if buffer.len() > io.rate as usize / 10 {
                     buffer.clear();
                 }
-                buffer.extend(output_resampler.process(&data));
+                buffer.extend(io.resampler.process(&data));
             }
         }
         thread::sleep(Duration::from_millis(5));
@@ -527,6 +760,75 @@ fn run_audio(shared: &Arc<Shared>, incoming: flume::Receiver<Incoming>) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn audio_switch_discards_old_capture_and_rejects_stale_device_choices() {
+        let e = Engine::create(false);
+        e.configure(false, false, 150_000, 1);
+        let options = vec![
+            super::super::DesktopAudioDevice {
+                id: String::new(),
+                name: "System default".into(),
+            },
+            super::super::DesktopAudioDevice {
+                id: "headset".into(),
+                name: "Headset".into(),
+            },
+        ];
+        *e.shared.audio_devices.lock().unwrap() = DesktopAudioDevices {
+            microphones: options.clone(),
+            speakers: options,
+            ..Default::default()
+        };
+        let old = e.shared.settings().unwrap().generation;
+        e.shared.emit(
+            old,
+            DesktopCallEvent::Encoded {
+                kind: 1,
+                timestamp_us: 0,
+                key_frame: false,
+                data: vec![1],
+            },
+        );
+        e.shared.force_key.store(false, Ordering::Release);
+        e.shared.emit(
+            old,
+            DesktopCallEvent::Encoded {
+                kind: 2,
+                timestamp_us: 0,
+                key_frame: false,
+                data: vec![2],
+            },
+        );
+        e.select_audio_devices("headset".into(), String::new());
+        assert!(
+            e.shared.force_key.load(Ordering::Acquire),
+            "discarding queued video requires a new reference frame"
+        );
+        assert!(
+            e.poll().is_empty(),
+            "old microphone audio must not escape after selection"
+        );
+        assert!(
+            !e.shared.stopped.load(Ordering::Acquire),
+            "switch must preserve call transport"
+        );
+        assert_eq!(e.shared.audio_selection.lock().unwrap().revision, 1);
+        e.select_audio_devices("headset".into(), String::new());
+        e.select_audio_devices("unplugged".into(), String::new());
+        assert_eq!(e.shared.audio_selection.lock().unwrap().revision, 1);
+        assert_eq!(
+            e.shared.audio_selection.lock().unwrap().microphone,
+            "headset"
+        );
+        e.shared.audio_devices.lock().unwrap().error =
+            Some("Audio switched to system default.".into());
+        e.select_audio_devices("headset".into(), String::new());
+        assert_eq!(
+            e.shared.audio_selection.lock().unwrap().revision,
+            2,
+            "a device that failed to open can be selected again"
+        );
+    }
     #[test]
     fn cameras_without_mjpeg_or_720p_use_an_advertised_decodable_mode() {
         use nokhwa::utils::Resolution;

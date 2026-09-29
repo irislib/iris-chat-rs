@@ -44,9 +44,30 @@ internal static class Program
             manager.Calls.Update(call with { callId="second-call",phase="ended",endReason="Call declined" });Pump();
             Check(((TextBlock)view.FindName("Status")).Text=="Call declined","Remote end reason");
             Check(((Button)view.FindName("End")).Content?.ToString()=="Done","Dismiss ended call");
+            // Render the connected controls with a fixture; opening the panel itself must not capture.
+            typeof(CallController).GetProperty(nameof(CallController.Call))!.SetValue(manager.Calls,
+                call with { callId="audio-call",phase="connected",video=false,remoteVideo=false,mediaConnected=true });
+            var devices = new DesktopAudioDevice[] {
+                new("", "System default"), new("headset", "USB headset")
+            };
+            typeof(CallController).GetProperty(nameof(CallController.AudioDevices))!.SetValue(manager.Calls,
+                new DesktopAudioDevices(devices, devices, "headset", "", null));
+            typeof(CallView).GetMethod("Refresh",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(view,null);
+            ((Button)view.FindName("Audio")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));Pump();
+            var microphones = (ComboBox)view.FindName("Microphones");
+            var speakers = (ComboBox)view.FindName("Speakers");
+            Check(((FrameworkElement)view.FindName("AudioSettings")).Visibility==Visibility.Visible,"Audio controls open");
+            Check(microphones.SelectedValue?.ToString()=="headset" && speakers.SelectedValue?.ToString()=="","Actual devices selected");
+            Check(typeof(CallController).GetField("_media",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(manager.Calls)==null,"Showing audio options does not capture");
+            Save(view,Path.Combine(output,"call-audio-devices.png"));
+            var defaults = new DesktopAudioDevice[] { devices[0] };
+            typeof(CallController).GetProperty(nameof(CallController.AudioDevices))!.SetValue(manager.Calls,
+                new DesktopAudioDevices(defaults, defaults, "", "", null));
+            typeof(CallView).GetMethod("Refresh",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(view,null);Pump();
+            Check(microphones.Items.Count==1 && microphones.SelectedValue?.ToString()=="","Hotplug refresh removes unplugged headset");
             manager.Calls.Update(null);Pump();
             Check(view.Visibility==Visibility.Collapsed,"Logout removes call UI");
-            Console.WriteLine("PASS: WPF incoming, decline, stale-state device privacy, ended, and logout");
+            Console.WriteLine("PASS: WPF incoming, decline, stale-state device privacy, ended, audio selectors, hotplug, and logout");
             return 0;
         }
         catch(Exception e) {Console.Error.WriteLine(e);return 1;}

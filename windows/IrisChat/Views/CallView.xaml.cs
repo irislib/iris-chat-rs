@@ -10,6 +10,7 @@ public partial class CallView : UserControl
 {
     private string? _id;
     private CallController? _calls;
+    private bool _refreshingAudio;
     public CallView()
     {
         InitializeComponent();
@@ -22,7 +23,7 @@ public partial class CallView : UserControl
         Visibility = Show(_calls?.Visible == true);
         var c = _calls?.Call;
         if (c == null) { RemoteVideo.Source = LocalVideo.Source = null; return; }
-        if (_id != c.callId) { _id = c.callId; RemoteVideo.Source = LocalVideo.Source = null; }
+        if (_id != c.callId) { _id = c.callId; RemoteVideo.Source = LocalVideo.Source = null; AudioSettings.Visibility = Visibility.Collapsed; }
         var incoming = c.phase == "incoming";
         var connected = c.phase == "connected";
         Peer.Text = c.peerName;
@@ -31,9 +32,33 @@ public partial class CallView : UserControl
         Status.Text = c.phase == "ended" ? c.endReason ?? "Call ended" : incoming ? (c.videoCapable ? "Incoming video call" : "Incoming voice call") : c.phase == "ringing" ? "Ringing…" : !connected ? "Calling…" : !c.mediaConnected ? "Connecting…" : c.remoteMuted ? "Microphone muted" : "Connected";
         Answer.Visibility = Show(incoming); Voice.Visibility = Show(incoming && c.videoCapable);
         Mute.Visibility = Show(connected); Mute.Content = c.muted ? "Unmute" : "Mute";
+        Audio.Visibility = Show(connected);
+        if (!connected) AudioSettings.Visibility = Visibility.Collapsed;
+        RefreshAudio();
         Camera.Visibility = Show(connected && c.videoCapable); Camera.Content = c.video ? "Camera off" : "Camera on";
         End.Content = c.phase == "ended" ? "Done" : incoming ? "Decline" : "End call";
         LocalVideo.Visibility = Show(connected && c.video); RemoteVideo.Visibility = Show(connected && c.remoteVideo);
+    }
+    private void RefreshAudio()
+    {
+        if (_calls?.AudioDevices is not {} devices) return;
+        _refreshingAudio = true;
+        try
+        {
+            Microphones.ItemsSource = devices.microphones; Microphones.SelectedValue = devices.microphone;
+            Speakers.ItemsSource = devices.speakers; Speakers.SelectedValue = devices.speaker;
+        }
+        finally { _refreshingAudio = false; }
+    }
+    private void OnAudio(object sender, RoutedEventArgs e)
+    {
+        AudioSettings.Visibility = AudioSettings.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        RefreshAudio();
+    }
+    private void OnAudioDevice(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_refreshingAudio && Microphones.SelectedValue is string microphone && Speakers.SelectedValue is string speaker)
+            _calls?.SelectAudioDevices(microphone, speaker);
     }
     private void ShowVideo(DesktopCallEvent.Video frame)
     {
