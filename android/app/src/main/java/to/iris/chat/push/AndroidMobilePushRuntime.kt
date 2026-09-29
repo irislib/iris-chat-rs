@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.google.android.gms.tasks.Task
 import com.google.firebase.messaging.FirebaseMessaging
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.flow.first
@@ -31,11 +32,12 @@ class AndroidMobilePushRuntime(
     private val dataStore: DataStore<Preferences>,
     private val forCalls: Boolean = false,
     private val httpClient: OkHttpClient = OkHttpClient(),
-    private val messaging: FirebaseMessaging = FirebaseMessaging.getInstance(),
+    private val fetchToken: suspend () -> String? = { FirebaseMessaging.getInstance().token.await() },
 ) {
     private val syncMutex = Mutex()
     private var callDevicePubkeyHex: String? = null
-    @Volatile private var lastSyncSignature: String? = null
+    private val tokenRevision = AtomicLong()
+    @Volatile private var lastSyncSignature: Pair<Long, String>? = null
 
     suspend fun sync(
         state: AppState,
@@ -49,8 +51,11 @@ class AndroidMobilePushRuntime(
         val inviteResponses = if (forCalls) emptyList() else state.mobilePush.inviteResponsePubkeys
         val enabled = if (forCalls) state.preferences.voiceCallsEnabled || state.preferences.videoCallsEnabled else state.preferences.desktopNotificationsEnabled
         val serverOverride = userServerOverride(state) ?: buildServerOverride()
+        // An old request may finish after Firebase reports a new token. Keep
+        // its cache entry tied to the revision it started with so it cannot
+        // hide the refresh waiting for this sync's mutex.
         val signature =
-            listOf(
+            tokenRevision.get() to listOf(
                 if (enabled) "1" else "0",
                 owner.orEmpty(),
                 if (forCalls) callDevicePubkeyHex.orEmpty() else "",
@@ -75,7 +80,7 @@ class AndroidMobilePushRuntime(
         }
 
         val token = try {
-            messaging.token.await()?.trim()?.ifEmpty { null }
+            fetchToken()?.trim()?.ifEmpty { null }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -101,7 +106,7 @@ class AndroidMobilePushRuntime(
     }
 
     fun invalidate() {
-        lastSyncSignature = null
+        tokenRevision.incrementAndGet()
     }
 
     suspend fun unregisterStoredSubscription(
@@ -112,7 +117,7 @@ class AndroidMobilePushRuntime(
         val storageKey = stringPreferencesKey(storageKeyName)
         val serverOverride = userServerOverride(state) ?: buildServerOverride()
         disableStoredSubscription(ownerNsec?.trim()?.ifEmpty { null }, storageKey, serverOverride)
-        lastSyncSignature = null
+        invalidate()
     }
 
     private suspend fun resolveExistingSubscriptionId(
