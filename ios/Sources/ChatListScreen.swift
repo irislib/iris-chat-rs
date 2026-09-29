@@ -731,14 +731,20 @@ struct InChatSearchButton: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(palette.textPrimary)
+#if os(macOS)
+                .frame(width: 44, height: 44)
+#else
                 .frame(width: 40, height: 40)
                 .frame(width: 48, height: 48)
+#endif
                 .contentShape(Rectangle())
         }
         .buttonStyle(.irisPlain)
         .accessibilityLabel("Search in this chat")
         .accessibilityIdentifier("chatHeaderSearchButton")
+#if !os(macOS)
         .padding(.trailing, 4)
+#endif
         .sheet(item: $presentedTarget) { target in
             InChatSearchSheet(manager: manager, target: target) {
                 presentedTarget = nil

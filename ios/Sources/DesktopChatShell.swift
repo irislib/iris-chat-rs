@@ -86,15 +86,15 @@ struct DesktopChatShell: View {
                     )
                 } ?? AnyView(EmptyView()),
                 trailing: AnyView(
-                    HStack(spacing: 18) {
-                    IrisChatCallButtons(manager: manager, chatID: chatId)
-                    InChatSearchButton(
-                        manager: manager,
-                        target: InChatSearchTarget(
-                            chatId: chatId,
-                            displayName: chat?.displayName ?? "Chat"
+                    HStack(spacing: 0) {
+                        IrisChatCallButtons(manager: manager, chatID: chatId)
+                        InChatSearchButton(
+                            manager: manager,
+                            target: InChatSearchTarget(
+                                chatId: chatId,
+                                displayName: chat?.displayName ?? "Chat"
+                            )
                         )
-                    )
                     }
                 )
             )
