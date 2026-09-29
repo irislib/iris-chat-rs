@@ -146,6 +146,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleLaunchIntent(intent: Intent?) {
+        if (intent?.action == to.iris.chat.push.MobilePushNotifier.ACTION_OPEN_CHAT) {
+            intent.getStringExtra(to.iris.chat.push.MobilePushNotifier.CHAT_ID_EXTRA)?.let(container.appManager::receiveNotificationChat)
+            intent.removeExtra(to.iris.chat.push.MobilePushNotifier.CHAT_ID_EXTRA)
+            intent.action = null
+            intent.data = null
+            return
+        }
         if (intent?.action == "to.iris.chat.ANSWER_CALL") {
             intent.getStringExtra("callId")?.let(container.callRuntime::requestAnswer)
             return

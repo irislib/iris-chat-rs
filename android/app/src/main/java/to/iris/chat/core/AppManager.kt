@@ -202,7 +202,7 @@ private fun activeNotificationChatIds(
             }
     }
 
-private fun pushNotificationChatCandidates(payload: JSONObject): Set<String> =
+internal fun pushNotificationChatCandidates(payload: JSONObject): Set<String> =
     buildSet {
         listOf(
             "chat_id",
@@ -211,10 +211,6 @@ private fun pushNotificationChatCandidates(payload: JSONObject): Set<String> =
             "conversationId",
             "thread_id",
             "threadId",
-            "sender_pubkey",
-            "senderPubkey",
-            "author_pubkey",
-            "authorPubkey",
         ).forEach { key ->
             normalizedNotificationId(payload.optString(key))?.let(::add)
         }
@@ -226,6 +222,9 @@ private fun pushNotificationChatCandidates(payload: JSONObject): Set<String> =
                     add("$MOBILE_PUSH_GROUP_CHAT_PREFIX$groupId")
                 }
             }
+        }
+        listOf("sender_pubkey", "senderPubkey", "author_pubkey", "authorPubkey").forEach { key ->
+            normalizedNotificationId(payload.optString(key))?.let(::add)
         }
     }
 
@@ -475,6 +474,12 @@ class AppManager(
             return
         }
         dispatchToRust(action)
+    }
+
+    fun receiveNotificationChat(chatId: String) {
+        if (automaticRevocationLogoutInFlight) return
+        pendingChatLink.offerChat(chatId)
+        if (!automaticRevocationLogoutInFlight) pendingChatLink.takeWhenAuthorized(mutableState.value.account?.authorizationState)?.let(::dispatch)
     }
 
     fun receiveChatLink(input: String) {

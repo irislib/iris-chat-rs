@@ -52,6 +52,19 @@ class ChatLinkTest {
     }
 
     @Test
+    fun notificationWaitsForAuthorizationAndOpensExistingGroupOnce() {
+        val pending = PendingChatLink()
+        pending.offerChat("group:team")
+        assertNull(pending.takeWhenAuthorized(null))
+        assertNull(pending.takeWhenAuthorized(DeviceAuthorizationState.AWAITING_APPROVAL))
+        assertEquals(AppAction.OpenChat("group:team"), pending.takeWhenAuthorized(DeviceAuthorizationState.AUTHORIZED))
+        assertNull(pending.takeWhenAuthorized(DeviceAuthorizationState.AUTHORIZED))
+        pending.offerChat("old-account")
+        pending.clear()
+        assertNull(pending.takeWhenAuthorized(DeviceAuthorizationState.AUTHORIZED))
+    }
+
+    @Test
     fun firstInstallAndDeviceApprovalRetainLinkUntilAuthorizedOnce() {
         val pending = PendingChatLink()
         pending.offer("irischat://chat.iris.to/$hex")

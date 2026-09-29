@@ -10,6 +10,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.RingtoneManager
+import android.net.Uri
+import org.json.JSONObject
+import to.iris.chat.core.pushNotificationChatCandidates
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -32,10 +35,7 @@ object MobilePushNotifier {
 
         val title = resolution.title.ifBlank { "Iris Chat" }
         val body = resolution.body.ifBlank { "New message" }
-        val intent =
-            Intent(context, MainActivity::class.java)
-                .setAction("to.iris.chat.OPEN_CHAT_LIST")
-                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        val intent = launchIntent(context, resolution.payloadJson)
         val pendingIntent =
             PendingIntent.getActivity(
                 context,
@@ -62,6 +62,26 @@ object MobilePushNotifier {
                 PushNotificationProbe.recordNotificationBlocked(context, error.javaClass.simpleName)
             }
     }
+
+    internal fun launchIntent(context: Context, payload: String): Intent {
+        val chatId = runCatching { pushNotificationChatCandidates(JSONObject(payload)).firstOrNull() }.getOrNull()
+        return Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .apply {
+                if (chatId == null) {
+                    action = "to.iris.chat.OPEN_CHAT_LIST"
+                } else {
+                    action = ACTION_OPEN_CHAT
+                    // PendingIntent identity excludes extras. Give each chat its
+                    // own URI so a newer banner cannot redirect an older one.
+                    data = Uri.Builder().scheme("irischat").authority("notification").appendPath(chatId).build()
+                    putExtra(CHAT_ID_EXTRA, chatId)
+                }
+            }
+    }
+
+    const val ACTION_OPEN_CHAT = "to.iris.chat.OPEN_NOTIFICATION_CHAT"
+    const val CHAT_ID_EXTRA = "notificationChatId"
 
     fun dismissRead(context: Context, dataDir: String, owner: String, device: String) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return

@@ -45,6 +45,11 @@ internal class PendingChatLink {
     }
 
     @Synchronized
+    fun offerChat(chatId: String) {
+        chatId.trim().takeIf(String::isNotEmpty)?.let { action = AppAction.OpenChat(it) }
+    }
+
+    @Synchronized
     fun takeWhenAuthorized(state: DeviceAuthorizationState?): AppAction? =
         when (state) {
             DeviceAuthorizationState.AUTHORIZED -> action.also { action = null }
