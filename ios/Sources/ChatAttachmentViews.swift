@@ -886,6 +886,8 @@ struct IrisImageViewerPage: View {
     let data: Data?
     let image: PlatformImage?
     let filename: String
+    @State private var isCopying = false
+    @State private var copyFailed = false
 
     var body: some View {
         Group {
@@ -905,6 +907,21 @@ struct IrisImageViewerPage: View {
                 ProgressView()
                     .tint(.white)
             }
+        }
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("Copy Image", systemImage: "doc.on.doc") {
+                guard let data else { return }
+                isCopying = true
+                Task { @MainActor in
+                    copyFailed = !(await copyIrisImage(data))
+                    isCopying = false
+                }
+            }
+            .disabled(data == nil || isCopying)
+        }
+        .alert("Couldn’t copy the image.", isPresented: $copyFailed) {
+            Button("OK", role: .cancel) {}
         }
     }
 }

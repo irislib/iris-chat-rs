@@ -70,6 +70,38 @@ func makeIrisDecodedImage(data: Data, maxPixelSize: Int? = nil) -> PlatformImage
     #endif
 }
 
+private func loadIrisClipboardImageData(_ data: Data) async -> Data? {
+    // Copy the original image pixels, not the smaller chat preview or a file
+    // URL. Decoding and encoding can be expensive, so keep both off the UI.
+    await Task.detached(priority: .userInitiated) {
+        guard let image = makeIrisDecodedImage(data: data) else { return nil as Data? }
+#if os(iOS)
+        return image.pngData()
+#elseif os(macOS)
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        return NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:])
+#endif
+    }.value
+}
+
+#if os(macOS)
+@MainActor
+func copyIrisImage(_ data: Data, to pasteboard: NSPasteboard = .general) async -> Bool {
+    let imageData = await loadIrisClipboardImageData(data)
+    guard !Task.isCancelled, let imageData else { return false }
+    pasteboard.clearContents()
+    return pasteboard.setData(imageData, forType: .png)
+}
+#elseif os(iOS)
+@MainActor
+func copyIrisImage(_ data: Data, to pasteboard: UIPasteboard = .general) async -> Bool {
+    let imageData = await loadIrisClipboardImageData(data)
+    guard !Task.isCancelled, let imageData else { return false }
+    pasteboard.setData(imageData, forPasteboardType: "public.png")
+    return true
+}
+#endif
+
 func loadChatAttachmentPreviewImage(data: Data, filename: String) async -> PlatformImage? {
     await loadIrisDecodedImage {
         makeChatAttachmentPreviewImage(data: data, filename: filename)
