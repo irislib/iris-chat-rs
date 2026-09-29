@@ -66,6 +66,23 @@ internal static class NotificationNavigationTests
         PumpUntil(() => manager.Account == null);
         Check(!(bool)logoutPending.GetValue(manager)!, "logged-out core snapshot acknowledges logout");
         Check(manager.Calls.Call == null, "logout acknowledgement keeps the call closed");
+        var apply = typeof(AppManager).GetMethod("Apply", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var revoked = beforeLogout with {
+            rev = manager.State.rev + 1,
+            account = beforeLogout.account! with { authorizationState = DeviceAuthorizationState.Revoked },
+            toast = null,
+            call = null
+        };
+        var staleFile = Path.Combine(output, "data", "revoked-data.txt");
+        File.WriteAllText(staleFile, "private fixture data");
+        File.WriteAllText(Path.Combine(output, "secret.json"), "private fixture secret");
+        apply.Invoke(manager, new object[] { new AppUpdate.FullState(revoked) });
+        Check(!File.Exists(staleFile), "revocation runs normal local file cleanup");
+        Check(!File.Exists(Path.Combine(output, "secret.json")), "revocation clears the stored secret");
+        apply.Invoke(manager, new object[] { new AppUpdate.FullState(revoked with { rev = revoked.rev + 1, account = null }) });
+        Check(manager.Account == null && manager.ToastMessage == "This device was removed. You’ve been logged out.",
+            "revocation explains logout after the core confirms the account is gone");
+        Console.WriteLine("PASS: Windows device removal clears local data and explains logout");
         Console.WriteLine("PASS: Windows notification warm/cold routing, pending auth, exact target, stale-account/logout safeguards");
     }
 

@@ -77,6 +77,7 @@ pub struct AppManager {
     last_user_activity: RefCell<Instant>,
     last_synced_device_labels_key: RefCell<Option<String>>,
     automatic_revocation_logout_in_flight: Cell<bool>,
+    device_removal_notice_pending: Cell<bool>,
 }
 
 struct Reconciler {
@@ -231,6 +232,7 @@ impl AppManager {
             last_user_activity: RefCell::new(Instant::now()),
             last_synced_device_labels_key: RefCell::new(None),
             automatic_revocation_logout_in_flight: Cell::new(false),
+            device_removal_notice_pending: Cell::new(false),
         };
         if !manager.logout_if_current_device_revoked(&manager.current_state()) {
             manager.sync_current_device_labels_if_needed(&manager.current_state());
@@ -449,7 +451,10 @@ impl AppManager {
                     return None;
                 }
                 let rev = state.rev;
-                let reconciled = self.state_by_reconciling_pending_navigation(state);
+                let mut reconciled = self.state_by_reconciling_pending_navigation(state);
+                if reconciled.account.is_none() && self.device_removal_notice_pending.replace(false) {
+                    reconciled.toast = Some("This device was removed. You’ve been logged out.".into());
+                }
                 self.last_rev_applied.set(rev);
                 *self.local_state.borrow_mut() = reconciled.clone();
                 if reconciled.account.is_none() {
@@ -800,6 +805,7 @@ impl AppManager {
         self.automatic_revocation_logout_in_flight.set(true);
         if !self.secret_store.clear() {
             self.automatic_revocation_logout_in_flight.set(false);
+            self.device_removal_notice_pending.set(false);
             self.show_toast(SECRET_CLEAR_FAILURE_TOAST);
             return;
         }
@@ -815,6 +821,7 @@ impl AppManager {
         if !current_device_revoked(state) || self.automatic_revocation_logout_in_flight.get() {
             return false;
         }
+        self.device_removal_notice_pending.set(true);
         self.logout();
         true
     }

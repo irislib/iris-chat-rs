@@ -65,6 +65,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
     private ulong _lastRevApplied;
     private bool _persistedRestoreInFlight;
     private bool _automaticRevocationLogoutInFlight;
+    private bool _deviceRemovalNoticePending;
     private PendingNavigationOverride? _pendingNavigationOverride;
     private string? _lastSyncedDeviceLabelsKey;
 
@@ -299,6 +300,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
         if (!_secretStore.Clear() || !_pendingDeviceLinkSecretStore.Clear())
         {
             _automaticRevocationLogoutInFlight = false;
+            _deviceRemovalNoticePending = false;
             ShowToast("Could not clear secret key.");
             return;
         }
@@ -853,7 +855,12 @@ public sealed partial class AppManager : INotifyPropertyChanged
                 PostDesktopNotifications(prev, next);
                 TryOpenPendingNotification();
                 NotifyAll();
-                if (!string.IsNullOrEmpty(next.toast))
+                if (next.account == null && _deviceRemovalNoticePending)
+                {
+                    _deviceRemovalNoticePending = false;
+                    ShowToast("This device was removed. You’ve been logged out.");
+                }
+                else if (!string.IsNullOrEmpty(next.toast))
                 {
                     ShowToast(next.toast!);
                 }
@@ -876,6 +883,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
             return false;
         }
 
+        _deviceRemovalNoticePending = true;
         Logout();
         return true;
     }

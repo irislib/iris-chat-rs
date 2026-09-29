@@ -482,6 +482,23 @@ pub fn run() {
     assert!(manager.apply_update(AppUpdate::FullState(next_login)).is_some());
     assert!(manager.current_state().account.is_some(), "logout acknowledgement permits a later login");
     println!("PASS: logout ignores queued authorized state until logged-out acknowledgement");
+    // A verified revocation uses that same logout path and explains it only
+    // once the core acknowledges that the session has ended.
+    let mut revoked = manager.current_state();
+    revoked.rev += 1;
+    revoked.account.as_mut().unwrap().authorization_state = iris_chat_core::DeviceAuthorizationState::Revoked;
+    manager.apply_update(AppUpdate::FullState(revoked.clone()));
+    let mut cleared = revoked;
+    cleared.rev += 1;
+    cleared.account = None;
+    cleared.call = None;
+    cleared.toast = None;
+    manager.apply_update(AppUpdate::FullState(cleared.clone()));
+    assert_eq!(manager.current_state().toast.as_deref(), Some("This device was removed. You’ve been logged out."));
+    cleared.rev += 1;
+    manager.apply_update(AppUpdate::FullState(cleared));
+    assert!(manager.current_state().toast.is_none(), "removal notice must not repeat on later snapshots");
+    println!("PASS: device removal uses normal logout and explains the completed session removal");
     window.close();
     println!("PASS: message input survives a real persisted-draft update with focus intact");
 }
