@@ -233,6 +233,21 @@ jobs:
           work_dir="$RUNNER_TEMP/ios-distribution-fastlane"
           mkdir -p "$work_dir/fastlane"
           cat > "$work_dir/fastlane/Fastfile" <<'RUBY'
+          require "deliver/upload_metadata"
+
+          # fastlane 2.237.0 deletes existing review attachments when no file is
+          # supplied. Preserve them while still updating notes and other metadata.
+          module PreserveAppReviewAttachments
+            private
+
+            def review_attachment_file(version)
+              return unless options[:app_review_attachment_file]
+
+              super
+            end
+          end
+          Deliver::UploadMetadata.prepend(PreserveAppReviewAttachments)
+
           default_platform(:ios)
 
           platform :ios do

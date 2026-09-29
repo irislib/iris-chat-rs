@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
+import shutil
+import subprocess
+import textwrap
 import unittest
 
 
@@ -131,6 +134,86 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("if exact_version && !edit_version", workflow)
         self.assertIn("existing_version = !exact_version.nil?", workflow)
         self.assertNotIn("existing_version = !edit_version.nil?", workflow)
+
+    @unittest.skipUnless(shutil.which("ruby"), "Ruby is needed to exercise the Fastfile")
+    def test_app_store_preserves_review_attachments_without_skipping_metadata(self) -> None:
+        workflow = (ROOT / ".github/workflows/ios-distribution.yml").read_text()
+        fastfile = textwrap.dedent(
+            workflow.split("<<'RUBY'\n", 1)[1].split("\n          RUBY", 1)[0]
+        )
+        # Execute the actual embedded Fastfile against the pinned deliver method's
+        # destructive default. The lane itself must never contact Apple in a test.
+        stub = r'''
+          module Deliver
+            class UploadMetadata
+              attr_reader :options, :events
+              def initialize(options)
+                @options = options
+                @events = []
+              end
+              def upload(version)
+                events << [:release_notes, options[:release_notes]]
+                events << [:review_notes, options[:app_review_information]]
+                review_attachment_file(version)
+              end
+              private
+              def review_attachment_file(version)
+                events << [:attachment, version]
+                version.clear
+                if options[:app_review_attachment_file]
+                  raise "replacement failed" if options[:app_review_attachment_file] == "bad.pdf"
+                  version << options[:app_review_attachment_file]
+                end
+              end
+            end
+          end
+          $LOADED_FEATURES << "deliver/upload_metadata.rb"
+          def default_platform(*)
+          end
+          def platform(*)
+            yield
+          end
+          def lane(*)
+          end
+          eval(STDIN.read, TOPLEVEL_BINDING, "Fastfile")
+
+          metadata = {
+            release_notes: {"en-US" => "Release notes"},
+            app_review_information: {notes: "Review instructions"}
+          }
+          [nil, "replacement.pdf"].each do |replacement|
+            options = metadata.dup
+            options[:app_review_attachment_file] = replacement if replacement
+            uploader = Deliver::UploadMetadata.new(options)
+            attachments = ["existing.pdf"]
+            uploader.upload(attachments)
+            expected = replacement ? [replacement] : ["existing.pdf"]
+            raise "attachment was not preserved or replaced" unless attachments == expected
+            expected_events = [[:release_notes, metadata[:release_notes]],
+                               [:review_notes, metadata[:app_review_information]]]
+            expected_events << [:attachment, attachments] if replacement
+            raise "metadata or replacement path was skipped" unless uploader.events == expected_events
+          end
+
+          uploader = Deliver::UploadMetadata.new(metadata.merge(app_review_attachment_file: "bad.pdf"))
+          begin
+            uploader.upload(["existing.pdf"])
+            raise "replacement error was swallowed"
+          rescue RuntimeError => error
+            raise unless error.message == "replacement failed"
+          end
+        '''
+        result = subprocess.run(
+            [shutil.which("ruby"), "-e", textwrap.dedent(stub)],
+            input=fastfile,
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("app_review_information", fastfile)
+        self.assertIn("release_notes:", fastfile)
+        self.assertNotIn("skip_metadata", fastfile)
 
     def test_only_supported_operator_entrypoint_is_active(self) -> None:
         self.assertTrue((ROOT / "scripts/distribute").exists())
