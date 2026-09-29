@@ -5,6 +5,15 @@ import XCTest
 
 final class IosPushNotificationRoutingTests: XCTestCase {
     @MainActor
+    func testNotificationFromPreviousAccountDoesNotIngestOrNavigate() {
+        let rust = MockRustApp(state: makeAppState(rev: 1, account: makeAuthorizedAccount()))
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), environment: [:])
+        manager.handlePushNotificationTap(userInfo: ["chat_id": "old-chat", "iris_account_id": "old-owner", "body": "Old message"])
+        XCTAssertTrue(openedChatIDs(in: rust.dispatchedActions).isEmpty)
+        XCTAssertEqual(pushIngestCount(in: rust.dispatchedActions), 0)
+    }
+
+    @MainActor
     func testGroupPushTapPrefersGroupOverSenderButExplicitChatWins() async {
         let rust = MockRustApp(state: makeAppState(rev: 1, account: makeAuthorizedAccount()))
         let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), environment: [:])

@@ -74,14 +74,31 @@ final class NotificationTapRoutingTests: XCTestCase {
     }
 
     func testPostedNotificationCarriesItsOwnChatID() {
-        let first = SystemDesktopNotificationPoster.content(chatID: "chat-one", title: "One", body: "First")
-        let second = SystemDesktopNotificationPoster.content(chatID: "group:two", title: "Two", body: "Second")
+        let first = SystemDesktopNotificationPoster.content(accountID: "owner", chatID: "chat-one", title: "One", body: "First")
+        let second = SystemDesktopNotificationPoster.content(accountID: "owner", chatID: "group:two", title: "Two", body: "Second")
         XCTAssertEqual(first.userInfo["chatId"] as? String, "chat-one")
         XCTAssertEqual(second.userInfo["chatId"] as? String, "group:two")
+        XCTAssertEqual(first.userInfo["iris_account_id"] as? String, "owner")
     }
 
-    private func account(authorization: DeviceAuthorizationState = .authorized) -> AccountSnapshot {
-        .init(publicKeyHex: "owner", npub: "npub-owner", displayName: "Alice", pictureUrl: nil, about: nil,
+    @MainActor
+    func testAccountSwitchRejectsOldPendingAndDeliveredNotificationTargets() async {
+        let rust = MockRustApp(state: makeAppState(rev: 1, account: account(authorization: .awaitingApproval)))
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(),
+                                 desktopNotifications: NoopDesktopNotificationPoster(), environment: [:])
+        manager.handleNotificationTap(chatID: "pending-old-chat", accountID: "owner")
+        rust.emit(.fullState(makeAppState(rev: 2, account: account(owner: "new-owner"))))
+        let switched = await waitUntil { manager.state.rev == 2 }
+        XCTAssertTrue(switched)
+        manager.handleNotificationTap(chatID: "delivered-old-chat", accountID: "owner")
+        XCTAssertTrue(openedChats(rust).isEmpty)
+        manager.handleNotificationTap(chatID: "new-chat", accountID: "new-owner")
+        let opened = await waitUntil { self.openedChats(rust) == ["new-chat"] }
+        XCTAssertTrue(opened)
+    }
+
+    private func account(owner: String = "owner", authorization: DeviceAuthorizationState = .authorized) -> AccountSnapshot {
+        .init(publicKeyHex: owner, npub: "npub-owner", displayName: "Alice", pictureUrl: nil, about: nil,
               devicePublicKeyHex: "device", deviceNpub: "npub-device", hasOwnerSigningAuthority: true,
               authorizationState: authorization)
     }
@@ -98,12 +115,12 @@ final class MacNotificationDelegateTests: XCTestCase {
         var activations = 0
         var opened: [String] = []
         let delegate = MacUserNotificationDelegate { activations += 1 }
-        delegate.handleResponse(actionIdentifier: UNNotificationDefaultActionIdentifier, userInfo: ["chatId": "first"])
-        delegate.handleResponse(actionIdentifier: UNNotificationDefaultActionIdentifier, userInfo: ["chatId": "group:second"])
+        delegate.handleResponse(actionIdentifier: UNNotificationDefaultActionIdentifier, userInfo: ["chatId": "first", "iris_account_id": "owner"])
+        delegate.handleResponse(actionIdentifier: UNNotificationDefaultActionIdentifier, userInfo: ["chatId": "group:second", "iris_account_id": "owner"])
         XCTAssertTrue(delegate.hasPendingTap)
         XCTAssertEqual(activations, 0)
-        delegate.configure { opened.append($0) }
-        delegate.configure { opened.append($0) }
+        delegate.configure { chat, owner in XCTAssertEqual(owner, "owner"); opened.append(chat) }
+        delegate.configure { chat, _ in opened.append(chat) }
         XCTAssertEqual(opened, ["group:second"])
         XCTAssertEqual(activations, 1)
         XCTAssertFalse(delegate.hasPendingTap)
@@ -114,10 +131,10 @@ final class MacNotificationDelegateTests: XCTestCase {
         var activations = 0
         var opened: [String] = []
         let delegate = MacUserNotificationDelegate { activations += 1 }
-        delegate.configure { opened.append($0) }
-        delegate.handleResponse(actionIdentifier: UNNotificationDefaultActionIdentifier, userInfo: ["chatId": "message"])
+        delegate.configure { chat, _ in opened.append(chat) }
+        delegate.handleResponse(actionIdentifier: UNNotificationDefaultActionIdentifier, userInfo: ["chatId": "message", "iris_account_id": "owner"])
         delegate.handleResponse(actionIdentifier: UNNotificationDefaultActionIdentifier,
-                                userInfo: ["chatId": "caller", "callId": "call"])
+                                userInfo: ["chatId": "caller", "callId": "call", "iris_account_id": "owner"])
         delegate.handleResponse(actionIdentifier: UNNotificationDismissActionIdentifier, userInfo: ["chatId": "dismissed"])
         XCTAssertEqual(opened, ["message", "caller"])
         XCTAssertEqual(activations, 2)
@@ -127,9 +144,10 @@ final class MacNotificationDelegateTests: XCTestCase {
     func testOldNotificationWithoutTargetOnlyActivatesWindow() {
         var activations = 0
         let delegate = MacUserNotificationDelegate { activations += 1 }
-        delegate.configure { _ in XCTFail("No chat target") }
+        delegate.configure { _, _ in XCTFail("No safe chat target") }
         delegate.handleResponse(actionIdentifier: UNNotificationDefaultActionIdentifier, userInfo: [:])
-        XCTAssertEqual(activations, 1)
+        delegate.handleResponse(actionIdentifier: UNNotificationDefaultActionIdentifier, userInfo: ["chatId": "old-unscoped-chat"])
+        XCTAssertEqual(activations, 2)
     }
 }
 #endif

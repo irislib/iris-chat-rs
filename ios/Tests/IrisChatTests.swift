@@ -37,10 +37,12 @@ final class InMemoryPendingDeviceLinkSecretStore: PendingDeviceLinkSecretStore {
     @discardableResult func clear() -> Bool { link = nil; return true }
 }
 private final class MockDesktopNotificationPoster: DesktopNotificationPosting {
-    var posts: [(chatID: String, title: String, body: String)] = []
-    func post(chatID: String, title: String, body: String) {
-        posts.append((chatID: chatID, title: title, body: body))
+    var posts: [(accountID: String, chatID: String, title: String, body: String)] = []
+    var clearCount = 0
+    func post(accountID: String, chatID: String, title: String, body: String) {
+        posts.append((accountID: accountID, chatID: chatID, title: title, body: body))
     }
+    func clear() { clearCount += 1 }
 }
 
 private enum MockRustAppError: Error {
@@ -1083,6 +1085,7 @@ final class IrisChatTests: XCTestCase {
         XCTAssertEqual(notifications.posts.first?.title, "Bob")
         XCTAssertEqual(notifications.posts.first?.body, "new text")
         XCTAssertEqual(notifications.posts.first?.chatID, "chat-1")
+        XCTAssertEqual(notifications.posts.first?.accountID, "owner")
         _ = manager
     }
 
@@ -1448,16 +1451,19 @@ final class IrisChatTests: XCTestCase {
         let staleFile = tempDir.appendingPathComponent("stale.txt")
         FileManager.default.createFile(atPath: staleFile.path, contents: Data("old".utf8))
         defer { try? FileManager.default.removeItem(at: tempDir) }
+        let notifications = MockDesktopNotificationPoster()
         let manager = AppManager(
             rust: rust,
             secretStore: store,
             pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
+            desktopNotifications: notifications,
             dataDir: tempDir,
             environment: [:]
         )
 
         await Task.yield()
         manager.logout()
+        XCTAssertEqual(notifications.clearCount, 1)
 
         let resetCompleted = await waitUntil { !manager.bootstrapInFlight && manager.state.rev == 2 }
         XCTAssertTrue(resetCompleted)
@@ -1618,16 +1624,19 @@ final class IrisChatTests: XCTestCase {
         let sessionFile = tempDir.appendingPathComponent("session.json")
         FileManager.default.createFile(atPath: sessionFile.path, contents: Data("session".utf8))
         defer { try? FileManager.default.removeItem(at: tempDir) }
+        let notifications = MockDesktopNotificationPoster()
         let manager = AppManager(
             rust: rust,
             secretStore: store,
             pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
+            desktopNotifications: notifications,
             dataDir: tempDir,
             environment: [:]
         )
 
         await Task.yield()
         manager.logout()
+        XCTAssertEqual(notifications.clearCount, 0)
 
         XCTAssertFalse(rust.dispatchedActions.contains(.logout))
         XCTAssertNotNil(store.load())

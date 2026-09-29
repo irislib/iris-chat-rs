@@ -82,8 +82,8 @@ final class IrisChatAppDelegate: NSObject, NSApplicationDelegate {
         self.openMainWindow = openMainWindow
         route(urls: pendingUrls, activate: !startsHidden)
         pendingUrls.removeAll()
-        notificationDelegate.configure { [weak manager] chatID in
-            manager?.handleNotificationTap(chatID: chatID)
+        notificationDelegate.configure { [weak manager] chatID, accountID in
+            manager?.handleNotificationTap(chatID: chatID, accountID: accountID)
         }
         if startsHidden {
             hideMainWindowSoon()

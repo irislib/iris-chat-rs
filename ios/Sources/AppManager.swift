@@ -1022,7 +1022,7 @@ final class AppManager: ObservableObject {
     private let fileManager: FileManager
     private let attachmentCache: IrisAttachmentCache
     private let sharedContainerOverride: URL?
-    private var pendingNotificationChatID: String?
+    private var pendingNotificationTarget: (chatID: String, accountID: String)?
 #if os(macOS)
     private let currentAppVersion: String
 #endif
@@ -2010,6 +2010,7 @@ final class AppManager: ObservableObject {
         content: UNNotificationContent
     ) async -> UNNotificationPresentationOptions {
         let userInfo = content.userInfo
+        if let accountID = userInfo["iris_account_id"] as? String, accountID != currentNotificationAccountID { return [] }
         if userInfo[foregroundDecryptedPushMarkerKey] as? Bool == true {
             if let payloadJson = serializedPushPayload(content: content),
                shouldBlockPushNotification(payloadJson: payloadJson) {
@@ -2029,13 +2030,14 @@ final class AppManager: ObservableObject {
         if shouldBlockPushNotification(payloadJson: resolution.payloadJson) {
             return []
         }
-        await postForegroundDecryptedPush(resolution: resolution)
+        await postForegroundDecryptedPush(resolution: resolution, accountID: currentNotificationAccountID)
         return []
     }
 
     func foregroundPushPresentationOptions(
         userInfo: [AnyHashable: Any]
     ) async -> UNNotificationPresentationOptions {
+        if let accountID = userInfo["iris_account_id"] as? String, accountID != currentNotificationAccountID { return [] }
         if userInfo[foregroundDecryptedPushMarkerKey] as? Bool == true {
             if let payloadJson = serializedPushPayload(userInfo: userInfo),
                shouldBlockPushNotification(payloadJson: payloadJson) {
@@ -2052,7 +2054,7 @@ final class AppManager: ObservableObject {
         if shouldBlockPushNotification(payloadJson: resolution.payloadJson) {
             return []
         }
-        await postForegroundDecryptedPush(resolution: resolution)
+        await postForegroundDecryptedPush(resolution: resolution, accountID: currentNotificationAccountID)
         return []
     }
 
@@ -2067,12 +2069,14 @@ final class AppManager: ObservableObject {
     }
 
     func handlePushNotificationTap(userInfo: [AnyHashable: Any]) {
+        let accountID = userInfo["iris_account_id"] as? String
+        if let accountID, accountID != currentNotificationAccountID { return }
         guard let resolution = resolvePushNotification(userInfo: userInfo),
               let chatID = chatID(fromPushPayloadJson: resolution.payloadJson),
               !chatID.isEmpty else {
             return
         }
-        handleNotificationTap(chatID: chatID)
+        handleNotificationTap(chatID: chatID, accountID: accountID)
     }
 
     private func resolvePushNotification(userInfo: [AnyHashable: Any]) -> MobilePushNotificationResolution? {
@@ -2120,8 +2124,9 @@ final class AppManager: ObservableObject {
     }
 
     private func postForegroundDecryptedPush(
-        resolution: MobilePushNotificationResolution
+        resolution: MobilePushNotificationResolution, accountID: String?
     ) async {
+        guard let accountID, accountID == currentNotificationAccountID else { return }
         guard !AppPaths.notificationsDisabledForAutomation(
             environment: ProcessInfo.processInfo.environment
         ) else {
@@ -2141,12 +2146,17 @@ final class AppManager: ObservableObject {
         content.body = resolution.body
         content.sound = .default
         content.userInfo = foregroundDecryptedPushUserInfo(from: resolution.payloadJson)
+        content.userInfo["iris_account_id"] = accountID
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
             content: content,
             trigger: nil
         )
         try? await UNUserNotificationCenter.current().add(request)
+        if accountID != currentNotificationAccountID {
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [request.identifier])
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [request.identifier])
+        }
 #endif
     }
 
@@ -2209,19 +2219,25 @@ final class AppManager: ObservableObject {
     }
 #endif
 
-    func handleNotificationTap(chatID: String) {
+    private var currentNotificationAccountID: String? {
+        state.account?.publicKeyHex ?? secretStore.load()?.ownerPubkeyHex
+    }
+
+    func handleNotificationTap(chatID: String, accountID: String? = nil) {
         let chatID = chatID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !localResetInFlight, !chatID.isEmpty,
-              state.account != nil || secretStore.load() != nil else { return }
-        pendingNotificationChatID = chatID
+              let currentAccountID = currentNotificationAccountID,
+              accountID == nil || accountID == currentAccountID else { return }
+        pendingNotificationTarget = (chatID, currentAccountID)
         openPendingNotificationChatIfReady()
     }
 
     private func openPendingNotificationChatIfReady() {
         guard !localResetInFlight, state.account?.authorizationState == .authorized,
-              let chatID = pendingNotificationChatID else { return }
-        pendingNotificationChatID = nil
-        dispatch(.openChat(chatId: chatID))
+              let target = pendingNotificationTarget else { return }
+        pendingNotificationTarget = nil
+        guard target.accountID == state.account?.publicKeyHex else { return }
+        dispatch(.openChat(chatId: target.chatID))
     }
 
     func setStartupAtLoginEnabled(_ enabled: Bool) {
@@ -2764,7 +2780,7 @@ final class AppManager: ObservableObject {
         pendingShareSendTask = nil
         // Startup snapshots can lack the account during restore. Logout is the
         // deterministic boundary for clearing deferred notification navigation.
-        pendingNotificationChatID = nil
+        pendingNotificationTarget = nil
 #if os(iOS)
         pendingShareReadTask?.cancel()
         pendingShareReadTask = nil
@@ -2777,6 +2793,13 @@ final class AppManager: ObservableObject {
             showToast("Could not clear secret key.")
             return
         }
+        desktopNotifications.clear()
+#if os(iOS)
+        if !AppPaths.notificationsDisabledForAutomation(environment: ProcessInfo.processInfo.environment) {
+            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        }
+#endif
 #if os(iOS)
         isReviewDemo = false
         reviewDemoAttempted = false
@@ -2947,7 +2970,7 @@ final class AppManager: ObservableObject {
         state = reconciledState
         calls.update(reconciledState.call,
                      preferences: reconciledState.account == nil ? nil : reconciledState.preferences,
-                     error: reconciledState.toast)
+                     error: reconciledState.toast, accountID: reconciledState.account?.publicKeyHex)
 #if os(iOS)
         if appIsBackgrounded, oldState.call != nil,
            reconciledState.call == nil || reconciledState.call?.phase == "ended" {
@@ -3528,7 +3551,8 @@ final class AppManager: ObservableObject {
     }
 
     private func postDesktopNotifications(from oldState: AppState, to nextState: AppState) {
-        guard oldState.account != nil else {
+        guard let accountID = nextState.account?.publicKeyHex,
+              oldState.account?.publicKeyHex == accountID else {
             return
         }
         let candidates = decidePendingNotifications(
@@ -3539,7 +3563,7 @@ final class AppManager: ObservableObject {
             openChatId: routerOpenChatId(router: nextState.router)
         )
         for candidate in candidates {
-            desktopNotifications.post(chatID: candidate.chatId, title: candidate.title, body: candidate.body)
+            desktopNotifications.post(accountID: accountID, chatID: candidate.chatId, title: candidate.title, body: candidate.body)
         }
     }
 

@@ -285,7 +285,8 @@ final class IrisCallController: NSObject, ObservableObject {
         dispatch(.setCallQuality(quality: quality.rawValue, maxBitrateBps: UInt32(custom * 1_000)))
     }
 
-    func update(_ snapshot: CallSnapshot?, preferences: PreferencesSnapshot? = nil, error: String? = nil) {
+    func update(_ snapshot: CallSnapshot?, preferences: PreferencesSnapshot? = nil, error: String? = nil,
+                accountID: String? = nil) {
         if let preferences { callPreferences = preferences }
         var snapshot = snapshot
         if let candidate = snapshot ?? call, !allowsCall(candidate) {
@@ -336,7 +337,7 @@ final class IrisCallController: NSObject, ObservableObject {
 #elseif os(macOS)
         if mediaForTesting == nil {
             if snapshot != nil && snapshot?.phase != "ended" { audioDevices.start() }
-            desktopAlerts.update(snapshot?.callId == endingCallID ? nil : snapshot)
+            desktopAlerts.update(snapshot?.callId == endingCallID ? nil : snapshot, accountID: accountID)
         }
 #endif
         updateHardware()

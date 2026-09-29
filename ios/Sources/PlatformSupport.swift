@@ -623,39 +623,54 @@ var irisToolbarTrailingPlacement: ToolbarItemPlacement {
 }
 
 protocol DesktopNotificationPosting {
-    func post(chatID: String, title: String, body: String)
+    func post(accountID: String, chatID: String, title: String, body: String)
+    func clear()
 }
 
 final class NoopDesktopNotificationPoster: DesktopNotificationPosting {
-    func post(chatID: String, title: String, body: String) {
+    func post(accountID: String, chatID: String, title: String, body: String) {
+        _ = accountID
         _ = chatID
         _ = title
         _ = body
     }
+    func clear() {}
 }
 
 final class SystemDesktopNotificationPoster: DesktopNotificationPosting {
     private let center = UNUserNotificationCenter.current()
     private let environment: [String: String]
+    private let lock = NSLock()
+    private var generation = 0
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment) {
         self.environment = environment
     }
 
-    func post(chatID: String, title: String, body: String) {
+    func post(accountID: String, chatID: String, title: String, body: String) {
         guard !AppPaths.notificationsDisabledForAutomation(environment: environment) else {
             return
         }
+        lock.lock()
+        let requestGeneration = generation
+        lock.unlock()
+        let isCurrent = { [weak self] in
+            guard let self else { return false }
+            self.lock.lock()
+            defer { self.lock.unlock() }
+            return self.generation == requestGeneration
+        }
         center.getNotificationSettings { [center] settings in
+            guard isCurrent() else { return }
             switch settings.authorizationStatus {
             case .authorized, .provisional, .ephemeral:
-                Self.enqueue(chatID: chatID, title: title, body: body, center: center)
+                Self.enqueue(accountID: accountID, chatID: chatID, title: title, body: body, center: center, isCurrent: isCurrent)
             case .notDetermined:
                 center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-                    guard granted else {
+                    guard granted, isCurrent() else {
                         return
                     }
-                    Self.enqueue(chatID: chatID, title: title, body: body, center: center)
+                    Self.enqueue(accountID: accountID, chatID: chatID, title: title, body: body, center: center, isCurrent: isCurrent)
                 }
             case .denied:
                 break
@@ -665,22 +680,38 @@ final class SystemDesktopNotificationPoster: DesktopNotificationPosting {
         }
     }
 
-    static func content(chatID: String, title: String, body: String) -> UNMutableNotificationContent {
+    func clear() {
+        lock.lock()
+        generation += 1
+        lock.unlock()
+        guard !AppPaths.notificationsDisabledForAutomation(environment: environment) else { return }
+        center.removeAllPendingNotificationRequests()
+        center.removeAllDeliveredNotifications()
+    }
+
+    static func content(accountID: String, chatID: String, title: String, body: String) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
-        content.userInfo = ["chatId": chatID]
+        content.userInfo = ["chatId": chatID, "iris_account_id": accountID]
         return content
     }
 
-    private static func enqueue(chatID: String, title: String, body: String, center: UNUserNotificationCenter) {
+    private static func enqueue(accountID: String, chatID: String, title: String, body: String,
+                                center: UNUserNotificationCenter, isCurrent: @escaping () -> Bool) {
+        guard isCurrent() else { return }
         let request = UNNotificationRequest(
             identifier: "iris-chat-\(UUID().uuidString)",
-            content: content(chatID: chatID, title: title, body: body),
+            content: content(accountID: accountID, chatID: chatID, title: title, body: body),
             trigger: nil
         )
-        center.add(request)
+        center.add(request) { _ in
+            if !isCurrent() {
+                center.removePendingNotificationRequests(withIdentifiers: [request.identifier])
+                center.removeDeliveredNotifications(withIdentifiers: [request.identifier])
+            }
+        }
     }
 }
 

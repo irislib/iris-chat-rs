@@ -11,8 +11,8 @@ final class IrisDesktopCallAlerts {
     private var attention: Int?
     private let sound = NSSound(named: NSSound.Name("Glass"))
 
-    func update(_ call: CallSnapshot?) {
-        guard let call, call.phase == "incoming" else { stop(); return }
+    func update(_ call: CallSnapshot?, accountID: String? = nil) {
+        guard let call, let accountID, call.phase == "incoming" else { stop(); return }
         guard callID != call.callId else { return }
         stop()
         callID = call.callId
@@ -26,7 +26,7 @@ final class IrisDesktopCallAlerts {
         let content = UNMutableNotificationContent()
         content.title = call.peerName
         content.body = call.videoCapable ? "Incoming video call" : "Incoming voice call"
-        content.userInfo = ["callId": call.callId, "chatId": call.chatId]
+        content.userInfo = ["callId": call.callId, "chatId": call.chatId, "iris_account_id": accountID]
         // Ringtone is owned here, so notification delivery cannot leave a sound
         // playing after an answer, decline, remote cancellation or timeout.
         Task { [weak self] in

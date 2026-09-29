@@ -47,6 +47,7 @@ final class NotificationService: UNNotificationServiceExtension {
 
         let resolution: MobilePushNotificationResolution
         if let bundle = loadAccountBundle(), let dataDir = sharedDataDir() {
+            bestAttempt.userInfo["iris_account_id"] = bundle.ownerPubkeyHex
             resolution = decryptMobilePushNotificationPayload(
                 dataDir: dataDir.path,
                 ownerPubkeyHex: bundle.ownerPubkeyHex,
