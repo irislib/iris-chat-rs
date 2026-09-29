@@ -20,6 +20,7 @@ struct IrisChatCallButtons: View {
                     }
                     .accessibilityLabel("Voice call")
                     .accessibilityIdentifier("startVoiceCallButton")
+                    .irisCallControlHelp("Voice call")
                 }
                 if manager.state.preferences.videoCallsEnabled {
                     Button { manager.calls.start(chatID: chatID, video: true) } label: {
@@ -27,10 +28,11 @@ struct IrisChatCallButtons: View {
                     }
                     .accessibilityLabel("Video call")
                     .accessibilityIdentifier("startVideoCallButton")
+                    .irisCallControlHelp("Video call")
                 }
             }
             .font(.system(size: 19, weight: .semibold))
-            .buttonStyle(.plain)
+            .buttonStyle(.irisPlain)
             .disabled(controller.startingVideo != nil || (manager.state.call != nil && manager.state.call?.phase != "ended"))
         }
     }
@@ -124,9 +126,10 @@ struct IrisCallScreen: View {
                                     .font(.title3).padding(12)
                                     .background(.black.opacity(0.25), in: Circle())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.irisPlain)
                             .accessibilityLabel("Video quality")
                             .accessibilityIdentifier("callQualityButton")
+                            .irisCallControlHelp("Video quality", onDarkBackground: true)
                         }
                         Spacer()
                     }
@@ -177,7 +180,8 @@ struct IrisCallScreen: View {
                            color: call.muted ? .white.opacity(0.35) : .white.opacity(0.16), id: "muteCallButton") { controller.toggleMuted() }
                 if call.videoCapable {
                     callButton("Camera", icon: call.video ? "video.fill" : "video.slash.fill",
-                               color: .white.opacity(0.16), id: "callCameraButton") { controller.toggleCamera() }
+                               color: .white.opacity(0.16), id: "callCameraButton",
+                               help: call.video ? "Turn camera off" : "Turn camera on") { controller.toggleCamera() }
                 }
 #if os(iOS)
                 if controller.audioRoute.external {
@@ -193,16 +197,18 @@ struct IrisCallScreen: View {
                 }
 #endif
 #if os(macOS)
-                callButton("Audio", icon: "speaker.wave.2.fill", color: .white.opacity(0.16), id: "callAudioDevicesButton") {
+                callButton("Audio", icon: "speaker.wave.2.fill", color: .white.opacity(0.16), id: "callAudioDevicesButton",
+                           help: "Choose microphone and speaker") {
                     showsAudioDevices = true
                 }
 #endif
-                callButton("End", icon: "phone.down.fill", color: .red, id: "endCallButton") { controller.end() }
+                callButton("End", icon: "phone.down.fill", color: .red, id: "endCallButton", help: "End call") { controller.end() }
             }
         }
     }
 
-    private func callButton(_ label: String, icon: String, color: Color, id: String, action: @escaping () -> Void) -> some View {
+    private func callButton(_ label: String, icon: String, color: Color, id: String, help: String? = nil,
+                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 8) {
                 Image(systemName: icon).font(.system(size: 23, weight: .semibold))
@@ -210,7 +216,8 @@ struct IrisCallScreen: View {
                 Text(label).font(.caption)
             }
         }
-        .buttonStyle(.plain).accessibilityLabel(label).accessibilityIdentifier(id)
+        .buttonStyle(.irisPlain).accessibilityLabel(help ?? label).accessibilityIdentifier(id)
+        .irisCallControlHelp(help ?? label, onDarkBackground: true)
     }
 }
 
