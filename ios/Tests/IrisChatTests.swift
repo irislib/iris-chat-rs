@@ -1511,6 +1511,7 @@ final class IrisChatTests: XCTestCase {
             router: Router(defaultScreen: .deviceRevoked, screenStack: []),
             account: makeAccount(hasOwnerSigningAuthority: false, authorizationState: .revoked)
         )))
+        XCTAssertNotEqual(manager.toasts.message, "This device was removed. You’ve been logged out.")
         let resetCompleted = await waitUntil { !manager.bootstrapInFlight && manager.state.rev == 0 }
         XCTAssertTrue(resetCompleted)
 
@@ -1521,6 +1522,7 @@ final class IrisChatTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: staleFile.path))
         XCTAssertEqual(manager.state.router.defaultScreen, .welcome)
         XCTAssertEqual(manager.state.rev, 0)
+        XCTAssertEqual(manager.toasts.message, "This device was removed. You’ve been logged out.")
     }
 
     @MainActor
@@ -1645,6 +1647,13 @@ final class IrisChatTests: XCTestCase {
         XCTAssertFalse(rust.dispatchedActions.contains(.logout))
         XCTAssertNotNil(store.load())
         XCTAssertTrue(FileManager.default.fileExists(atPath: sessionFile.path))
+        XCTAssertEqual(manager.toasts.message, "Could not clear secret key.")
+        rust.emit(.fullState(makeLargeFixtureState(
+            rev: 2,
+            account: makeAccount(authorizationState: .revoked)
+        )))
+        await Task.yield()
+        XCTAssertFalse(rust.dispatchedActions.contains(.logout))
         XCTAssertEqual(manager.toasts.message, "Could not clear secret key.")
     }
 

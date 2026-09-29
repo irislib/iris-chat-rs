@@ -2768,6 +2768,10 @@ final class AppManager: ObservableObject {
     }
 
     func logout() {
+        logout(completionNotice: nil)
+    }
+
+    private func logout(completionNotice: String?) {
         guard !localResetInFlight else { return }
         pendingChatLinkAction = nil
 #if os(iOS)
@@ -2808,10 +2812,10 @@ final class AppManager: ObservableObject {
 #endif
         dispatchToRust(.logout)
         storedAccountBundle = nil
-        replaceRustCoreAfterLocalReset()
+        replaceRustCoreAfterLocalReset(completionNotice: completionNotice)
     }
 
-    private func replaceRustCoreAfterLocalReset() {
+    private func replaceRustCoreAfterLocalReset(completionNotice: String?) {
         guard !localResetInFlight else { return }
         localResetInFlight = true
         bootstrapInFlight = true
@@ -2842,6 +2846,9 @@ final class AppManager: ObservableObject {
             localResetInFlight = false
             applyFullState(nextRust.state(), force: true)
             automaticRevocationLogoutInFlight = false
+            if state.account == nil, let completionNotice {
+                showToast(completionNotice)
+            }
         }
     }
 
@@ -3012,7 +3019,7 @@ final class AppManager: ObservableObject {
             return false
         }
         automaticRevocationLogoutInFlight = true
-        logout()
+        logout(completionNotice: "This device was removed. You’ve been logged out.")
         return true
     }
 

@@ -665,7 +665,7 @@ class AppManagerContractTest {
         firstRust.emit(AppUpdate.FullState(makeRevokedState(rev = 2u)))
 
         waitFor("fresh rust core after revoked snapshot") {
-            rustFactory.instances.size == 2
+            rustFactory.instances.size == 2 && appManager.state.value.account == null
         }
         val secondRust = rustFactory.instances[1]
 
@@ -674,7 +674,8 @@ class AppManagerContractTest {
         assertEquals(1, secureSecretStore.clearCount)
         assertNull(loadPersistedBundle())
         assertFalse(staleFile.exists())
-        assertEquals(secondRust.currentState, appManager.state.value)
+        assertEquals("This device was removed. You’ve been logged out.", appManager.state.value.toast)
+        assertEquals(secondRust.currentState.copy(toast = appManager.state.value.toast), appManager.state.value)
         assertTrue(appManager.bootstrapState.value is AccountBootstrapState.NeedsLogin)
     }
 
@@ -708,6 +709,12 @@ class AppManagerContractTest {
         assertEquals(0, notificationClearCount)
         assertEquals("nsec1device", loadPersistedBundle()?.deviceNsec)
         assertEquals(makeLoggedInState(rev = 5u).account, appManager.state.value.account)
+        firstRust.emit(AppUpdate.FullState(makeRevokedState(rev = 6u)))
+        waitFor("revocation secure clear failure") {
+            secureSecretStore.clearCount == 2 && appManager.state.value.toast == "Could not clear secret key."
+        }
+        assertEquals(1, rustFactory.instances.size)
+        assertFalse(firstRust.dispatchedActions.contains(AppAction.Logout))
         secureSecretStore.clearSucceeds = true
     }
 

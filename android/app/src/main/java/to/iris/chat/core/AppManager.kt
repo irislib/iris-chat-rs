@@ -1080,7 +1080,9 @@ class AppManager(
         }
     }
 
-    fun logout() {
+    fun logout() = logout(completionNotice = null)
+
+    private fun logout(completionNotice: String?) {
         pendingChatLink.clear()
         signer.cancel()
         automaticRevocationLogoutInFlight = true
@@ -1102,7 +1104,7 @@ class AppManager(
                 return@launch
             }
             dispatchToRust(AppAction.Logout)
-            replaceRustCoreAfterReset()
+            replaceRustCoreAfterReset(completionNotice)
         }
     }
 
@@ -1766,7 +1768,7 @@ class AppManager(
         scheduleMobilePushSyncIfNeeded(mutableState.value, cachedAccountBundle?.mobilePushAuthNsec)
     }
 
-    private fun replaceRustCoreAfterReset() {
+    private fun replaceRustCoreAfterReset(completionNotice: String? = null) {
         pendingChatLink.clear()
         signer.cancel()
         val previous = rust
@@ -1778,7 +1780,13 @@ class AppManager(
         lastSyncedDeviceLabelsKey = null
         val initial = bindRust(createRustApp())
         restoreCheckComplete = true
-        publishState(initial)
+        publishState(
+            if (initial.account == null && completionNotice != null) {
+                initial.copy(toast = completionNotice)
+            } else {
+                initial
+            },
+        )
         automaticRevocationLogoutInFlight = false
     }
 
@@ -1927,7 +1935,7 @@ class AppManager(
             !automaticRevocationLogoutInFlight
         ) {
             automaticRevocationLogoutInFlight = true
-            logout()
+            logout(completionNotice = "This device was removed. You’ve been logged out.")
             return
         }
         syncCurrentDeviceLabelsIfNeeded(snapshot)
