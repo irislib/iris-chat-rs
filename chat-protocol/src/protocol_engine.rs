@@ -6,6 +6,7 @@ include!("protocol_engine/engine_state_helpers.rs");
 include!("protocol_engine/engine_fact_ingest.rs");
 include!("protocol_engine/engine_sends.rs");
 include!("protocol_engine/engine_local_sibling_sends.rs");
+include!("protocol_engine/engine_remote_sends.rs");
 include!("protocol_engine/engine_invite_owner.rs");
 include!("protocol_engine/engine_handshake_proof.rs");
 include!("protocol_engine/roster_helpers.rs");
@@ -22,6 +23,7 @@ mod tests {
     include!("protocol_engine/invite_owner_tests.rs");
     include!("protocol_engine/handshake_proof_tests.rs");
     include!("protocol_engine/local_sibling_send_tests.rs");
+    include!("protocol_engine/remote_send_tests.rs");
 
     #[test]
     fn sender_owner_resolution_keeps_claimed_device_pending_until_owner_verified() {

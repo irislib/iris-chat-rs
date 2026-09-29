@@ -614,6 +614,7 @@ fn appcore_direct_send_storage_failure_rolls_back_protocol_state() {
     let device = Keys::generate();
     let peer_owner = Keys::generate();
     let peer_device = Keys::generate();
+    let missing_peer_device = Keys::generate();
     let storage = Arc::new(SwitchableFailStorage::new());
     let mut engine = test_protocol_engine_with_storage(
         &owner,
@@ -624,7 +625,7 @@ fn appcore_direct_send_storage_failure_rolls_back_protocol_state() {
     observe_peer_appkeys_for_test(
         &mut engine,
         &peer_owner,
-        &[peer_device.public_key()],
+        &[peer_device.public_key(), missing_peer_device.public_key()],
         1,
     );
     let mut rng = OsRng;
@@ -657,6 +658,7 @@ fn appcore_direct_send_storage_failure_rolls_back_protocol_state() {
     );
 
     assert!(result.is_err());
+    assert!(!engine.has_pending_retry_work(), "failed persistence must also roll back the partial remote queue");
     assert_eq!(
         engine.session_manager_snapshot_for_test(),
         before,
@@ -702,4 +704,72 @@ fn appcore_group_create_storage_failure_rolls_back_protocol_state() {
         0,
         "failed group persistence must not leave pending group fanouts in memory"
     );
+}
+
+#[test]
+fn appcore_direct_queue_delivers_to_ready_peer_while_other_peer_device_is_undiscovered() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let missing_device = Keys::generate();
+    let mut sender = logged_in_test_core("partial-remote-sender", &owner, &device);
+    let mut receiver = logged_in_test_core("partial-remote-receiver", &peer_owner, &peer_device);
+    let own = signed_app_keys_authorization_event(&owner, device.public_key(), 1);
+    let peer = AppKeys::new(vec![
+        DeviceEntry::new(peer_device.public_key(), 1),
+        DeviceEntry::new(missing_device.public_key(), 1),
+    ])
+    .get_event_at(peer_owner.public_key(), 1)
+    .sign_with_keys(&peer_owner)
+    .unwrap();
+    for core in [&mut sender, &mut receiver] {
+        core.handle_relay_event(own.clone());
+        core.handle_relay_event(peer.clone());
+    }
+    let invite = receiver
+        .protocol_engine
+        .as_ref()
+        .unwrap()
+        .local_invite()
+        .unwrap();
+    let invite_event = nostr_double_ratchet::invite_unsigned_event(&invite)
+        .unwrap()
+        .sign_with_keys(&peer_device)
+        .unwrap();
+    sender.handle_relay_event(invite_event);
+    let chat_id = peer_owner.public_key().to_hex();
+    sender.send_direct_message(
+        &chat_id,
+        "reply reaches the available device",
+        UnixSeconds(10),
+        None,
+    );
+    let sent = sender.threads[&chat_id].messages[0].clone();
+    assert!(
+        !sent.delivery_trace.outer_event_ids.is_empty(),
+        "ready peer must leave the unsent outbox immediately"
+    );
+    assert!(
+        sender
+            .protocol_engine
+            .as_ref()
+            .unwrap()
+            .has_pending_retry_work(),
+        "missing device retains a durable retry"
+    );
+    let plan = sender.compute_protocol_subscription_plan().unwrap();
+    assert!(
+        plan.invite_authors
+            .contains(&missing_device.public_key().to_hex()),
+        "missing device invite stays subscribed after partial send"
+    );
+    for kind in [INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND] {
+        for event in pending_events_with_kind(&sender, kind) {
+            receiver.handle_relay_event(event);
+        }
+    }
+    let received = &receiver.threads[&owner.public_key().to_hex()].messages[0];
+    assert_eq!(received.id, sent.id);
+    assert_eq!(received.body, "reply reaches the available device");
 }

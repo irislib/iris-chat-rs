@@ -736,30 +736,14 @@ impl ProtocolEngine {
         message_id: String,
         now: UnixSeconds,
     ) -> anyhow::Result<ProtocolDirectSendResult> {
-        let recipient_owner = ndr_owner(peer_pubkey);
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(NdrUnixSeconds(now.get()), &mut rng);
-        let remote = self.session_manager.prepare_remote_send(
-            &mut ctx,
-            recipient_owner,
-            remote_payload.clone(),
+        let (event_ids, effects) = self.queue_remote_payload(
+            peer_pubkey,
+            chat_id,
+            remote_payload,
+            inner_event_id,
+            &message_id,
+            now,
         )?;
-
-        let mut event_ids = Vec::new();
-        let effects = protocol_effects_from_prepared(
-            &remote,
-            self.local_handshake_owner_proof(),
-            inner_event_id.clone(),
-            chat_id.to_string(),
-            &mut event_ids,
-        )?;
-
-        if !remote.relay_gaps.is_empty() {
-            anyhow::bail!("direct send readiness invariant failed: remote relay gaps remain");
-        }
-        if remote.deliveries.is_empty() && remote.invite_responses.is_empty() {
-            anyhow::bail!("direct send readiness invariant failed: no remote target prepared");
-        }
         self.persist()?;
         Ok(ProtocolDirectSendResult {
             message_id,
@@ -815,24 +799,14 @@ impl ProtocolEngine {
         message_id: String,
         now: UnixSeconds,
     ) -> anyhow::Result<ProtocolDirectSendResult> {
-        let recipient_owner = ndr_owner(peer_pubkey);
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(NdrUnixSeconds(now.get()), &mut rng);
-        let remote = self.session_manager.prepare_remote_send(
-            &mut ctx,
-            recipient_owner,
-            remote_payload.clone(),
+        let (mut event_ids, mut effects) = self.queue_remote_payload(
+            peer_pubkey,
+            chat_id,
+            remote_payload,
+            inner_event_id,
+            &message_id,
+            now,
         )?;
-
-        let mut event_ids = Vec::new();
-        let mut effects = Vec::new();
-        effects.extend(protocol_effects_from_prepared(
-            &remote,
-            self.local_handshake_owner_proof(),
-            inner_event_id.clone(),
-            chat_id.to_string(),
-            &mut event_ids,
-        )?);
         let snapshot = self.session_manager.snapshot();
         let eligible_devices = user_record_snapshot(&snapshot, self.local_owner)
             .and_then(roster_device_pubkeys)
@@ -852,12 +826,6 @@ impl ProtocolEngine {
         }));
         effects.extend(sibling_effects);
 
-        if !remote.relay_gaps.is_empty() {
-            anyhow::bail!("direct send readiness invariant failed: remote relay gaps remain");
-        }
-        if remote.deliveries.is_empty() && remote.invite_responses.is_empty() {
-            anyhow::bail!("direct send readiness invariant failed: no remote target prepared");
-        }
         self.persist()?;
         Ok(ProtocolDirectSendResult {
             message_id,

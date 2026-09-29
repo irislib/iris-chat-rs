@@ -42,6 +42,8 @@ struct ProtocolEnginePersistedState {
     #[serde(default)]
     pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
     #[serde(default)]
+    pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
+    #[serde(default)]
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     #[serde(default)]
     pending_group_sender_key_messages:
@@ -397,6 +399,7 @@ pub struct ProtocolEngine {
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
     pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
+    pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
@@ -434,6 +437,7 @@ struct ProtocolEngineCheckpoint {
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
     pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
+    pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
@@ -459,6 +463,20 @@ struct ProtocolPendingLocalSiblingSend {
     payload: Vec<u8>,
     message_id: String,
     completed_devices: BTreeSet<NdrDevicePubkey>,
+    created_at_secs: u64,
+    next_retry_at_secs: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ProtocolPendingRemoteSend {
+    recipient_owner: NdrOwnerPubkey,
+    eligible_devices: BTreeSet<NdrDevicePubkey>,
+    completed_devices: BTreeSet<NdrDevicePubkey>,
+    chat_id: String,
+    payload: Vec<u8>,
+    inner_event_id: Option<String>,
+    message_id: String,
+    expires_at_secs: Option<u64>,
     created_at_secs: u64,
     next_retry_at_secs: u64,
 }
