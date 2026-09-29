@@ -7,16 +7,19 @@ struct IrisChatMacApp: App {
     @AppStorage("desktopZoomLevel") private var desktopZoomLevel = 0
     @NSApplicationDelegateAdaptor(IrisChatAppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openWindow) private var openWindow
     private let startInBackground = CommandLine.arguments.contains(PlatformStartupAtLogin.backgroundLaunchArgument)
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             RootView(manager: manager)
                 .modifier(IrisDesktopZoom(level: desktopZoomLevel))
                 .frame(minWidth: 980, minHeight: 640)
                 .modifier(MacUserActivityMonitor(manager: manager))
                 .onAppear {
-                    appDelegate.configure(manager: manager, startInBackground: startInBackground)
+                    appDelegate.configure(manager: manager, startInBackground: startInBackground) {
+                        openWindow(id: "main")
+                    }
                     manager.updates.runStartupCheckIfNeeded()
                 }
                 .onOpenURL { url in

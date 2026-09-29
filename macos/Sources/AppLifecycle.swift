@@ -9,7 +9,11 @@ final class IrisChatAppDelegate: NSObject, NSApplicationDelegate {
     private weak var manager: AppManager?
     private var pendingUrls: [URL] = []
     private var startsHidden = false
-    private let notificationDelegate = MacUserNotificationDelegate()
+    private var openMainWindow: (() -> Void)?
+    private lazy var notificationDelegate = MacUserNotificationDelegate { [weak self] in
+        self?.startsHidden = false
+        self?.showMainWindow()
+    }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         singleInstance.onOpen = { [weak self] urls in
@@ -70,11 +74,17 @@ final class IrisChatAppDelegate: NSObject, NSApplicationDelegate {
         singleInstance.release()
     }
 
-    func configure(manager: AppManager, startInBackground: Bool) {
+    func configure(manager: AppManager, startInBackground: Bool, openMainWindow: @escaping () -> Void) {
+        if self.manager == nil {
+            startsHidden = startInBackground && !Self.launchArgumentsContainDeepLink && !notificationDelegate.hasPendingTap
+        }
         self.manager = manager
-        startsHidden = startInBackground && !Self.launchArgumentsContainDeepLink
+        self.openMainWindow = openMainWindow
         route(urls: pendingUrls, activate: !startsHidden)
         pendingUrls.removeAll()
+        notificationDelegate.configure { [weak manager] chatID in
+            manager?.handleNotificationTap(chatID: chatID)
+        }
         if startsHidden {
             hideMainWindowSoon()
         }
@@ -109,12 +119,14 @@ final class IrisChatAppDelegate: NSObject, NSApplicationDelegate {
                 window.deminiaturize(nil)
             }
             window.makeKeyAndOrderFront(nil)
+        } else {
+            openMainWindow?()
         }
     }
 
     private func hideMainWindowSoon() {
         DispatchQueue.main.async { [weak self] in
-            guard let self, let window = self.mainWindow() else { return }
+            guard let self, self.startsHidden, let window = self.mainWindow() else { return }
             window.orderOut(nil)
         }
     }
@@ -127,31 +139,6 @@ final class IrisChatAppDelegate: NSObject, NSApplicationDelegate {
 
     private static var launchArgumentsContainDeepLink: Bool {
         CommandLine.arguments.contains { $0.starts(with: "irischat://") }
-    }
-}
-
-final class MacUserNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
-    func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
-    ) {
-        completionHandler([.banner, .sound, .list])
-    }
-
-    func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse,
-        withCompletionHandler completionHandler: @escaping () -> Void
-    ) {
-        DispatchQueue.main.async {
-            NSApp.activate(ignoringOtherApps: true)
-            let window = NSApp.windows.first(where: { $0.title == "Iris Chat" })
-                ?? NSApp.windows.first(where: { $0.canBecomeKey })
-                ?? NSApp.windows.first
-            window?.makeKeyAndOrderFront(nil)
-        }
-        completionHandler()
     }
 }
 

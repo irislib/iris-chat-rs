@@ -37,9 +37,9 @@ final class InMemoryPendingDeviceLinkSecretStore: PendingDeviceLinkSecretStore {
     @discardableResult func clear() -> Bool { link = nil; return true }
 }
 private final class MockDesktopNotificationPoster: DesktopNotificationPosting {
-    var posts: [(title: String, body: String)] = []
-    func post(title: String, body: String) {
-        posts.append((title: title, body: body))
+    var posts: [(chatID: String, title: String, body: String)] = []
+    func post(chatID: String, title: String, body: String) {
+        posts.append((chatID: chatID, title: title, body: body))
     }
 }
 
@@ -1082,6 +1082,7 @@ final class IrisChatTests: XCTestCase {
         XCTAssertTrue(posted)
         XCTAssertEqual(notifications.posts.first?.title, "Bob")
         XCTAssertEqual(notifications.posts.first?.body, "new text")
+        XCTAssertEqual(notifications.posts.first?.chatID, "chat-1")
         _ = manager
     }
 
@@ -1147,6 +1148,7 @@ final class IrisChatTests: XCTestCase {
         XCTAssertTrue(posted)
         XCTAssertEqual(notifications.posts.first?.title, "Bob")
         XCTAssertEqual(notifications.posts.first?.body, "after backgrounded")
+        XCTAssertEqual(notifications.posts.first?.chatID, "chat-1")
         _ = manager
     }
 

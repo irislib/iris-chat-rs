@@ -623,11 +623,12 @@ var irisToolbarTrailingPlacement: ToolbarItemPlacement {
 }
 
 protocol DesktopNotificationPosting {
-    func post(title: String, body: String)
+    func post(chatID: String, title: String, body: String)
 }
 
 final class NoopDesktopNotificationPoster: DesktopNotificationPosting {
-    func post(title: String, body: String) {
+    func post(chatID: String, title: String, body: String) {
+        _ = chatID
         _ = title
         _ = body
     }
@@ -641,20 +642,20 @@ final class SystemDesktopNotificationPoster: DesktopNotificationPosting {
         self.environment = environment
     }
 
-    func post(title: String, body: String) {
+    func post(chatID: String, title: String, body: String) {
         guard !AppPaths.notificationsDisabledForAutomation(environment: environment) else {
             return
         }
         center.getNotificationSettings { [center] settings in
             switch settings.authorizationStatus {
             case .authorized, .provisional, .ephemeral:
-                Self.enqueue(title: title, body: body, center: center)
+                Self.enqueue(chatID: chatID, title: title, body: body, center: center)
             case .notDetermined:
                 center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
                     guard granted else {
                         return
                     }
-                    Self.enqueue(title: title, body: body, center: center)
+                    Self.enqueue(chatID: chatID, title: title, body: body, center: center)
                 }
             case .denied:
                 break
@@ -664,14 +665,19 @@ final class SystemDesktopNotificationPoster: DesktopNotificationPosting {
         }
     }
 
-    private static func enqueue(title: String, body: String, center: UNUserNotificationCenter) {
+    static func content(chatID: String, title: String, body: String) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
+        content.userInfo = ["chatId": chatID]
+        return content
+    }
+
+    private static func enqueue(chatID: String, title: String, body: String, center: UNUserNotificationCenter) {
         let request = UNNotificationRequest(
             identifier: "iris-chat-\(UUID().uuidString)",
-            content: content,
+            content: content(chatID: chatID, title: title, body: body),
             trigger: nil
         )
         center.add(request)

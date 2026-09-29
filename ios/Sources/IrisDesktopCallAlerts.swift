@@ -26,7 +26,7 @@ final class IrisDesktopCallAlerts {
         let content = UNMutableNotificationContent()
         content.title = call.peerName
         content.body = call.videoCapable ? "Incoming video call" : "Incoming voice call"
-        content.userInfo = ["callId": call.callId]
+        content.userInfo = ["callId": call.callId, "chatId": call.chatId]
         // Ringtone is owned here, so notification delivery cannot leave a sound
         // playing after an answer, decline, remote cancellation or timeout.
         Task { [weak self] in

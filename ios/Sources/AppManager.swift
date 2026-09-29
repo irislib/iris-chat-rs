@@ -1022,6 +1022,7 @@ final class AppManager: ObservableObject {
     private let fileManager: FileManager
     private let attachmentCache: IrisAttachmentCache
     private let sharedContainerOverride: URL?
+    private var pendingNotificationChatID: String?
 #if os(macOS)
     private let currentAppVersion: String
 #endif
@@ -1044,7 +1045,6 @@ final class AppManager: ObservableObject {
     @Published private(set) var reviewDemoFailed = false
     private var reviewDemoTask: Task<Void, Never>?
     private var reviewDemoAttempted = false
-    private var pendingPushChatID: String?
     private lazy var pendingShares = IrisPendingShares(
         containerOverride: sharedContainerOverride,
         appGroupIdentifier: AppPaths.appGroupIdentifier,
@@ -2072,20 +2072,7 @@ final class AppManager: ObservableObject {
               !chatID.isEmpty else {
             return
         }
-        guard state.account != nil || secretStore.load() != nil else {
-            return
-        }
-        pendingPushChatID = chatID
-        openPendingPushChatIfReady()
-    }
-
-    private func openPendingPushChatIfReady() {
-        guard state.account?.authorizationState == .authorized,
-              let chatID = pendingPushChatID else {
-            return
-        }
-        pendingPushChatID = nil
-        dispatch(.openChat(chatId: chatID))
+        handleNotificationTap(chatID: chatID)
     }
 
     private func resolvePushNotification(userInfo: [AnyHashable: Any]) -> MobilePushNotificationResolution? {
@@ -2221,6 +2208,21 @@ final class AppManager: ObservableObject {
         return false
     }
 #endif
+
+    func handleNotificationTap(chatID: String) {
+        let chatID = chatID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !localResetInFlight, !chatID.isEmpty,
+              state.account != nil || secretStore.load() != nil else { return }
+        pendingNotificationChatID = chatID
+        openPendingNotificationChatIfReady()
+    }
+
+    private func openPendingNotificationChatIfReady() {
+        guard !localResetInFlight, state.account?.authorizationState == .authorized,
+              let chatID = pendingNotificationChatID else { return }
+        pendingNotificationChatID = nil
+        dispatch(.openChat(chatId: chatID))
+    }
 
     func setStartupAtLoginEnabled(_ enabled: Bool) {
         do {
@@ -2760,13 +2762,13 @@ final class AppManager: ObservableObject {
         automaticRevocationLogoutInFlight = true
         pendingShareSendTask?.cancel()
         pendingShareSendTask = nil
+        // Startup snapshots can lack the account during restore. Logout is the
+        // deterministic boundary for clearing deferred notification navigation.
+        pendingNotificationChatID = nil
 #if os(iOS)
         pendingShareReadTask?.cancel()
         pendingShareReadTask = nil
         pendingShareRescanRequested = false
-        // Account-nil startup snapshots are ambiguous; logout is the deterministic
-        // session boundary for discarding deferred notification navigation.
-        pendingPushChatID = nil
         callPushRuntime.unregister(state: state, ownerNsec: (storedAccountBundle ?? secretStore.load())?.mobilePushAuthNsec)
         mobilePushRuntime.unregisterStoredSubscription(state: state, ownerNsec: (storedAccountBundle ?? secretStore.load())?.mobilePushAuthNsec)
 #endif
@@ -2955,9 +2957,7 @@ final class AppManager: ObservableObject {
         if logoutIfCurrentDeviceRevoked(reconciledState) {
             return
         }
-#if os(iOS)
-        openPendingPushChatIfReady()
-#endif
+        openPendingNotificationChatIfReady()
         postDesktopNotifications(from: oldState, to: reconciledState)
         syncCurrentDeviceLabelsIfNeeded(state: reconciledState)
         rememberCurrentChatIfPresent()
@@ -3539,7 +3539,7 @@ final class AppManager: ObservableObject {
             openChatId: routerOpenChatId(router: nextState.router)
         )
         for candidate in candidates {
-            desktopNotifications.post(title: candidate.title, body: candidate.body)
+            desktopNotifications.post(chatID: candidate.chatId, title: candidate.title, body: candidate.body)
         }
     }
 
@@ -3820,11 +3820,7 @@ private func chatIDs(fromPushPayloadJson payloadJson: String) -> [String] {
         "conversation_id",
         "conversationId",
         "thread_id",
-        "threadId",
-        "sender_pubkey",
-        "senderPubkey",
-        "author_pubkey",
-        "authorPubkey"
+        "threadId"
     ].forEach { key in
         append(normalizedPushString(object[key]))
     }
@@ -3835,6 +3831,9 @@ private func chatIDs(fromPushPayloadJson payloadJson: String) -> [String] {
         "groupChatId"
     ].forEach { key in
         appendGroup(normalizedPushString(object[key]))
+    }
+    ["sender_pubkey", "senderPubkey", "author_pubkey", "authorPubkey"].forEach { key in
+        append(normalizedPushString(object[key]))
     }
 
     return result

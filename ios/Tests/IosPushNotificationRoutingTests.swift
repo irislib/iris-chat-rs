@@ -5,6 +5,18 @@ import XCTest
 
 final class IosPushNotificationRoutingTests: XCTestCase {
     @MainActor
+    func testGroupPushTapPrefersGroupOverSenderButExplicitChatWins() async {
+        let rust = MockRustApp(state: makeAppState(rev: 1, account: makeAuthorizedAccount()))
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), environment: [:])
+        manager.handlePushNotificationTap(userInfo: ["group_id": "team", "sender_pubkey": "sender", "body": "Hello"])
+        let groupOpened = await waitUntil { self.openedChatIDs(in: rust.dispatchedActions) == ["group:team"] }
+        XCTAssertTrue(groupOpened)
+        manager.handlePushNotificationTap(userInfo: ["chat_id": "explicit", "group_id": "team", "sender_pubkey": "sender"])
+        let explicitOpened = await waitUntil { self.openedChatIDs(in: rust.dispatchedActions) == ["group:team", "explicit"] }
+        XCTAssertTrue(explicitOpened)
+    }
+
+    @MainActor
     func testPushTapBeforeRestoreWaitsForAuthorizationAndOpensOnlyOnce() async throws {
         let dataDir = makeDataDir()
         defer { try? FileManager.default.removeItem(at: dataDir) }
