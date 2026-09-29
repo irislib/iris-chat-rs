@@ -1,3 +1,5 @@
+#[path = "calls/screen_share.rs"]
+mod screen_share;
 use crate::app_manager::AppManager;
 use adw::prelude::*;
 use gtk::{gdk, gio, glib};
@@ -20,6 +22,11 @@ pub struct Calls {
     mute: gtk::Button,
     camera: gtk::Button,
     audio: gtk::MenuButton,
+    share: gtk::Button,
+    screen: Option<screen_share::Capture>,
+    screen_selection: Option<Rc<screen_share::Selection>>,
+    camera_before_sharing: bool,
+    video_override: Option<bool>,
     microphones: gtk::ComboBoxText,
     speakers: gtk::ComboBoxText,
     audio_error: gtk::Label,
@@ -68,6 +75,7 @@ impl Calls {
         end.add_css_class("destructive-action");
         let mute = gtk::Button::with_label("Mute");
         let camera = gtk::Button::with_label("Camera off");
+        let share = gtk::Button::with_label("Share screen");
         let audio = gtk::MenuButton::builder().label("Audio").build();
         let audio_popover = gtk::Popover::new();
         let audio_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -93,6 +101,7 @@ impl Calls {
             row.append(b);
         }
         row.insert_child_after(&audio, Some(&mute));
+        row.insert_child_after(&share, Some(&camera));
         column.append(&row);
         window.set_child(Some(&column));
         let calls = Rc::new(RefCell::new(Self {
@@ -108,6 +117,11 @@ impl Calls {
             mute: mute.clone(),
             camera: camera.clone(),
             audio,
+            share: share.clone(),
+            screen: None,
+            screen_selection: None,
+            camera_before_sharing: false,
+            video_override: None,
             microphones: microphones.clone(),
             speakers: speakers.clone(),
             audio_error,
@@ -119,6 +133,12 @@ impl Calls {
             media: None,
             tone: None,
         }));
+        let weak = Rc::downgrade(&calls);
+        share.connect_clicked(move |_| {
+            if let Some(calls) = weak.upgrade() {
+                Self::choose_screen(&calls);
+            }
+        });
         for selector in [microphones, speakers] {
             let weak = Rc::downgrade(&calls);
             selector.connect_changed(move |_| {
@@ -167,6 +187,127 @@ impl Calls {
         });
         calls
     }
+    fn choose_screen(calls: &Rc<RefCell<Self>>) {
+        let (selection, window, id) = {
+            let mut calls = calls.borrow_mut();
+            if calls.screen.is_some() {
+                calls.stop_screen(true);
+                return;
+            }
+            if calls.screen_selection.is_some() {
+                return;
+            }
+            let Some(call) = calls
+                .call
+                .as_ref()
+                .filter(|call| call.phase == "connected" && call.video_capable)
+            else {
+                return;
+            };
+            let id = call.call_id.clone();
+            let selection = Rc::new(screen_share::Selection::default());
+            calls.screen_selection = Some(selection.clone());
+            calls.share.set_label("Choosing…");
+            calls.share.set_sensitive(false);
+            (selection, calls.window.clone(), id)
+        };
+        let weak = Rc::downgrade(calls);
+        glib::MainContext::default().spawn_local(async move {
+            let result = screen_share::choose(&window, selection.clone()).await;
+            let Some(calls) = weak.upgrade() else { return };
+            let mut calls = calls.borrow_mut();
+            if !calls
+                .screen_selection
+                .as_ref()
+                .is_some_and(|current| Rc::ptr_eq(current, &selection))
+                || !calls
+                    .call
+                    .as_ref()
+                    .is_some_and(|call| call.call_id == id && call.phase == "connected")
+            {
+                return;
+            }
+            calls.screen_selection = None;
+            calls.share.set_sensitive(true);
+            calls.share.set_label("Share screen");
+            match result {
+                Ok(Some(capture)) => {
+                    let Some(media) = calls.media.clone() else {
+                        return;
+                    };
+                    let call = calls.call.clone().unwrap();
+                    calls.camera_before_sharing = call.video;
+                    media.set_external_video(true);
+                    media.configure(
+                        call.muted,
+                        true,
+                        call.target_bitrate_bps,
+                        call.key_frame_generation,
+                    );
+                    match capture.start(media.clone()) {
+                        Ok(()) => {
+                            calls.video_override = Some(true);
+                            calls.screen = Some(capture);
+                            calls.share.set_label("Stop sharing");
+                            calls.camera.set_sensitive(false);
+                            calls
+                                .manager
+                                .dispatch(AppAction::SetCallVideoEnabled { enabled: true });
+                        }
+                        Err(message) => {
+                            media.configure(
+                                call.muted,
+                                call.video,
+                                call.target_bitrate_bps,
+                                call.key_frame_generation,
+                            );
+                            media.set_external_video(false);
+                            calls.screen_error(&message);
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(message) => calls.screen_error(&message),
+            }
+        });
+    }
+    fn screen_error(&self, message: &str) {
+        let dialog = adw::AlertDialog::builder()
+            .heading("Couldn’t share screen")
+            .body(message)
+            .build();
+        dialog.add_response("close", "Close");
+        dialog.present(Some(&self.window));
+    }
+    fn stop_screen(&mut self, restore_camera: bool) {
+        if let Some(selection) = self.screen_selection.take() {
+            selection.cancel();
+        }
+        if self.screen.take().is_some() && restore_camera {
+            if let (Some(media), Some(call)) = (&self.media, &self.call) {
+                if call.phase == "connected" {
+                    self.video_override = Some(self.camera_before_sharing);
+                    media.configure(
+                        call.muted,
+                        self.camera_before_sharing,
+                        call.target_bitrate_bps,
+                        call.key_frame_generation,
+                    );
+                    self.manager.dispatch(AppAction::SetCallVideoEnabled {
+                        enabled: self.camera_before_sharing,
+                    });
+                }
+            }
+        }
+        if restore_camera {
+            if let Some(media) = &self.media {
+                media.set_external_video(false);
+            }
+        }
+        self.share.set_label("Share screen");
+        self.share.set_sensitive(true);
+        self.camera.set_sensitive(true);
+    }
     fn action(&mut self, action: u8) {
         let Some(call) = self.call.clone() else {
             return;
@@ -206,7 +347,7 @@ impl Calls {
             self.remote.set_paintable(gdk::Paintable::NONE);
         }
         self.call = call;
-        let Some(call) = self.call.as_ref() else {
+        let Some(call) = self.call.clone() else {
             self.stop();
             self.window.set_visible(false);
             return;
@@ -261,6 +402,8 @@ impl Calls {
         self.mute
             .set_label(if call.muted { "Unmute" } else { "Mute" });
         self.camera.set_visible(connected && call.video_capable);
+        self.camera.set_sensitive(self.screen.is_none());
+        self.share.set_visible(connected && call.video_capable);
         self.camera.set_label(if call.video {
             "Camera off"
         } else {
@@ -276,15 +419,21 @@ impl Calls {
             tone.stop();
         }
         if connected {
+            if self.video_override == Some(call.video) {
+                self.video_override = None;
+            }
             let media = self.media.get_or_insert_with(DesktopCallMedia::new);
             media.configure(
                 call.muted,
-                call.video,
+                self.video_override.unwrap_or(call.video),
                 call.target_bitrate_bps,
                 call.key_frame_generation,
             );
-        } else if let Some(media) = self.media.take() {
-            media.stop();
+        } else {
+            self.stop_screen(false);
+            if let Some(media) = self.media.take() {
+                media.stop();
+            }
         }
         if changed {
             self.window.present();
@@ -325,6 +474,14 @@ impl Calls {
         }
     }
     fn poll(&mut self) {
+        if self
+            .screen
+            .as_ref()
+            .is_some_and(|capture| capture.finished())
+        {
+            self.stop_screen(true);
+        }
+
         if self
             .call
             .as_ref()
@@ -418,6 +575,8 @@ impl Calls {
         }
     }
     fn stop(&mut self) {
+        self.stop_screen(false);
+        self.video_override = None;
         self.audio_devices = None;
         self.microphones.remove_all();
         self.speakers.remove_all();
@@ -440,6 +599,7 @@ impl Calls {
 
 #[cfg(feature = "ui-tests")]
 pub fn verify_ui(manager: Rc<AppManager>) {
+    screen_share::verify_capture_ui();
     let parent = adw::ApplicationWindow::builder().title("Call test").build();
     let calls = Calls::new(&parent, manager);
     let mut call = CallSnapshot {

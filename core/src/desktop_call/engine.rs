@@ -24,6 +24,7 @@ use std::{
 struct Settings {
     muted: bool,
     video: bool,
+    external_video: bool,
     bitrate: u32,
     key: u32,
     generation: u64,
@@ -39,6 +40,7 @@ struct Shared {
     settings: Mutex<Settings>,
     output: Mutex<VecDeque<(u64, DesktopCallEvent)>>,
     force_key: AtomicBool,
+    external_frame: Mutex<Option<image::RgbImage>>,
     audio_selection: Mutex<AudioSelection>,
     audio_devices: Mutex<DesktopAudioDevices>,
 }
@@ -96,12 +98,14 @@ impl Engine {
             settings: Mutex::new(Settings {
                 muted: true,
                 video: false,
+                external_video: false,
                 bitrate: 1_200_000,
                 key: 0,
                 generation: 0,
             }),
             output: Mutex::new(VecDeque::new()),
             force_key: AtomicBool::new(true),
+            external_frame: Mutex::new(None),
             audio_selection: Mutex::new(AudioSelection::default()),
             audio_devices: Mutex::new(DesktopAudioDevices::default()),
         });
@@ -139,6 +143,52 @@ impl Engine {
             s.video = video;
             s.bitrate = bitrate.clamp(100_000, 10_000_000);
             s.key = key;
+        }
+    }
+    pub(super) fn set_external_video(&self, enabled: bool) {
+        if let Ok(mut settings) = self.shared.settings.lock() {
+            if settings.external_video != enabled {
+                settings.external_video = enabled;
+                settings.generation = settings.generation.wrapping_add(1);
+                self.shared.force_key.store(true, Ordering::Release);
+                if let Ok(mut frame) = self.shared.external_frame.lock() {
+                    *frame = None;
+                }
+            }
+        }
+    }
+    pub(super) fn submit_video_frame(&self, width: u32, height: u32, rgba: Vec<u8>) {
+        // Capture is untrusted in dimensions and bounded to one newest frame.
+        if width == 0
+            || height == 0
+            || width > 8192
+            || height > 8192
+            || u64::from(width) * u64::from(height) > 16_777_216
+            || rgba.len() as u64 != u64::from(width) * u64::from(height) * 4
+        {
+            return;
+        }
+        let Some(initial) = self.shared.settings() else {
+            return;
+        };
+        if !initial.external_video || self.shared.stopped.load(Ordering::Acquire) {
+            return;
+        }
+        let Some(image) = image::RgbaImage::from_raw(width, height, rgba) else {
+            return;
+        };
+        let rgb = image::DynamicImage::ImageRgba8(image).into_rgb8();
+        let Ok(settings) = self.shared.settings.lock() else {
+            return;
+        };
+        if settings.generation != initial.generation
+            || !settings.external_video
+            || self.shared.stopped.load(Ordering::Acquire)
+        {
+            return;
+        }
+        if let Ok(mut frame) = self.shared.external_frame.lock() {
+            *frame = Some(rgb);
         }
     }
     pub(super) fn audio_devices(&self) -> DesktopAudioDevices {
@@ -226,6 +276,9 @@ impl Engine {
     }
     pub(super) fn stop(&self) {
         self.shared.stopped.store(true, Ordering::Release);
+        if let Ok(mut frame) = self.shared.external_frame.lock() {
+            *frame = None;
+        }
         if let Ok(mut out) = self.shared.output.lock() {
             out.clear();
         }
@@ -271,35 +324,51 @@ fn run_camera(shared: Arc<Shared>) {
             thread::sleep(Duration::from_millis(20));
             continue;
         }
-        if camera.is_none() {
-            let format = RequestedFormat::new::<RgbFormat>(RequestedFormatType::None);
-            match Camera::new(CameraIndex::Index(0), format).and_then(|mut c| {
-                if let Ok(formats) = c.compatible_camera_formats() {
-                    if let Some(format) = camera_format(&formats) {
-                        c.set_camera_requset(RequestedFormat::new::<RgbFormat>(
-                            RequestedFormatType::Exact(format),
-                        ))?;
+        let rgb = if s.external_video {
+            if let Some(mut old) = camera.take() {
+                let _ = old.stop_stream();
+            }
+            let frame = shared
+                .external_frame
+                .lock()
+                .ok()
+                .and_then(|mut frame| frame.take());
+            let Some(frame) = frame else {
+                thread::sleep(Duration::from_millis(10));
+                continue;
+            };
+            frame
+        } else {
+            if camera.is_none() {
+                let format = RequestedFormat::new::<RgbFormat>(RequestedFormatType::None);
+                match Camera::new(CameraIndex::Index(0), format).and_then(|mut c| {
+                    if let Ok(formats) = c.compatible_camera_formats() {
+                        if let Some(format) = camera_format(&formats) {
+                            c.set_camera_requset(RequestedFormat::new::<RgbFormat>(
+                                RequestedFormatType::Exact(format),
+                            ))?;
+                        }
+                    }
+                    c.open_stream()?;
+                    Ok(c)
+                }) {
+                    Ok(c) => camera = Some(c),
+                    Err(_) => {
+                        shared.fail("Couldn’t open the camera.");
+                        return;
                     }
                 }
-                c.open_stream()?;
-                Ok(c)
-            }) {
-                Ok(c) => camera = Some(c),
+            }
+            let Some(cam) = camera.as_mut() else { continue };
+            match cam
+                .frame()
+                .and_then(|frame| frame.decode_image::<RgbFormat>())
+            {
+                Ok(frame) => frame,
                 Err(_) => {
-                    shared.fail("Couldn’t open the camera.");
+                    shared.fail("Couldn’t read the camera.");
                     return;
                 }
-            }
-        }
-        let Some(cam) = camera.as_mut() else { continue };
-        let rgb = match cam
-            .frame()
-            .and_then(|frame| frame.decode_image::<RgbFormat>())
-        {
-            Ok(frame) => frame,
-            Err(_) => {
-                shared.fail("Couldn’t read the camera.");
-                return;
             }
         };
         let (w, h, fps) = video::settings(s.bitrate, rgb.width(), rgb.height());
@@ -760,6 +829,88 @@ fn run_audio(shared: &Arc<Shared>, incoming: flume::Receiver<Incoming>) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn external_screen_frames_use_the_real_h264_pipeline_without_camera_or_audio_changes() {
+        let e = Engine::create(false);
+        e.configure(true, false, 500_000, 1);
+        e.set_external_video(true);
+        assert!(e.shared.settings().unwrap().muted);
+        e.configure(true, true, 500_000, 1);
+        let worker = {
+            let state = e.shared.clone();
+            thread::spawn(move || run_camera(state))
+        };
+        e.submit_video_frame(64, 32, [40, 120, 220, 255].repeat(64 * 32));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut encoded = None;
+        while encoded.is_none() && Instant::now() < deadline {
+            for event in e.poll() {
+                if let DesktopCallEvent::Encoded {
+                    kind: 2,
+                    data,
+                    key_frame,
+                    ..
+                } = event
+                {
+                    encoded = Some((data, key_frame));
+                }
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        e.stop();
+        worker.join().unwrap();
+        let (data, key) = encoded.expect("screen pixels must reach H.264 output");
+        assert!(key);
+        let mut decoder = openh264::decoder::Decoder::new().unwrap();
+        let frame = decoder
+            .decode(&data)
+            .unwrap()
+            .expect("normal call decoder accepts screen share");
+        use openh264::formats::YUVSource;
+        assert_eq!(frame.dimensions(), (64, 32));
+        assert!(e.shared.settings().unwrap().muted);
+        assert!(e.poll().is_empty());
+    }
+
+    #[test]
+    fn screen_source_switch_discards_old_pixels_and_rejects_invalid_or_late_frames() {
+        let e = Engine::create(false);
+        e.configure(false, true, 150_000, 1);
+        let camera_generation = e.shared.settings().unwrap().generation;
+        e.shared.emit(
+            camera_generation,
+            DesktopCallEvent::Video {
+                local: true,
+                width: 2,
+                height: 2,
+                rgba: vec![0; 16],
+            },
+        );
+        e.set_external_video(true);
+        assert!(e.poll().is_empty());
+        e.submit_video_frame(2, 2, vec![1; 15]);
+        assert!(e.shared.external_frame.lock().unwrap().is_none());
+        e.submit_video_frame(2, 2, vec![1; 16]);
+        e.submit_video_frame(2, 2, vec![2; 16]);
+        assert_eq!(
+            e.shared
+                .external_frame
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .as_raw(),
+            &vec![2; 12]
+        );
+        e.set_external_video(false);
+        e.submit_video_frame(2, 2, vec![3; 16]);
+        assert!(e.shared.external_frame.lock().unwrap().is_none());
+        assert!(!e.shared.settings().unwrap().muted);
+        e.set_external_video(true);
+        e.stop();
+        e.submit_video_frame(2, 2, vec![4; 16]);
+        assert!(e.shared.external_frame.lock().unwrap().is_none());
+    }
     #[test]
     fn audio_switch_discards_old_capture_and_rejects_stale_device_choices() {
         let e = Engine::create(false);

@@ -19,6 +19,8 @@ glib = "0.20"
 gio = "0.20"
 async-channel = "2"
 gstreamer = "0.23"
+gstreamer-app = "0.23"
+gstreamer-video = "0.23"
 base64 = "0.22"
 tempfile = "3"
 serde = { version = "1", features = ["derive"] }
@@ -37,7 +39,7 @@ maintainer = "Iris <hi@iris.to>"
 copyright = "Iris"
 extended-description = "Iris Chat — encrypted Nostr messenger."
 section = "net"
-depends = "$auto, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-libav"
+depends = "$auto, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-libav, gstreamer1.0-pipewire"
 priority = "optional"
 assets = [
     ["../DESKTOP_MEDIA_LICENSES.txt", "usr/share/doc/iris-chat/DESKTOP_MEDIA_LICENSES.txt", "644"],

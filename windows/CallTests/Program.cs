@@ -67,6 +67,7 @@ internal static class Program
             Check(microphones.Items.Count==1 && microphones.SelectedValue?.ToString()=="","Hotplug refresh removes unplugged headset");
             manager.Calls.Update(null);Pump();
             Check(view.Visibility==Visibility.Collapsed,"Logout removes call UI");
+            ScreenShareTests.Run(manager, window, call);
             NotificationNavigationTests.Run(manager, output);
             AttachmentCacheTests.Run();
             Console.WriteLine("PASS: WPF incoming, decline, stale-state device privacy, ended, audio selectors, hotplug, and logout");

@@ -74,6 +74,21 @@ impl DesktopCallMedia {
         #[cfg(not(feature = "desktop-media"))]
         let _ = (muted, video, bitrate, key_generation);
     }
+    /// Select a platform-owned screen capture source instead of the camera.
+    /// The platform must obtain explicit user consent before enabling this.
+    pub fn set_external_video(&self, enabled: bool) {
+        #[cfg(feature = "desktop-media")]
+        self.engine.set_external_video(enabled);
+        #[cfg(not(feature = "desktop-media"))]
+        let _ = enabled;
+    }
+    /// Supplies RGBA pixels to the existing bounded H.264 video worker.
+    pub fn submit_video_frame(&self, width: u32, height: u32, rgba: Vec<u8>) {
+        #[cfg(feature = "desktop-media")]
+        self.engine.submit_video_frame(width, height, rgba);
+        #[cfg(not(feature = "desktop-media"))]
+        let _ = (width, height, rgba);
+    }
     /// Device discovery and switching run on the audio worker, never on the UI thread.
     pub fn audio_devices(&self) -> DesktopAudioDevices {
         #[cfg(feature = "desktop-media")]

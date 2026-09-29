@@ -1,6 +1,9 @@
 using System;
 using System.Linq;
 using System.Windows.Threading;
+using System.Windows;
+using System.Windows.Interop;
+using System.Threading.Tasks;
 using IrisChat.Bindings;
 
 namespace IrisChat;
@@ -13,6 +16,55 @@ public sealed class CallController : IDisposable
     private DesktopCallMedia? _media;
     private DesktopCallTone? _tone;
     private string? _ending;
+    private ScreenCapture? _screen;
+    internal Func<IntPtr, Task<Windows.Graphics.Capture.GraphicsCaptureItem?>> ScreenPicker { get; set; } = ScreenCapture.PickAsync;
+    private long _screenRequest;
+    private bool _cameraBeforeSharing;
+    private bool? _videoOverride;
+    public bool SharingScreen => _screen != null;
+    public bool ChoosingScreen { get; private set; }
+    public async Task ToggleScreenShareAsync(Window window)
+    {
+        if (_screen != null) { StopScreenShare(true); return; }
+        if (ChoosingScreen || Call is not { phase: "connected", videoCapable: true } call || _media == null) return;
+        var request = ++_screenRequest;
+        ChoosingScreen = true; Changed?.Invoke();
+        try
+        {
+            var item = await ScreenPicker(new WindowInteropHelper(window).Handle);
+            if (item == null || request != _screenRequest || Call?.callId != call.callId || Call.phase != "connected" || _media == null) return;
+            var media = _media;
+            var capture = new ScreenCapture(item, (width, height, bytes) => media.SubmitVideoFrame(width, height, bytes),
+                () => _timer.Dispatcher.BeginInvoke(() => { if (request == _screenRequest) StopScreenShare(true); }));
+            _cameraBeforeSharing = Call.video;
+            _screen = capture;
+            media.SetExternalVideo(true);
+            _videoOverride = true;
+            media.Configure(Call.muted, true, Call.targetBitrateBps, Call.keyFrameGeneration);
+            try { capture.Start(); }
+            catch { StopScreenShare(true); throw; }
+            _manager.DispatchCall(new AppAction.SetCallVideoEnabled(true));
+        }
+        catch (Exception) { if (Call?.callId == call.callId && Call.phase == "connected" && _ending != call.callId) _manager.ShowToast("Couldn’t share the screen."); }
+        finally { if (request == _screenRequest) { ChoosingScreen = false; Changed?.Invoke(); } }
+    }
+    private void StopScreenShare(bool restoreCamera)
+    {
+        ++_screenRequest;
+        ChoosingScreen = false;
+        var screen = _screen; _screen = null;
+        screen?.Dispose();
+        if (screen != null && restoreCamera && Call is { phase: "connected" } call && _media != null)
+        {
+            _videoOverride = _cameraBeforeSharing;
+            _media.Configure(call.muted, _cameraBeforeSharing, call.targetBitrateBps, call.keyFrameGeneration);
+            _manager.DispatchCall(new AppAction.SetCallVideoEnabled(_cameraBeforeSharing));
+        }
+        // During hangup the media engine is stopped immediately afterward;
+        // do not briefly reopen the camera while dismantling a screen share.
+        if (restoreCamera) _media?.SetExternalVideo(false);
+        if (screen != null) Changed?.Invoke();
+    }
     private DateTime _lastRing;
     private DateTime _lastAudioDevices;
     public DesktopAudioDevices? AudioDevices { get; private set; }
@@ -41,7 +93,8 @@ public sealed class CallController : IDisposable
         if (call?.phase == "connected" && _ending != call.callId)
         {
             _media ??= new DesktopCallMedia();
-            _media.Configure(call.muted, call.video, call.targetBitrateBps, call.keyFrameGeneration);
+            if (_videoOverride == call.video) _videoOverride = null;
+            _media.Configure(call.muted, _videoOverride ?? call.video, call.targetBitrateBps, call.keyFrameGeneration);
         }
         else StopMedia();
         Changed?.Invoke();
@@ -100,7 +153,7 @@ public sealed class CallController : IDisposable
             }
         }
     }
-    private void StopMedia() { _media?.Stop(); _media?.Dispose(); _media = null; AudioDevices = null; }
+    private void StopMedia() { StopScreenShare(false); _videoOverride = null; _media?.Stop(); _media?.Dispose(); _media = null; AudioDevices = null; }
     private void StopTone() { _tone?.Stop(); _tone?.Dispose(); _tone = null; }
     public void Dispose() { AudioMessagePlayback.SetCallActive(false); _timer.Stop(); StopTone(); StopMedia(); }
 }

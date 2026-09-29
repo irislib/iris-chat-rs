@@ -36,6 +36,10 @@ public partial class CallView : UserControl
         if (!connected) AudioSettings.Visibility = Visibility.Collapsed;
         RefreshAudio();
         Camera.Visibility = Show(connected && c.videoCapable); Camera.Content = c.video ? "Camera off" : "Camera on";
+        Camera.IsEnabled = _calls?.SharingScreen != true;
+        ShareScreen.Visibility = Show(connected && c.videoCapable);
+        ShareScreen.Content = _calls?.SharingScreen == true ? "Stop sharing" : _calls?.ChoosingScreen == true ? "Choosing…" : "Share screen";
+        ShareScreen.IsEnabled = _calls?.ChoosingScreen != true;
         End.Content = c.phase == "ended" ? "Done" : incoming ? "Decline" : "End call";
         LocalVideo.Visibility = Show(connected && c.video); RemoteVideo.Visibility = Show(connected && c.remoteVideo);
     }
@@ -72,6 +76,10 @@ public partial class CallView : UserControl
             image.Source = bitmap;
         }
         bitmap.WritePixels(new Int32Rect(0, 0, (int)frame.width, (int)frame.height), bytes, (int)frame.width * 4, 0);
+    }
+    private async void OnShareScreen(object sender, RoutedEventArgs e)
+    {
+        if (_calls != null && Window.GetWindow(this) is {} window) await _calls.ToggleScreenShareAsync(window);
     }
     private void OnAnswer(object sender, RoutedEventArgs e) { if (_calls?.Call is {} c) App.CurrentManager.DispatchCall(new AppAction.AnswerCall(c.callId)); }
     private void OnVoice(object sender, RoutedEventArgs e) { if (_calls?.Call is {} c) App.CurrentManager.DispatchCall(new AppAction.AnswerCallWithVoice(c.callId)); }
