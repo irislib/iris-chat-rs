@@ -69,6 +69,7 @@ pub struct AppManager {
     bootstrap_in_flight: Cell<bool>,
     persisted_restore_in_flight: Cell<bool>,
     pending_navigation_override: RefCell<Option<PendingNavigationOverride>>,
+    notification_routing: RefCell<crate::platform::notifications::NotificationRouting>,
     staged_attachments: RefCell<HashMap<String, Vec<OutgoingAttachment>>>,
     search_ui: RefCell<SearchUiState>,
     client_debug_log: RefCell<Vec<ClientDebugLogEntry>>,
@@ -211,7 +212,7 @@ impl AppManager {
             update_rx: rx,
             update_tx_ui,
             secret_store,
-            data_dir,
+            data_dir: data_dir.clone(),
             nearby,
             nearby_update_rx: nearby_rx,
             nearby_snapshot: RefCell::new(nearby_snapshot),
@@ -220,6 +221,9 @@ impl AppManager {
             bootstrap_in_flight: Cell::new(persisted_restore_in_flight),
             persisted_restore_in_flight: Cell::new(persisted_restore_in_flight),
             pending_navigation_override: RefCell::new(None),
+            notification_routing: RefCell::new(
+                crate::platform::notifications::NotificationRouting::new(&data_dir),
+            ),
             staged_attachments: RefCell::new(HashMap::new()),
             search_ui: RefCell::new(SearchUiState::default()),
             client_debug_log: RefCell::new(Vec::new()),
@@ -387,6 +391,48 @@ impl AppManager {
         );
     }
 
+    pub fn receive_notification_chat(&self, payload: &str) {
+        if self.automatic_revocation_logout_in_flight.get() {
+            return;
+        }
+        let accepted = self.notification_routing.borrow_mut().receive(payload);
+        if accepted {
+            self.open_pending_notification_chat();
+        }
+    }
+
+    pub fn notification_target(
+        &self,
+        chat_id: &str,
+    ) -> Option<crate::platform::notifications::NotificationTarget> {
+        let state = self.local_state.borrow();
+        let account = state.account.as_ref()?;
+        Some(
+            self.notification_routing
+                .borrow_mut()
+                .target(&account.public_key_hex, chat_id),
+        )
+    }
+
+    fn open_pending_notification_chat(&self) {
+        let state = self.current_state();
+        if state.account.as_ref().is_some_and(|account| {
+            account.authorization_state != DeviceAuthorizationState::Authorized
+        }) {
+            return;
+        }
+        let chat_id = self.notification_routing.borrow_mut().take(
+            state
+                .account
+                .as_ref()
+                .map(|account| account.public_key_hex.as_str()),
+            &state.chat_list,
+        );
+        if let Some(chat_id) = chat_id {
+            self.dispatch(AppAction::OpenChat { chat_id });
+        }
+    }
+
     pub fn apply_update(&self, update: AppUpdate) -> Option<AppUpdate> {
         match update {
             AppUpdate::FullState(state) => {
@@ -409,7 +455,8 @@ impl AppManager {
                 }
                 self.settle_bootstrap_if_needed(&reconciled);
                 self.sync_current_device_labels_if_needed(&reconciled);
-                Some(AppUpdate::FullState(reconciled))
+                self.open_pending_notification_chat();
+                Some(AppUpdate::FullState(self.current_state()))
             }
             other => Some(other),
         }
@@ -744,15 +791,19 @@ impl AppManager {
 
     #[allow(dead_code)]
     pub fn logout(&self) {
+        self.notification_routing.borrow_mut().clear_pending();
         self.automatic_revocation_logout_in_flight.set(true);
         if !self.secret_store.clear() {
             self.automatic_revocation_logout_in_flight.set(false);
             self.show_toast(SECRET_CLEAR_FAILURE_TOAST);
             return;
         }
+        crate::widgets::image_cache::clear();
         self.dispatch_to_rust(AppAction::Logout, false);
         let _ = std::fs::remove_dir_all(&self.data_dir);
         let _ = std::fs::create_dir_all(&self.data_dir);
+        self.notification_routing.borrow_mut().invalidate();
+        self.staged_attachments.borrow_mut().clear();
     }
 
     fn logout_if_current_device_revoked(&self, state: &AppState) -> bool {

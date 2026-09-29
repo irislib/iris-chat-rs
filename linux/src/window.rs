@@ -17,15 +17,13 @@ use crate::widgets::image_cache;
 mod content;
 use content::Content;
 
-const APP_ID: &str = "to.iris.chat";
-
-pub fn build_ui(app: &adw::Application, present_on_create: bool) {
+pub fn build_ui(app: &adw::Application, present_on_create: bool) -> Option<Rc<AppManager>> {
     if let Some(window) = app
         .active_window()
         .or_else(|| app.windows().into_iter().next())
     {
         window.present();
-        return;
+        return None;
     }
 
     let manager = Rc::new(AppManager::new());
@@ -277,6 +275,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
                             &prev_chat_list,
                             &slot,
                             manager_for_updates.window_active(),
+                            &manager_for_updates,
                         );
                     }
                 }
@@ -344,6 +343,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
     if present_on_create {
         window.present();
     }
+    Some(manager)
 }
 
 fn attach_user_activity_tracking(
@@ -657,6 +657,7 @@ fn post_notifications_from_core(
     prev: &[ChatThreadSnapshot],
     state: &AppState,
     window_active: bool,
+    manager: &AppManager,
 ) {
     let open_chat_id = router_open_chat_id(state.router.clone());
     let candidates = decide_pending_notifications(
@@ -667,7 +668,14 @@ fn post_notifications_from_core(
         open_chat_id,
     );
     for candidate in candidates {
-        notifications::notify(APP_ID, &candidate.title, &candidate.body);
+        if let Some(target) = manager.notification_target(&candidate.chat_id) {
+            notifications::notify(
+                &format!("chat-{}", candidate.chat_id),
+                &candidate.title,
+                &candidate.body,
+                &target,
+            );
+        }
     }
 }
 

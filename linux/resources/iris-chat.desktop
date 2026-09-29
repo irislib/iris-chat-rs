@@ -7,3 +7,5 @@ Exec=iris-chat
 Icon=iris-chat
 Terminal=false
 Categories=Network;InstantMessaging;
+DBusActivatable=true
+StartupNotify=true

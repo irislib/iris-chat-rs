@@ -289,11 +289,14 @@ impl Calls {
         if changed {
             self.window.present();
             if incoming {
-                crate::platform::notifications::notify(
-                    "iris-call",
-                    &self.title.text(),
-                    "Incoming call",
-                );
+                if let Some(target) = self.manager.notification_target(&call.chat_id) {
+                    crate::platform::notifications::notify(
+                        "iris-call",
+                        &self.title.text(),
+                        "Incoming call",
+                        &target,
+                    );
+                }
             }
         }
         if !incoming {

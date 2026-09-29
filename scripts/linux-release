@@ -141,7 +141,7 @@ docker run \
       install -m 0644 "resources/iris-chat-${sz}.png" "$BUNDLE/icons/iris-chat-${sz}.png"
     done
 
-    cat > "$BUNDLE/iris-chat.desktop" <<DESKTOP
+    cat > "$BUNDLE/to.iris.chat.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=Iris Chat
@@ -151,6 +151,8 @@ Exec=iris-chat
 Icon=iris-chat
 Terminal=false
 Categories=Network;InstantMessaging;
+DBusActivatable=true
+StartupNotify=true
 DESKTOP
 
     cat > "$BUNDLE/install.sh" <<INSTALL
@@ -158,7 +160,13 @@ DESKTOP
 set -e
 PREFIX="\${1:-/usr/local}"
 install -Dm 0755 "\$(dirname "\$0")/iris-chat" "\$PREFIX/bin/iris-chat"
-install -Dm 0644 "\$(dirname "\$0")/iris-chat.desktop" "\$PREFIX/share/applications/iris-chat.desktop"
+install -Dm 0644 "\$(dirname "\$0")/to.iris.chat.desktop" "\$PREFIX/share/applications/to.iris.chat.desktop"
+mkdir -p "\$PREFIX/share/dbus-1/services"
+cat > "\$PREFIX/share/dbus-1/services/to.iris.chat.service" <<SERVICE
+[D-BUS Service]
+Name=to.iris.chat
+Exec="\$PREFIX/bin/iris-chat" --gapplication-service
+SERVICE
 for sz in 16 22 24 32 48 64 128 256 512; do
   install -Dm 0644 "\$(dirname "\$0")/icons/iris-chat-\${sz}.png" \\
     "\$PREFIX/share/icons/hicolor/\${sz}x\${sz}/apps/iris-chat.png"

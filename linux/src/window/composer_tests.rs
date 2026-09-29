@@ -80,6 +80,7 @@ pub fn run() {
     adw::init().expect("GTK display required; run this test under xvfb-run on Linux");
     let manager = Rc::new(AppManager::new());
     crate::calls::verify_ui(manager.clone());
+    crate::screens::chat::verify_image_clipboard_ui();
     let rx = manager.update_rx();
     let drain = || {
         while let Ok(update) = rx.try_recv() {
@@ -245,13 +246,196 @@ pub fn run() {
         expected
     );
 
+    // Exercise the controller installed on the real chat, including drops over
+    // the message editor. No network send is dispatched by this GTK signal.
+    fn file_drop_target(widget: &gtk::Widget) -> Option<gtk::DropTarget> {
+        let controllers = widget.observe_controllers();
+        for index in 0..controllers.n_items() {
+            if let Some(target) = controllers
+                .item(index)
+                .and_then(|item| item.downcast::<gtk::DropTarget>().ok())
+            {
+                return Some(target);
+            }
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            if let Some(target) = file_drop_target(&widget) {
+                return Some(target);
+            }
+            child = widget.next_sibling();
+        }
+        None
+    }
+    // Exercise the same serialized target accepted by the GApplication action.
+    let notification_chat = manager
+        .current_state()
+        .current_chat
+        .as_ref()
+        .unwrap()
+        .chat_id
+        .clone();
+    let owner = manager
+        .current_state()
+        .account
+        .as_ref()
+        .unwrap()
+        .public_key_hex
+        .clone();
+    let target = manager.notification_target(&notification_chat).unwrap();
+    let payload = serde_json::to_string(&target).unwrap();
+    let mut persisted =
+        crate::platform::notifications::NotificationRouting::new(manager.app_data_dir());
+    assert!(
+        persisted.receive(&payload),
+        "notification survives process restart"
+    );
+    let chats = manager.current_state().chat_list;
+    assert_eq!(
+        persisted.take(None, &chats),
+        None,
+        "wait for account restore"
+    );
+    assert_eq!(
+        persisted.take(Some(&owner), &[]),
+        None,
+        "wait for chat restore"
+    );
+    assert_eq!(
+        persisted.take(Some(&owner), &chats),
+        Some(notification_chat.clone())
+    );
+    assert_eq!(
+        persisted.take(Some(&owner), &chats),
+        None,
+        "one-shot navigation"
+    );
+    assert!(persisted.receive(&payload));
+    assert_eq!(persisted.take(Some(&"0".repeat(64)), &chats), None);
+    assert_eq!(
+        persisted.take(Some(&owner), &chats),
+        None,
+        "account mismatch consumes target"
+    );
+    persisted.receive(&payload);
+    persisted.invalidate();
+    assert!(
+        !persisted.receive(&payload),
+        "logout invalidates old notification"
+    );
+    assert!(!persisted.receive("{}"));
+    manager.dispatch(AppAction::PushScreen {
+        screen: iris_chat_core::Screen::Settings,
+    });
+    assert!(matches!(
+        manager.current_state().router.screen_stack.last(),
+        Some(iris_chat_core::Screen::Settings)
+    ));
+    let actions = gio::SimpleActionGroup::new();
+    let manager_for_notification = manager.clone();
+    crate::platform::notifications::install_open_chat_action(&actions, move |payload| {
+        manager_for_notification.receive_notification_chat(payload);
+    });
+    actions.activate_action("open-notification-chat", Some(&payload.to_variant()));
+    assert_eq!(
+        iris_chat_core::router_open_chat_id(manager.current_state().router),
+        Some(notification_chat.clone()),
+        "production manager dispatches exact chat route"
+    );
+    println!("PASS: Linux notification warm/cold target, pending auth, one-shot and logout/account guards");
+
+    let target = file_drop_target(slot.root.upcast_ref()).expect("whole-chat file drop target");
+    let apply_drop_state = |mut state: AppState| {
+        state.rev = manager.current_state().rev + 1;
+        manager.apply_update(AppUpdate::FullState(state));
+    };
+    let mut eligible = manager.current_state();
+    let chat_id = eligible.current_chat.as_ref().unwrap().chat_id.clone();
+    eligible
+        .current_chat
+        .as_mut()
+        .unwrap()
+        .direct_chat_capability = None;
+    eligible.current_chat.as_mut().unwrap().is_request = false;
+    apply_drop_state(eligible.clone());
+    let first = data.path().join("First.txt");
+    let second = data.path().join("Second.pdf");
+    std::fs::write(&first, "one").unwrap();
+    std::fs::write(&second, "two").unwrap();
+    let files = gtk::gdk::FileList::from_array(&[
+        gio::File::for_path(&first),
+        gio::File::for_path(&second),
+    ]);
+    assert!(target.emit_by_name::<bool>(
+        "drop",
+        &[&glib::BoxedValue(files.to_value()), &0.0f64, &0.0f64]
+    ));
+    let staged = manager.staged_attachments(&chat_id);
+    assert_eq!(
+        staged
+            .iter()
+            .map(|file| file.filename.as_str())
+            .collect::<Vec<_>>(),
+        ["First.txt", "Second.pdf"]
+    );
+    assert_eq!(
+        buffer.text(&buffer.start_iter(), &buffer.end_iter(), true),
+        expected
+    );
+    assert!(find_label(slot.root.upcast_ref(), "First.txt").is_some());
+    assert_eq!(
+        manager
+            .current_state()
+            .current_chat
+            .as_ref()
+            .unwrap()
+            .messages
+            .len(),
+        eligible.current_chat.as_ref().unwrap().messages.len(),
+        "drop must not send"
+    );
+    let folders = gtk::gdk::FileList::from_array(&[gio::File::for_path(data.path())]);
+    assert!(!target.emit_by_name::<bool>(
+        "drop",
+        &[&glib::BoxedValue(folders.to_value()), &0.0f64, &0.0f64]
+    ));
+    let remote =
+        gtk::gdk::FileList::from_array(&[gio::File::for_uri("https://example.com/file.pdf")]);
+    assert!(!target.emit_by_name::<bool>(
+        "drop",
+        &[&glib::BoxedValue(remote.to_value()), &0.0f64, &0.0f64]
+    ));
+    let mut changed = eligible.clone();
+    changed.current_chat.as_mut().unwrap().chat_id = "different-chat".into();
+    apply_drop_state(changed);
+    assert!(!target.emit_by_name::<bool>(
+        "drop",
+        &[&glib::BoxedValue(files.to_value()), &0.0f64, &0.0f64]
+    ));
+    let mut request = eligible.clone();
+    request.current_chat.as_mut().unwrap().is_request = true;
+    apply_drop_state(request);
+    assert!(!target.emit_by_name::<bool>(
+        "drop",
+        &[&glib::BoxedValue(files.to_value()), &0.0f64, &0.0f64]
+    ));
+    apply_drop_state(eligible);
+    println!("PASS: whole-chat file drop stages files, preserves text, rejects folders/URLs/stale chat/request");
+
     if let Some(path) = std::env::var_os("IRIS_UI_TEST_SCREENSHOT") {
         pump_until(|| window.width() > 0 && window.height() > 0);
         let paintable = gtk::WidgetPaintable::new(Some(&window));
-        let snapshot = gtk::Snapshot::new();
-        paintable.snapshot(&snapshot, window.width() as f64, window.height() as f64);
-        let node = snapshot.to_node().expect("rendered chat");
-        let texture = window.renderer().unwrap().render_texture(&node, None);
+        let mut node = None;
+        pump_until(|| {
+            let snapshot = gtk::Snapshot::new();
+            paintable.snapshot(&snapshot, window.width() as f64, window.height() as f64);
+            node = snapshot.to_node();
+            node.is_some()
+        });
+        let texture = window
+            .renderer()
+            .unwrap()
+            .render_texture(node.as_ref().unwrap(), None);
         texture.save_to_png(path).unwrap();
     }
     window.close();

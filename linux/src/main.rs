@@ -148,8 +148,31 @@ fn main() -> glib::ExitCode {
         install_css();
         gtk::Window::set_default_icon_name("iris-chat");
     });
+    let manager = std::rc::Rc::new(std::cell::RefCell::new(
+        None::<std::rc::Rc<app_manager::AppManager>>,
+    ));
+    let active_manager = manager.clone();
     app.connect_activate(move |app| {
-        window::build_ui(app, !start_in_background);
+        if let Some(manager) = window::build_ui(app, !start_in_background) {
+            *active_manager.borrow_mut() = Some(manager);
+        }
+    });
+    let weak_app = app.downgrade();
+    platform::notifications::install_open_chat_action(&app, move |payload| {
+        let Some(app) = weak_app.upgrade() else {
+            return;
+        };
+        // Activation creates the manager on cold start and restores an existing window.
+        app.activate();
+        if let Some(manager) = manager.borrow().as_ref() {
+            manager.receive_notification_chat(payload);
+        }
+        if let Some(window) = app
+            .active_window()
+            .or_else(|| app.windows().into_iter().next())
+        {
+            window.present();
+        }
     });
     app.run()
 }

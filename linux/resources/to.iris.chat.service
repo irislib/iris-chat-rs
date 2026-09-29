@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=to.iris.chat
+Exec=/usr/bin/iris-chat --gapplication-service

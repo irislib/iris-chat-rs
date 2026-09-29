@@ -14,6 +14,8 @@ pub(super) struct Composer {
     attach: gtk::Button,
     progress: gtk::ProgressBar,
     ttl: Rc<Cell<Option<u64>>>,
+    preview_row: gtk::Box,
+    preview_scroll: gtk::ScrolledWindow,
 }
 
 impl Composer {
@@ -233,9 +235,60 @@ impl Composer {
             attach,
             progress,
             ttl,
+            preview_row,
+            preview_scroll,
         };
         composer.update(chat, state);
         composer
+    }
+
+    pub fn file_drop_target(&self, manager: &Rc<AppManager>, chat_id: &str) -> gtk::DropTarget {
+        let target = gtk::DropTarget::new(
+            gtk::gdk::FileList::static_type(),
+            gtk::gdk::DragAction::COPY,
+        );
+        target.set_preload(true);
+        target.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let manager = manager.clone();
+        let chat_id = chat_id.to_owned();
+        let row = self.preview_row.clone();
+        let scroll = self.preview_scroll.clone();
+        let manager_for_hover = manager.clone();
+        let chat_for_hover = chat_id.clone();
+        target.connect_value_notify(move |target| {
+            let valid = can_attach(&manager_for_hover, &chat_for_hover)
+                && target.value().as_ref().and_then(dropped_files).is_some();
+            if let Some(widget) = target.widget() {
+                if valid {
+                    widget.add_css_class("file-drop-target");
+                } else {
+                    widget.remove_css_class("file-drop-target");
+                }
+            }
+        });
+        target.connect_leave(|target| {
+            if let Some(widget) = target.widget() {
+                widget.remove_css_class("file-drop-target");
+            }
+        });
+        target.connect_drop(move |target, value, _, _| {
+            if let Some(widget) = target.widget() {
+                widget.remove_css_class("file-drop-target");
+            }
+            if !can_attach(&manager, &chat_id) {
+                return false;
+            }
+            let Some(files) = dropped_files(value) else {
+                return false;
+            };
+            for attachment in files {
+                manager.stage_attachment(&chat_id, attachment);
+            }
+            rebuild_attachment_previews(&row, &manager, &chat_id);
+            scroll.set_visible(row.first_child().is_some());
+            true
+        });
+        target
     }
 
     pub fn update(&self, chat: &CurrentChatSnapshot, state: &AppState) {
@@ -471,4 +524,50 @@ fn can_send(manager: &AppManager, chat_id: &str) -> bool {
                 matches!(state, iris_chat_core::DirectChatCapabilityState::Available)
             })
         })
+}
+
+// File lists from remote URI drags and directories are not attachments. Reject
+// the entire selection so a partial drop never silently omits a file.
+fn dropped_files(value: &glib::Value) -> Option<Vec<OutgoingAttachment>> {
+    let list = value.get::<gtk::gdk::FileList>().ok()?;
+    let files = list.files();
+    if files.is_empty() {
+        return None;
+    }
+    files
+        .iter()
+        .map(|file| {
+            let path = file.path()?;
+            if !path.is_file() {
+                return None;
+            }
+            Some(OutgoingAttachment {
+                filename: path.file_name()?.to_string_lossy().into_owned(),
+                file_path: path.to_string_lossy().into_owned(),
+            })
+        })
+        .collect()
+}
+
+fn can_attach(manager: &AppManager, chat_id: &str) -> bool {
+    let state = manager.current_state();
+    !state.busy.sending_message
+        && !state.busy.uploading_attachment
+        && state
+            .current_chat
+            .as_ref()
+            .filter(|chat| chat.chat_id == chat_id)
+            .is_some_and(|chat| {
+                !(matches!(chat.kind, iris_chat_core::ChatKind::Direct)
+                    && (chat.is_request || super::is_user_blocked(&state.preferences, chat_id)))
+                    && chat
+                        .direct_chat_capability
+                        .as_ref()
+                        .is_none_or(|capability| {
+                            matches!(
+                                capability,
+                                iris_chat_core::DirectChatCapabilityState::Available
+                            )
+                        })
+            })
 }

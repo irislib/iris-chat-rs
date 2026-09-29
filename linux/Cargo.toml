@@ -51,7 +51,8 @@ assets = [
     ["resources/iris-chat-128.png", "usr/share/icons/hicolor/128x128/apps/iris-chat.png", "644"],
     ["resources/iris-chat-256.png", "usr/share/icons/hicolor/256x256/apps/iris-chat.png", "644"],
     ["resources/iris-chat-512.png", "usr/share/icons/hicolor/512x512/apps/iris-chat.png", "644"],
-    ["resources/iris-chat.desktop", "usr/share/applications/iris-chat.desktop", "644"],
+    ["resources/to.iris.chat.service", "usr/share/dbus-1/services/to.iris.chat.service", "644"],
+    ["resources/iris-chat.desktop", "usr/share/applications/to.iris.chat.desktop", "644"],
 ]
 
 [[test]]

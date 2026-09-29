@@ -10,6 +10,7 @@ pub struct ChatView {
     capability: Option<DirectChatCapabilityState>,
     capability_status: Option<gtk::Widget>,
     composer: Option<composer::Composer>,
+    file_drop_target: Option<gtk::DropTarget>,
     rendered: Option<(CurrentChatSnapshot, PreferencesSnapshot)>,
 }
 
@@ -17,6 +18,13 @@ impl ChatView {
     pub fn new(chat_id: &str) -> Self {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.set_vexpand(true);
+        let css = gtk::CssProvider::new();
+        css.load_from_data(
+            ".file-drop-target { outline: 2px solid @accent_color; outline-offset: -4px; }",
+        );
+        #[allow(deprecated)]
+        root.style_context()
+            .add_provider(&css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
         let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
         body.set_vexpand(true);
         let footer = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -34,6 +42,7 @@ impl ChatView {
             capability: None,
             capability_status: None,
             composer: None,
+            file_drop_target: None,
             rendered: None,
         }
     }
@@ -48,6 +57,10 @@ impl ChatView {
             clear(&self.footer);
             self.clear_capability();
             self.composer = None;
+            if let Some(target) = self.file_drop_target.take() {
+                self.root.remove_controller(&target);
+                self.root.remove_css_class("file-drop-target");
+            }
             self.rendered = None;
             let loading = gtk::Label::new(Some("Loading chat…"));
             loading.add_css_class("dim-label");
@@ -102,12 +115,19 @@ impl ChatView {
         if let Some(gate) = gate {
             clear(&self.footer);
             self.composer = None;
+            if let Some(target) = self.file_drop_target.take() {
+                self.root.remove_controller(&target);
+                self.root.remove_css_class("file-drop-target");
+            }
             self.footer.append(&gate);
         } else if let Some(composer) = &self.composer {
             composer.update(chat, state);
         } else {
             clear(&self.footer);
             let composer = composer::Composer::new(chat, state, manager);
+            let target = composer.file_drop_target(manager, &self.chat_id);
+            self.root.add_controller(target.clone());
+            self.file_drop_target = Some(target);
             self.footer.append(&composer.root);
             self.composer = Some(composer);
         }
