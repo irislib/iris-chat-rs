@@ -1,5 +1,7 @@
 package to.iris.chat.ui.screens
 
+import to.iris.chat.core.AccountImageSession
+
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -969,18 +971,22 @@ internal fun rememberNhashImageData(
         value = it
         return@produceState
     }
-    value =
-        appManager.resolveHashtreePictureBytes(nhash)
-            ?.also { NhashImageDataCache.put(nhash, it) }
+    val generation = AccountImageSession.current()
+    val loaded = appManager.resolveHashtreePictureBytes(nhash)
+    if (AccountImageSession.isCurrent(generation)) {
+        loaded?.let { NhashImageDataCache.put(nhash, it, generation) }
+        value = loaded
+    }
 }
 
-private object NhashImageDataCache {
+internal object NhashImageDataCache {
     private val images = ConcurrentHashMap<String, ByteArray>()
+    init { AccountImageSession.register { images.clear() } }
 
     fun get(nhash: String): ByteArray? = images[nhash]
 
-    fun put(nhash: String, data: ByteArray) {
-        images[nhash] = data
+    fun put(nhash: String, data: ByteArray, generation: Long) {
+        AccountImageSession.ifCurrent(generation) { images[nhash] = data }
     }
 }
 

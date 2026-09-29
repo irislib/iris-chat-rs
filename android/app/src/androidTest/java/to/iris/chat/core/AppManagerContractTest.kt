@@ -1,6 +1,11 @@
 package to.iris.chat.core
 
 import android.content.Context
+import android.graphics.Bitmap
+import to.iris.chat.ui.components.IrisAvatarBitmapCache
+import to.iris.chat.ui.screens.SelectedImageThumbnailCache
+import to.iris.chat.ui.screens.ChatAttachmentPreviewBitmapCache
+import to.iris.chat.ui.screens.NhashImageDataCache
 import android.content.ContextWrapper
 import java.io.File
 import android.os.SystemClock
@@ -601,6 +606,12 @@ class AppManagerContractTest {
         staleFile.writeText("stale")
         val cachedImage = appContext.cacheDir.resolve("private-image.png").apply { writeText("private pixels") }
         val externalCache = appContext.externalCacheDirs.first().resolve("shared-image.png").apply { writeText("shared pixels") }
+        val oldImageSession = AccountImageSession.current()
+        val pixels = Bitmap.createBitmap(2, 1, Bitmap.Config.ARGB_8888)
+        SelectedImageThumbnailCache.put("fixture", pixels, oldImageSession)
+        ChatAttachmentPreviewBitmapCache.put("fixture", pixels, oldImageSession)
+        IrisAvatarBitmapCache.put("fixture", pixels, oldImageSession)
+        NhashImageDataCache.put("fixture", byteArrayOf(1, 2), oldImageSession)
 
         appManager.logout()
 
@@ -617,6 +628,19 @@ class AppManagerContractTest {
         assertEquals("Delivered notifications must be cleared", 1, notificationClearCount)
         assertFalse("Downloaded images must be removed", cachedImage.exists())
         assertFalse("External cached images must be removed", externalCache.exists())
+        assertNull(SelectedImageThumbnailCache.get("fixture"))
+        assertNull(ChatAttachmentPreviewBitmapCache.get("fixture"))
+        assertNull(IrisAvatarBitmapCache.get("fixture"))
+        assertNull(NhashImageDataCache.get("fixture"))
+        assertFalse(SelectedImageThumbnailCache.put("fixture", pixels, oldImageSession))
+        assertFalse(ChatAttachmentPreviewBitmapCache.put("fixture", pixels, oldImageSession))
+        IrisAvatarBitmapCache.put("fixture", pixels, oldImageSession)
+        NhashImageDataCache.put("fixture", byteArrayOf(1, 2), oldImageSession)
+        assertNull(IrisAvatarBitmapCache.get("fixture"))
+        assertNull(NhashImageDataCache.get("fixture"))
+        val currentSession = AccountImageSession.current()
+        assertTrue(SelectedImageThumbnailCache.put("new fixture", pixels, currentSession))
+        assertTrue(ChatAttachmentPreviewBitmapCache.put("new fixture", pixels, currentSession))
         assertNull(appManager.state.value.account)
         assertEquals(secondRust.currentState, appManager.state.value)
         assertTrue(appManager.bootstrapState.value is AccountBootstrapState.NeedsLogin)

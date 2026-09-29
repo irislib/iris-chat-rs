@@ -1,5 +1,6 @@
 package to.iris.chat.ui.screens
 
+import to.iris.chat.core.AccountImageSession
 import android.content.Context
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DropdownMenu
@@ -197,13 +198,13 @@ private fun SelectedImageAttachmentChip(
         mutableStateOf(SelectedImageThumbnailCache.get(attachment.path))
     }
     LaunchedEffect(attachment.path) {
+        val generation = AccountImageSession.current()
         if (bitmap == null) {
             val decoded = withContext(Dispatchers.IO) {
                 decodeStagedImageThumbnail(attachment.path)
             }
             if (decoded != null) {
-                SelectedImageThumbnailCache.put(attachment.path, decoded)
-                bitmap = decoded
+                if (SelectedImageThumbnailCache.put(attachment.path, decoded, generation)) bitmap = decoded
             }
         }
     }
@@ -259,7 +260,7 @@ private fun SelectedImageAttachmentChip(
     }
 }
 
-private object SelectedImageThumbnailCache {
+internal object SelectedImageThumbnailCache {
     private const val MaxCacheKb = 8 * 1024
 
     private val cache =
@@ -270,14 +271,15 @@ private object SelectedImageThumbnailCache {
             ): Int = (value.byteCount / 1024).coerceAtLeast(1)
         }
 
+    init { AccountImageSession.register { cache.evictAll() } }
+
     fun get(key: String): Bitmap? = cache.get(key)
 
     fun put(
         key: String,
         bitmap: Bitmap,
-    ) {
-        cache.put(key, bitmap)
-    }
+        generation: Long,
+    ): Boolean = AccountImageSession.ifCurrent(generation) { cache.put(key, bitmap); true } ?: false
 }
 
 private fun decodeStagedImageThumbnail(path: String): Bitmap? {
@@ -518,7 +520,9 @@ private fun AlbumCell(
         if (localPreviewBitmap == null) {
             localPreviewBitmap = ChatAttachmentPreviewBitmapCache.get(attachment.htreeUrl)
         }
+        val generation = AccountImageSession.current()
         val data = downloadAttachment(attachment)
+        if (!AccountImageSession.isCurrent(generation)) return null
         imageLoading = false
         if (data == null) {
             imageLoadFailed = true
@@ -530,7 +534,7 @@ private fun AlbumCell(
                 imageLoadFailed = true
                 return null
             }
-            ChatAttachmentPreviewBitmapCache.put(attachment.htreeUrl, preview)
+            if (!ChatAttachmentPreviewBitmapCache.put(attachment.htreeUrl, preview, generation)) return null
             localPreviewBitmap = preview
         }
         localImageData = data
@@ -675,7 +679,9 @@ internal fun AttachmentChip(
         if (localPreviewBitmap == null) {
             localPreviewBitmap = ChatAttachmentPreviewBitmapCache.get(attachment.htreeUrl)
         }
+        val generation = AccountImageSession.current()
         val data = downloadAttachment(attachment)
+        if (!AccountImageSession.isCurrent(generation)) return null
         imageLoading = false
         if (data == null) {
             imageLoadFailed = true
@@ -687,7 +693,7 @@ internal fun AttachmentChip(
                 imageLoadFailed = true
                 return null
             }
-            ChatAttachmentPreviewBitmapCache.put(attachment.htreeUrl, preview)
+            if (!ChatAttachmentPreviewBitmapCache.put(attachment.htreeUrl, preview, generation)) return null
             localPreviewBitmap = preview
         }
         localImageData = data
@@ -906,7 +912,7 @@ private fun AttachmentActionRow(
     }
 }
 
-private object ChatAttachmentPreviewBitmapCache {
+internal object ChatAttachmentPreviewBitmapCache {
     private const val MaxCacheKb = 48 * 1024
 
     private val cache =
@@ -917,14 +923,15 @@ private object ChatAttachmentPreviewBitmapCache {
             ): Int = (value.byteCount / 1024).coerceAtLeast(1)
         }
 
+    init { AccountImageSession.register { cache.evictAll() } }
+
     fun get(key: String): Bitmap? = cache.get(key)
 
     fun put(
         key: String,
         bitmap: Bitmap,
-    ) {
-        cache.put(key, bitmap)
-    }
+        generation: Long,
+    ): Boolean = AccountImageSession.ifCurrent(generation) { cache.put(key, bitmap); true } ?: false
 }
 
 private suspend fun decodeChatAttachmentPreviewBitmap(data: ByteArray): Bitmap? =
@@ -1345,6 +1352,7 @@ private fun ImageViewerPage(
             data == null -> CircularProgressIndicator(color = Color.White)
             isAnimated -> AnimatedImageDataView(
                 data = data,
+                onLongPress = { copyMenu = true },
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(18.dp),
@@ -1394,6 +1402,7 @@ private fun shareImageAttachment(context: Context, item: DownloadedImageAttachme
 private fun AnimatedImageDataView(
     data: ByteArray,
     modifier: Modifier = Modifier,
+    onLongPress: (() -> Unit)? = null,
 ) {
     val html = remember(data) { animatedImageHtml(data) }
     AndroidView(
@@ -1408,6 +1417,7 @@ private fun AnimatedImageDataView(
             }
         },
         update = { webView ->
+            webView.setOnLongClickListener { onLongPress?.invoke(); onLongPress != null }
             webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
         },
     )

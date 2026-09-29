@@ -1,5 +1,7 @@
 package to.iris.chat.ui.components
 
+import to.iris.chat.core.AccountImageSession
+
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.text.format.DateUtils
@@ -356,9 +358,11 @@ fun IrisAvatar(
                 value = cached
                 return@produceState
             }
+            val generation = AccountImageSession.current()
             val bitmap = withContext(Dispatchers.Default) { decodeAvatarBitmap(data, targetPx) }
+            if (!AccountImageSession.isCurrent(generation)) return@produceState
             if (bitmap != null) {
-                IrisAvatarBitmapCache.put(key, bitmap)
+                IrisAvatarBitmapCache.put(key, bitmap, generation)
             }
             value = bitmap
         }
@@ -370,15 +374,17 @@ fun IrisAvatar(
         produceState<Bitmap?>(initialValue = null, request, targetPx) {
             value = null
             if (request == null) return@produceState
-            value = withContext(Dispatchers.IO) {
+            val generation = AccountImageSession.current()
+            val loaded = withContext(Dispatchers.IO) {
                 loadHttpImage(
                     request,
                     cached = { url -> IrisAvatarBitmapCache.get(IrisAvatarBitmapCache.urlKey(url, targetPx)) },
                     store = { url, bitmap ->
-                        IrisAvatarBitmapCache.put(IrisAvatarBitmapCache.urlKey(url, targetPx), bitmap)
+                        IrisAvatarBitmapCache.put(IrisAvatarBitmapCache.urlKey(url, targetPx), bitmap, generation)
                     },
                 ) { data -> decodeAvatarBitmap(data, targetPx) }
             }
+            if (AccountImageSession.isCurrent(generation)) value = loaded
         }
     Box(
         modifier =
@@ -440,9 +446,10 @@ private fun avatarSampleSize(
     return sampleSize
 }
 
-private object IrisAvatarBitmapCache {
+internal object IrisAvatarBitmapCache {
     private const val MaxEntries = 160
     private val bitmaps = ConcurrentHashMap<String, android.graphics.Bitmap>()
+    init { AccountImageSession.register { bitmaps.clear() } }
 
     fun get(key: String): android.graphics.Bitmap? = bitmaps[key]
 
@@ -451,10 +458,12 @@ private object IrisAvatarBitmapCache {
 
     fun urlKey(url: String, targetSizePx: Int): String = "url:$targetSizePx:$url"
 
-    fun put(key: String, bitmap: android.graphics.Bitmap) {
-        bitmaps[key] = bitmap
-        if (bitmaps.size > MaxEntries) {
-            bitmaps.keys.firstOrNull()?.let { bitmaps.remove(it) }
+    fun put(key: String, bitmap: android.graphics.Bitmap, generation: Long) {
+        AccountImageSession.ifCurrent(generation) {
+            bitmaps[key] = bitmap
+            if (bitmaps.size > MaxEntries) {
+                bitmaps.keys.firstOrNull()?.let { bitmaps.remove(it) }
+            }
         }
     }
 }

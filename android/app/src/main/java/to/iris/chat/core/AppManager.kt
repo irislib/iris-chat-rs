@@ -1009,9 +1009,10 @@ class AppManager(
         )
     }
 
-    suspend fun downloadAttachment(attachment: MessageAttachmentSnapshot): ByteArray? =
-        withContext(ioDispatcher) {
-            cachedDownloadedAttachment(attachment)?.let { return@withContext it }
+    suspend fun downloadAttachment(attachment: MessageAttachmentSnapshot): ByteArray? {
+        val generation = AccountImageSession.current()
+        return withContext(ioDispatcher) {
+            AccountImageSession.ifCurrent(generation) { cachedDownloadedAttachment(attachment) }?.let { return@withContext it }
 
             val result =
                 downloadHashtreeAttachment(
@@ -1021,11 +1022,12 @@ class AppManager(
                 result.dataBase64
                 ?.takeIf(String::isNotBlank)
                 ?.let { encoded -> Base64.decode(encoded, Base64.NO_WRAP) }
-            if (data != null) {
-                cacheDownloadedAttachment(attachment, data)
+            AccountImageSession.ifCurrent(generation) {
+                if (data != null) cacheDownloadedAttachment(attachment, data)
+                data
             }
-            data
         }
+    }
 
     suspend fun downloadHashtreeBytes(nhash: String): ByteArray? =
         withContext(ioDispatcher) {
@@ -1044,32 +1046,39 @@ class AppManager(
      * disk-backed cache that chat attachments use. Subsequent renders read
      * straight off disk instead of re-fetching from the hashtree network.
      */
-    suspend fun resolveHashtreePictureBytes(nhash: String): ByteArray? =
-        withContext(ioDispatcher) {
+    suspend fun resolveHashtreePictureBytes(nhash: String): ByteArray? {
+        val generation = AccountImageSession.current()
+        return withContext(ioDispatcher) {
             val trimmed = nhash.trim()
             if (trimmed.isEmpty()) {
                 return@withContext null
             }
-            val cacheFile = pictureCacheFile(trimmed)
-            if (cacheFile.isFile) {
-                cacheFile.setLastModified(System.currentTimeMillis())
-                runCatching { cacheFile.readBytes() }.getOrNull()?.let { return@withContext it }
-            }
+            val cacheFile = AccountImageSession.ifCurrent(generation) { pictureCacheFile(trimmed) }
+                ?: return@withContext null
+            AccountImageSession.ifCurrent(generation) {
+                if (cacheFile.isFile) {
+                    cacheFile.setLastModified(System.currentTimeMillis())
+                    runCatching { cacheFile.readBytes() }.getOrNull()
+                } else null
+            }?.let { return@withContext it }
             val result = downloadHashtreeAttachment(nhash = trimmed)
             val data =
                 result.dataBase64
                     ?.takeIf(String::isNotBlank)
                     ?.let { encoded -> Base64.decode(encoded, Base64.NO_WRAP) }
-            if (data != null) {
-                runCatching {
-                    cacheFile.writeBytes(data)
-                    pruneDownloadedAttachmentCache(protectedFile = cacheFile)
-                }.onFailure { error ->
-                    Log.w(TAG, "failed to cache profile picture", error)
+            AccountImageSession.ifCurrent(generation) {
+                if (data != null) {
+                    runCatching {
+                        cacheFile.writeBytes(data)
+                        pruneDownloadedAttachmentCache(protectedFile = cacheFile)
+                    }.onFailure { error ->
+                        Log.w(TAG, "failed to cache profile picture", error)
+                    }
                 }
+                data
             }
-            data
         }
+    }
 
     fun logout() {
         pendingChatLink.clear()
@@ -1763,6 +1772,7 @@ class AppManager(
         val previous = rust
         previous.shutdown()
         clearDeliveredNotifications(appContext)
+        AccountImageSession.clear()
         wipeAppStorage()
         pendingNavigationOverride = null
         lastSyncedDeviceLabelsKey = null
