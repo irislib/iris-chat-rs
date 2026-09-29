@@ -1,5 +1,8 @@
 import XCTest
 import AVFoundation
+#if os(iOS)
+import CallKit
+#endif
 #if os(macOS)
 @testable import IrisChatMac
 #else
@@ -20,6 +23,17 @@ private final class CallMediaProbe: IrisCallMediaHandling {
     }
     func setQuality(_ quality: IrisCallQuality, customKilobits: Int) {}
     func stop() { stopCount += 1 }
+}
+
+@MainActor
+private final class CallToneProbe: IrisCallTonePlaying {
+    var isPlaying = false
+    var numberOfLoops = 0
+    var canPlay = true
+    var playCount = 0
+    var stopCount = 0
+    func play() -> Bool { playCount += 1; isPlaying = canPlay; return canPlay }
+    func stop() { stopCount += 1; isPlaying = false }
 }
 
 final class CallControllerTests: XCTestCase {
@@ -164,6 +178,44 @@ final class CallControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testOutgoingToneRetriesFailedPlaybackWithoutWaitingForAnotherPhase() {
+        let player = CallToneProbe()
+        player.canPlay = false
+        let tones = IrisCallTones(makePlayer: { _ in player })
+        var call = connectedCall(id: "dialing")
+        call.outgoing = true
+        call.phase = "outgoing"
+        tones.update(call)
+        XCTAssertFalse(player.isPlaying)
+        player.canPlay = true
+        tones.update(call)
+        XCTAssertTrue(player.isPlaying)
+        XCTAssertEqual(player.playCount, 2)
+        XCTAssertEqual(player.numberOfLoops, -1)
+        tones.update(nil)
+        XCTAssertFalse(player.isPlaying)
+    }
+
+    @MainActor
+    func testOutgoingToneRecoversStoppedPlayerWithoutRestartingHealthyPlayback() {
+        let player = CallToneProbe()
+        let tones = IrisCallTones(makePlayer: { _ in player })
+        var call = connectedCall(id: "ringing")
+        call.outgoing = true
+        call.phase = "ringing"
+        tones.update(call)
+        tones.update(call)
+        XCTAssertEqual(player.playCount, 1, "Unchanged updates must preserve the ringing cadence")
+        player.isPlaying = false // A route change or interruption stopped playback.
+        tones.update(call)
+        XCTAssertTrue(player.isPlaying)
+        XCTAssertEqual(player.playCount, 2)
+        call.phase = "connected"
+        tones.update(call)
+        XCTAssertFalse(player.isPlaying, "The answered call must stop ringing immediately")
+    }
+
+    @MainActor
     func testCancelOrIncomingCallInvalidatesPendingStart() async {
         for incoming in [false, true] {
             let prompted = expectation(description: "permission prompt")
@@ -215,6 +267,70 @@ final class CallControllerTests: XCTestCase {
     }
 
 #if os(iOS)
+    @MainActor
+    func testOutgoingTonePlaysBeforeCallKitActivationWithoutStartingCapture() {
+        let media = CallMediaProbe()
+        let player = CallToneProbe()
+        let controller = IrisCallController(dispatch: { _ in }, showError: { XCTFail($0) },
+            mediaForTesting: media, tonesForTesting: IrisCallTones(makePlayer: { _ in player }))
+        let provider = CXProvider(configuration: CXProviderConfiguration())
+        let session = AVAudioSession.sharedInstance()
+        controller.provider(provider, didDeactivate: session)
+        var call = connectedCall(id: "before-activation")
+        call.outgoing = true
+        call.phase = "outgoing"
+        controller.update(call)
+        XCTAssertFalse(player.isPlaying, "Wait until the outgoing session is configured")
+        controller.outgoingAudioSessionConfigured()
+        XCTAssertTrue(player.isPlaying)
+        XCTAssertTrue(media.started.isEmpty)
+        XCTAssertTrue(media.configurations.allSatisfy { $0.callID == nil })
+        call.phase = "ringing"
+        controller.update(call)
+        XCTAssertTrue(player.isPlaying)
+        call.phase = "connected"
+        controller.update(call)
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertNil(media.configurations.last?.callID, "Answer alone cannot start capture before CallKit activation")
+        controller.provider(provider, didActivate: session)
+        XCTAssertEqual(media.configurations.last?.callID, call.callId)
+        controller.end()
+    }
+
+    @MainActor
+    func testCallKitDeactivationSuppressesTonesUntilReactivationAndNextCallCanRing() {
+        let player = CallToneProbe()
+        let controller = IrisCallController(dispatch: { _ in }, showError: { XCTFail($0) },
+            mediaForTesting: CallMediaProbe(), tonesForTesting: IrisCallTones(makePlayer: { _ in player }))
+        let provider = CXProvider(configuration: CXProviderConfiguration())
+        let session = AVAudioSession.sharedInstance()
+        controller.provider(provider, didDeactivate: session)
+        var call = connectedCall(id: "first")
+        call.outgoing = true
+        call.phase = "ringing"
+        controller.update(call)
+        controller.outgoingAudioSessionConfigured()
+        XCTAssertTrue(player.isPlaying)
+        controller.provider(provider, didDeactivate: session)
+        XCTAssertFalse(player.isPlaying)
+        let attempts = player.playCount
+        controller.update(call)
+        XCTAssertEqual(player.playCount, attempts, "Snapshot updates cannot restart an interrupted session")
+        controller.provider(provider, didActivate: session)
+        XCTAssertTrue(player.isPlaying)
+        controller.end()
+        XCTAssertFalse(player.isPlaying)
+        controller.update(call)
+        XCTAssertFalse(player.isPlaying, "Stale state after local hangup cannot restart the tone")
+        call.callId = "second"
+        controller.update(call)
+        XCTAssertFalse(player.isPlaying)
+        controller.outgoingAudioSessionConfigured()
+        XCTAssertTrue(player.isPlaying)
+        controller.providerDidReset(provider)
+        XCTAssertFalse(player.isPlaying)
+    }
+
     @MainActor
     func testSecondPushCannotReplaceConnectedCallOrStopItsMedia() {
         let media = CallMediaProbe()

@@ -48,6 +48,7 @@ final class IrisCallController: NSObject, ObservableObject {
     private nonisolated let outgoingSlots = DispatchSemaphore(value: 4)
     private let showError: (String) -> Void
     private var audioActive = true
+    private var toneAudioReady = true
     private var mediaCallID: String?
     private var endingCallID: String?
     private var pendingMuted: Bool?
@@ -55,7 +56,7 @@ final class IrisCallController: NSObject, ObservableObject {
     private var permissionRequestID: UUID?
     private var callPreferences: PreferencesSnapshot?
     private var startDispatched = false
-    private let tones = IrisCallTones()
+    private let tones: IrisCallTones?
     private let permissionAccess: IrisCallPermissions
     private let mediaForTesting: IrisCallMediaHandling?
 #if os(macOS)
@@ -118,11 +119,13 @@ final class IrisCallController: NSObject, ObservableObject {
          showError: @escaping (String) -> Void,
          sendMedia: ((AppAction, @escaping () -> Bool) -> Void)? = nil,
          mediaForTesting: IrisCallMediaHandling? = nil,
+         tonesForTesting: IrisCallTones? = nil,
          permissionAccess: IrisCallPermissions? = nil) {
         self.dispatch = dispatch
         self.showError = showError
         self.sendMedia = sendMedia
         self.mediaForTesting = mediaForTesting
+        self.tones = tonesForTesting ?? (mediaForTesting == nil ? IrisCallTones() : nil)
         self.permissionAccess = permissionAccess ?? IrisCallPermissions()
         super.init()
 #if os(iOS) && !targetEnvironment(simulator)
@@ -136,6 +139,7 @@ final class IrisCallController: NSObject, ObservableObject {
         provider.setDelegate(self, queue: .main)
         self.provider = provider
         audioActive = false
+        toneAudioReady = false
 #endif
     }
 
@@ -194,12 +198,13 @@ final class IrisCallController: NSObject, ObservableObject {
 
     func end() {
 #if os(iOS)
+        toneAudioReady = false
         pendingPushCallID = nil
         pushRecoveryTask?.cancel()
         pushRecoveryTask = nil
 #endif
         startFailed()
-        tones.update(nil)
+        tones?.update(nil)
         guard let call else { return }
         endingCallID = call.callId
         presentedCall = nil
@@ -361,7 +366,7 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
     private func updateHardware() {
-        tones.update(mediaForTesting == nil && audioActive && call?.callId != endingCallID ? call : nil)
+        tones?.update(toneAudioReady && call?.callId != endingCallID ? call : nil)
         let active = call?.phase == "connected" && audioActive && call?.callId != endingCallID
         let id = active ? call?.callId : nil
         mediaCallID = id
@@ -381,6 +386,14 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
 #if os(iOS)
+    func outgoingAudioSessionConfigured() {
+        guard call?.outgoing == true, call?.callId != endingCallID else { return }
+        // Local progress tones can play before CallKit activates call media.
+        // Microphone and camera remain gated by connected + audioActive.
+        toneAudioReady = true
+        updateHardware()
+    }
+
     private func configureAudioSession(video: Bool) throws {
         try AVAudioSession.sharedInstance().setCategory(.playAndRecord,
             mode: video ? .videoChat : .voiceChat, options: [.allowBluetooth])
@@ -447,6 +460,7 @@ final class IrisCallController: NSObject, ObservableObject {
                 fallbackAudioSessionActive = false
                 try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             }
+            toneAudioReady = fallbackAudioSessionActive
             return
         }
         guard let snapshot, snapshot.phase != "ended" else {
@@ -457,9 +471,11 @@ final class IrisCallController: NSObject, ObservableObject {
             systemCallCoreID = nil
             systemConnected = false
             audioActive = false
+            toneAudioReady = false
             return
         }
         if systemCallCoreID != snapshot.callId {
+            toneAudioReady = false
             if let systemCallID { provider.reportCall(with: systemCallID, endedAt: Date(), reason: .remoteEnded) }
             let id = UUID()
             systemCallID = id
@@ -527,6 +543,7 @@ extension IrisCallController: @preconcurrency CXProviderDelegate {
             try configureAudioSession(video: call.videoCapable)
             provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: Date())
             action.fulfill()
+            outgoingAudioSessionConfigured()
         } catch { action.fail(); end() }
     }
 
@@ -555,12 +572,14 @@ extension IrisCallController: @preconcurrency CXProviderDelegate {
 
     func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
         audioActive = true
+        toneAudioReady = true
         if speakerEnabled { try? audioSession.overrideOutputAudioPort(.speaker) }
         updateHardware()
     }
 
     func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
         audioActive = false
+        toneAudioReady = false
         updateHardware()
     }
 }

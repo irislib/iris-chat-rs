@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.telecom.Connection
 import android.telecom.CallAudioState
@@ -48,6 +49,18 @@ class IrisConnectionService : ConnectionService() {
         val call = container.callRuntime.snapshot()?.takeIf { it.phase != "ended" }
             ?: return Connection.createFailedConnection(DisconnectCause(DisconnectCause.CANCELED))
         return object : Connection() {
+            private var legacyAudioReady = false
+            @Suppress("DEPRECATION")
+            override fun onCallAudioStateChanged(state: CallAudioState) {
+                super.onCallAudioStateChanged(state)
+                // Android 8 has no service-focus callbacks. Its initial audio
+                // state arrives after Telecom admits and attaches the call.
+                // Telecom still owns focus; no competing focus request is made.
+                if (Build.VERSION.SDK_INT < 28 && current === this && !legacyAudioReady) {
+                    legacyAudioReady = true
+                    container.callRuntime.telecomFocusChanged(true)
+                }
+            }
             override fun onAnswer() { openCall() }
             override fun onAnswer(videoState: Int) { openCall() }
             override fun onReject() { end() }
