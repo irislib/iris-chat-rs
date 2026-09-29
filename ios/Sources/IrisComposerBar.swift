@@ -18,7 +18,6 @@ struct IrisComposerBar: View {
     @Binding var attachments: [StagedAttachment]
     @State private var showingAttachmentPicker = false
     @State private var showingEmojiPicker = false
-    @State private var isDropTargeted = false
     @State private var isPreparingAttachments = false
     @State private var attachmentTask: Task<Void, Never>?
     #if os(iOS)
@@ -46,6 +45,8 @@ struct IrisComposerBar: View {
     let onStageVoice: (URL) async throws -> [StagedAttachment]
     let onSendVoice: ([StagedAttachment]) -> Bool
     var sendAllowed = true
+    var isPreparingDroppedAttachments = false
+    var onFileDropAvailabilityChange: (Bool) -> Void = { _ in }
     let onSend: (String) -> Void
 
     private var draft: String { composerState.text }
@@ -54,7 +55,7 @@ struct IrisComposerBar: View {
         (
             !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
             !attachments.isEmpty
-        ) && sendAllowed && !isSending && !isUploading && !isPreparingAttachments && !voiceActive
+        ) && sendAllowed && !isSending && !isUploading && !isPreparingAttachments && !isPreparingDroppedAttachments && !voiceActive
     }
 
     private var canSend: Bool { canSend(text: draft) && !voiceActive }
@@ -87,7 +88,7 @@ struct IrisComposerBar: View {
                 .accessibilityIdentifier("chatSelectedAttachments")
             }
 
-            if isPreparingAttachments {
+            if isPreparingAttachments || isPreparingDroppedAttachments {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Adding attachments…")
@@ -130,19 +131,9 @@ struct IrisComposerBar: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chatComposerBar")
         .irisOnChange(of: draft) { _ in onDraftChange() }
-        .overlay {
-            if isDropTargeted {
-                RoundedRectangle(cornerRadius: IrisLayout.inputCornerRadius + 8, style: .continuous)
-                    .stroke(palette.accent.opacity(0.78), lineWidth: 2)
-                    .padding(.horizontal, IrisLayout.usesDesktopChrome ? 8 : 10)
-                    .padding(.vertical, 6)
-            }
-        }
         .frame(maxWidth: .infinity)
-        .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
-            guard !voiceActive, !isPreparingAttachments else { return false }
-            return handleDroppedFiles(providers)
-        }
+        .onAppear { onFileDropAvailabilityChange(canPrepareAttachments) }
+        .irisOnChange(of: canPrepareAttachments) { onFileDropAvailabilityChange($0) }
         .fileImporter(
             isPresented: $showingAttachmentPicker,
             allowedContentTypes: [.item],
@@ -157,6 +148,7 @@ struct IrisComposerBar: View {
             attachmentTask?.cancel()
             attachmentTask = nil
             isPreparingAttachments = false
+            onFileDropAvailabilityChange(false)
         }
         #if os(iOS)
         .onDisappear { voiceSendTask?.cancel(); voiceRecorder.cancel() }
@@ -425,8 +417,13 @@ struct IrisComposerBar: View {
     }
     #endif
 
+    private var canPrepareAttachments: Bool {
+        sendAllowed && !isSending && !isUploading && !voiceActive &&
+            !isPreparingAttachments && !isPreparingDroppedAttachments
+    }
+
     private func prepareAttachments(loadURLs: @escaping () async -> [URL]) {
-        guard !isPreparingAttachments else { return }
+        guard canPrepareAttachments else { return }
         isPreparingAttachments = true
         attachmentTask = Task {
             defer {
@@ -507,38 +504,7 @@ struct IrisComposerBar: View {
         irisComposerUserEditingBinding($composerState.text, onUserEdit: onUserEdit)
     }
 
-    private func handleDroppedFiles(_ providers: [NSItemProvider]) -> Bool {
-        let fileProviders = providers.filter {
-            $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
-        }
-        guard !fileProviders.isEmpty else {
-            return false
-        }
 
-        prepareAttachments {
-            await withCheckedContinuation { continuation in
-                let group = DispatchGroup()
-                let lock = NSLock()
-                var urls: [URL] = []
-                for provider in fileProviders {
-                    group.enter()
-                    provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                        if let url = droppedFileURL(from: item) {
-                            lock.lock()
-                            urls.append(url)
-                            lock.unlock()
-                        }
-                        group.leave()
-                    }
-                }
-                group.notify(queue: .main) {
-                    continuation.resume(returning: urls)
-                }
-            }
-        }
-
-        return true
-    }
 }
 
 enum IrisComposerSubmitResult: Equatable {
@@ -875,26 +841,6 @@ final class IrisComposerNSTextView: NSTextView {
 }
 #endif
 
-func droppedFileURL(from item: NSSecureCoding?) -> URL? {
-    if let url = item as? URL {
-        return url
-    }
-    if let url = item as? NSURL {
-        return url as URL
-    }
-    if let data = item as? Data {
-        if let url = URL(dataRepresentation: data, relativeTo: nil) {
-            return url
-        }
-        if let string = String(data: data, encoding: .utf8) {
-            return URL(string: string.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-    }
-    if let string = item as? String {
-        return URL(string: string.trimmingCharacters(in: .whitespacesAndNewlines))
-    }
-    return nil
-}
 
 struct IrisPrimaryCircleButtonStyle: ButtonStyle {
     @Environment(\.irisPalette) private var palette

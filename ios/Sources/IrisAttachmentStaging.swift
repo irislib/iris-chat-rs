@@ -11,6 +11,10 @@ struct IrisAttachmentStaging: @unchecked Sendable {
     func stage(_ sourceURL: URL) throws -> StagedAttachment {
         let accessed = sourceURL.startAccessingSecurityScopedResource()
         defer { if accessed { sourceURL.stopAccessingSecurityScopedResource() } }
+        guard sourceURL.isFileURL,
+              try sourceURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+            throw CocoaError(.fileReadUnsupportedScheme)
+        }
         let directory = dataDir.appendingPathComponent("attachments", isDirectory: true)
             .appendingPathComponent("outgoing", isDirectory: true)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)

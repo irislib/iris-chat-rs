@@ -125,6 +125,8 @@ struct ChatScreen: View {
 
     @State private var composerState = IrisComposerState()
     @State private var selectedAttachments: [StagedAttachment] = []
+    @State private var fileDropAvailable = false
+    @State private var isPreparingDroppedAttachments = false
     @State private var isNearBottom = true
     @State private var shouldFollowLatest = true
     @State private var forceScrollToLatest = false
@@ -578,17 +580,7 @@ struct ChatScreen: View {
                                                     manager.dispatch(.setChatDraft(chatId: chatId, text: text))
                                                 }
                                             },
-                                            onAttach: { loadURLs in
-                                                do {
-                                                    selectedAttachments.append(
-                                                        contentsOf: try await manager.stageOutgoingAttachmentsAsync(loadURLs)
-                                                    )
-                                                } catch is CancellationError {
-                                                    // Leaving the chat discards an unfinished selection.
-                                                } catch {
-                                                    manager.showAttachmentOpenError()
-                                                }
-                                            },
+                                            onAttach: stageAttachments,
                                             voiceRecordingAllowed: !capabilityBlocked && (manager.state.call == nil || manager.state.call?.phase == "ended"),
                                             onStageVoice: { try await manager.stageOutgoingAttachmentsAsync([$0]) },
                                             onSendVoice: { voice in
@@ -604,7 +596,9 @@ struct ChatScreen: View {
                                                 manager.sendAttachments(chatId: chatId, attachments: voice, caption: caption)
                                                 return true
                                             },
-                                            sendAllowed: !capabilityBlocked
+                                            sendAllowed: !capabilityBlocked,
+                                            isPreparingDroppedAttachments: isPreparingDroppedAttachments,
+                                            onFileDropAvailabilityChange: { fileDropAvailable = $0 }
                                         ) { composerText in
                                             let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
                                             guard !text.isEmpty || !selectedAttachments.isEmpty else { return }
@@ -680,6 +674,11 @@ struct ChatScreen: View {
                 reactorsSelection = nil
             }
         }
+        .modifier(IrisAttachmentDropModifier(
+            enabled: fileDropAvailable && canAttachToCurrentChat,
+            isPreparing: $isPreparingDroppedAttachments,
+            onAttach: stageAttachments
+        ))
         .modifier(MessageRequestSafetyModifier(
             blockTarget: $messageRequestBlockChat,
             reportTarget: $messageRequestReportChat,
@@ -706,6 +705,34 @@ struct ChatScreen: View {
                 .map(\.id)
             guard !incomingIds.isEmpty else { return }
             manager.dispatch(.markMessagesSeen(chatId: chat.chatId, messageIds: incomingIds))
+        }
+    }
+
+    private var canAttachToCurrentChat: Bool {
+        guard let chat, !manager.state.busy.sendingMessage,
+              !manager.state.busy.uploadingAttachment else { return false }
+        if chat.kind == .direct {
+            return !manager.isUserBlocked(chatId) &&
+                (!chat.isRequest || acceptedRequestChatId == chatId) &&
+                (chat.directChatCapability == nil || chat.directChatCapability == .available)
+        }
+        return true
+    }
+
+    private func stageAttachments(_ loadURLs: () async -> [URL]) async {
+        guard canAttachToCurrentChat else { return }
+        do {
+            let staged = try await manager.stageOutgoingAttachmentsAsync(loadURLs)
+            guard !Task.isCancelled, canAttachToCurrentChat else {
+                await manager.discardOutgoingAttachments(staged)
+                return
+            }
+            guard !staged.isEmpty else { manager.showAttachmentOpenError(); return }
+            selectedAttachments.append(contentsOf: staged)
+        } catch is CancellationError {
+            // Leaving the chat discards an unfinished selection.
+        } catch {
+            manager.showAttachmentOpenError()
         }
     }
 
