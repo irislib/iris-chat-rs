@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+static TEST_LOCK: Mutex<()> = Mutex::new(());
+
 const PNG: &[u8] = include_bytes!("../../resources/iris-chat-16.png");
 
 struct ImageServer {
@@ -112,6 +114,8 @@ fn load_with_redirect_source(urls: Vec<String>, original: Option<String>) -> boo
 
 #[test]
 fn image_fallback_requires_opt_in_and_a_failed_proxy_load() {
+    let _serial = TEST_LOCK.lock().unwrap();
+    clear();
     let context = glib::MainContext::default();
     let _guard = context.acquire().unwrap();
     let original = ImageServer::new(200, PNG);
@@ -222,4 +226,57 @@ fn image_fallback_requires_opt_in_and_a_failed_proxy_load() {
         vec![unavailable_url, original.url.clone()],
         &original.url
     ));
+}
+
+#[test]
+fn logout_clears_images_and_rejects_inflight_results_from_previous_account() {
+    let _serial = TEST_LOCK.lock().unwrap();
+    clear();
+    let url = "image-fixture".to_string();
+    let old_generation = GENERATION.with(Cell::get);
+    BYTES_CACHE
+        .lock()
+        .unwrap()
+        .insert(url.clone(), PNG.to_vec());
+    cache_texture(
+        &url,
+        &gdk::Texture::from_bytes(&glib::Bytes::from_static(PNG)).unwrap(),
+    );
+    IN_FLIGHT.lock().unwrap().insert(url.clone());
+    WAITERS.with(|waiters| {
+        waiters.borrow_mut().insert(
+            url.clone(),
+            vec![Box::new(|_| panic!("old-account callback ran"))],
+        )
+    });
+    clear();
+    assert!(cached_texture(&url).is_none());
+    assert!(BYTES_CACHE.lock().unwrap().is_empty());
+    assert!(IN_FLIGHT.lock().unwrap().is_empty());
+    assert!(WAITERS.with(|waiters| waiters.borrow().is_empty()));
+
+    let called = Rc::new(Cell::new(false));
+    let result = called.clone();
+    IN_FLIGHT.lock().unwrap().insert(url.clone());
+    WAITERS.with(|waiters| {
+        waiters.borrow_mut().insert(
+            url.clone(),
+            vec![Box::new(move |bytes| {
+                assert_eq!(bytes, Some(PNG));
+                result.set(true);
+            })],
+        )
+    });
+    complete_fetch(
+        url.clone(),
+        old_generation,
+        Some(b"old private image".to_vec()),
+    );
+    assert!(!called.get());
+    assert!(BYTES_CACHE.lock().unwrap().is_empty());
+    assert!(IN_FLIGHT.lock().unwrap().contains(&url));
+    complete_fetch(url.clone(), GENERATION.with(Cell::get), Some(PNG.to_vec()));
+    assert!(called.get());
+    assert_eq!(BYTES_CACHE.lock().unwrap().get(&url).unwrap(), PNG);
+    clear();
 }

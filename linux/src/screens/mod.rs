@@ -120,7 +120,7 @@ pub(crate) fn chat_input_action(input: &str) -> iris_chat_core::AppAction {
 
 pub(crate) fn confirm_delete_app_data(parent: Option<&gtk::Window>, manager: &Rc<AppManager>) {
     let dialog = adw::Dialog::builder()
-        .title("Delete all local data?")
+        .title("Log out and delete local data?")
         .content_width(340)
         .build();
 
@@ -130,13 +130,13 @@ pub(crate) fn confirm_delete_app_data(parent: Option<&gtk::Window>, manager: &Rc
     content.set_margin_start(20);
     content.set_margin_end(20);
 
-    let title = gtk::Label::new(Some("Delete all local data?"));
+    let title = gtk::Label::new(Some("Log out and delete local data?"));
     title.add_css_class("title-2");
     title.set_halign(gtk::Align::Start);
     content.append(&title);
 
     let message = gtk::Label::new(Some(
-        "This removes your secret keys, messages, and cached files from this device.",
+        "This removes your secret keys, messages, and cached files from this device. Your other devices keep their data.",
     ));
     message.set_wrap(true);
     message.set_xalign(0.0);
@@ -156,7 +156,7 @@ pub(crate) fn confirm_delete_app_data(parent: Option<&gtk::Window>, manager: &Rc
     }
     buttons.append(&cancel);
 
-    let delete = gtk::Button::with_label("Delete");
+    let delete = gtk::Button::with_label("Log out");
     delete.add_css_class("pill");
     delete.add_css_class("destructive-action");
     {

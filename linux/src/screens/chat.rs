@@ -16,6 +16,9 @@ use crate::screens::chat_list::{relative_time, unix_now};
 use crate::widgets::{audio_message, image_cache};
 
 mod chat_links;
+mod image_clipboard;
+#[cfg(feature = "ui-tests")]
+pub use image_clipboard::verify_ui as verify_image_clipboard_ui;
 mod contact_details;
 use contact_details::nickname_card;
 mod composer;
@@ -2389,6 +2392,7 @@ fn present_image_viewer(
     picture.set_hexpand(true);
     picture.set_vexpand(true);
     stage.append(&picture);
+    image_clipboard::install(&picture);
     overlay.set_child(Some(&stage));
 
     let close_btn = gtk::Button::from_icon_name("window-close-symbolic");

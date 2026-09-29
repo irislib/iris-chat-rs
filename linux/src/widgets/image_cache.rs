@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::{LazyLock, Mutex};
@@ -19,8 +19,18 @@ type TextureLoadCallback = Box<dyn FnOnce(gdk::Texture) + 'static>;
 type ImageLoadCallback = Box<dyn FnOnce(Option<&[u8]>) + 'static>;
 
 thread_local! {
+    static GENERATION: Cell<u64> = const { Cell::new(0) };
     static WAITERS: RefCell<HashMap<String, Vec<ImageLoadCallback>>> = RefCell::new(HashMap::new());
     static TEXTURES: RefCell<HashMap<String, gdk::Texture>> = RefCell::new(HashMap::new());
+}
+
+/// Called on the GTK thread when the current account is removed.
+pub fn clear() {
+    GENERATION.with(|generation| generation.set(generation.get().wrapping_add(1)));
+    BYTES_CACHE.lock().unwrap().clear();
+    IN_FLIGHT.lock().unwrap().clear();
+    WAITERS.with(|waiters| waiters.borrow_mut().clear());
+    TEXTURES.with(|textures| textures.borrow_mut().clear());
 }
 
 pub fn fetch_into_picture(
@@ -198,26 +208,36 @@ where
         let _ = tx.send_blocking(bytes);
     });
 
+    let generation = GENERATION.with(Cell::get);
     let url_for_main = url_owned;
     glib::MainContext::default().spawn_local(async move {
         let bytes = rx.recv().await.ok().flatten();
-        if let Some(bytes) = &bytes {
-            BYTES_CACHE
-                .lock()
-                .unwrap()
-                .insert(url_for_main.clone(), bytes.clone());
-        }
-        IN_FLIGHT.lock().unwrap().remove(&url_for_main);
-        let callbacks = WAITERS.with(|waiters| {
-            waiters
-                .borrow_mut()
-                .remove(&url_for_main)
-                .unwrap_or_default()
-        });
-        for callback in callbacks {
-            callback(bytes.as_deref());
-        }
+        complete_fetch(url_for_main, generation, bytes);
     });
+}
+
+fn complete_fetch(url_for_main: String, generation: u64, bytes: Option<Vec<u8>>) {
+    // An old response must not populate the new account's cache, remove its
+    // in-flight request, or invoke its callbacks for the same URL.
+    if GENERATION.with(Cell::get) != generation {
+        return;
+    }
+    if let Some(bytes) = &bytes {
+        BYTES_CACHE
+            .lock()
+            .unwrap()
+            .insert(url_for_main.clone(), bytes.clone());
+    }
+    IN_FLIGHT.lock().unwrap().remove(&url_for_main);
+    let callbacks = WAITERS.with(|waiters| {
+        waiters
+            .borrow_mut()
+            .remove(&url_for_main)
+            .unwrap_or_default()
+    });
+    for callback in callbacks {
+        callback(bytes.as_deref());
+    }
 }
 
 #[cfg(test)]

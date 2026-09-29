@@ -64,7 +64,7 @@ impl SettingsPage {
             Self::Updates => "Updates",
             Self::About => "About",
             Self::Support => "Support",
-            Self::AccountData => "Account data",
+            Self::AccountData => "Log out",
         }
     }
 
@@ -916,8 +916,8 @@ fn account_data_group(manager: &Rc<AppManager>) -> adw::PreferencesGroup {
         .build();
 
     let logout = adw::ActionRow::builder()
-        .title("Sign out of this device")
-        .subtitle("Clears local secrets and chat data")
+        .title("Log out")
+        .subtitle("Deletes secret keys, messages, and cached files from this device")
         .activatable(true)
         .build();
     let icon = gtk::Image::from_icon_name("system-log-out-symbolic");
