@@ -846,11 +846,19 @@ fn restored_owner_app_keys_backfill_merges_current_device_and_republishes() {
         .expect("remote app keys event");
     core.apply_app_keys_event(&remote_event)
         .expect("apply remote app keys");
+    assert_eq!(
+        core.logged_in.as_ref().unwrap().authorization_state,
+        LocalAuthorizationState::Authorized,
+        "the old roster being backfilled must not revoke the device explicitly being registered"
+    );
+    assert_eq!(core.state.account.as_ref().unwrap().authorization_state, DeviceAuthorizationState::Authorized);
+    assert_eq!(core.signed_local_device_authorization(owner.public_key(), device.public_key()), Some(true));
 
     let known = core
         .app_keys
         .get(&owner.public_key().to_hex())
         .expect("known app keys");
+    assert!(known.created_at_secs > remote_event.created_at.as_secs(), "the merged registration must supersede the old signed roster");
     assert!(known
         .devices
         .iter()

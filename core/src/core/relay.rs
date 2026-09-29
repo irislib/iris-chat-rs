@@ -627,8 +627,8 @@ impl AppCore {
             (
                 merged,
                 next_app_keys_created_at(
-                    unix_now().get().max(event.created_at.as_secs()),
-                    current_created_at,
+                    unix_now().get(),
+                    current_created_at.max(event.created_at.as_secs()),
                 ),
             )
         } else {
@@ -666,10 +666,13 @@ impl AppCore {
             self.app_keys.insert(owner_hex, known);
             self.bump_user_discovery_revision();
         }
-        self.reconcile_device_sync();
         if should_publish_backfilled_owner_app_keys {
             self.defer_owner_app_keys_publish = false;
+            // An explicit sign-in registers this device in the merged roster.
+            // Install that signed proof before checking the older roster for removal.
+            self.publish_local_app_keys();
         }
+        self.reconcile_device_sync();
         self.migrate_verified_device_owner_threads(event.pubkey, &effective_app_keys);
         self.mark_mobile_push_dirty();
         let _authorization_changed = self.refresh_local_authorization_state();
@@ -681,7 +684,6 @@ impl AppCore {
             self.broadcast_device_sync_snapshot();
         }
         if should_publish_backfilled_owner_app_keys {
-            self.publish_local_app_keys();
             self.retry_protocol_engine_pending_work("owner_registration_backfill");
         }
         if app_keys_changed && !self.fips_nearby_links.is_empty() {
