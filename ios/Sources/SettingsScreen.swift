@@ -19,7 +19,7 @@ struct SettingsScreen: View {
     let modalClose: (() -> Void)?
     @State private var pendingSecretExport: SecretExportKind?
     @State private var showingDeleteProfileConfirmation = false
-    @State private var showingDeleteLocalDataConfirmation = false
+    @State private var showingLogOutConfirmation = false
     @State private var showingProfileQr = false
     @State private var profileName = ""
     @State private var profileAbout = ""
@@ -129,14 +129,14 @@ struct SettingsScreen: View {
         } message: {
             Text("This clears your public profile, then removes local data from this device.")
         }
-        .alert("Delete all local data?", isPresented: $showingDeleteLocalDataConfirmation) {
+        .alert("Log out?", isPresented: $showingLogOutConfirmation) {
             Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
+            Button("Log out", role: .destructive) {
                 manager.resetAppState()
             }
-            .accessibilityIdentifier("myProfileConfirmDeleteLocalDataButton")
+            .accessibilityIdentifier("settingsConfirmLogOutButton")
         } message: {
-            Text("This removes secret keys, messages, and cached files from this device. Your public profile is not changed.")
+            Text("This removes secret keys, messages, and cached files from this device. Your profile and other devices stay unchanged.")
         }
     }
 
@@ -265,6 +265,27 @@ struct SettingsScreen: View {
                         selectedPage = page
                     }
                 }
+            }
+
+            SettingsMenuSection {
+                Button(role: .destructive) {
+                    showingLogOutConfirmation = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 32, height: 32)
+                        Text("Log out")
+                        Spacer(minLength: 8)
+                    }
+                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 13)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.irisPlain)
+                .accessibilityIdentifier("settingsLogOutButton")
             }
         }
     }
@@ -610,12 +631,6 @@ struct SettingsScreen: View {
                 .buttonStyle(IrisSecondaryButtonStyle())
                 .disabled(manager.state.account?.hasOwnerSigningAuthority != true)
                 .accessibilityIdentifier("myProfileDeleteProfileButton")
-
-                Button("Delete all local data", role: .destructive) {
-                    showingDeleteLocalDataConfirmation = true
-                }
-                .buttonStyle(IrisSecondaryButtonStyle())
-                .accessibilityIdentifier("myProfileDeleteLocalDataButton")
             }
         }
     }

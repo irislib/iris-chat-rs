@@ -768,7 +768,7 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
         XCTAssertFalse(element(app, "onboardingBackButton").exists)
     }
 
-    func testDeleteLocalDataReturnsToWelcomeChooser() {
+    func testLogOutFromSettingsExplainsLocalRemovalAndReturnsToWelcome() {
         let app = launchCleanApp()
 
         createAccount(app)
@@ -777,11 +777,18 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
         element(app, "chatListProfileButton").tap()
 
         XCTAssertTrue(element(app, "settingsScreen").waitForExistence(timeout: 10))
-        openSettingsPage(app, "settingsAccountDataRow")
-        XCTAssertTrue(element(app, "myProfileDeleteLocalDataButton").waitForExistence(timeout: 10))
-        element(app, "myProfileDeleteLocalDataButton").tap()
-        XCTAssertTrue(element(app, "myProfileConfirmDeleteLocalDataButton").waitForExistence(timeout: 10))
-        app.buttons["myProfileConfirmDeleteLocalDataButton"].firstMatch.tap()
+        openSettingsPage(app, "settingsLogOutButton")
+        XCTAssertTrue(element(app, "settingsConfirmLogOutButton").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["This removes secret keys, messages, and cached files from this device. Your profile and other devices stay unchanged."].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "settings-log-out-confirmation"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["Cancel"].firstMatch.tap()
+        XCTAssertTrue(element(app, "settingsScreen").exists)
+        XCTAssertFalse(element(app, "welcomeChooserCard").exists)
+        openSettingsPage(app, "settingsLogOutButton")
+        app.buttons["settingsConfirmLogOutButton"].firstMatch.tap()
 
         XCTAssertTrue(element(app, "welcomeChooserCard").waitForExistence(timeout: 20))
         XCTAssertTrue(element(app, "welcomeCreateAction").waitForExistence(timeout: 10))
@@ -806,18 +813,16 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
         XCTAssertTrue(element(app, "linkDeviceCopyButton").waitForExistence(timeout: 10))
     }
 
-    func testLinkDeviceShowsScannableCodeAfterDeletingLocalData() throws {
+    func testLinkDeviceShowsScannableCodeAfterLogOut() throws {
         let app = launchCleanApp()
         createAccount(app)
 
         XCTAssertTrue(element(app, "chatListProfileButton").waitForExistence(timeout: 15))
         element(app, "chatListProfileButton").tap()
         XCTAssertTrue(element(app, "settingsScreen").waitForExistence(timeout: 10))
-        openSettingsPage(app, "settingsAccountDataRow")
-        XCTAssertTrue(element(app, "myProfileDeleteLocalDataButton").waitForExistence(timeout: 10))
-        element(app, "myProfileDeleteLocalDataButton").tap()
-        XCTAssertTrue(element(app, "myProfileConfirmDeleteLocalDataButton").waitForExistence(timeout: 10))
-        app.buttons["myProfileConfirmDeleteLocalDataButton"].firstMatch.tap()
+        openSettingsPage(app, "settingsLogOutButton")
+        XCTAssertTrue(element(app, "settingsConfirmLogOutButton").waitForExistence(timeout: 10))
+        app.buttons["settingsConfirmLogOutButton"].firstMatch.tap()
 
         XCTAssertTrue(element(app, "welcomeChooserCard").waitForExistence(timeout: 20))
         tapWelcomeAction(app, "welcomeRestoreAction")
