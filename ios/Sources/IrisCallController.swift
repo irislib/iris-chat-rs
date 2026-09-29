@@ -64,6 +64,25 @@ final class IrisCallController: NSObject, ObservableObject {
     private let mediaForTesting: IrisCallMediaHandling?
 #if os(macOS)
     private let desktopAlerts = IrisDesktopCallAlerts()
+    lazy var screenSharing: IrisCallScreenShareSession = {
+        let media = self.media
+        return IrisCallScreenShareSession(capture: IrisMacScreenShare(), changeVideo: { [weak self] id, video, screen in
+            media.setScreenSharing(screen)
+            guard let self, self.call?.callId == id, self.call?.phase == "connected", self.endingCallID != id else { return }
+            self.pendingVideo = video
+            self.updateHardware()
+            self.dispatch(.setCallVideoEnabled(enabled: video))
+        }, frame: { id, pixel, timestamp in
+            media.captureScreenFrame(callID: id, pixel: pixel, timestamp: timestamp)
+        }, changed: { [weak self] in self?.objectWillChange.send() }, error: { [weak self] in self?.showError($0) })
+    }()
+
+    func chooseScreenShare() {
+        guard let call, endingCallID != call.callId else { return }
+        screenSharing.choose(callID: call.callId, connected: call.phase == "connected",
+                             videoCapable: call.videoCapable, camera: pendingVideo ?? call.video)
+    }
+
     lazy var audioDevices = IrisMacCallAudioDevices { [weak self] selection, completion in
         guard let self else { completion(false); return }
         self.media.setAudioDevices(selection) { [weak self] succeeded in
@@ -74,45 +93,58 @@ final class IrisCallController: NSObject, ObservableObject {
         }
     }
 #endif
-    private lazy var media: IrisCallMediaHandling = mediaForTesting ?? IrisCallMediaEngine(
-        send: { [weak self, outgoingSlots, sendGate] id, kind, timestamp, key, data, captureAllowed in
-            guard outgoingSlots.wait(timeout: .now()) == .success else { return }
-            let ticket = sendGate.permission(callID: id, kind: kind)
-            let allowed = { captureAllowed() && ticket() }
-            Task { @MainActor in
-                defer { outgoingSlots.signal() }
-                guard let self, self.call?.callId == id, self.endingCallID != id,
-                      self.call?.phase == "connected", self.audioActive,
-                      kind == 1 ? !(self.pendingMuted ?? self.call?.muted ?? true) :
-                        (self.pendingVideo ?? self.call?.video ?? false) else { return }
-                let action = AppAction.sendCallMedia(callId: id, kind: kind, timestampUs: timestamp, keyFrame: key, data: data)
-                if let sendMedia = self.sendMedia { sendMedia(action, allowed) }
-                else if allowed() { self.dispatch(action) }
+    private lazy var media: IrisCallMediaHandling = {
+        if let mediaForTesting { return mediaForTesting }
+        let engine = IrisCallMediaEngine(
+            send: { [weak self, outgoingSlots, sendGate] id, kind, timestamp, key, data, captureAllowed in
+                guard outgoingSlots.wait(timeout: .now()) == .success else { return }
+                let ticket = sendGate.permission(callID: id, kind: kind)
+                let allowed = { captureAllowed() && ticket() }
+                Task { @MainActor in
+                    defer { outgoingSlots.signal() }
+                    guard let self, self.call?.callId == id, self.endingCallID != id,
+                          self.call?.phase == "connected", self.audioActive,
+                          kind == 1 ? !(self.pendingMuted ?? self.call?.muted ?? true) :
+                            (self.pendingVideo ?? self.call?.video ?? false) else { return }
+                    let action = AppAction.sendCallMedia(callId: id, kind: kind, timestampUs: timestamp, keyFrame: key, data: data)
+                    if let sendMedia = self.sendMedia { sendMedia(action, allowed) }
+                    else if allowed() { self.dispatch(action) }
+                }
+            },
+            frame: { [localSurface, remoteSurface] id, local, pixel in
+                (local ? localSurface : remoteSurface).present(pixel, callID: id)
+            },
+            connectionChanged: { [weak self] id, connected in
+                Task { @MainActor in
+                    guard let self, self.call?.callId == id, self.endingCallID != id else { return }
+                    self.dispatch(.setCallMediaConnected(callId: id, connected: connected))
+                }
+            },
+            requestKeyFrame: { [weak self] id in
+                Task { @MainActor in
+                    guard let self, self.call?.callId == id, self.endingCallID != id else { return }
+                    self.dispatch(.requestCallKeyFrame(callId: id))
+                }
+            },
+            failed: { [weak self] id, message in
+                Task { @MainActor in
+                    guard let self, self.call?.callId == id, self.endingCallID != id else { return }
+                    self.showError(message)
+                    self.end()
+                }
             }
-        },
-        frame: { [localSurface, remoteSurface] id, local, pixel in
-            (local ? localSurface : remoteSurface).present(pixel, callID: id)
-        },
-        connectionChanged: { [weak self] id, connected in
+        )
+#if os(macOS)
+        engine.screenShareFailed = { [weak self] id in
             Task { @MainActor in
-                guard let self, self.call?.callId == id, self.endingCallID != id else { return }
-                self.dispatch(.setCallMediaConnected(callId: id, connected: connected))
-            }
-        },
-        requestKeyFrame: { [weak self] id in
-            Task { @MainActor in
-                guard let self, self.call?.callId == id, self.endingCallID != id else { return }
-                self.dispatch(.requestCallKeyFrame(callId: id))
-            }
-        },
-        failed: { [weak self] id, message in
-            Task { @MainActor in
-                guard let self, self.call?.callId == id, self.endingCallID != id else { return }
-                self.showError(message)
-                self.end()
+                guard let self, self.call?.callId == id, self.screenSharing.isSharing else { return }
+                self.screenSharing.stop()
+                self.showError("Couldn’t share the screen.")
             }
         }
-    )
+#endif
+        return engine
+    }()
 #if os(iOS)
     private var pendingPushCallID: String?
     private var pushRecoveryTask: Task<Void, Never>?
@@ -226,6 +258,9 @@ final class IrisCallController: NSObject, ObservableObject {
         tones?.update(nil)
         guard let call else { return }
         endingCallID = call.callId
+#if os(macOS)
+        screenSharing.stop(restoreCamera: false)
+#endif
         presentedCall = nil
         dismissalTask?.cancel()
         dismissalTask = nil
@@ -257,6 +292,9 @@ final class IrisCallController: NSObject, ObservableObject {
     }
 
     func toggleCamera() {
+#if os(macOS)
+        guard !screenSharing.isSharing, !screenSharing.isChoosing else { return }
+#endif
         guard let call, call.videoCapable, endingCallID != call.callId else { return }
         if pendingVideo ?? call.video {
             pendingVideo = false
@@ -307,6 +345,9 @@ final class IrisCallController: NSObject, ObservableObject {
         IrisAudioActivity.setCallActive(snapshot != nil && snapshot?.phase != "ended")
         let previousID = call?.callId
         call = snapshot
+#if os(macOS)
+        screenSharing.reconcile(callID: snapshot?.callId, connected: snapshot?.phase == "connected")
+#endif
         if (snapshot != nil && snapshot?.phase != "ended") || (startDispatched && error != nil) {
             startFailed()
         }

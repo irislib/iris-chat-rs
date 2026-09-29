@@ -25,6 +25,8 @@ private final class CallMediaProbe: IrisCallMediaHandling {
     func stop() { stopCount += 1 }
 #if os(macOS)
     func setAudioDevices(_ selection: IrisMacAudioDeviceSelection, completion: @escaping (Bool) -> Void) { completion(true) }
+    func setScreenSharing(_ enabled: Bool) {}
+    func captureScreenFrame(callID: String, pixel: CVPixelBuffer, timestamp: UInt64) {}
 #endif
 }
 

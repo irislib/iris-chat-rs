@@ -83,6 +83,13 @@ struct IrisCallScreen: View {
                     status
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.75))
+#if os(macOS)
+                    if controller.screenSharing.isSharing {
+                        Label("You’re sharing your screen", systemImage: "rectangle.on.rectangle")
+                            .font(.subheadline.weight(.medium))
+                            .accessibilityIdentifier("screenSharingStatus")
+                    }
+#endif
                     Spacer()
                     if !call.remoteVideo || call.phase != "connected" {
                         Text(String(call.peerName.prefix(1)).uppercased())
@@ -107,10 +114,10 @@ struct IrisCallScreen: View {
                         HStack {
                             Spacer()
                             IrisCallVideoView(surface: controller.localSurface)
-                                .scaleEffect(x: -1, y: 1)
-                                .frame(width: 104, height: 138)
+                                .scaleEffect(x: localPreviewMirrored ? -1 : 1, y: 1)
+                                .frame(width: localPreviewMirrored ? 104 : 160, height: localPreviewMirrored ? 138 : 100)
                                 .background(.black).clipShape(RoundedRectangle(cornerRadius: 16))
-                                .accessibilityLabel("Your camera")
+                                .accessibilityLabel(localPreviewMirrored ? "Your camera" : "Your screen")
                         }
                         Spacer()
                     }
@@ -146,6 +153,16 @@ struct IrisCallScreen: View {
         }
     }
 
+    private var localPreviewMirrored: Bool {
+#if os(macOS)
+        return !controller.screenSharing.isSharing
+#else
+        return true
+#endif
+    }
+
+    private var cameraOn: Bool { call.video && localPreviewMirrored }
+
     @ViewBuilder private var status: some View {
         if call.phase == "incoming" { Text(call.videoCapable ? "Incoming video call" : "Incoming voice call") }
         else if call.phase == "ringing" { Text("Ringing…") }
@@ -179,9 +196,12 @@ struct IrisCallScreen: View {
                 callButton(call.muted ? "Unmute" : "Mute", icon: call.muted ? "mic.slash.fill" : "mic.fill",
                            color: call.muted ? .white.opacity(0.35) : .white.opacity(0.16), id: "muteCallButton") { controller.toggleMuted() }
                 if call.videoCapable {
-                    callButton("Camera", icon: call.video ? "video.fill" : "video.slash.fill",
+                    callButton("Camera", icon: cameraOn ? "video.fill" : "video.slash.fill",
                                color: .white.opacity(0.16), id: "callCameraButton",
-                               help: call.video ? "Turn camera off" : "Turn camera on") { controller.toggleCamera() }
+                               help: cameraOn ? "Turn camera off" : "Turn camera on") { controller.toggleCamera() }
+#if os(macOS)
+                        .disabled(controller.screenSharing.isSharing || controller.screenSharing.isChoosing)
+#endif
                 }
 #if os(iOS)
                 if controller.audioRoute.external {
@@ -197,6 +217,16 @@ struct IrisCallScreen: View {
                 }
 #endif
 #if os(macOS)
+                if call.videoCapable, call.phase == "connected" {
+                    callButton(controller.screenSharing.isSharing ? "Stop sharing" : "Share screen",
+                               icon: controller.screenSharing.isSharing ? "rectangle.slash" : "rectangle.on.rectangle",
+                               color: controller.screenSharing.isSharing ? .white.opacity(0.35) : .white.opacity(0.16),
+                               id: "callScreenShareButton") {
+                        if controller.screenSharing.isSharing { controller.screenSharing.stop() }
+                        else { controller.chooseScreenShare() }
+                    }
+                    .disabled(controller.screenSharing.isChoosing)
+                }
                 callButton("Audio", icon: "speaker.wave.2.fill", color: .white.opacity(0.16), id: "callAudioDevicesButton",
                            help: "Choose microphone and speaker") {
                     showsAudioDevices = true

@@ -15,6 +15,8 @@ protocol IrisCallMediaHandling: AnyObject {
     func stop()
 #if os(macOS)
     func setAudioDevices(_ selection: IrisMacAudioDeviceSelection, completion: @escaping (Bool) -> Void)
+    func setScreenSharing(_ enabled: Bool)
+    func captureScreenFrame(callID: String, pixel: CVPixelBuffer, timestamp: UInt64)
 #endif
 }
 
@@ -26,6 +28,7 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
     private let incomingVideoSlots = DispatchSemaphore(value: 3)
     private let incomingAudioSlots = DispatchSemaphore(value: 8)
     private let captureGate = IrisCallSendGate()
+    private let videoSourceGate = IrisCallVideoSourceGate()
     private var captureCallID: String?
     private var captureMuted = true
     private var captureVideo = false
@@ -45,12 +48,16 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
     private var receivedVideo = false
 #if os(macOS)
     private var audioDevices = IrisMacAudioDeviceSelection()
+    private var screenSharing = false
+    private var lastScreenFrame: CVPixelBuffer?
+    private let screenFrameSlots = DispatchSemaphore(value: 2)
 #endif
     private let send: (String, UInt8, UInt64, Bool, Data, @escaping () -> Bool) -> Void
     private let frame: (String, Bool, CVPixelBuffer) -> Void
     private let connectionChanged: (String, Bool) -> Void
     private let requestKeyFrame: (String) -> Void
     private let failed: (String, String) -> Void
+    var screenShareFailed: ((String) -> Void)?
 
     init(send: @escaping (String, UInt8, UInt64, Bool, Data, @escaping () -> Bool) -> Void,
          frame: @escaping (String, Bool, CVPixelBuffer) -> Void,
@@ -93,19 +100,7 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
                 self.send(session.callID, 1, timestamp, false, data, allowed)
             }
             self.camera = IrisCallCamera(queue: self.queue) { [weak self] pixel, timestamp in
-                guard let self, self.allowed(session.callID, video: true) else { return }
-                let allowed = self.captureGate.permission(callID: session.callID, kind: 2, capturedAtUs: timestamp)
-                guard allowed() else { return }
-                self.lock.lock()
-                let cameraGeneration = self.cameraGeneration
-                self.lock.unlock()
-                if self.encodedCameraGeneration != cameraGeneration {
-                    self.encodedCameraGeneration = cameraGeneration
-                    self.encoder?.requestKeyFrame()
-                }
-                self.frame(session.callID, true, pixel)
-                do { try self.encoder?.encode(pixel, timestampUs: timestamp, isCurrent: allowed) }
-                catch { self.failed(session.callID, "Couldn’t start call video.") }
+                self?.encodeVideo(pixel, timestamp: timestamp, callID: session.callID, screen: false)
             }
         }
     }
@@ -138,7 +133,12 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
 #endif
                 try self.audio?.start()
                 self.audio?.setMuted(muted)
-                if video && session.videoCapable { try self.camera?.start(height: self.quality.captureHeight) }
+                var useCamera = video && session.videoCapable
+#if os(macOS)
+                useCamera = useCamera && !self.screenSharing
+#endif
+                if useCamera { try self.camera?.start(height: self.quality.captureHeight) }
+                else if video && session.videoCapable { self.camera?.stop() }
                 else { self.camera?.stop(); self.encoder?.stop() }
                 if !self.ready { self.ready = true; self.connectionChanged(session.callID, true) }
             } catch { self.failed(session.callID, video ? "Couldn’t start the camera or microphone." : "Couldn’t start the microphone.") }
@@ -150,6 +150,25 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
     }
 
 #if os(macOS)
+    func setScreenSharing(_ enabled: Bool) {
+        videoSourceGate.select(screen: enabled)
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.screenSharing = enabled
+            self.lastScreenFrame = nil
+            self.camera?.stop()
+            self.encoder?.stop()
+        }
+    }
+
+    func captureScreenFrame(callID: String, pixel: CVPixelBuffer, timestamp: UInt64) {
+        guard screenFrameSlots.wait(timeout: .now()) == .success else { return }
+        queue.async { [weak self, screenFrameSlots] in
+            defer { screenFrameSlots.signal() }
+            self?.encodeVideo(pixel, timestamp: timestamp, callID: callID, screen: true)
+        }
+    }
+
     func setAudioDevices(_ selection: IrisMacAudioDeviceSelection, completion: @escaping (Bool) -> Void) {
         queue.async { [weak self] in
             guard let self else { completion(false); return }
@@ -162,6 +181,28 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
     }
 #endif
 
+    private func encodeVideo(_ pixel: CVPixelBuffer, timestamp: UInt64, callID: String, screen: Bool) {
+        guard session?.callID == callID, allowed(callID, video: true) else { return }
+        let captureAllowed = captureGate.permission(callID: callID, kind: 2, capturedAtUs: timestamp)
+        let sourceAllowed = videoSourceGate.permission(screen: screen, capturedAt: timestamp)
+        let allowed = { captureAllowed() && sourceAllowed() }
+        guard allowed() else { return }
+#if os(macOS)
+        if screen { lastScreenFrame = pixel }
+#endif
+        lock.lock(); let cameraGeneration = self.cameraGeneration; lock.unlock()
+        if encodedCameraGeneration != cameraGeneration {
+            encodedCameraGeneration = cameraGeneration
+            encoder?.requestKeyFrame()
+        }
+        frame(callID, true, pixel)
+        do { try encoder?.encode(pixel, timestampUs: timestamp, isCurrent: allowed) }
+        catch {
+            if screen { screenShareFailed?(callID) }
+            else { failed(callID, "Couldn’t start call video.") }
+        }
+    }
+
     func adapt(targetBitrate: UInt32, keyFrameGeneration: UInt32) {
         queue.async { [weak self] in
             guard let self else { return }
@@ -170,6 +211,13 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
             if self.keyFrameGeneration != keyFrameGeneration {
                 self.keyFrameGeneration = keyFrameGeneration
                 self.encoder?.requestKeyFrame()
+#if os(macOS)
+                // ScreenCaptureKit emits no new pixels for an unchanged screen.
+                // A receiver still needs a fresh keyframe after packet loss.
+                if self.screenSharing, let pixel = self.lastScreenFrame, let id = self.session?.callID {
+                    self.encodeVideo(pixel, timestamp: UInt64(ProcessInfo.processInfo.systemUptime * 1_000_000), callID: id, screen: true)
+                }
+#endif
             }
         }
     }
@@ -194,6 +242,7 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
 
     func stop() {
         captureGate.update(callID: nil, muted: true, video: false)
+        videoSourceGate.select(screen: false)
         lock.lock()
         captureCallID = nil
         captureMuted = true
@@ -207,6 +256,10 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
         audio?.stop(); camera?.stop(); encoder?.stop(); receiver?.stop()
         audio = nil; camera = nil; encoder = nil; receiver = nil; session = nil
         ready = false
+#if os(macOS)
+        screenSharing = false
+        lastScreenFrame = nil
+#endif
     }
 
     deinit { audio?.stop(); camera?.stop(); encoder?.stop(); receiver?.stop() }
