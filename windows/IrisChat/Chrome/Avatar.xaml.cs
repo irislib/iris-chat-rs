@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
@@ -15,10 +14,12 @@ namespace IrisChat.Chrome;
 
 public partial class Avatar : UserControl
 {
-    private static readonly ConcurrentDictionary<string, ImageSource> ImageCache = new();
+    private static readonly AccountImageCache<ImageSource> ImageCache = new();
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
     private static readonly HttpClient ProxyHttp = new(new HttpClientHandler { AllowAutoRedirect = false })
         { Timeout = TimeSpan.FromSeconds(15) };
+    internal static void ClearImageCache() => ImageCache.Clear();
+
     private const int AvatarDecodePixelWidth = 160;
     private string? _loadingKey;
     private int _loadVersion;
@@ -121,13 +122,14 @@ public partial class Avatar : UserControl
         if (_loadingKey == key) return;
         _loadingKey = key;
         var version = ++_loadVersion;
+        var generation = ImageCache.Generation;
         ImageHost.Visibility = Visibility.Collapsed;
 
         // Cache by the URL actually loaded. A cached original must never skip
         // the proxy when the user's current settings require it.
         foreach (var candidate in urls)
         {
-            if (_loadVersion != version) return;
+            if (_loadVersion != version || !ImageCache.IsCurrent(generation)) return;
             var cacheKey = CacheKey(candidate);
             if (ImageCache.TryGetValue(cacheKey, out var cached))
             {
@@ -138,12 +140,12 @@ public partial class Avatar : UserControl
             try
             {
                 var data = await LoadImageBytesAsync(candidate, candidate != url || !allowOriginalRedirects);
-                if (_loadVersion != version) return;
+                if (_loadVersion != version || !ImageCache.IsCurrent(generation)) return;
                 if (data == null || data.Length == 0) continue;
                 var bmp = await Task.Run(() => DecodeAvatarImage(data));
-                if (_loadVersion != version) return;
+                if (_loadVersion != version || !ImageCache.IsCurrent(generation)) return;
                 if (bmp == null) continue;
-                ImageCache[cacheKey] = bmp;
+                if (!ImageCache.TryStore(cacheKey, bmp, generation)) return;
                 ImageBrush.ImageSource = bmp;
                 ImageHost.Visibility = Visibility.Visible;
                 return;

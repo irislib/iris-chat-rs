@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -10,8 +11,17 @@ namespace IrisChat.Chrome;
 
 public sealed class ImageViewerWindow : Window
 {
+    private static readonly List<ImageViewerWindow> OpenViewers = new();
+
+    public static void CloseAll()
+    {
+        foreach (var viewer in OpenViewers.ToArray()) viewer.Close();
+    }
+
     public ImageViewerWindow(BitmapSource bitmap, string filename, Action? openFile = null, Action<string>? showError = null)
     {
+        Loaded += (_, _) => OpenViewers.Add(this);
+        Closed += (_, _) => OpenViewers.Remove(this);
         Title = filename;
         Width = 900; Height = 700; MinWidth = 320; MinHeight = 240;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;

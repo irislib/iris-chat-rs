@@ -58,6 +58,7 @@ internal static class Program
             TestCancellationAndRetry();
             TestImageClipboard(output);
             AttachmentDropTests.Run();
+            AccountImageCacheTests.Run();
             Save(column, Path.Combine(output, "windows-inline-voice-messages.png"));
             Click(incoming, "chatAudioPlayButton");
             if (args.Length > 1 && args[1] == "--expect-no-audio-device")
@@ -123,6 +124,7 @@ internal static class Program
 
     private static void TestImageClipboard(string output)
     {
+        var previousClipboard = Clipboard.GetDataObject();
         var pixels = new byte[] { 255, 0, 0, 255, 0, 255, 0, 255 };
         var original = BitmapSource.Create(2, 1, 96, 96, PixelFormats.Bgra32, null, pixels, 8);
         var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(original));
@@ -141,7 +143,12 @@ internal static class Program
             Save(image, Path.Combine(output, "windows-image-viewer.png"));
             Console.WriteLine("PASS: opened image viewer copies actual image pixels");
         }
-        finally { viewer.Close(); }
+        finally
+        {
+            viewer.Close();
+            if (previousClipboard != null) Clipboard.SetDataObject(previousClipboard, true);
+            else Clipboard.Clear();
+        }
     }
 
     private static void TestCancellationAndRetry()

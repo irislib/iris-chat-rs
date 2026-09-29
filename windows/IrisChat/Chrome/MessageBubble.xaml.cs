@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -24,7 +23,12 @@ public partial class MessageBubble : UserControl
         RecentReactionEmojis.ToArray();
 
     public static void RememberEmojiUsage(string emoji) => RememberReactionEmoji(emoji);
-    private static readonly ConcurrentDictionary<string, ImageSource> AttachmentImageCache = new();
+    private static readonly AccountImageCache<ImageSource> AttachmentImageCache = new();
+    internal static void ClearImageCache()
+    {
+        AttachmentImageCache.Clear();
+        ImageViewerWindow.CloseAll();
+    }
     private const int RecentReactionEmojiLimit = 16;
     private const int AttachmentPreviewDecodeWidth = 640;
     private const double CollapsedBodyMaxHeight = 320;
@@ -351,10 +355,11 @@ public partial class MessageBubble : UserControl
     {
         if (Application.Current is not App app || app.Manager == null) return;
 
+        var generation = AttachmentImageCache.Generation;
         var cacheKey = string.IsNullOrWhiteSpace(att.htreeUrl) ? $"{att.nhash}:{att.filename}" : att.htreeUrl;
         if (AttachmentImageCache.TryGetValue(cacheKey, out var cached))
         {
-            SetImageSource(control, cached);
+            SetImageSource(control, cached!, generation);
             return;
         }
 
@@ -364,8 +369,8 @@ public partial class MessageBubble : UserControl
         var decoded = await Task.Run(() => DecodeAttachmentPreview(data)).ConfigureAwait(false);
         if (decoded == null) return;
 
-        AttachmentImageCache[cacheKey] = decoded;
-        SetImageSource(control, decoded);
+        if (!AttachmentImageCache.TryStore(cacheKey, decoded, generation)) return;
+        SetImageSource(control, decoded, generation);
     }
 
     private static BitmapImage? DecodeAttachmentPreview(byte[] data)
@@ -388,25 +393,27 @@ public partial class MessageBubble : UserControl
         }
     }
 
-    private static void SetImageSource(System.Windows.Controls.Image control, ImageSource source)
+    private static void SetImageSource(System.Windows.Controls.Image control, ImageSource source, long generation)
     {
         if (control.Dispatcher.CheckAccess())
         {
-            control.Source = source;
+            if (AttachmentImageCache.IsCurrent(generation)) control.Source = source;
         }
         else
         {
             _ = control.Dispatcher.InvokeAsync(() =>
             {
-                control.Source = source;
+                if (AttachmentImageCache.IsCurrent(generation)) control.Source = source;
             });
         }
     }
 
     private static async Task<BitmapSource?> LoadFullImageAsync(MessageAttachmentSnapshot attachment)
     {
+        var generation = AttachmentImageCache.Generation;
         var data = await App.CurrentManager.DownloadAttachmentAsync(attachment);
         var image = data == null ? null : await Task.Run(() => ImageViewerWindow.Decode(data));
+        if (!AttachmentImageCache.IsCurrent(generation)) return null;
         if (image == null) App.CurrentManager.ShowToast("Couldn’t load image");
         return image;
     }
