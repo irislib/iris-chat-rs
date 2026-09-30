@@ -147,6 +147,7 @@ include!("tests/groups_sender_key_retry.rs");
 include!("tests/groups_scale.rs");
 include!("tests/groups_persistence_helpers.rs");
 include!("tests/groups_persistence_more.rs");
+include!("tests/group_removal.rs");
 include!("tests/device_sync_helpers.rs");
 include!("tests/device_sync.rs");
 include!("tests/chat_read_sync.rs");

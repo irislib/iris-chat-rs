@@ -434,12 +434,19 @@ impl AppCore {
         &mut self,
         group: GroupSnapshot,
         updated_at_secs: u64,
-    ) {
-        if self.chat_activity_is_deleted(&group_chat_id(&group.group_id), group.updated_at.get()) {
-            return;
+    ) -> bool {
+        if self.chat_activity_is_deleted(&group_chat_id(&group.group_id), group.updated_at.get())
+            || self.groups.get(&group.group_id).is_some_and(|current| {
+                current.revision > group.revision
+                    || (current.revision == group.revision && current.updated_at > group.updated_at)
+            })
+        {
+            return false;
         }
         self.apply_group_snapshot_to_threads(&group, updated_at_secs);
         self.groups.insert(group.group_id.clone(), group);
+        self.discard_removed_group_publications();
+        true
     }
 
     pub(super) fn apply_group_snapshot_to_threads(
@@ -461,10 +468,12 @@ impl AppCore {
                     return;
                 }
                 let previous = self.groups.get(&group.group_id).cloned();
-                self.apply_group_roster_snapshot(
+                if !self.apply_group_roster_snapshot(
                     group.clone(),
                     unix_now().get().max(group.updated_at.get()),
-                );
+                ) {
+                    return;
+                }
                 self.apply_group_metadata_notice(previous.as_ref(), &group);
             }
             GroupIncomingEvent::Message(message) => {
@@ -615,6 +624,9 @@ impl AppCore {
         let chat_id = group_chat_id(&group.group_id);
         let now = unix_now().get();
         match previous {
+            None if self.is_removed_from_group(&chat_id) => {
+                self.push_system_notice(&chat_id, "You were removed from the group".into(), now)
+            }
             None => {
                 self.push_system_notice(&chat_id, format!("Group created: {}", group.name), now)
             }
@@ -645,14 +657,19 @@ impl AppCore {
                     .iter()
                     .filter(|owner| !group.members.iter().any(|existing| existing == *owner))
                 {
-                    self.push_system_notice(
-                        &chat_id,
+                    let notice = if self
+                        .logged_in
+                        .as_ref()
+                        .is_some_and(|local| local.owner_pubkey.to_bytes() == owner.to_bytes())
+                    {
+                        "You were removed from the group".to_string()
+                    } else {
                         format!(
                             "{} left the group",
                             self.owner_display_label(&owner.to_string())
-                        ),
-                        now,
-                    );
+                        )
+                    };
+                    self.push_system_notice(&chat_id, notice, now);
                 }
                 if previous.admins != group.admins {
                     self.push_system_notice(

@@ -119,6 +119,13 @@ impl AppCore {
         chat_id: Option<String>,
         inner_event_id: Option<String>,
     ) -> bool {
+        if inner_event_id.is_some()
+            && chat_id
+                .as_deref()
+                .is_some_and(|id| self.is_removed_from_group(id))
+        {
+            return false;
+        }
         if self.defer_owner_app_keys_publish && is_app_keys_event(&event) {
             self.push_debug_log(
                 "publish.runtime",
@@ -226,6 +233,7 @@ impl AppCore {
     }
 
     pub(super) fn retry_pending_relay_publishes(&mut self, reason: &str) {
+        self.discard_removed_group_publications();
         self.replay_mesh_outbox();
         if self.pending_relay_publishes.is_empty() {
             return;
@@ -744,7 +752,7 @@ impl AppCore {
         should_retry
     }
 
-    fn forget_pending_relay_publish(&mut self, event_id: &str) {
+    pub(super) fn forget_pending_relay_publish(&mut self, event_id: &str) {
         self.pending_relay_publishes.remove(event_id);
         self.pending_relay_publish_inflight.remove(event_id);
         if let Err(error) = self.app_store.delete_pending_relay_publish(event_id) {

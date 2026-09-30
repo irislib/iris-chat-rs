@@ -9,6 +9,9 @@ impl AppCore {
         let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
             return;
         };
+        if self.reject_removed_group_send(&normalized_chat_id) {
+            return;
+        }
         let Some(local_owner) = self
             .logged_in
             .as_ref()

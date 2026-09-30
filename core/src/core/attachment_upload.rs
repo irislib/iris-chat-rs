@@ -167,6 +167,9 @@ impl AppCore {
             self.emit_state();
             return;
         };
+        if self.reject_removed_group_send(&normalized_chat_id) {
+            return;
+        }
         let prepared = match prepare_outgoing_attachments(attachments) {
             Ok(prepared) => prepared,
             Err(message) => {

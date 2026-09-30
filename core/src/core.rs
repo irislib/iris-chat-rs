@@ -99,6 +99,7 @@ mod device_sync;
 mod device_sync_tcp;
 mod direct_chat_capability;
 mod fips_nearby;
+mod group_membership;
 mod groups;
 mod identity;
 mod invites;

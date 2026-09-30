@@ -591,7 +591,7 @@ impl AppCore {
             if self.chat_activity_is_deleted(&group_chat_id(&group.id), group.updated_at) {
                 continue;
             }
-            let Some(group) = group.into_group_snapshot(&local_owner_hex) else {
+            let Some(group) = group.into_group_snapshot() else {
                 continue;
             };
             let installed = self
@@ -600,8 +600,11 @@ impl AppCore {
                 .and_then(|engine| engine.install_device_sync_group(group.clone()).ok())
                 .unwrap_or(false);
             if installed {
-                self.apply_group_roster_snapshot(group.clone(), group.updated_at.get());
-                changed = true;
+                let previous = self.groups.get(&group.group_id).cloned();
+                if self.apply_group_roster_snapshot(group.clone(), group.updated_at.get()) {
+                    self.apply_group_metadata_notice(previous.as_ref(), &group);
+                    changed = true;
+                }
             }
         }
         for chat in snapshot.chats {
@@ -769,7 +772,7 @@ impl AppCore {
 }
 
 impl DeviceSyncGroup {
-    fn into_group_snapshot(self, local_owner_hex: &str) -> Option<GroupSnapshot> {
+    fn into_group_snapshot(self) -> Option<GroupSnapshot> {
         if self.id.is_empty() || self.id.len() > 128 || self.name.len() > 4096 {
             return None;
         }
@@ -784,12 +787,7 @@ impl DeviceSyncGroup {
             .iter()
             .map(|value| ndr_owner_from_hex(value))
             .collect::<Option<Vec<_>>>()?;
-        if !self
-            .members
-            .iter()
-            .any(|member| member.eq_ignore_ascii_case(local_owner_hex))
-            || members.is_empty()
-        {
+        if members.is_empty() {
             return None;
         }
         Some(GroupSnapshot {

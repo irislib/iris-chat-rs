@@ -186,6 +186,7 @@ impl AppCore {
 
     pub(super) fn replay_mesh_outbox(&mut self) {
         use std::ops::Bound::{Excluded, Unbounded};
+        self.discard_removed_group_publications();
         let Some(mesh) = self.device_sync.as_mut() else {
             return;
         };

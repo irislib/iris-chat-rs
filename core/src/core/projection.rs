@@ -106,7 +106,7 @@ impl AppCore {
         } else {
             vec![chat_id.to_string()]
         };
-        if let Some(local_owner_hex) = local_owner_hex {
+        if let Some(local_owner_hex) = local_owner_hex.filter(|_| group_snapshot.is_none()) {
             owners.push(local_owner_hex.to_string());
         }
         owners.sort();

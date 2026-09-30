@@ -507,6 +507,9 @@ impl AppCore {
             self.emit_state();
             return;
         }
+        if self.reject_removed_group_send(&normalized_chat_id) {
+            return;
+        }
 
         let now =
             UnixSeconds(self.chat_activity_after_deletion(&normalized_chat_id, unix_now().get()));
@@ -597,6 +600,9 @@ impl AppCore {
         now: UnixSeconds,
         expires_at_secs: Option<u64>,
     ) {
+        if self.reject_removed_group_send(chat_id) {
+            return;
+        }
         let Some(group_id) = parse_group_id_from_chat_id(chat_id) else {
             self.state.toast = Some("Invalid group id.".to_string());
             return;
@@ -1229,6 +1235,9 @@ impl AppCore {
         tags: Vec<Vec<String>>,
         now_ms: Option<u64>,
     ) {
+        if self.is_removed_from_group(chat_id) {
+            return;
+        }
         if kind == CHAT_MESSAGE_KIND {
             self.send_group_message(chat_id, content, unix_now(), None);
             return;
