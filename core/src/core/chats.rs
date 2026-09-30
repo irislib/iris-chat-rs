@@ -1165,7 +1165,9 @@ impl AppCore {
         if thread
             .messages
             .iter()
-            .any(|message| message.author == "Iris" && message.body == body)
+            .rev()
+            .find(|message| message.author == "Iris")
+            .is_some_and(|message| message.body == body)
         {
             return;
         }

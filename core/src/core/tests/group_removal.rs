@@ -28,7 +28,7 @@ fn removed_group_fixture() -> (AppCore, Keys, Keys, GroupSnapshot, GroupSnapshot
 
 #[test]
 fn group_removal_retains_history_notifies_once_and_blocks_sends_before_clearing_draft() {
-    let (mut core, _owner, _device, joined, removed) = removed_group_fixture();
+    let (mut core, owner, _device, joined, removed) = removed_group_fixture();
     let chat_id = group_chat_id(&joined.group_id);
     core.push_outgoing_message_with_id(
         "before-removal".into(),
@@ -117,7 +117,7 @@ fn group_removal_retains_history_notifies_once_and_blocks_sends_before_clearing_
         "a later timestamp without a newer membership revision cannot restore access"
     );
     stale_restore.revision = 3;
-    core.apply_group_decrypted_event(GroupIncomingEvent::MetadataUpdated(stale_restore));
+    core.apply_group_decrypted_event(GroupIncomingEvent::MetadataUpdated(stale_restore.clone()));
     core.rebuild_state();
     assert!(
         core.state
@@ -128,6 +128,20 @@ fn group_removal_retains_history_notifies_once_and_blocks_sends_before_clearing_
             .iter()
             .any(|p| p.is_local_owner),
         "a newer roster can explicitly add the user back"
+    );
+    stale_restore.revision = 4;
+    stale_restore
+        .members
+        .retain(|member| member.to_bytes() != owner.public_key().to_bytes());
+    core.apply_group_decrypted_event(GroupIncomingEvent::MetadataUpdated(stale_restore));
+    assert_eq!(
+        core.threads[&chat_id]
+            .messages
+            .iter()
+            .filter(|message| message.body == "You were removed from the group")
+            .count(),
+        2,
+        "a later removal must leave a new notice after rejoining"
     );
 }
 
