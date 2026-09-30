@@ -2715,8 +2715,18 @@ fn nearby_master_toggle_preserves_transport_preferences() {
     core.handle_action(AppAction::SetNearbyBluetoothEnabled { enabled: true });
     core.handle_action(AppAction::SetNearbyLanEnabled { enabled: true });
     assert!(core.device_sync.is_some(), "Enabling LAN must immediately start the shared call endpoint");
+    let nearby_endpoint = core.device_sync_endpoint_for_test().unwrap();
     core.handle_action(AppAction::SetNearbyEnabled { enabled: false });
-    assert!(core.device_sync.is_none(), "Disabling Nearby releases the LAN-only endpoint");
+    assert!(core.runtime.block_on(nearby_endpoint.peers()).is_err(), "Disabling Nearby shuts down its LAN endpoint");
+    let (local_endpoint, sibling_tcp, siblings, _blobs) = core
+        .same_host_runtime_for_test()
+        .expect("local attachment sharing remains available with Nearby disabled");
+    assert!(!core.device_sync.as_ref().unwrap().nearby_enabled);
+    assert!(!sibling_tcp);
+    assert_eq!(siblings, 0);
+    core.runtime.block_on(local_endpoint.register_service_receiver(
+        super::fips_nearby::FIPS_NEARBY_PORT,
+    )).expect("the local-only endpoint must not register the Nearby service");
 
     assert!(!core.state.preferences.nearby_enabled);
     assert!(core.state.preferences.nearby_bluetooth_enabled);
@@ -2727,6 +2737,8 @@ fn nearby_master_toggle_preserves_transport_preferences() {
     assert!(core.state.preferences.nearby_enabled);
     assert!(core.state.preferences.nearby_bluetooth_enabled);
     assert!(core.state.preferences.nearby_lan_enabled);
+    assert!(core.device_sync.as_ref().unwrap().nearby_enabled);
+    core.stop_device_sync_now();
 }
 
 #[test]

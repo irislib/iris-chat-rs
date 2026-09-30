@@ -77,9 +77,19 @@ impl AppCore {
         &mut self,
         websocket: WebSocketConfig,
     ) {
+        self.reconcile_device_sync_with_websocket_and_rendezvous_for_test(websocket, None);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reconcile_device_sync_with_websocket_and_rendezvous_for_test(
+        &mut self,
+        websocket: WebSocketConfig,
+        rendezvous_addr: Option<SocketAddrV4>,
+    ) {
+        // Message handling also runs normal reconciliation; keep the same service set.
         self.reconcile_shared_fips(SharedFipsOptions {
-            same_host_hashtree: false,
-            rendezvous_addr: None,
+            same_host_hashtree: same_host_hashtree_enabled(),
+            rendezvous_addr,
             standalone_route: None,
             additional_peers: Vec::new(),
             websocket: Some(websocket),
