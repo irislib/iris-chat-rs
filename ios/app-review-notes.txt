@@ -8,7 +8,7 @@ Start the demo (iPhone or iPad):
 4. The chat list contains Sample conversation and Sample group. The bottom banner says "Demo profile · Sample messages". Open Sample conversation to see incoming/outgoing text and a playable six-second audio message. Play, pause, seek or change its speed; long-press messages for reactions and other actions. Use the microphone to record a voice message, or attach a photo/file. Sample group contains a group message.
 
 If an earlier review profile is already open:
-Renaming an existing profile does not enable the demo. To start over with a disposable review profile, tap the chat-list avatar → Settings → Account data → Delete all local data → Delete, then follow the steps above. This removes that device's profile, messages and keys; use it only for your test profile. Do not select Delete profile.
+Renaming an existing profile does not enable the demo. To start over with a disposable review profile, tap the chat-list avatar → Settings → Log out → Log out, then follow the steps above. This removes that device's profile, messages and keys; use it only for your test profile. Do not select Delete profile.
 
 Live messaging, voice/video calls, CallKit and background audio:
 Use TWO iPhones/iPads, each with its own newly created profile. You can enter AppStoreDemoUserMode on both; each creates a different user ID and secret key. No shared credentials are needed.
