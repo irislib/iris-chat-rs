@@ -1,4 +1,4 @@
-use super::chats::{chat_message_from_persisted, message_order};
+use super::chats::chat_message_from_persisted;
 use super::*;
 
 const DELIVERED_RECEIPT_DEBOUNCE: Duration = Duration::from_millis(750);
@@ -44,64 +44,70 @@ impl AppCore {
         let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
             return;
         };
-        if !self.hydrate_receipt_messages(&normalized_chat_id, message_ids) {
-            return;
-        }
-        let Some(thread) = self.threads.get(&normalized_chat_id) else {
+        let Some(stored_messages) =
+            self.load_stored_receipt_messages(&normalized_chat_id, message_ids)
+        else {
             return;
         };
+        let Some(thread) = self.threads.get_mut(&normalized_chat_id) else {
+            return;
+        };
+        let loaded_len = thread.messages.len();
+        // Read-state persistence and group receipt routing need these rows only
+        // while acknowledging them. They must not alter the UI's page cursor.
+        thread.messages.extend(stored_messages);
         let receipt_ids = thread
             .messages
             .iter()
             .filter(|message| !message.is_outgoing && message_ids.contains(&message.id))
             .map(|message| message.id.clone())
             .collect::<Vec<_>>();
-        if receipt_ids.is_empty()
-            || !self.record_local_chat_read_state(&normalized_chat_id, &receipt_ids, false)
-        {
+        let changed = !receipt_ids.is_empty()
+            && self.record_local_chat_read_state(&normalized_chat_id, &receipt_ids, false);
+        if changed {
+            self.send_seen_updates(&normalized_chat_id, receipt_ids);
+        }
+        if let Some(thread) = self.threads.get_mut(&normalized_chat_id) {
+            thread.messages.truncate(loaded_len);
+        }
+        if !changed {
             return;
         }
-        self.send_seen_updates(&normalized_chat_id, receipt_ids);
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
         self.broadcast_device_sync_snapshot();
     }
 
-    // Inactive restored chats contain only their latest preview. Load only
-    // receipt-referenced rows so acknowledgments update durable older messages
-    // without opening the chat or implicitly marking neighboring messages read.
-    fn hydrate_receipt_messages(&mut self, chat_id: &str, message_ids: &[String]) -> bool {
-        let mut hydrated = false;
-        for id in message_ids {
-            if self
-                .threads
-                .get(chat_id)
-                .is_none_or(|thread| thread.messages.iter().any(|message| &message.id == id))
-            {
-                continue;
-            }
+    // Inactive restored chats contain only their latest preview. Fetch missing
+    // receipt targets separately: inserting sparse old rows into the visible
+    // window would make pagination skip the history between them and the page.
+    fn load_stored_receipt_messages(
+        &mut self,
+        chat_id: &str,
+        message_ids: &[String],
+    ) -> Option<Vec<ChatMessageSnapshot>> {
+        let thread = self.threads.get(chat_id)?;
+        let mut known_ids = thread
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect::<HashSet<_>>();
+        let missing = message_ids
+            .iter()
+            .filter(|id| known_ids.insert(id.as_str()))
+            .collect::<Vec<_>>();
+        let mut messages = Vec::new();
+        for id in missing {
             match self.app_store.load_messages_around(chat_id, id, 0, 0) {
-                Ok(messages) => {
-                    if let Some(thread) = self.threads.get_mut(chat_id) {
-                        hydrated |= !messages.is_empty();
-                        thread
-                            .messages
-                            .extend(messages.iter().map(chat_message_from_persisted));
-                    }
-                }
+                Ok(stored) => messages.extend(stored.iter().map(chat_message_from_persisted)),
                 Err(error) => {
                     self.push_debug_log("storage.messages.receipt.error", error.to_string());
-                    return false;
+                    return None;
                 }
             }
         }
-        if hydrated {
-            if let Some(thread) = self.threads.get_mut(chat_id) {
-                thread.messages.sort_by_key(message_order);
-            }
-        }
-        true
+        Some(messages)
     }
 
     pub(super) fn sync_open_chat_read_state(&mut self, chat_id: &str) {
@@ -436,55 +442,46 @@ impl AppCore {
         is_from_local_owner: bool,
         receipt_author_hex: Option<&str>,
     ) {
-        if message_ids.is_empty() || !self.hydrate_receipt_messages(chat_id, message_ids) {
+        if message_ids.is_empty() {
             return;
         }
+        let Some(mut stored_messages) = self.load_stored_receipt_messages(chat_id, message_ids)
+        else {
+            return;
+        };
+        stored_messages.retain_mut(|message| {
+            apply_message_receipt(message, &delivery, is_from_local_owner, receipt_author_hex)
+        });
+        // Save unloaded rows directly even inside a relay-event batch. A deferred
+        // full snapshot contains only the visible window and cannot save them.
+        let unread_thread = (is_from_local_owner && matches!(delivery, DeliveryState::Seen))
+            .then(|| self.threads.get(chat_id))
+            .flatten();
+        let mut newly_seen_incoming =
+            match self
+                .app_store
+                .save_message_receipts(chat_id, &stored_messages, unread_thread)
+            {
+                Ok(count) => count,
+                Err(error) => {
+                    self.push_debug_log("storage.messages.receipt.error", error.to_string());
+                    return;
+                }
+            };
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;
         };
         let unread_ids = thread.unread_message_ids();
-        let mut changed = false;
-        let mut newly_seen_incoming = 0u64;
+        let mut changed = !stored_messages.is_empty();
         for message in &mut thread.messages {
-            if !message_ids.iter().any(|id| id == &message.id) {
+            if !message_ids.contains(&message.id) {
                 continue;
             }
-            if is_from_local_owner == message.is_outgoing {
-                continue;
-            }
-            if should_advance_delivery(&message.delivery, &delivery) {
+            if apply_message_receipt(message, &delivery, is_from_local_owner, receipt_author_hex) {
                 if !message.is_outgoing && matches!(delivery, DeliveryState::Seen) {
                     newly_seen_incoming += u64::from(unread_ids.contains(&message.id));
                 }
-                message.delivery = delivery.clone();
                 changed = true;
-            }
-            if message.is_outgoing {
-                if let Some(author) = receipt_author_hex {
-                    let now = unix_now().get();
-                    if let Some(recipient) = message
-                        .recipient_deliveries
-                        .iter_mut()
-                        .find(|recipient| recipient.owner_pubkey_hex == author)
-                    {
-                        if should_advance_delivery(&recipient.delivery, &delivery) {
-                            recipient.delivery = delivery.clone();
-                            recipient.updated_at_secs = now;
-                            changed = true;
-                        }
-                    } else {
-                        message
-                            .recipient_deliveries
-                            .push(MessageRecipientDeliverySnapshot {
-                                owner_pubkey_hex: author.to_string(),
-                                display_name: String::new(),
-                                picture_url: None,
-                                delivery: delivery.clone(),
-                                updated_at_secs: now,
-                            });
-                        changed = true;
-                    }
-                }
             }
         }
         if is_from_local_owner && matches!(delivery, DeliveryState::Seen) {
@@ -497,6 +494,49 @@ impl AppCore {
             self.persist_best_effort();
         }
     }
+}
+
+fn apply_message_receipt(
+    message: &mut ChatMessageSnapshot,
+    delivery: &DeliveryState,
+    is_from_local_owner: bool,
+    receipt_author_hex: Option<&str>,
+) -> bool {
+    if is_from_local_owner == message.is_outgoing {
+        return false;
+    }
+    let mut changed = false;
+    if should_advance_delivery(&message.delivery, delivery) {
+        message.delivery = delivery.clone();
+        changed = true;
+    }
+    if message.is_outgoing {
+        if let Some(author) = receipt_author_hex {
+            if let Some(recipient) = message
+                .recipient_deliveries
+                .iter_mut()
+                .find(|recipient| recipient.owner_pubkey_hex == author)
+            {
+                if should_advance_delivery(&recipient.delivery, delivery) {
+                    recipient.delivery = delivery.clone();
+                    recipient.updated_at_secs = unix_now().get();
+                    changed = true;
+                }
+            } else {
+                message
+                    .recipient_deliveries
+                    .push(MessageRecipientDeliverySnapshot {
+                        owner_pubkey_hex: author.to_string(),
+                        display_name: String::new(),
+                        picture_url: None,
+                        delivery: delivery.clone(),
+                        updated_at_secs: unix_now().get(),
+                    });
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 fn receipt_unsigned_event(

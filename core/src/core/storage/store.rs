@@ -387,6 +387,59 @@ impl AppStore {
         load_messages_around(&conn, chat_id, message_id, before_limit, after_limit)
     }
 
+    pub(crate) fn save_message_receipts(
+        &self,
+        chat_id: &str,
+        messages: &[ChatMessageSnapshot],
+        unread_thread: Option<&ThreadRecord>,
+    ) -> anyhow::Result<u64> {
+        if messages.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        let tx = conn.transaction()?;
+        let mut newly_seen_unread = 0;
+        if let Some(thread) = unread_thread {
+            // A relay batch may have newer incoming rows only in memory. Include
+            // them before locating the last counted unread messages, or an old
+            // receipt could incorrectly clear a newer message's badge.
+            for message in &thread.messages {
+                upsert_message_row(&tx, chat_id, message)?;
+            }
+            let mut statement = tx.prepare(
+                "SELECT id FROM messages WHERE chat_id = ?1
+                 AND is_outgoing = 0 AND delivery != 'seen'
+                 ORDER BY created_at_secs DESC, rowid DESC LIMIT ?2",
+            )?;
+            let ids = statement.query_map(params![chat_id, thread.unread_count as i64], |row| {
+                row.get::<_, String>(0)
+            })?;
+            for id in ids {
+                let id = id?;
+                newly_seen_unread += u64::from(messages.iter().any(|message| message.id == id));
+            }
+        }
+        {
+            let mut statement = tx.prepare_cached(
+                "UPDATE messages SET delivery = ?3, recipient_deliveries_json = ?4
+                 WHERE chat_id = ?1 AND id = ?2",
+            )?;
+            for message in messages {
+                statement.execute(params![
+                    chat_id,
+                    message.id,
+                    serialize_delivery(&message.delivery),
+                    serde_json::to_string(&message.recipient_deliveries)?
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(newly_seen_unread)
+    }
+
     pub(crate) fn message_exists(
         &self,
         chat_id: &str,

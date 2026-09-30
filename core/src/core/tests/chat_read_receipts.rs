@@ -322,3 +322,248 @@ fn encrypted_receipts_update_stored_messages_outside_the_loaded_chat_window() {
         );
     }
 }
+
+#[test]
+fn old_receipts_preserve_contiguous_history_pagination() {
+    for batched in [false, true] {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let peer = Keys::generate();
+        let chat_id = peer.public_key().to_hex();
+        let mut core = logged_in_test_core("receipt-pagination", &owner, &device);
+        let messages = (1..=200)
+            .map(|index| {
+                test_chat_message(&chat_id, &index.to_string(), "stored message", index, true)
+            })
+            .collect();
+        core.threads.insert(
+            chat_id.clone(),
+            ThreadRecord {
+                chat_id: chat_id.clone(),
+                unread_count: 0,
+                updated_at_secs: 200,
+                messages,
+                draft: String::new(),
+            },
+        );
+        core.threads.get_mut(&chat_id).unwrap().messages[0]
+            .recipient_deliveries
+            .push(MessageRecipientDeliverySnapshot {
+                owner_pubkey_hex: chat_id.clone(),
+                display_name: "Peer".to_string(),
+                picture_url: Some("https://example.invalid/peer.png".to_string()),
+                delivery: DeliveryState::Received,
+                updated_at_secs: 1,
+            });
+        core.persist_best_effort();
+        let before = core
+            .app_store
+            .load_messages_around(&chat_id, "1", 0, 0)
+            .unwrap()
+            .remove(0);
+        core.threads
+            .get_mut(&chat_id)
+            .unwrap()
+            .messages
+            .retain(|message| message.id == "200");
+        if batched {
+            core.enter_batch();
+        }
+        core.apply_receipt_to_messages(
+            &chat_id,
+            &["1".to_string()],
+            DeliveryState::Seen,
+            false,
+            Some(&chat_id),
+        );
+        // A late delivered receipt must not undo Seen or replace recipient metadata.
+        core.apply_receipt_to_messages(
+            &chat_id,
+            &["1".to_string()],
+            DeliveryState::Received,
+            false,
+            Some(&chat_id),
+        );
+        if batched {
+            core.exit_batch();
+        }
+        let stored = core
+            .app_store
+            .load_messages_around(&chat_id, "1", 0, 0)
+            .unwrap();
+        assert_eq!(
+            DeliveryState::from(stored[0].delivery.clone()),
+            DeliveryState::Seen
+        );
+        assert_eq!(
+            stored[0].recipient_deliveries[0].delivery,
+            DeliveryState::Seen
+        );
+        assert_eq!(stored[0].recipient_deliveries[0].display_name, "Peer");
+        assert_eq!(
+            stored[0].recipient_deliveries[0].picture_url,
+            before.recipient_deliveries[0].picture_url
+        );
+        let mut before_fields = serde_json::to_value(&before).unwrap();
+        let mut after_fields = serde_json::to_value(&stored[0]).unwrap();
+        for fields in [&mut before_fields, &mut after_fields] {
+            fields.as_object_mut().unwrap().remove("delivery");
+            fields
+                .as_object_mut()
+                .unwrap()
+                .remove("recipient_deliveries");
+        }
+        assert_eq!(
+            before_fields, after_fields,
+            "receipt writes must preserve message content and decorations"
+        );
+        core.open_chat(&chat_id);
+        let current = core.state.current_chat.as_ref().unwrap();
+        let mut ids = current
+            .messages
+            .iter()
+            .map(|message| message.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            (121..=200).map(|id| id.to_string()).collect::<Vec<_>>(),
+            "receipt-only rows must not become a sparse history cursor; batched={batched}"
+        );
+        // Mirror desktop/mobile pagination: request the page before the first
+        // visible row until all history is reached, without any missing middle.
+        loop {
+            let page = crate::core::chat_snapshot_before_from_state_and_db(
+                &core.state,
+                Some(&core.app_store.shared()),
+                &chat_id,
+                &ids[0],
+                80,
+            )
+            .unwrap();
+            if page.messages.is_empty() {
+                break;
+            }
+            ids.splice(0..0, page.messages.iter().map(|message| message.id.clone()));
+        }
+        assert_eq!(ids, (1..=200).map(|id| id.to_string()).collect::<Vec<_>>());
+    }
+}
+
+#[test]
+fn sibling_seen_receipt_for_unloaded_message_updates_only_counted_unread() {
+    for (unread_count, has_unsaved_newer) in [(1, false), (3, false), (3, true)] {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let peer = Keys::generate();
+        let chat_id = peer.public_key().to_hex();
+        let mut core = logged_in_test_core("receipt-unloaded-unread", &owner, &device);
+        core.threads.insert(
+            chat_id.clone(),
+            ThreadRecord {
+                chat_id: chat_id.clone(),
+                unread_count,
+                updated_at_secs: 3,
+                draft: String::new(),
+                messages: (1..=3)
+                    .map(|id| test_chat_message(&chat_id, &id.to_string(), "incoming", id, false))
+                    .collect(),
+            },
+        );
+        core.persist_best_effort();
+        core.threads
+            .get_mut(&chat_id)
+            .unwrap()
+            .messages
+            .retain(|message| message.id == "3");
+        if has_unsaved_newer {
+            core.threads
+                .get_mut(&chat_id)
+                .unwrap()
+                .messages
+                .push(test_chat_message(
+                    &chat_id,
+                    "4",
+                    "received during this batch",
+                    4,
+                    false,
+                ));
+        }
+        core.enter_batch();
+        core.apply_receipt_to_messages(
+            &chat_id,
+            &["1".to_string()],
+            DeliveryState::Seen,
+            true,
+            None,
+        );
+        core.exit_batch();
+        let thread = &core.threads[&chat_id];
+        assert_eq!(
+            thread.unread_count,
+            if unread_count == 3 && !has_unsaved_newer {
+                2
+            } else {
+                unread_count
+            }
+        );
+        assert_eq!(thread.messages.len(), if has_unsaved_newer { 2 } else { 1 });
+        assert_eq!(thread.messages[0].delivery, DeliveryState::Received);
+        let old = core
+            .app_store
+            .load_messages_around(&chat_id, "1", 0, 0)
+            .unwrap();
+        assert_eq!(
+            DeliveryState::from(old[0].delivery.clone()),
+            DeliveryState::Seen
+        );
+    }
+}
+
+#[test]
+fn marking_stored_messages_seen_preserves_loaded_window() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let chat_id = peer.public_key().to_hex();
+    let mut core = logged_in_test_core("mark-stored-seen-window", &owner, &device);
+    core.threads.insert(
+        chat_id.clone(),
+        ThreadRecord {
+            chat_id: chat_id.clone(),
+            unread_count: 3,
+            updated_at_secs: 3,
+            draft: String::new(),
+            messages: (1..=3)
+                .map(|id| test_chat_message(&chat_id, &id.to_string(), "incoming", id, false))
+                .collect(),
+        },
+    );
+    core.persist_best_effort();
+    core.threads
+        .get_mut(&chat_id)
+        .unwrap()
+        .messages
+        .retain(|message| message.id == "3");
+    for batched in [false, true] {
+        if batched {
+            core.enter_batch();
+        }
+        core.mark_messages_seen(&chat_id, &["1".to_string()]);
+        if batched {
+            core.exit_batch();
+        }
+        let thread = &core.threads[&chat_id];
+        assert_eq!(thread.messages.len(), 1);
+        assert_eq!(thread.messages[0].id, "3");
+        assert_eq!(thread.messages[0].delivery, DeliveryState::Received);
+        assert_eq!(thread.unread_count, 2);
+        let old = core
+            .app_store
+            .load_messages_around(&chat_id, "1", 0, 0)
+            .unwrap();
+        assert_eq!(
+            DeliveryState::from(old[0].delivery.clone()),
+            DeliveryState::Seen
+        );
+    }
+}
