@@ -816,11 +816,12 @@ async fn shutdown_shared_fips(
 }
 
 fn same_host_hashtree_enabled() -> bool {
-    std::env::var(SAME_HOST_HASHTREE_ENV).is_ok_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        )
+    same_host_hashtree_setting(std::env::var(SAME_HOST_HASHTREE_ENV).ok().as_deref())
+}
+
+fn same_host_hashtree_setting(value: Option<&str>) -> bool {
+    !value.is_some_and(|value| {
+        matches!(value.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off")
     })
 }
 
@@ -873,6 +874,17 @@ fn parse_local_rendezvous_addr(value: &str) -> Result<SocketAddrV4, String> {
 #[cfg(test)]
 mod local_rendezvous_tests {
     use super::*;
+
+    #[test]
+    fn same_host_files_are_enabled_unless_explicitly_disabled() {
+        assert!(same_host_hashtree_setting(None));
+        for value in ["", "1", "true", "YES", " on "] {
+            assert!(same_host_hashtree_setting(Some(value)));
+        }
+        for value in ["0", "false", "NO", " off "] {
+            assert!(!same_host_hashtree_setting(Some(value)));
+        }
+    }
 
     #[test]
     fn websocket_seeds_default_to_osiris_then_lnvps() {
