@@ -24,6 +24,7 @@ mod tests {
     include!("protocol_engine/handshake_proof_tests.rs");
     include!("protocol_engine/local_sibling_send_tests.rs");
     include!("protocol_engine/remote_send_tests.rs");
+    include!("protocol_engine/receive_session_fallback_tests.rs");
 
     #[test]
     fn sender_owner_resolution_keeps_claimed_device_pending_until_owner_verified() {

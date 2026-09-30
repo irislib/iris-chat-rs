@@ -21,3 +21,6 @@ serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
+
+[patch.crates-io]
+nostr-double-ratchet = { path = "../vendor/nostr-double-ratchet" }

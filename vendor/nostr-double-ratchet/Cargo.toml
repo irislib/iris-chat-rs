@@ -1,0 +1,73 @@
+# Runtime sources from the published nostr-double-ratchet 0.0.167 crate.
+# Package SHA-256: ba46b31d2ad5028e9b6aeaaee374ee3059d23ace7f309958fb51f611f6e13aa4
+# Only source patch: upstream 8f29423508226e81ff36dd39fb16b88eab52435b
+# (try all matching receive sessions before rejecting a message).
+# Keep until a published release containing that fix replaces this override.
+# Upstream examples and integration tests are omitted; native regression lives
+# in chat-protocol/src/protocol_engine/receive_session_fallback_tests.rs.
+
+[package]
+publish = false
+edition = "2021"
+name = "nostr-double-ratchet"
+version = "0.0.167"
+authors = ["Martti Malmi"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Nostr double ratchet library for Rust"
+license = "MIT"
+repository = "https://files.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-double-ratchet"
+
+[features]
+default = ["full"]
+full = ["pairwise"]
+pairwise = []
+
+[lib]
+name = "nostr_double_ratchet"
+path = "src/lib.rs"
+
+[dependencies.base64]
+version = "0.22"
+
+[dependencies.hex]
+version = "0.4"
+features = ["serde"]
+
+[dependencies.hkdf]
+version = "0.12"
+
+[dependencies.nostr]
+version = "0.44.7"
+features = [
+    "std",
+    "nip44",
+]
+default-features = false
+
+[dependencies.rand]
+version = "0.8"
+
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+
+[dependencies.serde_json]
+version = "1"
+
+[dependencies.sha2]
+version = "0.10"
+
+[dependencies.thiserror]
+version = "2"
+
+[dependencies.urlencoding]
+version = "2.1"
+
+[dependencies.uuid]
+version = "1"
+features = ["v4"]

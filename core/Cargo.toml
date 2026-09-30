@@ -101,3 +101,6 @@ tempfile = "3"
 [target.'cfg(windows)'.dependencies]
 widestring = "1.2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_Pipes"] }
+
+[patch.crates-io]
+nostr-double-ratchet = { path = "../vendor/nostr-double-ratchet" }
