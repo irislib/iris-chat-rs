@@ -163,15 +163,44 @@ final class ScreenshotTests: XCTestCase {
         #endif
     }
 
+    func testChatHeaderAndDetailsLayout() {
+        let app = launchFixtureApp(createAccount: true)
+        XCTAssertTrue(waitForChatList(app, timeout: 30))
+        openFixtureChat(app, index: 0)
+        XCTAssertTrue(app.buttons["startVideoCallButton"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["chatHeaderSearchButton"].exists)
+        capture(app, named: "chat-header-call-buttons")
+        app.buttons["chatHeaderTitleButton"].tap()
+        XCTAssertTrue(app.buttons["chatDetailsSearchButton"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["chatDetailsPinButton"].exists)
+        capture(app, named: "chat-details-search-pin")
+        app.buttons["chatDetailsSearchButton"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["inChatSearchField"].waitForExistence(timeout: 10))
+        capture(app, named: "chat-details-search-open")
+    }
+
+    func testDeviceNameLayout() {
+        let app = launchFixtureApp(createAccount: true, deviceNames: true)
+        XCTAssertTrue(waitForChatList(app, timeout: 30))
+        app.buttons["chatListProfileButton"].tap()
+        let devices = app.descendants(matching: .any)["settingsDevicesRow"]
+        XCTAssertTrue(devices.waitForExistence(timeout: 10))
+        devices.tap()
+        XCTAssertTrue(app.staticTexts["Study laptop"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Calm Otter (unnamed device)"].exists)
+        capture(app, named: "device-names")
+    }
+
     // MARK: - Helpers
 
-    private func launchFixtureApp(createAccount: Bool, marketing: Bool = false) -> XCUIApplication {
+    private func launchFixtureApp(createAccount: Bool, marketing: Bool = false, deviceNames: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
         app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = "screenshot-\(UUID().uuidString)"
         app.launchEnvironment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] = "1"
         app.launchEnvironment["IRIS_DISABLE_NOTIFICATIONS"] = "1"
         app.launchEnvironment["IRIS_UI_TEST_SCREENSHOT_FIXTURE"] = "1"
+        if deviceNames { app.launchEnvironment["IRIS_UI_TEST_DEVICE_NAMES"] = "1" }
         if marketing {
             app.launchEnvironment["IRIS_UI_TEST_SCREENSHOT_STYLE"] = "marketing"
             let bundle = Bundle(for: Self.self)

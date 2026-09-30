@@ -175,6 +175,7 @@ pub struct AccountSnapshot {
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct DeviceEntrySnapshot {
+    pub display_name: String,
     pub device_pubkey_hex: String,
     pub device_npub: String,
     pub is_current_device: bool,

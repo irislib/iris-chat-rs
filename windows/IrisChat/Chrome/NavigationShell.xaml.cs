@@ -94,20 +94,11 @@ public partial class NavigationShell : UserControl
 
         var btn = new Button
         {
-            Style = (Style)FindResource("IconButton"),
-            Padding = new Thickness(8),
-            Content = new TextBlock
-            {
-                Text = "‹", // ‹
-                FontSize = 24,
-                FontWeight = FontWeights.Bold,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, -4, 0, 0),
-            },
-            Width = 44,
-            Height = 44,
+            Style = (Style)FindResource("HeaderIconButton"),
+            Content = "\uE72B",
+            ToolTip = "Back",
         };
+        System.Windows.Automation.AutomationProperties.SetName(btn, "Back");
         btn.Click += (_, _) => BackRequested?.Invoke();
         grid.Children.Add(btn);
 

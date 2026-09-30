@@ -258,6 +258,7 @@ fun GroupDetailsScreen(
             run {
                 val groupChatId = "group:$groupId"
                 IrisListSection {
+                    ChatDetailsActions(appManager, groupChatId, details.name)
                     IrisMenuRow(
                         title = "Mute notifications",
                         icon =
@@ -266,7 +267,7 @@ fun GroupDetailsScreen(
                             } else {
                                 IrisIcons.NotificationsOff
                             },
-                        onClick = rememberChatMuteAction(groupChatId, details.isMuted, appManager::dispatch),
+                        onClick = rememberChatMuteAction(groupChatId, details.isMuted, appManager::dispatch, untilSecs = appState.preferences.timedChatMutes.firstOrNull { it.chatId == groupChatId }?.untilSecs),
                         modifier = Modifier.testTag("groupDetailsMuteButton"),
                     )
                 }

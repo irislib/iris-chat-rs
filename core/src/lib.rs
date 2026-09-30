@@ -1,6 +1,7 @@
 mod actions;
 mod call_audio;
 mod desktop_call;
+mod device_names;
 pub use call_audio::{CallAudioCodec, CallAudioError};
 pub use desktop_call::*;
 mod core;
@@ -1380,7 +1381,7 @@ fn chat_input_shortcut(raw: &str) -> Option<ChatInputShortcut> {
         let normalized = crate::core::normalize_peer_input_for_display(trimmed);
         if let Ok(pubkey) = nostr::PublicKey::parse(&normalized) {
             let npub = pubkey.to_bech32().unwrap_or_else(|_| normalized.clone());
-            let display = short_npub_display(&npub);
+            let display = crate::core::fallback_profile_name_for_identity(&pubkey.to_hex());
             return Some(ChatInputShortcut::DirectPeer {
                 peer_input: normalized,
                 display,
@@ -1390,14 +1391,6 @@ fn chat_input_shortcut(raw: &str) -> Option<ChatInputShortcut> {
         }
     }
     None
-}
-
-fn short_npub_display(npub: &str) -> String {
-    if npub.len() > 16 {
-        format!("{}…{}", &npub[..10], &npub[npub.len() - 4..])
-    } else {
-        npub.to_string()
-    }
 }
 
 fn short_invite_display(invite: &str) -> String {

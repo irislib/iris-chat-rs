@@ -457,17 +457,8 @@ struct IrisTopBar: View {
         if canGoBack {
             Button(action: onBack) {
                 ZStack(alignment: .topTrailing) {
-                    // Match the composer's attach button: 40pt
-                    // glass circle so the two are visually a
-                    // pair sitting at the same horizontal inset.
-                    // The 48pt content shape (visible disc still
-                    // pinned to the leading edge so the chevron
-                    // stays at x=8) gives the button some extra
-                    // hit area on the trailing side, so an off-
-                    // center thumb tap toward the title doesn't
-                    // slip past the disc.
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .bold))
+                        .font(.system(size: 20, weight: .medium))
                         .foregroundStyle(palette.textPrimary)
                         .frame(width: 40, height: 40)
                         .irisGlassSurface(in: Circle())

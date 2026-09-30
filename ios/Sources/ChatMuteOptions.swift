@@ -15,6 +15,13 @@ struct ChatMuteOptions: View {
 
     var body: some View {
         if muted {
+            let deadline = manager.state.preferences.timedChatMutes.first { $0.chatId == chatId }
+            if let deadline {
+                let date = Date(timeIntervalSince1970: TimeInterval(deadline.untilSecs))
+                Text("Muted until \(date.formatted(date: Calendar.current.isDateInToday(date) ? .omitted : .abbreviated, time: .shortened))")
+            } else {
+                Text("Muted always")
+            }
             Button("Unmute") { manager.dispatch(.setChatMuted(chatId: chatId, muted: false)) }
         }
         ForEach(chatMuteDurations, id: \.seconds) { duration in

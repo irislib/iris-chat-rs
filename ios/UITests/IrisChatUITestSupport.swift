@@ -238,6 +238,14 @@ extension IrisChatUITestCase {
         line: UInt = #line
     ) {
         if element(app, "chatMessageInput").exists { return }
+        // Seeding posts messages asynchronously. Wait for the last one before
+        // tapping a row that is still being replaced by table updates.
+        if app.launchEnvironment["IRIS_UI_TEST_SEED_COUNT"] != nil {
+            XCTAssertTrue(waitUntil(timeout: rowTimeout) {
+                let row = seededChatRowPreview(app)
+                return row.exists && row.label.contains("LAST_SCROLL_SENTINEL") && row.isHittable
+            }, "seeded messages did not finish loading", file: file, line: line)
+        }
         let deadline = Date().addingTimeInterval(rowTimeout)
         var sawRow = false
         repeat {

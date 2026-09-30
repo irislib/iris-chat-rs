@@ -38,6 +38,12 @@ pub fn render(group_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk
         return scrolled.upcast();
     };
 
+    inner.append(&super::chat_details_actions(
+        manager,
+        &format!("group:{group_id}"),
+        &details.name,
+        || {},
+    ));
     inner.append(&settings_card(group_id, details, state, manager));
     inner.append(&members_card(group_id, details, state, manager));
     if details.can_manage {

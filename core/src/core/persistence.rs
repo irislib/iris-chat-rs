@@ -18,6 +18,7 @@ impl AppCore {
         self.chat_deletions = self.app_store.load_chat_deletions()?;
         self.chat_read_states = self.app_store.load_chat_read_states()?;
         self.chat_mute_states = self.app_store.load_chat_mute_states()?;
+        self.chat_pin_states = self.app_store.load_chat_pin_states()?;
         self.app_store.load_state()
     }
 

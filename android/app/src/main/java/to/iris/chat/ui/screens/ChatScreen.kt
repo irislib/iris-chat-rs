@@ -28,7 +28,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Check
@@ -183,7 +182,6 @@ fun ChatScreen(
     val latestDraft by rememberUpdatedState(draft)
     val latestLastPersistedDraft by rememberUpdatedState(lastPersistedDraft)
     val latestHasSentTyping by rememberUpdatedState(hasSentTyping)
-    var inChatSearchOpen by remember(chatId) { mutableStateOf(false) }
     var composerBounds by remember { mutableStateOf<Rect?>(null) }
     var showMessageRequestBlockDialog by remember(chatId) { mutableStateOf(false) }
     var showMessageRequestBlockAndReportDialog by remember(chatId) { mutableStateOf(false) }
@@ -467,18 +465,6 @@ fun ChatScreen(
                 actions = {
                     if (chat?.kind == ChatKind.DIRECT && !chat.isRequest && !isUserBlocked(preferences, chatId)) {
                         to.iris.chat.calls.ChatCallButtons(appManager, chatId)
-                    }
-                    if (chat != null) {
-                        IconButton(
-                            onClick = { inChatSearchOpen = true },
-                            modifier = Modifier.testTag("chatHeaderSearchButton"),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Search,
-                                contentDescription = "Search in this chat",
-                                tint = MaterialTheme.colorScheme.onBackground,
-                            )
-                        }
                     }
                 },
             )
@@ -841,15 +827,6 @@ fun ChatScreen(
                     onDismiss = { imageViewerItem = null },
                 )
             }
-
-            if (inChatSearchOpen) {
-                InChatSearchSheet(
-                    appManager = appManager,
-                    chatId = chatId,
-                    chatDisplayName = chat.displayName,
-                    onDismiss = { inChatSearchOpen = false },
-                )
-            }
         }
 
         if (showMessageRequestBlockDialog) {
@@ -995,13 +972,10 @@ private fun Modifier.clearFocusOnTapOutside(
         }
     }
 
-/// Scoped message search bound to a single conversation. Reached via
-/// the magnifying-glass icon in the chat header; mirrors the Signal
-/// in-conversation search experience without forcing the user to
-/// navigate back to the chat list.
+/// Scoped message search opened from the user or group details page.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun InChatSearchSheet(
+internal fun InChatSearchSheet(
     appManager: AppManager,
     chatId: String,
     chatDisplayName: String,

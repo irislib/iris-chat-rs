@@ -14,6 +14,7 @@ impl AppCore {
                 entries.insert(
                     device_pubkey_hex.clone(),
                     DeviceEntrySnapshot {
+                        display_name: String::new(),
                         device_pubkey_hex: device_pubkey_hex.clone(),
                         device_npub: device_npub(&device_pubkey_hex)
                             .unwrap_or_else(|| device_pubkey_hex.clone()),
@@ -47,6 +48,7 @@ impl AppCore {
         entries
             .entry(current_device_pubkey_hex.clone())
             .or_insert(DeviceEntrySnapshot {
+                display_name: String::new(),
                 device_pubkey_hex: current_device_pubkey_hex.clone(),
                 device_npub: current_device_npub.clone(),
                 is_current_device: true,
@@ -64,6 +66,36 @@ impl AppCore {
                 client_label: current_labels.and_then(|labels| labels.client_label.clone()),
             });
 
+        let unnamed = entries
+            .values()
+            .filter(|device| {
+                crate::device_names::meaningful_device_name(device.device_label.as_deref())
+                    .is_none()
+            })
+            .map(|device| {
+                (
+                    device.device_pubkey_hex.clone(),
+                    crate::device_names::unnamed_device_name(&device.device_pubkey_hex),
+                )
+            })
+            .collect::<Vec<_>>();
+        for device in entries.values_mut() {
+            device.display_name =
+                crate::device_names::meaningful_device_name(device.device_label.as_deref())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        let name =
+                            crate::device_names::unnamed_device_name(&device.device_pubkey_hex);
+                        if unnamed.iter().filter(|(_, other)| other == &name).count() > 1 {
+                            // Only show a short distinguishing suffix when two devices collide.
+                            let suffix = &device.device_pubkey_hex
+                                [device.device_pubkey_hex.len().saturating_sub(8)..];
+                            format!("{name} {suffix} (unnamed device)")
+                        } else {
+                            format!("{name} (unnamed device)")
+                        }
+                    });
+        }
         let mut devices = entries.into_values().collect::<Vec<_>>();
         devices.sort_by(|left, right| {
             right

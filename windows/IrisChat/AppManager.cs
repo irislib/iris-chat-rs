@@ -907,12 +907,12 @@ public sealed partial class AppManager : INotifyPropertyChanged
     private void SyncCurrentDeviceLabels(AppState state)
     {
         var currentDevice = state.deviceRoster?.devices.FirstOrDefault(d => d.isCurrentDevice);
-        var deviceLabel = string.IsNullOrWhiteSpace(currentDevice?.deviceLabel)
+        var savedName = currentDevice?.deviceLabel?.Trim();
+        var deviceLabel = string.IsNullOrWhiteSpace(savedName)
+            || new[] { "linked device", "this device", "unnamed device" }.Contains(savedName.ToLowerInvariant())
             ? PlatformDeviceLabels.CurrentDeviceLabel
-            : currentDevice!.deviceLabel!.Trim();
-        var clientLabel = string.IsNullOrWhiteSpace(currentDevice?.clientLabel)
-            ? PlatformDeviceLabels.CurrentClientLabel
-            : currentDevice!.clientLabel!.Trim();
+            : savedName;
+        var clientLabel = PlatformDeviceLabels.CurrentClientLabel;
         var key = $"{deviceLabel}\u001F{clientLabel}";
         if (key == _lastSyncedDeviceLabelsKey) return;
         _lastSyncedDeviceLabelsKey = key;

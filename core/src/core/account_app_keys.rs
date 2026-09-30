@@ -70,7 +70,19 @@ pub(super) fn preserve_known_app_key_labels(
         let Ok(pubkey) = PublicKey::parse(&device.identity_pubkey_hex) else {
             continue;
         };
-        if incoming.get_device(&pubkey).is_some() {
+        if incoming.get_device(&pubkey).is_some()
+            && incoming.get_device_labels(&pubkey).is_none_or(|labels| {
+                (
+                    labels.updated_at,
+                    &labels.device_label,
+                    &labels.client_label,
+                ) < (
+                    device.label_updated_at_secs,
+                    &device.device_label,
+                    &device.client_label,
+                )
+            })
+        {
             incoming.set_device_labels(
                 pubkey,
                 device.device_label.clone(),
@@ -164,5 +176,31 @@ pub(super) fn known_app_keys_from_ndr(
         owner_pubkey_hex: owner.to_hex(),
         created_at_secs,
         devices,
+    }
+}
+
+// Device descriptions never grant access or modify the membership revision.
+pub(super) fn merge_known_device_labels(current: &mut KnownAppKeys, incoming: &KnownAppKeys) {
+    for device in &mut current.devices {
+        let Some(next) = incoming
+            .devices
+            .iter()
+            .find(|next| next.identity_pubkey_hex == device.identity_pubkey_hex)
+        else {
+            continue;
+        };
+        if (
+            next.label_updated_at_secs,
+            &next.device_label,
+            &next.client_label,
+        ) > (
+            device.label_updated_at_secs,
+            &device.device_label,
+            &device.client_label,
+        ) {
+            device.device_label = next.device_label.clone();
+            device.client_label = next.client_label.clone();
+            device.label_updated_at_secs = next.label_updated_at_secs;
+        }
     }
 }

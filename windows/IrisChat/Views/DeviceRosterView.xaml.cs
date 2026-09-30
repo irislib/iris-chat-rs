@@ -68,7 +68,7 @@ public partial class DeviceRosterView : UserControl
         var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var primary = new TextBlock
         {
-            Text = TitleText(d),
+            Text = d.displayName,
             Foreground = (Brush)Application.Current.Resources["TextPrimary"],
             FontWeight = FontWeights.SemiBold,
         };
@@ -143,7 +143,8 @@ public partial class DeviceRosterView : UserControl
     private static string StatusText(DeviceEntrySnapshot d)
     {
         var parts = new System.Collections.Generic.List<string>();
-        if (!string.IsNullOrWhiteSpace(d.clientLabel))
+        if (d.isCurrentDevice) parts.Add("This device");
+        if (!string.IsNullOrWhiteSpace(d.clientLabel) && d.clientLabel.Trim() != "Iris Chat")
         {
             parts.Add(d.clientLabel!.Trim());
         }
@@ -160,14 +161,6 @@ public partial class DeviceRosterView : UserControl
             parts.Add($"Added {when}");
         }
         return string.Join(" · ", parts);
-    }
-
-    private static string TitleText(DeviceEntrySnapshot d)
-    {
-        var label = d.deviceLabel?.Trim();
-        if (!string.IsNullOrEmpty(label) && !d.isCurrentDevice) return label!;
-        if (!string.IsNullOrEmpty(label) && d.isCurrentDevice) return $"This device · {label}";
-        return d.isCurrentDevice ? "This device" : "Linked device";
     }
 
     private void OnDeviceInputChanged(object sender, TextChangedEventArgs e)

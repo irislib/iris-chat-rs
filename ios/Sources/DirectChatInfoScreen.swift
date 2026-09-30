@@ -126,6 +126,10 @@ struct DirectChatInfoScreen: View {
                     }
 
                     IrisSectionCard {
+                        InChatSearchButton(manager: manager, target: InChatSearchTarget(chatId: chatId, displayName: chat.displayName))
+                        Divider().overlay(palette.border)
+                        ChatPinButton(manager: manager, chatId: chatId)
+                        Divider().overlay(palette.border)
                         Menu {
                             ChatMuteOptions(manager: manager, chatId: chatId, muted: chat.isMuted)
                         } label: {

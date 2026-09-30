@@ -19,7 +19,7 @@ import to.iris.chat.rust.AppAction
 internal val chatMuteDurations = listOf("1 hour" to 3600uL, "8 hours" to 28800uL, "1 day" to 86400uL, "1 week" to 604800uL)
 
 @Composable
-fun rememberChatMuteAction(chatId: String, muted: Boolean, dispatch: (AppAction) -> Unit): () -> Unit {
+fun rememberChatMuteAction(chatId: String, muted: Boolean, dispatch: (AppAction) -> Unit, untilSecs: ULong? = null): () -> Unit {
     var showing by remember(chatId) { mutableStateOf(false) }
     if (showing) {
         AlertDialog(
@@ -27,6 +27,11 @@ fun rememberChatMuteAction(chatId: String, muted: Boolean, dispatch: (AppAction)
             title = { Text("Mute notifications") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
+                    if (muted) {
+                        Text(untilSecs?.let {
+                            "Muted until ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(it.toLong() * 1000))}"
+                        } ?: "Muted always")
+                    }
                     if (muted) TextButton(onClick = {
                         showing = false
                         dispatch(AppAction.SetChatMuted(chatId, false))

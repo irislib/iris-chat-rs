@@ -66,7 +66,7 @@ internal fun FollowedPersonSearchRow(
     val preview = person.profileLabel
         ?.takeIf { !it.equals(person.displayLabel, ignoreCase = true) }
         ?: person.about
-        ?: person.userId
+        ?: ""
     IrisChatListRow(
         title = person.displayLabel,
         preview = preview,

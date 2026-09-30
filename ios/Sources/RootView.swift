@@ -299,6 +299,7 @@ struct RootView: View {
                 )
             }
             .buttonStyle(.irisUnpressed)
+            .accessibilityLabel("Settings")
             .accessibilityIdentifier("chatListProfileButton")
             .accessibilityValue(
                 ProcessInfo.processInfo.environment["IRIS_UI_TEST_EXPOSE_ACCOUNT_NPUB"] == "1"
@@ -317,36 +318,10 @@ struct RootView: View {
             )
         }
 
-        // Surface "Search in this chat" on the chat / group-details
-        // pages. Tapping pops up an inline scoped-search sheet so the
-        // user doesn't have to navigate back to the chat list and
-        // retype the chat name.
-        if let target = chatHeaderSearchTarget(for: screen) {
-            return AnyView(
-                HStack(spacing: 0) {
-                    IrisChatCallButtons(manager: manager, chatID: target.chatId)
-                    InChatSearchButton(manager: manager, target: target)
-                }
-            )
+        if case .chat = screen, let chat = manager.state.currentChat {
+            return AnyView(IrisChatCallButtons(manager: manager, chatID: chat.chatId))
         }
-
-        // The chat header avatar/title is the entry point to chat info now —
-        // no overflow menu needed.
         return AnyView(EmptyView())
-    }
-
-    private func chatHeaderSearchTarget(for screen: Screen) -> InChatSearchTarget? {
-        switch screen {
-        case .chat:
-            guard let chat = manager.state.currentChat else { return nil }
-            return InChatSearchTarget(chatId: chat.chatId, displayName: chat.displayName)
-        case .groupDetails(let groupId):
-            let chatId = "group:\(groupId)"
-            let name = manager.state.groupDetails?.name ?? "Group"
-            return InChatSearchTarget(chatId: chatId, displayName: name)
-        default:
-            return nil
-        }
     }
 
     private func backUnreadCount(for screen: Screen) -> UInt64 {
@@ -397,7 +372,7 @@ struct RootView: View {
             return irisDisappearingLabel(seconds: ttl)
         }
         if chat.isMuted {
-            return "muted"
+            return "Muted"
         }
         return nil
     }

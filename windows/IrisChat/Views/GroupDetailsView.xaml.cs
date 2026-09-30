@@ -45,6 +45,7 @@ public partial class GroupDetailsView : UserControl
         SaveNameButton.IsEnabled = details.canManage;
         AddMemberInput.IsEnabled = details.canManage;
         MuteChatText.Text = "Mute notifications…";
+        PinChatButton.Content = App.CurrentManager.Preferences.pinnedChatIds.Contains($"group:{details.groupId}") ? "Unpin chat" : "Pin chat";
 
         var about = details.about ?? string.Empty;
         if (details.canManage)
@@ -376,6 +377,13 @@ public partial class GroupDetailsView : UserControl
         var details = App.CurrentManager.GroupDetails;
         if (details == null) return;
         App.CurrentManager.DeleteChat($"group:{details.groupId}");
+    }
+
+    private void OnTogglePin(object sender, RoutedEventArgs e)
+    {
+        if (App.CurrentManager.GroupDetails is not { } details) return;
+        var chatId = $"group:{details.groupId}";
+        App.CurrentManager.SetChatPinned(chatId, !App.CurrentManager.Preferences.pinnedChatIds.Contains(chatId));
     }
 
     private void OnToggleMute(object sender, RoutedEventArgs e)

@@ -390,3 +390,113 @@ fn timed_mute_newly_linked_device_inherits_legacy_and_versioned_mutes() {
     deliver_chat_read_packets(&mut pair.b, &pair.a_device, &packets);
     assert!(!pair.b.is_chat_muted(&legacy));
 }
+
+#[test]
+fn chat_pin_sync_survives_unpin_restart_and_new_device_catchup() {
+    let mut pair = chat_read_sync_pair("chat-pin-sync");
+    let chat_id = Keys::generate().public_key().to_hex();
+    pair.a.handle_action(AppAction::SetChatPinned { chat_id: chat_id.clone(), pinned: true });
+    let stale = pair.a.build_device_sync_packets_for_test(100, false);
+    deliver_chat_read_packets(&mut pair.b, &Keys::generate(), &stale);
+    assert!(!pair.b.is_chat_pinned(&chat_id));
+    deliver_chat_read_packets(&mut pair.b, &pair.a_device, &stale);
+    assert!(pair.b.is_chat_pinned(&chat_id), "a sibling must receive the pin even without chat history");
+    pair.b.handle_action(AppAction::SetChatPinned { chat_id: chat_id.clone(), pinned: false });
+    sync_chat_reads(&pair.b, &mut pair.a, &pair.b_device, false);
+    assert!(!pair.a.is_chat_pinned(&chat_id));
+    deliver_chat_read_packets(&mut pair.b, &pair.a_device, &stale);
+    assert!(!pair.b.is_chat_pinned(&chat_id), "stale pin must not undo unpin");
+    pair.a.persist_best_effort();
+    drop(pair.a);
+    let mut restarted = logged_in_test_core_at_data_dir(&pair.owner, &pair.a_device, pair.a_dir.path().to_string_lossy().into());
+    restarted.load_persisted().unwrap();
+    assert!(!restarted.is_chat_pinned(&chat_id));
+}
+
+#[test]
+fn chat_pin_control_is_encrypted_to_siblings_and_replays_without_chat_messages() {
+    let mut pair = chat_read_sync_pair("pin-ratchet");
+    install_two_way_local_sibling_state_for_test(
+        &mut pair.a,
+        &mut pair.b,
+        &pair.owner,
+        &pair.a_device,
+        &pair.b_device,
+    );
+    pair.a.pending_relay_publishes.clear();
+    pair.b.pending_relay_publishes.clear();
+    let chat_id = Keys::generate().public_key().to_hex();
+    pair.a.handle_action(AppAction::SetChatPinned {
+        chat_id: chat_id.clone(),
+        pinned: true,
+    });
+    let encrypted = sorted_pending_events_for_test(&pair.a);
+    assert!(!encrypted.is_empty());
+    assert!(encrypted
+        .iter()
+        .all(|event| !event.content.contains(&chat_id) && !event.content.contains("chat-pin")));
+    // Delivery can happen after the receiver has been offline.
+    deliver_pending_relay_events_for_test(&pair.a, &mut pair.b);
+    assert!(pair.b.is_chat_pinned(&chat_id));
+    assert!(
+        pair.b.threads.is_empty(),
+        "control must not create a chat or bubble"
+    );
+    pair.b.handle_action(AppAction::SetChatPinned {
+        chat_id: chat_id.clone(),
+        pinned: false,
+    });
+    deliver_pending_relay_events_for_test(&pair.b, &mut pair.a);
+    assert!(!pair.a.is_chat_pinned(&chat_id));
+    for event in encrypted {
+        pair.b.handle_relay_event(event);
+    }
+    assert!(!pair.b.is_chat_pinned(&chat_id));
+    assert!(pair.a.threads.is_empty());
+}
+
+#[test]
+fn chat_pin_control_rejects_peer_spoof_and_removed_sibling() {
+    let mut pair = chat_read_sync_pair("pin-control-auth");
+    let stranger = Keys::generate();
+    let chat_id = stranger.public_key().to_hex();
+    let value = serde_json::json!({ "type": "chat-pin", "v": 1, "pin": {
+        "chatId": chat_id, "pinned": true, "updatedAtMs": unix_now_ms(),
+    }})
+    .to_string();
+    for (sender, device) in [
+        (stranger.public_key(), stranger.public_key()),
+        (pair.owner.public_key(), stranger.public_key()),
+    ] {
+        let (rumor, _) = runtime_rumor_json(
+            sender,
+            chat_pin_sync::CHAT_PIN_KIND,
+            &value,
+            unix_now().get(),
+            vec![],
+        );
+        assert!(pair.b.apply_decrypted_runtime_message_with_metadata(
+            sender,
+            Some(device),
+            Some(pair.owner.public_key()),
+            rumor,
+            None,
+            unix_now().get()
+        ));
+        assert!(!pair.b.is_chat_pinned(&chat_id));
+        assert!(pair.b.threads.is_empty());
+    }
+}
+
+
+#[test]
+fn chat_pin_new_device_inherits_legacy_pins_before_link_time() {
+    let mut pair = chat_read_sync_pair("pin-new-device");
+    let legacy = Keys::generate().public_key().to_hex();
+    pair.a.preferences.pinned_chat_ids.push(legacy.clone());
+    pair.a.set_chat_pinned("group:weekend", true);
+    let packets = pair.a.build_device_sync_packets_for_test(unix_now().get() + 10, false);
+    deliver_chat_read_packets(&mut pair.b, &pair.a_device, &packets);
+    assert!(pair.b.is_chat_pinned(&legacy));
+    assert!(pair.b.is_chat_pinned("group:weekend"));
+}

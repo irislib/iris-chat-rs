@@ -142,6 +142,9 @@ struct SettingsScreen: View {
 
     private var settingsScreenMarker: some View {
         Text("Settings")
+            // A selectable, hidden AX marker causes recursive label resolution
+            // in AppKit. Keep selection enabled only for the visible content.
+            .textSelection(.disabled)
             .frame(width: 1, height: 1)
             .opacity(0.001)
             .allowsHitTesting(false)

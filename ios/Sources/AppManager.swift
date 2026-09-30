@@ -2851,8 +2851,9 @@ final class AppManager: ObservableObject {
 
     private func syncCurrentDeviceLabelsIfNeeded(state: AppState) {
         let currentDevice = state.deviceRoster?.devices.first(where: \.isCurrentDevice)
-        let deviceLabel = nonEmptyLabel(currentDevice?.deviceLabel) ?? PlatformDeviceLabels.currentDeviceLabel
-        let clientLabel = nonEmptyLabel(currentDevice?.clientLabel) ?? PlatformDeviceLabels.currentClientLabel
+        let savedName = nonEmptyLabel(currentDevice?.deviceLabel)
+        let deviceLabel = savedName.flatMap { ["linked device", "this device", "unnamed device"].contains($0.lowercased()) ? nil : $0 } ?? PlatformDeviceLabels.currentDeviceLabel
+        let clientLabel = PlatformDeviceLabels.currentClientLabel
         let key = "\(deviceLabel)\u{1F}\(clientLabel)"
         guard key != lastSyncedDeviceLabelsKey else { return }
         lastSyncedDeviceLabelsKey = key
@@ -3086,10 +3087,12 @@ final class AppManager: ObservableObject {
         // to the chat list mid-screenshot. Pin the current local stack
         // when it terminates in a fixture chat.
         var pinned = source
-        if let active = state.router.screenStack.last,
-           case let .chat(chatId) = active,
-           fixture.chatIsFixture(chatId),
-           source.router.screenStack.last != active {
+        let active = state.router.screenStack.last
+        let fixtureChatID: String? = switch active {
+        case .chat(let id), .directChatInfo(let id): id
+        default: nil
+        }
+        if let chatId = fixtureChatID, fixture.chatIsFixture(chatId), source.router.screenStack.last != active {
             pinned.router = Router(
                 defaultScreen: source.router.defaultScreen,
                 screenStack: state.router.screenStack

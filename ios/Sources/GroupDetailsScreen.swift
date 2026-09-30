@@ -153,6 +153,10 @@ struct GroupDetailsScreen: View {
                 }
 
                 IrisSectionCard {
+                    InChatSearchButton(manager: manager, target: InChatSearchTarget(chatId: "group:\(groupId)", displayName: details.name))
+                    Divider().overlay(palette.border)
+                    ChatPinButton(manager: manager, chatId: "group:\(groupId)")
+                    Divider().overlay(palette.border)
                     Menu {
                         ChatMuteOptions(manager: manager, chatId: "group:\(groupId)", muted: details.isMuted)
                     } label: {

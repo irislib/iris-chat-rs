@@ -144,6 +144,15 @@ pub fn present_chat_info(
         content.append(&message);
     }
 
+    let closing = dialog.clone();
+    content.append(&super::chat_details_actions(
+        &manager,
+        &info.chat_id,
+        &info.display_name,
+        move || {
+            closing.close();
+        },
+    ));
     let mute = gtk::Button::with_label("Mute notifications…");
     mute.set_halign(gtk::Align::Start);
     let manager_for_mute = manager.clone();

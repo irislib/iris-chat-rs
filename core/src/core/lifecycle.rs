@@ -87,6 +87,7 @@ impl AppCore {
             chat_deletions: BTreeMap::new(),
             chat_read_states: BTreeMap::new(),
             chat_mute_states: BTreeMap::new(),
+            chat_pin_states: BTreeMap::new(),
             active_chat_id: None,
             screen_stack: Vec::new(),
             next_message_id: 1,

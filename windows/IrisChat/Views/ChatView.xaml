@@ -49,7 +49,7 @@
                                    FontSize="12"
                                    VerticalAlignment="Center"
                                    Margin="0,0,4,0" />
-                        <TextBlock Text="muted"
+                        <TextBlock Text="Muted"
                                    Foreground="{StaticResource TextMuted}"
                                    FontSize="12"
                                    TextTrimming="CharacterEllipsis" />
@@ -72,8 +72,8 @@
                     </Grid>
                 </Border>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button x:Name="VoiceCall" Style="{StaticResource GhostButton}" Content="&#xE717;" FontFamily="Segoe MDL2 Assets" ToolTip="Voice call" Click="OnVoiceCall"/>
-                    <Button x:Name="VideoCall" Style="{StaticResource GhostButton}" Content="&#xE714;" FontFamily="Segoe MDL2 Assets" ToolTip="Video call" Click="OnVideoCall"/>
+                    <Button x:Name="VideoCall" Style="{StaticResource HeaderIconButton}" Content="&#xE714;" ToolTip="Video call" AutomationProperties.Name="Video call" Click="OnVideoCall"/>
+                    <Button x:Name="VoiceCall" Style="{StaticResource HeaderIconButton}" Content="&#xE717;" ToolTip="Voice call" AutomationProperties.Name="Voice call" Click="OnVoiceCall"/>
                     <Button Style="{StaticResource GhostButton}"
                             Click="OnToggleMute"
                             x:Name="MuteChatButton"

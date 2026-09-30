@@ -469,3 +469,54 @@ struct IrisInfoPill: View {
             )
     }
 }
+
+/// Quiet, equally sized toolbar controls with hover and pressed feedback.
+struct IrisHeaderButtonStyle: ButtonStyle {
+    @Environment(\.irisPalette) private var palette
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(palette.textPrimary)
+            .background(Circle().fill(palette.textPrimary.opacity(
+                isEnabled && (configuration.isPressed || hovered) ? (configuration.isPressed ? 0.14 : 0.08) : 0
+            )))
+            .opacity(isEnabled ? 1 : 0.4)
+            .contentShape(Circle())
+            .onHover { hovered = $0 }
+            .irisHoverPointer()
+    }
+}
+
+struct ChatPinButton: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
+    let chatId: String
+    private var pinned: Bool { manager.state.preferences.pinnedChatIds.contains(chatId) }
+
+    var body: some View {
+        Button {
+            manager.dispatch(.setChatPinned(chatId: chatId, pinned: !pinned))
+        } label: {
+            Label(pinned ? "Unpin chat" : "Pin chat", systemImage: pinned ? "pin.slash.fill" : "pin.fill")
+                .labelStyle(IrisDetailsLabelStyle())
+                .font(.system(.body, design: .rounded, weight: .semibold))
+                .foregroundStyle(palette.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.irisPlain)
+        .accessibilityIdentifier("chatDetailsPinButton")
+    }
+}
+
+struct IrisDetailsLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 12) {
+            configuration.icon.frame(width: 24)
+            configuration.title
+        }
+    }
+}

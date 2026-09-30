@@ -364,7 +364,7 @@ private fun DeviceRosterRow(
     isUpdatingRoster: Boolean,
     onRemove: () -> Unit,
 ) {
-    val displayTitle = deviceDisplayTitle(device)
+    val displayTitle = device.displayName
     val displaySubtitle = deviceDisplaySubtitle(device)
     var confirmRemoval by remember { mutableStateOf(false) }
 
@@ -407,12 +407,15 @@ private fun DeviceRosterRow(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
-                Text(
-                    text = displaySubtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = IrisTheme.palette.muted,
-                )
+                if (displaySubtitle != null) {
+                    Text(
+                        text = displaySubtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = IrisTheme.palette.muted,
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (device.isCurrentDevice) DeviceStateChip(text = "This device")
                     if (!device.isAuthorized && !device.isStale) {
                         DeviceStateChip(text = "Pending")
                     }
@@ -483,27 +486,8 @@ private fun DeviceRosterRow(
     }
 }
 
-private fun deviceDisplayTitle(device: DeviceEntrySnapshot): String =
-    if (device.isCurrentDevice) {
-        "This device"
-    } else {
-        device.deviceLabel?.trim()?.takeIf { it.isNotEmpty() } ?: "Linked device"
-    }
-
-private fun deviceDisplaySubtitle(device: DeviceEntrySnapshot): String {
-    val clientLabel =
-        device.clientLabel?.trim()?.takeIf { it.isNotEmpty() }
-            ?: if (device.isCurrentDevice) {
-                "Iris Chat Android"
-            } else {
-                "Iris Chat"
-            }
-    val deviceLabel = device.deviceLabel?.trim()?.takeIf { it.isNotEmpty() }
-    if (device.isCurrentDevice && deviceLabel != null) {
-        return "$deviceLabel - $clientLabel"
-    }
-    return clientLabel
-}
+private fun deviceDisplaySubtitle(device: DeviceEntrySnapshot): String? =
+    device.clientLabel?.trim()?.takeIf { it.isNotEmpty() && it != "Iris Chat" }
 
 @Composable
 private fun DeviceStateChip(

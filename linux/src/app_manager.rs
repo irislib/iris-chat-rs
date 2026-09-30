@@ -379,10 +379,14 @@ impl AppManager {
         });
         let device_label = current_device
             .and_then(|device| non_empty_owned(device.device_label.as_deref()))
+            .filter(|name| {
+                !matches!(
+                    name.to_lowercase().as_str(),
+                    "linked device" | "this device" | "unnamed device"
+                )
+            })
             .unwrap_or_else(local_device_label);
-        let client_label = current_device
-            .and_then(|device| non_empty_owned(device.client_label.as_deref()))
-            .unwrap_or_else(|| "Iris Chat Linux".to_string());
+        let client_label = "Iris Chat Linux".to_string();
         let key = format!("{device_label}\x1F{client_label}");
         if self.last_synced_device_labels_key.borrow().as_deref() == Some(key.as_str()) {
             return;

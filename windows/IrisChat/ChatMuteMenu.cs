@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -28,7 +29,14 @@ internal static class ChatMuteMenu
 
     private static void AddItems(ItemCollection items, AppManager manager, string chatId, bool muted)
     {
-        if (muted) Add("Unmute", () => manager.SetChatMuted(chatId, false));
+        if (muted)
+        {
+            var deadline = manager.Preferences.timedChatMutes.FirstOrDefault(mute => mute.chatId == chatId);
+            var status = deadline == null ? "Muted always"
+                : $"Muted until {DateTimeOffset.FromUnixTimeSeconds((long)deadline.untilSecs).LocalDateTime:g}";
+            items.Add(new MenuItem { Header = status, IsEnabled = false });
+            Add("Unmute", () => manager.SetChatMuted(chatId, false));
+        }
         foreach (var (label, seconds) in Durations)
             Add(label, () => manager.SetChatMuteUntil(chatId, checked((ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds() + seconds)));
         Add("Always", () => manager.SetChatMuted(chatId, true));

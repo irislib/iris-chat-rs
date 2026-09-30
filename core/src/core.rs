@@ -87,11 +87,13 @@ mod calls;
 pub(crate) use calls::push::{build_call_push_subscription_request, resolve_call_push_invite};
 mod chat_deletions;
 mod chat_mute_sync;
+mod chat_pin_sync;
 mod chat_reactions;
 mod chat_read_state;
 mod chat_receipts;
 mod chat_settings;
 use chat_mute_sync::ChatMuteState;
+use chat_pin_sync::ChatPinState;
 mod chat_typing;
 mod chats;
 mod config;
@@ -114,6 +116,7 @@ pub(crate) mod notifications;
 mod payloads;
 mod persistence;
 mod profile;
+pub(crate) use profile::fallback_profile_name_for_identity;
 mod profile_helpers;
 mod profile_search;
 mod profile_search_capability;
@@ -591,6 +594,7 @@ pub struct AppCore {
     chat_deletions: BTreeMap<String, u64>,
     chat_read_states: BTreeMap<String, ChatReadState>,
     chat_mute_states: BTreeMap<String, ChatMuteState>,
+    chat_pin_states: BTreeMap<String, ChatPinState>,
     active_chat_id: Option<String>,
     screen_stack: Vec<Screen>,
     next_message_id: u64,

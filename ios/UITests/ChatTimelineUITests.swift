@@ -274,8 +274,18 @@ final class IrisChatTimelineUITests: IrisChatUITestCase {
 
         openSeededChat(app)
 
-        XCTAssertTrue(element(app, "chatHeaderSearchButton").waitForExistence(timeout: 10))
-        element(app, "chatHeaderSearchButton").tap()
+        XCTAssertFalse(element(app, "chatHeaderSearchButton").exists)
+        element(app, "chatHeaderTitleButton").tap()
+        XCTAssertTrue(element(app, "chatDetailsSearchButton").waitForExistence(timeout: 10))
+        let pin = element(app, "chatDetailsPinButton")
+        XCTAssertTrue(pin.waitForExistence(timeout: 5))
+        pin.tap()
+        XCTAssertTrue(app.buttons["Unpin chat"].waitForExistence(timeout: 5))
+        let details = XCTAttachment(screenshot: app.screenshot())
+        details.name = "chat-details-search-and-pin"
+        details.lifetime = .keepAlways
+        add(details)
+        element(app, "chatDetailsSearchButton").tap()
         let searchField = editableElement(app, "inChatSearchField")
         XCTAssertTrue(searchField.waitForExistence(timeout: 10))
         typeText("FIRST_SCROLL_SENTINEL", into: searchField, app: app)

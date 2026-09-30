@@ -111,33 +111,14 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) -> Option<Rc<Ap
     }
     header.pack_start(&settings_button);
 
-    let chat_search_button = gtk::Button::from_icon_name("system-search-symbolic");
-    chat_search_button.set_tooltip_text(Some("Search in chat"));
-    chat_search_button.set_visible(false);
-    {
-        let manager = manager.clone();
-        chat_search_button.connect_clicked(move |_| {
-            let state = manager.current_state();
-            let (chat_id, name) = if let Some(chat) = state.current_chat.as_ref() {
-                (chat.chat_id.clone(), chat.display_name.clone())
-            } else if let Some(details) = state.group_details.as_ref() {
-                (format!("group:{}", details.group_id), details.name.clone())
-            } else {
-                return;
-            };
-            manager.enter_chat_scope(chat_id, name);
-            // Drop the chat screen so the user lands back on the chat
-            // list with the scope chip and search input focused.
-            manager.dispatch(iris_chat_core::AppAction::UpdateScreenStack { stack: Vec::new() });
-            manager.redraw_ui();
-        });
-    }
-    header.pack_end(&chat_search_button);
     let voice_call_button = gtk::Button::from_icon_name("call-start-symbolic");
     voice_call_button.set_tooltip_text(Some("Voice call"));
     let video_call_button = gtk::Button::from_icon_name("camera-video-symbolic");
     video_call_button.set_tooltip_text(Some("Video call"));
     for (button, video) in [(&voice_call_button, false), (&video_call_button, true)] {
+        button.add_css_class("flat");
+        button.add_css_class("circular");
+        button.set_size_request(44, 44);
         let manager = manager.clone();
         button.connect_clicked(move |_| {
             if let Some(chat) = manager.current_state().current_chat {
@@ -210,7 +191,6 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) -> Option<Rc<Ap
         new_chat: new_chat_button.clone(),
         settings: settings_button.clone(),
         chat_info: chat_info_button.clone(),
-        chat_search: chat_search_button.clone(),
         voice_call: voice_call_button,
         video_call: video_call_button,
         title: title_label.clone(),
@@ -438,7 +418,6 @@ struct HeaderWidgets {
     new_chat: gtk::Button,
     settings: gtk::Button,
     chat_info: gtk::Button,
-    chat_search: gtk::Button,
     voice_call: gtk::Button,
     video_call: gtk::Button,
     title: gtk::Label,
@@ -478,7 +457,6 @@ fn apply_state(slot: &Content, header: &HeaderWidgets, manager: &Rc<AppManager>,
         header.settings.set_visible(false);
         header.settings.set_child(gtk::Widget::NONE);
         header.chat_info.set_visible(false);
-        header.chat_search.set_visible(false);
         header.title.set_label("Loading");
         header.title_status.set_visible(false);
         slot.replace(&loading_screen());
@@ -506,10 +484,6 @@ fn apply_state(slot: &Content, header: &HeaderWidgets, manager: &Rc<AppManager>,
     header
         .chat_info
         .set_visible(matches!(screen, Screen::Chat { .. }));
-    header.chat_search.set_visible(matches!(
-        screen,
-        Screen::Chat { .. } | Screen::GroupDetails { .. }
-    ));
 
     let title_text =
         chat_title(&screen, state).unwrap_or_else(|| screens::title(&screen).to_string());

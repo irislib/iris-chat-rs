@@ -166,3 +166,41 @@ fn restored_owner_session_publishes_app_keys_snapshot_when_creating_public_invit
     let app_keys = AppKeys::from_event(&app_keys_events_after_invite[0]).expect("app keys event");
     assert!(app_keys.get_device(&device_pubkey).is_some());
 }
+
+#[test]
+fn linked_device_labels_sync_without_owner_key_or_changing_authorization() {
+    let mut pair = chat_read_sync_pair("linked-device-labels-sync");
+    pair.a.logged_in.as_mut().unwrap().owner_keys = None;
+    let owner = pair.owner.public_key().to_hex();
+    let device = pair.a_device.public_key().to_hex();
+    let before = pair.a.app_keys[&owner].created_at_secs;
+    pair.a.set_current_device_labels("Study laptop", "Iris Chat macOS");
+    assert_eq!(pair.a.app_keys[&owner].created_at_secs, before);
+    assert_eq!(pair.a.app_keys[&owner].devices.len(), 2);
+    // Receiver has a newer membership revision; the name still catches up.
+    pair.b.app_keys.get_mut(&owner).unwrap().created_at_secs = before + 100;
+    sync_chat_reads(&pair.a, &mut pair.b, &pair.a_device, false);
+    let known = &pair.b.app_keys[&owner];
+    assert_eq!(known.created_at_secs, before + 100);
+    let sibling = known.devices.iter().find(|entry| entry.identity_pubkey_hex == device).unwrap();
+    assert_eq!(sibling.device_label.as_deref(), Some("Study laptop"));
+    assert_eq!(sibling.client_label.as_deref(), Some("Iris Chat macOS"));
+    let old = pair.a.build_device_sync_packets_for_test(100, false);
+    pair.a.set_current_device_labels("Travel laptop", "Iris Chat macOS");
+    sync_chat_reads(&pair.a, &mut pair.b, &pair.a_device, false);
+    deliver_chat_read_packets(&mut pair.b, &pair.a_device, &old);
+    assert_eq!(pair.b.app_keys[&owner].devices.iter().find(|entry| entry.identity_pubkey_hex == device).unwrap().device_label.as_deref(), Some("Travel laptop"));
+}
+
+#[test]
+fn unnamed_device_labels_are_stable_and_real_names_take_precedence() {
+    assert_eq!(crate::device_names::unnamed_device_name(&"a".repeat(64)), "Cozy Tiger");
+    assert_eq!(crate::device_names::unnamed_device_name(&"B".repeat(64)), "Cozy Koala");
+    let pair = chat_read_sync_pair("unnamed-devices");
+    let roster = pair.a.build_device_roster_snapshot().unwrap();
+    assert!(roster.devices.iter().all(|device| device.display_name.ends_with(" (unnamed device)")));
+    assert_ne!(roster.devices[0].display_name, roster.devices[1].display_name);
+    let mut core = pair.a;
+    core.set_current_device_labels("Kitchen tablet", "Iris Chat iOS");
+    assert_eq!(core.build_device_roster_snapshot().unwrap().devices.iter().find(|device| device.is_current_device).unwrap().display_name, "Kitchen tablet");
+}

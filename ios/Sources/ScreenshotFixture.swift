@@ -350,6 +350,21 @@ extension ScreenshotFixture {
         overriddenAccount.pictureUrl = Self.avatarURL(for: ownerDisplayName)
         next.account = overriddenAccount
 
+        if ProcessInfo.processInfo.environment["IRIS_UI_TEST_DEVICE_NAMES"] == "1", var roster = next.deviceRoster {
+            roster.devices = [
+                DeviceEntrySnapshot(displayName: "Study laptop", devicePubkeyHex: account.devicePublicKeyHex, deviceNpub: account.deviceNpub,
+                    isCurrentDevice: true, isConnected: true, isAuthorized: true, isStale: false, addedAtSecs: UInt64(referenceDate.timeIntervalSince1970) - 86400,
+                    deviceLabel: "Study laptop", clientLabel: "Iris Chat macOS"),
+                DeviceEntrySnapshot(displayName: "Travel phone", devicePubkeyHex: String(repeating: "a", count: 64), deviceNpub: "",
+                    isCurrentDevice: false, isConnected: true, isAuthorized: true, isStale: false, addedAtSecs: UInt64(referenceDate.timeIntervalSince1970) - 172800,
+                    deviceLabel: "Travel phone", clientLabel: "Iris Chat iOS"),
+                DeviceEntrySnapshot(displayName: "Calm Otter (unnamed device)", devicePubkeyHex: String(repeating: "b", count: 64), deviceNpub: "",
+                    isCurrentDevice: false, isConnected: false, isAuthorized: true, isStale: false, addedAtSecs: UInt64(referenceDate.timeIntervalSince1970) - 5961600,
+                    deviceLabel: nil, clientLabel: "Iris Chat")
+            ]
+            next.deviceRoster = roster
+        }
+
         // Force the Nearby row visible in the chat list — the row only
         // renders when `preferences.nearbyEnabled` is true.
         next.preferences.nearbyEnabled = true
@@ -365,8 +380,11 @@ extension ScreenshotFixture {
         }
 
         // If the active screen is a fixture chat, inject the timeline.
-        if case let .chat(chatId) = state.router.screenStack.last,
-           chatIsFixture(chatId),
+        let fixtureChatID: String? = switch state.router.screenStack.last {
+        case .chat(let id), .directChatInfo(let id): id
+        default: nil
+        }
+        if let chatId = fixtureChatID, chatIsFixture(chatId),
            let thread = threads.first(where: { $0.chatId == chatId }) {
             next.currentChat = currentChatSnapshot(
                 thread: thread,

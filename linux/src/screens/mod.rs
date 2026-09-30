@@ -192,6 +192,22 @@ pub(crate) fn show_chat_mute_options(
     let title = gtk::Label::new(Some("Mute notifications"));
     title.add_css_class("title-2");
     content.append(&title);
+    if muted {
+        let state = manager.current_state();
+        let deadline = state
+            .preferences
+            .timed_chat_mutes
+            .iter()
+            .find(|mute| mute.chat_id == chat_id);
+        let text = deadline
+            .and_then(|mute| gtk::glib::DateTime::from_unix_local(mute.until_secs as i64).ok())
+            .and_then(|date| date.format("%x %H:%M").ok())
+            .map(|date| format!("Muted until {date}"))
+            .unwrap_or_else(|| "Muted always".to_string());
+        let status = gtk::Label::new(Some(&text));
+        status.add_css_class("dim-label");
+        content.append(&status);
+    }
     let mut options = vec![
         ("1 hour", Some(3_600)),
         ("8 hours", Some(28_800)),
@@ -323,4 +339,56 @@ pub(crate) fn scan_qr_button<F: Fn(String) + 'static>(label: &str, on_result: F)
 
 pub(crate) fn present_nearby(parent: Option<&gtk::Window>, manager: Rc<AppManager>) {
     nearby::present(parent, manager);
+}
+
+fn chat_details_actions(
+    manager: &Rc<AppManager>,
+    chat_id: &str,
+    name: &str,
+    close: impl Fn() + 'static,
+) -> gtk::Widget {
+    let group = adw::PreferencesGroup::new();
+    let search = adw::ActionRow::builder()
+        .title("Search in chat")
+        .activatable(true)
+        .build();
+    search.add_prefix(&gtk::Image::from_icon_name("system-search-symbolic"));
+    let target = chat_id.to_string();
+    let name = name.to_string();
+    let searching = manager.clone();
+    search.connect_activated(move |_| {
+        searching.enter_chat_scope(target.clone(), name.clone());
+        searching.dispatch(AppAction::UpdateScreenStack { stack: Vec::new() });
+        close();
+        searching.redraw_ui();
+    });
+    group.add(&search);
+    let pin = adw::ActionRow::builder().activatable(true).build();
+    let update_title = |row: &adw::ActionRow, pinned| {
+        row.set_title(if pinned { "Unpin chat" } else { "Pin chat" })
+    };
+    update_title(
+        &pin,
+        manager
+            .current_state()
+            .preferences
+            .pinned_chat_ids
+            .contains(&chat_id.to_string()),
+    );
+    let target = chat_id.to_string();
+    let manager = manager.clone();
+    pin.connect_activated(move |row| {
+        let pinned = !manager
+            .current_state()
+            .preferences
+            .pinned_chat_ids
+            .contains(&target);
+        manager.dispatch(AppAction::SetChatPinned {
+            chat_id: target.clone(),
+            pinned,
+        });
+        update_title(row, pinned);
+    });
+    group.add(&pin);
+    group.upcast()
 }

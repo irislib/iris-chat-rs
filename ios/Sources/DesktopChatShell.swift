@@ -63,7 +63,7 @@ struct DesktopChatShell: View {
             let chat = manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
             DesktopPaneTopBar(
                 title: chat?.displayName ?? "Chat",
-                subtitle: chat?.isMuted == true ? "muted" : chat?.subtitle,
+                subtitle: chat?.isMuted == true ? "Muted" : chat?.subtitle,
                 subtitleSystemImage: chat?.isMuted == true ? "bell.slash.fill" : nil,
                 onTitleTap: chat.map { current in
                     {
@@ -86,16 +86,7 @@ struct DesktopChatShell: View {
                     )
                 } ?? AnyView(EmptyView()),
                 trailing: AnyView(
-                    HStack(spacing: 0) {
-                        IrisChatCallButtons(manager: manager, chatID: chatId)
-                        InChatSearchButton(
-                            manager: manager,
-                            target: InChatSearchTarget(
-                                chatId: chatId,
-                                displayName: chat?.displayName ?? "Chat"
-                            )
-                        )
-                    }
+                    IrisChatCallButtons(manager: manager, chatID: chatId)
                 )
             )
             ChatScreen(manager: manager, chatId: chatId)
@@ -200,9 +191,10 @@ struct DesktopPaneTopBar: View {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(palette.textPrimary)
-                        .frame(width: 34, height: 34)
+                        .frame(width: 40, height: 40)
                 }
-                .buttonStyle(.irisPlain)
+                .buttonStyle(IrisHeaderButtonStyle())
+                .accessibilityLabel("Back")
                 .accessibilityIdentifier("desktopPaneBackButton")
             }
 
@@ -364,6 +356,7 @@ struct DesktopChatSidebar: View {
                         )
                     }
                     .buttonStyle(.irisUnpressed)
+                    .accessibilityLabel("Settings")
                     .accessibilityIdentifier("chatListProfileButton")
                     if hasHttpPicture(account.pictureUrl) || hasHashtreePicture(account.pictureUrl) {
                         Color.clear
@@ -388,6 +381,7 @@ struct DesktopChatSidebar: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.irisPlain)
+            .accessibilityLabel("Settings")
             .accessibilityIdentifier("desktopSettingsButton")
         }
         .padding(.horizontal, 18)

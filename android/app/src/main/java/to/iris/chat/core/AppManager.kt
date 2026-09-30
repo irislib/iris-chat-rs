@@ -1802,9 +1802,10 @@ class AppManager(
     private fun syncCurrentDeviceLabelsIfNeeded(snapshot: AppState) {
         val currentDevice = snapshot.deviceRoster?.devices?.firstOrNull { it.isCurrentDevice }
         val deviceLabel =
-            currentDevice?.deviceLabel?.trim()?.ifEmpty { null } ?: currentPlatformDeviceLabel()
-        val clientLabel =
-            currentDevice?.clientLabel?.trim()?.ifEmpty { null } ?: "Iris Chat Android"
+            currentDevice?.deviceLabel?.trim()?.takeIf {
+                it.isNotEmpty() && it.lowercase() !in setOf("linked device", "this device", "unnamed device")
+            } ?: currentPlatformDeviceLabel()
+        val clientLabel = "Iris Chat Android"
         val key = "$deviceLabel\u001F$clientLabel"
         if (key == lastSyncedDeviceLabelsKey) {
             return

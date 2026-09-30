@@ -35,6 +35,9 @@ struct SharedFipsOptions {
 
 impl AppCore {
     pub(in crate::core) fn reconcile_device_sync(&mut self) {
+        if self.apply_current_device_labels_to_local_app_keys(false) {
+            self.persist_best_effort();
+        }
         let (additional_peers, routed_peers) = match super::settings::configured_peer_hints() {
             Ok(peers) => peers,
             Err(error) => {

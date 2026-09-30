@@ -90,6 +90,9 @@ impl AppCore {
         if changed && !self.defer_owner_app_keys_publish {
             self.publish_local_app_keys();
         }
+        if changed {
+            self.broadcast_device_sync_snapshot();
+        }
         self.rebuild_persist_and_emit_state();
     }
 
@@ -581,6 +584,7 @@ impl AppCore {
             self.chat_message_ttl_seconds = persisted.chat_message_ttl_seconds.clone();
             apply_persisted_preferences(&mut self.preferences, &persisted.preferences);
             self.restore_chat_mute_projection();
+            self.restore_chat_pin_projection();
             self.seen_event_order = persisted
                 .seen_event_ids
                 .iter()
@@ -955,7 +959,10 @@ impl AppCore {
         true
     }
 
-    fn apply_current_device_labels_to_local_app_keys(&mut self, create_if_missing: bool) -> bool {
+    pub(super) fn apply_current_device_labels_to_local_app_keys(
+        &mut self,
+        create_if_missing: bool,
+    ) -> bool {
         let Some(labels) = self.current_device_labels.clone() else {
             return false;
         };
@@ -963,7 +970,27 @@ impl AppCore {
             return false;
         };
         if logged_in.owner_keys.is_none() {
-            return false;
+            // A linked device may describe itself, but cannot create membership
+            // or advance the owner's authorization revision.
+            let Some(known) = self.app_keys.get_mut(&logged_in.owner_pubkey.to_hex()) else {
+                return false;
+            };
+            let Some(device) = known.devices.iter_mut().find(|device| {
+                device.identity_pubkey_hex == logged_in.device_keys.public_key().to_hex()
+            }) else {
+                return false;
+            };
+            if device.device_label == labels.device_label
+                && device.client_label == labels.client_label
+            {
+                return false;
+            }
+            device.device_label = labels.device_label;
+            device.client_label = labels.client_label;
+            device.label_updated_at_secs = unix_now()
+                .get()
+                .max(device.label_updated_at_secs.saturating_add(1));
+            return true;
         }
         self.upsert_local_app_key_device_with_labels(
             logged_in.owner_pubkey,

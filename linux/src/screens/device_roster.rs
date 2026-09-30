@@ -243,14 +243,9 @@ fn device_row(
     device: &DeviceEntrySnapshot,
     manager: &Rc<AppManager>,
 ) -> adw::ActionRow {
-    let title = if device.is_current_device {
-        "This device".to_string()
-    } else {
-        non_empty(device.device_label.as_deref())
-            .unwrap_or("Linked device")
-            .to_string()
-    };
-    let row = adw::ActionRow::builder().title(title).build();
+    let row = adw::ActionRow::builder()
+        .title(&device.display_name)
+        .build();
     if !device.is_current_device {
         let connection_label = if device.is_connected {
             "Connected"
@@ -270,11 +265,11 @@ fn device_row(
     }
     let mut subtitles = Vec::new();
     if device.is_current_device {
-        if let Some(label) = non_empty(device.device_label.as_deref()) {
-            subtitles.push(label.to_string());
-        }
+        subtitles.push("This device".to_string());
     }
-    if let Some(client) = non_empty(device.client_label.as_deref()) {
+    if let Some(client) =
+        non_empty(device.client_label.as_deref()).filter(|label| *label != "Iris Chat")
+    {
         subtitles.push(client.to_string());
     }
     if let Some(secs) = device.added_at_secs {

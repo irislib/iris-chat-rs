@@ -87,14 +87,14 @@ fun ChatCallButtons(app: AppManager, chatId: String) {
     val call by app.call.collectAsStateWithLifecycle()
     val permissions = rememberCallPermissionAction()
     val available = call == null || call?.phase == "ended"
-    if (preferences.voiceCallsEnabled) IconButton(
-        onClick = { permissions(false) { app.dispatch(AppAction.StartCall(chatId, false)) } },
-        enabled = available, modifier = Modifier.testTag("chatVoiceCallButton"),
-    ) { Icon(Icons.Filled.Call, "Voice call") }
     if (preferences.videoCallsEnabled) IconButton(
         onClick = { permissions(true) { app.dispatch(AppAction.StartCall(chatId, true)) } },
         enabled = available, modifier = Modifier.testTag("chatVideoCallButton"),
     ) { Icon(Icons.Filled.Videocam, "Video call") }
+    if (preferences.voiceCallsEnabled) IconButton(
+        onClick = { permissions(false) { app.dispatch(AppAction.StartCall(chatId, false)) } },
+        enabled = available, modifier = Modifier.testTag("chatVoiceCallButton"),
+    ) { Icon(Icons.Filled.Call, "Voice call") }
 }
 
 @Composable

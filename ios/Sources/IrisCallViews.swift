@@ -14,14 +14,6 @@ struct IrisChatCallButtons: View {
     var body: some View {
         if !chatID.hasPrefix("group:"), !manager.isUserBlocked(chatID) {
             HStack(spacing: 0) {
-                if manager.state.preferences.voiceCallsEnabled {
-                    Button { manager.calls.start(chatID: chatID, video: false) } label: {
-                        callIcon("phone.fill", video: false)
-                    }
-                    .accessibilityLabel("Voice call")
-                    .accessibilityIdentifier("startVoiceCallButton")
-                    .irisCallControlHelp("Voice call")
-                }
                 if manager.state.preferences.videoCallsEnabled {
                     Button { manager.calls.start(chatID: chatID, video: true) } label: {
                         callIcon("video.fill", video: true)
@@ -30,9 +22,17 @@ struct IrisChatCallButtons: View {
                     .accessibilityIdentifier("startVideoCallButton")
                     .irisCallControlHelp("Video call")
                 }
+                if manager.state.preferences.voiceCallsEnabled {
+                    Button { manager.calls.start(chatID: chatID, video: false) } label: {
+                        callIcon("phone.fill", video: false)
+                    }
+                    .accessibilityLabel("Voice call")
+                    .accessibilityIdentifier("startVoiceCallButton")
+                    .irisCallControlHelp("Voice call")
+                }
             }
-            .font(.system(size: 19, weight: .semibold))
-            .buttonStyle(.irisPlain)
+            .font(.system(size: 20, weight: .regular))
+            .buttonStyle(IrisHeaderButtonStyle())
             .disabled(controller.startingVideo != nil || (manager.state.call != nil && manager.state.call?.phase != "ended"))
         }
     }

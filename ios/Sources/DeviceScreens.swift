@@ -232,19 +232,10 @@ struct DeviceRosterRow: View {
     let canManageDevices: Bool
     @State private var showingRemoveConfirmation = false
 
-    private var displayTitle: String {
-        if device.isCurrentDevice {
-            return "This device"
-        }
-        return nonEmpty(device.deviceLabel) ?? "Linked device"
-    }
+    private var displayTitle: String { device.displayName }
 
-    private var displaySubtitle: String {
-        let client = nonEmpty(device.clientLabel)
-            ?? (device.isCurrentDevice ? PlatformDeviceLabels.currentClientLabel : "Iris Chat")
-        if device.isCurrentDevice, let deviceLabel = nonEmpty(device.deviceLabel) {
-            return "\(deviceLabel) - \(client)"
-        }
+    private var displaySubtitle: String? {
+        guard let client = nonEmpty(device.clientLabel), client != "Iris Chat" else { return nil }
         return client
     }
 
@@ -274,14 +265,17 @@ struct DeviceRosterRow: View {
                             .foregroundStyle(palette.textPrimary)
                     }
                     .accessibilityElement(children: .combine)
-                    Text(displaySubtitle)
-                        .font(.system(.footnote, design: .monospaced))
-                        .foregroundStyle(palette.muted)
-                        .lineLimit(2)
+                    if let displaySubtitle {
+                        Text(displaySubtitle)
+                            .font(.footnote)
+                            .foregroundStyle(palette.muted)
+                            .lineLimit(2)
+                    }
                 }
             }
 
             HStack(spacing: 8) {
+                if device.isCurrentDevice { IrisInfoPill("This device", tint: .purple) }
                 if !device.isAuthorized && !device.isStale {
                     IrisInfoPill("Pending", tint: .orange)
                 }

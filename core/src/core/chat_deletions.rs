@@ -6,6 +6,7 @@ impl AppCore {
         self.chat_deletions.clear();
         self.chat_read_states.clear();
         self.chat_mute_states.clear();
+        self.chat_pin_states.clear();
         self.pending_decrypted_delivery_acks.clear();
     }
 

@@ -386,6 +386,14 @@ public partial class ChatView : UserControl
         }
 
         stack.Children.Add(BuildNicknameSection(chat));
+        var pin = new Button { Margin = new Thickness(0, 0, 0, 8), HorizontalAlignment = HorizontalAlignment.Left };
+        void RefreshPin() => pin.Content = App.CurrentManager.Preferences.pinnedChatIds.Contains(chat.chatId) ? "Unpin chat" : "Pin chat";
+        pin.Click += (_, _) => App.CurrentManager.SetChatPinned(chat.chatId, !App.CurrentManager.Preferences.pinnedChatIds.Contains(chat.chatId));
+        PropertyChangedEventHandler updatePin = (_, _) => RefreshPin();
+        App.CurrentManager.PropertyChanged += updatePin;
+        window.Closed += (_, _) => App.CurrentManager.PropertyChanged -= updatePin;
+        RefreshPin();
+        stack.Children.Add(pin);
         stack.Children.Add(BuildDirectInfoButton(
             "Mute notifications…",
             () => ChatMuteMenu.Show(window, App.CurrentManager, chat.chatId, chat.isMuted)

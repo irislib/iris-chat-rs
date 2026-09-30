@@ -22,6 +22,8 @@ mod store_chat_read_states;
 
 #[path = "store_chat_mutes.rs"]
 mod store_chat_mutes;
+#[path = "store_chat_pins.rs"]
+mod store_chat_pins;
 
 #[path = "store_outgoing_events.rs"]
 mod store_outgoing_events;

@@ -151,37 +151,6 @@ impl AppCore {
         self.rebuild_persist_and_emit_state();
     }
 
-    pub(super) fn set_chat_pinned(&mut self, chat_id: &str, pinned: bool) {
-        let Some(normalized_chat_id) = self.normalize_local_chat_setting_id(chat_id) else {
-            return;
-        };
-
-        let mut pinned_chat_ids = self.preferences.pinned_chat_ids.clone();
-        pinned_chat_ids.sort();
-        pinned_chat_ids.dedup();
-        let had_pinned = pinned_chat_ids
-            .iter()
-            .any(|existing| existing == &normalized_chat_id);
-
-        if pinned == had_pinned {
-            if pinned_chat_ids != self.preferences.pinned_chat_ids {
-                self.preferences.pinned_chat_ids = pinned_chat_ids;
-                self.persist_best_effort();
-            }
-            return;
-        }
-
-        if pinned {
-            pinned_chat_ids.push(normalized_chat_id.clone());
-            pinned_chat_ids.sort();
-            pinned_chat_ids.dedup();
-        } else {
-            pinned_chat_ids.retain(|existing| existing != &normalized_chat_id);
-        }
-        self.preferences.pinned_chat_ids = pinned_chat_ids;
-        self.rebuild_persist_and_emit_state();
-    }
-
     pub(super) fn is_chat_pinned(&self, chat_id: &str) -> bool {
         self.normalize_local_chat_setting_id(chat_id)
             .is_some_and(|normalized| {

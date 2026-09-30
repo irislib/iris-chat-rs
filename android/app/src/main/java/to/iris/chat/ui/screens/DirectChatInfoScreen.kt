@@ -236,6 +236,7 @@ fun DirectChatInfoScreen(
                             onBack = onBack,
                         )
                     }
+                    ChatDetailsActions(appManager, chatId, chat.displayName)
                     IrisInlineAction(
                         text = "Copy user ID",
                         onClick = { clipboard.setText("User ID", peerInputToNpub(chatId)) },
@@ -245,7 +246,7 @@ fun DirectChatInfoScreen(
                     }
                     IrisInlineAction(
                         text = "Mute notifications",
-                        onClick = rememberChatMuteAction(chatId, chat.isMuted, appManager::dispatch),
+                        onClick = rememberChatMuteAction(chatId, chat.isMuted, appManager::dispatch, untilSecs = preferences.timedChatMutes.firstOrNull { it.chatId == chatId }?.untilSecs),
                         modifier = Modifier.testTag("directChatMuteButton"),
                     ) {
                         Icon(

@@ -83,6 +83,8 @@ enum DeviceSyncPacket {
         deleted_chats: Vec<DeviceSyncChatDeletion>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         chat_mutes: Vec<ChatMuteState>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        chat_pins: Vec<ChatPinState>,
         #[serde(default)]
         app_keys: Vec<DeviceSyncAppKeys>,
         #[serde(default)]
@@ -119,6 +121,12 @@ struct DeviceSyncAppKeys {
 struct DeviceSyncAppKeyDevice {
     identity_pubkey: String,
     created_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    device_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    client_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label_updated_at: Option<u64>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -184,6 +192,7 @@ struct DeviceSyncSnapshot {
     chats: Vec<DeviceSyncChat>,
     deleted_chats: Vec<DeviceSyncChatDeletion>,
     chat_mutes: Vec<ChatMuteState>,
+    chat_pins: Vec<ChatPinState>,
     app_keys: Vec<DeviceSyncAppKeys>,
     groups: Vec<DeviceSyncGroup>,
     messages: Vec<DeviceSyncMessage>,
@@ -193,6 +202,7 @@ enum DeviceSyncItem {
     Chat(DeviceSyncChat),
     Deletion(DeviceSyncChatDeletion),
     Mute(ChatMuteState),
+    Pin(ChatPinState),
     AppKeys(DeviceSyncAppKeys),
     Group(DeviceSyncGroup),
     Message(DeviceSyncMessage),
@@ -201,6 +211,7 @@ impl DeviceSyncItem {
     fn push(&self, snapshot: &mut DeviceSyncSnapshot) {
         match self {
             Self::Mute(value) => snapshot.chat_mutes.push(value.clone()),
+            Self::Pin(value) => snapshot.chat_pins.push(value.clone()),
             Self::Chat(value) => snapshot.chats.push(value.clone()),
             Self::Deletion(value) => snapshot.deleted_chats.push(value.clone()),
             Self::AppKeys(value) => snapshot.app_keys.push(value.clone()),
@@ -213,6 +224,9 @@ impl DeviceSyncItem {
         match self {
             Self::Deletion(_) => {
                 snapshot.deleted_chats.pop();
+            }
+            Self::Pin(_) => {
+                snapshot.chat_pins.pop();
             }
             Self::Mute(_) => {
                 snapshot.chat_mutes.pop();
@@ -241,6 +255,7 @@ impl DeviceSyncSnapshot {
             chats: self.chats.clone(),
             deleted_chats: self.deleted_chats.clone(),
             chat_mutes: self.chat_mutes.clone(),
+            chat_pins: self.chat_pins.clone(),
             app_keys: self.app_keys.clone(),
             groups: self.groups.clone(),
             messages: self.messages.clone(),
@@ -248,7 +263,8 @@ impl DeviceSyncSnapshot {
     }
 
     fn is_empty(&self) -> bool {
-        self.chat_mutes.is_empty()
+        self.chat_pins.is_empty()
+            && self.chat_mutes.is_empty()
             && self.deleted_chats.is_empty()
             && self.chats.is_empty()
             && self.app_keys.is_empty()
@@ -292,6 +308,7 @@ impl AppCore {
                 chats,
                 deleted_chats,
                 chat_mutes,
+                chat_pins,
                 app_keys,
                 groups,
                 messages,
@@ -301,6 +318,7 @@ impl AppCore {
                     chats,
                     deleted_chats,
                     chat_mutes,
+                    chat_pins,
                     app_keys,
                     groups,
                     messages,
@@ -510,6 +528,7 @@ impl AppCore {
             roster_at,
             chats,
             chat_mutes: self.chat_mute_snapshot(),
+            chat_pins: self.chat_pin_snapshot(),
             deleted_chats: self
                 .chat_deletions
                 .iter()
@@ -537,6 +556,12 @@ impl AppCore {
             return;
         };
         let mut changed = false;
+        for state in snapshot.chat_pins {
+            match self.merge_chat_pin(state) {
+                Ok(merged) => changed |= merged,
+                Err(error) => self.push_debug_log("chat_pin.save_failed", error.to_string()),
+            }
+        }
         for state in snapshot.chat_mutes {
             match self.merge_chat_mute(state) {
                 Ok(applied) => changed |= applied,
@@ -561,13 +586,18 @@ impl AppCore {
             let owner_hex = owner.to_hex();
             let current = self.app_keys.get(&owner_hex).cloned();
             preserve_known_app_key_labels(current.as_ref(), &mut incoming);
-            let (effective, known) = canonical_known_app_keys_snapshot(
+            let (_, mut known) = canonical_known_app_keys_snapshot(
                 current.as_ref(),
                 owner,
                 &incoming,
                 created_at,
                 None,
             );
+            // Names have their own clock. A stale membership snapshot can still
+            // carry a newer name for a device that remains authorized.
+            let label_source = known_app_keys_from_ndr(owner, &incoming, created_at);
+            account_app_keys::merge_known_device_labels(&mut known, &label_source);
+            let effective = known_app_keys_to_ndr(&known);
             if current.as_ref() == Some(&known) {
                 continue;
             }
@@ -843,6 +873,11 @@ impl DeviceSyncAppKeys {
                         .ok()?
                         .to_hex(),
                     created_at: device.created_at_secs,
+                    device_label: device.device_label.clone(),
+                    client_label: device.client_label.clone(),
+                    label_updated_at: (device.device_label.is_some()
+                        || device.client_label.is_some())
+                    .then_some(device.label_updated_at_secs),
                 })
             })
             .collect::<Option<Vec<_>>>()?;
@@ -858,17 +893,32 @@ impl DeviceSyncAppKeys {
     fn into_app_keys(self) -> Option<(PublicKey, AppKeys, u64)> {
         let owner = PublicKey::from_hex(&self.owner_pubkey).ok()?;
         let mut identities = HashSet::new();
-        let devices = self
-            .devices
-            .into_iter()
-            .map(|device| {
-                let identity = PublicKey::from_hex(&device.identity_pubkey).ok()?;
-                identities
-                    .insert(identity)
-                    .then_some(DeviceEntry::new(identity, device.created_at))
-            })
-            .collect::<Option<Vec<_>>>()?;
-        Some((owner, AppKeys::new(devices), self.created_at))
+        let mut incoming = AppKeys::new(Vec::new());
+        for device in self.devices {
+            let identity = PublicKey::from_hex(&device.identity_pubkey).ok()?;
+            if !identities.insert(identity) {
+                return None;
+            }
+            incoming.add_device(DeviceEntry::new(identity, device.created_at));
+            if device
+                .label_updated_at
+                .is_some_and(|at| at <= unix_now().get().saturating_add(300))
+            {
+                incoming.set_device_labels(
+                    identity,
+                    device
+                        .device_label
+                        .as_deref()
+                        .and_then(account_app_keys::normalize_device_label),
+                    device
+                        .client_label
+                        .as_deref()
+                        .and_then(account_app_keys::normalize_device_label),
+                    device.label_updated_at,
+                );
+            }
+        }
+        Some((owner, incoming, self.created_at))
     }
 }
 
@@ -879,6 +929,7 @@ fn encode_device_sync_chunks(snapshot: DeviceSyncSnapshot) -> Vec<Vec<u8>> {
         .into_iter()
         .map(DeviceSyncItem::Deletion)
         .chain(snapshot.chat_mutes.into_iter().map(DeviceSyncItem::Mute))
+        .chain(snapshot.chat_pins.into_iter().map(DeviceSyncItem::Pin))
         .chain(snapshot.chats.into_iter().map(DeviceSyncItem::Chat))
         .chain(snapshot.app_keys.into_iter().map(DeviceSyncItem::AppKeys))
         .chain(snapshot.groups.into_iter().map(DeviceSyncItem::Group))

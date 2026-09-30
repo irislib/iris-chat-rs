@@ -421,10 +421,10 @@ fn person_row(
 ) -> adw::ActionRow {
     let subtitle = person
         .profile_label
-        .as_ref()
+        .as_deref()
         .filter(|label| !label.eq_ignore_ascii_case(&person.display_label))
-        .or(person.about.as_ref())
-        .unwrap_or(&person.user_id);
+        .or(person.about.as_deref())
+        .unwrap_or("");
     let row = adw::ActionRow::builder()
         .title(escape(&person.display_label))
         .subtitle(escape(subtitle))

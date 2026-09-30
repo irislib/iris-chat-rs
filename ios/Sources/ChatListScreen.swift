@@ -550,7 +550,7 @@ struct FollowedPersonSearchRow: View {
         let profile = person.profileLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
         let preview = (profile?.isEmpty == false && profile != person.displayLabel)
             ? profile!
-            : person.about ?? person.userId
+            : person.about ?? ""
         IrisChatRow(
             title: person.displayLabel,
             preview: preview,
@@ -728,23 +728,16 @@ struct InChatSearchButton: View {
         Button {
             presentedTarget = target
         } label: {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 18, weight: .semibold))
+            Label("Search in chat", systemImage: "magnifyingglass")
+                .labelStyle(IrisDetailsLabelStyle())
+                .font(.system(.body, design: .rounded, weight: .semibold))
                 .foregroundStyle(palette.textPrimary)
-#if os(macOS)
-                .frame(width: 44, height: 44)
-#else
-                .frame(width: 40, height: 40)
-                .frame(width: 48, height: 48)
-#endif
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.irisPlain)
-        .accessibilityLabel("Search in this chat")
-        .accessibilityIdentifier("chatHeaderSearchButton")
-#if !os(macOS)
-        .padding(.trailing, 4)
-#endif
+        .accessibilityIdentifier("chatDetailsSearchButton")
         .sheet(item: $presentedTarget) { target in
             InChatSearchSheet(manager: manager, target: target) {
                 presentedTarget = nil
@@ -762,7 +755,7 @@ struct InChatSearchButton: View {
 }
 
 /// Scoped message search bound to a single conversation. Reached from
-/// the chat / group-details header magnifying-glass icon. Tapping a
+/// the user or group details page. Tapping a
 /// hit dismisses the sheet and opens the chat at that conversation.
 struct InChatSearchSheet: View {
     @Environment(\.irisPalette) private var palette
