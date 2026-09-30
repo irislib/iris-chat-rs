@@ -33,10 +33,7 @@ import androidx.compose.material.icons.rounded.AddReaction
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Schedule
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -565,95 +562,6 @@ private fun SystemMessageChip(message: ChatMessageSnapshot) {
     }
 }
 
-@Composable
-private fun MessageActionDock(
-    canReplyAndReact: Boolean,
-    postReactionSuggestions: List<String>,
-    onReact: (String) -> Unit,
-    onReply: () -> Unit,
-    onForward: () -> Unit,
-    onCopy: () -> Unit,
-    onInfo: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    var menuOpen by remember { mutableStateOf(false) }
-    var reactionPickerOpen by remember { mutableStateOf(false) }
-    Surface(
-        color = IrisTheme.palette.toolbar,
-        shape = RoundedCornerShape(100.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 3.dp),
-            horizontalArrangement = Arrangement.spacedBy(1.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (canReplyAndReact) Box {
-                ActionDockIconButton(
-                    icon = Icons.Rounded.AddReaction,
-                    label = "React",
-                    testTag = "messageReactButton",
-                    onClick = { reactionPickerOpen = true },
-                )
-                ReactionPickerMenu(
-                    expanded = reactionPickerOpen,
-                    onDismiss = { reactionPickerOpen = false },
-                    postReactionSuggestions = postReactionSuggestions,
-                    onEmoji = { emoji ->
-                        reactionPickerOpen = false
-                        onReact(emoji)
-                    },
-                )
-            }
-            if (canReplyAndReact) ActionDockIconButton(Icons.AutoMirrored.Rounded.Reply, "Reply", onClick = onReply)
-            ActionDockIconButton(IrisIcons.Share, "Forward", onClick = onForward)
-            Box {
-                ActionDockIconButton(Icons.Rounded.MoreHoriz, "More", { menuOpen = true })
-                DropdownMenu(
-                    expanded = menuOpen,
-                    onDismissRequest = { menuOpen = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Copy text") },
-                        onClick = {
-                            menuOpen = false
-                            onCopy()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Info") },
-                        onClick = {
-                            menuOpen = false
-                            onInfo()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Delete message") },
-                        onClick = {
-                            menuOpen = false
-                            onDelete()
-                        },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReactionPickerMenu(
-    expanded: Boolean,
-    onDismiss: () -> Unit,
-    postReactionSuggestions: List<String>,
-    onEmoji: (String) -> Unit,
-) {
-    if (!expanded) return
-    IrisEmojiPickerSheet(
-        onDismiss = onDismiss,
-        suggestedEmojis = postReactionSuggestions,
-        onPick = onEmoji,
-    )
-}
-
 internal fun postReactionSuggestionEmojis(reactions: List<MessageReactionSnapshot>): List<String> =
     uniqueReactionEmojis(reactions.map { it.emoji })
 
@@ -943,39 +851,6 @@ private fun MessageActionRow(
             text = label,
             style = MaterialTheme.typography.bodyLarge,
             color = tint,
-        )
-    }
-}
-
-@Composable
-private fun ActionDockIconButton(
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit,
-    testTag: String? = null,
-) {
-    val haptics = rememberIrisHapticFeedback()
-    val interactionSource = remember { MutableInteractionSource() }
-    Box(
-        modifier =
-            Modifier
-                .size(28.dp)
-                .clip(CircleShape)
-                .clickable(
-                    interactionSource = interactionSource,
-                    indication = ripple(radius = 14.dp),
-                ) {
-                    haptics.press()
-                    onClick()
-                }
-                .then(if (testTag != null) Modifier.testTag(testTag) else Modifier),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            tint = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.size(18.dp),
         )
     }
 }

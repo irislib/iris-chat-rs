@@ -1455,31 +1455,6 @@ final class AppManager: ObservableObject {
         await profileReadRunner.mutualGroups(ownerInput: ownerInput)
     }
 
-    private func shouldBlockOutgoingAction(_ action: AppAction) -> Bool {
-        switch action {
-        case .sendMessage(chatId: let chatId, text: _),
-             .sendDisappearingMessage(chatId: let chatId, text: _, expiresAtSecs: _),
-             .sendAttachment(chatId: let chatId, filePath: _, filename: _, caption: _),
-             .sendAttachments(chatId: let chatId, attachments: _, caption: _),
-             .sendTyping(chatId: let chatId),
-             .toggleReaction(chatId: let chatId, messageId: _, emoji: _):
-            return shouldBlockOutgoingChat(chatId: chatId)
-        default:
-            return false
-        }
-    }
-
-    private func shouldBlockOutgoingChat(chatId: String) -> Bool {
-        let trimmed = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
-        if state.currentChat?.chatId == trimmed, state.currentChat?.isRemovedFromGroup == true {
-            return true
-        }
-        guard !trimmed.isEmpty, !trimmed.lowercased().hasPrefix("group:") else {
-            return false
-        }
-        return isUserBlocked(trimmed)
-    }
-
     private static func normalizedBlockedUserId(_ input: String) -> String {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
