@@ -20,6 +20,9 @@ mod store_chat_deletions;
 #[path = "store_chat_read_states.rs"]
 mod store_chat_read_states;
 
+#[path = "store_chat_mutes.rs"]
+mod store_chat_mutes;
+
 #[path = "store_outgoing_events.rs"]
 mod store_outgoing_events;
 

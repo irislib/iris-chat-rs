@@ -95,41 +95,14 @@ impl AppCore {
     }
 
     pub(super) fn set_chat_muted(&mut self, chat_id: &str, muted: bool) {
-        self.update_chat_mute(chat_id, muted, None);
+        self.set_synced_chat_mute(chat_id, muted.then_some(0));
     }
 
     pub(super) fn set_chat_mute_until(&mut self, chat_id: &str, until_secs: u64) {
-        self.update_chat_mute(
+        self.set_synced_chat_mute(
             chat_id,
-            false,
             (until_secs > unix_now().get()).then_some(until_secs),
         );
-    }
-
-    fn update_chat_mute(&mut self, chat_id: &str, indefinite: bool, until_secs: Option<u64>) {
-        let Some(chat_id) = self.normalize_local_chat_setting_id(chat_id) else {
-            return;
-        };
-        self.preferences.muted_chat_ids.retain(|id| id != &chat_id);
-        self.preferences
-            .timed_chat_mutes
-            .retain(|mute| mute.chat_id != chat_id);
-        if indefinite {
-            self.preferences.muted_chat_ids.push(chat_id);
-            self.preferences.muted_chat_ids.sort();
-            self.preferences.muted_chat_ids.dedup();
-        } else if let Some(until_secs) = until_secs {
-            self.preferences.timed_chat_mutes.push(ChatMuteDeadline {
-                chat_id,
-                until_secs,
-            });
-            self.preferences
-                .timed_chat_mutes
-                .sort_by(|a, b| a.chat_id.cmp(&b.chat_id));
-        }
-        self.schedule_chat_mute_expiry();
-        self.mark_mobile_push_dirty();
-        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn is_chat_muted(&self, chat_id: &str) -> bool {
@@ -219,7 +192,7 @@ impl AppCore {
             })
     }
 
-    fn normalize_local_chat_setting_id(&self, chat_id: &str) -> Option<String> {
+    pub(super) fn normalize_local_chat_setting_id(&self, chat_id: &str) -> Option<String> {
         let trimmed = chat_id.trim();
         if trimmed.is_empty() {
             return None;

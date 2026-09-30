@@ -580,6 +580,7 @@ impl AppCore {
             self.owner_profiles = persisted.owner_profiles.clone();
             self.chat_message_ttl_seconds = persisted.chat_message_ttl_seconds.clone();
             apply_persisted_preferences(&mut self.preferences, &persisted.preferences);
+            self.restore_chat_mute_projection();
             self.seen_event_order = persisted
                 .seen_event_ids
                 .iter()

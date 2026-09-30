@@ -1402,6 +1402,13 @@ impl AppCore {
             return true;
         }
 
+        if runtime_rumor.kind == chat_mute_sync::CHAT_MUTE_KIND {
+            return self.receive_chat_mute_control(
+                effective_sender_owner,
+                sender_device,
+                &runtime_rumor.content,
+            );
+        }
         let kind = runtime_rumor.kind;
         let created_at_secs = runtime_rumor.created_at_secs;
         let expires_at_secs = message_expiration_from_tags(runtime_rumor.tags.iter());

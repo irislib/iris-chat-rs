@@ -86,10 +86,12 @@ mod attachments;
 mod calls;
 pub(crate) use calls::push::{build_call_push_subscription_request, resolve_call_push_invite};
 mod chat_deletions;
+mod chat_mute_sync;
 mod chat_reactions;
 mod chat_read_state;
 mod chat_receipts;
 mod chat_settings;
+use chat_mute_sync::ChatMuteState;
 mod chat_typing;
 mod chats;
 mod config;
@@ -588,6 +590,7 @@ pub struct AppCore {
     threads: BTreeMap<String, ThreadRecord>,
     chat_deletions: BTreeMap<String, u64>,
     chat_read_states: BTreeMap<String, ChatReadState>,
+    chat_mute_states: BTreeMap<String, ChatMuteState>,
     active_chat_id: Option<String>,
     screen_stack: Vec<Screen>,
     next_message_id: u64,

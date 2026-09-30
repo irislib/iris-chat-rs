@@ -211,3 +211,182 @@ fn timed_mute_duplicate_restored_chat_deadlines_keep_the_longest_mute() {
         }]
     );
 }
+
+#[test]
+fn timed_mute_sync_preserves_deadline_unmute_and_rejects_stale_or_foreign_devices() {
+    let mut pair = chat_read_sync_pair("timed-mute-sync");
+    let chat_id = Keys::generate().public_key().to_hex();
+    let until = unix_now().get() + 3600;
+    pair.a.handle_action(AppAction::SetChatMuteUntil {
+        chat_id: chat_id.clone(),
+        until_secs: until,
+    });
+    let stale = pair.a.build_device_sync_packets_for_test(100, false);
+    deliver_chat_read_packets(&mut pair.b, &Keys::generate(), &stale);
+    assert!(!pair.b.is_chat_muted(&chat_id));
+    deliver_chat_read_packets(&mut pair.b, &pair.a_device, &stale);
+    assert!(
+        pair.b.is_chat_muted(&chat_id),
+        "linked device must receive the mute"
+    );
+    assert_eq!(pair.b.preferences.timed_chat_mutes[0].until_secs, until);
+    pair.b.handle_action(AppAction::SetChatMuted {
+        chat_id: chat_id.clone(),
+        muted: false,
+    });
+    sync_chat_reads(&pair.b, &mut pair.a, &pair.b_device, false);
+    assert!(!pair.a.is_chat_muted(&chat_id));
+    deliver_chat_read_packets(&mut pair.b, &pair.a_device, &stale);
+    assert!(
+        !pair.b.is_chat_muted(&chat_id),
+        "stale mute cannot undo unmute"
+    );
+    pair.a.persist_best_effort();
+    drop(pair.a);
+    let mut restarted = logged_in_test_core_at_data_dir(
+        &pair.owner,
+        &pair.a_device,
+        pair.a_dir.path().to_string_lossy().into(),
+    );
+    restarted.load_persisted().unwrap();
+    configure_test_device_sync_profile(
+        &mut restarted,
+        &pair.owner,
+        &pair.a_device,
+        &pair.b_device,
+        None,
+    );
+    deliver_chat_read_packets(&mut restarted, &pair.b_device, &stale);
+    assert!(
+        !restarted.is_chat_muted(&chat_id),
+        "unmute survives restart"
+    );
+}
+
+#[test]
+fn timed_mute_sync_covers_group_forever_mutes_and_expired_deadlines() {
+    let mut pair = chat_read_sync_pair("group-mute-sync");
+    let group = "group:muted-friends".to_string();
+    pair.a.handle_action(AppAction::SetChatMuted {
+        chat_id: group.clone(),
+        muted: true,
+    });
+    sync_chat_reads(&pair.a, &mut pair.b, &pair.a_device, false);
+    assert!(pair.b.is_chat_muted(&group));
+    pair.a.handle_action(AppAction::SetChatMuteUntil {
+        chat_id: group.clone(),
+        until_secs: unix_now().get() + 60,
+    });
+    let mut packet: serde_json::Value =
+        serde_json::from_slice(&pair.a.build_device_sync_packets_for_test(100, false)[0]).unwrap();
+    packet["chatMutes"][0]["untilSecs"] = serde_json::json!(unix_now().get() - 1);
+    pair.b.handle_device_sync_packet(
+        &pair.a_device.public_key().to_hex(),
+        DEVICE_SYNC_PORT,
+        &serde_json::to_vec(&packet).unwrap(),
+    );
+    assert!(
+        !pair.b.is_chat_muted(&group),
+        "an expired timed mute replaces an older forever mute"
+    );
+}
+
+#[test]
+fn timed_mute_control_is_encrypted_to_siblings_and_replays_without_chat_messages() {
+    let mut pair = chat_read_sync_pair("mute-ratchet");
+    install_two_way_local_sibling_state_for_test(
+        &mut pair.a,
+        &mut pair.b,
+        &pair.owner,
+        &pair.a_device,
+        &pair.b_device,
+    );
+    pair.a.pending_relay_publishes.clear();
+    pair.b.pending_relay_publishes.clear();
+    let chat_id = Keys::generate().public_key().to_hex();
+    let until = unix_now().get() + 3600;
+    pair.a.handle_action(AppAction::SetChatMuteUntil {
+        chat_id: chat_id.clone(),
+        until_secs: until,
+    });
+    let encrypted = sorted_pending_events_for_test(&pair.a);
+    assert!(!encrypted.is_empty());
+    assert!(encrypted
+        .iter()
+        .all(|event| !event.content.contains(&chat_id) && !event.content.contains("chat-mute")));
+    // Delivery can happen after the receiver has been offline.
+    deliver_pending_relay_events_for_test(&pair.a, &mut pair.b);
+    assert!(pair.b.is_chat_muted(&chat_id));
+    assert_eq!(pair.b.preferences.timed_chat_mutes[0].until_secs, until);
+    assert!(
+        pair.b.threads.is_empty(),
+        "control must not create a chat or bubble"
+    );
+    pair.b.handle_action(AppAction::SetChatMuted {
+        chat_id: chat_id.clone(),
+        muted: false,
+    });
+    deliver_pending_relay_events_for_test(&pair.b, &mut pair.a);
+    assert!(!pair.a.is_chat_muted(&chat_id));
+    for event in encrypted {
+        pair.b.handle_relay_event(event);
+    }
+    assert!(!pair.b.is_chat_muted(&chat_id));
+    assert!(pair.a.threads.is_empty());
+}
+
+#[test]
+fn timed_mute_control_rejects_peer_spoof_and_removed_sibling() {
+    let mut pair = chat_read_sync_pair("mute-control-auth");
+    let stranger = Keys::generate();
+    let chat_id = stranger.public_key().to_hex();
+    let value = serde_json::json!({ "type": "chat-mute", "v": 1, "mute": {
+        "chatId": chat_id, "untilSecs": 0, "updatedAtMs": unix_now_ms(),
+    }})
+    .to_string();
+    for (sender, device) in [
+        (stranger.public_key(), stranger.public_key()),
+        (pair.owner.public_key(), stranger.public_key()),
+    ] {
+        let (rumor, _) = runtime_rumor_json(
+            sender,
+            chat_mute_sync::CHAT_MUTE_KIND,
+            &value,
+            unix_now().get(),
+            vec![],
+        );
+        assert!(pair.b.apply_decrypted_runtime_message_with_metadata(
+            sender,
+            Some(device),
+            Some(pair.owner.public_key()),
+            rumor,
+            None,
+            unix_now().get()
+        ));
+        assert!(!pair.b.is_chat_muted(&chat_id));
+        assert!(pair.b.threads.is_empty());
+    }
+}
+
+#[test]
+fn timed_mute_newly_linked_device_inherits_legacy_and_versioned_mutes() {
+    let mut pair = chat_read_sync_pair("mute-new-device");
+    let legacy = Keys::generate().public_key().to_hex();
+    let timed = Keys::generate().public_key().to_hex();
+    pair.a.preferences.muted_chat_ids.push(legacy.clone());
+    pair.a.set_chat_mute_until(&timed, unix_now().get() + 3600);
+    // A link time newer than both settings must not filter out preferences.
+    let packets = pair
+        .a
+        .build_device_sync_packets_for_test(unix_now().get() + 10, false);
+    deliver_chat_read_packets(&mut pair.b, &pair.a_device, &packets);
+    assert!(pair.b.is_chat_muted(&legacy));
+    assert!(pair.b.is_chat_muted(&timed));
+    assert_eq!(
+        pair.b.preferences.timed_chat_mutes,
+        pair.a.preferences.timed_chat_mutes
+    );
+    pair.b.set_chat_muted(&legacy, false);
+    deliver_chat_read_packets(&mut pair.b, &pair.a_device, &packets);
+    assert!(!pair.b.is_chat_muted(&legacy));
+}
