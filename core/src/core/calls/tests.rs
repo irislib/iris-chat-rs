@@ -9,6 +9,31 @@ const CALL_ID: &str = "00112233445566778899aabbccddeeff";
 const NEXT_CALL_ID: &str = "112233445566778899aabbccddeeff00";
 
 #[test]
+fn received_audio_is_not_silenced_by_stale_remote_mute_status() {
+    let mut f = Fixture::new();
+    f.connected_incoming(false);
+    let muted = Signal::new("media_state", CALL_ID, false, true);
+    f.core
+        .handle_call_packet(&f.devices[0], PORT, &serde_json::to_vec(&muted).unwrap());
+    assert!(f.snapshot().remote_muted);
+    f._updates.try_iter().for_each(drop);
+
+    // Audio can arrive before the peer's unmute status. Only the selected
+    // device may send it, regardless of the advisory microphone indicator.
+    for (sequence, device, delivered) in [(0, 1, false), (1, 0, true)] {
+        for packet in wire::encode(CALL_ID, 1, sequence, 0, false, &[1, 2, 3]) {
+            f.core.handle_call_packet(&f.devices[device], PORT, &packet);
+        }
+        assert_eq!(
+            f._updates
+                .try_iter()
+                .any(|update| matches!(update, AppUpdate::CallMedia { kind: 1, .. })),
+            delivered
+        );
+    }
+}
+
+#[test]
 fn media_batches_expire_and_preserve_peer_validation() {
     let mut f = Fixture::new();
     f.connected_incoming(true);

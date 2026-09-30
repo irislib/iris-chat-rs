@@ -99,7 +99,7 @@ struct IrisCallScreen: View {
                     }
                     Spacer()
                     if call.remoteMuted && call.phase == "connected" {
-                        Label("Microphone off", systemImage: "mic.slash.fill")
+                        Label("Their microphone is off", systemImage: "mic.slash.fill")
                             .font(.footnote).foregroundStyle(.white.opacity(0.7))
                     }
                     controls

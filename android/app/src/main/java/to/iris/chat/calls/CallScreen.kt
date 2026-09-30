@@ -168,7 +168,7 @@ internal fun CallSurface(
                     "ended" -> error ?: active.endReason ?: "Call ended"
                     else -> "Calling…"
                 }, color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.titleMedium)
-                if (active.remoteMuted && active.phase == "connected") Text("Microphone muted", color = Color.White.copy(alpha = 0.7f))
+                if (active.remoteMuted && active.phase == "connected") Text("Their microphone is off", color = Color.White.copy(alpha = 0.7f))
                 Spacer(Modifier.weight(1f))
                 local?.let { CallVideo(it, Modifier.align(Alignment.End).size(112.dp, 150.dp).clip(MaterialTheme.shapes.large), overlay = true) }
                 Spacer(Modifier.height(24.dp))

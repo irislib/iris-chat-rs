@@ -18,9 +18,9 @@ impl AppCore {
                 return;
             }
             if let Some(frame) = active.frames.receive(&active.id, data, Clock::now()) {
-                if (frame.kind == 1 && snapshot.remote_muted)
-                    || (frame.kind == 2 && (!active.video || !snapshot.remote_video))
-                {
+                // The sender enforces microphone mute. Its status signal can
+                // arrive after audio, so it must not gate received audio.
+                if frame.kind == 2 && (!active.video || !snapshot.remote_video) {
                     return;
                 }
                 active.last_received = Clock::now();

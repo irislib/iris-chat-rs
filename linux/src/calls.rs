@@ -384,7 +384,7 @@ impl Calls {
         } else if !call.media_connected {
             "Connecting…"
         } else if call.remote_muted {
-            "Microphone muted"
+            "Their microphone is off"
         } else {
             "Connected"
         });
