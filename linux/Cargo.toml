@@ -68,6 +68,3 @@ name = "audio"
 path = "tests/audio.rs"
 harness = false
 required-features = ["ui-tests"]
-
-[patch.crates-io]
-nostr-double-ratchet = { path = "../vendor/nostr-double-ratchet" }

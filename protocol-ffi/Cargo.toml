@@ -24,6 +24,3 @@ uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3"
-
-[patch.crates-io]
-nostr-double-ratchet = { path = "../vendor/nostr-double-ratchet" }

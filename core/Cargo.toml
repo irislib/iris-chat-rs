@@ -74,8 +74,8 @@ nostr-pubsub-fips = "=0.5.6"
 nostr-pubsub-relay = "=0.1.11"
 nostr-social-graph = "=0.1.4"
 nostr-identity = "=0.4.0"
-nostr-double-ratchet = "0.0.167"
-nostr-double-ratchet-pairwise-codec = "0.0.167"
+nostr-double-ratchet = "0.0.168"
+nostr-double-ratchet-pairwise-codec = "0.0.168"
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
@@ -101,6 +101,3 @@ tempfile = "3"
 [target.'cfg(windows)'.dependencies]
 widestring = "1.2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_Pipes"] }
-
-[patch.crates-io]
-nostr-double-ratchet = { path = "../vendor/nostr-double-ratchet" }
