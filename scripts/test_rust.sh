@@ -40,7 +40,7 @@ fi
 for crate in core chat-protocol protocol-ffi; do
     args=(--manifest-path "${ROOT_DIR}/${crate}/Cargo.toml" --locked)
     if command -v cargo-nextest >/dev/null 2>&1; then
-        cargo nextest run "${args[@]}"
+        cargo nextest run --no-fail-fast "${args[@]}"
         cargo test -q --doc "${args[@]}"
     else
         cargo test -q "${args[@]}"

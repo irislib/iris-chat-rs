@@ -16,7 +16,7 @@ class RustRunnerTests(unittest.TestCase):
         for crate in CRATES:
             args = ["--manifest-path", str(ROOT / crate / "Cargo.toml"), "--locked"]
             if nextest:
-                commands.append(["nextest", "run", *args])
+                commands.append(["nextest", "run", "--no-fail-fast", *args])
                 commands.append(["test", "-q", "--doc", *args])
             else:
                 commands.append(["test", "-q", *args])
