@@ -143,6 +143,12 @@ struct DesktopUpdateSettingsSection: View {
                     .foregroundStyle(palette.muted)
                     .accessibilityIdentifier("desktopUpdateStatusText")
             }
+            if let checkedAt = updates.lastCheckedAt {
+                Text("Last checked \(checkedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(palette.muted)
+                    .accessibilityIdentifier("desktopUpdateLastCheckedText")
+            }
         }
     }
 }

@@ -32,9 +32,7 @@ struct RootView: View {
                 } else if usesDesktopChatShell {
                     VStack(spacing: 0) {
 #if os(macOS)
-                        if manager.updates.available {
-                            DesktopUpdateStripe(updates: manager.updates)
-                        }
+                        DesktopUpdateStripe(updates: manager.updates)
 #endif
                         DesktopChatShell(
                             manager: manager,

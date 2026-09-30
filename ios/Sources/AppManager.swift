@@ -743,9 +743,10 @@ final class DesktopUpdateController: ObservableObject {
     @Published private(set) var available = false
     @Published private(set) var version = ""
     @Published private(set) var status = ""
-    @Published var autoCheck: Bool = UserDefaults.standard.object(forKey: "updates.autoCheck") as? Bool ?? true {
+    @Published private(set) var lastCheckedAt: Date?
+    @Published var autoCheck: Bool {
         didSet {
-            UserDefaults.standard.set(autoCheck, forKey: "updates.autoCheck")
+            defaults.set(autoCheck, forKey: "updates.autoCheck")
             if autoCheck {
                 startAutomaticChecks()
             } else {
@@ -753,9 +754,9 @@ final class DesktopUpdateController: ObservableObject {
             }
         }
     }
-    @Published var autoInstall: Bool = UserDefaults.standard.bool(forKey: "updates.autoInstall") {
+    @Published var autoInstall: Bool {
         didSet {
-            UserDefaults.standard.set(autoInstall, forKey: "updates.autoInstall")
+            defaults.set(autoInstall, forKey: "updates.autoInstall")
             if autoInstall, canInstall {
                 install()
             }
@@ -766,8 +767,25 @@ final class DesktopUpdateController: ObservableObject {
     private var task: Task<Void, Never>?
     private var automaticCheckTask: Task<Void, Never>?
     private var startupCheckDone = false
+    private let defaults: UserDefaults
+    private let fetchUpdate: () async throws -> IrisDesktopUpdateResult
+    private let now: () -> Date
 
-    init() {}
+    init(
+        defaults: UserDefaults = .standard,
+        fetchUpdate: @escaping () async throws -> IrisDesktopUpdateResult = {
+            await Task.detached { irisDesktopUpdateCheck() }.value
+        },
+        now: @escaping () -> Date = Date.init
+    ) {
+        self.defaults = defaults
+        self.fetchUpdate = fetchUpdate
+        self.now = now
+        self.autoCheck = defaults.object(forKey: "updates.autoCheck") as? Bool ?? true
+        self.autoInstall = defaults.bool(forKey: "updates.autoInstall")
+        self.status = defaults.string(forKey: "updates.lastCheckStatus") ?? ""
+        self.lastCheckedAt = defaults.object(forKey: "updates.lastCheckedAt") as? Date
+    }
 
     deinit {
         automaticCheckTask?.cancel()
@@ -810,8 +828,9 @@ final class DesktopUpdateController: ObservableObject {
         automaticCheckTask = nil
     }
 
-    func check(manual: Bool = true) {
-        guard !checking else { return }
+    @discardableResult
+    func check(manual: Bool = true) -> Task<Void, Never>? {
+        guard !checking else { return nil }
         task?.cancel()
         checking = true
         if manual {
@@ -822,17 +841,15 @@ final class DesktopUpdateController: ObservableObject {
             do {
                 let result = try await self.fetch()
                 await MainActor.run {
-                    self.apply(result, manual: manual)
+                    self.apply(result)
                 }
             } catch {
                 await MainActor.run {
-                    self.checking = false
-                    if manual {
-                        self.status = error.localizedDescription
-                    }
+                    self.finishCheck(status: "Couldn’t check for updates: \(error.localizedDescription)")
                 }
             }
         }
+        return task
     }
 
     private static var automaticCheckIntervalNanoseconds: UInt64 {
@@ -869,9 +886,7 @@ final class DesktopUpdateController: ObservableObject {
     }
 
     private func fetch() async throws -> IrisUpdateCheck {
-        let result = await Task.detached {
-            irisDesktopUpdateCheck()
-        }.value
+        let result = try await fetchUpdate()
         try validateIrisUpdateResult(result)
         return IrisUpdateCheck(
             tag: result.tag,
@@ -880,22 +895,25 @@ final class DesktopUpdateController: ObservableObject {
         )
     }
 
-    private func apply(_ check: IrisUpdateCheck, manual: Bool) {
+    private func finishCheck(status: String) {
         checking = false
+        self.status = status
+        lastCheckedAt = now()
+        defaults.set(status, forKey: "updates.lastCheckStatus")
+        defaults.set(lastCheckedAt, forKey: "updates.lastCheckedAt")
+    }
+
+    private func apply(_ check: IrisUpdateCheck) {
         available = check.isNewer
         version = check.tag
         hasUpdateAsset = check.isNewer && check.assetName != nil
-        if check.isNewer {
-            status = !hasUpdateAsset
+        finishCheck(status: check.isNewer
+            ? (!hasUpdateAsset
                 ? "Update \(check.tag) found without a macOS app"
-                : "Update \(check.tag) available"
-            if autoInstall, hasUpdateAsset {
-                install()
-            }
-        } else if manual {
-            status = "Up to date"
-        } else {
-            status = ""
+                : "Update \(check.tag) available")
+            : "Up to date")
+        if autoInstall, hasUpdateAsset {
+            install()
         }
     }
 

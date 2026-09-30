@@ -680,6 +680,12 @@ struct DesktopUpdateStripe: View {
     @ObservedObject var updates: DesktopUpdateController
 
     var body: some View {
+        if updates.available {
+            content
+        }
+    }
+
+    private var content: some View {
         HStack(spacing: 10) {
             Image(systemName: "arrow.down.circle.fill")
                 .font(.system(size: 13, weight: .semibold))
