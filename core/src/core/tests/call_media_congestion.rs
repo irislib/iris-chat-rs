@@ -131,7 +131,7 @@ fn calls_sustained_audio_playout_survives_video_bursts() {
         if now_us >= next_frame * 20_000 {
             // Burst eight maximum-sized keyframes before audio, every two
             // seconds. This deliberately exceeds normal camera burst size.
-            if stage == 1 && next_frame % 100 == 0 {
+            if stage == 1 && next_frame.is_multiple_of(100) {
                 for _ in 0..8 {
                     a.handle_action(AppAction::SendCallMedia {
                         call_id: id.clone(),

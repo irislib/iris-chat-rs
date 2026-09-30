@@ -60,10 +60,12 @@ pub(crate) fn build_mobile_push_create_subscription_request(
         &platform_key,
         &push_token,
         apns_topic.as_deref(),
-        message_author_pubkeys,
-        background_message_author_pubkeys,
-        invite_response_pubkeys,
-        delayed_message_authors,
+        SubscriptionAuthors {
+            message_author_pubkeys,
+            background_message_author_pubkeys,
+            invite_response_pubkeys,
+            delayed_message_authors,
+        },
         is_release,
     )?;
     build_mobile_push_subscription_request(
@@ -96,10 +98,12 @@ pub(crate) fn build_mobile_push_update_subscription_request(
         &platform_key,
         &push_token,
         apns_topic.as_deref(),
-        message_author_pubkeys,
-        background_message_author_pubkeys,
-        invite_response_pubkeys,
-        delayed_message_authors,
+        SubscriptionAuthors {
+            message_author_pubkeys,
+            background_message_author_pubkeys,
+            invite_response_pubkeys,
+            delayed_message_authors,
+        },
         is_release,
     )?;
     build_mobile_push_subscription_request(
@@ -164,16 +168,26 @@ fn build_mobile_push_auth_header(owner_nsec: &str, method: &str, url: &str) -> O
     Some(format!("Nostr {encoded}"))
 }
 
-fn mobile_push_subscription_body_json(
-    platform_key: &str,
-    push_token: &str,
-    apns_topic: Option<&str>,
+struct SubscriptionAuthors {
     message_author_pubkeys: Vec<String>,
     background_message_author_pubkeys: Vec<String>,
     invite_response_pubkeys: Vec<String>,
     delayed_message_authors: Vec<MobilePushDelayedAuthor>,
+}
+
+fn mobile_push_subscription_body_json(
+    platform_key: &str,
+    push_token: &str,
+    apns_topic: Option<&str>,
+    subscriptions: SubscriptionAuthors,
     is_release: bool,
 ) -> Option<String> {
+    let SubscriptionAuthors {
+        message_author_pubkeys,
+        background_message_author_pubkeys,
+        invite_response_pubkeys,
+        delayed_message_authors,
+    } = subscriptions;
     let platform = normalize_platform_key(platform_key);
     let token = push_token.trim();
     if token.is_empty() {

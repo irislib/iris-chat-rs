@@ -165,7 +165,7 @@ impl GroupScaleFarm {
                         device.delivered.insert(event.id);
                         device.core.handle_relay_event(event.clone());
                         self.deliveries += 1;
-                        if self.deliveries % 11 == 0 {
+                        if self.deliveries.is_multiple_of(11) {
                             device.core.handle_relay_event(event.clone());
                             self.duplicates += 1;
                         }

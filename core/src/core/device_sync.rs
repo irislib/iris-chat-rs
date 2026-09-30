@@ -318,7 +318,11 @@ impl AppCore {
     }
 
     pub(super) fn flush_device_sync_snapshot(&mut self) {
-        if self.device_sync.as_mut().is_some_and(|runtime| std::mem::take(&mut runtime.snapshot_pending)) {
+        if self
+            .device_sync
+            .as_mut()
+            .is_some_and(|runtime| std::mem::take(&mut runtime.snapshot_pending))
+        {
             self.broadcast_device_sync_snapshot();
         }
     }

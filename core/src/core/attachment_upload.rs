@@ -415,7 +415,10 @@ async fn upload_file_to_store<S: Store + 'static>(
     path: &Path,
     store: Arc<S>,
 ) -> anyhow::Result<String> {
-    let tree = HashTree::new(HashTreeConfig { encrypted: true, ..HashTreeConfig::new(store) });
+    let tree = HashTree::new(HashTreeConfig {
+        encrypted: true,
+        ..HashTreeConfig::new(store)
+    });
     let file = tokio::fs::File::open(path).await?;
     let (cid, _size) = tree
         .put_stream(file.compat())

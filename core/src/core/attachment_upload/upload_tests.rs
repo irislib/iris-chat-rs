@@ -32,12 +32,19 @@ async fn attachment_upload_encrypts_every_stored_chunk_and_requires_the_key() {
     let dir = tempfile::tempdir().unwrap();
     // Every native attachment, including voice messages, uses this upload path.
     let large: Vec<u8> = (0..DEFAULT_CHUNK_SIZE * 2 + 123)
-        .map(|i| (i.wrapping_mul(37) ^ (i >> 8)) as u8).collect();
+        .map(|i| (i.wrapping_mul(37) ^ (i >> 8)) as u8)
+        .collect();
     for (name, data) in [
         ("photo.png", IRIS_LOGO_PNG),
         ("drawing.svg", IRIS_LOGO_SVG),
-        ("voice.m4a", include_bytes!("../../../../test-fixtures/voice-message.m4a").as_slice()),
-        ("document.txt", b"Private attachment regression fixture".as_slice()),
+        (
+            "voice.m4a",
+            include_bytes!("../../../../test-fixtures/voice-message.m4a").as_slice(),
+        ),
+        (
+            "document.txt",
+            b"Private attachment regression fixture".as_slice(),
+        ),
         ("large-video.mp4", large.as_slice()),
         ("empty.txt", b"".as_slice()),
     ] {
@@ -46,17 +53,31 @@ async fn attachment_upload_encrypts_every_stored_chunk_and_requires_the_key() {
         let store = Arc::new(RecordedAttachmentStore::default());
         let link = upload_file_to_store(&path, store.clone()).await.unwrap();
         let decoded = nhash_decode(&link).unwrap();
-        let cid = Cid { hash: decoded.hash, key: decoded.decrypt_key };
-        assert!(cid.key.is_some(), "{name}: attachment link needs a decryption key");
-        assert_eq!(read_hashtree_attachment(&cid, store.clone(), MAX_ATTACHMENT_BYTES).await.unwrap(), data);
+        let cid = Cid {
+            hash: decoded.hash,
+            key: decoded.decrypt_key,
+        };
+        assert!(
+            cid.key.is_some(),
+            "{name}: attachment link needs a decryption key"
+        );
+        assert_eq!(
+            read_hashtree_attachment(&cid, store.clone(), MAX_ATTACHMENT_BYTES)
+                .await
+                .unwrap(),
+            data
+        );
         let ciphertext = store.0.lock().unwrap().clone();
         let mut pending = vec![cid.clone()];
         let mut visited = HashSet::new();
         while let Some(node) = pending.pop() {
-            if !visited.insert(node.hash) { continue; }
+            if !visited.insert(node.hash) {
+                continue;
+            }
             let key = node.key.expect("every child and root must be encrypted");
             let bytes = &ciphertext[&node.hash];
-            let plain = decrypt_chk(bytes, &key).expect("stored bytes must authenticate with their key");
+            let plain =
+                decrypt_chk(bytes, &key).expect("stored bytes must authenticate with their key");
             assert_ne!(bytes, &plain, "{name}: plaintext reached the blob store");
             let mut wrong_key = key;
             wrong_key[0] ^= 1;
@@ -65,10 +86,20 @@ async fn attachment_upload_encrypts_every_stored_chunk_and_requires_the_key() {
                 pending.extend(tree.links.iter().map(|link| link.to_cid()));
             }
         }
-        assert_eq!(visited.len(), ciphertext.len(), "{name}: every stored chunk must be checked");
-        let without_key = Cid { hash: cid.hash, key: None };
+        assert_eq!(
+            visited.len(),
+            ciphertext.len(),
+            "{name}: every stored chunk must be checked"
+        );
+        let without_key = Cid {
+            hash: cid.hash,
+            key: None,
+        };
         let unkeyed = read_hashtree_attachment(&without_key, store, MAX_ATTACHMENT_BYTES).await;
-        assert!(unkeyed.is_err() || unkeyed.unwrap() != data, "{name}: hash alone exposed attachment");
+        assert!(
+            unkeyed.is_err() || unkeyed.unwrap() != data,
+            "{name}: hash alone exposed attachment"
+        );
     }
 }
 

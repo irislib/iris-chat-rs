@@ -101,7 +101,7 @@ fn sustained(network: Network, sender_clock_ppm: i64) -> Metrics {
             if let Some(arrives) = network.delivery(sequence, sent) {
                 transit.insert((arrives, sequence), encoded.clone());
                 // Duplicate packets exercise idempotence without doubling media.
-                if matches!(network, Network::Unstable) && sequence % 53 == 0 {
+                if matches!(network, Network::Unstable) && sequence.is_multiple_of(53) {
                     transit.insert((arrives + 10_000, sequence), encoded);
                 }
             } else {
