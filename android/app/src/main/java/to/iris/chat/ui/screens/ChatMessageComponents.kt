@@ -91,6 +91,7 @@ import to.iris.chat.rust.MessageAttachmentSnapshot
 import to.iris.chat.rust.MessageReactionSnapshot
 import to.iris.chat.rust.MessageReactor
 import to.iris.chat.rust.MessageRecipientDeliverySnapshot
+import to.iris.chat.core.isRemovedFromGroup
 import to.iris.chat.core.AppManager
 import to.iris.chat.rust.peerInputToNpub
 import to.iris.chat.ui.components.DeliveryGlyph
@@ -143,12 +144,14 @@ internal fun MessageBubble(
         return
     }
 
+    val canReplyAndReact = chat?.isRemovedFromGroup != true
     val clipboard = rememberIrisClipboard()
     val context = LocalContext.current.applicationContext
     val hapticFeedback = LocalHapticFeedback.current
     val parsed = remember(message.body) { parseReplyEncodedMessage(message.body) }
     val postReactionSuggestions = remember(reactions) { postReactionSuggestionEmojis(reactions) }
     fun pickReaction(emoji: String) {
+        if (!canReplyAndReact) return
         rememberRecentReactionEmoji(context, emoji)
         onReact(emoji)
     }
@@ -182,6 +185,7 @@ internal fun MessageBubble(
     if (isActionsSheetOpen) {
         MessageActionsSheet(
             message = message,
+            canReplyAndReact = canReplyAndReact,
             parsedBody = parsed.body,
             reactions = reactions,
             onDismiss = { isActionsSheetOpen = false },
@@ -303,7 +307,7 @@ internal fun MessageBubble(
                             onDragEnd = {
                                 val finalOffset = swipeOffsetX.value
                                 if (finalOffset >= swipeThresholdPx) {
-                                    onReply()
+                                    if (canReplyAndReact) onReply()
                                 } else if (finalOffset <= -swipeThresholdPx) {
                                     isInfoOpen = true
                                 }
@@ -349,6 +353,7 @@ internal fun MessageBubble(
             ) {
                 if (showActionDock && message.isOutgoing) {
                     MessageActionDock(
+                        canReplyAndReact = canReplyAndReact,
                         postReactionSuggestions = postReactionSuggestions,
                         onReact = { emoji -> pickReaction(emoji) },
                         onReply = onReply,
@@ -491,6 +496,7 @@ internal fun MessageBubble(
                 }
                 if (showActionDock && !message.isOutgoing) {
                     MessageActionDock(
+                        canReplyAndReact = canReplyAndReact,
                         postReactionSuggestions = postReactionSuggestions,
                         onReact = { emoji -> pickReaction(emoji) },
                         onReply = onReply,
@@ -561,6 +567,7 @@ private fun SystemMessageChip(message: ChatMessageSnapshot) {
 
 @Composable
 private fun MessageActionDock(
+    canReplyAndReact: Boolean,
     postReactionSuggestions: List<String>,
     onReact: (String) -> Unit,
     onReply: () -> Unit,
@@ -580,7 +587,7 @@ private fun MessageActionDock(
             horizontalArrangement = Arrangement.spacedBy(1.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box {
+            if (canReplyAndReact) Box {
                 ActionDockIconButton(
                     icon = Icons.Rounded.AddReaction,
                     label = "React",
@@ -597,7 +604,7 @@ private fun MessageActionDock(
                     },
                 )
             }
-            ActionDockIconButton(Icons.AutoMirrored.Rounded.Reply, "Reply", onClick = onReply)
+            if (canReplyAndReact) ActionDockIconButton(Icons.AutoMirrored.Rounded.Reply, "Reply", onClick = onReply)
             ActionDockIconButton(IrisIcons.Share, "Forward", onClick = onForward)
             Box {
                 ActionDockIconButton(Icons.Rounded.MoreHoriz, "More", { menuOpen = true })
@@ -708,6 +715,7 @@ private fun isEmojiBase(codePoint: Int): Boolean =
 @Composable
 private fun MessageActionsSheet(
     message: ChatMessageSnapshot,
+    canReplyAndReact: Boolean,
     parsedBody: String,
     reactions: List<MessageReactionSnapshot>,
     onDismiss: () -> Unit,
@@ -733,13 +741,13 @@ private fun MessageActionsSheet(
                     .testTag("messageActionsSheet"),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            QuickReactionRow(
+            if (canReplyAndReact) QuickReactionRow(
                 onPick = onReact,
                 onMore = onShowFullReactionPicker,
             )
             MessagePreviewCard(message = message, parsedBody = parsedBody, reactions = reactions)
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                MessageActionRow(
+                if (canReplyAndReact) MessageActionRow(
                     icon = Icons.AutoMirrored.Rounded.Reply,
                     label = "Reply",
                     onClick = onReply,

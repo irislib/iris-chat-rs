@@ -85,6 +85,7 @@ struct ChatMessageActionsSheet: View {
     @Environment(\.irisPalette) private var palette
     let message: ChatMessageSnapshot
     let bodyText: String
+    var canReplyAndReact = true
     let onReact: (String) -> Void
     let onShowFullReactionPicker: () -> Void
     let onReply: () -> Void
@@ -95,10 +96,12 @@ struct ChatMessageActionsSheet: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            quickReactionRow
+            if canReplyAndReact { quickReactionRow }
             previewCard
             VStack(spacing: 0) {
-                actionRow(icon: "arrowshape.turn.up.left", label: "Reply", action: onReply)
+                if canReplyAndReact {
+                    actionRow(icon: "arrowshape.turn.up.left", label: "Reply", action: onReply)
+                }
                 actionRow(icon: "arrowshape.turn.up.right", label: "Forward", action: onForward)
                 actionRow(icon: "doc.on.doc", label: "Copy", action: onCopy)
                 actionRow(icon: "info.circle", label: "Info", action: onInfo)

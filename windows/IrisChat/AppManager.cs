@@ -1286,6 +1286,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
         bool preservesPendingNavigation = false
     )
     {
+        if (BlocksRemovedGroupAction(action)) return false;
         if (!preservesPendingNavigation && ActionClearsPendingNavigation(action))
         {
             _pendingNavigationOverride = null;

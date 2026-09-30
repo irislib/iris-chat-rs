@@ -1196,7 +1196,7 @@ class AppManager(
         action: AppAction,
         showsToastOnFailure: Boolean = true,
         preservesPendingNavigation: Boolean = false,
-    ): Boolean =
+    ): Boolean = !blocksRemovedGroupAction(mutableState.value.currentChat, action) &&
         runCatching {
             if (!preservesPendingNavigation && actionClearsPendingNavigation(action)) {
                 pendingNavigationOverride = null
@@ -1271,7 +1271,9 @@ class AppManager(
         page.messages.forEach { message -> messagesById[message.id] = message }
         val mergedMessages = messagesById.values.sortedWith(::compareChatMessages)
         return page.copy(
-            participants = page.participants.ifEmpty { existing.participants },
+            participants =
+                if (page.kind == to.iris.chat.rust.ChatKind.GROUP) page.participants
+                else page.participants.ifEmpty { existing.participants },
             messages = mergedMessages,
             typingIndicators = page.typingIndicators.ifEmpty { existing.typingIndicators },
             draft = page.draft.ifEmpty { existing.draft },

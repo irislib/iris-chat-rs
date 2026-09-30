@@ -90,6 +90,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
+import to.iris.chat.core.isRemovedFromGroup
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatMessageSnapshot
@@ -399,7 +400,7 @@ fun ChatScreen(
 
     Scaffold(
         modifier = attachmentDropTarget(
-            enabled = chat != null && !isUserBlocked(preferences, chatId) &&
+            enabled = chat != null && !chat.isRemovedFromGroup && !isUserBlocked(preferences, chatId) &&
                 (chat.kind != ChatKind.DIRECT || chat.directChatCapability == null ||
                     chat.directChatCapability == DirectChatCapabilityState.AVAILABLE),
             onAttachments = { selectedAttachments = selectedAttachments + it },
@@ -668,7 +669,7 @@ fun ChatScreen(
                     }
                 }
 
-                if (!composerBlocked && !isMessageRequest) {
+                if (!composerBlocked && !isMessageRequest && !chat.isRemovedFromGroup) {
                     replyTarget?.let { reply ->
                         ReplyComposerStrip(
                             message = reply,
@@ -678,6 +679,15 @@ fun ChatScreen(
                 }
 
                 when {
+                    chat.isRemovedFromGroup -> {
+                        Text(
+                            "You’re no longer in this group",
+                            modifier = Modifier.fillMaxWidth().padding(18.dp).testTag("removedGroupBar"),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
                     composerBlocked -> {
                         BlockedComposerBar(
                             onUnblock = {
@@ -745,6 +755,7 @@ fun ChatScreen(
                                     selectedAttachments = selectedAttachments - attachment
                                 },
                                 onSend = {
+                                    if (appManager.state.value.currentChat?.isRemovedFromGroup == true) return@ComposerBar
                                     shouldFollowLatest = true
                                     forceScrollToLatest = true
                                     val outgoingDraft = replyEncodedMessage(replyTarget, draft.trim())

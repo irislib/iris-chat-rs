@@ -418,12 +418,14 @@ struct ChatScreen: View {
                                 let capability = chat.kind == .direct ? chat.directChatCapability : nil
                                 let capabilityBlocked = capability != nil && capability != .available
                                 VStack(spacing: 0) {
-                                    if let replyTarget, !composerBlocked, !isRequest {
+                                    if let replyTarget, !composerBlocked, !isRequest, !chat.isRemovedFromGroup {
                                         IrisReplyComposerStrip(message: replyTarget) {
                                             self.replyTarget = nil
                                         }
                                     }
-                                    if composerBlocked {
+                                    if chat.isRemovedFromGroup {
+                                        IrisRemovedGroupBar()
+                                    } else if composerBlocked {
                                         IrisBlockedComposerBar {
                                             manager.setUserBlocked(chat.chatId, blocked: false)
                                         } onDelete: {
@@ -474,7 +476,8 @@ struct ChatScreen: View {
                                             voiceRecordingAllowed: !capabilityBlocked && (manager.state.call == nil || manager.state.call?.phase == "ended"),
                                             onStageVoice: { try await manager.stageOutgoingAttachmentsAsync([$0]) },
                                             onSendVoice: { voice in
-                                                guard !manager.state.busy.sendingMessage,
+                                                guard canAttachToCurrentChat,
+                                                      !manager.state.busy.sendingMessage,
                                                       !manager.state.busy.uploadingAttachment,
                                                       !manager.isUserBlocked(chatId) else { return false }
                                                 stopTypingIfNeeded()
@@ -490,6 +493,7 @@ struct ChatScreen: View {
                                             isPreparingDroppedAttachments: isPreparingDroppedAttachments,
                                             onFileDropAvailabilityChange: { fileDropAvailable = $0 }
                                         ) { composerText in
+                                            guard canAttachToCurrentChat else { return }
                                             let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
                                             guard !text.isEmpty || !selectedAttachments.isEmpty else { return }
                                             stopTypingIfNeeded()
@@ -599,7 +603,7 @@ struct ChatScreen: View {
     }
 
     private var canAttachToCurrentChat: Bool {
-        guard let chat, !manager.state.busy.sendingMessage,
+        guard let chat, !chat.isRemovedFromGroup, !manager.state.busy.sendingMessage,
               !manager.state.busy.uploadingAttachment else { return false }
         if chat.kind == .direct {
             return !manager.isUserBlocked(chatId) &&
@@ -682,6 +686,7 @@ struct ChatScreen: View {
             showsGroupSenderName: showsGroupSenderName,
             showsGroupSenderAvatar: showsGroupSenderAvatar,
             reactions: message.reactions,
+            canReplyAndReact: !chat.isRemovedFromGroup,
             swipeOffset: activeBubbleSwipe?.messageId == message.id ? activeBubbleSwipe?.offset ?? 0 : 0,
             isActionDockActive: activeMessageActionDockId == message.id,
             onActionDockActiveChange: { isActive in
@@ -692,6 +697,7 @@ struct ChatScreen: View {
                 )
             },
             onReply: {
+                guard self.chat?.isRemovedFromGroup != true else { return }
                 replyTarget = message
                 isComposerFocused = true
             },
@@ -874,7 +880,7 @@ struct ChatScreen: View {
         guard let chat, let swipe = activeBubbleSwipe else { return }
         activeBubbleSwipe = nil
         guard let message = chat.messages.first(where: { $0.id == swipe.messageId }) else { return }
-        if swipe.offset >= ChatMessageBubbleSwipeMetrics.threshold {
+        if swipe.offset >= ChatMessageBubbleSwipeMetrics.threshold && !chat.isRemovedFromGroup {
             replyTarget = message
             isComposerFocused = true
         } else if swipe.offset <= -ChatMessageBubbleSwipeMetrics.threshold {
@@ -975,7 +981,7 @@ struct ChatScreen: View {
     }
 
     private func sendTypingIfNeeded(text: String) {
-        guard !manager.isUserBlocked(chatId) else { return }
+        guard chat?.isRemovedFromGroup != true, !manager.isUserBlocked(chatId) else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             stopTypingIfNeeded()

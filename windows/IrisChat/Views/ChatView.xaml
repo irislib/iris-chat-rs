@@ -176,6 +176,10 @@
                 </Grid>
             </StackPanel>
 
+            <TextBlock x:Name="RemovedGroupPanel" Visibility="Collapsed"
+                       Text="You’re no longer in this group"
+                       TextAlignment="Center" TextWrapping="Wrap" Margin="16,18"
+                       Foreground="{StaticResource TextMuted}" />
             <chrome:ComposerBar x:Name="Composer" />
         </Grid>
 

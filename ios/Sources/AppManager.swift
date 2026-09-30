@@ -1461,7 +1461,8 @@ final class AppManager: ObservableObject {
              .sendDisappearingMessage(chatId: let chatId, text: _, expiresAtSecs: _),
              .sendAttachment(chatId: let chatId, filePath: _, filename: _, caption: _),
              .sendAttachments(chatId: let chatId, attachments: _, caption: _),
-             .sendTyping(chatId: let chatId):
+             .sendTyping(chatId: let chatId),
+             .toggleReaction(chatId: let chatId, messageId: _, emoji: _):
             return shouldBlockOutgoingChat(chatId: chatId)
         default:
             return false
@@ -1470,6 +1471,9 @@ final class AppManager: ObservableObject {
 
     private func shouldBlockOutgoingChat(chatId: String) -> Bool {
         let trimmed = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if state.currentChat?.chatId == trimmed, state.currentChat?.isRemovedFromGroup == true {
+            return true
+        }
         guard !trimmed.isEmpty, !trimmed.lowercased().hasPrefix("group:") else {
             return false
         }
@@ -3280,7 +3284,7 @@ final class AppManager: ObservableObject {
         }
         var merged = page
         merged.messages = mergedChatMessages(existing: existing.messages, page: page.messages)
-        if merged.participants.isEmpty {
+        if merged.kind != .group && merged.participants.isEmpty {
             merged.participants = existing.participants
         }
         if merged.typingIndicators.isEmpty {

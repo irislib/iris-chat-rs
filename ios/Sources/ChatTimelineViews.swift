@@ -424,6 +424,7 @@ struct ChatMessageRow: View, Equatable {
         lhs.message == rhs.message
             && lhs.reactions == rhs.reactions
             && lhs.chatKind == rhs.chatKind
+            && lhs.canReplyAndReact == rhs.canReplyAndReact
             && lhs.showDayChip == rhs.showDayChip
             && lhs.hidesInlineDayChip == rhs.hidesInlineDayChip
             && lhs.isFirstInCluster == rhs.isFirstInCluster
@@ -445,6 +446,7 @@ struct ChatMessageRow: View, Equatable {
     let showsGroupSenderName: Bool
     let showsGroupSenderAvatar: Bool
     let reactions: [MessageReactionSnapshot]
+    var canReplyAndReact = true
     let swipeOffset: CGFloat
     let isActionDockActive: Bool
     let onActionDockActiveChange: (Bool) -> Void
@@ -478,6 +480,7 @@ struct ChatMessageRow: View, Equatable {
     private func actionDock() -> some View {
         ChatMessageActionDock(
             isOverflowPresented: actionDockOverflowBinding,
+            canReplyAndReact: canReplyAndReact,
             onShowReactionPicker: { showReactionPicker = true },
             onReply: onReply,
             onForward: onForward,
@@ -678,6 +681,7 @@ struct ChatMessageRow: View, Equatable {
                             ChatMessageActionsSheet(
                                 message: message,
                                 bodyText: parsed.body,
+                                canReplyAndReact: canReplyAndReact,
                                 onReact: { emoji in
                                     showActionsSheet = false
                                     onReact(emoji)
@@ -717,7 +721,7 @@ struct ChatMessageRow: View, Equatable {
                                 onClose: { showReactionPicker = false }
                             ) { emoji in
                                 showReactionPicker = false
-                                onReact(emoji)
+                                if canReplyAndReact { onReact(emoji) }
                             }
                             .irisModalSurface()
                             .presentationDetents([.medium, .large])

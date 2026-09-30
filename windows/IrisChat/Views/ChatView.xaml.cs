@@ -73,6 +73,7 @@ public partial class ChatView : UserControl
         if (chat == null || (ChatId != null && chat.chatId != ChatId)) return;
 
         var chatChanged = _focusedChatId != chat.chatId;
+        var removedFromGroup = App.CurrentManager.IsRemovedFromGroup(chat.chatId);
         var userBlocked = chat.kind == ChatKind.Direct && App.CurrentManager.IsUserBlocked(chat.chatId);
         var messageRequest = chat.kind == ChatKind.Direct && chat.isRequest && !userBlocked;
         var directCapability = chat.kind == ChatKind.Direct ? chat.directChatCapability : null;
@@ -83,7 +84,7 @@ public partial class ChatView : UserControl
             _capabilityTimer.Stop();
             _focusedChatId = chat.chatId;
             _renderedMessageSignature = null;
-            if (!userBlocked && !messageRequest)
+            if (!userBlocked && !messageRequest && !removedFromGroup)
             {
                 Dispatcher.BeginInvoke(new Action(() => Composer.FocusInput()));
             }
@@ -152,8 +153,9 @@ public partial class ChatView : UserControl
             DirectChatCapabilityState.CheckFailed => "Couldn’t check messaging availability.",
             _ => string.Empty,
         };
-        Composer.SendAllowed = !capabilityBlocked;
-        Composer.Visibility = userBlocked || messageRequest
+        RemovedGroupPanel.Visibility = removedFromGroup ? Visibility.Visible : Visibility.Collapsed;
+        Composer.SendAllowed = !capabilityBlocked && !removedFromGroup;
+        Composer.Visibility = userBlocked || messageRequest || removedFromGroup
             ? Visibility.Collapsed
             : Visibility.Visible;
 
@@ -170,7 +172,7 @@ public partial class ChatView : UserControl
         }
 
         var messages = chat.messages ?? Array.Empty<ChatMessageSnapshot>();
-        var messageSignature = string.Join("|", messages.Select(m =>
+        var messageSignature = removedFromGroup + ":" + string.Join("|", messages.Select(m =>
             $"{m.id}:{m.delivery}:{m.body}:{m.reactions?.Length ?? 0}:{m.reactors?.Length ?? 0}"));
         var shouldPinToBottom = chatChanged
             || ScrollHost.ScrollableHeight <= 0
@@ -221,6 +223,7 @@ public partial class ChatView : UserControl
 
     private void OnSubmit(string text, IList<string> stagedAttachments)
     {
+        if (!CanAttachFiles()) return;
         var chatId = App.CurrentManager.CurrentChat?.chatId;
         if (string.IsNullOrEmpty(chatId)) return;
         if (stagedAttachments != null && stagedAttachments.Count > 0)
@@ -238,7 +241,7 @@ public partial class ChatView : UserControl
     {
         var manager = App.CurrentManager;
         var chat = manager.CurrentChat;
-        return IsLoaded && chat != null && chat.chatId == _focusedChatId &&
+        return IsLoaded && chat != null && !manager.IsRemovedFromGroup(chat.chatId) && chat.chatId == _focusedChatId &&
             (ChatId == null || ChatId == chat.chatId) &&
             !manager.Busy.sendingMessage && !manager.Busy.uploadingAttachment &&
             !(chat.kind == ChatKind.Direct && (chat.isRequest || manager.IsUserBlocked(chat.chatId))) &&

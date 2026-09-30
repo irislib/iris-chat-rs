@@ -116,7 +116,7 @@ public partial class MessageBubble : UserControl
     private void BuildContextMenu(ChatMessageSnapshot message)
     {
         var menu = new ContextMenu();
-        if (message.kind != ChatMessageKind.System)
+        if (message.kind != ChatMessageKind.System && !App.CurrentManager.IsRemovedFromGroup(message.chatId))
         {
             var react = new MenuItem { Header = "React" };
             foreach (var emoji in ReactionPickerEmojis())
@@ -151,7 +151,7 @@ public partial class MessageBubble : UserControl
 
     private void OpenReactionPicker()
     {
-        if (_message == null) return;
+        if (_message == null || App.CurrentManager.IsRemovedFromGroup(_message.chatId)) return;
         var picker = new EmojiPicker
         {
             RecentEmojis = RecentReactionEmojiSnapshot(),

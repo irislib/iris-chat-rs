@@ -674,6 +674,7 @@ struct IrisDeliveryGlyph: View {
 struct ChatMessageActionDock: View {
     @Environment(\.irisPalette) private var palette
     @Binding var isOverflowPresented: Bool
+    var canReplyAndReact = true
     let onShowReactionPicker: () -> Void
     let onReply: () -> Void
     let onForward: () -> Void
@@ -696,7 +697,9 @@ struct ChatMessageActionDock: View {
             }
             .buttonStyle(.irisPlain)
             .accessibilityIdentifier("messageReactButton")
+            .disabled(!canReplyAndReact)
             dockButton("arrowshape.turn.up.left", identifier: "messageReplyButton", action: onReply)
+                .disabled(!canReplyAndReact)
             dockButton("info.circle", identifier: "messageInfoButton", action: onInfo)
             Button {
                 isOverflowPresented.toggle()
