@@ -265,6 +265,7 @@ impl AppCore {
                             || !group_result.events.is_empty()
                             || !group_result.effects.is_empty();
                         for group_event in group_result.events {
+                            self.cache_group_mobile_push_control(&event_id, &group_event);
                             self.apply_group_decrypted_event(group_event);
                         }
                         if !group_result.effects.is_empty() {

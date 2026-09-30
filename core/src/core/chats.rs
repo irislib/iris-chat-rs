@@ -1439,6 +1439,12 @@ impl AppCore {
         {
             return true;
         }
+        self.cache_mobile_push_control(
+            outer_event_id.as_deref(),
+            effective_sender_owner,
+            &chat_id,
+            &runtime_rumor,
+        );
         let inner_event_id = runtime_rumor.id.clone();
         self.acknowledge_delivered_group_runtime_rumor(
             &chat_id,

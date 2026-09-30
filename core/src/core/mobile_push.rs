@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+mod control_preview;
 mod diagnostics;
 mod invite_owner;
 mod read_state;
@@ -334,20 +335,18 @@ fn decrypt_mobile_push_notification_inner(
     }
 
     // When NDR decrypt fails (the foreground app already advanced
-    // the ratchet past this event) we look up the message body the
-    // foreground stored in SQLite. If even that misses we suppress
-    // rather than show a meaningless "New activity" — the foreground
-    // saw the wrapper as a non-message rumor (typing, receipt,
-    // reaction, settings) and there's nothing useful to show.
+    // the ratchet past this event) recover the message or control preview
+    // stored by the foreground runtime. A cache miss has unknown contents;
+    // iOS supplies a quiet fallback until notification filtering is approved.
     let cached_fallback = || {
         if !wait_for_cache {
-            return lookup_mobile_push_preview(&data_dir, &outer_event_id)
+            return lookup_mobile_push_preview(&data_dir, &outer_event_id, &owner_pubkey_hex)
                 .unwrap_or_else(suppressed_resolution);
         }
         let is_legacy_group_outer = !mobile_push_event_has_tag(&outer_event, "header")
             && parse_group_sender_key_message_event(&outer_event).is_ok();
-        lookup_mobile_push_preview_after_short_wait(&data_dir, &outer_event_id).unwrap_or_else(
-            || {
+        lookup_mobile_push_preview_after_short_wait(&data_dir, &outer_event_id, &owner_pubkey_hex)
+            .unwrap_or_else(|| {
                 if is_legacy_group_outer {
                     lookup_recent_group_mobile_push_preview_after_short_wait(
                         &data_dir,
@@ -357,14 +356,15 @@ fn decrypt_mobile_push_notification_inner(
                 } else {
                     suppressed_resolution()
                 }
-            },
-        )
+            })
     };
 
     // If the foreground app already wrote a chat message for this
     // wrapper event, prefer that body — it's faster than NDR decrypt
     // and matches exactly what the user would see in-app.
-    if let Some(resolution) = lookup_mobile_push_preview(&data_dir, &outer_event_id) {
+    if let Some(resolution) =
+        lookup_mobile_push_preview(&data_dir, &outer_event_id, &owner_pubkey_hex)
+    {
         return resolution;
     }
 
@@ -528,7 +528,7 @@ fn decrypted_mobile_push_resolution(
             .map(str::to_string)
             .unwrap_or_else(|| "Iris Chat".to_string())
     });
-    let body_preview = decrypted_mobile_push_body(inner_kind, &inner_content);
+    let body_preview = control_preview::body(inner_kind, &inner_content, &inner_json);
     let (title, body) =
         group_notification_title_and_body(group_title, &resolved_sender_name, body_preview.clone());
 
@@ -603,8 +603,14 @@ fn group_notification_title_and_body(
 fn lookup_mobile_push_preview(
     data_dir: &str,
     outer_event_id: &str,
+    owner_pubkey_hex: &str,
 ) -> Option<MobilePushNotificationResolution> {
     let conn = open_lookup_connection(data_dir)?;
+    if let Some(control) =
+        control_preview::lookup(&conn, data_dir, outer_event_id, owner_pubkey_hex)
+    {
+        return Some(control);
+    }
     let (chat_id, body, author_hex, dismiss): (String, String, String, bool) = conn
         .query_row(
             "SELECT chat_id, body, author, is_outgoing = 1 OR delivery = 'seen'
@@ -794,12 +800,15 @@ fn lookup_recent_group_mobile_push_preview_after_short_wait(
 fn lookup_mobile_push_preview_after_short_wait(
     data_dir: &str,
     outer_event_id: &str,
+    owner_pubkey_hex: &str,
 ) -> Option<MobilePushNotificationResolution> {
     for delay_ms in [0_u64, 25, 75, 150, 300, 600, 1_200, 2_400] {
         if delay_ms > 0 {
             std::thread::sleep(Duration::from_millis(delay_ms));
         }
-        if let Some(resolution) = lookup_mobile_push_preview(data_dir, outer_event_id) {
+        if let Some(resolution) =
+            lookup_mobile_push_preview(data_dir, outer_event_id, owner_pubkey_hex)
+        {
             return Some(resolution);
         }
     }
@@ -1229,8 +1238,12 @@ fn decrypted_mobile_push_body(kind: u64, content: &str) -> String {
             }
         }
         MOBILE_PUSH_REACTION_KIND => reaction_push_body(content.trim()),
-        kind if kind == TYPING_KIND as u64 => "is typing".to_string(),
-        kind if kind == RECEIPT_KIND as u64 => "Seen".to_string(),
+        kind if kind == TYPING_KIND as u64 => "Typing…".to_string(),
+        kind if kind == RECEIPT_KIND as u64 => match content.trim() {
+            "seen" => "Seen".to_string(),
+            "delivered" => "Delivered".to_string(),
+            _ => "Message status updated".to_string(),
+        },
         kind if kind == CHAT_SETTINGS_KIND as u64 => "Updated chat".to_string(),
         kind if kind == APP_KEYS_EVENT_KIND as u64 => "Updated devices".to_string(),
         MOBILE_PUSH_INVITE_RESPONSE_KIND => "Someone joined your chat".to_string(),
@@ -1303,8 +1316,9 @@ mod tests {
         )
         .expect("insert message");
 
-        let resolution = lookup_mobile_push_preview(tmp.path().to_str().unwrap(), "outer-event-id")
-            .expect("resolved preview");
+        let resolution =
+            lookup_mobile_push_preview(tmp.path().to_str().unwrap(), "outer-event-id", "")
+                .expect("resolved preview");
         let payload: serde_json::Value =
             serde_json::from_str(&resolution.payload_json).expect("payload json");
 
@@ -1338,8 +1352,9 @@ mod tests {
         )
         .expect("insert message");
 
-        let resolution = lookup_mobile_push_preview(tmp.path().to_str().unwrap(), "outer-event-id")
-            .expect("resolved preview");
+        let resolution =
+            lookup_mobile_push_preview(tmp.path().to_str().unwrap(), "outer-event-id", "")
+                .expect("resolved preview");
 
         assert_eq!(resolution.body, "only show the new reply");
     }

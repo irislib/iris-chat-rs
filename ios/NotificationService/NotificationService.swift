@@ -9,10 +9,8 @@ import UserNotifications
 /// group name as title and prefix the body with the sender name. If
 /// decryption fails for any reason — no logged-in
 /// account, missing storage, ratchet already advanced by the foreground
-/// app — encrypted Iris placeholders are cleared. iOS only honors that
-/// suppression with Apple's notification-filtering entitlement; without it,
-/// the system can restore the original alert. An empty result alone is not
-/// proof that a notification was suppressed on a physical device.
+/// app — we show a quiet "Chat updated" fallback. Decrypted controls use
+/// their real status until Apple's filtering entitlement lets us hide them.
 final class NotificationService: UNNotificationServiceExtension {
     private static let appGroupIdentifier = "group.fi.siriusbusiness.irischat"
     private static let keychainService = "fi.siriusbusiness.irischat"
@@ -39,7 +37,7 @@ final class NotificationService: UNNotificationServiceExtension {
         self.bestAttempt = bestAttempt
         let shouldClearFallback = isLikelyEncryptedIrisPush(request.content)
         if shouldClearFallback {
-            clearVisibleFallback(bestAttempt)
+            MobilePushNotificationPresentation.prepareFallback(bestAttempt)
         }
 
         guard let payloadJson = serializedPayload(from: request.content) else {
@@ -69,22 +67,7 @@ final class NotificationService: UNNotificationServiceExtension {
             contentHandler(bestAttempt)
             return
         }
-        if !resolution.title.isEmpty {
-            bestAttempt.title = resolution.title
-        }
-        if !resolution.body.isEmpty {
-            bestAttempt.body = resolution.body
-        }
-        if resolution.shouldShow {
-            bestAttempt.sound = .default
-        } else {
-            // Non-message kinds (typing, reactions, settings) on
-            // platforms that can really suppress would never reach
-            // here. iOS can't, so clear sound/badge for previews that
-            // are informative but not chat messages.
-            bestAttempt.sound = nil
-            bestAttempt.badge = nil
-        }
+        MobilePushNotificationPresentation.apply(resolution, to: bestAttempt)
         contentHandler(bestAttempt)
     }
 
@@ -175,14 +158,6 @@ final class NotificationService: UNNotificationServiceExtension {
             title == "someone" ||
             title.hasPrefix("dm by ")
         return genericTitle && genericBody
-    }
-
-    private func clearVisibleFallback(_ content: UNMutableNotificationContent) {
-        content.title = ""
-        content.subtitle = ""
-        content.body = ""
-        content.sound = nil
-        content.badge = nil
     }
 
     private func sharedDataDir() -> URL? {
