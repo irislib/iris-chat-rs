@@ -2,6 +2,7 @@ use super::*;
 
 include!("protocol_engine/types.rs");
 include!("protocol_engine/engine_core.rs");
+include!("protocol_engine/engine_test_support.rs");
 include!("protocol_engine/engine_state_helpers.rs");
 include!("protocol_engine/engine_fact_ingest.rs");
 include!("protocol_engine/engine_sends.rs");
@@ -25,6 +26,7 @@ mod tests {
     include!("protocol_engine/local_sibling_send_tests.rs");
     include!("protocol_engine/remote_send_tests.rs");
     include!("protocol_engine/receive_session_fallback_tests.rs");
+    include!("protocol_engine/incident_first_contact_tests.rs");
 
     #[test]
     fn sender_owner_resolution_keeps_claimed_device_pending_until_owner_verified() {
