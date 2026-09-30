@@ -230,7 +230,24 @@ fn classifies_npub_invite_and_plain_text_inputs() {
             assert_eq!(npub, bob_npub);
             assert!(!pubkey_hex.is_empty());
             assert!(peer_input.starts_with("npub"));
-            assert!(display.contains("…"), "{display}");
+            assert!(!display.is_empty());
+            assert!(
+                !display.contains("npub"),
+                "search should show a friendly label: {display}"
+            );
+            assert!(!display.contains(&pubkey_hex));
+            match classify_chat_input(pubkey_hex).expect("hex user ID is a shortcut") {
+                ChatInputShortcut::DirectPeer {
+                    display: hex_display,
+                    ..
+                } => {
+                    assert_eq!(
+                        display, hex_display,
+                        "the same user keeps the same friendly label"
+                    );
+                }
+                other => panic!("expected DirectPeer, got {other:?}"),
+            }
         }
         other => panic!("expected DirectPeer, got {other:?}"),
     }
