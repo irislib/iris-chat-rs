@@ -995,7 +995,7 @@ final class IrisChatTests: XCTestCase {
             environment: [:]
         )
 
-        let suppressed = manager.shouldSuppressPushNotification(userInfo: [
+        let suppressed = await manager.shouldSuppressPushNotification(userInfo: [
             "chat_id": "chat-1",
             "title": "Bob",
             "body": "hello",

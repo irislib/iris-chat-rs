@@ -9,8 +9,10 @@ import UserNotifications
 /// group name as title and prefix the body with the sender name. If
 /// decryption fails for any reason — no logged-in
 /// account, missing storage, ratchet already advanced by the foreground
-/// app — encrypted Iris placeholders are cleared instead of surfacing
-/// generic "New activity" text.
+/// app — encrypted Iris placeholders are cleared. iOS only honors that
+/// suppression with Apple's notification-filtering entitlement; without it,
+/// the system can restore the original alert. An empty result alone is not
+/// proof that a notification was suppressed on a physical device.
 final class NotificationService: UNNotificationServiceExtension {
     private static let appGroupIdentifier = "group.fi.siriusbusiness.irischat"
     private static let keychainService = "fi.siriusbusiness.irischat"

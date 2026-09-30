@@ -1038,6 +1038,8 @@ final class AppManager: ObservableObject {
     private let desktopNotifications: DesktopNotificationPosting
     private let dataDir: URL
     private let fileManager: FileManager
+    private let pushNotificationResolver: MobilePushNotificationResolver
+    private var notificationTapSequence: UInt64 = 0
     private let attachmentCache: IrisAttachmentCache
     private let sharedContainerOverride: URL?
     private var pendingNotificationTarget: (chatID: String, accountID: String)?
@@ -1115,9 +1117,11 @@ final class AppManager: ObservableObject {
         fileManager: FileManager = .default,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         appVersion: String = AppPaths.appVersion(),
-        rustFactory: (() -> RustAppClient)? = nil
+        rustFactory: (() -> RustAppClient)? = nil,
+        pushNotificationResolver: MobilePushNotificationResolver = MobilePushNotificationResolver()
     ) {
         self.fileManager = fileManager
+        self.pushNotificationResolver = pushNotificationResolver
         self.sharedContainerOverride = environment["IRIS_SHARE_CONTAINER_DIR"]
             .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
         let resolvedDataDir = dataDir ?? AppPaths.dataDir(fileManager: fileManager, environment: environment)
@@ -2019,7 +2023,12 @@ final class AppManager: ObservableObject {
         if isGenericIrisFallback(content: content) && !hasPushEventPayload(userInfo: userInfo) {
             return []
         }
-        guard let resolution = resolvePushNotification(content: content) else {
+        let generation = reconciliationGeneration
+        let accountID = currentNotificationAccountID
+        let resolved = await resolvePushNotification(content: content)
+        guard generation == reconciliationGeneration,
+              accountID == currentNotificationAccountID else { return [] }
+        guard let resolution = resolved else {
             return fallbackForegroundPushPresentationOptions(content: content)
         }
         guard resolution.shouldShow else {
@@ -2043,7 +2052,12 @@ final class AppManager: ObservableObject {
             }
             return [.banner, .sound, .list]
         }
-        guard let resolution = resolvePushNotification(userInfo: userInfo) else {
+        let generation = reconciliationGeneration
+        let accountID = currentNotificationAccountID
+        let resolved = await resolvePushNotification(userInfo: userInfo)
+        guard generation == reconciliationGeneration,
+              accountID == currentNotificationAccountID else { return [] }
+        guard let resolution = resolved else {
             return fallbackForegroundPushPresentationOptions(userInfo: userInfo)
         }
         guard resolution.shouldShow else {
@@ -2056,8 +2070,8 @@ final class AppManager: ObservableObject {
         return []
     }
 
-    func shouldSuppressPushNotification(userInfo: [AnyHashable: Any]) -> Bool {
-        guard let resolution = resolvePushNotification(userInfo: userInfo) else {
+    func shouldSuppressPushNotification(userInfo: [AnyHashable: Any]) async -> Bool {
+        guard let resolution = await resolvePushNotification(userInfo: userInfo) else {
             return false
         }
         guard resolution.shouldShow else {
@@ -2068,42 +2082,49 @@ final class AppManager: ObservableObject {
 
     func handlePushNotificationTap(userInfo: [AnyHashable: Any]) {
         let accountID = userInfo["iris_account_id"] as? String
-        if let accountID, accountID != currentNotificationAccountID { return }
-        guard let resolution = resolvePushNotification(userInfo: userInfo),
-              let chatID = chatID(fromPushPayloadJson: resolution.payloadJson),
-              !chatID.isEmpty else {
-            return
-        }
-        handleNotificationTap(chatID: chatID, accountID: accountID)
-    }
-
-    private func resolvePushNotification(userInfo: [AnyHashable: Any]) -> MobilePushNotificationResolution? {
-        guard let payloadJson = serializedPushPayload(userInfo: userInfo) else {
-            return nil
-        }
-        return resolvePushNotification(payloadJson: payloadJson)
-    }
-
-    private func resolvePushNotification(content: UNNotificationContent) -> MobilePushNotificationResolution? {
-        guard let payloadJson = serializedPushPayload(content: content) else {
-            return nil
-        }
-        return resolvePushNotification(payloadJson: payloadJson)
-    }
-
-    private func resolvePushNotification(payloadJson: String) -> MobilePushNotificationResolution? {
-        let resolution: MobilePushNotificationResolution
-        if let bundle = secretStore.load() {
-            resolution = decryptMobilePushNotificationPayload(
-                dataDir: dataDir.path,
-                ownerPubkeyHex: bundle.ownerPubkeyHex,
-                deviceNsec: bundle.deviceNsec,
-                rawPayloadJson: payloadJson
-            )
-        } else {
-            resolution = resolveMobilePushNotificationPayload(rawPayloadJson: payloadJson)
-        }
+        guard !localResetInFlight,
+              accountID == nil || accountID == currentNotificationAccountID,
+              let payloadJson = serializedPushPayload(userInfo: userInfo) else { return }
+        notificationTapSequence &+= 1
+        let sequence = notificationTapSequence
+        let generation = reconciliationGeneration
+        // Let the live core ingest immediately, including while restoring. The
+        // preview reader can then find its result without blocking navigation.
         dispatchToRust(.ingestMobilePushPayload(payloadJson: payloadJson), showsToastOnFailure: false)
+        Task { [weak self] in
+            guard let self, generation == self.reconciliationGeneration,
+                  sequence == self.notificationTapSequence,
+                  let resolution = await self.resolvePushNotification(payloadJson: payloadJson),
+                  sequence == self.notificationTapSequence,
+                  let chatID = chatID(fromPushPayloadJson: resolution.payloadJson),
+                  !chatID.isEmpty else { return }
+            self.handleNotificationTap(chatID: chatID, accountID: accountID)
+        }
+    }
+
+    private func resolvePushNotification(userInfo: [AnyHashable: Any]) async -> MobilePushNotificationResolution? {
+        guard let payloadJson = serializedPushPayload(userInfo: userInfo) else { return nil }
+        dispatchToRust(.ingestMobilePushPayload(payloadJson: payloadJson), showsToastOnFailure: false)
+        return await resolvePushNotification(payloadJson: payloadJson)
+    }
+
+    private func resolvePushNotification(content: UNNotificationContent) async -> MobilePushNotificationResolution? {
+        guard let payloadJson = serializedPushPayload(content: content) else { return nil }
+        dispatchToRust(.ingestMobilePushPayload(payloadJson: payloadJson), showsToastOnFailure: false)
+        return await resolvePushNotification(payloadJson: payloadJson)
+    }
+
+    private func resolvePushNotification(payloadJson: String) async -> MobilePushNotificationResolution? {
+        guard !localResetInFlight else { return nil }
+        let generation = reconciliationGeneration
+        let accountID = currentNotificationAccountID
+        let bundle = storedAccountBundle ?? secretStore.load()
+        let resolution = await pushNotificationResolver.resolve(
+            dataDir: dataDir.path, bundle: bundle, payloadJson: payloadJson
+        )
+        guard !Task.isCancelled, !localResetInFlight,
+              generation == reconciliationGeneration,
+              accountID == currentNotificationAccountID else { return nil }
         return resolution
     }
 
@@ -2783,6 +2804,7 @@ final class AppManager: ObservableObject {
         // Startup snapshots can lack the account during restore. Logout is the
         // deterministic boundary for clearing deferred notification navigation.
         pendingNotificationTarget = nil
+        notificationTapSequence &+= 1
 #if os(iOS)
         pendingShareReadTask?.cancel()
         pendingShareReadTask = nil
@@ -2833,6 +2855,9 @@ final class AppManager: ObservableObject {
         lastSyncedDeviceLabelsKey = nil
         Task {
             await previousRust.shutdown()
+            // A preview may still have an old account's database open. Drain
+            // those reads before deleting its files or creating the next core.
+            await pushNotificationResolver.waitUntilIdle()
             await Task.detached(priority: .userInitiated) { files.reset() }.value
             let nextRust = makeRustClient()
             let nextReconciler = UpdateBridge(owner: self, generation: generation)

@@ -5,6 +5,81 @@ import XCTest
 
 final class IosPushNotificationRoutingTests: XCTestCase {
     @MainActor
+    func testEncryptedPushCacheMissLeavesMainActorResponsive() async throws {
+        let dataDir = makeDataDir()
+        defer { try? FileManager.default.removeItem(at: dataDir) }
+        let manager = AppManager(rust: MockRustApp(state: makeAppState(rev: 1, account: makeAuthorizedAccount())),
+            secretStore: InMemorySecretStore(bundle: makeStoredAccountBundle()), dataDir: dataDir, environment: [:])
+        // A parseable envelope with unavailable local keys takes the real
+        // preview-cache retry path, which previously slept on the main thread.
+        let payload: [AnyHashable: Any] = ["event": [
+            "id": String(repeating: "0", count: 64),
+            "pubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            "sig": String(repeating: "0", count: 128), "created_at": 1,
+            "kind": 1060, "tags": [["header", "unavailable"]], "content": "unavailable"
+        ]]
+        let start = Date()
+        let handling = Task { await manager.foregroundPushPresentationOptions(userInfo: payload) }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 1, "notification cache retries must not freeze the UI")
+        let options = await handling.value
+        XCTAssertTrue(options.isEmpty)
+        XCTAssertGreaterThan(Date().timeIntervalSince(start), 4, "exercise the actual cache retry path")
+    }
+
+    @MainActor
+    func testSlowNotificationDecryptionDoesNotBlockUIOrDelayIngestion() async {
+        let started = expectation(description: "preview worker started")
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        let resolver = MobilePushNotificationResolver { _, _, payload in
+            XCTAssertFalse(Thread.isMainThread)
+            started.fulfill()
+            XCTAssertEqual(gate.wait(timeout: .now() + 3), .success)
+            return resolveMobilePushNotificationPayload(rawPayloadJson: payload)
+        }
+        let rust = MockRustApp(state: makeAppState(rev: 1, account: makeAuthorizedAccount()))
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), environment: [:], pushNotificationResolver: resolver)
+        manager.handlePushNotificationTap(userInfo: pushPayload(chatID: "slow-chat"))
+        XCTAssertEqual(pushIngestCount(in: rust.dispatchedActions), 1)
+        await fulfillment(of: [started], timeout: 2)
+        // This resumes on the UI executor while the preview is still blocked.
+        XCTAssertTrue(openedChatIDs(in: rust.dispatchedActions).isEmpty)
+        manager.recordUserActivity()
+        gate.signal()
+        let opened = await waitUntil { self.openedChatIDs(in: rust.dispatchedActions) == ["slow-chat"] }
+        XCTAssertTrue(opened)
+    }
+
+    @MainActor
+    func testLogoutDiscardsNotificationDecryptionAlreadyInFlight() async {
+        let started = expectation(description: "preview worker started")
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        let resolver = MobilePushNotificationResolver { _, _, payload in
+            if payload != "{}" {
+                started.fulfill()
+                XCTAssertEqual(gate.wait(timeout: .now() + 3), .success)
+            }
+            return resolveMobilePushNotificationPayload(rawPayloadJson: payload)
+        }
+        let dataDir = makeDataDir()
+        defer { try? FileManager.default.removeItem(at: dataDir) }
+        let rust = MockRustApp(state: makeAppState(rev: 1, account: makeAuthorizedAccount()))
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(),
+            pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
+            dataDir: dataDir, environment: [:], pushNotificationResolver: resolver)
+        manager.handlePushNotificationTap(userInfo: pushPayload(chatID: "old-chat"))
+        await fulfillment(of: [started], timeout: 2)
+        manager.logout()
+        XCTAssertTrue(manager.bootstrapInFlight)
+        gate.signal()
+        let reset = await waitUntil { !manager.bootstrapInFlight && rust.shutdownCallCount == 1 }
+        XCTAssertTrue(reset)
+        XCTAssertTrue(openedChatIDs(in: rust.dispatchedActions).isEmpty)
+    }
+
+    @MainActor
     func testNotificationFromPreviousAccountDoesNotIngestOrNavigate() {
         let rust = MockRustApp(state: makeAppState(rev: 1, account: makeAuthorizedAccount()))
         let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), environment: [:])
