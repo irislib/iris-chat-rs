@@ -36,10 +36,14 @@ pub(super) struct Selection {
     session: RefCell<Option<String>>,
     request: RefCell<Option<(String, async_channel::Sender<glib::Variant>)>>,
     dialog: RefCell<Option<adw::AlertDialog>>,
+    dialog_response: RefCell<Option<async_channel::Sender<String>>>,
 }
 impl Selection {
     pub(super) fn cancel(&self) {
         self.cancelled.set(true);
+        if let Some(sender) = self.dialog_response.borrow_mut().take() {
+            let _ = sender.try_send("cancel".into());
+        }
         if let Some(dialog) = self.dialog.borrow_mut().take() {
             dialog.close();
         }
@@ -395,6 +399,9 @@ async fn choose_x11(
     parent: &gtk::Window,
     selection: Rc<Selection>,
 ) -> Result<Option<Capture>, String> {
+    if selection.cancelled.get() {
+        return Ok(None);
+    }
     let choices = x11_choices(parent);
     if choices.is_empty() {
         return Err("No screens are available to share.".into());
@@ -415,10 +422,44 @@ async fn choose_x11(
     dropdown.set_margin_start(18);
     dropdown.set_margin_end(18);
     dialog.set_extra_child(Some(&dropdown));
+    let (sender, receiver) = async_channel::bounded(1);
+    *selection.dialog_response.borrow_mut() = Some(sender.clone());
+    // Resolve Escape/window-close before starting an animation: older Adwaita
+    // versions can omit completion when a dialog closes while still opening.
+    dialog.set_can_close(false);
+    let close_sender = sender.clone();
+    let close_handler = dialog.connect_close_attempt(move |_| {
+        let close_sender = close_sender.clone();
+        glib::idle_add_local_once(move || {
+            let _ = close_sender.try_send("cancel".into());
+        });
+    });
+    let closed_sender = sender.clone();
+    let closed_handler = dialog.connect_closed(move |_| {
+        // AlertDialog can emit closed before its Share response. Give that
+        // response first choice; an ordinary window close still cancels.
+        let closed_sender = closed_sender.clone();
+        glib::idle_add_local_once(move || {
+            let _ = closed_sender.try_send("cancel".into());
+        });
+    });
+    let handler = dialog.connect_response(None, move |_, response| {
+        let _ = sender.try_send(response.to_string());
+    });
     *selection.dialog.borrow_mut() = Some(dialog.clone());
-    let response = dialog.clone().choose_future(parent).await;
+    dialog.present(Some(parent));
+    // On libadwaita 1.5, closing a newly presented dialog can leave
+    // choose_future unresolved. Selection cancellation completes this channel
+    // directly, without depending on the dialog's closing animation.
+    let response = receiver.recv().await.unwrap_or_default();
     selection.dialog.borrow_mut().take();
-    dialog.close();
+    selection.dialog_response.borrow_mut().take();
+    dialog.disconnect(handler);
+    dialog.disconnect(close_handler);
+    dialog.disconnect(closed_handler);
+    if dialog.is_mapped() {
+        dialog.force_close();
+    }
     if response != "share" || selection.cancelled.get() {
         return Ok(None);
     }
@@ -558,23 +599,50 @@ unsafe extern "C" {
 #[cfg(feature = "ui-tests")]
 pub(super) fn verify_capture_ui() {
     use std::time::{Duration, Instant};
-    fn pump(mut ready: impl FnMut() -> bool) {
+    fn pump(phase: &str, mut ready: impl FnMut() -> bool) {
+        eprintln!("Screen capture test: {phase}");
         let context = glib::MainContext::default();
         let deadline = Instant::now() + Duration::from_secs(8);
         while !ready() {
             while context.pending() {
                 context.iteration(false);
             }
-            assert!(Instant::now() < deadline, "screen capture timed out");
+            assert!(
+                Instant::now() < deadline,
+                "screen capture timed out: {phase}"
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
     }
-    let window = gtk::Window::builder()
+    fn button(widget: &gtk::Widget, label: &str) -> Option<gtk::Button> {
+        if let Ok(button) = widget.clone().downcast::<gtk::Button>() {
+            if button.label().as_deref() == Some(label) {
+                return Some(button);
+            }
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(found) = button(&current, label) {
+                return Some(found);
+            }
+            child = current.next_sibling();
+        }
+        None
+    }
+    #[derive(Clone, Copy, Debug)]
+    enum Action {
+        CancelBeforeOpen,
+        CancelPending,
+        CancelButton,
+        Close,
+        Share,
+    }
+    let window = adw::Window::builder()
         .title("Screen sharing test")
         .default_width(400)
         .default_height(220)
         .build();
-    window.set_child(Some(&gtk::Label::new(Some(
+    window.set_content(Some(&gtk::Label::new(Some(
         "Only this selected surface is shared",
     ))));
     window.present();
@@ -586,23 +654,41 @@ pub(super) fn verify_capture_ui() {
             .contains("X11"),
         "fixture requires Xvfb/X11"
     );
-    for accept in [false, true] {
+    for action in [
+        Action::CancelBeforeOpen,
+        Action::CancelPending,
+        Action::CancelButton,
+        Action::Close,
+        Action::Share,
+    ] {
+        eprintln!("Screen capture action: {action:?}");
+        let cancel_before_open = matches!(action, Action::CancelBeforeOpen);
+        let accept = matches!(action, Action::Share);
         let selection = Rc::new(Selection::default());
         let result = Rc::new(RefCell::new(None));
         let completion = result.clone();
         let choosing = selection.clone();
-        let parent = window.clone();
+        let parent = window.clone().upcast::<gtk::Window>();
+        if cancel_before_open {
+            selection.cancel();
+        }
         glib::MainContext::default().spawn_local(async move {
             *completion.borrow_mut() = Some(choose_x11(&parent, choosing).await);
         });
-        pump(|| selection.dialog.borrow().is_some());
+        if cancel_before_open {
+            pump("cancel before picker opens", || result.borrow().is_some());
+            assert!(result.borrow_mut().take().unwrap().unwrap().is_none());
+            assert!(selection.dialog.borrow().is_none());
+            continue;
+        }
+        pump("open picker", || selection.dialog.borrow().is_some());
         let dialog = selection.dialog.borrow().clone().unwrap();
         if accept {
             if let Some(path) = std::env::var_os("IRIS_SCREEN_PICKER_SNAPSHOT") {
                 let mut node = None;
                 let surface = dialog.native().expect("screen picker surface");
                 let widget = surface.clone().dynamic_cast::<gtk::Widget>().unwrap();
-                pump(|| {
+                pump("render picker", || {
                     let paintable = gtk::WidgetPaintable::new(Some(&widget));
                     let snapshot = gtk::Snapshot::new();
                     paintable.snapshot(&snapshot, widget.width() as f64, widget.height() as f64);
@@ -616,28 +702,28 @@ pub(super) fn verify_capture_ui() {
                     .save_to_png(path)
                     .expect("screen picker screenshot");
             }
-            fn button(widget: &gtk::Widget) -> Option<gtk::Button> {
-                if let Ok(button) = widget.clone().downcast::<gtk::Button>() {
-                    if button.label().as_deref() == Some("Share") {
-                        return Some(button);
-                    }
-                }
-                let mut child = widget.first_child();
-                while let Some(current) = child {
-                    if let Some(found) = button(&current) {
-                        return Some(found);
-                    }
-                    child = current.next_sibling();
-                }
-                None
-            }
-            button(dialog.upcast_ref())
+            button(dialog.upcast_ref(), "Share")
                 .expect("Share button")
                 .emit_clicked();
         } else {
-            selection.cancel();
+            match action {
+                Action::CancelButton => button(dialog.upcast_ref(), "Cancel")
+                    .expect("Cancel button")
+                    .emit_clicked(),
+                Action::Close => {
+                    dialog.close();
+                }
+                _ => selection.cancel(),
+            }
         }
-        pump(|| result.borrow().is_some());
+        pump(
+            if accept {
+                "accept picker"
+            } else {
+                "cancel picker"
+            },
+            || result.borrow().is_some(),
+        );
         let captured = result.borrow_mut().take().unwrap().unwrap();
         if !accept {
             assert!(captured.is_none());
@@ -649,8 +735,15 @@ pub(super) fn verify_capture_ui() {
         media.configure(true, true, 500_000, 1);
         capture.start(media.clone()).unwrap();
         let mut encoded = false;
-        pump(|| {
+        pump("encode captured frame", || {
+            assert!(
+                !capture.finished(),
+                "screen capture stopped before its first frame"
+            );
             for event in media.poll() {
+                if let iris_chat_core::DesktopCallEvent::Error { message } = &event {
+                    eprintln!("Screen capture media diagnostic: {message}");
+                }
                 if matches!(
                     event,
                     iris_chat_core::DesktopCallEvent::Encoded { kind: 2, .. }
