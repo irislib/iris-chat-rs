@@ -2,6 +2,33 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.30.3
+
+### GitHub
+
+- Move iOS notification preview decryption and cache retries off the UI thread, ingest incoming events immediately, and keep notification navigation scoped to the current account and latest tap.
+- Preserve authenticated control-event previews after foreground decryption. Distinguish delivered, seen, typing, and stopped-typing updates; use a quiet Chat updated fallback while iOS notification filtering is unavailable.
+- Sync pinned chats and timed mutes privately between linked devices, including newly linked devices and explicit unpin or unmute changes.
+- Share device names between linked devices and give unnamed devices stable friendly names without redundant Linked device labels.
+- Simplify chat headers with consistent call controls, move existing chat search into chat details, and add pin controls to chat details where supported.
+- Remove raw user ID placeholders from search results and fix a macOS Settings accessibility crash.
+
+### Apple
+
+- Fix pauses when receiving or opening notifications on iPhone.
+- Show accurate delivery, read, and typing updates instead of misleading New message alerts.
+- Keep pinned chats and mute durations in sync across your devices.
+- Make linked devices easier to recognize with clearer names.
+- Refine call buttons and make chat search available from chat details.
+- Fix a crash in Mac settings.
+
+### Zapstore
+
+- Keep pinned chats and mute durations in sync across your devices.
+- Make linked devices easier to recognize with clearer names.
+- Refine call buttons and make chat search available from chat details.
+- Improve search results and linked-device setup.
+
 ## v2026.9.30.2
 
 ### GitHub
