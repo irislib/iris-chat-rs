@@ -439,6 +439,7 @@ impl AppCore {
             || self.groups.get(&group.group_id).is_some_and(|current| {
                 current.revision > group.revision
                     || (current.revision == group.revision && current.updated_at > group.updated_at)
+                    || self.group_snapshot_restores_removed_member(current, &group)
             })
         {
             return false;

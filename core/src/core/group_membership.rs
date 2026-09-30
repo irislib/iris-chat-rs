@@ -1,6 +1,23 @@
 use super::*;
 
 impl AppCore {
+    pub(super) fn group_snapshot_restores_removed_member(
+        &self,
+        current: &GroupSnapshot,
+        incoming: &GroupSnapshot,
+    ) -> bool {
+        incoming.revision <= current.revision
+            && self.logged_in.as_ref().is_some_and(|local| {
+                let includes_local = |group: &GroupSnapshot| {
+                    group
+                        .members
+                        .iter()
+                        .any(|member| member.to_bytes() == local.owner_pubkey.to_bytes())
+                };
+                !includes_local(current) && includes_local(incoming)
+            })
+    }
+
     pub(super) fn is_removed_from_group(&self, chat_id: &str) -> bool {
         let Some(group) = parse_group_id_from_chat_id(chat_id).and_then(|id| self.groups.get(&id))
         else {
