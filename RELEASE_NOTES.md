@@ -2,6 +2,25 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.30.2
+
+### GitHub
+
+- Discover same-machine Hashtree providers by default and serve cached encrypted attachment blocks through Chat's existing FIPS endpoint.
+- Reuse files cached by Drive, htree, or another Chat instance without requiring a standalone daemon.
+- Preserve the explicit local-sharing opt-out and keep Nearby's LAN preferences independent.
+- Verify remote transport authorization separately from same-machine discovery, including contact-session preservation and relayless transit recovery.
+
+### Apple
+
+- Improve access to files already cached by other Iris apps on the same device.
+- Keep local file sharing available when Nearby is turned off.
+
+### Zapstore
+
+- Improve access to files already cached by other Iris apps on the same device.
+- Keep local file sharing available when Nearby is turned off.
+
 ## v2026.9.30.1
 
 ### GitHub
