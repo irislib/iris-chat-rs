@@ -821,7 +821,10 @@ fn same_host_hashtree_enabled() -> bool {
 
 fn same_host_hashtree_setting(value: Option<&str>) -> bool {
     !value.is_some_and(|value| {
-        matches!(value.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off")
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        )
     })
 }
 

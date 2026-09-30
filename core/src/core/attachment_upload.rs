@@ -48,9 +48,13 @@ pub(super) struct AttachmentChunkStore;
 impl Store for AttachmentChunkStore {
     async fn put(&self, hash: Hash, data: Vec<u8>) -> Result<bool, StoreError> {
         if hashtree_core::sha256(&data) != hash {
-            return Err(StoreError::Other("attachment cache hash mismatch".to_string()));
+            return Err(StoreError::Other(
+                "attachment cache hash mismatch".to_string(),
+            ));
         }
-        Ok(shared_chunk_cache_write().insert(to_hex(&hash), data).is_none())
+        Ok(shared_chunk_cache_write()
+            .insert(to_hex(&hash), data)
+            .is_none())
     }
 
     async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
@@ -79,7 +83,8 @@ impl AttachmentBlobRuntime {
 }
 
 fn attachment_blob_store() -> &'static RwLock<Option<Weak<RoutedStore<AttachmentChunkStore>>>> {
-    static STORE: OnceLock<RwLock<Option<Weak<RoutedStore<AttachmentChunkStore>>>>> = OnceLock::new();
+    static STORE: OnceLock<RwLock<Option<Weak<RoutedStore<AttachmentChunkStore>>>>> =
+        OnceLock::new();
     STORE.get_or_init(|| RwLock::new(None))
 }
 
