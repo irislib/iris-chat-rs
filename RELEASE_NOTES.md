@@ -6,6 +6,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 ### GitHub
 
+- Publish iris-chat-protocol 0.1.11 with the current delivery, group membership, and retry fixes, and update native consumers.
 - Retain group history after removal, show a clear notice, and block sending and queued retries across native apps and linked devices.
 - Fix Linux screen-sharing picker cancellation on older supported desktops.
 - Deliver direct messages to available linked devices while durably retrying unavailable devices, and try all matching receive sessions before rejecting a message.
