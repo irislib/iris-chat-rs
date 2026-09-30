@@ -502,6 +502,15 @@ fn session_start_retry_recovers_self_chat_queued_by_older_client() {
 
 #[test]
 fn group_fanout_retry_missing_roster_does_not_rewrite_persisted_state() {
+    assert_group_fanout_no_progress_does_not_rewrite_persisted_state(false);
+}
+
+#[test]
+fn group_fanout_retry_missing_invite_does_not_rewrite_persisted_state() {
+    assert_group_fanout_no_progress_does_not_rewrite_persisted_state(true);
+}
+
+fn assert_group_fanout_no_progress_does_not_rewrite_persisted_state(known_roster: bool) {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer_owner = Keys::generate();
@@ -509,6 +518,14 @@ fn group_fanout_retry_missing_roster_does_not_rewrite_persisted_state() {
     let mut engine =
         test_protocol_engine_with_storage(&owner, &device, storage.clone() as Arc<dyn StorageAdapter>);
     observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+    if known_roster {
+        observe_peer_appkeys_for_test(
+            &mut engine,
+            &peer_owner,
+            &[Keys::generate().public_key()],
+            2,
+        );
+    }
 
     let create = engine
         .create_group(
@@ -552,22 +569,22 @@ fn group_fanout_retry_missing_roster_does_not_rewrite_persisted_state() {
     );
     let batch = engine
         .retry_pending_protocol(NdrUnixSeconds(due_retry_at))
-        .expect("retry missing group roster");
+        .expect("retry unavailable group target");
 
     assert!(
         batch.is_empty(),
-        "missing-roster group retries should remain pending without fetch/backfill effects"
+        "unavailable-target group retries should remain pending without fetch/backfill effects"
     );
     assert_eq!(
         storage.put_count(),
         before,
-        "missing-roster group retries must not serialize unchanged ratchet state"
+        "unavailable-target group retries must not serialize unchanged ratchet state"
     );
 
     let generation_after_due = engine.debug_snapshot().subscription_generation;
     assert_eq!(
         generation_after_due, generation_before_due,
-        "missing-roster retries should not advance subscription generation without protocol output"
+        "unavailable-target retries should not advance subscription generation without protocol output"
     );
     let quiet_after_due = storage.put_count();
     let quiet_batch = engine

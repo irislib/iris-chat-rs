@@ -741,7 +741,9 @@ impl ProtocolEngine {
                 if let Some(current) = user_record_snapshot(&self.session_manager.snapshot(), owner)
                     .and_then(roster_device_pubkeys)
                 {
+                    let previous_len = devices.len();
                     devices.retain(|device| current.contains(device));
+                    persist_needed |= devices.len() != previous_len;
                 }
                 if devices.is_empty() {
                     persist_needed = true;
@@ -804,12 +806,14 @@ impl ProtocolEngine {
                     continue;
                 }
             };
-            pending.remaining_devices =
+            let remaining_devices =
                 self.group_fanout_missing_devices(&pending.fanout, &prepared.relay_gaps);
-            // Persist both progress and discarded revoked targets even when no
-            // new encrypted delivery was necessary.
-            persist_needed = true;
+            persist_needed |= pending.remaining_devices != remaining_devices;
+            pending.remaining_devices = remaining_devices;
             let still_has_gap = !prepared.relay_gaps.is_empty();
+            // Save progress and removed targets, but keep backoff-only retries
+            // in memory instead of serializing unchanged ratchet state.
+            persist_needed |= !still_has_gap;
             let mut event_ids = Vec::new();
             let chat_id = group_chat_id(&pending.group_id);
             effects.extend(protocol_effects_from_group_prepared_publish(
@@ -829,7 +833,7 @@ impl ProtocolEngine {
         if session_changed {
             self.invalidate_known_message_author_cache();
         }
-        if persist_needed {
+        if persist_needed || session_changed {
             self.persist()?;
         }
         Ok(ProtocolGroupIncomingResult {
