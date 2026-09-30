@@ -44,35 +44,8 @@ impl AppCore {
         let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
             return;
         };
-        // A passive CLI may acknowledge a stored message without opening its
-        // chat first. Restored inactive chats keep only their latest message in
-        // memory; hydrate only the requested IDs, with no navigation/read side
-        // effects and no implicit acknowledgment of neighboring messages.
-        for id in message_ids {
-            if self
-                .threads
-                .get(&normalized_chat_id)
-                .is_none_or(|thread| thread.messages.iter().any(|message| &message.id == id))
-            {
-                continue;
-            }
-            match self
-                .app_store
-                .load_messages_around(&normalized_chat_id, id, 0, 0)
-            {
-                Ok(messages) => {
-                    if let Some(thread) = self.threads.get_mut(&normalized_chat_id) {
-                        thread
-                            .messages
-                            .extend(messages.iter().map(chat_message_from_persisted));
-                        thread.messages.sort_by_key(message_order);
-                    }
-                }
-                Err(error) => {
-                    self.push_debug_log("storage.messages.seen.error", error.to_string());
-                    return;
-                }
-            }
+        if !self.hydrate_receipt_messages(&normalized_chat_id, message_ids) {
+            return;
         }
         let Some(thread) = self.threads.get(&normalized_chat_id) else {
             return;
@@ -93,6 +66,42 @@ impl AppCore {
         self.rebuild_state();
         self.emit_state();
         self.broadcast_device_sync_snapshot();
+    }
+
+    // Inactive restored chats contain only their latest preview. Load only
+    // receipt-referenced rows so acknowledgments update durable older messages
+    // without opening the chat or implicitly marking neighboring messages read.
+    fn hydrate_receipt_messages(&mut self, chat_id: &str, message_ids: &[String]) -> bool {
+        let mut hydrated = false;
+        for id in message_ids {
+            if self
+                .threads
+                .get(chat_id)
+                .is_none_or(|thread| thread.messages.iter().any(|message| &message.id == id))
+            {
+                continue;
+            }
+            match self.app_store.load_messages_around(chat_id, id, 0, 0) {
+                Ok(messages) => {
+                    if let Some(thread) = self.threads.get_mut(chat_id) {
+                        hydrated |= !messages.is_empty();
+                        thread
+                            .messages
+                            .extend(messages.iter().map(chat_message_from_persisted));
+                    }
+                }
+                Err(error) => {
+                    self.push_debug_log("storage.messages.receipt.error", error.to_string());
+                    return false;
+                }
+            }
+        }
+        if hydrated {
+            if let Some(thread) = self.threads.get_mut(chat_id) {
+                thread.messages.sort_by_key(message_order);
+            }
+        }
+        true
     }
 
     pub(super) fn sync_open_chat_read_state(&mut self, chat_id: &str) {
@@ -427,7 +436,7 @@ impl AppCore {
         is_from_local_owner: bool,
         receipt_author_hex: Option<&str>,
     ) {
-        if message_ids.is_empty() {
+        if message_ids.is_empty() || !self.hydrate_receipt_messages(chat_id, message_ids) {
             return;
         }
         let Some(thread) = self.threads.get_mut(chat_id) else {
