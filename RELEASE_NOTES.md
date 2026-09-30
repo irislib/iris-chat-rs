@@ -2,6 +2,42 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.9.30
+
+### GitHub
+
+- Deliver direct messages to available linked devices while durably retrying unavailable devices, and try all matching receive sessions before rejecting a message.
+- Use published nostr-double-ratchet 0.0.168 and remove the temporary vendored library.
+- Preserve delivered and seen receipts for unloaded messages without creating gaps in history pagination; keep linked-device unread counts accurate.
+- Keep an undecryptable queued message from blocking other senders, and preserve pending decrypted messages across storage failures and restarts.
+- Improve large, multi-device group delivery, sender-key recovery, and mesh catch-up while reducing repeated subscription and snapshot work.
+- Add desktop screen sharing, call audio-device selection, restored outgoing call tones, and clearer call controls.
+- Keep incoming call audio playing when a peer's mute status arrives out of order, and clarify whose microphone is off.
+- Add timed chat mute, image copying, and file-drop attachment staging across supported native interfaces.
+- Open the correct account and chat from notifications, enforce call blocking immediately, and preserve Android push-token updates.
+- Clear local data and caches on logout and end sessions when a signed device list removes the current device.
+- Refresh the Mac update banner when a release is found and retain automatic update-check outcomes in Settings.
+
+### Apple
+
+- Improve message delivery between linked devices and in large groups.
+- Make delivered and read indicators more reliable, with accurate unread counts.
+- Choose call audio devices and hear outgoing call tones on iPhone.
+- Prevent stale microphone status from silencing incoming call audio.
+- Mute chats for a chosen duration, copy images, and attach dropped files where supported.
+- Open the right chat from notifications and make signing out clearer.
+- Improve responsiveness when accepting chat requests.
+
+### Zapstore
+
+- Improve message delivery between linked devices and in large groups.
+- Make delivered and read indicators more reliable, with accurate unread counts.
+- Choose available call audio devices and restore outgoing call tones.
+- Prevent stale microphone status from silencing incoming call audio.
+- Mute chats for a chosen duration, copy images, and attach dropped files.
+- Open the right chat from notifications and improve push registration reliability.
+- Clear local caches when signing out and end sessions on removed devices.
+
 ## v2026.9.29.2
 
 ### GitHub
