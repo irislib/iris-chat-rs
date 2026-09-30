@@ -532,3 +532,149 @@ fn direct_recipient_routing_preserves_legacy_owner_and_multi_recipient_messages(
         assert_eq!(received.sender, peer_owner.public_key());
     }
 }
+
+#[test]
+fn removed_group_member_cannot_retry_messages_after_restart_but_controls_survive() {
+    fn apply_controls(receiver: &mut ProtocolEngine, effects: Vec<ProtocolEffect>) {
+        for message in decrypt_own_sync_effects(receiver, effects) {
+            receiver
+                .process_group_pairwise_payload(
+                    message.content.as_bytes(),
+                    message.sender,
+                    message.sender_device,
+                )
+                .unwrap();
+        }
+    }
+    fn pending_command(pending: &ProtocolPendingGroupFanout) -> GroupPairwiseCommand {
+        let payload = match &pending.fanout {
+            GroupPendingFanout::Remote { payload, .. }
+            | GroupPendingFanout::LocalSiblings { payload } => payload,
+        };
+        JsonGroupPayloadCodecV1
+            .decode_pairwise_command(payload)
+            .unwrap()
+            .unwrap()
+    }
+
+    let mut f = remote_send_fixture();
+    let third_member = Keys::generate().public_key();
+    let created = f
+        .sender
+        .create_group(
+            "removal while offline".into(),
+            vec![f.peer_owner.public_key(), third_member],
+            unix_now(),
+        )
+        .unwrap();
+    let group_id = created.snapshot.unwrap().group_id;
+    apply_controls(&mut f.ready, created.effects);
+    let promoted = f
+        .sender
+        .set_group_admin(&group_id, f.peer_owner.public_key(), true)
+        .unwrap();
+    apply_controls(&mut f.ready, promoted.effects);
+    let sent = f
+        .sender
+        .send_group_payload(
+            &group_id,
+            b"unsent text".to_vec(),
+            Some("queued-message".into()),
+        )
+        .unwrap();
+    assert!(!sent.effects.is_empty());
+    assert!(
+        f.sender.pending_group_fanouts.iter().any(|pending| {
+            pending.inner_event_id.is_none()
+                && matches!(
+                    pending_command(pending),
+                    GroupPairwiseCommand::SenderKeyDistribution { .. }
+                )
+        }),
+        "group creation queued the handoff needed to decrypt the later message"
+    );
+
+    // An earlier removal must still reach the absent peer device even after the
+    // other administrator removes us. Both operations use real control payloads.
+    let removal = f
+        .sender
+        .remove_group_member(&group_id, third_member)
+        .unwrap();
+    apply_controls(&mut f.ready, removal.effects);
+    let removal = f
+        .ready
+        .remove_group_member(&group_id, f.owner.public_key())
+        .unwrap();
+    apply_controls(&mut f.sender, removal.effects);
+    assert!(!f
+        .sender
+        .group_manager
+        .group(&group_id)
+        .unwrap()
+        .members
+        .contains(&ndr_owner(f.owner.public_key())));
+    f.sender = ProtocolEngine::load_or_create_for_local_device(
+        f.store.clone(),
+        f.owner.public_key(),
+        &f.device,
+    )
+    .unwrap();
+    let retry = f
+        .sender
+        .retry_pending_protocol(NdrUnixSeconds(unix_now().get() + 60))
+        .unwrap();
+    assert!(retry.group_result.effects.is_empty());
+    assert!(
+        f.sender.pending_group_fanouts.iter().all(|pending| {
+            matches!(
+                pending_command(pending),
+                GroupPairwiseCommand::MetadataSnapshot { .. }
+            )
+        }),
+        "removed members must not retry queued sender-key handoffs"
+    );
+    assert!(
+        f.sender.pending_group_fanouts.iter().any(|pending| {
+            matches!(pending_command(pending), GroupPairwiseCommand::MetadataSnapshot { snapshot }
+            if !snapshot.members.contains(&ndr_owner(third_member)))
+        }),
+        "the unavailable device still needs the earlier membership removal"
+    );
+    assert!(f
+        .sender
+        .send_group_payload(
+            &group_id,
+            b"blocked new text".to_vec(),
+            Some("new-message".into())
+        )
+        .is_err());
+
+    f.sender =
+        ProtocolEngine::load_or_create_for_local_device(f.store, f.owner.public_key(), &f.device)
+            .unwrap();
+    assert!(
+        f.sender.pending_group_fanouts.iter().all(|pending| {
+            matches!(
+                pending_command(pending),
+                GroupPairwiseCommand::MetadataSnapshot { .. }
+            )
+        }),
+        "cancellation is durable"
+    );
+    let retry = observe_sibling_invite(&mut f.sender, &f.late, &f.late_device);
+    let recovered = decrypt_own_sync_effects(&mut f.late, retry.group_result.effects);
+    assert!(!recovered.is_empty());
+    assert!(recovered.iter().all(|message| {
+        matches!(
+            JsonGroupPayloadCodecV1
+                .decode_pairwise_command(message.content.as_bytes())
+                .unwrap(),
+            Some(GroupPairwiseCommand::MetadataSnapshot { .. })
+        )
+    }));
+    assert!(recovered.iter().any(|message| {
+        matches!(JsonGroupPayloadCodecV1.decode_pairwise_command(message.content.as_bytes()).unwrap(),
+            Some(GroupPairwiseCommand::MetadataSnapshot { snapshot })
+                if !snapshot.members.contains(&ndr_owner(third_member)))
+    }), "late devices receive the membership removal, without old sender keys");
+}

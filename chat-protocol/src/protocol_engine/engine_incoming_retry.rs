@@ -720,6 +720,22 @@ impl ProtocolEngine {
         let mut session_changed = false;
         let mut processed_due = 0usize;
         for mut pending in pending {
+            if self.local_owner_is_inactive_for_group(&pending.group_id) {
+                let payload = match &pending.fanout {
+                    GroupPendingFanout::Remote { payload, .. }
+                    | GroupPendingFanout::LocalSiblings { payload } => payload,
+                };
+                // Creation can queue sender-key handoffs without a message ID.
+                // After removal, only membership metadata may still be sent.
+                if !matches!(
+                    JsonGroupPayloadCodecV1.decode_pairwise_command(payload),
+                    Ok(Some(GroupPairwiseCommand::MetadataSnapshot { snapshot }))
+                        if snapshot.group_id == pending.group_id
+                ) {
+                    persist_needed = true;
+                    continue;
+                }
+            }
             if pending.next_retry_at_secs > now.get() {
                 still_pending.push(pending);
                 continue;
