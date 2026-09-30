@@ -3,13 +3,40 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::gio;
 use iris_chat_core::{
-    peer_input_to_npub, AppAction, CurrentChatSnapshot, DirectChatCapabilityState,
+    peer_input_to_npub, AppAction, ChatKind, CurrentChatSnapshot, DirectChatCapabilityState,
     PreferencesSnapshot,
 };
 
 use crate::app_manager::AppManager;
 
 const IRIS_SUPPORT_EMAIL: &str = "irismessenger@pm.me";
+
+pub(super) fn is_removed_group(chat: &CurrentChatSnapshot) -> bool {
+    matches!(chat.kind, ChatKind::Group)
+        && !chat
+            .participants
+            .iter()
+            .any(|participant| participant.is_local_owner)
+}
+
+pub(super) fn can_change_chat(manager: &AppManager, chat_id: &str) -> bool {
+    manager
+        .current_state()
+        .current_chat
+        .as_ref()
+        .is_some_and(|chat| chat.chat_id == chat_id && !is_removed_group(chat))
+}
+
+pub(super) fn removed_group_bar() -> gtk::Widget {
+    let label = gtk::Label::new(Some("You’re no longer in this group"));
+    label.add_css_class("dim-label");
+    label.set_wrap(true);
+    label.set_margin_top(16);
+    label.set_margin_bottom(16);
+    label.set_margin_start(12);
+    label.set_margin_end(12);
+    label.upcast()
+}
 
 pub(super) fn is_user_blocked(preferences: &PreferencesSnapshot, chat_id: &str) -> bool {
     let normalized = chat_id.trim().to_lowercase();

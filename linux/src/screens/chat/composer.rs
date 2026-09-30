@@ -53,6 +53,9 @@ impl Composer {
         let preview_row_for_attach = preview_row.clone();
         let preview_scroll_for_attach = preview_scroll.clone();
         attach.connect_clicked(move |btn| {
+            if !can_attach(&manager_for_attach, &chat_id_for_attach) {
+                return;
+            }
             let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
             let dialog = gtk::FileDialog::builder().title("Attach file").build();
             let manager = manager_for_attach.clone();
@@ -64,6 +67,9 @@ impl Composer {
                 gtk::gio::Cancellable::NONE,
                 move |result| {
                     let Ok(file) = result else { return };
+                    if !can_attach(&manager, &chat_id) {
+                        return;
+                    }
                     let path = match file.path() {
                         Some(p) => p.to_string_lossy().to_string(),
                         None => return,
@@ -297,11 +303,13 @@ impl Composer {
         self.ttl.set(chat.message_ttl_seconds);
         self.send.set_sensitive(
             !state.busy.sending_message
+                && !super::is_removed_group(chat)
                 && chat.direct_chat_capability.as_ref().is_none_or(|state| {
                     matches!(state, iris_chat_core::DirectChatCapabilityState::Available)
                 }),
         );
-        self.attach.set_sensitive(!state.busy.uploading_attachment);
+        self.attach
+            .set_sensitive(!state.busy.uploading_attachment && !super::is_removed_group(chat));
         self.progress.set_visible(state.busy.uploading_attachment);
         if state.busy.uploading_attachment {
             if let Some(upload) = state
@@ -520,9 +528,10 @@ fn can_send(manager: &AppManager, chat_id: &str) -> bool {
         .as_ref()
         .filter(|chat| chat.chat_id == chat_id)
         .is_some_and(|chat| {
-            chat.direct_chat_capability.as_ref().is_none_or(|state| {
-                matches!(state, iris_chat_core::DirectChatCapabilityState::Available)
-            })
+            !super::is_removed_group(chat)
+                && chat.direct_chat_capability.as_ref().is_none_or(|state| {
+                    matches!(state, iris_chat_core::DirectChatCapabilityState::Available)
+                })
         })
 }
 
@@ -558,8 +567,9 @@ fn can_attach(manager: &AppManager, chat_id: &str) -> bool {
             .as_ref()
             .filter(|chat| chat.chat_id == chat_id)
             .is_some_and(|chat| {
-                !(matches!(chat.kind, iris_chat_core::ChatKind::Direct)
-                    && (chat.is_request || super::is_user_blocked(&state.preferences, chat_id)))
+                !super::is_removed_group(chat)
+                    && !(matches!(chat.kind, iris_chat_core::ChatKind::Direct)
+                        && (chat.is_request || super::is_user_blocked(&state.preferences, chat_id)))
                     && chat
                         .direct_chat_capability
                         .as_ref()

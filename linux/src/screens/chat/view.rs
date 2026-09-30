@@ -83,7 +83,9 @@ impl ChatView {
             self.rendered = Some(key);
         }
 
-        let gate = if matches!(chat.kind, ChatKind::Direct)
+        let gate = if is_removed_group(chat) {
+            Some(removed_group_bar())
+        } else if matches!(chat.kind, ChatKind::Direct)
             && is_user_blocked(&state.preferences, &chat.chat_id)
         {
             Some(blocked_bar(chat, manager))

@@ -28,8 +28,8 @@ pub use view::ChatView;
 
 use chat_links::{install_link_actions, linkified_text};
 use safety::{
-    blocked_bar, delayed_capability_bar, is_user_blocked, message_request_bar,
-    present_block_user_dialog, present_report_user_dialog,
+    blocked_bar, can_change_chat, delayed_capability_bar, is_removed_group, is_user_blocked,
+    message_request_bar, present_block_user_dialog, present_report_user_dialog, removed_group_bar,
 };
 
 #[derive(Clone)]
@@ -769,6 +769,7 @@ fn ttl_strip(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) -> gtk::Widge
     menu_button.set_label(&label);
     menu_button.add_css_class("flat");
     menu_button.add_css_class("caption");
+    menu_button.set_sensitive(!is_removed_group(chat));
 
     let popover = gtk::Popover::new();
     let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
@@ -793,6 +794,9 @@ fn ttl_strip(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) -> gtk::Widge
         let ttl_value = *ttl;
         let popover_for_close = popover.clone();
         item.connect_clicked(move |_| {
+            if !can_change_chat(&manager, &chat_id) {
+                return;
+            }
             manager.dispatch(AppAction::SetChatMessageTtl {
                 chat_id: chat_id.clone(),
                 ttl_seconds: ttl_value,
@@ -1180,6 +1184,7 @@ fn build_message_popover(
     column.set_margin_end(6);
 
     let reactions_row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    reactions_row.set_visible(!is_removed_group(chat));
     for emoji in reaction_picker_emojis() {
         let btn = gtk::Button::with_label(&emoji);
         btn.add_css_class("flat");
@@ -1190,6 +1195,9 @@ fn build_message_popover(
         let emoji_owned = emoji.to_string();
         let popover_for_close = popover.clone();
         btn.connect_clicked(move |_| {
+            if !can_change_chat(&manager, &chat_id) {
+                return;
+            }
             remember_reaction_emoji(&emoji_owned);
             manager.dispatch(AppAction::ToggleReaction {
                 chat_id: chat_id.clone(),
@@ -1388,6 +1396,9 @@ fn append_reaction_emoji_section(
         let picker_for_close = picker_popover.clone();
         let owner_for_close = owner_popover.clone();
         btn.connect_clicked(move |_| {
+            if !can_change_chat(&manager, &chat_id) {
+                return;
+            }
             remember_reaction_emoji(&emoji);
             manager.dispatch(AppAction::ToggleReaction {
                 chat_id: chat_id.clone(),
@@ -1420,6 +1431,7 @@ fn reactions_row(
         let chip = gtk::Button::with_label(&format!("{} {}", reaction.emoji, reaction.count));
         chip.add_css_class("pill");
         chip.add_css_class("flat");
+        chip.set_sensitive(can_change_chat(manager, &message.chat_id));
         if reaction.reacted_by_me {
             chip.add_css_class("suggested-action");
         }
@@ -1428,6 +1440,9 @@ fn reactions_row(
         let message_id = message.id.clone();
         let emoji = reaction.emoji.clone();
         chip.connect_clicked(move |_| {
+            if !can_change_chat(&manager, &chat_id) {
+                return;
+            }
             remember_reaction_emoji(&emoji);
             manager.dispatch(AppAction::ToggleReaction {
                 chat_id: chat_id.clone(),
