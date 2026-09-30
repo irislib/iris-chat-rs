@@ -389,19 +389,66 @@ fn chat_read_sync_merges_device_alias_progress_without_reviving_old_chat() {
 }
 
 #[test]
-fn chat_read_explicit_seen_hydrates_only_requested_stored_messages_without_opening_chat() {
-    let mut pair = chat_read_sync_pair("passive-seen-stored");
-    let peer = Keys::generate();
-    let chat_id = peer.public_key().to_hex();
-    chat_read_sync_incoming(&mut pair.a, &peer, "requested", 200);
-    chat_read_sync_incoming(&mut pair.a, &peer, "still-unread", 201);
-    pair.a.persist_best_effort();
-    // An inactive conversation restores only its latest message into memory.
-    pair.a.threads.get_mut(&chat_id).unwrap().messages.remove(0);
-    assert!(!pair.a.is_chat_visible(&chat_id));
-    pair.a
-        .mark_messages_seen(&chat_id, &["requested".to_string()]);
-    assert_chat_read_delivery(&pair.a, &chat_id, "requested", true);
-    assert_chat_read_delivery(&pair.a, &chat_id, "still-unread", false);
-    assert!(!pair.a.is_chat_visible(&chat_id));
+fn chat_read_explicit_seen_updates_stored_message_without_changing_visible_history() {
+    for batched in [false, true] {
+        let mut pair = chat_read_sync_pair("passive-seen-stored");
+        let peer = Keys::generate();
+        let chat_id = peer.public_key().to_hex();
+        chat_read_sync_incoming(&mut pair.a, &peer, "requested", 200);
+        chat_read_sync_incoming(&mut pair.a, &peer, "same-second-unread", 200);
+        chat_read_sync_incoming(&mut pair.a, &peer, "still-unread", 201);
+        pair.a.persist_best_effort();
+        assert_eq!(pair.a.threads[&chat_id].unread_count, 3);
+        // An inactive conversation restores only its latest message into memory.
+        pair.a
+            .threads
+            .get_mut(&chat_id)
+            .unwrap()
+            .messages
+            .retain(|message| message.id == "still-unread");
+        assert!(!pair.a.is_chat_visible(&chat_id));
+        if batched {
+            pair.a.enter_batch();
+        }
+        pair.a
+            .mark_messages_seen(&chat_id, &["requested".to_string()]);
+        if batched {
+            pair.a.exit_batch();
+        }
+        let thread = &pair.a.threads[&chat_id];
+        assert_eq!(thread.messages.len(), 1);
+        assert_eq!(thread.messages[0].id, "still-unread");
+        assert_chat_read_delivery(&pair.a, &chat_id, "still-unread", false);
+        assert_eq!(thread.unread_count, 2);
+        assert!(!pair.a.is_chat_visible(&chat_id));
+
+        let assert_stored_read_state = |core: &AppCore| {
+            let stored = core.app_store.load_thread(&chat_id, 10).unwrap().unwrap();
+            assert_eq!(stored.unread_count, 2);
+            assert_eq!(stored.messages.len(), 3);
+            for (id, seen) in [
+                ("requested", true),
+                ("same-second-unread", false),
+                ("still-unread", false),
+            ] {
+                let message = stored.messages.iter().find(|message| message.id == id).unwrap();
+                assert_eq!(
+                    matches!(message.delivery, PersistedDeliveryState::Seen),
+                    seen,
+                    "stored message {id}; batched={batched}"
+                );
+            }
+        };
+        assert_stored_read_state(&pair.a);
+        let expected_read_state = pair.a.chat_read_states[&chat_id].clone();
+        drop(pair.a);
+        let mut restarted = logged_in_test_core_at_data_dir(
+            &pair.owner,
+            &pair.a_device,
+            pair.a_dir.path().to_string_lossy().into_owned(),
+        );
+        restarted.load_persisted().unwrap().unwrap();
+        assert_eq!(restarted.chat_read_states[&chat_id], expected_read_state);
+        assert_stored_read_state(&restarted);
+    }
 }
