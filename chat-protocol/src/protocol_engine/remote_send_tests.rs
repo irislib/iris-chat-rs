@@ -678,3 +678,68 @@ fn removed_group_member_cannot_retry_messages_after_restart_but_controls_survive
                 if !snapshot.members.contains(&ndr_owner(third_member)))
     }), "late devices receive the membership removal, without old sender keys");
 }
+
+#[test]
+fn sibling_group_removal_requires_new_revision_to_restore_membership() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let admin = Keys::generate();
+    let store = Arc::new(InMemoryStorage::new());
+    let mut engine =
+        ProtocolEngine::load_or_create_for_local_device(store.clone(), owner.public_key(), &device)
+            .unwrap();
+    let joined = group_snapshot_for_test(
+        "removed-sibling-snapshot",
+        "Friends",
+        1,
+        &admin,
+        &[admin.public_key(), owner.public_key()],
+    );
+    engine
+        .ingest_group_roster_fact_event(&group_roster_fact_event_for_test(&admin, &joined))
+        .unwrap();
+    let mut removed = joined.clone();
+    removed.revision = 2;
+    removed.updated_at = NdrUnixSeconds(20);
+    removed
+        .members
+        .retain(|member| *member != ndr_owner(owner.public_key()));
+    assert!(engine.install_device_sync_group(removed.clone()).unwrap());
+    engine = ProtocolEngine::load_or_create_for_local_device(store, owner.public_key(), &device)
+        .unwrap();
+
+    let mut conflicting = joined.clone();
+    conflicting.revision = removed.revision;
+    conflicting.updated_at = removed.updated_at;
+    let result = engine
+        .ingest_group_roster_fact_event(&group_roster_fact_event_for_test(&admin, &conflicting))
+        .unwrap()
+        .unwrap();
+    assert!(
+        result.snapshot.is_none(),
+        "equal-version signed replay must not undo a sibling removal"
+    );
+    assert!(!engine
+        .install_device_sync_group(conflicting.clone())
+        .unwrap());
+    conflicting.updated_at = NdrUnixSeconds(21);
+    assert!(
+        !engine
+            .install_device_sync_group(conflicting.clone())
+            .unwrap(),
+        "a newer clock without a newer membership revision is not a re-add"
+    );
+    assert_eq!(engine.group_manager.group(&joined.group_id), Some(removed));
+
+    conflicting.revision += 1;
+    conflicting.members.sort();
+    let result = engine
+        .ingest_group_roster_fact_event(&group_roster_fact_event_for_test(&admin, &conflicting))
+        .unwrap()
+        .unwrap();
+    assert_eq!(result.snapshot, Some(conflicting.clone()));
+    assert_eq!(
+        engine.group_manager.group(&joined.group_id),
+        Some(conflicting)
+    );
+}

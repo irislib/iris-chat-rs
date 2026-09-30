@@ -1,6 +1,7 @@
 impl ProtocolEngine {
     /// Install metadata copied from an authenticated sibling device. Signed
-    /// roster facts remain authoritative and can replace this bootstrap copy.
+    /// roster facts can advance this copy, but restoring removed membership
+    /// requires a newer revision.
     pub fn install_device_sync_group(&mut self, snapshot: GroupSnapshot) -> anyhow::Result<bool> {
         let checkpoint = self.state_checkpoint();
         let applied = self.install_group_roster_snapshot(snapshot)?;
@@ -111,8 +112,7 @@ impl ProtocolEngine {
         }
 
         let local_owner = self.group_manager.snapshot().local_owner_pubkey;
-        fact.snapshot.admins.contains(&signer_owner)
-            && fact.snapshot.members.contains(&local_owner)
+        fact.snapshot.admins.contains(&signer_owner) && fact.snapshot.members.contains(&local_owner)
     }
 
     fn install_group_roster_snapshot(&mut self, snapshot: GroupSnapshot) -> anyhow::Result<bool> {
@@ -144,7 +144,11 @@ impl ProtocolEngine {
                 current.revision > incoming.revision
                     || (current.revision == incoming.revision
                         && current.updated_at > incoming.updated_at)
+                    // Sibling snapshots do not carry a signed event tie-breaker.
+                    // A competing fact at the same revision cannot undo removal.
+                    || (incoming.revision <= current.revision
+                        && !current.members.contains(&self.local_owner)
+                        && incoming.members.contains(&self.local_owner))
             })
     }
-
 }
