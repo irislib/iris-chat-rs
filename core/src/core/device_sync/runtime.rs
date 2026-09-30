@@ -77,19 +77,16 @@ impl AppCore {
         &mut self,
         websocket: WebSocketConfig,
     ) {
-        self.reconcile_device_sync_with_websocket_and_rendezvous_for_test(websocket, None);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn reconcile_device_sync_with_websocket_and_rendezvous_for_test(
-        &mut self,
-        websocket: WebSocketConfig,
-        rendezvous_addr: Option<SocketAddrV4>,
-    ) {
+        // Model separate machines so local discovery cannot bypass the tested route.
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let std::net::SocketAddr::V4(rendezvous_addr) = socket.local_addr().unwrap() else {
+            unreachable!("IPv4 reservation");
+        };
+        drop(socket);
         // Message handling also runs normal reconciliation; keep the same service set.
         self.reconcile_shared_fips(SharedFipsOptions {
             same_host_hashtree: same_host_hashtree_enabled(),
-            rendezvous_addr,
+            rendezvous_addr: Some(rendezvous_addr),
             standalone_route: None,
             additional_peers: Vec::new(),
             websocket: Some(websocket),

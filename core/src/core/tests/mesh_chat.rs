@@ -157,19 +157,10 @@ fn encrypted_chat_crosses_uninterested_fips_transit_without_relays_or_sibling_sy
         )
         .unwrap();
     for core in [&mut alice, &mut bob] {
-        // Model separate machines: local discovery must not shortcut the transit route.
-        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        let std::net::SocketAddr::V4(rendezvous) = socket.local_addr().unwrap() else {
-            unreachable!("IPv4 reservation");
-        };
-        drop(socket);
-        core.reconcile_device_sync_with_websocket_and_rendezvous_for_test(
-            WebSocketConfig {
-                seed_urls: vec![format!("ws://{transit_addr}/fips")],
-                ..WebSocketConfig::default()
-            },
-            Some(rendezvous),
-        );
+        core.reconcile_device_sync_with_websocket_for_test(WebSocketConfig {
+            seed_urls: vec![format!("ws://{transit_addr}/fips")],
+            ..WebSocketConfig::default()
+        });
         assert!(!core.device_sync_has_sibling_tcp_for_test());
         assert!(core.logged_in.as_ref().unwrap().relay_urls.is_empty());
     }
