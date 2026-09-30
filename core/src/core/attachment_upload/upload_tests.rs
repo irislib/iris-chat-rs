@@ -1,4 +1,5 @@
 use super::*;
+use hashtree_core::MemoryStore;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
@@ -103,7 +104,7 @@ async fn attachment_upload_encrypts_every_stored_chunk_and_requires_the_key() {
     }
 }
 
-fn serve_one_blossom_upload(status: &str) -> (String, thread::JoinHandle<Vec<u8>>) {
+pub(super) fn serve_one_blossom_upload(status: &str) -> (String, thread::JoinHandle<Vec<u8>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local Blossom test server");
     let address = listener.local_addr().expect("local Blossom address");
     let status = status.to_string();

@@ -7,7 +7,7 @@ use hashtree_blossom::BlossomClient;
 use hashtree_config::Config as HashtreeConfig;
 use hashtree_core::{
     nhash_decode, nhash_encode_full, to_hex, BlobRoute, Cid, Hash, HashTree, HashTreeConfig,
-    MemoryStore, NHashData, Store, StoreBlobRoute, StoreError,
+    NHashData, Store, StoreBlobRoute, StoreError,
 };
 use hashtree_fips_transport::{FipsBlobRoute, TcpBlobTransport, TcpBlobTransportConfig};
 use hashtree_network::{BlobRouteEntry, BlobRouter, BlobRouterConfig, RoutedStore};
@@ -41,10 +41,39 @@ fn shared_chunk_cache_write() -> RwLockWriteGuard<'static, HashMap<String, Vec<u
         .unwrap_or_else(|poison| poison.into_inner())
 }
 
+/// The network serves the exact uploaded/downloaded blocks, never assembled files or keys.
+pub(super) struct AttachmentChunkStore;
+
+#[async_trait]
+impl Store for AttachmentChunkStore {
+    async fn put(&self, hash: Hash, data: Vec<u8>) -> Result<bool, StoreError> {
+        if hashtree_core::sha256(&data) != hash {
+            return Err(StoreError::Other(
+                "attachment cache hash mismatch".to_string(),
+            ));
+        }
+        Ok(shared_chunk_cache_write()
+            .insert(to_hex(&hash), data)
+            .is_none())
+    }
+
+    async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
+        Ok(shared_chunk_cache_read().get(&to_hex(hash)).cloned())
+    }
+
+    async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
+        Ok(shared_chunk_cache_read().contains_key(&to_hex(hash)))
+    }
+
+    async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
+        Ok(shared_chunk_cache_write().remove(&to_hex(hash)).is_some())
+    }
+}
+
 pub(super) struct AttachmentBlobRuntime {
-    store: Arc<RoutedStore<MemoryStore>>,
-    _transport: Arc<TcpBlobTransport<MemoryStore>>,
-    provider: Arc<FipsBlobRoute<MemoryStore>>,
+    store: Arc<RoutedStore<AttachmentChunkStore>>,
+    _transport: Arc<TcpBlobTransport<AttachmentChunkStore>>,
+    provider: Arc<FipsBlobRoute<AttachmentChunkStore>>,
 }
 
 impl AttachmentBlobRuntime {
@@ -53,12 +82,13 @@ impl AttachmentBlobRuntime {
     }
 }
 
-fn attachment_blob_store() -> &'static RwLock<Option<Weak<RoutedStore<MemoryStore>>>> {
-    static STORE: OnceLock<RwLock<Option<Weak<RoutedStore<MemoryStore>>>>> = OnceLock::new();
+fn attachment_blob_store() -> &'static RwLock<Option<Weak<RoutedStore<AttachmentChunkStore>>>> {
+    static STORE: OnceLock<RwLock<Option<Weak<RoutedStore<AttachmentChunkStore>>>>> =
+        OnceLock::new();
     STORE.get_or_init(|| RwLock::new(None))
 }
 
-fn active_attachment_blob_store() -> Option<Arc<RoutedStore<MemoryStore>>> {
+fn active_attachment_blob_store() -> Option<Arc<RoutedStore<AttachmentChunkStore>>> {
     attachment_blob_store()
         .read()
         .unwrap_or_else(|poison| poison.into_inner())
@@ -71,12 +101,13 @@ pub(super) async fn bind_same_host_attachment_store(
     standalone: Arc<dyn BlobRoute>,
     peers: Vec<fips_core::PeerIdentity>,
 ) -> anyhow::Result<Arc<AttachmentBlobRuntime>> {
-    let primary = Arc::new(MemoryStore::new());
+    let primary = Arc::new(AttachmentChunkStore);
     let transport = Arc::new(
-        TcpBlobTransport::bind_client_with_config(
+        TcpBlobTransport::bind_advertised_with_config(
             endpoint.clone(),
             primary.clone(),
             TcpBlobTransportConfig::default(),
+            25,
         )
         .await?,
     );

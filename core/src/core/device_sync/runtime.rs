@@ -77,9 +77,36 @@ impl AppCore {
         &mut self,
         websocket: WebSocketConfig,
     ) {
+        self.reconcile_device_sync_with_websocket_options_for_test(websocket, None);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reconcile_device_sync_with_isolated_websocket_for_test(
+        &mut self,
+        websocket: WebSocketConfig,
+    ) {
+        // Model separate machines so local discovery cannot bypass the tested route.
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let std::net::SocketAddr::V4(rendezvous_addr) = socket.local_addr().unwrap() else {
+            unreachable!("IPv4 reservation");
+        };
+        drop(socket);
+        self.reconcile_device_sync_with_websocket_options_for_test(
+            websocket,
+            Some(rendezvous_addr),
+        );
+    }
+
+    #[cfg(test)]
+    fn reconcile_device_sync_with_websocket_options_for_test(
+        &mut self,
+        websocket: WebSocketConfig,
+        rendezvous_addr: Option<SocketAddrV4>,
+    ) {
+        // Message handling also runs normal reconciliation; keep the same service set.
         self.reconcile_shared_fips(SharedFipsOptions {
-            same_host_hashtree: false,
-            rendezvous_addr: None,
+            same_host_hashtree: same_host_hashtree_enabled(),
+            rendezvous_addr,
             standalone_route: None,
             additional_peers: Vec::new(),
             websocket: Some(websocket),
@@ -816,10 +843,14 @@ async fn shutdown_shared_fips(
 }
 
 fn same_host_hashtree_enabled() -> bool {
-    std::env::var(SAME_HOST_HASHTREE_ENV).is_ok_and(|value| {
+    same_host_hashtree_setting(std::env::var(SAME_HOST_HASHTREE_ENV).ok().as_deref())
+}
+
+fn same_host_hashtree_setting(value: Option<&str>) -> bool {
+    !value.is_some_and(|value| {
         matches!(
             value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
+            "0" | "false" | "no" | "off"
         )
     })
 }
@@ -873,6 +904,17 @@ fn parse_local_rendezvous_addr(value: &str) -> Result<SocketAddrV4, String> {
 #[cfg(test)]
 mod local_rendezvous_tests {
     use super::*;
+
+    #[test]
+    fn same_host_files_are_enabled_unless_explicitly_disabled() {
+        assert!(same_host_hashtree_setting(None));
+        for value in ["", "1", "true", "YES", " on "] {
+            assert!(same_host_hashtree_setting(Some(value)));
+        }
+        for value in ["0", "false", "NO", " off "] {
+            assert!(!same_host_hashtree_setting(Some(value)));
+        }
+    }
 
     #[test]
     fn websocket_seeds_default_to_osiris_then_lnvps() {

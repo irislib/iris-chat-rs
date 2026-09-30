@@ -180,6 +180,51 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
         provider_data
     );
     assert_eq!(core.runtime.block_on(download_bytes(&before_nhash)), before);
+    wait_until(|| {
+        provider_endpoint
+            .local_instance_advertisements()
+            .is_ok_and(|adverts| {
+                adverts.iter().any(|advert| {
+                    advert.npub == consumer.npub()
+                        && advert.capability(TCP_BLOB_CAPABILITY).is_some()
+                })
+            })
+    });
+    let consumer_identity = fips_core::PeerIdentity::from_npub(consumer.npub()).unwrap();
+    let downloaded = nhash_decode(&provider_nhash).unwrap();
+    let cached_ciphertext = provider_runtime
+        .block_on(provider.fetch_from_peer(&downloaded.hash, consumer_identity))
+        .unwrap()
+        .expect("Chat serves downloaded ciphertext");
+    assert_eq!(
+        hashtree_core::decrypt_chk(&cached_ciphertext, &downloaded.decrypt_key.unwrap()).unwrap(),
+        provider_data
+    );
+
+    // Exercise the real encrypted upload path, then fetch its ciphertext from Chat.
+    let upload_path = temp_dir.path().join("peer-attachment.txt");
+    let plaintext = b"private file shared from the Chat attachment cache";
+    std::fs::write(&upload_path, plaintext).unwrap();
+    let (upload_url, upload_server) = super::upload_tests::serve_one_blossom_upload("200 OK");
+    let uploading = Arc::new(
+        UploadingBlossomStore::new(nostr::Keys::generate(), Vec::new(), vec![upload_url], None)
+            .unwrap(),
+    );
+    let uploaded = core
+        .runtime
+        .block_on(upload_file_to_store(&upload_path, uploading))
+        .unwrap();
+    upload_server.join().unwrap();
+    let uploaded = nhash_decode(&uploaded).unwrap();
+    let ciphertext = provider_runtime
+        .block_on(provider.fetch_from_peer(&uploaded.hash, consumer_identity))
+        .unwrap()
+        .expect("Chat serves its uploaded chunk");
+    assert_ne!(ciphertext, plaintext);
+    assert_eq!(
+        hashtree_core::decrypt_chk(&ciphertext, &uploaded.decrypt_key.unwrap()).unwrap(),
+        plaintext
+    );
     drop(provider);
     provider_runtime
         .block_on(provider_endpoint.shutdown())
