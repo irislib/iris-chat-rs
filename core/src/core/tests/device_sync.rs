@@ -30,13 +30,13 @@ fn device_sync_websocket_scenario(use_relay: bool) {
     configure_test_device_sync_profile(&mut bob_core, &owner, &bob, &alice, relay_url);
 
     let websocket_addr = reserve_tcp_addr();
-    alice_core.reconcile_device_sync_with_websocket_for_test(
+    alice_core.reconcile_device_sync_with_isolated_websocket_for_test(
         fips_core::config::WebSocketConfig {
             bind_addr: Some(websocket_addr.to_string()),
             ..Default::default()
         },
     );
-    bob_core.reconcile_device_sync_with_websocket_for_test(
+    bob_core.reconcile_device_sync_with_isolated_websocket_for_test(
         fips_core::config::WebSocketConfig {
             seed_urls: vec![format!("ws://{websocket_addr}/fips")],
             ..Default::default()
@@ -131,7 +131,7 @@ fn device_sync_websocket_scenario(use_relay: bool) {
         &alice,
         relay_url,
     );
-    attacker_core.reconcile_device_sync_with_websocket_for_test(
+    attacker_core.reconcile_device_sync_with_isolated_websocket_for_test(
         fips_core::config::WebSocketConfig {
             seed_urls: vec![format!("ws://{websocket_addr}/fips")],
             ..Default::default()

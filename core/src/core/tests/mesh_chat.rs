@@ -157,7 +157,7 @@ fn encrypted_chat_crosses_uninterested_fips_transit_without_relays_or_sibling_sy
         )
         .unwrap();
     for core in [&mut alice, &mut bob] {
-        core.reconcile_device_sync_with_websocket_for_test(WebSocketConfig {
+        core.reconcile_device_sync_with_isolated_websocket_for_test(WebSocketConfig {
             seed_urls: vec![format!("ws://{transit_addr}/fips")],
             ..WebSocketConfig::default()
         });
