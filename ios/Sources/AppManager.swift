@@ -3085,11 +3085,7 @@ final class AppManager: ObservableObject {
             let body = "\(label) lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua"
             dispatchToRust(.sendMessage(chatId: chatId, text: body))
         }
-        // Pop back to the chat list so the test can re-enter the chat
-        // from a clean state — that's the "open an existing long chat"
-        // scenario the bug report describes. Without this we'd be
-        // racing with the message-arrival auto-scroll on first paint,
-        // which is a different (and easier) code path.
+        // Return to the chat list so the test reopens an existing, populated chat.
         dispatch(.updateScreenStack(stack: []))
         pendingTestSeed = nil
     }

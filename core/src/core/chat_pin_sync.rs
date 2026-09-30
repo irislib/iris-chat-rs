@@ -138,10 +138,15 @@ impl AppCore {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
             return true;
         };
-        if value["type"] != "chat-pin" || value["v"] != 1 {
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("chat-pin")
+            || value.get("v").and_then(serde_json::Value::as_u64) != Some(1)
+        {
             return true;
         }
-        let Ok(state) = serde_json::from_value::<ChatPinState>(value["pin"].clone()) else {
+        let Some(payload) = value.get("pin") else {
+            return true;
+        };
+        let Ok(state) = serde_json::from_value::<ChatPinState>(payload.clone()) else {
             return true;
         };
         match self.merge_chat_pin(state) {

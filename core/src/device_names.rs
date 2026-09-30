@@ -21,6 +21,8 @@ pub(crate) fn meaningful_device_name(label: Option<&str>) -> Option<&str> {
     })
 }
 
+// Both arrays have exactly 32 entries; masking the indexes to five bits is in bounds.
+#[allow(clippy::indexing_slicing)]
 pub(crate) fn unnamed_device_name(device_id: &str) -> String {
     let hash = device_id
         .to_ascii_lowercase()

@@ -9,6 +9,7 @@ use tokio::task::JoinHandle;
 use anti_entropy::metadata_page_packets;
 use messages::collect_device_sync_messages;
 use recent_peers::DeviceSyncRecentPeers;
+use settings::valid_device_sync_chat_id;
 
 mod anti_entropy;
 mod body;
@@ -992,13 +993,6 @@ fn ndr_owner_from_hex(pubkey_hex: &str) -> Option<NdrOwnerPubkey> {
     PublicKey::from_hex(pubkey_hex)
         .ok()
         .map(|pubkey| NdrOwnerPubkey::from_bytes(pubkey.to_bytes()))
-}
-
-fn valid_device_sync_chat_id(chat_id: &str) -> bool {
-    chat_id
-        .strip_prefix("group:")
-        .is_some_and(|group_id| !group_id.is_empty() && group_id.len() <= 128)
-        || PublicKey::from_hex(chat_id).is_ok()
 }
 
 #[cfg(test)]

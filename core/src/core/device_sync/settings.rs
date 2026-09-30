@@ -86,6 +86,13 @@ fn parse_peer_hints(
     Ok((peers, routed_peers))
 }
 
+pub(super) fn valid_device_sync_chat_id(chat_id: &str) -> bool {
+    chat_id
+        .strip_prefix("group:")
+        .is_some_and(|group_id| !group_id.is_empty() && group_id.len() <= 128)
+        || nostr::PublicKey::from_hex(chat_id).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

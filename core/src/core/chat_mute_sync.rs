@@ -172,10 +172,15 @@ impl AppCore {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
             return true;
         };
-        if value["type"] != "chat-mute" || value["v"] != 1 {
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("chat-mute")
+            || value.get("v").and_then(serde_json::Value::as_u64) != Some(1)
+        {
             return true;
         }
-        let Ok(state) = serde_json::from_value::<ChatMuteState>(value["mute"].clone()) else {
+        let Some(payload) = value.get("mute") else {
+            return true;
+        };
+        let Ok(state) = serde_json::from_value::<ChatMuteState>(payload.clone()) else {
             return true;
         };
         match self.merge_chat_mute(state) {
