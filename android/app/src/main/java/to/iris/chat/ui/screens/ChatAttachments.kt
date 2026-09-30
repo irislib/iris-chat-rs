@@ -12,7 +12,6 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
 import android.util.Log
-import android.util.LruCache
 import android.webkit.MimeTypeMap
 import android.webkit.WebView
 import androidx.compose.animation.core.animateFloatAsState
@@ -258,28 +257,6 @@ private fun SelectedImageAttachmentChip(
             )
         }
     }
-}
-
-internal object SelectedImageThumbnailCache {
-    private const val MaxCacheKb = 8 * 1024
-
-    private val cache =
-        object : LruCache<String, Bitmap>(MaxCacheKb) {
-            override fun sizeOf(
-                key: String,
-                value: Bitmap,
-            ): Int = (value.byteCount / 1024).coerceAtLeast(1)
-        }
-
-    init { AccountImageSession.register { cache.evictAll() } }
-
-    fun get(key: String): Bitmap? = cache.get(key)
-
-    fun put(
-        key: String,
-        bitmap: Bitmap,
-        generation: Long,
-    ): Boolean = AccountImageSession.ifCurrent(generation) { cache.put(key, bitmap); true } ?: false
 }
 
 private fun decodeStagedImageThumbnail(path: String): Bitmap? {
@@ -910,28 +887,6 @@ private fun AttachmentActionRow(
             color = MaterialTheme.colorScheme.onSurface,
         )
     }
-}
-
-internal object ChatAttachmentPreviewBitmapCache {
-    private const val MaxCacheKb = 48 * 1024
-
-    private val cache =
-        object : LruCache<String, Bitmap>(MaxCacheKb) {
-            override fun sizeOf(
-                key: String,
-                value: Bitmap,
-            ): Int = (value.byteCount / 1024).coerceAtLeast(1)
-        }
-
-    init { AccountImageSession.register { cache.evictAll() } }
-
-    fun get(key: String): Bitmap? = cache.get(key)
-
-    fun put(
-        key: String,
-        bitmap: Bitmap,
-        generation: Long,
-    ): Boolean = AccountImageSession.ifCurrent(generation) { cache.put(key, bitmap); true } ?: false
 }
 
 private suspend fun decodeChatAttachmentPreviewBitmap(data: ByteArray): Bitmap? =
