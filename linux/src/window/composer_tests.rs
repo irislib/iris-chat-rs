@@ -61,7 +61,6 @@ fn header() -> HeaderWidgets {
         new_chat: gtk::Button::new(),
         settings: gtk::Button::new(),
         chat_info: gtk::Button::new(),
-        chat_search: gtk::Button::new(),
         voice_call: gtk::Button::new(),
         video_call: gtk::Button::new(),
         title,
