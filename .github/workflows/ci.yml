@@ -142,7 +142,11 @@ jobs:
         working-directory: iris-chat-rs/android
 
   linux:
-    name: Linux build and tests
+    name: Linux build and tests (Rust ${{ matrix.toolchain }})
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, '1.93.1']
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -177,8 +181,8 @@ jobs:
 
       - name: Install Rust
         run: |
-          rustup toolchain install stable --profile minimal --component clippy
-          rustup default stable
+          rustup toolchain install "${{ matrix.toolchain }}" --profile minimal --component clippy
+          rustup default "${{ matrix.toolchain }}"
 
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -187,9 +191,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
-          key: linux-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
+          key: linux-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
           restore-keys: |
-            linux-${{ runner.os }}-
+            linux-${{ runner.os }}-${{ matrix.toolchain }}-
 
       - name: Desktop media regression tests
         run: |
