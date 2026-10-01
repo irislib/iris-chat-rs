@@ -62,7 +62,9 @@ pub async fn build_secure_update_updater(
         .and_then(Weak::upgrade);
     let provider = match shared {
         Some(provider) => provider,
-        None => standalone_update_provider().await?,
+        None => tokio::time::timeout(Duration::from_secs(4), standalone_update_provider())
+            .await
+            .map_err(|_| UpdateError::Announcement("timed out starting update pubsub".into()))??,
     };
     let updater = build_secure_pubsub_blossom_updater(provider, secure_update_config()).await?;
     let events = UPDATE_EVENTS
