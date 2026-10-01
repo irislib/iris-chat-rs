@@ -317,7 +317,11 @@ struct SettingsScreen: View {
                     profileName: $profileName,
                     profileAbout: $profileAbout,
                     openProfilePicture: { profilePictureViewerItem = $0 },
-                    showQrCode: { showingProfileQr = true }
+                    showQrCode: { showingProfileQr = true },
+                    openNoteToSelf: {
+                        modalClose?()
+                        manager.dispatch(.openChat(chatId: account.publicKeyHex))
+                    }
                 )
             }
 

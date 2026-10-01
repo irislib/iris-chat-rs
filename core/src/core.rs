@@ -373,6 +373,13 @@ fn build_chat_snapshot_with_messages(
         kind,
         display_name: thread
             .map(|thread| thread.display_name.clone())
+            .or_else(|| {
+                state
+                    .account
+                    .as_ref()
+                    .filter(|account| account.public_key_hex == chat_id)
+                    .map(|_| crate::search::NOTE_TO_SELF.to_string())
+            })
             .unwrap_or_else(|| fallback_chat_title(chat_id)),
         nickname: thread.and_then(|thread| thread.nickname.clone()),
         contact_note: thread.and_then(|thread| thread.contact_note.clone()),

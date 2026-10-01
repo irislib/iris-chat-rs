@@ -507,6 +507,7 @@ struct ProfileEditorCard: View {
     @Binding var profileAbout: String
     let openProfilePicture: (IrisProfilePictureViewerItem) -> Void
     let showQrCode: () -> Void
+    let openNoteToSelf: () -> Void
     @State private var showingProfilePicturePicker = false
     @State private var showingProfilePictureSourceMenu = false
     @State private var profilePictureTask: Task<Void, Never>?
@@ -577,6 +578,25 @@ struct ProfileEditorCard: View {
             }
 
             IrisSectionCard {
+                Button(action: openNoteToSelf) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "note.text")
+                            .frame(width: 24)
+                        Text("Note to self")
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(.footnote, weight: .semibold))
+                            .foregroundStyle(palette.muted)
+                    }
+                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.irisPlain)
+                .accessibilityIdentifier("myProfileNoteToSelfButton")
+
+                Divider().overlay(palette.border)
+
                 Button {
                     showQrCode()
                 } label: {

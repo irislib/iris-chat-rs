@@ -1,4 +1,38 @@
-use crate::{ChatKind, ChatThreadSnapshot};
+use crate::{AccountSnapshot, ChatKind, ChatThreadSnapshot};
+
+pub(crate) const NOTE_TO_SELF: &str = "Note to self";
+
+/// Expose self-chat before its first message without persisting an empty thread.
+pub(crate) fn include_note_to_self(chats: &mut Vec<ChatThreadSnapshot>, account: &AccountSnapshot) {
+    if chats
+        .iter()
+        .any(|chat| chat.chat_id == account.public_key_hex)
+    {
+        return;
+    }
+    chats.push(ChatThreadSnapshot {
+        chat_id: account.public_key_hex.clone(),
+        kind: ChatKind::Direct,
+        display_name: NOTE_TO_SELF.to_string(),
+        nickname: None,
+        contact_note: None,
+        profile_name: Some(account.display_name.clone()),
+        subtitle: None,
+        picture_url: account.picture_url.clone(),
+        about: account.about.clone(),
+        member_count: 0,
+        last_message_preview: None,
+        last_message_at_secs: None,
+        last_message_is_outgoing: None,
+        last_message_delivery: None,
+        unread_count: 0,
+        is_typing: false,
+        is_muted: false,
+        is_pinned: false,
+        draft: String::new(),
+        is_request: false,
+    });
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum NameMatchRank {

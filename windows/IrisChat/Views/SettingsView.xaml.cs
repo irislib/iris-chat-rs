@@ -315,6 +315,12 @@ public partial class SettingsView : UserControl
         }
     }
 
+    private void OnNoteToSelf(object sender, RoutedEventArgs e)
+    {
+        if (App.CurrentManager.Account is { } account)
+            App.CurrentManager.OpenChat(account.publicKeyHex);
+    }
+
     private void OnSaveProfile(object sender, RoutedEventArgs e)
     {
         var name = ProfileNameInput.Text?.Trim();

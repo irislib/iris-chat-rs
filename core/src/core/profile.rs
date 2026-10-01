@@ -364,6 +364,18 @@ impl AppCore {
             .unwrap_or_else(|| fallback_profile_name_for_identity(owner_hex))
     }
 
+    pub(super) fn direct_chat_display_label(&self, owner_hex: &str) -> String {
+        if self
+            .logged_in
+            .as_ref()
+            .is_some_and(|session| session.owner_pubkey.to_hex() == owner_hex)
+        {
+            crate::search::NOTE_TO_SELF.to_string()
+        } else {
+            self.owner_display_label(owner_hex)
+        }
+    }
+
     pub(super) fn owner_picture_url(&self, owner_hex: &str) -> Option<String> {
         self.owner_profiles
             .get(owner_hex)

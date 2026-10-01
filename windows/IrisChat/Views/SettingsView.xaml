@@ -230,6 +230,13 @@
                                  MinHeight="76"
                                  VerticalScrollBarVisibility="Auto" />
 
+                        <Button Style="{StaticResource SecondaryButton}"
+                                Click="OnNoteToSelf"
+                                AutomationProperties.AutomationId="myProfileNoteToSelfButton"
+                                HorizontalAlignment="Left" Margin="0,16,0,0">
+                            <TextBlock Text="Note to self" />
+                        </Button>
+
                         <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
                             <Button Style="{StaticResource SecondaryButton}"
                                     Click="OnCopyUserId"

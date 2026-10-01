@@ -619,6 +619,18 @@ fn profile_group(
     group.add(&name_row);
     group.add(&about_row);
 
+    let note_row = adw::ActionRow::builder().title("Note to self").build();
+    note_row.set_activatable(true);
+    note_row.add_prefix(&gtk::Image::from_icon_name("document-edit-symbolic"));
+    let self_id = account.public_key_hex.clone();
+    let note_manager = manager.clone();
+    note_row.connect_activated(move |_| {
+        note_manager.dispatch(AppAction::OpenChat {
+            chat_id: self_id.clone(),
+        });
+    });
+    group.add(&note_row);
+
     let qr_row = adw::ActionRow::builder()
         .title("Show QR code")
         .activatable(true)

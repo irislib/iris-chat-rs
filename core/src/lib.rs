@@ -436,7 +436,7 @@ impl FfiApp {
                 // the active chat's loaded history or the other screen data.
                 // Keep both allocation work and the shared read lock bounded
                 // by the contact list while the user types.
-                let (chat_list, blocked_owner_pubkeys, current_owner_hex) = {
+                let (mut chat_list, blocked_owner_pubkeys, account) = {
                     let state = self
                         .shared_state
                         .read()
@@ -444,12 +444,17 @@ impl FfiApp {
                     (
                         state.chat_list.clone(),
                         state.preferences.blocked_owner_pubkeys.clone(),
-                        state
-                            .account
-                            .as_ref()
-                            .map(|account| account.public_key_hex.to_ascii_lowercase()),
+                        state.account.clone(),
                     )
                 };
+                let current_owner_hex = account
+                    .as_ref()
+                    .map(|account| account.public_key_hex.to_ascii_lowercase());
+                if scope_chat_id.is_none() {
+                    if let Some(account) = &account {
+                        search::include_note_to_self(&mut chat_list, account);
+                    }
+                }
                 let (contacts, groups) = if scope_chat_id.is_some() {
                     (Vec::new(), Vec::new())
                 } else {

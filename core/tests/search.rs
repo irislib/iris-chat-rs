@@ -10,6 +10,99 @@ use nostr::Keys;
 use rusqlite::Connection;
 use tempfile::TempDir;
 
+#[test]
+fn note_to_self_search_opens_one_real_conversation() {
+    let dir = TempDir::new().unwrap();
+    let app = FfiApp::new(
+        dir.path().to_string_lossy().to_string(),
+        String::new(),
+        "test".to_string(),
+    );
+    let inbox = ReconcilerInbox::install(&app);
+    assert!(app
+        .search("note to self".into(), None, 20)
+        .contacts
+        .is_empty());
+    app.dispatch(AppAction::CreateAccount {
+        name: "Alice".into(),
+    });
+    inbox.wait_until(Duration::from_secs(5), |state| state.account.is_some());
+    let account = inbox.snapshot().account.unwrap();
+    assert_eq!(
+        app.chat_snapshot(account.public_key_hex.clone(), 20)
+            .unwrap()
+            .display_name,
+        "Note to self"
+    );
+
+    for query in ["note", "SELF", " note to self ", "Alice"] {
+        let result = app.search(query.into(), None, 20);
+        assert_eq!(result.contacts.len(), 1, "query: {query}");
+        assert_eq!(result.contacts[0].chat_id, account.public_key_hex);
+        assert_eq!(result.contacts[0].display_name, "Note to self");
+        assert!(result.people.is_empty());
+    }
+    assert!(
+        inbox.snapshot().chat_list.is_empty(),
+        "search must not create a chat"
+    );
+    assert!(app.search("unrelated".into(), None, 20).contacts.is_empty());
+    assert!(app
+        .search("note".into(), Some(account.public_key_hex.clone()), 20)
+        .contacts
+        .is_empty());
+
+    // The synthetic search row and profile action use the normal open-chat path.
+    app.dispatch(AppAction::OpenChat {
+        chat_id: account.public_key_hex.clone(),
+    });
+    inbox.wait_until(Duration::from_secs(5), |state| {
+        state
+            .current_chat
+            .as_ref()
+            .is_some_and(|chat| chat.chat_id == account.public_key_hex)
+    });
+    assert_eq!(
+        inbox.snapshot().current_chat.unwrap().display_name,
+        "Note to self"
+    );
+    app.dispatch(AppAction::SendMessage {
+        chat_id: account.public_key_hex.clone(),
+        text: "Remember the tea".into(),
+    });
+    inbox.wait_until(Duration::from_secs(5), |state| {
+        state.current_chat.as_ref().is_some_and(|chat| {
+            chat.messages
+                .iter()
+                .any(|message| message.body == "Remember the tea")
+        })
+    });
+    let result = app.search("note".into(), None, 20);
+    assert_eq!(result.contacts.len(), 1);
+    assert_eq!(
+        result.contacts[0].last_message_preview.as_deref(),
+        Some("Remember the tea")
+    );
+    assert_eq!(inbox.snapshot().chat_list.len(), 1);
+    assert_eq!(inbox.snapshot().account.unwrap().display_name, "Alice");
+    assert_eq!(
+        app.chat_snapshot(account.public_key_hex.clone(), 20)
+            .unwrap()
+            .display_name,
+        "Note to self"
+    );
+    app.dispatch(AppAction::OpenChat {
+        chat_id: account.public_key_hex,
+    });
+    inbox.wait_until(Duration::from_secs(5), |state| {
+        state
+            .current_chat
+            .as_ref()
+            .is_some_and(|chat| chat.messages.len() == 1)
+    });
+    app.shutdown();
+}
+
 /// A migrated v10 database must still serve FTS5 search after the
 /// app upgrades to a schema that introduces the index. Mirrors the
 /// shape of installed devices that have shipped before search landed.

@@ -302,7 +302,7 @@ impl AppCore {
                 let display_name = group_snapshot
                     .as_ref()
                     .map(|group| group.name.clone())
-                    .unwrap_or_else(|| self.owner_display_label(&thread.chat_id));
+                    .unwrap_or_else(|| self.direct_chat_display_label(&thread.chat_id));
                 let direct_nickname = if group_snapshot.is_none() {
                     self.owner_nickname(&thread.chat_id)
                 } else {
@@ -427,7 +427,7 @@ impl AppCore {
                     display_name: group_snapshot
                         .as_ref()
                         .map(|group| group.name.clone())
-                        .unwrap_or_else(|| self.owner_display_label(&thread.chat_id)),
+                        .unwrap_or_else(|| self.direct_chat_display_label(&thread.chat_id)),
                     nickname: direct_nickname,
                     contact_note: self
                         .owner_profiles

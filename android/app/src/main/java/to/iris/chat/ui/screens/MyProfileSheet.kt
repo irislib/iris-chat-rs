@@ -337,6 +337,12 @@ fun MyProfileSheet(
                                 },
                                 onShowQr = { showProfileQr = true },
                                 onCopyUserId = { clipboard.setText("User ID", npub) },
+                                onNoteToSelf = {
+                                    appState.account?.let { account ->
+                                        onDismiss()
+                                        appManager.dispatch(AppAction.OpenChat(account.publicKeyHex))
+                                    }
+                                },
                             )
                         }
 
@@ -957,6 +963,7 @@ private fun ProfileSettingsPage(
     onSaveProfile: () -> Unit,
     onShowQr: () -> Unit,
     onCopyUserId: () -> Unit,
+    onNoteToSelf: () -> Unit,
 ) {
     val canSaveProfile =
         canManageDevices &&
@@ -1003,6 +1010,12 @@ private fun ProfileSettingsPage(
         }
 
         IrisListSection {
+            ProfileActionRow(
+                title = "Note to self",
+                icon = IrisIcons.NewChat,
+                onClick = onNoteToSelf,
+                modifier = Modifier.testTag("myProfileNoteToSelfButton"),
+            )
             ProfileActionRow(
                 title = "Show QR code",
                 icon = IrisIcons.ScanQr,
