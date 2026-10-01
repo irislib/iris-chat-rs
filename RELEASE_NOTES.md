@@ -6,7 +6,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 ### GitHub
 
-- Add account-rooted social connection badges at the top right of avatars, with blue, gold, and gray colors and follow-distance explanations. Warn about accounts with more mutes than follows in your social network.
+- Add blue, gold, and gray social connection badges at the top right of list and chat avatars, and beside follow-distance explanations on profiles. Warn about accounts with more mutes than follows in your social network.
 - Preserve first-interaction and accepted contact names privately in SQLite. Require approval for a changed public name and record approved changes in the chat history.
 - Add private favorite stars and public follow controls that preserve existing contacts, tag hints, and contact-list content.
 - Add read-only contact inspection, favorites, exact-name approval, and public follow commands to the CLI; drain queued public updates before a one-shot command exits.

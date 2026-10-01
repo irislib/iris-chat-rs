@@ -88,10 +88,7 @@ pub fn present_chat_info(
             image_cache::fetch_proxied_into_avatar(&avatar, url, &info.preferences, 144);
         }
     }
-    header_row.append(&crate::widgets::social_badge::avatar(
-        &avatar,
-        info.social_connection.as_ref(),
-    ));
+    header_row.append(&avatar);
 
     let text_column = gtk::Box::new(gtk::Orientation::Vertical, 4);
     text_column.set_valign(gtk::Align::Center);

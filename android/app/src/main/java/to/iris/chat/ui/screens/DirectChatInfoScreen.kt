@@ -164,7 +164,7 @@ fun DirectChatInfoScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         IrisAvatar(
-                            socialConnection = chat.socialConnection, label = chat.displayName,
+                            label = chat.displayName,
                             size = 72.dp,
                             emphasize = true,
                             imageRequest = proxiedAvatarUrl,

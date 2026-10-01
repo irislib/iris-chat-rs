@@ -8,38 +8,50 @@ pub fn avatar(avatar: &adw::Avatar, connection: Option<&SocialConnectionSnapshot
     overlay.set_halign(gtk::Align::Center);
     overlay.set_valign(gtk::Align::Center);
     overlay.set_child(Some(avatar));
-    if let Some(connection) = connection.filter(|c| c.badge.is_some()) {
-        let badge = gtk::Label::new(Some(if connection.badge == Some(SocialBadge::Warning) {
-            "!"
-        } else if connection.badge == Some(SocialBadge::Muted) {
-            "−"
-        } else {
-            "✓"
-        }));
+    if let Some(badge) = connection.and_then(badge) {
         badge.set_halign(gtk::Align::End);
         badge.set_valign(gtk::Align::Start);
-        badge.add_css_class("social-badge");
-        badge.add_css_class(match connection.badge {
-            Some(SocialBadge::Warning) => "warning",
-            Some(SocialBadge::Following) => "following",
-            Some(SocialBadge::Trusted) => "trusted",
-            Some(SocialBadge::Muted) => "muted",
-            _ => "friend",
-        });
-        badge.set_tooltip_text(Some(&connection.description));
-        badge.update_property(&[gtk::accessible::Property::Label(&connection.description)]);
         overlay.add_overlay(&badge);
     }
     overlay
 }
 
-pub fn description(connection: &SocialConnectionSnapshot) -> gtk::Label {
+fn badge(connection: &SocialConnectionSnapshot) -> Option<gtk::Label> {
+    connection.badge?;
+    let badge = gtk::Label::new(Some(if connection.badge == Some(SocialBadge::Warning) {
+        "!"
+    } else if connection.badge == Some(SocialBadge::Muted) {
+        "−"
+    } else {
+        "✓"
+    }));
+    badge.add_css_class("social-badge");
+    badge.add_css_class(match connection.badge {
+        Some(SocialBadge::Warning) => "warning",
+        Some(SocialBadge::Following) => "following",
+        Some(SocialBadge::Trusted) => "trusted",
+        Some(SocialBadge::Muted) => "muted",
+        _ => "friend",
+    });
+    badge.set_tooltip_text(Some(&connection.description));
+    badge.update_property(&[gtk::accessible::Property::Label(&connection.description)]);
+    Some(badge)
+}
+
+pub fn description(connection: &SocialConnectionSnapshot) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    if let Some(badge) = badge(connection) {
+        badge.set_valign(gtk::Align::Center);
+        row.append(&badge);
+    }
     let label = gtk::Label::new(Some(&connection.description));
     label.add_css_class("dim-label");
     label.set_wrap(true);
     label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     label.set_xalign(0.0);
-    label
+    label.set_hexpand(true);
+    row.append(&label);
+    row
 }
 
 pub const CSS: &str = r#"
