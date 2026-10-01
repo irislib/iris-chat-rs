@@ -891,7 +891,7 @@ impl AppManager {
         stopped
     }
 
-    fn show_toast(&self, text: &str) {
+    pub(crate) fn show_toast(&self, text: &str) {
         let mut state = self.local_state.borrow().clone();
         state.toast = Some(text.to_string());
         *self.local_state.borrow_mut() = state.clone();
