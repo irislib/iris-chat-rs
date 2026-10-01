@@ -12,6 +12,7 @@ final class IrisComposerState: ObservableObject {
     }
     var lastTypingSentAt: Date?
     var sentTypingIndicator = false
+    private(set) var attachmentGeneration = UUID()
     private var lastPersistedText: String?
     private var pendingSave: DispatchWorkItem?
     // An empty composer can be a local edit (delete/send), not an invitation
@@ -19,6 +20,7 @@ final class IrisComposerState: ObservableObject {
     private var hasLocalEdits = false
 
     func restore(_ persisted: String, replaceExisting: Bool) {
+        if replaceExisting { invalidatePendingAttachments() }
         if replaceExisting || !hasLocalEdits {
             pendingSave?.cancel()
             pendingSave = nil
@@ -31,6 +33,7 @@ final class IrisComposerState: ObservableObject {
     }
 
     func clearForSend(_ persist: (String) -> Void) {
+        invalidatePendingAttachments()
         hasLocalEdits = true
         text = ""
         // Cancel the old debounce immediately, before queued core updates or
@@ -51,6 +54,10 @@ final class IrisComposerState: ObservableObject {
         }
         pendingSave = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    func invalidatePendingAttachments() {
+        attachmentGeneration = UUID()
     }
 
     func flush(_ persist: (String) -> Void) {

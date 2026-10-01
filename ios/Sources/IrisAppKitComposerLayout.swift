@@ -75,14 +75,9 @@ extension IrisAppKitComposerTextView {
             return nil
         }
 
-        let measuredHeight = textView.attributedString().boundingRect(
-            with: NSSize(width: width, height: CGFloat.greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        ).height
-        let height = min(
-            max(ceil(measuredHeight), lineHeight(for: textView)),
-            maxHeight(for: textView)
-        )
+        guard let storage = textView.textStorage else { return nil }
+        let measurement = (textView as? IrisComposerNSTextView)?.composerMeasurement ?? IrisComposerTextMeasurement()
+        let height = measurement.height(for: storage, width: width, lineHeight: lineHeight(for: textView))
         return CGSize(width: width, height: height)
     }
 

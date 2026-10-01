@@ -86,9 +86,12 @@ struct IrisComposerBar: View {
                         ForEach(attachments) { attachment in
                             IrisSelectedAttachmentChip(
                                 attachment: attachment,
-                                enabled: !isSending && !isUploading
+                                enabled: !isSending && !isUploading && !isPreparingAttachments && !isPreparingDroppedAttachments
                             ) {
                                 attachments.removeAll { $0 == attachment }
+                                Task.detached(priority: .utility) {
+                                    try? FileManager.default.removeItem(atPath: attachment.path)
+                                }
                                 if attachments.isEmpty { sendFilesDirectly = false }
                             }
                         }
@@ -342,7 +345,8 @@ struct IrisComposerBar: View {
             }
             IrisUIKitComposerTextView(
                 text: userEditingDraft,
-                isFocused: $isFocused
+                isFocused: $isFocused,
+                onPasteAttachments: canPrepareAttachments ? pasteAttachments : nil
             )
         }
         .padding(.horizontal, 16)
@@ -368,7 +372,8 @@ struct IrisComposerBar: View {
             IrisAppKitComposerTextView(
                 text: userEditingDraft,
                 isFocused: $isFocused,
-                onSubmit: submitDraft
+                onSubmit: submitDraft,
+                onPasteAttachments: canPrepareAttachments ? pasteAttachments : nil
             )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -447,6 +452,14 @@ struct IrisComposerBar: View {
     }
 
     private func prepareAttachments(loadURLs: @escaping () async -> [URL]) {
+        prepareAttachmentOperation { await onAttach(loadURLs) }
+    }
+
+    private func pasteAttachments(_ clipboard: IrisClipboardAttachments) {
+        prepareAttachmentOperation { await clipboard.withURLs(onAttach) }
+    }
+
+    private func prepareAttachmentOperation(_ operation: @escaping () async -> Void) {
         guard canPrepareAttachments else { return }
         isPreparingAttachments = true
         attachmentTask = Task {
@@ -456,7 +469,7 @@ struct IrisComposerBar: View {
                     attachmentTask = nil
                 }
             }
-            await onAttach(loadURLs)
+            await operation()
         }
     }
 
@@ -560,9 +573,11 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
 
     @Binding var text: String
     @FocusState.Binding var isFocused: Bool
+    var onPasteAttachments: ((IrisClipboardAttachments) -> Void)? = nil
 
     func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+        let textView = IrisComposerUITextView()
+        textView.onPasteAttachments = onPasteAttachments
         Self.activeTextView = textView
         textView.delegate = context.coordinator
         textView.backgroundColor = .clear
@@ -576,6 +591,7 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
         textView.returnKeyType = .default
         textView.keyboardDismissMode = .interactive
         textView.autocapitalizationType = .sentences
+        textView.allowsEditingTextAttributes = false
         // Keep the native defaults so the user's keyboard preferences apply.
         textView.accessibilityIdentifier = "chatMessageInput"
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -584,6 +600,7 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
+        (uiView as? IrisComposerUITextView)?.onPasteAttachments = onPasteAttachments
         Self.activeTextView = uiView
         context.coordinator.parent = self
         if uiView.markedTextRange == nil, uiView.text != text {
@@ -622,7 +639,8 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
     }
 
     private func measuredHeight(for textView: UITextView, width: CGFloat) -> CGFloat {
-        textView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+        let measurement = (textView as? IrisComposerUITextView)?.composerMeasurement ?? IrisComposerTextMeasurement()
+        return measurement.height(for: textView.textStorage, width: width, lineHeight: minHeight(for: textView))
     }
 
     private func minHeight(for textView: UITextView) -> CGFloat {
@@ -691,6 +709,7 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
     @Binding var text: String
     @FocusState.Binding var isFocused: Bool
     let onSubmit: (String) -> IrisComposerSubmitResult
+    var onPasteAttachments: ((IrisClipboardAttachments) -> Void)? = nil
 
     func makeNSView(context: Context) -> IrisComposerScrollView {
         let scrollView = IrisComposerScrollView()
@@ -703,6 +722,7 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
         scrollView.setAccessibilityIdentifier("chatMessageInput")
 
         let textView = IrisComposerNSTextView()
+        textView.onPasteAttachments = onPasteAttachments
         Self.activeTextView = textView
         textView.drawsBackground = false
         textView.backgroundColor = .clear
@@ -743,6 +763,7 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
 
         Self.activeTextView = textView
         context.coordinator.parent = self
+        textView.onPasteAttachments = onPasteAttachments
         textView.composerCommandDelegate = context.coordinator
         textView.delegate = context.coordinator
 
@@ -838,31 +859,6 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
     }
 }
 
-private protocol IrisComposerNSTextViewCommandDelegate: AnyObject {
-    func composerTextViewDidSubmit(_ textView: NSTextView)
-}
-
-final class IrisComposerNSTextView: NSTextView {
-    fileprivate weak var composerCommandDelegate: IrisComposerNSTextViewCommandDelegate?
-
-    override func doCommand(by selector: Selector) {
-        if selector == #selector(NSResponder.insertNewline(_:)),
-           !hasMarkedText(),
-           !shouldInsertLineBreakForCurrentEvent {
-            composerCommandDelegate?.composerTextViewDidSubmit(self)
-            return
-        }
-        super.doCommand(by: selector)
-    }
-
-    private var shouldInsertLineBreakForCurrentEvent: Bool {
-        guard let event = NSApp.currentEvent, event.type == .keyDown else {
-            return false
-        }
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        return flags.contains(.shift) || flags.contains(.option)
-    }
-}
 #endif
 
 

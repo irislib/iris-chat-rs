@@ -586,6 +586,7 @@ struct ChatScreen: View {
             manager: manager
         ))
         .onDisappear {
+            composerState.invalidatePendingAttachments()
             pendingScrollSettle?.cancel()
             pendingScrollSettle = nil
             stopTypingIfNeeded()
@@ -621,9 +622,10 @@ struct ChatScreen: View {
 
     private func stageAttachments(_ loadURLs: () async -> [URL]) async {
         guard canAttachToCurrentChat else { return }
+        let generation = composerState.attachmentGeneration
         do {
             let staged = try await manager.stageOutgoingAttachmentsAsync(loadURLs)
-            guard !Task.isCancelled, canAttachToCurrentChat else {
+            guard !Task.isCancelled, generation == composerState.attachmentGeneration, canAttachToCurrentChat else {
                 await manager.discardOutgoingAttachments(staged)
                 return
             }
@@ -632,7 +634,7 @@ struct ChatScreen: View {
         } catch is CancellationError {
             // Leaving the chat discards an unfinished selection.
         } catch {
-            manager.showAttachmentOpenError()
+            if generation == composerState.attachmentGeneration { manager.showAttachmentOpenError() }
         }
     }
 

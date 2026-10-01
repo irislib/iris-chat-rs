@@ -9,6 +9,24 @@ import XCTest
 
 final class IrisComposerTypingTests: XCTestCase {
     @MainActor
+    func testAttachmentSelectionBelongsToOriginalDraftAndChat() {
+        let composer = IrisComposerState()
+        composer.restore("caption", replaceExisting: true)
+        let selection = composer.attachmentGeneration
+        composer.text = "caption with more text"
+        composer.restore("caption", replaceExisting: false)
+        XCTAssertEqual(composer.attachmentGeneration, selection)
+        composer.clearForSend { _ in }
+        XCTAssertNotEqual(composer.attachmentGeneration, selection)
+        let nextSelection = composer.attachmentGeneration
+        composer.restore("other chat", replaceExisting: true)
+        XCTAssertNotEqual(composer.attachmentGeneration, nextSelection)
+        let leavingSelection = composer.attachmentGeneration
+        composer.invalidatePendingAttachments()
+        XCTAssertNotEqual(composer.attachmentGeneration, leavingSelection)
+    }
+
+    @MainActor
     func testDraftSaveDebouncesEditsAndDoesNotRepeatOnFlush() async {
         let composer = IrisComposerState()
         composer.restore("saved", replaceExisting: true)
