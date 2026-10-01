@@ -23,11 +23,15 @@ class IrisFirebaseMessagingService : FirebaseMessagingService() {
         if (isCallWakeup(message.data["event"])) {
             val container = (applicationContext as? IrisChatApp)?.container ?: return
             runBlocking {
-                val invite = container.appManager.resolveCallPush(payloadJson) ?: return@runBlocking
-                // Establish the visible call/foreground service before FCM
-                // releases its short wake lease, including a cold process start.
-                withContext(Dispatchers.Main) { container.callRuntime.receivePushInvite(invite) }
-                container.appManager.ingestCallPush(payloadJson)
+                deliverCallPush(
+                    resolve = { container.appManager.resolveCallPush(payloadJson) },
+                    present = { invite ->
+                        // Establish the authenticated call/foreground service before
+                        // FCM releases its short wake lease, including cold starts.
+                        withContext(Dispatchers.Main) { container.callRuntime.receivePushInvite(invite) }
+                    },
+                    ingest = { container.appManager.ingestCallPush(payloadJson) },
+                )
             }
             return
         }
