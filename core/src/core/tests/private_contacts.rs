@@ -4,6 +4,28 @@ fn private_contact_patch(value: serde_json::Value) -> PrivateContactPatchV2 {
     serde_json::from_value(value).unwrap()
 }
 
+// Public bootstrap invites use the same kind as retired private app records.
+// Allow only verified empty-content invites, never sealed contact data.
+fn assert_only_public_invites_pending(core: &AppCore) {
+    for event in pending_events_with_kind(core, 30078) {
+        assert!(
+            event.content.is_empty(),
+            "private ciphertext must not be published as app data"
+        );
+        assert!(
+            nostr_double_ratchet::parse_invite_event(&event).is_ok(),
+            "only a valid public ratchet invite may use this kind"
+        );
+        assert!(
+            !event
+                .tags
+                .iter()
+                .any(|tag| { tag.as_slice() == ["t", "nostr-social-memory/v1"] }),
+            "retired contact records must never enter the public outbox"
+        );
+    }
+}
+
 #[test]
 fn private_contacts_ratcheted_outbox_restores_and_linked_device_converges() {
     let mut pair = chat_read_receipt_pair("private-v2-outbox");
@@ -25,7 +47,7 @@ fn private_contacts_ratcheted_outbox_restores_and_linked_device_converges() {
         assert!(!event.content.contains(&id));
         assert!(!event.content.contains("private-contact"));
     }
-    assert!(pending_events_with_kind(&pair.a, 30078).is_empty());
+    assert_only_public_invites_pending(&pair.a);
     assert!(
         pair.a
             .private_contacts

@@ -7,6 +7,8 @@ fn legacy_labeled_roster_for_test(roster: &AppKeys, owner: &Keys, at: u64) -> Ev
         ])
         .unwrap(),
     );
+    // Adding a legacy tag changes the event ID cached by the roster builder.
+    event.id = None;
     event.sign_with_keys(owner).unwrap()
 }
 
@@ -352,4 +354,36 @@ fn legacy_private_roster_is_retired_only_after_exact_public_replacement_ack() {
         .unwrap()
         .iter()
         .any(|event| event.event_id == legacy.id.to_hex()));
+}
+
+#[test]
+fn legacy_local_device_label_survives_projection_until_a_newer_clear() {
+    let owner = Keys::generate().public_key();
+    let device = Keys::generate().public_key();
+    let roster = AppKeys::new(vec![DeviceEntry::new(device, 1)]);
+    let mut known = known_app_keys_from_ndr(owner, &roster, 10);
+    known.devices.first_mut().unwrap().device_label = Some("Kept locally".into());
+    let projected = known_app_keys_to_ndr(&known);
+    let roundtrip = known_app_keys_from_ndr(owner, &projected, 10);
+    let label = roundtrip.devices.first().unwrap();
+    assert_eq!(label.device_label.as_deref(), Some("Kept locally"));
+    assert_eq!(
+        label.label_updated_at_secs, 0,
+        "migration must not invent a newer edit"
+    );
+
+    let mut cleared = roster;
+    cleared.set_device_labels(device, None, None, Some(11));
+    preserve_known_app_key_labels(Some(&known), &mut cleared);
+    let roundtrip = known_app_keys_from_ndr(owner, &cleared, 12);
+    let label = roundtrip.devices.first().unwrap();
+    assert!(label.device_label.is_none());
+    assert_eq!(
+        label.label_updated_at_secs, 11,
+        "newer deletion must survive legacy preservation"
+    );
+    let projected = known_app_keys_to_ndr(&roundtrip);
+    let tombstone = projected.get_device_labels(&device).unwrap();
+    assert!(tombstone.device_label.is_none());
+    assert_eq!(tombstone.updated_at, 11);
 }
