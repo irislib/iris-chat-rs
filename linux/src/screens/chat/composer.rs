@@ -132,6 +132,13 @@ impl Composer {
         let input_overlay = gtk::Overlay::new();
         input_overlay.set_hexpand(true);
         input_overlay.set_child(Some(&input_scroll));
+        super::composer_clipboard::install(
+            &input,
+            manager,
+            &chat.chat_id,
+            &preview_row,
+            &preview_scroll,
+        );
 
         let placeholder = gtk::Label::new(Some("Message"));
         placeholder.add_css_class("dim-label");
@@ -382,7 +389,7 @@ fn submit_composer(
     true
 }
 
-fn rebuild_attachment_previews(row: &gtk::Box, manager: &Rc<AppManager>, chat_id: &str) {
+pub(super) fn rebuild_attachment_previews(row: &gtk::Box, manager: &Rc<AppManager>, chat_id: &str) {
     while let Some(child) = row.first_child() {
         row.remove(&child);
     }
@@ -576,7 +583,7 @@ fn can_send(manager: &AppManager, chat_id: &str) -> bool {
 
 // File lists from remote URI drags and directories are not attachments. Reject
 // the entire selection so a partial drop never silently omits a file.
-fn dropped_files(value: &glib::Value) -> Option<Vec<OutgoingAttachment>> {
+pub(super) fn dropped_files(value: &glib::Value) -> Option<Vec<OutgoingAttachment>> {
     let list = value.get::<gtk::gdk::FileList>().ok()?;
     let files = list.files();
     if files.is_empty() {
@@ -597,7 +604,7 @@ fn dropped_files(value: &glib::Value) -> Option<Vec<OutgoingAttachment>> {
         .collect()
 }
 
-fn can_attach(manager: &AppManager, chat_id: &str) -> bool {
+pub(super) fn can_attach(manager: &AppManager, chat_id: &str) -> bool {
     let state = manager.current_state();
     !state.busy.sending_message
         && !state.busy.uploading_attachment

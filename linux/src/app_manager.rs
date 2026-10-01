@@ -1,9 +1,11 @@
 #[path = "app_manager_helpers.rs"]
 mod helpers;
 use helpers::*;
+#[path = "attachment_drafts.rs"]
+mod attachment_drafts;
+use attachment_drafts::AttachmentDrafts;
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -76,7 +78,7 @@ pub struct AppManager {
     persisted_restore_in_flight: Cell<bool>,
     pending_navigation_override: RefCell<Option<PendingNavigationOverride>>,
     notification_routing: RefCell<crate::platform::notifications::NotificationRouting>,
-    staged_attachments: RefCell<HashMap<String, Vec<OutgoingAttachment>>>,
+    staged_attachments: std::rc::Rc<RefCell<AttachmentDrafts>>,
     search_ui: RefCell<SearchUiState>,
     client_debug_log: RefCell<Vec<ClientDebugLogEntry>>,
     window_active: Cell<bool>,
@@ -232,7 +234,7 @@ impl AppManager {
             notification_routing: RefCell::new(
                 crate::platform::notifications::NotificationRouting::new(&data_dir),
             ),
-            staged_attachments: RefCell::new(HashMap::new()),
+            staged_attachments: AttachmentDrafts::for_application(),
             search_ui: RefCell::new(SearchUiState::default()),
             client_debug_log: RefCell::new(Vec::new()),
             window_active: Cell::new(false),
@@ -310,32 +312,29 @@ impl AppManager {
     }
 
     pub fn staged_attachments(&self, chat_id: &str) -> Vec<OutgoingAttachment> {
-        self.staged_attachments
-            .borrow()
-            .get(chat_id)
-            .cloned()
-            .unwrap_or_default()
+        self.staged_attachments.borrow().get(chat_id)
     }
 
     pub fn stage_attachment(&self, chat_id: &str, attachment: OutgoingAttachment) {
-        let mut staged = self.staged_attachments.borrow_mut();
-        let entry = staged.entry(chat_id.to_string()).or_default();
-        if !entry.iter().any(|a| a.file_path == attachment.file_path) {
-            entry.push(attachment);
-        }
+        self.staged_attachments
+            .borrow_mut()
+            .stage(chat_id, attachment);
+    }
+
+    pub fn stage_clipboard_image(&self, chat_id: &str, file: tempfile::NamedTempFile) {
+        self.staged_attachments
+            .borrow_mut()
+            .stage_image(chat_id, file);
     }
 
     pub fn unstage_attachment(&self, chat_id: &str, file_path: &str) {
-        if let Some(entry) = self.staged_attachments.borrow_mut().get_mut(chat_id) {
-            entry.retain(|a| a.file_path != file_path);
-        }
+        self.staged_attachments
+            .borrow_mut()
+            .remove(chat_id, file_path);
     }
 
     pub fn take_staged_attachments(&self, chat_id: &str) -> Vec<OutgoingAttachment> {
-        self.staged_attachments
-            .borrow_mut()
-            .remove(chat_id)
-            .unwrap_or_default()
+        self.staged_attachments.borrow_mut().take(chat_id)
     }
 
     pub fn app_data_dir(&self) -> &std::path::Path {

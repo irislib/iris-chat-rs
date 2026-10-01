@@ -16,6 +16,8 @@ public partial class ComposerBar : UserControl
     public event Action? AttachRequested;
     public event Action? Typing;
     public event Action? StoppedTyping;
+    public Func<string?>? AttachmentPasteScope { get; set; }
+    private readonly ClipboardAttachmentFiles _clipboardFiles = new();
 
     private bool _wasTyping;
     private bool _directSendAllowed;
@@ -31,6 +33,10 @@ public partial class ComposerBar : UserControl
     {
         InitializeComponent();
         StagedAttachmentsList.ItemsSource = _staged;
+        _ = new AttachmentPasteTarget(Input, () => AttachmentPasteScope?.Invoke(),
+            paths => AddAttachments(paths), _clipboardFiles,
+            () => App.CurrentManager.ShowToast("Could not paste files."));
+        Unloaded += (_, _) => Clear();
     }
 
     public bool SendAllowed
@@ -42,6 +48,7 @@ public partial class ComposerBar : UserControl
     public void Clear()
     {
         Input.Clear();
+        _clipboardFiles.Dispose();
         _staged.Clear();
         UpdateStagedVisibility();
         _wasTyping = false;
@@ -139,6 +146,7 @@ public partial class ComposerBar : UserControl
         {
             var match = _staged.FirstOrDefault(a => a.FilePath == path);
             if (match != null) _staged.Remove(match);
+            _clipboardFiles.Remove(path);
             UpdateStagedVisibility();
         }
     }
@@ -150,6 +158,7 @@ public partial class ComposerBar : UserControl
         var paths = StagedFilePaths;
         if (string.IsNullOrEmpty(text) && paths.Count == 0) return;
         Submitted?.Invoke(text, paths);
+        _clipboardFiles.HandOff(paths);
         Input.Clear();
         _staged.Clear();
         UpdateStagedVisibility();

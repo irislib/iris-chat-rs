@@ -27,6 +27,8 @@ public partial class ChatView : UserControl
     public ChatView()
     {
         InitializeComponent();
+        Composer.AttachmentPasteScope = () => CanAttachFiles()
+            ? App.CurrentManager.Account?.publicKeyHex + ":" + _focusedChatId : null;
         _ = new AttachmentDropTarget(this, CanAttachFiles,
             files => Composer.AddAttachments(files),
             active => FileDropHighlight.Visibility = active ? Visibility.Visible : Visibility.Collapsed);
@@ -80,6 +82,7 @@ public partial class ChatView : UserControl
         var capabilityBlocked = directCapability != null && directCapability != DirectChatCapabilityState.Available;
         if (chatChanged)
         {
+            Composer.Clear();
             _checkingSince = null;
             _capabilityTimer.Stop();
             _focusedChatId = chat.chatId;

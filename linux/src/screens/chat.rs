@@ -22,6 +22,9 @@ pub use image_clipboard::verify_ui as verify_image_clipboard_ui;
 mod contact_details;
 use contact_details::nickname_card;
 mod composer;
+mod composer_clipboard;
+#[cfg(feature = "ui-tests")]
+pub use composer_clipboard::tests::verify_ui as verify_composer_clipboard_ui;
 mod direct_files;
 #[cfg(feature = "ui-tests")]
 pub use direct_files::verify_ui as verify_direct_files_ui;

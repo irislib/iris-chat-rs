@@ -241,7 +241,7 @@ jobs:
         run: ./scripts/test-macos
 
   ios:
-    name: iOS simulator build
+    name: iOS simulator build and composer tests
     runs-on: macos-15
     timeout-minutes: 75
     env:
@@ -275,6 +275,65 @@ jobs:
 
       - name: iOS simulator build
         run: ./scripts/ios-build ios-build-sim
+
+      - name: iOS native composer and clipboard tests
+        run: |
+          mkdir -p work/clipboard
+          xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
+            -destination "$(./scripts/ios-simulator-destination)" \
+            -parallel-testing-enabled NO \
+            -only-testing:IrisChatTests \
+            -resultBundlePath work/clipboard/ios.xcresult test
+
+      - name: Upload iOS test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-composer-tests
+          path: iris-chat-rs/work/clipboard/
+          retention-days: 14
+
+  windows-ui:
+    name: Windows native clipboard and composer tests
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: iris-chat-rs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: iris-chat-rs
+      - name: Install build tools
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          choco install cmake nasm --no-progress -y
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: all-builds-windows-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/windows/**/*.csproj') }}
+          restore-keys: all-builds-windows-
+      - name: Build native app
+        run: ./scripts/windows-build-local.ps1 build
+      - name: Exercise real WPF clipboard and draft lifecycle
+        run: |
+          dotnet run --project windows/ClipboardTests/ClipboardTests.csproj -c Release -- work/clipboard
+          if ($LASTEXITCODE -ne 0) { throw 'Native clipboard tests failed' }
+      - name: Upload Windows clipboard results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-clipboard-tests
+          path: iris-chat-rs/work/clipboard/
+          retention-days: 14
 
   cli-service:
     name: CLI service (${{ matrix.os }})

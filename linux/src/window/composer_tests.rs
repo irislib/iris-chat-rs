@@ -458,6 +458,7 @@ pub fn run() {
             .render_texture(node.as_ref().unwrap(), None);
         texture.save_to_png(path).unwrap();
     }
+    crate::screens::chat::verify_composer_clipboard_ui(manager.clone());
     // A core update already queued before logout must not restore the old call
     // or allow notifications to use the newly rotated local session.
     let before_logout = manager.current_state();
