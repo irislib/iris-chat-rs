@@ -118,7 +118,11 @@ fn group_created_on_linked_device_syncs_to_primary_as_self_chat() {
     let linked_device = Keys::generate();
     let mut primary = logged_in_test_core("linked-group-primary", &owner, &primary_device);
     let mut linked = logged_in_test_core("linked-group-linked", &owner, &linked_device);
-    linked.logged_in.as_mut().expect("linked logged in").owner_keys = None;
+    linked
+        .logged_in
+        .as_mut()
+        .expect("linked logged in")
+        .owner_keys = None;
 
     install_two_way_local_sibling_state_for_test(
         &mut primary,
@@ -230,22 +234,16 @@ fn fully_approved_linked_device_group_messages_sync_to_primary_without_request()
     {
         linked.handle_relay_event(event);
     }
-    for event in relay_events(&approval_relay)
-        .into_iter()
-        .filter(|event| {
-            event.kind.as_u16() as u32 == APP_KEYS_EVENT_KIND
-                && event_has_tag_value(event, "device", &linked_device_hex)
-        })
-    {
+    for event in relay_events(&approval_relay).into_iter().filter(|event| {
+        event.kind.as_u16() as u32 == APP_KEYS_EVENT_KIND
+            && event_has_tag_value(event, "device", &linked_device_hex)
+    }) {
         linked.handle_relay_event(event);
     }
-    for event in relay_events(&approval_relay)
-        .into_iter()
-        .filter(|event| {
-            event.kind.as_u16() as u32 == u32::from(FACT_OP_KIND)
-                && event_has_tag_value(event, "type", "nostr_identity_device_approval_receipt")
-        })
-    {
+    for event in relay_events(&approval_relay).into_iter().filter(|event| {
+        event.kind.as_u16() as u32 == u32::from(FACT_OP_KIND)
+            && event_has_tag_value(event, "type", "nostr_identity_device_approval_receipt")
+    }) {
         linked.handle_relay_event(event);
     }
     for event in sorted_pending_events_for_test(&primary)
@@ -273,16 +271,23 @@ fn fully_approved_linked_device_group_messages_sync_to_primary_without_request()
         linked.debug_log
     );
 
+    assert!(
+        sorted_pending_events_for_test(&linked)
+            .iter()
+            .any(|event| event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND),
+        "startup private-contact sync should queue encrypted sibling traffic"
+    );
+    // Startup sync can establish a new sibling ratchet while processing the
+    // primary's invite. Deliver its handshake and control messages before
+    // clearing the capture; dropping them strands subsequent group messages.
+    settle_pending_relay_events_for_test(&mut primary, &mut linked);
     primary.pending_relay_publishes.clear();
     linked.pending_relay_publishes.clear();
     linked.handle_action(AppAction::CreateGroup {
         name: "Okkk".to_string(),
         member_inputs: Vec::new(),
     });
-    let chat_id = linked
-        .active_chat_id
-        .clone()
-        .expect("linked opens group");
+    let chat_id = linked.active_chat_id.clone().expect("linked opens group");
     deliver_pending_relay_events_for_test(&linked, &mut primary);
     primary.rebuild_state();
     let created = primary
@@ -422,6 +427,30 @@ fn deliver_pending_relay_events_for_test(sender: &AppCore, recipient: &mut AppCo
     for event in sorted_pending_events_for_test(sender) {
         recipient.handle_relay_event(event);
     }
+}
+
+fn settle_pending_relay_events_for_test(primary: &mut AppCore, linked: &mut AppCore) {
+    let mut delivered_to_primary = HashSet::new();
+    let mut delivered_to_linked = HashSet::new();
+    for _ in 0..8 {
+        let mut delivered = false;
+        for event in sorted_pending_events_for_test(linked) {
+            if delivered_to_primary.insert(event.id) {
+                primary.handle_relay_event(event);
+                delivered = true;
+            }
+        }
+        for event in sorted_pending_events_for_test(primary) {
+            if delivered_to_linked.insert(event.id) {
+                linked.handle_relay_event(event);
+                delivered = true;
+            }
+        }
+        if !delivered {
+            return;
+        }
+    }
+    panic!("sibling startup relay traffic did not settle");
 }
 
 fn sorted_pending_events_for_test(core: &AppCore) -> Vec<Event> {
