@@ -96,6 +96,10 @@ struct Cli {
     #[arg(long, global = true, env = "IRIS_DATA_DIR")]
     data_dir: Option<PathBuf>,
 
+    /// Do not start a background sync process after this command exits.
+    #[arg(long, global = true)]
+    no_background_sync: bool,
+
     #[command(subcommand)]
     command: Commands,
 }

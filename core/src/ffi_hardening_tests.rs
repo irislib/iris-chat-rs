@@ -149,11 +149,22 @@ fn core_supervisor_recovers_after_batch_panic() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let app = new_ffi_app_inner(temp_dir.path().to_string_lossy().to_string());
 
+    // A fresh test process first warms the social graph. Wait for the worker
+    // before measuring recovery so startup under load cannot race the assertion.
+    let (ready_tx, ready_rx) = flume::bounded(1);
+    app.foreground_tx
+        .send(CoreMsg::CorePerfCounters(ready_tx))
+        .expect("send readiness request");
+    ready_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("core worker ready");
+
     app.foreground_tx
         .send(CoreMsg::PanicForTest)
         .expect("send test panic");
 
-    for _ in 0..40 {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
         if app.recovery.restart_count() > 0 {
             break;
         }
