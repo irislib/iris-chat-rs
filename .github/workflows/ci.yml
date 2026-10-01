@@ -138,8 +138,18 @@ jobs:
         run: ./scripts/android-build android-assemble
 
       - name: Android unit and compile checks
-        run: ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebugAndroidTest
         working-directory: iris-chat-rs/android
+
+      - name: Upload Android native test packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-native-test-packages
+          path: |
+            iris-chat-rs/android/app/build/outputs/apk/debug/*.apk
+            iris-chat-rs/android/app/build/outputs/apk/androidTest/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
 
   linux:
     name: Linux build and tests (Rust ${{ matrix.toolchain }})
