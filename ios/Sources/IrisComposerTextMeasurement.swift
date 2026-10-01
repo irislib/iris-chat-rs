@@ -10,6 +10,9 @@ final class IrisComposerTextMeasurement {
     let layoutManager = NSLayoutManager()
     private let container = NSTextContainer(size: .zero)
     private weak var storage: NSTextStorage?
+    #if DEBUG
+    var onLayoutTiming: ((Double) -> Void)?
+    #endif
 
     init() {
         container.lineFragmentPadding = 0
@@ -29,7 +32,13 @@ final class IrisComposerTextMeasurement {
         // than the base font. Only the returned composer height is clamped.
         let size = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         if container.size != size { container.size = size }
+        #if DEBUG
+        let timingStart = onLayoutTiming == nil ? nil : ProcessInfo.processInfo.systemUptime
+        #endif
         layoutManager.ensureLayout(for: container)
+        #if DEBUG
+        if let timingStart { onLayoutTiming?((ProcessInfo.processInfo.systemUptime - timingStart) * 1_000) }
+        #endif
         let used = layoutManager.usedRect(for: container)
         let extra = layoutManager.extraLineFragmentRect
         return min(max(ceil(max(used.maxY, extra.maxY)), lineHeight), maximum)

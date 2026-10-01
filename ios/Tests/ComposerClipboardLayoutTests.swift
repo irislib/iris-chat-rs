@@ -40,6 +40,7 @@ final class ComposerClipboardLayoutTests: XCTestCase {
         let multiline = String(repeating: "A large pasted paragraph 🙂\nlet value = 42;\n", count: 1_000)
         let paragraph = String(repeating: "A large pasted paragraph 🙂 with code: let value = 42; ", count: 1_000)
         for (name, text) in [("caption", "Here is the picture"), ("multiline", multiline), ("single-paragraph", paragraph)] {
+            let operations = ComposerOperationProbe()
             let draft = ClipboardComposerDraft(files: attachments)
             let view = IrisTheme {
                 VStack { Spacer(); ClipboardComposerFixture(draft: draft) }
@@ -59,11 +60,13 @@ final class ComposerClipboardLayoutTests: XCTestCase {
             let editor = try XCTUnwrap(find(IrisComposerNSTextView.self, in: host))
             XCTAssertTrue(window.makeFirstResponder(editor))
             let sample: () throws -> ComposerGeometry = {
-                host.layoutSubtreeIfNeeded()
-                CATransaction.flush()
+                operations.measure("sample-host-layout") { host.layoutSubtreeIfNeeded() }
+                operations.measure("sample-transaction-flush") { CATransaction.flush() }
                 let viewport = try XCTUnwrap(editor.enclosingScrollView)
                 let selection = editor.selectedRange()
-                let caretOnScreen = editor.firstRect(forCharacterRange: selection, actualRange: nil)
+                let caretOnScreen = operations.measure("sample-caret-query") {
+                    editor.firstRect(forCharacterRange: selection, actualRange: nil)
+                }
                 let caret = editor.convert(window.convertFromScreen(caretOnScreen), from: nil)
                 return ComposerGeometry(frame: editor.convert(editor.bounds, to: host), viewport: editor.visibleRect,
                                         caret: caret, height: viewport.contentView.bounds.height,
@@ -93,11 +96,17 @@ final class ComposerClipboardLayoutTests: XCTestCase {
             let editor = try XCTUnwrap(find(IrisComposerUITextView.self, in: host.view))
             XCTAssertTrue(editor.becomeFirstResponder())
             defer { editor.resignFirstResponder() }
+            #if DEBUG
+            editor.onLayoutTiming = { operations.record($0, milliseconds: $1) }
+            defer { editor.onLayoutTiming = nil }
+            #endif
             let sample: () throws -> ComposerGeometry = {
-                host.view.layoutIfNeeded()
-                CATransaction.flush()
+                operations.measure("sample-host-layout") { host.view.layoutIfNeeded() }
+                operations.measure("sample-transaction-flush") { CATransaction.flush() }
                 let selection = editor.selectedRange
-                let caret = editor.caretRect(for: try XCTUnwrap(editor.selectedTextRange).end)
+                let caret = try operations.measure("sample-caret-query") {
+                    editor.caretRect(for: try XCTUnwrap(editor.selectedTextRange).end)
+                }
                 return ComposerGeometry(frame: editor.convert(editor.bounds, to: host.view), viewport: editor.bounds,
                                         caret: caret, height: editor.bounds.height,
                                         maximumHeight: ceil(try XCTUnwrap(editor.font).lineHeight * 5), selection: selection,
@@ -113,15 +122,24 @@ final class ComposerClipboardLayoutTests: XCTestCase {
             let paste = { editor.paste(itemProviders: [textProvider]) }
             let smallEdit = { editor.insertText("!") }
             #endif
+            #if DEBUG
+            editor.composerMeasurement.onLayoutTiming = { operations.record("fitting-layout", milliseconds: $0) }
+            defer { editor.composerMeasurement.onLayoutTiming = nil }
+            #endif
+            // Reading the legacy layoutManager would itself force compatibility
+            // mode. This optional modern accessor only observes the live engine.
+            let enginePresence = { editor.textLayoutManager != nil }
             // Window, keyboard and thumbnail setup are outside both measurements.
             try await Task.sleep(nanoseconds: 400_000_000)
             _ = try sample()
-            try await measureChange("\(name)-paste", expected: text, draft: draft, action: paste, sample: sample)
+            try await measureChange("\(name)-paste", expected: text, draft: draft, operations: operations,
+                                    enginePresence: enginePresence, action: paste, sample: sample)
             attachScreenshot(try screenshot(), name: "\(name)-paste")
             XCTAssertEqual(draft.files, attachments)
             XCTAssertTrue(draft.directly)
             XCTAssertFalse(draft.didSend)
-            try await measureChange("\(name)-following-edit", expected: text + "!", draft: draft, action: smallEdit, sample: sample)
+            try await measureChange("\(name)-following-edit", expected: text + "!", draft: draft, operations: operations,
+                                    enginePresence: enginePresence, action: smallEdit, sample: sample)
             attachScreenshot(try screenshot(), name: "\(name)-following-edit")
             XCTAssertEqual(draft.files, attachments)
             XCTAssertTrue(draft.directly)
@@ -130,11 +148,14 @@ final class ComposerClipboardLayoutTests: XCTestCase {
     }
 
     private func measureChange(_ name: String, expected: String, draft: ClipboardComposerDraft,
+                               operations: ComposerOperationProbe, enginePresence: () -> Bool,
                                action: () -> Void, sample: () throws -> ComposerGeometry) async throws {
         let expectedSelection = NSRange(location: (expected as NSString).length, length: 0)
         let updated = expectation(description: "\(name) reaches the composer draft")
         var updates = 0
         var draftUpdateMs: Double = -1
+        operations.reset()
+        let engineBeforeEdit = enginePresence()
         let started = ProcessInfo.processInfo.systemUptime
         let runLoop = ComposerRunLoopProbe()
         defer { runLoop.invalidate() }
@@ -149,6 +170,7 @@ final class ComposerClipboardLayoutTests: XCTestCase {
         defer { draft.onUserEdit = { _ in } }
         action()
         let nativeCallMs = (ProcessInfo.processInfo.systemUptime - started) * 1_000
+        let engineAfterNativeEdit = enginePresence()
         runLoop.mark("native-edit-return")
         await fulfillment(of: [updated], timeout: max(0.01, 5 - nativeCallMs / 1_000))
         runLoop.mark("draft-fulfillment-return")
@@ -190,12 +212,15 @@ final class ComposerClipboardLayoutTests: XCTestCase {
         } while ProcessInfo.processInfo.systemUptime - started < 5
         let elapsedMs = (ProcessInfo.processInfo.systemUptime - started) * 1_000
         runLoop.mark(settled ? "settled" : "deadline")
+        let runLoopValues = runLoop.finish()
+        let engines = ["beforeEdit": engineBeforeEdit, "afterNativeEdit": engineAfterNativeEdit, "settled": enginePresence()]
         let values: [String: Any] = [
             "utf16Length": expectedSelection.location, "nativeEditCallMs": nativeCallMs,
             "draftUpdateMs": draftUpdateMs, "hostedLayoutAndGeometryMs": layoutMs,
             "settledElapsedMs": elapsedMs, "intentionalObservationDelayMs": observationDelayMs,
             "actualObservationWaitMs": actualObservationWaitMs, "longestObservationWaitMs": longestObservationWaitMs,
-            "layoutObservations": layoutObservations, "mainRunLoop": runLoop.finish(),
+            "layoutObservations": layoutObservations, "mainRunLoop": runLoopValues,
+            "operations": operations.diagnostics, "textKit2Present": engines,
             "editNotifications": updates, "stableGeometrySamples": stableSamples,
             "caretVisible": previous?.caretVisible ?? false, "settled": settled,
             "geometry": previous?.diagnostics ?? [:],
@@ -206,6 +231,12 @@ final class ComposerClipboardLayoutTests: XCTestCase {
         evidence.name = "hosted-composer-\(name)"
         evidence.lifetime = .keepAlways
         add(evidence)
+        let logValues: [String: Any] = ["case": name, "utf16Length": expectedSelection.location,
+            "nativeEditCallMs": nativeCallMs, "draftUpdateMs": draftUpdateMs, "settledElapsedMs": elapsedMs,
+            "longestActiveTurnMs": runLoopValues["longestActiveTurnMs"] ?? 0,
+            "operations": operations.diagnostics, "textKit2Present": engines]
+        let logData = try JSONSerialization.data(withJSONObject: logValues, options: [.sortedKeys])
+        print("COMPOSER_PHASES \(String(decoding: logData, as: UTF8.self))")
         XCTAssertEqual(draft.composer.text, expected)
         XCTAssertEqual(updates, 1, "A native edit should publish one whole draft")
         XCTAssertTrue(settled, "Draft, five-line viewport and visible caret must settle together")

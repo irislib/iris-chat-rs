@@ -76,3 +76,25 @@ final class ComposerRunLoopProbe {
 
     deinit { invalidate() }
 }
+
+/// Numeric per-operation timings only; the probe never reads draft contents.
+final class ComposerOperationProbe {
+    private var operations: [String: (count: Int, totalMs: Double, maximumMs: Double)] = [:]
+
+    func reset() { operations.removeAll(keepingCapacity: true) }
+
+    func record(_ name: String, milliseconds: Double) {
+        let previous = operations[name] ?? (count: 0, totalMs: 0, maximumMs: 0)
+        operations[name] = (previous.count + 1, previous.totalMs + milliseconds, max(previous.maximumMs, milliseconds))
+    }
+
+    func measure<T>(_ name: String, _ operation: () throws -> T) rethrows -> T {
+        let started = ProcessInfo.processInfo.systemUptime
+        defer { record(name, milliseconds: (ProcessInfo.processInfo.systemUptime - started) * 1_000) }
+        return try operation()
+    }
+
+    var diagnostics: [String: Any] {
+        operations.mapValues { ["count": $0.count, "totalMs": $0.totalMs, "maximumMs": $0.maximumMs] as [String: Any] }
+    }
+}

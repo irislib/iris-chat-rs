@@ -6,6 +6,9 @@ final class IrisComposerUITextView: UITextView {
     var onPasteAttachments: ((IrisClipboardAttachments) -> Void)?
     private var pendingSelectionReveal: NSRange?
     private var selectionRevealScheduled = false
+    #if DEBUG
+    var onLayoutTiming: ((String, Double) -> Void)?
+    #endif
 
     func revealSelectionAfterNextLayout() {
         guard isFirstResponder, markedTextRange == nil else { return }
@@ -20,8 +23,18 @@ final class IrisComposerUITextView: UITextView {
             self.pendingSelectionReveal = nil
             guard let selection, self.isFirstResponder, self.isScrollEnabled, self.markedTextRange == nil,
                   self.selectedRange == selection else { return }
+            #if DEBUG
+            let layoutStart = self.onLayoutTiming == nil ? nil : ProcessInfo.processInfo.systemUptime
+            #endif
             self.layoutIfNeeded()
+            #if DEBUG
+            if let layoutStart { self.onLayoutTiming?("deferred-editor-layout", (ProcessInfo.processInfo.systemUptime - layoutStart) * 1_000) }
+            let revealStart = self.onLayoutTiming == nil ? nil : ProcessInfo.processInfo.systemUptime
+            #endif
             self.scrollRangeToVisible(self.selectedRange)
+            #if DEBUG
+            if let revealStart { self.onLayoutTiming?("deferred-selection-reveal", (ProcessInfo.processInfo.systemUptime - revealStart) * 1_000) }
+            #endif
         }
     }
 
