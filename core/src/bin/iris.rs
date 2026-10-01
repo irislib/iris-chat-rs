@@ -1548,16 +1548,18 @@ fn print_output(json_output: bool, command: &str, data: Value) -> Result<()> {
 }
 
 fn should_spawn_background_sync(state: &AppState, data: &Value) -> bool {
-    !state.preferences.nostr_relay_urls.is_empty()
-        && data
-            .get("is_outgoing")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
+    let public_follow_pending = data.get("contact_identity").is_some()
+        && data.get("network_publication").and_then(Value::as_str) == Some("not_verified");
+    let message_pending = data
+        .get("is_outgoing")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
         && data.get("id").and_then(Value::as_str).is_some()
         && data
             .get("delivery")
             .and_then(Value::as_str)
-            .is_some_and(|delivery| matches!(delivery, "queued" | "pending"))
+            .is_some_and(|delivery| matches!(delivery, "queued" | "pending"));
+    !state.preferences.nostr_relay_urls.is_empty() && (public_follow_pending || message_pending)
 }
 
 fn spawn_background_sync(data_dir: &Path) {

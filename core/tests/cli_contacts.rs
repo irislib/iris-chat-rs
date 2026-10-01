@@ -117,3 +117,87 @@ fn cli_contact_commands_require_an_existing_direct_contact() {
     let list = run(dir.path(), &["chat", "list"], true);
     assert_eq!(list["data"]["chats"].as_array().unwrap().len(), 0);
 }
+
+#[test]
+fn cli_contact_follow_publishes_before_one_shot_exit_and_preserves_existing_contacts() {
+    use iris_chat_core::local_relay::TestRelay;
+    use nostr::{Event, EventBuilder, Kind, Tag, Timestamp, ToBech32};
+    use std::time::{Duration, Instant};
+
+    let relay = TestRelay::start();
+    assert!(!relay.url().is_empty(), "local relay started");
+    let owner = Keys::generate();
+    let existing = Keys::generate().public_key();
+    let peer = Keys::generate().public_key();
+    let original = EventBuilder::new(Kind::ContactList, "legacy relay preferences")
+        .tags([
+            Tag::parse(["p", &existing.to_hex(), "wss://example.com", "Old friend"]).unwrap(),
+            Tag::parse(["alt", "Keep this extra tag"]).unwrap(),
+        ])
+        .custom_created_at(Timestamp::from_secs(
+            Timestamp::now().as_secs().saturating_sub(60),
+        ))
+        .sign_with_keys(&owner)
+        .unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let client = nostr_sdk::Client::default();
+        client.add_relay(relay.url()).await.unwrap();
+        client.connect().await;
+        client.send_event(&original).await.unwrap();
+        client.disconnect().await;
+    });
+    let dir = TempDir::new().unwrap();
+    run(
+        dir.path(),
+        &["restore", &owner.secret_key().to_bech32().unwrap()],
+        true,
+    );
+    run(dir.path(), &["relay", "set", relay.url()], true);
+    run(dir.path(), &["chat", "create", &peer.to_hex()], true);
+    let mut previous_id = original.id;
+    for (command, following) in [("follow", true), ("unfollow", false)] {
+        let result = run(dir.path(), &["contact", command, &peer.to_hex()], true);
+        assert_eq!(
+            result["data"]["contact_identity"]["is_following"],
+            following
+        );
+        assert_eq!(result["data"]["network_publication"], "queue_drained");
+        // No service, extra sync command, or profile reopen is allowed to deliver it.
+        let started = Instant::now();
+        let published = loop {
+            if let Some(event) = relay
+                .events()
+                .into_iter()
+                .filter_map(|event| serde_json::from_value::<Event>(event).ok())
+                .find(|event| {
+                    event.kind == Kind::ContactList
+                        && event.pubkey == owner.public_key()
+                        && event.id != previous_id
+                        && event.created_at > original.created_at
+                        && event.tags.iter().any(|tag| {
+                            tag.as_slice().first().map(String::as_str) == Some("p")
+                                && tag.as_slice().get(1) == Some(&peer.to_hex())
+                        }) == following
+                })
+            {
+                break event;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "public follow never reached relay"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        published.verify().unwrap();
+        assert_eq!(published.content, original.content);
+        for tag in original.tags.iter() {
+            assert!(published.tags.iter().any(|actual| actual == tag));
+        }
+        assert_eq!(
+            published.tags.len(),
+            original.tags.len() + usize::from(following)
+        );
+        previous_id = published.id;
+    }
+}

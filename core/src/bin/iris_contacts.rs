@@ -164,8 +164,14 @@ fn set_follow(cli: &CliApp, input: &str, following: bool) -> Result<Value> {
             .is_some_and(|identity| !identity.updating_follow && identity.is_following == following)
         {
             let mut result = contact_json(&updated);
-            // The shared core queues publication; this is not a delivery receipt.
-            result["network_publication"] = json!("not_verified");
+            // Keep the one-shot core alive until its publication queues drain.
+            // If they cannot drain promptly, the CLI runner resumes the durable
+            // outbox with its existing background-sync process.
+            result["network_publication"] = json!(if wait_for_publications(cli) {
+                "queue_drained"
+            } else {
+                "not_verified"
+            });
             return Ok(result);
         }
         thread::sleep(Duration::from_millis(50));
@@ -173,6 +179,23 @@ fn set_follow(cli: &CliApp, input: &str, following: bool) -> Result<Value> {
     anyhow::bail!(
         "Could not confirm the public follow update. Check `iris contact show` before retrying."
     )
+}
+
+fn wait_for_publications(cli: &CliApp) -> bool {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(5) {
+        let state = cli.app.state();
+        if !has_pending_runtime_publishes(&state) {
+            if let Ok(bundle) = serde_json::from_str::<Value>(&cli.app.export_support_bundle_json())
+            {
+                if !has_pending_relay_transport_publishes(&bundle) {
+                    return true;
+                }
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    false
 }
 
 fn contact_json(chat: &CurrentChatSnapshot) -> Value {
