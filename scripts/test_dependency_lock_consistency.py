@@ -21,7 +21,7 @@ EXPECTED = {
     "hashtree-network": "0.2.88",
     "nostr-pubsub": "0.1.15",
     "nostr-pubsub-fips": "0.5.12",
-    "nostr-pubsub-relay": "0.1.11",
+    "nostr-pubsub-relay": "0.1.13",
     "nostr-pubsub-social-graph": "0.2.3",
     "nostr-social-graph": "0.1.4",
 }
@@ -63,7 +63,7 @@ class DependencyLockConsistencyTests(unittest.TestCase):
         self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.4\.0"$', "nostr-identity must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.15"$', "nostr-pubsub must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.5\.12"$', "nostr-pubsub-fips must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.11"$', "nostr-pubsub-relay must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.13"$', "nostr-pubsub-relay must stay on the gated release")
 
     def test_linux_build_inherits_the_pinned_core_manifest(self):
         manifest = (ROOT / "linux" / "Cargo.toml").read_text(encoding="utf-8")
