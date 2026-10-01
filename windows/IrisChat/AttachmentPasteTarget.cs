@@ -40,7 +40,12 @@ internal sealed class AttachmentPasteTarget
                 var captured = scope();
                 if (captured == null || !input.IsLoaded) return;
                 var data = Clipboard.GetDataObject();
-                if (!HasAttachment(data)) return;
+                if (!HasAttachment(data))
+                {
+                    e.Handled = LargePlainTextPaste.TryPaste(input, data,
+                        () => input.IsLoaded && scope() == captured);
+                    return;
+                }
                 e.Handled = true;
                 IReadOnlyList<string> paths;
                 if (data!.GetDataPresent(DataFormats.FileDrop))

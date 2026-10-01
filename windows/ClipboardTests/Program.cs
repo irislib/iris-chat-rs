@@ -123,6 +123,7 @@ internal static class Program
             TextChangedEventHandler changed = (_, _) => changes++;
             input.TextChanged += changed;
             Clipboard.SetText(large);
+            input.Focus(); Pump();
             var elapsed = Stopwatch.StartNew();
             Check(ApplicationCommands.Paste.CanExecute(null, input), "native Paste enabled");
             var canExecuteMs = elapsed.Elapsed.TotalMilliseconds;
@@ -177,6 +178,9 @@ internal static class Program
             Console.WriteLine($"TIMING: Windows large text paste {pasteMs:F1} ms; subsequent edit {editMs:F1} ms; events {pasteChanges}/{editChanges}");
             Check(input.Text == large + "!" && editChanges == 1, "subsequent native edit completes once after large paste");
             Check(pasteMs < freezeBudgetMs && editMs < freezeBudgetMs, "large paste and subsequent edit stay within the 5 s freeze budget");
+            Check(executeCompleteMs - canExecuteMs < 500, "large native paste command returns without full-document synchronous layout");
+            Save(window, Path.Combine(output, "windows-large-text-paste.png"));
+            LargeTextPasteTests.Verify(composer, Pump, output);
             composer.Clear();
             Clipboard.SetImage(bitmap); Paste(input);
             cancelled = composer.StagedFilePaths.Single();
