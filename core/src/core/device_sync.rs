@@ -796,6 +796,8 @@ impl AppCore {
                 .get(&logged_in.owner_pubkey.to_hex())
                 .is_some_and(|roster| {
                     roster.devices.iter().any(|device| {
+                        device.identity_pubkey_hex == logged_in.device_keys.public_key().to_hex()
+                    }) && roster.devices.iter().any(|device| {
                         device
                             .identity_pubkey_hex
                             .eq_ignore_ascii_case(source_pubkey_hex)

@@ -7,6 +7,7 @@ include!("protocol_engine/engine_state_helpers.rs");
 include!("protocol_engine/engine_fact_ingest.rs");
 include!("protocol_engine/engine_sends.rs");
 include!("protocol_engine/engine_local_sibling_sends.rs");
+include!("protocol_engine/engine_pending_retirement.rs");
 include!("protocol_engine/engine_remote_sends.rs");
 include!("protocol_engine/engine_invite_owner.rs");
 include!("protocol_engine/engine_handshake_proof.rs");
@@ -24,6 +25,7 @@ mod tests {
     include!("protocol_engine/invite_owner_tests.rs");
     include!("protocol_engine/handshake_proof_tests.rs");
     include!("protocol_engine/local_sibling_send_tests.rs");
+    include!("protocol_engine/pending_retirement_tests.rs");
     include!("protocol_engine/remote_send_tests.rs");
     include!("protocol_engine/receive_session_fallback_tests.rs");
     include!("protocol_engine/incident_first_contact_tests.rs");
