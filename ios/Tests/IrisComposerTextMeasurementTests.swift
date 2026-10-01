@@ -13,7 +13,7 @@ import AppKit
 final class IrisComposerTextMeasurementTests: XCTestCase {
     private let largeText = String(repeating: "A pasted paragraph with unicode 🙂 and code: let value = 42;\n", count: 4_000)
 
-    func testMeasurementStopsAtVisibleLinesAndPreservesEntireDraftAndSelection() throws {
+    func testMeasurementCapsVisibleLayoutAndPreservesEntireDraftAndSelection() throws {
         #if os(iOS)
         let view = IrisComposerUITextView()
         view.font = .systemFont(ofSize: 16)
@@ -30,30 +30,73 @@ final class IrisComposerTextMeasurementTests: XCTestCase {
         let lineHeight = IrisAppKitComposerTextView.lineHeight(for: view)
         #endif
         let measurement = view.composerMeasurement
+        let initialStarted = ProcessInfo.processInfo.systemUptime
         let height = measurement.height(for: storage, width: 300, lineHeight: lineHeight)
+        let initialFittingMs = (ProcessInfo.processInfo.systemUptime - initialStarted) * 1_000
         XCTAssertEqual(height, lineHeight * 5, accuracy: 1)
-        let laidOut = measurement.layoutManager.firstUnlaidCharacterIndex()
-        XCTAssertGreaterThan(laidOut, 0)
-        XCTAssertLessThan(laidOut, 1_000, "Sizing must not lay out the whole pasted document")
+        let initialLayout = try assertCappedVisibleLayout(measurement, maximumHeight: lineHeight * 5)
         let sizingStarted = ProcessInfo.processInfo.systemUptime
-        for _ in 0..<10 {
-            XCTAssertEqual(measurement.height(for: storage, width: 300, lineHeight: lineHeight), height)
+        let warmHeights = (0..<10).map { _ in
+            measurement.height(for: storage, width: 300, lineHeight: lineHeight)
         }
-        attachTiming(["utf16Length": storage.length, "laidOutCharacters": laidOut,
-                      "boundedSizing10CallsMs": (ProcessInfo.processInfo.systemUptime - sizingStarted) * 1_000],
-                     name: "composer-bounded-sizing")
-        XCTAssertEqual(measurement.layoutManager.firstUnlaidCharacterIndex(), laidOut)
+        let warmFittingMs = (ProcessInfo.processInfo.systemUptime - sizingStarted) * 1_000
+        XCTAssertEqual(warmHeights, Array(repeating: height, count: 10))
         XCTAssertEqual(storage.string, largeText)
         #if os(iOS)
-        XCTAssertEqual(view.selectedRange.location, (largeText as NSString).length)
+        XCTAssertEqual(view.selectedRange, NSRange(location: (largeText as NSString).length, length: 0))
         #else
-        XCTAssertEqual(view.selectedRange().location, (largeText as NSString).length)
+        XCTAssertEqual(view.selectedRange(), NSRange(location: (largeText as NSString).length, length: 0))
         #endif
 
         storage.replaceCharacters(in: NSRange(location: storage.length, length: 0), with: "tail")
+        #if os(iOS)
+        let selectionAfterEdit = view.selectedRange
+        #else
+        let selectionAfterEdit = view.selectedRange()
+        #endif
         XCTAssertEqual(measurement.height(for: storage, width: 300, lineHeight: lineHeight), height)
-        XCTAssertLessThan(measurement.layoutManager.firstUnlaidCharacterIndex(), 1_000)
+        let editedLayout = try assertCappedVisibleLayout(measurement, maximumHeight: lineHeight * 5)
         XCTAssertEqual(storage.string, largeText + "tail")
+        #if os(iOS)
+        XCTAssertEqual(view.selectedRange, selectionAfterEdit)
+        #else
+        XCTAssertEqual(view.selectedRange(), selectionAfterEdit)
+        #endif
+        attachTiming(["utf16Length": (largeText as NSString).length, "initialFittingMs": initialFittingMs,
+                      "warmFitting10CallsMs": warmFittingMs, "initialLayout": initialLayout,
+                      "afterEditLayout": editedLayout], name: "composer-capped-visible-sizing")
+    }
+
+    private func assertCappedVisibleLayout(_ measurement: IrisComposerTextMeasurement,
+                                           maximumHeight: CGFloat) throws -> [String: Any] {
+        let manager = measurement.layoutManager
+        let container = try XCTUnwrap(manager.textContainers.first)
+        let bounds = CGRect(origin: .zero, size: container.size)
+        let used = manager.usedRect(for: container)
+        XCTAssertGreaterThan(used.height, 0)
+        XCTAssertGreaterThanOrEqual(used.minY, 0)
+        XCTAssertLessThanOrEqual(used.maxY, maximumHeight + 1)
+        let visible = manager.glyphRange(forBoundingRectWithoutAdditionalLayout: bounds, in: container)
+        XCTAssertGreaterThan(visible.length, 0)
+        var glyph = visible.location
+        var lineBounds: [[Double]] = []
+        while glyph < NSMaxRange(visible), lineBounds.count < 6 {
+            var range = NSRange()
+            let line = manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: &range, withoutAdditionalLayout: true)
+            XCTAssertGreaterThan(line.height, 0)
+            XCTAssertGreaterThanOrEqual(line.minY, 0)
+            XCTAssertLessThanOrEqual(line.maxY, maximumHeight + 1)
+            lineBounds.append([Double(line.minY), Double(line.maxY)])
+            guard NSMaxRange(range) > glyph else { XCTFail("Visible line range must advance"); break }
+            glyph = NSMaxRange(range)
+        }
+        XCTAssertGreaterThan(lineBounds.count, 0)
+        XCTAssertLessThanOrEqual(lineBounds.count, 5)
+        // Apple permits layout beyond the requested container. The processed
+        // index is diagnostic only; it does not count physically visible lines.
+        return ["firstUnlaidCharacterIndex": manager.firstUnlaidCharacterIndex(),
+                "visibleGlyphLocation": visible.location, "visibleGlyphLength": visible.length,
+                "visibleLineBounds": lineBounds, "usedMinY": Double(used.minY), "usedMaxY": Double(used.maxY)]
     }
 
     func testShortDraftSizingMatchesNativeMeasurement() throws {
