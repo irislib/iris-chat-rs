@@ -215,12 +215,12 @@ final class ComposerClipboardLayoutTests: XCTestCase {
     #if os(macOS)
     private func find<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
         if let match = view as? T { return match }
-        return view.subviews.lazy.compactMap { find(type, in: $0) }.first
+        return view.subviews.lazy.compactMap { self.find(type, in: $0) }.first
     }
     #else
     private func find<T: UIView>(_ type: T.Type, in view: UIView) -> T? {
         if let match = view as? T { return match }
-        return view.subviews.lazy.compactMap { find(type, in: $0) }.first
+        return view.subviews.lazy.compactMap { self.find(type, in: $0) }.first
     }
     #endif
 }
