@@ -2,6 +2,31 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.1.7
+
+### GitHub
+
+- Sync private favorites, nicknames, and notes across devices and Iris apps using encrypted contact records, durable offline retries, and independent field merges. Add nickname and note commands to the CLI while keeping public name-change approval separate.
+- Preserve direct file transfers in conversation history and align attachment actions on mobile.
+- Show Nearby status on user avatars across the native apps.
+- Keep chat messages anchored as the keyboard opens and closes on iPhone and Android.
+- Keep internal TestFlight delivery restricted to internal tester groups without submitting the build for public beta review.
+- Check CLI and app update discovery with separate empty data directories and shipped transport settings.
+
+### Apple
+
+- Keep favorite stars, nicknames, and private notes in sync across your devices.
+- Keep direct file transfers in your chat history.
+- See Nearby status on people's avatars.
+- Keep your place in a chat when the keyboard opens or closes on iPhone.
+
+### Zapstore
+
+- Keep favorite stars, nicknames, and private notes in sync across your devices.
+- Keep direct file transfers in your chat history.
+- See Nearby status on people's avatars.
+- Keep your place in a chat when the keyboard opens or closes.
+
 ## v2026.10.1.6
 
 ### GitHub
