@@ -273,6 +273,14 @@ pub(super) fn prepare_signer_authorization(
     previous: Option<&Event>,
     now: u64,
 ) -> anyhow::Result<UnsignedEvent> {
+    // Check the received authorization before normalizing it. Dropping legacy
+    // private-label tags must not turn an oversized input into a signing prompt.
+    if let Some(previous) = previous {
+        anyhow::ensure!(
+            serde_json::to_vec(previous)?.len() <= MAX_SIGNER_EVENT_BYTES,
+            "Device list is too large."
+        );
+    }
     let mut app_keys = previous
         .map(AppKeys::from_event)
         .transpose()?
