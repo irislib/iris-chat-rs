@@ -22,7 +22,8 @@ internal static class LargeTextPasteTests
         composer.Clear();
         input.Text = original;
         input.Select(selectionStart, selectionLength);
-        input.ClearUndo();
+        input.IsUndoEnabled = false;
+        input.IsUndoEnabled = true;
         input.Focus();
         pump();
         Clipboard.SetText(text);
