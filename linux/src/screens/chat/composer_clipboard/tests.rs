@@ -138,6 +138,70 @@ pub fn verify_ui(manager: Rc<AppManager>) {
     assert!(first.exists() && second.exists());
     assert_eq!(manager.staged_attachments(&chat.chat_id).len(), 2);
 
+    // The real Send path calls take_staged_attachments even for text-only
+    // messages. Restaging the same paths keeps this test off the network while
+    // verifying that a completed Send cannot receive the earlier paste.
+    clipboard.set_texture(&texture);
+    input.emit_paste_clipboard();
+    for attachment in manager.take_staged_attachments(&chat.chat_id) {
+        manager.stage_attachment(&chat.chat_id, attachment);
+    }
+    glib::MainContext::default().block_on(glib::timeout_future(Duration::from_millis(100)));
+    assert_eq!(manager.staged_attachments(&chat.chat_id).len(), 2);
+
+    clipboard.set_texture(&texture);
+    input.emit_paste_clipboard();
+    direct.set_active(false);
+    glib::MainContext::default().block_on(glib::timeout_future(Duration::from_millis(100)));
+    assert_eq!(manager.staged_attachments(&chat.chat_id).len(), 2);
+    direct.set_active(true);
+
+    // Editing the caption is still the same draft, so it must not cancel files.
+    clipboard.set_texture(&texture);
+    input.emit_paste_clipboard();
+    buffer.insert_at_cursor(" while pasting");
+    pump_until(|| manager.staged_attachments(&chat.chat_id).len() == 3);
+    assert_eq!(text(), "Unsent caption plain text while pasting");
+    widgets(composer.root.upcast_ref())
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
+        .filter(|button| button.tooltip_text().as_deref() == Some("Remove attachment"))
+        .last()
+        .unwrap()
+        .emit_clicked();
+    buffer.set_text("Unsent caption plain text");
+
+    let invalid_files = gdk::FileList::from_array(&[
+        gtk::gio::File::for_path(&first),
+        gtk::gio::File::for_path(dir.path()),
+    ]);
+    clipboard
+        .set_content(Some(&gdk::ContentProvider::new_union(&[
+            gdk::ContentProvider::for_value(&invalid_files.to_value()),
+            gdk::ContentProvider::for_value(
+                &"file-manager labels must not become the caption".to_value(),
+            ),
+        ])))
+        .unwrap();
+    input.emit_paste_clipboard();
+    glib::MainContext::default().block_on(glib::timeout_future(Duration::from_millis(100)));
+    assert_eq!(manager.staged_attachments(&chat.chat_id).len(), 2);
+    assert_eq!(text(), "Unsent caption plain text");
+
+    let url = "https://example.com/copied-link";
+    let links = gdk::FileList::from_array(&[gtk::gio::File::for_uri(url)]);
+    clipboard
+        .set_content(Some(&gdk::ContentProvider::new_union(&[
+            gdk::ContentProvider::for_value(&links.to_value()),
+            gdk::ContentProvider::for_value(&url.to_value()),
+        ])))
+        .unwrap();
+    buffer.place_cursor(&buffer.end_iter());
+    input.emit_paste_clipboard();
+    pump_until(|| text() == format!("Unsent caption plain text{url}"));
+    assert_eq!(manager.staged_attachments(&chat.chat_id).len(), 2);
+    buffer.set_text("Unsent caption plain text");
+
     clipboard.set_texture(&texture);
     input.emit_paste_clipboard();
     let mut changed = state.clone();

@@ -136,6 +136,7 @@ impl Composer {
             &input,
             manager,
             &chat.chat_id,
+            &direct,
             &preview_row,
             &preview_scroll,
         );

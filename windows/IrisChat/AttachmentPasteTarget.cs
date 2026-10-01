@@ -10,10 +10,14 @@ using System.Windows.Media.Imaging;
 
 namespace IrisChat;
 
+public readonly record struct AttachmentPasteDestination(string AccountId, string ChatId);
+internal readonly record struct AttachmentPasteContext(
+    AttachmentPasteDestination Destination, long DraftGeneration, bool SendDirectly);
+
 /// Extends the editor's native Paste command; ordinary text remains WPF's job.
 internal sealed class AttachmentPasteTarget
 {
-    internal AttachmentPasteTarget(TextBox input, Func<string?> scope,
+    internal AttachmentPasteTarget(TextBox input, Func<AttachmentPasteContext?> scope,
         Action<IReadOnlyList<string>> stage, ClipboardAttachmentFiles files, Action failed)
     {
         CommandManager.AddPreviewCanExecuteHandler(input, (_, e) =>
@@ -33,11 +37,11 @@ internal sealed class AttachmentPasteTarget
             string? generated = null;
             try
             {
+                var captured = scope();
+                if (captured == null || !input.IsLoaded) return;
                 var data = Clipboard.GetDataObject();
                 if (!HasAttachment(data)) return;
                 e.Handled = true;
-                var captured = scope();
-                if (captured == null || !input.IsLoaded) return;
                 IReadOnlyList<string> paths;
                 if (data!.GetDataPresent(DataFormats.FileDrop))
                 {

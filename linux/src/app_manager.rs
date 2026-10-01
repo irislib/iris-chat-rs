@@ -315,6 +315,10 @@ impl AppManager {
         self.staged_attachments.borrow().get(chat_id)
     }
 
+    pub fn attachment_draft_generation(&self) -> u64 {
+        self.staged_attachments.borrow().generation()
+    }
+
     pub fn stage_attachment(&self, chat_id: &str, attachment: OutgoingAttachment) {
         self.staged_attachments
             .borrow_mut()

@@ -6,6 +6,7 @@ use tempfile::NamedTempFile;
 #[derive(Default)]
 pub(super) struct AttachmentDrafts {
     chats: HashMap<String, Vec<OutgoingAttachment>>,
+    generation: u64,
     images: HashMap<String, NamedTempFile>,
     // Core ingestion is asynchronous. Keep only the generated source files (no
     // pixel buffers) through the app session, including direct-send preparation.
@@ -26,6 +27,10 @@ impl AttachmentDrafts {
 
     pub fn get(&self, chat: &str) -> Vec<OutgoingAttachment> {
         self.chats.get(chat).cloned().unwrap_or_default()
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn stage(&mut self, chat: &str, attachment: OutgoingAttachment) {
@@ -58,6 +63,9 @@ impl AttachmentDrafts {
     }
 
     pub fn take(&mut self, chat: &str) -> Vec<OutgoingAttachment> {
+        // Even a text-only Send ends this draft. An asynchronous clipboard read
+        // started before it must not add files to the next message.
+        self.generation = self.generation.wrapping_add(1);
         let files = self.chats.remove(chat).unwrap_or_default();
         for file in &files {
             if let Some(image) = self.images.remove(&file.file_path) {
@@ -68,6 +76,7 @@ impl AttachmentDrafts {
     }
 
     pub fn clear(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
         self.chats.clear();
         self.images.clear();
     }
@@ -76,6 +85,17 @@ impl AttachmentDrafts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn send_and_clear_end_the_draft_even_without_attachments() {
+        let mut drafts = AttachmentDrafts::default();
+        let before_send = drafts.generation();
+        assert!(drafts.take("text-only-chat").is_empty());
+        assert_ne!(drafts.generation(), before_send);
+        let before_clear = drafts.generation();
+        drafts.clear();
+        assert_ne!(drafts.generation(), before_clear);
+    }
 
     #[test]
     fn owns_only_generated_images_and_keeps_submitted_sources_alive() {

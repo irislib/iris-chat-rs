@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Windows;
@@ -16,14 +17,30 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--clipboard-child") return Run(args[1]);
         var output = Path.GetFullPath(args.Length > 0 ? args[0] : "work/clipboard-ui");
         Directory.CreateDirectory(output);
+        var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false };
+        start.ArgumentList.Add("--clipboard-child");
+        start.ArgumentList.Add(output);
+        using var child = Process.Start(start)!;
+        if (!child.WaitForExit(180_000)) { child.Kill(entireProcessTree: true); return 1; }
+        if (child.ExitCode != 0) return child.ExitCode;
+        foreach (var name in File.ReadAllLines(Path.Combine(output, "generated-file-names.txt")))
+            Check(!File.Exists(Path.Combine(Path.GetTempPath(), name)), "process exit removes submitted clipboard PNGs");
+        Console.WriteLine("PASS: generated clipboard sources removed after native process exit");
+        return 0;
+    }
+
+    private static int Run(string output)
+    {
         Environment.SetEnvironmentVariable("IRIS_UI_TEST_RUN_ID", Guid.NewGuid().ToString());
         Environment.SetEnvironmentVariable("IRIS_UI_TEST_DATA_DIR", Path.Combine(output, "data"));
         var originalClipboard = Clipboard.GetDataObject();
         var app = new App();
         app.InitializeComponent();
-        var composer = new ComposerBar { DirectSendAllowed = true, AttachmentPasteScope = () => "test-account:chat-a" };
+        var composer = new ComposerBar { DirectSendAllowed = true,
+            AttachmentPasteScope = () => new AttachmentPasteDestination("test-account", "chat-a") };
         var window = new Window { Title = "Clipboard attachments", Width = 620, Height = 280, Content = composer };
         var input = (TextBox)composer.FindName("Input");
         var direct = (CheckBox)composer.FindName("DirectMode");
@@ -81,10 +98,10 @@ internal static class Program
             Check(!ApplicationCommands.Paste.CanExecute(null, input), "busy/blocked/unavailable destination disables image paste");
             Check(composer.StagedFilePaths.Count == 2, "denied paste does not stage");
             var scopeReads = 0;
-            composer.AttachmentPasteScope = () => ++scopeReads == 1 ? "chat-a" : "chat-b";
+            composer.AttachmentPasteScope = () => new AttachmentPasteDestination("test-account", ++scopeReads == 1 ? "chat-a" : "chat-b");
             ApplicationCommands.Paste.Execute(null, input);
             Check(scopeReads == 2 && composer.StagedFilePaths.Count == 2, "scope change during clipboard rendering discards paste");
-            composer.AttachmentPasteScope = () => "test-account:chat-a";
+            composer.AttachmentPasteScope = () => new AttachmentPasteDestination("test-account", "chat-a");
             Clipboard.SetData(DataFormats.FileDrop, new[] { first, output });
             Paste(input);
             Check(composer.StagedFilePaths.Count == 2, "mixed directory selection rejected atomically");
@@ -94,6 +111,7 @@ internal static class Program
             ((Button)composer.FindName("SendButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(submitted == 1 && sent?.Count == 3 && composer.StagedFilePaths.Count == 0, "only manual Send submits files");
             Check(File.Exists(image), "generated source survives queued asynchronous ingestion");
+            File.WriteAllLines(Path.Combine(output, "generated-file-names.txt"), new[] { Path.GetFileName(image) });
             Clipboard.SetImage(bitmap); Paste(input);
             var cancelled = composer.StagedFilePaths.Single();
             composer.Clear();
@@ -111,6 +129,7 @@ internal static class Program
             cancelled = composer.StagedFilePaths.Single();
             window.Content = null; Pump();
             Check(!File.Exists(cancelled), "unloading the old chat cleans its draft");
+            ReentrantPasteTests.Verify(window, bitmap, first);
             Console.WriteLine("PASS: WPF native clipboard paste, multiple originals, PNG pixels, direct draft, large text single-edit, no auto-send, stale/blocked destination and generated-file cleanup");
             return 0;
         }

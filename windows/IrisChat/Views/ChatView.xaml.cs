@@ -27,8 +27,9 @@ public partial class ChatView : UserControl
     public ChatView()
     {
         InitializeComponent();
-        Composer.AttachmentPasteScope = () => CanAttachFiles()
-            ? App.CurrentManager.Account?.publicKeyHex + ":" + _focusedChatId : null;
+        Composer.AttachmentPasteScope = () => CanAttachFiles() &&
+            App.CurrentManager.Account is {} account && _focusedChatId is {} chatId
+                ? new AttachmentPasteDestination(account.publicKeyHex, chatId) : null;
         _ = new AttachmentDropTarget(this, CanAttachFiles,
             files => Composer.AddAttachments(files),
             active => FileDropHighlight.Visibility = active ? Visibility.Visible : Visibility.Collapsed);
