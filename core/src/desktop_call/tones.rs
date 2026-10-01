@@ -25,7 +25,7 @@ impl DesktopCallTone {
         // Stop is terminal: a stale UI snapshot cannot revive a retired worker.
         let _ = self
             .state
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |old| {
                 (old != 0).then_some(if ringing { 2 } else { 1 })
             });
     }

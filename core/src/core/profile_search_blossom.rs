@@ -62,7 +62,7 @@ impl ReadBudget {
 
     fn consume(counter: &AtomicUsize, amount: usize) -> bool {
         let previous = counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
                 Some(left.saturating_sub(amount))
             })
             .unwrap_or_else(|left| left);
