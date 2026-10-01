@@ -27,6 +27,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Schedule
@@ -163,11 +165,12 @@ fun ChatScreen(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val chat = currentChat?.takeIf { it.chatId == chatId }
-    var draft by remember(chatId) { mutableStateOf("") }
+    val draft = remember(chatId) { TextFieldState() }
     var lastPersistedDraft by remember(chatId) { mutableStateOf<String?>(null) }
     var selectedAttachments by remember(chatId) { mutableStateOf<List<PickedAttachment>>(emptyList()) }
     var sendFilesDirectly by remember(chatId) { mutableStateOf(false) }
     var showAttachmentSources by remember(chatId) { mutableStateOf(false) }
+    val attachmentPaste = rememberChatAttachmentPaste(chatId)
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     val haptics = rememberIrisHapticFeedback()
@@ -180,7 +183,7 @@ fun ChatScreen(
     var imageViewerItem by remember(chatId) { mutableStateOf<ImageViewerItem?>(null) }
     var lastTypingSentMs by remember(chatId) { mutableStateOf(0L) }
     var hasSentTyping by remember(chatId) { mutableStateOf(false) }
-    val latestDraft by rememberUpdatedState(draft)
+    val latestDraft by rememberUpdatedState(draft.text.toString())
     val latestLastPersistedDraft by rememberUpdatedState(lastPersistedDraft)
     val latestHasSentTyping by rememberUpdatedState(hasSentTyping)
     var composerBounds by remember { mutableStateOf<Rect?>(null) }
@@ -244,11 +247,11 @@ fun ChatScreen(
         val previousPersisted = lastPersistedDraft
         when {
             previousPersisted == null -> {
-                draft = persisted
+                draft.setTextAndPlaceCursorAtEnd(persisted)
                 lastPersistedDraft = persisted
             }
-            persisted != previousPersisted && draft == previousPersisted -> {
-                draft = persisted
+            persisted != previousPersisted && draft.text.toString() == previousPersisted -> {
+                draft.setTextAndPlaceCursorAtEnd(persisted)
                 lastPersistedDraft = persisted
             }
             else -> {
@@ -260,8 +263,8 @@ fun ChatScreen(
     // Debounced persist: 500ms after the user stops typing, push the
     // current text into the thread's `draft` column. The Rust side
     // dedups against the previous value so no-op writes are cheap.
-    LaunchedEffect(chatId, draft) {
-        val currentDraft = draft
+    LaunchedEffect(chatId, draft.text.toString()) {
+        val currentDraft = draft.text.toString()
         if (lastPersistedDraft == currentDraft) {
             return@LaunchedEffect
         }
@@ -700,6 +703,11 @@ fun ChatScreen(
                         }) {
                             ComposerBar(
                                 draft = draft,
+                                inputContentModifier = attachmentPaste.receiverModifier(
+                                    enabled = !capabilityBlocked && !busy.sendingMessage && !busy.uploadingAttachment,
+                                    sendDirectly = sendFilesDirectly,
+                                    onAttachments = { selectedAttachments = selectedAttachments + it },
+                                ),
                                 sendAllowed = !capabilityBlocked,
                                 selectedAttachments = selectedAttachments,
                                 sendFilesDirectly = sendFilesDirectly,
@@ -719,7 +727,6 @@ fun ChatScreen(
                                     composerBounds = coordinates.boundsInParent()
                                 },
                                 onDraftChange = { value ->
-                                    draft = value
                                     if (value.isBlank()) {
                                         if (hasSentTyping) {
                                             hasSentTyping = false
@@ -740,14 +747,16 @@ fun ChatScreen(
                                     else { sendFilesDirectly = false; attachmentPicker.launch(arrayOf("*/*")) }
                                 },
                                 onRemoveAttachment = { attachment ->
+                                    attachmentPaste.remove(attachment)
                                     selectedAttachments = selectedAttachments - attachment
                                     if (selectedAttachments.isEmpty()) sendFilesDirectly = false
                                 },
                                 onSend = {
                                     if (appManager.state.value.currentChat?.isRemovedFromGroup == true) return@ComposerBar
+                                    attachmentPaste.sent(selectedAttachments)
                                     shouldFollowLatest = true
                                     forceScrollToLatest = true
-                                    val outgoingDraft = replyEncodedMessage(replyTarget, draft.trim())
+                                    val outgoingDraft = replyEncodedMessage(replyTarget, draft.text.toString().trim())
                                     replyTarget = null
                                     if (selectedAttachments.isEmpty()) {
                                         appManager.sendText(chatId, outgoingDraft)
@@ -756,7 +765,7 @@ fun ChatScreen(
                                         sendFilesDirectly = false
                                         selectedAttachments = emptyList()
                                     }
-                                    draft = ""
+                                    draft.setTextAndPlaceCursorAtEnd("")
                                     lastPersistedDraft = ""
                                     appManager.dispatch(AppAction.SetChatDraft(chatId, ""))
                                     if (hasSentTyping) {

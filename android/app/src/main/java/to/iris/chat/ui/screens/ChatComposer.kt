@@ -17,8 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material3.CircularProgressIndicator
@@ -30,28 +29,29 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import to.iris.chat.rust.ChatMessageSnapshot
 import to.iris.chat.rust.MessageAttachmentSnapshot
 import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
+import kotlinx.coroutines.flow.drop
 
 @Composable
 internal fun ReplyComposerStrip(
@@ -195,7 +195,7 @@ private fun replyAttachmentLabel(attachment: MessageAttachmentSnapshot): String 
 
 @Composable
 internal fun ComposerBar(
-    draft: String,
+    draft: TextFieldState,
     selectedAttachments: List<PickedAttachment>,
     isSending: Boolean,
     isUploading: Boolean,
@@ -208,10 +208,15 @@ internal fun ComposerBar(
     onSend: () -> Unit,
     sendAllowed: Boolean = true,
     sendFilesDirectly: Boolean = false,
+    inputContentModifier: Modifier = Modifier,
 ) {
     val haptics = rememberIrisHapticFeedback()
+    val currentOnDraftChange by rememberUpdatedState(onDraftChange)
+    LaunchedEffect(draft) {
+        snapshotFlow { draft.text.toString() }.drop(1).collect { currentOnDraftChange(it) }
+    }
     val isBusy = isSending || isUploading
-    val hasText = draft.isNotBlank()
+    val hasText = draft.text.isNotBlank()
     val hasAttachment = selectedAttachments.isNotEmpty()
     val hasSendContent = hasText || hasAttachment
     val canSend = hasSendContent && !isBusy && sendAllowed
@@ -311,7 +316,7 @@ internal fun ComposerBar(
                 EmojiPickerRow(
                     enabled = !isBusy,
                     onEmoji = { emoji ->
-                        onDraftChange(draft + emoji)
+                        draft.edit { append(emoji) }
                         showingEmojiPicker = false
                     },
                 )
@@ -369,11 +374,11 @@ internal fun ComposerBar(
                             }
                         }
 
-                        BasicTextField(
-                            value = draft,
-                            onValueChange = onDraftChange,
+                        ChatMessageInput(
+                            state = draft,
                             modifier =
                                 (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                                    .then(inputContentModifier)
                                     .weight(1f)
                                     .heightIn(min = 44.dp, max = 132.dp)
                                     .padding(
@@ -381,38 +386,6 @@ internal fun ComposerBar(
                                         end = if (showInlineAttach) 0.dp else 12.dp,
                                     )
                                     .testTag("chatMessageInput"),
-                            textStyle =
-                                MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = to.iris.chat.ui.theme.LocalMessageFontSize.current.body.sp,
-                                    lineHeight = (to.iris.chat.ui.theme.LocalMessageFontSize.current.body * 1.4f).sp,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                ),
-                            cursorBrush = SolidColor(IrisTheme.palette.accent),
-                            keyboardOptions =
-                                KeyboardOptions(
-                                    capitalization = KeyboardCapitalization.Sentences,
-                                ),
-                            minLines = 1,
-                            maxLines = 5,
-                            decorationBox = { innerTextField ->
-                                Box(
-                                    modifier =
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .heightIn(min = 44.dp)
-                                            .padding(vertical = 8.dp),
-                                    contentAlignment = Alignment.CenterStart,
-                                ) {
-                                    if (draft.isEmpty()) {
-                                        Text(
-                                            text = "Message",
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            color = IrisTheme.palette.muted,
-                                        )
-                                    }
-                                    innerTextField()
-                                }
-                            },
                         )
 
                         if (showInlineAttach) {

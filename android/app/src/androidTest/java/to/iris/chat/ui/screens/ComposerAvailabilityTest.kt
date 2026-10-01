@@ -1,6 +1,7 @@
 package to.iris.chat.ui.screens
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.*
@@ -21,7 +22,7 @@ class ComposerAvailabilityTest {
 
     @Test fun checkingKeepsDraftFocusAndPositionThenEnablesSend() {
         val state = mutableStateOf(DirectChatCapabilityState.CHECKING)
-        val draft = mutableStateOf("")
+        val draft = TextFieldState()
         var sent = ""
         compose.mainClock.autoAdvance = false
         compose.setContent {
@@ -29,9 +30,9 @@ class ComposerAvailabilityTest {
                 Column {
                     androidx.compose.foundation.layout.Spacer(androidx.compose.ui.Modifier.weight(1f))
                     DirectChatComposer("test-chat", state.value, {}) {
-                        ComposerBar(draft.value, emptyList(), false, false, null,
-                            onDraftChange = { draft.value = it }, onAttach = {}, onRemoveAttachment = {},
-                            onSend = { sent = draft.value }, sendAllowed = state.value == DirectChatCapabilityState.AVAILABLE)
+                        ComposerBar(draft, emptyList(), false, false, null,
+                            onDraftChange = {}, onAttach = {}, onRemoveAttachment = {},
+                            onSend = { sent = draft.text.toString() }, sendAllowed = state.value == DirectChatCapabilityState.AVAILABLE)
                     }
                 }
             }
@@ -67,6 +68,7 @@ class ComposerAvailabilityTest {
     @Test fun quickCheckNeverShowsStatusAndSizeChoiceUpdatesComposer() {
         val state = mutableStateOf(DirectChatCapabilityState.CHECKING)
         val size = mutableStateOf(MessageFontSize.Normal)
+        val draft = TextFieldState("A message that wraps naturally at larger sizes.")
         compose.mainClock.autoAdvance = false
         compose.setContent {
             IrisChatTheme(darkTheme = false) {
@@ -75,7 +77,7 @@ class ComposerAvailabilityTest {
                         MessageFontSizeSetting(size.value) { size.value = it }
                         androidx.compose.foundation.layout.Spacer(androidx.compose.ui.Modifier.weight(1f))
                         DirectChatComposer("test-chat", state.value, {}) {
-                            ComposerBar("A message that wraps naturally at larger sizes.", emptyList(), false, false, null,
+                            ComposerBar(draft, emptyList(), false, false, null,
                                 onDraftChange = {}, onAttach = {}, onRemoveAttachment = {}, onSend = {})
                         }
                     }
