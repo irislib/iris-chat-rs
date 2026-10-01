@@ -242,7 +242,9 @@ final class ChatTimelineScrollObserverView: UIView {
         observedScrollView = nil
     }
 
-    @objc private func keyboardWillResize() { timelineCoordinator?.captureKeyboardViewportAnchor() }
+    @objc private func keyboardWillResize(_ notification: Notification) {
+        timelineCoordinator?.captureKeyboardViewportAnchor(notification: notification)
+    }
 
     @objc private func keyboardDidResize() { timelineCoordinator?.keyboardViewportAnchor = nil }
 

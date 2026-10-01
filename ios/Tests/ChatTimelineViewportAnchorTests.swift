@@ -4,6 +4,26 @@ import XCTest
 @testable import IrisChat
 
 final class ChatTimelineViewportAnchorTests: XCTestCase {
+    func testKeyboardAnimationKeepsSystemCurveAndUsesOnlyRemainingTime() throws {
+        let notification = Notification(name: UIResponder.keyboardWillChangeFrameNotification, userInfo: [
+            UIResponder.keyboardAnimationDurationUserInfoKey: NSNumber(value: 0.35),
+            UIResponder.keyboardAnimationCurveUserInfoKey: NSNumber(value: 7)
+        ])
+        let animation = try XCTUnwrap(ChatKeyboardAnimation(notification: notification, now: 10))
+        XCTAssertEqual(animation.remainingDuration(at: 10.1), 0.25, accuracy: 0.0001)
+        XCTAssertEqual(animation.remainingDuration(at: 11), 0)
+        XCTAssertTrue(animation.options.contains(.beginFromCurrentState))
+        XCTAssertTrue(animation.options.contains(.allowUserInteraction))
+        XCTAssertEqual(animation.options.rawValue & (7 << 16), 7 << 16)
+
+        let interactive = Notification(name: notification.name, userInfo: [
+            UIResponder.keyboardAnimationDurationUserInfoKey: NSNumber(value: 0),
+            UIResponder.keyboardAnimationCurveUserInfoKey: NSNumber(value: 7)
+        ])
+        XCTAssertEqual(try XCTUnwrap(ChatKeyboardAnimation(notification: interactive, now: 10)).remainingDuration(at: 10), 0)
+        XCTAssertNil(ChatKeyboardAnimation(notification: nil, now: 10))
+    }
+
     func testKeyboardResizePreservesDistanceFromBottomAndReversesOnHide() {
         for offset: CGFloat in [500, 1_400] {
             let old = CGRect(x: 0, y: offset, width: 390, height: 600)

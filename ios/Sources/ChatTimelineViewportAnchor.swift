@@ -4,7 +4,28 @@ import UIKit
 
 struct ChatKeyboardViewportAnchor {
     let bounds: CGRect
+    let frame: CGRect
     let viewportHeight: CGFloat
+    let animation: ChatKeyboardAnimation?
+}
+
+struct ChatKeyboardAnimation {
+    let startedAt: CFTimeInterval
+    let duration: TimeInterval
+    let options: UIView.AnimationOptions
+
+    init?(notification: Notification?, now: CFTimeInterval) {
+        guard let info = notification?.userInfo,
+              let duration = info[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber,
+              let curve = info[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber else { return nil }
+        self.startedAt = now
+        self.duration = max(0, duration.doubleValue)
+        self.options = [UIView.AnimationOptions(rawValue: curve.uintValue << 16), .beginFromCurrentState, .allowUserInteraction]
+    }
+
+    func remainingDuration(at now: CFTimeInterval) -> TimeInterval {
+        max(0, duration - max(0, now - startedAt))
+    }
 }
 
 /// Keep the same conversation position relative to the composer while the
@@ -48,19 +69,46 @@ extension ChatTimelineInteractionCoordinator {
 #endif
     }
 
-    func captureKeyboardViewportAnchor() {
 #if os(iOS)
+    func captureKeyboardViewportAnchor(notification: Notification? = nil, now: CFTimeInterval = CACurrentMediaTime()) {
         guard let scrollView, viewportHeight > 0 else { return }
-        keyboardViewportAnchor = ChatKeyboardViewportAnchor(bounds: scrollView.bounds, viewportHeight: viewportHeight)
-#endif
+        keyboardViewportAnchor = ChatKeyboardViewportAnchor(
+            bounds: scrollView.bounds, frame: scrollView.frame, viewportHeight: viewportHeight,
+            animation: ChatKeyboardAnimation(notification: notification, now: now)
+        )
     }
+#endif
 
     func applyPendingViewportResize() {
 #if os(iOS)
         guard let scrollView, let pendingViewportResize,
               abs(scrollView.bounds.height - pendingViewportResize.height) < 1 else { return }
         self.pendingViewportResize = nil
-        scrollView.contentOffset.y = pendingViewportResize.offset
+        let finalFrame = scrollView.frame
+        let update = {
+            scrollView.frame = finalFrame
+            scrollView.contentOffset.y = pendingViewportResize.offset
+        }
+        if let animation = keyboardViewportAnchor?.animation,
+           animation.remainingDuration(at: CACurrentMediaTime()) > 0 {
+            // SwiftUI can resize the clipping viewport without animating its
+            // native frame. Animate that frame together with the content so
+            // no empty strip opens between the messages and the composer.
+            if let anchor = keyboardViewportAnchor,
+               scrollView.layer.animation(forKey: "bounds") == nil {
+                UIView.performWithoutAnimation {
+                    scrollView.frame = anchor.frame
+                    scrollView.bounds = anchor.bounds
+                }
+            }
+            // Layout may arrive after the keyboard animation has started. End
+            // together instead of restarting its full duration from here.
+            UIView.animate(withDuration: animation.remainingDuration(at: CACurrentMediaTime()),
+                           delay: 0, options: animation.options, animations: update)
+        } else {
+            // Interactive keyboard changes have no animation duration.
+            update()
+        }
 #endif
     }
 }
