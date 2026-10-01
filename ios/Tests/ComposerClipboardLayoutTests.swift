@@ -136,26 +136,39 @@ final class ComposerClipboardLayoutTests: XCTestCase {
         var updates = 0
         var draftUpdateMs: Double = -1
         let started = ProcessInfo.processInfo.systemUptime
+        let runLoop = ComposerRunLoopProbe()
+        defer { runLoop.invalidate() }
         draft.onUserEdit = { value in
             updates += 1
             if value == expected, draftUpdateMs < 0 {
                 draftUpdateMs = (ProcessInfo.processInfo.systemUptime - started) * 1_000
+                runLoop.mark("draft-update")
                 updated.fulfill()
             }
         }
         defer { draft.onUserEdit = { _ in } }
         action()
         let nativeCallMs = (ProcessInfo.processInfo.systemUptime - started) * 1_000
+        runLoop.mark("native-edit-return")
         await fulfillment(of: [updated], timeout: max(0.01, 5 - nativeCallMs / 1_000))
+        runLoop.mark("draft-fulfillment-return")
         var previous: ComposerGeometry?
         var stableSamples = 0
         var layoutMs = 0.0
         var observationDelayMs = 0.0
+        var actualObservationWaitMs = 0.0
+        var longestObservationWaitMs = 0.0
+        var layoutObservations: [[String: Any]] = []
         var settled = false
         repeat {
             let layoutStarted = ProcessInfo.processInfo.systemUptime
             let geometry = try sample()
             layoutMs += (ProcessInfo.processInfo.systemUptime - layoutStarted) * 1_000
+            if previous != geometry, layoutObservations.count < 8 {
+                layoutObservations.append(["elapsedMs": (ProcessInfo.processInfo.systemUptime - started) * 1_000,
+                                           "geometry": geometry.diagnostics])
+                runLoop.mark("hosted-geometry-change")
+            }
             stableSamples = previous == geometry ? stableSamples + 1 : 0
             previous = geometry
             let correctHeight = geometry.height > 0 && geometry.height <= geometry.maximumHeight + 1 &&
@@ -168,14 +181,21 @@ final class ComposerClipboardLayoutTests: XCTestCase {
             if ProcessInfo.processInfo.systemUptime - started >= 5 { break }
             // Sampling gives queued SwiftUI/layout/caret work a run-loop turn.
             // This deliberate delay is reported separately, not as processing.
+            let waitStarted = ProcessInfo.processInfo.systemUptime
             try await Task.sleep(nanoseconds: 10_000_000)
+            let waitedMs = (ProcessInfo.processInfo.systemUptime - waitStarted) * 1_000
+            actualObservationWaitMs += waitedMs
+            longestObservationWaitMs = max(longestObservationWaitMs, waitedMs)
             observationDelayMs += 10
         } while ProcessInfo.processInfo.systemUptime - started < 5
         let elapsedMs = (ProcessInfo.processInfo.systemUptime - started) * 1_000
+        runLoop.mark(settled ? "settled" : "deadline")
         let values: [String: Any] = [
             "utf16Length": expectedSelection.location, "nativeEditCallMs": nativeCallMs,
             "draftUpdateMs": draftUpdateMs, "hostedLayoutAndGeometryMs": layoutMs,
             "settledElapsedMs": elapsedMs, "intentionalObservationDelayMs": observationDelayMs,
+            "actualObservationWaitMs": actualObservationWaitMs, "longestObservationWaitMs": longestObservationWaitMs,
+            "layoutObservations": layoutObservations, "mainRunLoop": runLoop.finish(),
             "editNotifications": updates, "stableGeometrySamples": stableSamples,
             "caretVisible": previous?.caretVisible ?? false, "settled": settled,
             "geometry": previous?.diagnostics ?? [:],
