@@ -29,6 +29,7 @@ fn wake_event(keys: &Keys, encrypted: &Event, bootstrap: Option<&Event>) -> Opti
     if encrypted.kind.as_u16() as u32 != MESSAGE_EVENT_KIND || targets.len() != 1 {
         return None;
     }
+    let target = targets.first().copied()?;
     let sign = |events, bootstrap_event_id| {
         let content = serde_json::to_string(&CallWake {
             kind: "call-wake".into(),
@@ -38,7 +39,7 @@ fn wake_event(keys: &Keys, encrypted: &Event, bootstrap: Option<&Event>) -> Opti
         })
         .ok()?;
         let event = EventBuilder::new(Kind::from(CALL_WAKE_KIND), content)
-            .tags([Tag::public_key(targets[0])])
+            .tags([Tag::public_key(target)])
             .sign_with_keys(keys)
             .ok()?;
         (event.as_json().len() <= MAX_WAKE_BYTES).then_some(event)
