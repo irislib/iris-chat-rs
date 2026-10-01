@@ -84,6 +84,26 @@ jobs:
       - name: Rust tests
         run: ./scripts/test_rust.sh
 
+      - name: Verify protocol package
+        id: protocol-package
+        run: |
+          cargo package --manifest-path chat-protocol/Cargo.toml --locked
+          protocol_version="$(python3 -c 'import tomllib; print(tomllib.load(open("chat-protocol/Cargo.toml", "rb"))["package"]["version"])')"
+          protocol_archive="iris-chat-protocol-${protocol_version}.crate"
+          cd "$CARGO_TARGET_DIR/package"
+          sha256sum "$protocol_archive" > protocol-package.sha256
+          echo "archive=$CARGO_TARGET_DIR/package/$protocol_archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload verified protocol package
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-protocol-package
+          path: |
+            ${{ steps.protocol-package.outputs.archive }}
+            ${{ github.workspace }}/cargo-target/package/protocol-package.sha256
+          if-no-files-found: error
+          retention-days: 14
+
   android:
     if: ${{ inputs.scope == '' || inputs.scope == 'all' }}
     name: Android build and unit tests
