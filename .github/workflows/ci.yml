@@ -16,7 +16,7 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, core, windows]
+        options: [all, core, windows, apple]
 
 permissions:
   contents: read
@@ -31,7 +31,7 @@ env:
 
 jobs:
   rust:
-    if: ${{ inputs.scope != 'windows' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'core' }}
     name: Rust and repo checks
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -236,7 +236,7 @@ jobs:
           retention-days: 14
 
   macos:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' }}
     name: macOS build and tests
     runs-on: macos-15
     timeout-minutes: 75
@@ -283,7 +283,7 @@ jobs:
           retention-days: 14
 
   ios:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' }}
     name: iOS simulator build and composer tests
     runs-on: macos-15
     timeout-minutes: 75
@@ -305,8 +305,9 @@ jobs:
           rustup default stable
           rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 
-      - name: Cache Cargo
-        uses: actions/cache@v4
+      - name: Restore Cargo cache
+        id: ios_cargo_cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -318,6 +319,16 @@ jobs:
 
       - name: iOS simulator build
         run: ./scripts/ios-build ios-build-sim
+
+      - name: Save successful iOS compiler cache
+        if: steps.ios_cargo_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: ${{ steps.ios_cargo_cache.outputs.cache-primary-key }}
 
       - name: iOS native composer and clipboard tests
         run: |
@@ -337,7 +348,7 @@ jobs:
           retention-days: 14
 
   windows-ui:
-    if: ${{ inputs.scope != 'core' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'windows' }}
     name: Windows native clipboard and composer tests
     runs-on: windows-2025
     timeout-minutes: 90
