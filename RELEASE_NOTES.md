@@ -2,6 +2,30 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.2
+
+### GitHub
+
+- Paste images and multiple files into native chat drafts, preserving captions and direct-send mode without sending automatically.
+- Reuse capped text-layout measurements on Apple platforms, keep the caret visible after editing long drafts, and use Android's native text-field state to avoid repeated draft replacement during input.
+- Move private contacts and device labels to ratcheted device messages, direct transfer, and pairing snapshots. Retire the retained static-encryption sync formats while preserving existing accounts, sessions, and linked devices.
+- Authenticate background call notifications through ratcheted messages and signed session setup, and retain notifications for retry when a cold lookup fails.
+- Update all linked apps for private contact and device-name sync. Both calling endpoints must update for background call notifications; calls to an older app may not ring while it is closed.
+
+### Apple
+
+- Paste photos and files into a chat before sending.
+- Improve typing after long text pastes and keep the cursor visible.
+- Improve privacy when syncing favorites, nicknames, notes, and device names.
+- Update your other devices and calling contacts too. Calls to an older app may not ring while it is closed. Existing chats and linked devices stay connected.
+
+### Zapstore
+
+- Paste photos and files into a chat before sending.
+- Improve typing after long text pastes.
+- Improve privacy when syncing favorites, nicknames, notes, and device names.
+- Update your other devices and calling contacts too. Calls to an older app may not ring while it is closed. Existing chats and linked devices stay connected.
+
 ## v2026.10.1.8
 
 ### GitHub
