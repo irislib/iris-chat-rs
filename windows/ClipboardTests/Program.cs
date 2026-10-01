@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -120,10 +122,37 @@ internal static class Program
             var changes = 0;
             TextChangedEventHandler changed = (_, _) => changes++;
             input.TextChanged += changed;
-            Clipboard.SetText(large); Paste(input);
-            input.TextChanged -= changed;
+            Clipboard.SetText(large);
+            var elapsed = Stopwatch.StartNew();
+            Paste(input);
+            window.UpdateLayout(); Pump();
+            elapsed.Stop();
+            var pasteMs = elapsed.Elapsed.TotalMilliseconds;
+            var pasteChanges = changes;
             Check(input.Text == large && changes == 1, "large plain text is one native editor change");
             Check(composer.StagedFilePaths.Count == 0 && submitted == 1, "large text does not stage or send files");
+            input.CaretIndex = input.Text.Length;
+            elapsed.Restart();
+            input.SelectedText = "!";
+            window.UpdateLayout(); Pump();
+            elapsed.Stop();
+            var editMs = elapsed.Elapsed.TotalMilliseconds;
+            var editChanges = changes - pasteChanges;
+            input.TextChanged -= changed;
+            const double freezeBudgetMs = 5_000;
+            var timings = JsonSerializer.Serialize(new
+            {
+                platform = "windows", utf16_code_units = large.Length,
+                utf8_bytes = Encoding.UTF8.GetByteCount(large),
+                paste_ms = pasteMs, subsequent_edit_ms = editMs,
+                paste_change_events = pasteChanges, subsequent_edit_change_events = editChanges,
+                freeze_budget_ms = freezeBudgetMs,
+                boundary = "Clipboard already populated; native Paste command through forced window layout and background-priority dispatcher drain. Subsequent edit uses native SelectedText insertion through the same layout/drain.",
+            }, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(Path.Combine(output, "windows-text-paste-timings.json"), timings);
+            Console.WriteLine($"TIMING: Windows large text paste {pasteMs:F1} ms; subsequent edit {editMs:F1} ms; events {pasteChanges}/{editChanges}");
+            Check(input.Text == large + "!" && editChanges == 1, "subsequent native edit completes once after large paste");
+            Check(pasteMs < freezeBudgetMs && editMs < freezeBudgetMs, "large paste and subsequent edit stay within the 5 s freeze budget");
             composer.Clear();
             Clipboard.SetImage(bitmap); Paste(input);
             cancelled = composer.StagedFilePaths.Single();

@@ -7,6 +7,10 @@ fn pump_until(mut ready: impl FnMut() -> bool) {
     loop {
         while context.pending() {
             context.iteration(false);
+            assert!(
+                Instant::now() < deadline,
+                "clipboard UI did not settle within 5 s"
+            );
         }
         if ready() {
             return;
@@ -14,6 +18,16 @@ fn pump_until(mut ready: impl FnMut() -> bool) {
         assert!(Instant::now() < deadline, "clipboard action timed out");
         std::thread::sleep(Duration::from_millis(2));
     }
+}
+
+fn settle_paint(input: &gtk::TextView) {
+    let painted = Rc::new(std::cell::Cell::new(false));
+    let observed = painted.clone();
+    let clock = input.frame_clock().unwrap();
+    let handler = clock.connect_after_paint(move |_| observed.set(true));
+    input.queue_draw();
+    pump_until(|| painted.get());
+    clock.disconnect(handler);
 }
 
 fn widgets(root: &gtk::Widget) -> Vec<gtk::Widget> {
@@ -245,12 +259,45 @@ pub fn verify_ui(manager: Rc<AppManager>) {
     buffer.set_text("");
     let changes = Rc::new(std::cell::Cell::new(0));
     let observed = changes.clone();
-    buffer.connect_changed(move |_| observed.set(observed.get() + 1));
+    let changed = buffer.connect_changed(move |_| observed.set(observed.get() + 1));
     clipboard.set_text(&large);
+    let started = Instant::now();
     input.emit_paste_clipboard();
     pump_until(|| text() == large);
-    assert_eq!(changes.get(), 1, "large plain text is a single buffer edit");
+    settle_paint(&input);
+    let paste_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let paste_changes = changes.get();
+    assert_eq!(paste_changes, 1, "large plain text is a single buffer edit");
     assert_eq!(manager.staged_attachments(&chat.chat_id).len(), 2);
+    buffer.place_cursor(&buffer.end_iter());
+    let started = Instant::now();
+    buffer.insert_at_cursor("!");
+    pump_until(|| text() == format!("{large}!"));
+    settle_paint(&input);
+    let edit_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let edit_changes = changes.get() - paste_changes;
+    buffer.disconnect(changed);
+    let timings = serde_json::json!({
+        "platform": "linux", "utf16_code_units": large.encode_utf16().count(),
+        "utf8_bytes": large.len(), "paste_ms": paste_ms, "subsequent_edit_ms": edit_ms,
+        "paste_change_events": paste_changes, "subsequent_edit_change_events": edit_changes,
+        "freeze_budget_ms": 5000,
+        "boundary": "Clipboard already populated; native paste signal through complete text, pending GLib work, and the next GTK after-paint. Subsequent edit uses native TextBuffer insertion through the same settling boundary.",
+    });
+    if let Some(screenshot) = std::env::var_os("IRIS_CLIPBOARD_UI_SCREENSHOT") {
+        let path =
+            std::path::Path::new(&screenshot).with_file_name("linux-text-paste-timings.json");
+        std::fs::write(path, serde_json::to_vec_pretty(&timings).unwrap()).unwrap();
+    }
+    println!("TIMING: Linux large text paste {paste_ms:.1} ms; subsequent edit {edit_ms:.1} ms; events {paste_changes}/{edit_changes}");
+    assert_eq!(
+        edit_changes, 1,
+        "subsequent native edit completes once after large paste"
+    );
+    assert!(
+        paste_ms < 5000.0 && edit_ms < 5000.0,
+        "large paste and subsequent edit exceed the 5 s freeze budget"
+    );
     for file in manager.take_staged_attachments(&chat.chat_id) {
         assert!(std::path::Path::new(&file.file_path).exists());
     }
