@@ -68,4 +68,22 @@ fn signer_authorization_rejects_device_list_that_cannot_fit_handshake_proof() {
         "the roster itself is valid"
     );
     assert!(prepare_signer_authorization(owner.public_key(), new_device.public_key(), Some(&event), now).is_err(), "reject before prompting for a signature when the authorization cannot travel with the handshake");
+
+    // Exercise the actual lookup-to-prompt boundary, not only the preparer.
+    let relay = crate::local_relay::TestRelay::start();
+    let temp = tempfile::TempDir::new().unwrap();
+    let (mut core, messages, updates) = signer_test_core(temp.path(), vec![relay.url().into()]);
+    publish_signer_test_event(&core, &relay, &event);
+    core.begin_signer_login(&owner.public_key().to_hex());
+    pump_signer_core_until(&mut core, &messages, |core| {
+        !core.state.busy.restoring_session
+    });
+    assert!(core.logged_in.is_none());
+    assert_eq!(
+        core.state.toast.as_deref(),
+        Some("Device list is too large.")
+    );
+    assert!(!updates
+        .try_iter()
+        .any(|update| matches!(update, AppUpdate::SignerLoginSignEvent { .. })));
 }
