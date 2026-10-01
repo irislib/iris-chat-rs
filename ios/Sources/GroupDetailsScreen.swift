@@ -183,6 +183,7 @@ struct GroupDetailsScreen: View {
                         VStack(alignment: .leading, spacing: 10) {
                             let memberHeader = HStack(alignment: .top, spacing: 12) {
                                 IrisAvatar(
+                                    ownerPubkeyHex: member.ownerPubkeyHex,
                                     label: primary,
                                     size: 38,
                                     emphasize: member.isLocalOwner,
@@ -304,7 +305,7 @@ struct GroupDetailsScreen: View {
                                     toggleSelectedAddMember(chat.chatId)
                                 } label: {
                                     HStack(spacing: 12) {
-                                        IrisAvatar(socialConnection: chat.socialConnection, label: chat.displayName, size: 38, emphasize: selected)
+                                        IrisAvatar(socialConnection: chat.socialConnection, ownerPubkeyHex: chat.chatId, label: chat.displayName, size: 38, emphasize: selected, manager: manager)
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(chat.displayName)
                                                 .font(.system(.headline, design: .rounded, weight: .semibold))

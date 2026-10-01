@@ -13,6 +13,8 @@ import androidx.compose.ui.unit.dp
 import to.iris.chat.core.AppManager
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.PreferencesSnapshot
+import to.iris.chat.rust.ChatKind
+import to.iris.chat.rust.MessageSearchHit
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.FollowedUserSearchResult
 import to.iris.chat.ui.components.ImageLoadRequest
@@ -42,7 +44,7 @@ internal fun SearchChatRow(
 ) {
     val avatarData by rememberNhashImageData(appManager, chat.pictureUrl)
     IrisChatListRow(
-        socialConnection = chat.socialConnection, title = chat.displayName,
+        socialConnection = chat.socialConnection, ownerPubkeyHex = chat.chatId.takeIf { chat.kind == to.iris.chat.rust.ChatKind.DIRECT }, title = chat.displayName,
         isMuted = chat.isMuted,
         isPinned = chat.isPinned,
         preview = chat.chatListPreview(),
@@ -68,7 +70,7 @@ internal fun FollowedPersonSearchRow(
         ?: person.about
         ?: ""
     IrisChatListRow(
-        socialConnection = person.socialConnection, title = person.displayLabel,
+        socialConnection = person.socialConnection, ownerPubkeyHex = person.ownerPubkeyHex, title = person.displayLabel,
         preview = preview,
         timeLabel = null,
         imageRequest = proxiedAvatarUrl(person.pictureUrl, preferences),
@@ -93,3 +95,39 @@ private fun proxiedAvatarUrl(pictureUrl: String?, preferences: PreferencesSnapsh
                 square = true,
             )
         }
+
+@Composable
+internal fun MessageSearchHitRow(
+    appManager: AppManager,
+    preferences: PreferencesSnapshot,
+    hit: MessageSearchHit,
+) {
+    val avatarData by rememberNhashImageData(appManager, hit.chatPictureUrl)
+    val avatarUrl =
+        hit.chatPictureUrl
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?.let { url ->
+                imageLoadRequest(
+                    originalSrc = url,
+                    preferences = preferences,
+                    width = 84u,
+                    height = 84u,
+                    square = true,
+                )
+            }
+    IrisChatListRow(
+        ownerPubkeyHex = hit.chatId.takeIf { hit.chatKind == ChatKind.DIRECT },
+        title = hit.chatDisplayName,
+        isMuted = false,
+        isPinned = false,
+        preview = hit.body,
+        timeLabel = formatRelativeTime(hit.createdAtSecs.toLong(), System.currentTimeMillis()),
+        imageRequest = avatarUrl,
+        imageData = avatarData,
+        unreadCount = 0L,
+        lastMessageMine = false,
+        lastDelivery = null,
+        onClick = { appManager.openChatAtMessage(hit.chatId, hit.messageId) },
+        modifier = Modifier.testTag("messageHit-${hit.messageId.take(12)}"),
+    )
+}

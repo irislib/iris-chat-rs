@@ -121,6 +121,7 @@ public partial class ChatView : UserControl
         }
         NameChangeNotice.ChatId = chat.chatId;
         HeaderAvatar.SocialConnection = chat.socialConnection;
+        HeaderAvatar.OwnerPubkeyHex = chat.kind == ChatKind.Direct ? chat.chatId : null;
         HeaderAvatar.Label = chat.displayName;
         HeaderAvatar.PictureUrl = chat.pictureUrl;
         MuteChatButton.Visibility = Visibility.Visible;
@@ -484,6 +485,8 @@ public partial class ChatView : UserControl
         var avatar = new Avatar
         {
             Label = chat.displayName,
+            OwnerPubkeyHex = chat.chatId,
+            SocialConnection = chat.socialConnection,
             PictureUrl = chat.pictureUrl,
             Size = 64,
             Margin = new Thickness(0, 0, 14, 0),

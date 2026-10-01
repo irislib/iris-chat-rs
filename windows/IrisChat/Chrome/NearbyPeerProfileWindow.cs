@@ -42,6 +42,7 @@ public static class NearbyPeerProfileWindow
         header.Children.Add(new Avatar
         {
             Label = displayName,
+            OwnerPubkeyHex = peer.ownerPubkeyHex,
             PictureUrl = peer.pictureUrl,
             Size = 64,
             Margin = new Thickness(0, 0, 14, 0),

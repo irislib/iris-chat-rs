@@ -324,6 +324,7 @@ fun IrisTopBar(
 @Composable
 fun IrisAvatar(
     socialConnection: to.iris.chat.rust.SocialConnectionSnapshot? = null,
+    ownerPubkeyHex: String? = null,
     label: String,
     modifier: Modifier = Modifier,
     size: Dp = 40.dp,
@@ -413,6 +414,9 @@ fun IrisAvatar(
     }
         socialConnection?.let { connection ->
             IrisSocialBadge(connection, Modifier.align(Alignment.TopEnd))
+        }
+        if (ownerPubkeyHex != null && ownerPubkeyHex in LocalNearbyAvatarOwners.current) {
+            IrisNearbyBadge((size * 0.36f).coerceIn(14.dp, 22.dp), Modifier.align(Alignment.BottomEnd))
         }
     }
 }
@@ -773,6 +777,7 @@ fun IrisTextButton(
 @OptIn(ExperimentalFoundationApi::class)
 fun IrisChatListRow(
     socialConnection: to.iris.chat.rust.SocialConnectionSnapshot? = null,
+    ownerPubkeyHex: String? = null,
     title: String,
     modifier: Modifier = Modifier,
     isMuted: Boolean = false,
@@ -827,7 +832,7 @@ fun IrisChatListRow(
         if (leadingContent != null) {
             leadingContent()
         } else {
-            IrisAvatar(socialConnection = socialConnection, label = title, size = 48.dp, imageUrl = imageUrl, imageRequest = imageRequest, imageData = imageData)
+            IrisAvatar(socialConnection = socialConnection, ownerPubkeyHex = ownerPubkeyHex, label = title, size = 48.dp, imageUrl = imageUrl, imageRequest = imageRequest, imageData = imageData)
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(

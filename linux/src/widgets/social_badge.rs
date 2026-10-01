@@ -1,5 +1,33 @@
+use crate::app_manager::AppManager;
 use adw::prelude::*;
 use iris_chat_core::{SocialBadge, SocialConnectionSnapshot};
+
+pub fn user_avatar(
+    image: &adw::Avatar,
+    connection: Option<&SocialConnectionSnapshot>,
+    owner: &str,
+    manager: &AppManager,
+) -> gtk::Overlay {
+    let overlay = avatar(image, connection);
+    let size = (image.size() * 2 / 5).clamp(12, 24);
+    let badge = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    badge.add_css_class("nearby-avatar-badge");
+    // GTK adds the CSS border outside the requested content size.
+    badge.set_size_request(size - 4, size - 4);
+    badge.set_halign(gtk::Align::End);
+    badge.set_valign(gtk::Align::End);
+    badge.set_tooltip_text(Some("Nearby"));
+    badge.update_property(&[gtk::accessible::Property::Label("Nearby")]);
+    let icon = gtk::Image::from_icon_name("network-wireless-symbolic");
+    icon.set_pixel_size(size - 4);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    icon.set_hexpand(true);
+    badge.append(&icon);
+    manager.track_nearby_avatar_badge(owner, badge.upcast_ref());
+    overlay.add_overlay(&badge);
+    overlay
+}
 
 pub fn avatar(avatar: &adw::Avatar, connection: Option<&SocialConnectionSnapshot>) -> gtk::Overlay {
     let overlay = gtk::Overlay::new();
@@ -60,4 +88,5 @@ pub const CSS: &str = r#"
 .social-badge.trusted { background: #d4a017; }
 .social-badge.warning { background: @iris_accent_alt; }
 .social-badge.muted { background: #c53030; }
+.nearby-avatar-badge { border-radius: 50%; border: 2px solid @window_bg_color; color: white; background: #2267f5; }
 "#;

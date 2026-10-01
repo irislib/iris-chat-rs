@@ -430,7 +430,7 @@ fun ChatScreen(
                     if (chat != null) {
                         {
                             IrisAvatar(
-                                socialConnection = chat.socialConnection, label = chat.displayName,
+                                socialConnection = chat.socialConnection, ownerPubkeyHex = chat.chatId.takeIf { chat.kind == ChatKind.DIRECT }, label = chat.displayName,
                                 size = 36.dp,
                                 emphasize = false,
                                 imageRequest =
@@ -1077,6 +1077,7 @@ internal fun InChatSearchSheet(
                         val nowMs = System.currentTimeMillis()
                         items(current.messages, key = { it.messageId }) { hit ->
                             IrisChatListRow(
+                                ownerPubkeyHex = hit.chatId.takeIf { hit.chatKind == ChatKind.DIRECT },
                                 title = hit.chatDisplayName,
                                 isMuted = false,
                                 isPinned = false,

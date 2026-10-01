@@ -392,7 +392,16 @@ fn message_hit_row(
     if let Some(url) = hit.chat_picture_url.as_ref() {
         image_cache::fetch_proxied_into_avatar(&avatar, url, prefs, 80);
     }
-    row.add_prefix(&avatar);
+    row.add_prefix(&crate::widgets::social_badge::user_avatar(
+        &avatar,
+        None,
+        if hit.chat_kind == ChatKind::Direct {
+            &hit.chat_id
+        } else {
+            ""
+        },
+        manager,
+    ));
 
     if hit.created_at_secs > 0 {
         let label = gtk::Label::new(Some(&relative_time(hit.created_at_secs, now)));
@@ -435,9 +444,11 @@ fn person_row(
     if let Some(url) = person.picture_url.as_ref() {
         image_cache::fetch_proxied_into_avatar(&avatar, url, prefs, 80);
     }
-    row.add_prefix(&crate::widgets::social_badge::avatar(
+    row.add_prefix(&crate::widgets::social_badge::user_avatar(
         &avatar,
         person.social_connection.as_ref(),
+        &person.owner_pubkey_hex,
+        manager,
     ));
     let manager = manager.clone();
     let owner = person.owner_pubkey_hex.clone();
@@ -567,7 +578,12 @@ fn nearby_avatar_strip(
         column.set_size_request(64, -1);
         column.set_halign(gtk::Align::Center);
         column.set_valign(gtk::Align::Start);
-        column.append(&avatar);
+        column.append(&crate::widgets::social_badge::user_avatar(
+            &avatar,
+            None,
+            peer.owner_pubkey_hex.as_deref().unwrap_or_default(),
+            manager,
+        ));
         let label = gtk::Label::new(Some(&nearby_peer_display_name(&name)));
         label.add_css_class("caption");
         label.add_css_class("dim-label");
@@ -710,9 +726,15 @@ fn row_for(
     if let Some(url) = chat.picture_url.as_ref() {
         image_cache::fetch_proxied_into_avatar(&avatar, url, prefs, 80);
     }
-    row.add_prefix(&crate::widgets::social_badge::avatar(
+    row.add_prefix(&crate::widgets::social_badge::user_avatar(
         &avatar,
         chat.social_connection.as_ref(),
+        if chat.kind == ChatKind::Direct {
+            &chat.chat_id
+        } else {
+            ""
+        },
+        manager,
     ));
 
     let draft = chat.draft.trim();

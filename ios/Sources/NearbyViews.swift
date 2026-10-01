@@ -243,6 +243,7 @@ struct NearbyPeerStripRow: View {
                         } label: {
                             VStack(spacing: 4) {
                                 IrisAvatar(
+                                    ownerPubkeyHex: peer.ownerPubkeyHex,
                                     label: name,
                                     size: avatarSize,
                                     pictureUrl: peer.pictureURL,
@@ -678,6 +679,7 @@ struct NearbyIrisScreen: View {
                         } label: {
                             VStack(spacing: 6) {
                                 IrisAvatar(
+                                    ownerPubkeyHex: peer.ownerPubkeyHex,
                                     label: name,
                                     size: 42,
                                     pictureUrl: peer.pictureURL,

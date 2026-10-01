@@ -41,6 +41,36 @@ public partial class Avatar : UserControl
         DependencyProperty.Register(nameof(SocialConnection), typeof(SocialConnectionSnapshot), typeof(Avatar),
             new PropertyMetadata(null, (d, _) => ((Avatar)d).UpdateSocialBadge()));
 
+    public static readonly DependencyProperty OwnerPubkeyHexProperty =
+        DependencyProperty.Register(nameof(OwnerPubkeyHex), typeof(string), typeof(Avatar),
+            new PropertyMetadata(null, (d, _) => ((Avatar)d).RefreshNearbyState()));
+
+    public static readonly DependencyProperty IsNearbyProperty =
+        DependencyProperty.Register(nameof(IsNearby), typeof(bool), typeof(Avatar),
+            new PropertyMetadata(false, (d, _) => ((Avatar)d).UpdateNearbyBadge()));
+
+    public string? OwnerPubkeyHex
+    {
+        get => (string?)GetValue(OwnerPubkeyHexProperty);
+        set => SetValue(OwnerPubkeyHexProperty, value);
+    }
+
+    public bool IsNearby
+    {
+        get => (bool)GetValue(IsNearbyProperty);
+        set => SetValue(IsNearbyProperty, value);
+    }
+
+    private void RefreshNearbyState()
+    {
+        var manager = _preferencesManager ?? (Application.Current is App app ? app.Manager : null);
+        IsNearby = manager != null && NearbyPeerNames.IsNearby(manager.Preferences.nearbyEnabled,
+            manager.NearbySnapshot, manager.Account?.publicKeyHex, OwnerPubkeyHex);
+    }
+
+    private void UpdateNearbyBadge() =>
+        NearbyMark.Visibility = IsNearby ? Visibility.Visible : Visibility.Collapsed;
+
     public SocialConnectionSnapshot? SocialConnection
     {
         get => (SocialConnectionSnapshot?)GetValue(SocialConnectionProperty);
@@ -104,6 +134,7 @@ public partial class Avatar : UserControl
         if (_preferencesManager != null)
             _preferencesManager.PropertyChanged += OnPreferencesChanged;
         UpdateImage();
+        RefreshNearbyState();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -118,6 +149,8 @@ public partial class Avatar : UserControl
     private void OnPreferencesChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(AppManager.Preferences)) UpdateImage();
+        if (e.PropertyName is nameof(AppManager.Preferences) or nameof(AppManager.NearbySnapshot) or nameof(AppManager.Account))
+            RefreshNearbyState();
     }
 
     private static void OnLabelChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) =>
@@ -136,6 +169,10 @@ public partial class Avatar : UserControl
         BackgroundBorder.CornerRadius = new CornerRadius(Size / 2);
         ImageHost.CornerRadius = new CornerRadius(Size / 2);
         Initials.FontSize = Size * 0.36;
+        var badgeSize = Math.Clamp(Size * 0.4, 14, 24);
+        NearbyMark.Width = NearbyMark.Height = badgeSize;
+        NearbyMark.CornerRadius = new CornerRadius(badgeSize / 2);
+        NearbyMarkIcon.FontSize = badgeSize - 6;
     }
 
     private void UpdateLabel()

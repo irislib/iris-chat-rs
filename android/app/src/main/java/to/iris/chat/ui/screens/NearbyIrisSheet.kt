@@ -457,6 +457,7 @@ private fun NearbyPeerRow(
         onLongClick = onOpenProfile,
         leadingContent = {
             IrisAvatar(
+                ownerPubkeyHex = peer.ownerPubkeyHex,
                 label = displayName,
                 size = 42.dp,
                 imageRequest = avatarUrl,

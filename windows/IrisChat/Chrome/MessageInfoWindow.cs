@@ -367,6 +367,7 @@ public class MessageInfoWindow : Window
         var avatar = new Avatar
         {
             Label = info.Name,
+            OwnerPubkeyHex = info.OwnerPubkeyHex,
             PictureUrl = info.PictureUrl,
             Size = 32,
             Margin = new Thickness(0, 0, 10, 0),

@@ -259,6 +259,7 @@ public partial class DesktopShell : UserControl
         var avatar = new Avatar
         {
             SocialConnection = person.socialConnection,
+            OwnerPubkeyHex = person.ownerPubkeyHex,
             Label = person.displayLabel,
             PictureUrl = person.pictureUrl,
             Size = 44,
@@ -603,6 +604,7 @@ public partial class DesktopShell : UserControl
                 Size = AvatarSize,
                 Label = name,
                 PictureUrl = peer.pictureUrl,
+                OwnerPubkeyHex = peer.ownerPubkeyHex,
                 HorizontalAlignment = HorizontalAlignment.Center,
             });
             stack.Children.Add(new TextBlock

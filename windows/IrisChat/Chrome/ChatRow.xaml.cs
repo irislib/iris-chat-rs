@@ -49,6 +49,7 @@ public partial class ChatRow : UserControl
         if (chat == null) return;
 
         AvatarView.SocialConnection = chat.socialConnection;
+        AvatarView.OwnerPubkeyHex = chat.kind == ChatKind.Direct ? chat.chatId : null;
         AvatarView.Label = string.IsNullOrEmpty(chat.displayName)
             ? "Iris user"
             : chat.displayName;

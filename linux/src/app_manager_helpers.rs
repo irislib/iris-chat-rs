@@ -1,5 +1,24 @@
 use super::*;
 
+pub(super) fn nearby_avatar_visible(
+    state: &AppState,
+    nearby: &DesktopNearbySnapshot,
+    owner: &str,
+) -> bool {
+    !owner.is_empty()
+        && state
+            .account
+            .as_ref()
+            .is_some_and(|account| !account.public_key_hex.eq_ignore_ascii_case(owner))
+        && state.preferences.nearby_enabled
+        && nearby.visible
+        && nearby.peers.iter().any(|peer| {
+            peer.owner_pubkey_hex
+                .as_deref()
+                .is_some_and(|value| value.eq_ignore_ascii_case(owner))
+        })
+}
+
 pub(super) fn active_chat_id(state: &AppState) -> Option<String> {
     let active = state
         .router

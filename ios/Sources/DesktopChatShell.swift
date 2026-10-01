@@ -77,6 +77,8 @@ struct DesktopChatShell: View {
                 leading: chat.map { current in
                     AnyView(
                         IrisAvatar(
+                            socialConnection: current.socialConnection,
+                            ownerPubkeyHex: current.kind == .direct ? current.chatId : nil,
                             label: current.displayName,
                             size: 36,
                             pictureUrl: current.pictureUrl,
@@ -525,6 +527,7 @@ struct DesktopSidebarChatRow: View, Equatable {
             HStack(alignment: .top, spacing: 12) {
                 IrisAvatar(
                     socialConnection: chat.socialConnection,
+                    ownerPubkeyHex: chat.kind == .direct ? chat.chatId : nil,
                     label: chat.displayName,
                     size: 44,
                     emphasize: chat.unreadCount > 0,

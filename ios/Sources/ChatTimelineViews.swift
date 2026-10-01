@@ -442,6 +442,7 @@ struct ChatMessageRow: View, Equatable {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.irisPalette) private var palette
     var socialConnection: SocialConnectionSnapshot? = nil
+    var manager: AppManager? = nil
     let message: ChatMessageSnapshot
     let chatKind: ChatKind
     let showDayChip: Bool
@@ -847,8 +848,10 @@ struct ChatMessageRow: View, Equatable {
         if showsGroupSenderAvatar {
             IrisAvatar(
                 socialConnection: socialConnection,
+                ownerPubkeyHex: message.authorOwnerPubkeyHex,
                 label: message.author,
-                size: SignalConversationLayout.groupMessageAvatarSize
+                size: SignalConversationLayout.groupMessageAvatarSize,
+                manager: manager
             )
             .accessibilityHidden(true)
         } else {

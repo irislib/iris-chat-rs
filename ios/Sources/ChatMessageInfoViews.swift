@@ -546,6 +546,7 @@ struct MessageInfoUserRow<Trailing: View>: View {
         HStack(alignment: .center, spacing: 12) {
             IrisAvatar(
                 socialConnection: info.socialConnection,
+                ownerPubkeyHex: info.ownerPubkeyHex,
                 label: info.name,
                 size: 32,
                 pictureUrl: info.pictureUrl,

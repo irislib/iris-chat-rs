@@ -306,6 +306,7 @@ fun GroupDetailsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             IrisAvatar(
+                                ownerPubkeyHex = member.ownerPubkeyHex,
                                 label = primary,
                                 socialConnection = member.socialConnection,
                                 emphasize = member.isLocalOwner,
@@ -574,7 +575,7 @@ fun GroupDetailsScreen(
                                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    IrisAvatar(label = title, size = 38.dp, imageUrl = chat.pictureUrl, socialConnection = chat.socialConnection)
+                                    IrisAvatar(ownerPubkeyHex = chat.chatId, label = title, size = 38.dp, imageUrl = chat.pictureUrl, socialConnection = chat.socialConnection)
                                     Column(
                                         modifier = Modifier.weight(1f),
                                         verticalArrangement = Arrangement.spacedBy(2.dp),

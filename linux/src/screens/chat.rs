@@ -88,7 +88,12 @@ pub fn present_chat_info(
             image_cache::fetch_proxied_into_avatar(&avatar, url, &info.preferences, 144);
         }
     }
-    header_row.append(&avatar);
+    header_row.append(&crate::widgets::social_badge::user_avatar(
+        &avatar,
+        info.social_connection.as_ref(),
+        &info.chat_id,
+        &manager,
+    ));
 
     let text_column = gtk::Box::new(gtk::Orientation::Vertical, 4);
     text_column.set_valign(gtk::Align::Center);
@@ -754,7 +759,12 @@ fn info_recipient_row(
             image_cache::fetch_proxied_into_avatar(&avatar, url, preferences, 64);
         }
     }
-    row.append(&avatar);
+    row.append(&crate::widgets::social_badge::user_avatar(
+        &avatar,
+        None,
+        info.owner_pubkey_hex.as_deref().unwrap_or_default(),
+        manager,
+    ));
 
     let column = gtk::Box::new(gtk::Orientation::Vertical, 1);
     column.set_hexpand(true);

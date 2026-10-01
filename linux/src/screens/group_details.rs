@@ -289,9 +289,11 @@ fn member_row(
     if let Some(url) = member.picture_url.as_ref() {
         image_cache::fetch_proxied_into_avatar(&avatar, url, &state.preferences, 72);
     }
-    row.add_prefix(&crate::widgets::social_badge::avatar(
+    row.add_prefix(&crate::widgets::social_badge::user_avatar(
         &avatar,
         member.social_connection.as_ref(),
+        &member.owner_pubkey_hex,
+        manager,
     ));
 
     if member.is_local_owner {
@@ -474,9 +476,11 @@ fn add_members_card(
                 row.set_subtitle(sub);
             }
             let avatar = adw::Avatar::new(32, Some(&chat.display_name), true);
-            row.add_prefix(&crate::widgets::social_badge::avatar(
+            row.add_prefix(&crate::widgets::social_badge::user_avatar(
                 &avatar,
                 chat.social_connection.as_ref(),
+                &chat.chat_id,
+                &manager,
             ));
             let check = gtk::CheckButton::new();
             check.set_valign(gtk::Align::Center);

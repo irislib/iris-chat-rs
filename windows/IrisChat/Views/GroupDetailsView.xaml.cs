@@ -136,6 +136,7 @@ public partial class GroupDetailsView : UserControl
         var avatar = new IrisChat.Chrome.Avatar
         {
             Label = chat.displayName ?? string.Empty,
+            OwnerPubkeyHex = chat.chatId,
             SocialConnection = chat.socialConnection,
             PictureUrl = chat.pictureUrl,
             Size = 32,
@@ -252,6 +253,7 @@ public partial class GroupDetailsView : UserControl
         var avatar = new IrisChat.Chrome.Avatar
         {
             Label = m.displayName,
+            OwnerPubkeyHex = m.ownerPubkeyHex,
             SocialConnection = m.socialConnection,
             PictureUrl = m.pictureUrl,
             Size = 36,

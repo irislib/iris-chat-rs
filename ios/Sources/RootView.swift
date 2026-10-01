@@ -340,6 +340,7 @@ struct RootView: View {
         return AnyView(
             IrisAvatar(
                 socialConnection: chat.socialConnection,
+                ownerPubkeyHex: chat.kind == .direct ? chat.chatId : nil,
                 label: chat.displayName,
                 size: 40,
                 pictureUrl: chat.pictureUrl,

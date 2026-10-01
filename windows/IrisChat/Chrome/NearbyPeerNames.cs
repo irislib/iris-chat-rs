@@ -6,6 +6,12 @@ namespace IrisChat.Chrome;
 
 public static class NearbyPeerNames
 {
+    public static bool IsNearby(bool enabled, DesktopNearbySnapshot snapshot, string? localOwner, string? owner) =>
+        enabled && snapshot.visible && !string.IsNullOrWhiteSpace(localOwner) && !string.IsNullOrWhiteSpace(owner)
+        && !string.Equals(localOwner, owner, StringComparison.OrdinalIgnoreCase)
+        && (snapshot.peers ?? Array.Empty<DesktopNearbyPeerSnapshot>()).Any(peer =>
+            string.Equals(peer.ownerPubkeyHex, owner, StringComparison.OrdinalIgnoreCase));
+
     public static DesktopNearbyPeerSnapshot[] Sort(
         AppManager manager,
         DesktopNearbyPeerSnapshot[] peers) =>

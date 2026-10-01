@@ -27,6 +27,7 @@ struct IrisChatRow: View {
     @Environment(\.irisPalette) private var palette
 
     let socialConnection: SocialConnectionSnapshot?
+    let ownerPubkeyHex: String?
     let title: String
     let isMuted: Bool
     let isPinned: Bool
@@ -44,6 +45,7 @@ struct IrisChatRow: View {
 
     init(
         socialConnection: SocialConnectionSnapshot? = nil,
+        ownerPubkeyHex: String? = nil,
         title: String,
         isMuted: Bool = false,
         isPinned: Bool = false,
@@ -60,6 +62,7 @@ struct IrisChatRow: View {
         onTap: @escaping () -> Void
     ) {
         self.socialConnection = socialConnection
+        self.ownerPubkeyHex = ownerPubkeyHex
         self.title = title
         self.isMuted = isMuted
         self.isPinned = isPinned
@@ -84,6 +87,7 @@ struct IrisChatRow: View {
                 } else {
                     IrisAvatar(
                         socialConnection: socialConnection,
+                        ownerPubkeyHex: ownerPubkeyHex,
                         label: title,
                         size: IrisChatListRowMetrics.avatarSize,
                         emphasize: unreadCount > 0,

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use gtk::prelude::{ObjectExt, WidgetExt};
 use iris_chat_core::{
     AppAction, AppReconciler, AppState, AppUpdate, ChatThreadSnapshot, DesktopNearbyObserver,
     DesktopNearbySnapshot, DeviceAuthorizationState, FfiApp, FfiDesktopNearby, OutgoingAttachment,
@@ -68,6 +69,7 @@ pub struct AppManager {
     nearby: Arc<FfiDesktopNearby>,
     nearby_update_rx: async_channel::Receiver<DesktopNearbySnapshot>,
     nearby_snapshot: RefCell<DesktopNearbySnapshot>,
+    nearby_avatar_badges: RefCell<Vec<(String, glib::WeakRef<gtk::Widget>)>>,
     local_state: RefCell<AppState>,
     last_rev_applied: Cell<u64>,
     bootstrap_in_flight: Cell<bool>,
@@ -221,6 +223,7 @@ impl AppManager {
             nearby,
             nearby_update_rx: nearby_rx,
             nearby_snapshot: RefCell::new(nearby_snapshot),
+            nearby_avatar_badges: RefCell::new(Vec::new()),
             last_rev_applied: Cell::new(initial_state.rev),
             local_state: RefCell::new(initial_state),
             bootstrap_in_flight: Cell::new(persisted_restore_in_flight),
@@ -361,6 +364,32 @@ impl AppManager {
 
     pub fn apply_nearby_snapshot(&self, snapshot: DesktopNearbySnapshot) {
         *self.nearby_snapshot.borrow_mut() = snapshot;
+        self.refresh_nearby_avatar_badges(&self.current_state());
+    }
+
+    pub fn track_nearby_avatar_badge(&self, owner: &str, badge: &gtk::Widget) {
+        let state = self.current_state();
+        badge.set_visible(nearby_avatar_visible(
+            &state,
+            &self.nearby_snapshot.borrow(),
+            owner,
+        ));
+        let mut badges = self.nearby_avatar_badges.borrow_mut();
+        badges.retain(|(_, widget)| widget.upgrade().is_some());
+        badges.push((owner.to_owned(), badge.downgrade()));
+    }
+
+    fn refresh_nearby_avatar_badges(&self, state: &AppState) {
+        let nearby = self.nearby_snapshot.borrow();
+        self.nearby_avatar_badges
+            .borrow_mut()
+            .retain(|(owner, badge)| {
+                let Some(badge) = badge.upgrade() else {
+                    return false;
+                };
+                badge.set_visible(nearby_avatar_visible(state, &nearby, owner));
+                true
+            });
     }
 
     pub fn dispatch(&self, action: AppAction) {
@@ -768,6 +797,7 @@ impl AppManager {
     }
 
     pub fn sync_nearby_preference(&self, state: &AppState) {
+        self.refresh_nearby_avatar_badges(state);
         if state.preferences.nearby_enabled && state.preferences.nearby_lan_enabled {
             self.start_nearby_safely(false);
         } else if self.nearby_snapshot.borrow().visible {

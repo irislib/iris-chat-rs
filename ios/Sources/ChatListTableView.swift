@@ -60,6 +60,7 @@ struct ChatListRowContainer: View {
         }()
         return IrisChatRow(
             socialConnection: chat.socialConnection,
+            ownerPubkeyHex: chat.kind == .direct ? chat.chatId : nil,
             title: chat.displayName,
             isMuted: chat.isMuted,
             isPinned: chat.isPinned,
@@ -509,12 +510,17 @@ struct ChatListTableView: UIViewRepresentable {
             let preview = chatListPreview(for: chat)
             let timeLabel = irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow)
             cell.accessibilityIdentifier = "chatRow-\(String(chat.chatId.prefix(12)))"
-            cell.accessibilityLabel = [chat.displayName, preview, timeLabel].compactMap { $0 }.joined(separator: ", ")
+            let nearby = chat.kind == .direct && irisNearbyAvatarOwners(
+                peers: manager.nearbyIris.peers, isActive: manager.nearbyIris.isNearbyActive,
+                enabled: manager.state.preferences.nearbyEnabled, localOwner: manager.state.account?.publicKeyHex
+            ).contains(chat.chatId)
+            cell.accessibilityLabel = [chat.displayName, nearby ? "Nearby" : nil, preview, timeLabel].compactMap { $0 }.joined(separator: ", ")
             cell.accessibilityTraits = [.button]
             cell.selectionStyle = .default
             cell.contentConfiguration = UIHostingConfiguration {
                 ChatListTableRowContent(
                     socialConnection: chat.socialConnection,
+                    ownerPubkeyHex: chat.kind == .direct ? chat.chatId : nil,
                     title: chat.displayName,
                     isMuted: chat.isMuted,
                     isPinned: chat.isPinned,
@@ -659,6 +665,7 @@ struct ChatListTableRowContent: View {
     @Environment(\.irisPalette) private var palette
 
     let socialConnection: SocialConnectionSnapshot?
+    let ownerPubkeyHex: String?
     let title: String
     let isMuted: Bool
     let isPinned: Bool
@@ -675,6 +682,7 @@ struct ChatListTableRowContent: View {
 
     init(
         socialConnection: SocialConnectionSnapshot? = nil,
+        ownerPubkeyHex: String? = nil,
         title: String,
         isMuted: Bool = false,
         isPinned: Bool = false,
@@ -690,6 +698,7 @@ struct ChatListTableRowContent: View {
         previewLeading: AnyView? = nil
     ) {
         self.socialConnection = socialConnection
+        self.ownerPubkeyHex = ownerPubkeyHex
         self.title = title
         self.isMuted = isMuted
         self.isPinned = isPinned
@@ -711,8 +720,9 @@ struct ChatListTableRowContent: View {
                 leading
             } else {
                 IrisAvatar(
-                        socialConnection: socialConnection,
-                        label: title,
+                    socialConnection: socialConnection,
+                    ownerPubkeyHex: ownerPubkeyHex,
+                    label: title,
                     size: IrisChatListRowMetrics.avatarSize,
                     emphasize: unreadCount > 0,
                     pictureUrl: pictureUrl,

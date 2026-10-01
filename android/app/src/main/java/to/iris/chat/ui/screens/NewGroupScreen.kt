@@ -223,6 +223,7 @@ fun NewGroupScreen(
                                     localOwnerNpub = appState.account?.npub,
                                 )
                                 ExistingMemberRow(
+                                    ownerPubkeyHex = chat.chatId,
                                     title = presentation.primary,
                                     subtitle = presentation.secondary,
                                     socialConnection = chat.socialConnection,
@@ -587,6 +588,7 @@ private fun MemberChip(
 
 @Composable
 private fun ExistingMemberRow(
+    ownerPubkeyHex: String,
     socialConnection: SocialConnectionSnapshot?,
     title: String,
     subtitle: String?,
@@ -610,7 +612,7 @@ private fun ExistingMemberRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IrisAvatar(label = title, emphasize = selected, size = 38.dp, socialConnection = socialConnection)
+        IrisAvatar(ownerPubkeyHex = ownerPubkeyHex, label = title, emphasize = selected, size = 38.dp, socialConnection = socialConnection)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = title,

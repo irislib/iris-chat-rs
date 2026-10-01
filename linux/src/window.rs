@@ -521,7 +521,7 @@ fn apply_state(slot: &Content, header: &HeaderWidgets, manager: &Rc<AppManager>,
     }
     if matches!(screen, Screen::Chat { .. }) {
         if let Some(chat) = state.current_chat.as_ref() {
-            let avatar = build_chat_header_avatar(chat, state);
+            let avatar = build_chat_header_avatar(chat, state, manager);
             header.title_slot.prepend(&avatar);
             attach_chat_title_click(&header.title_slot, manager, chat);
         }
@@ -570,14 +570,28 @@ fn build_own_avatar(account: &AccountSnapshot, state: &AppState) -> gtk::Widget 
     avatar.upcast()
 }
 
-fn build_chat_header_avatar(chat: &CurrentChatSnapshot, state: &AppState) -> gtk::Widget {
-    let avatar = adw::Avatar::new(28, Some(&chat.display_name), true);
+fn build_chat_header_avatar(
+    chat: &CurrentChatSnapshot,
+    state: &AppState,
+    manager: &AppManager,
+) -> gtk::Widget {
+    let avatar = adw::Avatar::new(32, Some(&chat.display_name), true);
     if let Some(url) = chat.picture_url.as_deref() {
         if url.starts_with("http://") || url.starts_with("https://") {
-            image_cache::fetch_proxied_into_avatar(&avatar, url, &state.preferences, 56);
+            image_cache::fetch_proxied_into_avatar(&avatar, url, &state.preferences, 64);
         }
     }
-    avatar.upcast()
+    crate::widgets::social_badge::user_avatar(
+        &avatar,
+        chat.social_connection.as_ref(),
+        if chat.kind == iris_chat_core::ChatKind::Direct {
+            &chat.chat_id
+        } else {
+            ""
+        },
+        manager,
+    )
+    .upcast()
 }
 
 fn attach_chat_title_click(slot: &gtk::Box, manager: &Rc<AppManager>, chat: &CurrentChatSnapshot) {
@@ -697,3 +711,7 @@ fn current_screen(state: &AppState) -> Screen {
 #[cfg(all(test, feature = "ui-tests"))]
 #[path = "window/composer_tests.rs"]
 pub mod composer_tests;
+
+#[cfg(all(test, feature = "ui-tests"))]
+#[path = "window/nearby_avatar_tests.rs"]
+pub mod nearby_avatar_tests;

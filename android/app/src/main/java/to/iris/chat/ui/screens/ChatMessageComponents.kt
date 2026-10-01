@@ -1858,7 +1858,7 @@ private fun MessageInfoUserRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IrisAvatar(label = info.name, size = 32.dp, imageUrl = info.pictureUrl, socialConnection = info.socialConnection)
+        IrisAvatar(ownerPubkeyHex = info.ownerPubkeyHex, label = info.name, size = 32.dp, imageUrl = info.pictureUrl, socialConnection = info.socialConnection)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = info.name,

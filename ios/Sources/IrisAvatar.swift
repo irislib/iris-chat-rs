@@ -214,6 +214,7 @@ struct IrisAvatar: View {
     @Environment(\.irisPalette) private var palette
 
     let socialConnection: SocialConnectionSnapshot?
+    let ownerPubkeyHex: String?
     let label: String
     let size: CGFloat
     let emphasize: Bool
@@ -226,6 +227,7 @@ struct IrisAvatar: View {
 
     init(
         socialConnection: SocialConnectionSnapshot? = nil,
+        ownerPubkeyHex: String? = nil,
         label: String,
         size: CGFloat = 42,
         emphasize: Bool = false,
@@ -235,6 +237,7 @@ struct IrisAvatar: View {
         loadedImageIdentifier: String? = nil
     ) {
         self.socialConnection = socialConnection
+        self.ownerPubkeyHex = ownerPubkeyHex
         self.label = label
         self.size = size
         self.emphasize = emphasize
@@ -276,6 +279,12 @@ struct IrisAvatar: View {
             if let socialConnection, socialConnection.badge != nil {
                 IrisSocialBadge(connection: socialConnection, size: max(14, min(22, size * 0.3)))
                     .offset(x: 2, y: -2)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if let ownerPubkeyHex, let manager {
+                IrisNearbyAvatarBadge(ownerPubkeyHex: ownerPubkeyHex, manager: manager, size: max(14, min(22, size * 0.36)))
+                    .offset(x: 2, y: 2)
             }
         }
         .task(id: imageSourceKey) {

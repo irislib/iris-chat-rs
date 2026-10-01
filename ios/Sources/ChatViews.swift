@@ -684,6 +684,7 @@ struct ChatScreen: View {
 
         return EquatableView(content: ChatMessageRow(
             socialConnection: chat.participants.first { $0.ownerPubkeyHex == message.authorOwnerPubkeyHex }?.socialConnection,
+            manager: manager,
             message: message,
             chatKind: chat.kind,
             showDayChip: showDayChip,

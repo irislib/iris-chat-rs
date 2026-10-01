@@ -138,6 +138,9 @@ public partial class NewGroupView : UserControl
         var avatar = new IrisChat.Chrome.Avatar
         {
             Label = chat.displayName ?? string.Empty,
+            OwnerPubkeyHex = chat.chatId,
+            SocialConnection = chat.socialConnection,
+            PictureUrl = chat.pictureUrl,
             Size = 36,
             VerticalAlignment = VerticalAlignment.Center,
         };

@@ -16,6 +16,7 @@ struct ChatListScreen: View {
     @Environment(\.irisPalette) private var palette
     @Environment(\.irisNavigationHeaderTopInset) private var navigationHeaderTopInset
     @ObservedObject var manager: AppManager
+    @ObservedObject private var nearbyService: IrisNearbyService
     let onOpenNearby: () -> Void
     let onOpenNearbyPeerProfile: (String) -> Void
     @State private var searchText: String = ""
@@ -28,6 +29,7 @@ struct ChatListScreen: View {
         onOpenNearbyPeerProfile: @escaping (String) -> Void = { _ in }
     ) {
         self.manager = manager
+        self.nearbyService = manager.nearbyIris
         self.onOpenNearby = onOpenNearby
         self.onOpenNearbyPeerProfile = onOpenNearbyPeerProfile
     }
@@ -553,6 +555,7 @@ struct FollowedPersonSearchRow: View {
             : person.about ?? ""
         IrisChatRow(
             socialConnection: person.socialConnection,
+            ownerPubkeyHex: person.ownerPubkeyHex,
             title: person.displayLabel,
             preview: preview,
             subtitle: nil,
@@ -694,6 +697,7 @@ struct MessageSearchHitRow: View {
 
     var body: some View {
         IrisChatRow(
+            ownerPubkeyHex: hit.chatKind == .direct ? hit.chatId : nil,
             title: hit.chatDisplayName,
             isMuted: false,
             isPinned: false,
@@ -836,6 +840,7 @@ struct InChatSearchSheet: View {
                         LazyVStack(spacing: 0) {
                             ForEach(results.messages, id: \.messageId) { hit in
                                 IrisChatRow(
+                                    ownerPubkeyHex: hit.chatKind == .direct ? hit.chatId : nil,
                                     title: hit.chatDisplayName,
                                     isMuted: false,
                                     isPinned: false,

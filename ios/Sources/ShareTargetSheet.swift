@@ -262,6 +262,7 @@ struct ShareTargetSheet: View {
             HStack(spacing: 12) {
                 IrisAvatar(
                     socialConnection: chat.socialConnection,
+                    ownerPubkeyHex: chat.kind == .direct ? chat.chatId : nil,
                     label: chat.displayName,
                     size: 40,
                     emphasize: false,
@@ -313,6 +314,7 @@ struct ShareTargetSheet: View {
             } label: {
                 HStack(spacing: 12) {
                     IrisAvatar(
+                        ownerPubkeyHex: owner,
                         label: name,
                         size: 40,
                         emphasize: false,

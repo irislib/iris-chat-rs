@@ -75,10 +75,13 @@ import to.iris.chat.core.AppContainer
 import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.rust.AppAction
+import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.Screen
 import to.iris.chat.ui.components.imageLoadRequest
+import to.iris.chat.ui.components.LocalNearbyAvatarOwners
+import to.iris.chat.ui.components.nearbyAvatarOwners
 import to.iris.chat.ui.components.LocalImagePreferences
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisIcons
@@ -197,6 +200,10 @@ fun NdrApp(
     CompositionLocalProvider(
         LocalIrisOfflineBannerState provides offlineBannerState,
         LocalImagePreferences provides preferences,
+        LocalNearbyAvatarOwners provides nearbyAvatarOwners(
+            shareNearbySnapshot, preferences.nearbyEnabled,
+            (bootstrapState as? AccountBootstrapState.LoggedIn)?.account?.publicKeyHex,
+        ),
         to.iris.chat.ui.theme.LocalMessageFontSize provides messageFontSize,
     ) {
         Box(
@@ -861,6 +868,7 @@ private fun ShareNearbyTargetRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IrisAvatar(
+            ownerPubkeyHex = peer.ownerPubkeyHex,
             label = displayName,
             size = 40.dp,
             imageUrl = peer.pictureUrl,
@@ -926,7 +934,7 @@ private fun ShareTargetRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IrisAvatar(
-            socialConnection = chat.socialConnection, label = chat.displayName,
+            socialConnection = chat.socialConnection, ownerPubkeyHex = chat.chatId.takeIf { chat.kind == ChatKind.DIRECT }, label = chat.displayName,
             size = 40.dp,
             imageRequest = avatarUrl,
             imageData = avatarData,

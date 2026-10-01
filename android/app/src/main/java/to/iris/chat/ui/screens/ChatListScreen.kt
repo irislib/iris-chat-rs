@@ -841,7 +841,7 @@ private fun ChatListConversationRow(
             onDeleteRequest = { onDeleteRequest(chat) },
         ) {
             IrisChatListRow(
-                socialConnection = chat.socialConnection, title = chat.displayName,
+                socialConnection = chat.socialConnection, ownerPubkeyHex = chat.chatId.takeIf { chat.kind == to.iris.chat.rust.ChatKind.DIRECT }, title = chat.displayName,
                 isMuted = chat.isMuted,
                 isPinned = chat.isPinned,
                 preview = chat.chatListPreview(),
@@ -896,6 +896,7 @@ private fun NearbyPeerAvatar(
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         IrisAvatar(
+            ownerPubkeyHex = ownerPubkeyHex,
             label = displayName,
             size = 48.dp,
             imageUrl = peer.pictureUrl,
@@ -1138,38 +1139,3 @@ private fun ChatInputShortcutRow(
 }
 
 private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
-
-@Composable
-private fun MessageSearchHitRow(
-    appManager: AppManager,
-    preferences: PreferencesSnapshot,
-    hit: MessageSearchHit,
-) {
-    val avatarData by rememberNhashImageData(appManager, hit.chatPictureUrl)
-    val avatarUrl =
-        hit.chatPictureUrl
-            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-            ?.let { url ->
-                imageLoadRequest(
-                    originalSrc = url,
-                    preferences = preferences,
-                    width = 84u,
-                    height = 84u,
-                    square = true,
-                )
-            }
-    IrisChatListRow(
-        title = hit.chatDisplayName,
-        isMuted = false,
-        isPinned = false,
-        preview = hit.body,
-        timeLabel = formatRelativeTime(hit.createdAtSecs.toLong(), System.currentTimeMillis()),
-        imageRequest = avatarUrl,
-        imageData = avatarData,
-        unreadCount = 0L,
-        lastMessageMine = false,
-        lastDelivery = null,
-        onClick = { appManager.openChatAtMessage(hit.chatId, hit.messageId) },
-        modifier = Modifier.testTag("messageHit-${hit.messageId.take(12)}"),
-    )
-}

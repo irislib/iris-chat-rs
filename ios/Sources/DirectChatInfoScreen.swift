@@ -344,6 +344,8 @@ struct DirectChatInfoScreen: View {
 
     private func directChatAvatarImage(_ chat: CurrentChatSnapshot) -> some View {
         IrisAvatar(
+            socialConnection: chat.socialConnection,
+            ownerPubkeyHex: chat.chatId,
             label: chat.displayName,
             size: 96,
             emphasize: true,

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('doctor', 'rust', 'bindings', 'dotnet', 'build', 'installer', 'zip', 'artifacts', 'run', 'call-tests', 'direct-file-tests')]
+    [ValidateSet('doctor', 'rust', 'bindings', 'dotnet', 'build', 'installer', 'zip', 'artifacts', 'run', 'call-tests', 'direct-file-tests', 'nearby-avatar-tests')]
     [string] $Command = 'artifacts'
 )
 
@@ -237,6 +237,12 @@ switch ($Command) {
         Invoke-Checked {
             dotnet run --project (Join-Path $Root 'windows\DirectFileTests\DirectFileTests.csproj') -c $Configuration -- (Join-Path $Root 'work\direct-files-ui')
         } 'Windows direct file transfer and UI tests'
+    }
+    'nearby-avatar-tests' {
+        Add-ToolPaths
+        Invoke-Checked {
+            dotnet run --project (Join-Path $Root 'windows\NearbyAvatarTests\NearbyAvatarTests.csproj') -c $Configuration -- (Join-Path $Root 'work\nearby-avatar')
+        } 'Windows nearby avatar and chat header tests'
     }
     'call-tests' {
         Import-VisualStudioEnvironment

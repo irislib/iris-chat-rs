@@ -116,7 +116,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
 
         let mut row_widgets: Vec<adw::ActionRow> = Vec::with_capacity(known_users.len());
         for chat in &known_users {
-            let row = known_user_row(chat, add_member.clone());
+            let row = known_user_row(chat, add_member.clone(), manager);
             list.append(&row);
             row_widgets.push(row);
         }
@@ -256,7 +256,11 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     container.upcast()
 }
 
-fn known_user_row<F>(chat: &ChatThreadSnapshot, add_member: F) -> adw::ActionRow
+fn known_user_row<F>(
+    chat: &ChatThreadSnapshot,
+    add_member: F,
+    manager: &AppManager,
+) -> adw::ActionRow
 where
     F: Fn(String) + Clone + 'static,
 {
@@ -273,9 +277,11 @@ where
         row.set_subtitle(sub);
     }
     let avatar = adw::Avatar::new(32, Some(&chat.display_name), true);
-    row.add_prefix(&crate::widgets::social_badge::avatar(
+    row.add_prefix(&crate::widgets::social_badge::user_avatar(
         &avatar,
         chat.social_connection.as_ref(),
+        &chat.chat_id,
+        manager,
     ));
     let plus = gtk::Image::from_icon_name("list-add-symbolic");
     plus.add_css_class("dim-label");

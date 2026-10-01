@@ -6,3 +6,4 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 "$ROOT/scripts/windows-build" windows-build
 "$ROOT/scripts/windows-build" windows-direct-file-tests
+"$ROOT/scripts/windows-build" windows-nearby-avatar-tests

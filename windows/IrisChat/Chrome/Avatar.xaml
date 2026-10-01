@@ -25,5 +25,12 @@
             <TextBlock x:Name="SocialMarkText" Foreground="White" FontSize="12" FontWeight="Bold"
                        HorizontalAlignment="Center" VerticalAlignment="Center" />
         </Border>
+        <Border x:Name="NearbyMark" Width="16" Height="16" CornerRadius="8"
+                HorizontalAlignment="Right" VerticalAlignment="Bottom" Visibility="Collapsed"
+                Background="#2267F5" BorderBrush="{StaticResource Background}" BorderThickness="2"
+                ToolTip="Nearby" AutomationProperties.Name="Nearby">
+            <TextBlock x:Name="NearbyMarkIcon" Text="&#xE701;" FontFamily="Segoe MDL2 Assets"
+                       Foreground="White" FontSize="10" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Border>
     </Grid>
 </UserControl>
