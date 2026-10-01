@@ -90,7 +90,6 @@
                          PreviewKeyDown="OnInputKeyDown"
                          TextChanged="OnInputTextChanged"
                          TextWrapping="Wrap"
-                         TextOptions.TextFormattingMode="Display"
                          VerticalScrollBarVisibility="Auto"
                          MinHeight="38"
                          MaxHeight="126"
