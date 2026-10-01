@@ -2,7 +2,7 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
-## v2026.10.1.5
+## v2026.10.1.6
 
 ### GitHub
 
@@ -14,6 +14,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Send multiple files directly to an accepting device over FIPS, including between your own linked devices, without uploading the files to Blossom or Hashtree.
 - Recover device linking after suspension by replacing terminated pairing connections before reconnecting, preserving subscriptions and the existing recovery deadline.
 - Use the shared signed update transport and published dependencies while retaining protection against older release announcements.
+- Run desktop update checks on Rust worker threads to avoid exhausting the calling app's thread stack.
 
 ### Apple
 
@@ -23,6 +24,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Find Note to self from your profile or search.
 - Send files directly to someone who accepts them, including another device of your own.
 - Fix device linking after leaving and returning to the app.
+- Fix a startup crash on Mac during update checks.
 
 ### Zapstore
 

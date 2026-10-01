@@ -156,7 +156,14 @@ fn run_secure_update(operation: UpdateOperation) -> Result<IrisDesktopUpdateResu
         .enable_all()
         .build()
         .context("failed to start update runtime")?;
-    runtime.block_on(run_secure_update_async(operation))
+    // Swift's cooperative executor can call this FFI on a 512 KiB stack.
+    // Construct and poll the FIPS bootstrap future on a Tokio worker; the
+    // caller only waits on the small join handle. Boxing keeps the outer
+    // future small while the inner future is constructed on the worker.
+    let task = runtime.spawn(async move { Box::pin(run_secure_update_async(operation)).await });
+    runtime
+        .block_on(task)
+        .context("update runtime task failed")?
 }
 
 async fn run_secure_update_async(operation: UpdateOperation) -> Result<IrisDesktopUpdateResult> {
@@ -654,3 +661,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "desktop_update_startup_tests.rs"]
+mod startup_tests;
