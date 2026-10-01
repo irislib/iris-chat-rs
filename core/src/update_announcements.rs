@@ -7,7 +7,8 @@ use std::time::Duration;
 use fips_core::config::{TransportInstances, WebSocketConfig};
 use hashtree_updater::{
     build_secure_pubsub_blossom_updater, NostrEventSubscriber, SecurePubsubBlossomConfig,
-    SecurePubsubBlossomUpdater, UpdateError, UpdateRef,
+    SecurePubsubBlossomUpdater, UpdateCheck, UpdateCheckOptions, UpdateError, UpdateEventCache,
+    UpdateRef, UpdateTarget,
 };
 use nostr::{Keys, ToBech32};
 use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
@@ -21,6 +22,7 @@ const DEFAULT_BLOSSOM_READ_SERVERS: &[&str] = &[
 ];
 const UPDATE_MANIFEST_TIMEOUT: Duration = Duration::from_secs(8);
 static UPDATE_PROVIDER: OnceLock<Mutex<Option<Weak<dyn NostrEventSubscriber>>>> = OnceLock::new();
+static UPDATE_EVENTS: OnceLock<Mutex<Option<(UpdateRef, UpdateEventCache)>>> = OnceLock::new();
 
 pub(crate) fn register_update_provider(provider: &Arc<dyn NostrEventSubscriber>) {
     if let Ok(mut registered) = UPDATE_PROVIDER.get_or_init(|| Mutex::new(None)).lock() {
@@ -63,7 +65,70 @@ pub async fn build_secure_update_updater(
         None => standalone_update_provider().await?,
     };
     let updater = build_secure_pubsub_blossom_updater(provider, secure_update_config()).await?;
+    let events = UPDATE_EVENTS
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|_| UpdateError::Announcement("update event cache lock poisoned".into()))?
+        .as_ref()
+        .filter(|(cached_ref, _)| cached_ref == &reference)
+        .map(|(_, cache)| cache.resolver_events())
+        .unwrap_or_default();
+    for event in events {
+        updater.resolver().ingest_event(event).await?;
+    }
     Ok((reference, updater))
+}
+
+/// Keep the observed signed root between checks, without treating it as fresh.
+pub async fn check_secure_update(
+    current_version: String,
+    target: UpdateTarget,
+) -> Result<(SecurePubsubBlossomUpdater, UpdateCheck), UpdateError> {
+    let (reference, updater) = build_secure_update_updater().await?;
+    let result = updater
+        .check(UpdateCheckOptions {
+            reference: reference.clone(),
+            current_version,
+            target,
+            ..Default::default()
+        })
+        .await;
+    if let Some(event) = updater
+        .resolver()
+        .latest_event(&reference.resolver_key())
+        .await?
+    {
+        remember_update_event(&reference, event)?;
+    }
+    Ok((updater, result?))
+}
+
+fn remember_update_event(
+    reference: &UpdateRef,
+    event: hashtree_resolver::Event,
+) -> Result<(), UpdateError> {
+    let id = event.id;
+    let mut guard = UPDATE_EVENTS
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|_| UpdateError::Announcement("update event cache lock poisoned".into()))?;
+    if guard
+        .as_ref()
+        .is_none_or(|(cached_ref, _)| cached_ref != reference)
+    {
+        *guard = Some((reference.clone(), UpdateEventCache::new(reference)?));
+    }
+    let cache = &mut guard.as_mut().unwrap().1;
+    cache.ingest_event(event)?;
+    if cache
+        .latest()
+        .is_none_or(|latest| latest.as_event().id != id)
+    {
+        return Err(UpdateError::Announcement(
+            "a newer signed release was already observed".into(),
+        ));
+    }
+    Ok(())
 }
 
 async fn standalone_update_provider() -> Result<Arc<dyn NostrEventSubscriber>, UpdateError> {
@@ -186,5 +251,34 @@ mod tests {
             .resolve(&secure_update_ref().unwrap().resolver_key())
             .await
             .is_err());
+    }
+
+    #[test]
+    fn release_cache_never_rolls_back_between_checks() {
+        let keys = Keys::generate();
+        let reference = UpdateRef {
+            npub: keys.public_key().to_bech32().unwrap(),
+            tree_name: "releases/cache-regression".into(),
+            path: None,
+        };
+        let root = |at| {
+            EventBuilder::new(Kind::Custom(HASHTREE_KIND), "")
+                .tags([
+                    Tag::identifier(&reference.tree_name),
+                    Tag::custom(TagKind::Custom("hash".into()), ["42".repeat(32)]),
+                ])
+                .custom_created_at(nostr::Timestamp::from(at))
+                .sign_with_keys(&keys)
+                .unwrap()
+        };
+        let latest = root(2);
+        remember_update_event(&reference, latest.clone()).unwrap();
+        remember_update_event(&reference, latest.clone()).unwrap();
+        assert!(remember_update_event(&reference, root(1)).is_err());
+        let cache = UPDATE_EVENTS.get().unwrap().lock().unwrap();
+        assert_eq!(
+            cache.as_ref().unwrap().1.latest().unwrap().as_event().id,
+            latest.id
+        );
     }
 }

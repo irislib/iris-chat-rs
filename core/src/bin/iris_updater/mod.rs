@@ -4,10 +4,8 @@ use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
-use hashtree_updater::{
-    DownloadOptions, UpdateAsset, UpdateCheckOptions, UpdateManifest, UpdateTarget,
-};
-use iris_chat_core::update_announcements::build_secure_update_updater;
+use hashtree_updater::{DownloadOptions, UpdateAsset, UpdateManifest, UpdateTarget};
+use iris_chat_core::update_announcements::check_secure_update;
 use serde::{Deserialize, Serialize};
 
 mod asset_selection;
@@ -259,18 +257,12 @@ fn run_secure_update(request: &UpdateRequest) -> Result<()> {
 }
 
 async fn run_secure_update_async(request: &UpdateRequest) -> Result<()> {
-    let (reference, updater) = build_secure_update_updater()
-        .await
-        .context("failed to prepare signed release updater")?;
-    let mut check = updater
-        .check(UpdateCheckOptions {
-            reference,
-            current_version: current_version().to_string(),
-            target: UpdateTarget::new(current_target()),
-            ..UpdateCheckOptions::default()
-        })
-        .await
-        .context("failed to resolve signed hashtree release")?;
+    let (updater, mut check) = check_secure_update(
+        current_version().to_string(),
+        UpdateTarget::new(current_target()),
+    )
+    .await
+    .context("failed to resolve signed release")?;
     let asset = preferred_secure_asset(&check.manifest, request).ok_or_else(|| {
         anyhow!(
             "release {} has no {} asset for {}",

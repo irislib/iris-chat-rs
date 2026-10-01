@@ -3,12 +3,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
-use hashtree_updater::{
-    DownloadOptions, UpdateAsset, UpdateCheckOptions, UpdateManifest, UpdateTarget,
-};
+use hashtree_updater::{DownloadOptions, UpdateAsset, UpdateManifest, UpdateTarget};
 use serde::Deserialize;
 
-use crate::update_announcements::build_secure_update_updater;
+use crate::update_announcements::check_secure_update;
 
 const HTREE_MANIFEST_URL: &str = "https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/releases%2Firis-chat-rs/latest/release.json";
 const UPDATE_CONNECT_TIMEOUT_SECS: &str = "4";
@@ -162,18 +160,12 @@ fn run_secure_update(operation: UpdateOperation) -> Result<IrisDesktopUpdateResu
 }
 
 async fn run_secure_update_async(operation: UpdateOperation) -> Result<IrisDesktopUpdateResult> {
-    let (reference, updater) = build_secure_update_updater()
-        .await
-        .context("failed to prepare signed release updater")?;
-    let mut check = updater
-        .check(UpdateCheckOptions {
-            reference,
-            current_version: current_version().to_string(),
-            target: UpdateTarget::new(current_target()),
-            ..UpdateCheckOptions::default()
-        })
-        .await
-        .context("failed to resolve signed release")?;
+    let (updater, mut check) = check_secure_update(
+        current_version().to_string(),
+        UpdateTarget::new(current_target()),
+    )
+    .await
+    .context("failed to resolve signed release")?;
     let asset = preferred_secure_app_asset(&check.manifest).ok_or_else(|| {
         anyhow!(
             "release {} has no app update for {}",
