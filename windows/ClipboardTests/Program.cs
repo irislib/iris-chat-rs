@@ -124,6 +124,7 @@ internal static class Program
             input.TextChanged += changed;
             Clipboard.SetText(large);
             input.Focus(); Pump();
+            using var layoutProbe = new PasteLayoutProbe();
             var elapsed = Stopwatch.StartNew();
             Check(ApplicationCommands.Paste.CanExecute(null, input), "native Paste enabled");
             var canExecuteMs = elapsed.Elapsed.TotalMilliseconds;
@@ -135,6 +136,7 @@ internal static class Program
             var layoutCompleteMs = elapsed.Elapsed.TotalMilliseconds;
             Pump();
             elapsed.Stop();
+            layoutProbe.Finish();
             var pasteMs = elapsed.Elapsed.TotalMilliseconds;
             var pasteChanges = changes;
             Check(input.Text == large && changes == 1, "large plain text is one native editor change");
@@ -156,6 +158,8 @@ internal static class Program
                 platform = "windows", utf16_code_units = large.Length,
                 utf8_bytes = Encoding.UTF8.GetByteCount(large),
                 paste_ms = pasteMs, subsequent_edit_ms = editMs,
+                first_render_ms = layoutProbe.FirstRenderMs,
+                longest_dispatcher_gap_ms = layoutProbe.LongestDispatcherGapMs,
                 paste_phases_ms = new
                 {
                     can_execute = canExecuteMs,
@@ -181,6 +185,7 @@ internal static class Program
             Check(executeCompleteMs - canExecuteMs < 500, "large native paste command returns without full-document synchronous layout");
             Save(window, Path.Combine(output, "windows-large-text-paste.png"));
             LargeTextPasteTests.Verify(composer, Pump, output);
+            PasteLayoutComparison.Verify(window, composer, large, Pump, output);
             composer.Clear();
             Clipboard.SetImage(bitmap); Paste(input);
             cancelled = composer.StagedFilePaths.Single();
