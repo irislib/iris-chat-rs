@@ -44,6 +44,12 @@ require_command() {
   fi
 }
 
+tap_git() {
+  # These repositories are removed as soon as packaging finishes. Detached
+  # housekeeping can otherwise still write .git while the EXIT trap removes it.
+  git -c gc.autoDetach=false -c maintenance.autoDetach=false "$@"
+}
+
 formula_class_name() {
   local name="$1"
   awk -F'[-_]' '
@@ -203,10 +209,10 @@ work_repo="$tmp_dir/homebrew-tap"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 if [[ -n "$SEED_REPO" ]]; then
-  git clone -q "$SEED_REPO" "$work_repo" >/dev/null
+  tap_git clone -q "$SEED_REPO" "$work_repo" >/dev/null
 else
   mkdir -p "$work_repo"
-  git -C "$work_repo" init -q -b master >/dev/null
+  tap_git -C "$work_repo" init -q -b master >/dev/null
 fi
 
 mkdir -p "$work_repo/Formula"
@@ -214,16 +220,16 @@ write_formula "$work_repo/Formula/${FORMULA_NAME}.rb" "$class_name"
 
 (
   cd "$work_repo"
-  git add "Formula/${FORMULA_NAME}.rb"
-  if ! git diff --cached --quiet; then
-    git -c user.name='Agent' -c user.email='agent@local' \
+  tap_git add "Formula/${FORMULA_NAME}.rb"
+  if ! tap_git diff --cached --quiet; then
+    tap_git -c user.name='Agent' -c user.email='agent@local' \
       commit -m "Update ${FORMULA_NAME} formula to ${VERSION}" >/dev/null
   fi
 )
 
 rm -rf "$OUTPUT_DIR"
-git clone -q --bare "$work_repo" "$OUTPUT_DIR" >/dev/null
-GIT_DIR="$OUTPUT_DIR" git update-server-info
+tap_git clone -q --bare "$work_repo" "$OUTPUT_DIR" >/dev/null
+GIT_DIR="$OUTPUT_DIR" tap_git update-server-info
 
 cat <<EOF
 Created bare tap repository:

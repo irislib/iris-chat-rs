@@ -11,13 +11,21 @@ if "$ROOT_DIR/scripts/distribute" hashtree >/dev/null 2>&1; then
   exit 1
 fi
 
-if rg -n \
-  'IRIS_RELEASE_NOSTR_KEY_PATH|IrisChat-release-latest|scripts/release --publish' \
-  "$ROOT_DIR/scripts/distribute" \
-  "$ROOT_DIR/scripts/distribution_common.sh" \
-  "$ROOT_DIR/RELEASE.md"; then
-  echo "Canonical release paths contain a forbidden legacy fallback." >&2
-  exit 1
-fi
+python3 - "$ROOT_DIR" <<'PY'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+forbidden = ("IRIS_RELEASE_NOSTR_KEY_PATH", "IrisChat-release-latest", "scripts/release --publish")
+found = False
+for relative in ("scripts/distribute", "scripts/distribution_common.sh", "RELEASE.md"):
+    # An unavailable input must fail the guard, just like a forbidden path.
+    for number, line in enumerate((root / relative).read_text(encoding="utf-8").splitlines(), 1):
+        if any(value in line for value in forbidden):
+            print(f"{relative}:{number}:{line}", file=sys.stderr)
+            found = True
+if found:
+    sys.exit("Canonical release paths contain a forbidden legacy fallback.")
+PY
 
 echo "Release publication contract passed."
