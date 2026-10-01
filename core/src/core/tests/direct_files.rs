@@ -74,6 +74,7 @@ fn exercise_direct_files_actions(same_owner: bool, outcome: crate::DirectFileTra
     }
     let a_chat = bo.public_key().to_hex();
     let b_chat = ao.public_key().to_hex();
+    let mut signed_self_roster = None;
     if same_owner {
         configure_test_device_sync_profile(&mut a, &ao, &ad, &bd, None);
         configure_test_device_sync_profile(&mut b, &ao, &bd, &ad, None);
@@ -83,6 +84,12 @@ fn exercise_direct_files_actions(same_owner: bool, outcome: crate::DirectFileTra
             DeviceEntry::new(ad.public_key(), roster_at),
             DeviceEntry::new(bd.public_key(), roster_at),
         ]);
+        signed_self_roster = Some(
+            roster
+                .get_event_at(ao.public_key(), roster_at)
+                .sign_with_keys(&ao)
+                .expect("signed self-device roster"),
+        );
         for core in [&mut a, &mut b] {
             observe_peer_appkeys_for_test(
                 core.protocol_engine.as_mut().unwrap(),
@@ -116,16 +123,24 @@ fn exercise_direct_files_actions(same_owner: bool, outcome: crate::DirectFileTra
     let (bt, br) = flume::unbounded();
     b.core_sender = bt.clone();
     b.priority_sender = bt;
-    let addr = || {
-        std::net::UdpSocket::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-    };
-    let aa = addr();
-    let ba = addr();
-    a.reconcile_calls_udp_for_test(aa, ba, &test_fips_peer(&bd).npub());
-    b.reconcile_calls_udp_for_test(ba, aa, &test_fips_peer(&ad).npub());
+    if same_owner {
+        // Sibling roster events run normal reconciliation. A custom UDP test
+        // runtime has a different key and would be replaced mid-offer depending
+        // on event timing; use the same configuration as that production path.
+        a.reconcile_device_sync();
+        b.reconcile_device_sync();
+    } else {
+        let addr = || {
+            std::net::UdpSocket::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+        };
+        let aa = addr();
+        let ba = addr();
+        a.reconcile_calls_udp_for_test(aa, ba, &test_fips_peer(&bd).npub());
+        b.reconcile_calls_udp_for_test(ba, aa, &test_fips_peer(&ad).npub());
+    }
     let ae = a.device_sync_endpoint_for_test().unwrap();
     let be = b.device_sync_endpoint_for_test().unwrap();
     direct_files_wait(&mut a, &ar, &mut b, &br, |a, _| {
@@ -167,6 +182,23 @@ fn exercise_direct_files_actions(same_owner: bool, outcome: crate::DirectFileTra
     assert_eq!(record.status, crate::DirectFileTransferStatus::Offered);
     assert_eq!(record.offer.files.len(), 3);
     assert_eq!(record.offer.device, ad.public_key().to_hex());
+    if let Some(roster) = &signed_self_roster {
+        // Re-deliver the unchanged signed roster after registration, rather than
+        // depending on when the live sibling transport happens to deliver it.
+        let generation = a.fips_connection_generation;
+        let endpoint = a.device_sync_endpoint_for_test().unwrap();
+        assert!(a.apply_app_keys_event(roster).expect("same signed roster"));
+        assert_eq!(a.fips_connection_generation, generation);
+        assert!(Arc::ptr_eq(
+            &endpoint,
+            &a.device_sync_endpoint_for_test().unwrap()
+        ));
+        assert_eq!(
+            direct_files_test_records(&a)[0].status,
+            crate::DirectFileTransferStatus::Offered,
+            "an unchanged roster must retain the registered file capability"
+        );
+    }
     let signed: Event =
         serde_json::from_str(record.wire.strip_prefix("iris-direct-file-v1:").unwrap()).unwrap();
     signed.verify().expect("offer is signed");
