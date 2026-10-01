@@ -888,6 +888,15 @@ pub(in crate::core) fn preview_direct_messages(
     keys: &Keys,
     events: &[Event],
 ) -> Option<ProtocolDecryptedMessage> {
+    let mut engine = direct_message_preview_engine(data_dir, owner, keys)?;
+    preview_direct_messages_in_engine(&mut engine, events)
+}
+
+pub(in crate::core) fn direct_message_preview_engine(
+    data_dir: &str,
+    owner: PublicKey,
+    keys: &Keys,
+) -> Option<ProtocolEngine> {
     let conn = open_lookup_connection(data_dir)?;
     conn.busy_timeout(Duration::from_millis(200)).ok()?;
     super::storage::validate_account_storage(&conn, &owner.to_hex()).ok()?;
@@ -897,12 +906,20 @@ pub(in crate::core) fn preview_direct_messages(
         keys.public_key().to_hex(),
     )) as Arc<dyn StorageAdapter>;
     let overlay = Arc::new(NotificationPreviewStorage::new(base)) as Arc<dyn StorageAdapter>;
-    let mut engine = ProtocolEngine::load_or_create_for_local_device(overlay, owner, keys).ok()?;
+    ProtocolEngine::load_or_create_for_local_device(overlay, owner, keys).ok()
+}
+
+pub(in crate::core) fn preview_direct_messages_in_engine(
+    engine: &mut ProtocolEngine,
+    events: &[Event],
+) -> Option<ProtocolDecryptedMessage> {
     let expected = events.last()?.id.to_hex();
     let mut decrypted = None;
     for event in events {
         if event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND {
-            let batch = engine.observe_invite_response_event(event).ok()?;
+            let Ok(batch) = engine.observe_invite_response_event(event) else {
+                continue;
+            };
             if let Some(message) = batch
                 .direct_messages
                 .into_iter()

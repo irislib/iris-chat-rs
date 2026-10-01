@@ -213,6 +213,12 @@ fn first_call_wake_fetches_acked_bootstrap_and_reordered_ciphertext_recovers_wit
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     a.preferences.mobile_push_server_url = format!("http://{}", listener.local_addr().unwrap());
+    let silent_peer = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    a.reconcile_calls_udp_for_test(
+        "127.0.0.1:0".parse().unwrap(),
+        silent_peer.local_addr().unwrap(),
+        &test_fips_peer(&bd).npub(),
+    );
     a.start_call(&bo.public_key().to_hex(), true);
     let id = a.state.call.as_ref().unwrap().call_id.clone();
     let events: Vec<Event> = a
@@ -335,4 +341,82 @@ fn read_call_wake_http_for_test(stream: &mut std::net::TcpStream) -> Event {
             }
         }
     }
+}
+
+#[test]
+fn call_wake_v2_discovers_earlier_unread_bootstrap_after_sender_restart() {
+    let ao = Keys::generate();
+    let ad = Keys::generate();
+    let bo = Keys::generate();
+    let bd = Keys::generate();
+    let co = Keys::generate();
+    let cd = Keys::generate();
+    let (mut a, _, _adir) = logged_in_test_core_with_updates("older-wake-a", &ao, &ad);
+    let (mut b, _, _bdir) = logged_in_test_core_with_updates("older-wake-b", &bo, &bd);
+    let (mut c, _, _cdir) = logged_in_test_core_with_updates("older-wake-c", &co, &cd);
+    prepare_first_call_for_test(&mut a, &mut b, &ao, &bo, &ad, &bd);
+    prepare_first_call_for_test(&mut c, &mut b, &co, &bo, &cd, &bd);
+    let earlier_response = |sender: &mut AppCore, owner: &Keys| {
+        let rumor =
+            EventBuilder::new(Kind::from(1), "Earlier unread message").build(owner.public_key());
+        let result = sender
+            .protocol_engine
+            .as_mut()
+            .unwrap()
+            .send_direct_unsigned_event_to_peer_only(
+                bo.public_key(),
+                &bo.public_key().to_hex(),
+                rumor,
+                unix_now(),
+            )
+            .unwrap();
+        protocol_effect_events(&result.effects)
+            .into_iter()
+            .find(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND)
+            .unwrap()
+            .clone()
+    };
+    let response = earlier_response(&mut a, &ao);
+    let unrelated = earlier_response(&mut c, &co);
+    // Reload only durable sender protocol state. No active-call bootstrap cache
+    // survives, and the recipient still has never received the first message.
+    a.protocol_engine = None;
+    let storage = Arc::new(SqliteStorageAdapter::new(
+        a.app_store.shared(),
+        ao.public_key().to_hex(),
+        ad.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+    let mut restored =
+        ProtocolEngine::load_or_create_for_local_device(storage, ao.public_key(), &ad).unwrap();
+    restored.authenticate_local_owner_for_sending(&ao).unwrap();
+    a.protocol_engine = Some(restored);
+    let id = "aabbccddeeff00112233445566778899";
+    let wake = ratcheted_call_wake_for_test(&mut a, &bo, &ad, id);
+    let envelope: serde_json::Value = serde_json::from_str(&wake.content).unwrap();
+    assert!(envelope.get("bootstrapEventId").is_none());
+    let payload = serde_json::json!({"event":wake}).to_string();
+    let relay = crate::local_relay::TestRelay::start();
+    b.preferences.nostr_relay_urls = vec![relay.url().into()];
+    b.persist_best_effort();
+    let resolve = || {
+        calls::push::resolve_call_push_invite(
+            b.data_dir.to_string_lossy().into(),
+            bd.secret_key().to_secret_hex(),
+            payload.clone(),
+        )
+    };
+    publish_signer_test_event(&c, &relay, &unrelated);
+    assert!(
+        resolve().is_none(),
+        "another valid bootstrap cannot authenticate this caller's ciphertext"
+    );
+    publish_signer_test_event(&a, &relay, &response);
+    for _ in 0..2 {
+        assert_eq!(
+            resolve().unwrap().call_id,
+            id,
+            "normal recipient discovery recovers the older session without advancing durable state"
+        );
+    }
+    assert!(b.state.call.is_none(), "cold preview only reads state");
 }

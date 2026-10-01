@@ -485,11 +485,15 @@ pub(crate) fn resolve_call_push_invite(
         super::super::mobile_push::preview_direct_messages(&data_dir, local_owner, &keys, messages)
     };
     let message = preview(&wake.events).or_else(|| {
-        let id = EventId::from_hex(wake.bootstrap_event_id.as_ref()?).ok()?;
-        let response =
-            bootstrap::fetch_blocking(id, persisted.preferences.nostr_relay_urls.clone())?;
-        let messages = [vec![response], wake.events.clone()].concat();
-        preview(&messages)
+        bootstrap::recover_preview(
+            data_dir.clone(),
+            local_owner,
+            keys.clone(),
+            owner.parse().ok()?,
+            event.pubkey,
+            wake,
+            persisted.preferences.nostr_relay_urls.clone(),
+        )
     })?;
     if message.sender_device != Some(event.pubkey) || message.sender.to_hex() != owner {
         return None;
