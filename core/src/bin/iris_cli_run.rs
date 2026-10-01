@@ -7,6 +7,7 @@ pub(super) fn run(cli: Cli) -> Result<()> {
     let Cli {
         json: json_output,
         data_dir,
+        no_background_sync,
         command,
     } = cli;
     let command = match command {
@@ -46,7 +47,8 @@ pub(super) fn run(cli: Cli) -> Result<()> {
         command => {
             let cli_app = CliApp::open(&data_dir)?;
             let data = handle_command(&cli_app, &data_dir, command)?;
-            let background_sync = should_spawn_background_sync(&cli_app.app.state(), &data);
+            let background_sync =
+                !no_background_sync && should_spawn_background_sync(&cli_app.app.state(), &data);
             cli_app.app.shutdown();
             drop(cli_app);
             print_output(json_output, &command_name, data)?;

@@ -2,7 +2,10 @@ use super::*;
 
 impl OwnerProfileRecord {
     pub(super) fn preferred_label(&self) -> Option<String> {
-        self.nickname.clone().or_else(|| self.profile_label())
+        self.nickname
+            .clone()
+            .or_else(|| self.contact_memory.accepted_name.clone())
+            .or_else(|| self.profile_label())
     }
 
     pub(super) fn profile_label(&self) -> Option<String> {
@@ -48,6 +51,7 @@ pub(super) fn build_owner_profile_record(
     }
 
     Some(OwnerProfileRecord {
+        contact_memory: Default::default(),
         nickname: None,
         contact_note: None,
         contact_updated_at_ms: 0,
@@ -91,6 +95,7 @@ pub(super) fn parse_owner_profile_record(
         .unwrap_or_else(|_| default_extra_metadata_json_str());
 
     Some(OwnerProfileRecord {
+        contact_memory: Default::default(),
         nickname: None,
         contact_note: None,
         contact_updated_at_ms: 0,

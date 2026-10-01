@@ -82,6 +82,7 @@ pub fn run() {
     let manager = Rc::new(AppManager::new());
     crate::calls::verify_ui(manager.clone());
     crate::screens::chat::verify_image_clipboard_ui();
+    crate::screens::chat::verify_direct_files_ui(manager.clone());
     let rx = manager.update_rx();
     let drain = || {
         while let Ok(update) = rx.try_recv() {
@@ -384,6 +385,22 @@ pub fn run() {
         expected
     );
     assert!(find_label(slot.root.upcast_ref(), "First.txt").is_some());
+    let direct_mode = find_label(slot.root.upcast_ref(), "Send directly")
+        .unwrap()
+        .parent()
+        .unwrap()
+        .downcast::<gtk::CheckButton>()
+        .unwrap();
+    assert!(
+        direct_mode.is_visible(),
+        "Direct send choice appears with staged files"
+    );
+    assert!(
+        !direct_mode.is_active(),
+        "Files never silently change transfer mode"
+    );
+    direct_mode.set_active(true);
+
     assert_eq!(
         manager
             .current_state()

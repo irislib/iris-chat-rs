@@ -422,6 +422,7 @@ struct ChatMessageRow: View, Equatable {
     // message update only re-renders that one row instead of all 50.
     static func == (lhs: ChatMessageRow, rhs: ChatMessageRow) -> Bool {
         lhs.message == rhs.message
+            && lhs.socialConnection == rhs.socialConnection
             && lhs.reactions == rhs.reactions
             && lhs.chatKind == rhs.chatKind
             && lhs.canReplyAndReact == rhs.canReplyAndReact
@@ -437,6 +438,7 @@ struct ChatMessageRow: View, Equatable {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.irisPalette) private var palette
+    var socialConnection: SocialConnectionSnapshot? = nil
     let message: ChatMessageSnapshot
     let chatKind: ChatKind
     let showDayChip: Bool
@@ -461,6 +463,8 @@ struct ChatMessageRow: View, Equatable {
     let downloadAttachment: (MessageAttachmentSnapshot) async -> Data?
     var previewAudioAttachment: (MessageAttachmentSnapshot) async -> Data? = { _ in nil }
     let openAttachment: (MessageAttachmentSnapshot) async -> Void
+    var directTransferChatId = ""
+    var onDirectTransferAction: (AppAction) -> Void = { _ in }
     let onOpenImage: (Data, MessageAttachmentSnapshot) -> Void
 
     @State private var isPointerInside = false
@@ -596,6 +600,10 @@ struct ChatMessageRow: View, Equatable {
                                     isOutgoing: message.isOutgoing,
                                     bodyFont: irisMessageBodyFont(for: parsed.body)
                                 )
+                            }
+                            if let transfer = message.directTransfer {
+                                ChatDirectFileTransferView(transfer: transfer, chatId: directTransferChatId, dispatch: onDirectTransferAction)
+                                    .tint(message.isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs)
                             }
                             let imageAttachments = message.attachments.filter { $0.isImage }
                             let nonImageAttachments = message.attachments.filter { !$0.isImage }
@@ -835,6 +843,7 @@ struct ChatMessageRow: View, Equatable {
     private var groupSenderAvatar: some View {
         if showsGroupSenderAvatar {
             IrisAvatar(
+                socialConnection: socialConnection,
                 label: message.author,
                 size: SignalConversationLayout.groupMessageAvatarSize
             )

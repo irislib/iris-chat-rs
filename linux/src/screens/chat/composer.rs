@@ -12,6 +12,7 @@ pub(super) struct Composer {
     pub root: gtk::Box,
     send: gtk::Button,
     attach: gtk::Button,
+    direct: gtk::CheckButton,
     progress: gtk::ProgressBar,
     ttl: Rc<Cell<Option<u64>>>,
     preview_row: gtk::Box,
@@ -36,6 +37,19 @@ impl Composer {
         rebuild_attachment_previews(&preview_row, manager, &chat.chat_id);
         preview_scroll.set_visible(preview_row.first_child().is_some());
 
+        let direct = gtk::CheckButton::with_label("Send directly");
+        direct.set_widget_name("chatDirectFileMode");
+        let supports_direct = matches!(chat.kind, iris_chat_core::ChatKind::Direct);
+        direct.set_visible(supports_direct && preview_scroll.is_visible());
+        let direct_for_preview = direct.clone();
+        preview_scroll.connect_visible_notify(move |scroll| {
+            direct_for_preview.set_visible(supports_direct && scroll.is_visible());
+            if !scroll.is_visible() {
+                direct_for_preview.set_active(false);
+            }
+        });
+        outer.append(&direct);
+
         let progress = gtk::ProgressBar::new();
         progress.set_show_text(false);
         progress.add_css_class("osd");
@@ -57,34 +71,37 @@ impl Composer {
                 return;
             }
             let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
-            let dialog = gtk::FileDialog::builder().title("Attach file").build();
+            let dialog = gtk::FileDialog::builder().title("Attach files").build();
             let manager = manager_for_attach.clone();
             let chat_id = chat_id_for_attach.clone();
             let preview_row = preview_row_for_attach.clone();
             let preview_scroll = preview_scroll_for_attach.clone();
-            dialog.open(
+            dialog.open_multiple(
                 parent.as_ref(),
                 gtk::gio::Cancellable::NONE,
                 move |result| {
-                    let Ok(file) = result else { return };
+                    let Ok(files) = result else { return };
                     if !can_attach(&manager, &chat_id) {
                         return;
                     }
-                    let path = match file.path() {
-                        Some(p) => p.to_string_lossy().to_string(),
-                        None => return,
-                    };
-                    let filename = file
-                        .basename()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "attachment".to_string());
-                    manager.stage_attachment(
-                        &chat_id,
-                        OutgoingAttachment {
-                            file_path: path,
-                            filename,
-                        },
-                    );
+                    for index in 0..files.n_items() {
+                        let Some(file) = files.item(index).and_downcast::<gtk::gio::File>() else {
+                            continue;
+                        };
+                        let Some(path) = file.path().filter(|path| path.is_file()) else {
+                            continue;
+                        };
+                        manager.stage_attachment(
+                            &chat_id,
+                            OutgoingAttachment {
+                                filename: file
+                                    .basename()
+                                    .map(|p| p.to_string_lossy().into_owned())
+                                    .unwrap_or_else(|| "File".into()),
+                                file_path: path.to_string_lossy().into_owned(),
+                            },
+                        );
+                    }
                     rebuild_attachment_previews(&preview_row, &manager, &chat_id);
                     preview_scroll.set_visible(preview_row.first_child().is_some());
                 },
@@ -194,12 +211,14 @@ impl Composer {
         let buffer_for_click = buffer.clone();
         let preview_row_for_send = preview_row.clone();
         let preview_scroll_for_send = preview_scroll.clone();
+        let direct_for_click = direct.clone();
         send.connect_clicked(move |btn| {
             if submit_composer(
                 &manager_for_click,
                 &chat_id,
                 &buffer_for_click,
                 ttl_for_click.get(),
+                direct_for_click.is_active(),
                 &preview_row_for_send,
                 &preview_scroll_for_send,
             ) {
@@ -215,6 +234,7 @@ impl Composer {
         let preview_scroll_for_enter = preview_scroll.clone();
         let key_controller = gtk::EventControllerKey::new();
         key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let direct_for_enter = direct.clone();
         key_controller.connect_key_pressed(move |_, keyval, _, state| {
             if !matches!(keyval, gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter)
                 || state.contains(gtk::gdk::ModifierType::SHIFT_MASK)
@@ -227,6 +247,7 @@ impl Composer {
                 &chat_id,
                 &buffer_for_enter,
                 ttl_for_enter.get(),
+                direct_for_enter.is_active(),
                 &preview_row_for_enter,
                 &preview_scroll_for_enter,
             );
@@ -239,6 +260,7 @@ impl Composer {
             root: outer,
             send,
             attach,
+            direct,
             progress,
             ttl,
             preview_row,
@@ -301,6 +323,8 @@ impl Composer {
         // The live buffer owns local edits. Replaying a queued draft here would
         // overwrite newer typing, the selection, or an input method's preedit.
         self.ttl.set(chat.message_ttl_seconds);
+        self.direct
+            .set_sensitive(!state.busy.sending_message && !state.busy.uploading_attachment);
         self.send.set_sensitive(
             !state.busy.sending_message
                 && !super::is_removed_group(chat)
@@ -338,6 +362,7 @@ fn submit_composer(
     chat_id: &str,
     buffer: &gtk::TextBuffer,
     ttl_seconds: Option<u64>,
+    direct: bool,
     preview_row: &gtk::Box,
     preview_scroll: &gtk::ScrolledWindow,
 ) -> bool {
@@ -351,7 +376,7 @@ fn submit_composer(
     }
 
     buffer.set_text("");
-    dispatch_send(manager, chat_id, text, ttl_seconds);
+    dispatch_send(manager, chat_id, text, ttl_seconds, direct);
     rebuild_attachment_previews(preview_row, manager, chat_id);
     preview_scroll.set_visible(preview_row.first_child().is_some());
     true
@@ -492,13 +517,27 @@ fn attachment_icon_name(filename: &str) -> &'static str {
     }
 }
 
-fn dispatch_send(manager: &Rc<AppManager>, chat_id: &str, text: String, ttl_seconds: Option<u64>) {
+fn dispatch_send(
+    manager: &Rc<AppManager>,
+    chat_id: &str,
+    text: String,
+    ttl_seconds: Option<u64>,
+    direct: bool,
+) {
     let staged = manager.take_staged_attachments(chat_id);
     if !staged.is_empty() {
-        manager.dispatch(AppAction::SendAttachments {
-            chat_id: chat_id.to_string(),
-            attachments: staged,
-            caption: text,
+        manager.dispatch(if direct {
+            AppAction::SendDirectFiles {
+                chat_id: chat_id.into(),
+                attachments: staged,
+                caption: text,
+            }
+        } else {
+            AppAction::SendAttachments {
+                chat_id: chat_id.into(),
+                attachments: staged,
+                caption: text,
+            }
         });
         return;
     }

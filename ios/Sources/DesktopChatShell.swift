@@ -524,6 +524,7 @@ struct DesktopSidebarChatRow: View, Equatable {
         } label: {
             HStack(alignment: .top, spacing: 12) {
                 IrisAvatar(
+                    socialConnection: chat.socialConnection,
                     label: chat.displayName,
                     size: 44,
                     emphasize: chat.unreadCount > 0,

@@ -552,6 +552,7 @@ struct FollowedPersonSearchRow: View {
             ? profile!
             : person.about ?? ""
         IrisChatRow(
+            socialConnection: person.socialConnection,
             title: person.displayLabel,
             preview: preview,
             subtitle: nil,

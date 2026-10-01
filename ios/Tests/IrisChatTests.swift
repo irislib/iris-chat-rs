@@ -261,8 +261,7 @@ private func makeChatThread(
     lastMessageIsOutgoing: Bool? = false,
     preview: String? = "hello"
 ) -> ChatThreadSnapshot {
-    ChatThreadSnapshot(
-        chatId: "chat-1",
+    ChatThreadSnapshot(socialConnection: nil, chatId: "chat-1",
         kind: .direct,
         displayName: "Bob",
         nickname: nil,
@@ -290,8 +289,7 @@ private func makeCurrentChat(
     kind: ChatKind = .direct,
     messages: [ChatMessageSnapshot] = []
 ) -> CurrentChatSnapshot {
-    CurrentChatSnapshot(
-        chatId: chatId,
+    CurrentChatSnapshot(contactIdentity: nil, socialConnection: nil, chatId: chatId,
         kind: kind,
         displayName: "Chat",
         nickname: nil,

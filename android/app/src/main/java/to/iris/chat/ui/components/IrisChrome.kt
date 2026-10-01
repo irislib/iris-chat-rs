@@ -323,6 +323,7 @@ fun IrisTopBar(
 
 @Composable
 fun IrisAvatar(
+    socialConnection: to.iris.chat.rust.SocialConnectionSnapshot? = null,
     label: String,
     modifier: Modifier = Modifier,
     size: Dp = 40.dp,
@@ -380,9 +381,10 @@ fun IrisAvatar(
             }
             if (AccountImageSession.isCurrent(generation)) value = loaded
         }
+    Box(modifier = modifier.size(size)) {
     Box(
         modifier =
-            modifier
+            Modifier
                 .size(size)
                 .clip(CircleShape)
                 .background(if (emphasize) palette.accent else palette.panelAlt),
@@ -408,6 +410,10 @@ fun IrisAvatar(
             color = if (emphasize) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.Bold,
         )
+    }
+        socialConnection?.let { connection ->
+            IrisSocialBadge(connection, Modifier.align(Alignment.TopEnd))
+        }
     }
 }
 
@@ -766,6 +772,7 @@ fun IrisTextButton(
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
 fun IrisChatListRow(
+    socialConnection: to.iris.chat.rust.SocialConnectionSnapshot? = null,
     title: String,
     modifier: Modifier = Modifier,
     isMuted: Boolean = false,
@@ -820,7 +827,7 @@ fun IrisChatListRow(
         if (leadingContent != null) {
             leadingContent()
         } else {
-            IrisAvatar(label = title, size = 48.dp, imageUrl = imageUrl, imageRequest = imageRequest, imageData = imageData)
+            IrisAvatar(socialConnection = socialConnection, label = title, size = 48.dp, imageUrl = imageUrl, imageRequest = imageRequest, imageData = imageData)
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(

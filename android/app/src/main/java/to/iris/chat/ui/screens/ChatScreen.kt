@@ -96,7 +96,6 @@ import to.iris.chat.rust.ChatMessageSnapshot
 import to.iris.chat.rust.DirectChatCapabilityState
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.DeliveryState
-import to.iris.chat.rust.OutgoingAttachment
 import to.iris.chat.rust.Screen
 import to.iris.chat.rust.SearchResultSnapshot
 import to.iris.chat.ui.components.imageLoadRequest
@@ -167,6 +166,8 @@ fun ChatScreen(
     var draft by remember(chatId) { mutableStateOf("") }
     var lastPersistedDraft by remember(chatId) { mutableStateOf<String?>(null) }
     var selectedAttachments by remember(chatId) { mutableStateOf<List<PickedAttachment>>(emptyList()) }
+    var sendFilesDirectly by remember(chatId) { mutableStateOf(false) }
+    var showAttachmentSources by remember(chatId) { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     val haptics = rememberIrisHapticFeedback()
@@ -196,6 +197,7 @@ fun ChatScreen(
     val attachmentPicker =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
             if (uris.isEmpty()) {
+                if (selectedAttachments.isEmpty()) sendFilesDirectly = false
                 return@rememberLauncherForActivityResult
             }
             coroutineScope.launch {
@@ -208,6 +210,13 @@ fun ChatScreen(
                 }
             }
         }
+    if (showAttachmentSources) {
+        ChatAttachmentSourceDialog(onDismiss = { showAttachmentSources = false }) { directly ->
+            showAttachmentSources = false
+            sendFilesDirectly = directFileSendMode(sendFilesDirectly, selectedAttachments.isNotEmpty(), directly)
+            attachmentPicker.launch(arrayOf("*/*"))
+        }
+    }
     val showJumpToBottom by remember(chat?.messages?.size, listState) {
         derivedStateOf {
             val total = chat?.messages?.size ?: 0
@@ -433,7 +442,7 @@ fun ChatScreen(
                     if (chat != null) {
                         {
                             IrisAvatar(
-                                label = chat.displayName,
+                                socialConnection = chat.socialConnection, label = chat.displayName,
                                 size = 36.dp,
                                 emphasize = false,
                                 imageRequest =
@@ -521,6 +530,7 @@ fun ChatScreen(
                     },
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
+                to.iris.chat.ui.components.IrisNameChangeNotice(appManager, chat)
                 Box(
                     modifier =
                         Modifier
@@ -704,6 +714,7 @@ fun ChatScreen(
                                 draft = draft,
                                 sendAllowed = !capabilityBlocked,
                                 selectedAttachments = selectedAttachments,
+                                sendFilesDirectly = sendFilesDirectly,
                                 isSending = busy.sendingMessage,
                                 isUploading = busy.uploadingAttachment,
                                 uploadFraction = busy.uploadProgress?.let { progress ->
@@ -736,9 +747,13 @@ fun ChatScreen(
                                         }
                                     }
                                 },
-                                onAttach = { attachmentPicker.launch(arrayOf("*/*")) },
+                                onAttach = {
+                                    if (chat.kind == ChatKind.DIRECT) showAttachmentSources = true
+                                    else { sendFilesDirectly = false; attachmentPicker.launch(arrayOf("*/*")) }
+                                },
                                 onRemoveAttachment = { attachment ->
                                     selectedAttachments = selectedAttachments - attachment
+                                    if (selectedAttachments.isEmpty()) sendFilesDirectly = false
                                 },
                                 onSend = {
                                     if (appManager.state.value.currentChat?.isRemovedFromGroup == true) return@ComposerBar
@@ -749,17 +764,8 @@ fun ChatScreen(
                                     if (selectedAttachments.isEmpty()) {
                                         appManager.sendText(chatId, outgoingDraft)
                                     } else {
-                                        appManager.sendAttachments(
-                                            chatId = chatId,
-                                            attachments =
-                                                selectedAttachments.map { attachment ->
-                                                    OutgoingAttachment(
-                                                        filePath = attachment.path,
-                                                        filename = attachment.filename,
-                                                    )
-                                                },
-                                            caption = outgoingDraft,
-                                        )
+                                        appManager.dispatch(attachmentSendAction(chatId, selectedAttachments, outgoingDraft, sendFilesDirectly))
+                                        sendFilesDirectly = false
                                         selectedAttachments = emptyList()
                                     }
                                     draft = ""

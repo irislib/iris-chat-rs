@@ -932,8 +932,7 @@ class AppManagerContractTest {
         groupId: String? = null,
         messages: List<ChatMessageSnapshot> = emptyList(),
     ): CurrentChatSnapshot =
-        CurrentChatSnapshot(
-            chatId = chatId,
+        CurrentChatSnapshot(contactIdentity = null, socialConnection = null, chatId = chatId,
             kind = kind,
             displayName = "Chat",
             nickname = null,

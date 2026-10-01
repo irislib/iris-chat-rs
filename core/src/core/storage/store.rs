@@ -330,7 +330,9 @@ impl AppStore {
                     reactors_json, source_event_id, recipient_deliveries_json, delivery_trace_json, call_json
              FROM messages
              WHERE kind = 'user' AND created_at_secs >= ?1
-               AND delivery NOT IN ('queued', 'pending', 'failed')
+               AND (delivery NOT IN ('queued', 'pending', 'failed')
+                    OR (delivery IN ('queued', 'pending') AND is_outgoing = 1
+                        AND chat_id = author_owner_pubkey_hex AND body LIKE 'iris-direct-file-v1:%'))
                AND (expires_at_secs IS NULL OR expires_at_secs > ?2)
                AND (created_at_secs > ?3
                     OR (created_at_secs = ?3 AND chat_id > ?4)
@@ -528,6 +530,7 @@ impl AppStore {
 }
 
 const TABLES_TO_CLEAR: &[&str] = &[
+    "direct_file_transfers",
     "messages",
     "threads",
     "seen_events",
@@ -978,7 +981,7 @@ fn load_owner_profiles(
 ) -> anyhow::Result<BTreeMap<String, OwnerProfileRecord>> {
     let mut stmt = conn.prepare(
         "SELECT owner_pubkey_hex, nickname, name, display_name, picture, about,
-                extra_metadata_json, extra_tags_json, updated_at_secs, contact_note, contact_updated_at_ms
+                extra_metadata_json, extra_tags_json, updated_at_secs, contact_note, contact_updated_at_ms, contact_memory_json
          FROM owner_profiles",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -988,6 +991,7 @@ fn load_owner_profiles(
         let extra_tags: Vec<Vec<String>> =
             serde_json::from_str(&extra_tags_json).unwrap_or_default();
         let record = OwnerProfileRecord {
+            contact_memory: serde_json::from_str(&row.get::<_, String>(11)?).unwrap_or_default(),
             nickname: row.get(1)?,
             contact_note: row.get(9)?,
             contact_updated_at_ms: row.get::<_, i64>(10)? as u64,
@@ -1017,8 +1021,8 @@ fn write_owner_profiles(
     let mut stmt = tx.prepare_cached(
         "INSERT INTO owner_profiles
             (owner_pubkey_hex, nickname, name, display_name, picture, about,
-             extra_metadata_json, extra_tags_json, updated_at_secs, contact_note, contact_updated_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             extra_metadata_json, extra_tags_json, updated_at_secs, contact_note, contact_updated_at_ms, contact_memory_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
     )?;
     for (owner_pubkey_hex, profile) in profiles {
         let extra_tags_json =
@@ -1035,6 +1039,7 @@ fn write_owner_profiles(
             profile.updated_at_secs as i64,
             profile.contact_note,
             profile.contact_updated_at_ms as i64,
+            serde_json::to_string(&profile.contact_memory)?,
         ])?;
     }
     Ok(())
@@ -1289,7 +1294,7 @@ pub(crate) fn search_messages_fts(
             chat_id: row.get(0)?,
             message_id: row.get(1)?,
             author: row.get(2)?,
-            body: row.get(3)?,
+            body: super::super::attachments::chat_message_body_preview(&row.get::<_, String>(3)?),
             is_outgoing: row.get::<_, i64>(4)? != 0,
             created_at_secs: row.get::<_, i64>(5)?.max(0) as u64,
         })
@@ -1638,6 +1643,7 @@ mod tests {
 
     fn sample_message(id: &str, body: &str, ts: u64) -> ChatMessageSnapshot {
         ChatMessageSnapshot {
+            direct_transfer: None,
             call: None,
             id: id.to_string(),
             chat_id: "chat".to_string(),
@@ -2634,6 +2640,7 @@ mod tests {
             petname: None,
         };
         let initial = UserDiscoveryCache {
+            follow_event_json: None,
             owner_pubkey_hex: Some("root-a".to_string()),
             follow_event_id: Some("follow-1".to_string()),
             follow_created_at_secs: 10,
@@ -2649,6 +2656,7 @@ mod tests {
         assert_eq!(store.load_user_discovery().unwrap(), initial);
 
         let replacement = UserDiscoveryCache {
+            follow_event_json: None,
             owner_pubkey_hex: Some("root-b".to_string()),
             follow_event_id: Some("follow-2".to_string()),
             follow_created_at_secs: 11,

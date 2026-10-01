@@ -291,6 +291,8 @@ xcodebuild \
   -derivedDataPath "$DERIVED_DATA" \
   -only-testing "$TEST_TARGET" \
   ONLY_ACTIVE_ARCH=YES \
+  MARKETING_VERSION="$IRIS_XCODE_MARKETING_VERSION" \
+  CURRENT_PROJECT_VERSION="$IRIS_APP_VERSION_CODE" \
   build-for-testing \
   -quiet
 

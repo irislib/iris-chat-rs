@@ -307,6 +307,7 @@ fun GroupDetailsScreen(
                         ) {
                             IrisAvatar(
                                 label = primary,
+                                socialConnection = member.socialConnection,
                                 emphasize = member.isLocalOwner,
                                 size = 38.dp,
                                 imageUrl = member.pictureUrl,
@@ -573,7 +574,7 @@ fun GroupDetailsScreen(
                                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    IrisAvatar(label = title, size = 38.dp)
+                                    IrisAvatar(label = title, size = 38.dp, imageUrl = chat.pictureUrl, socialConnection = chat.socialConnection)
                                     Column(
                                         modifier = Modifier.weight(1f),
                                         verticalArrangement = Arrangement.spacedBy(2.dp),

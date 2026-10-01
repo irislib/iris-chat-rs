@@ -15,6 +15,7 @@ struct ChatScreen: View {
 
     @State private var composerState = IrisComposerState()
     @State private var selectedAttachments: [StagedAttachment] = []
+    @State private var sendFilesDirectly = false
     @State private var fileDropAvailable = false
     @State private var isPreparingDroppedAttachments = false
     @State private var isNearBottom = true
@@ -418,6 +419,7 @@ struct ChatScreen: View {
                                 let capability = chat.kind == .direct ? chat.directChatCapability : nil
                                 let capabilityBlocked = capability != nil && capability != .available
                                 VStack(spacing: 0) {
+                                    IrisNameChangeNotice(manager: manager, chat: chat)
                                     if let replyTarget, !composerBlocked, !isRequest, !chat.isRemovedFromGroup {
                                         IrisReplyComposerStrip(message: replyTarget) {
                                             self.replyTarget = nil
@@ -459,6 +461,8 @@ struct ChatScreen: View {
                                         IrisComposerBar(
                                             composerState: composerState,
                                             attachments: $selectedAttachments,
+                                            sendFilesDirectly: $sendFilesDirectly,
+                                            directFilesAllowed: chat.kind == .direct,
                                             placeholder: "Message",
                                             isSending: manager.state.busy.sendingMessage,
                                             isUploading: manager.state.busy.uploadingAttachment,
@@ -510,7 +514,8 @@ struct ChatScreen: View {
                                             } else {
                                                 let attachments = selectedAttachments
                                                 selectedAttachments = []
-                                                manager.sendAttachments(chatId: chatId, attachments: attachments, caption: outgoingText)
+                                                manager.dispatch(irisAttachmentSendAction(chatId: chatId, attachments: attachments, caption: outgoingText, sendDirectly: sendFilesDirectly))
+                                                sendFilesDirectly = false
                                             }
                                         }
                                         .overlay(alignment: .top) {
@@ -677,6 +682,7 @@ struct ChatScreen: View {
         )
 
         return EquatableView(content: ChatMessageRow(
+            socialConnection: chat.participants.first { $0.ownerPubkeyHex == message.authorOwnerPubkeyHex }?.socialConnection,
             message: message,
             chatKind: chat.kind,
             showDayChip: showDayChip,
@@ -749,6 +755,8 @@ struct ChatScreen: View {
             openAttachment: { attachment in
                 await manager.openAttachment(attachment)
             },
+            directTransferChatId: chatId,
+            onDirectTransferAction: manager.dispatch,
             onOpenImage: { data, attachment in
                 let imageAttachments = message.attachments.filter { $0.isImage }
                 let initialIndex = imageAttachments.firstIndex {

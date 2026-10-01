@@ -3,10 +3,11 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
-enum IrisAttachmentSource {
+enum IrisAttachmentSource: Equatable {
     case camera
     case photos
     case files
+    case directFiles
 }
 
 struct IrisAttachmentPicker: View {
@@ -14,6 +15,7 @@ struct IrisAttachmentPicker: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    var directFilesAllowed = false
     let onSource: (IrisAttachmentSource) -> Void
     let onPhotos: ([PhotosPickerItem]) -> Void
 
@@ -48,6 +50,16 @@ struct IrisAttachmentPicker: View {
                                  identifier: "chatAttachmentFilesButton")
                 }
                 .padding(.horizontal, 22)
+                if directFilesAllowed {
+                    Button { onSource(.directFiles) } label: {
+                        Label("Send directly", systemImage: "arrow.up.arrow.down")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.irisPlain)
+                    .foregroundStyle(palette.textPrimary)
+                    .padding(.vertical, 8)
+                    .accessibilityIdentifier("chatDirectFileButton")
+                }
             }
             .padding(.top, 16)
             .padding(.bottom, 18)
@@ -65,8 +77,8 @@ struct IrisAttachmentPicker: View {
     }
 
     private var sheetHeight: CGFloat {
-        if #available(iOS 17.0, *) { return 330 }
-        return 180
+        if #available(iOS 17.0, *) { return directFilesAllowed ? 385 : 330 }
+        return directFilesAllowed ? 235 : 180
     }
 
     private func sourceButton(

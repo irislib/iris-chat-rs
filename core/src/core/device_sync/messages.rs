@@ -44,6 +44,17 @@ pub(super) fn collect_device_sync_messages(
             if in_memory_message(core, &message.chat_id, &message.id).is_some() {
                 continue;
             }
+            if matches!(
+                message.delivery,
+                PersistedDeliveryState::Queued | PersistedDeliveryState::Pending
+            ) && !super::super::direct_files::is_pending_self_offer(
+                &message.body,
+                &message.chat_id,
+                message.author_owner_pubkey_hex.as_deref(),
+                message.is_outgoing,
+            ) {
+                continue;
+            }
             insert_bounded(&mut messages, from_persisted(message), limit);
         }
         let page_is_known = messages
@@ -95,10 +106,18 @@ fn eligible(message: &ChatMessageSnapshot, roster_at: u64, now: u64) -> bool {
             .expires_at_secs
             .is_none_or(|expires_at| expires_at > now)
         && matches!(message.kind, ChatMessageKind::User)
-        && !matches!(
-            message.delivery,
-            DeliveryState::Queued | DeliveryState::Pending | DeliveryState::Failed
-        )
+        && match message.delivery {
+            DeliveryState::Failed => false,
+            DeliveryState::Queued | DeliveryState::Pending => {
+                super::super::direct_files::is_pending_self_offer(
+                    &message.body,
+                    &message.chat_id,
+                    message.author_owner_pubkey_hex.as_deref(),
+                    message.is_outgoing,
+                )
+            }
+            _ => true,
+        }
 }
 
 fn after_cursor(message: &ChatMessageSnapshot, cursor: &DeviceSyncCursor) -> bool {

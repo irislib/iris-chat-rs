@@ -191,6 +191,7 @@ fn derived_order_persists_offline_and_degraded_refresh_restores_root() {
         .map(|_| Keys::generate().public_key())
         .collect::<Vec<_>>();
     let mut cache = UserDiscoveryCache {
+        follow_event_json: None,
         owner_pubkey_hex: Some("root".to_string()),
         follow_event_id: Some("root".to_string()),
         follow_created_at_secs: 100,

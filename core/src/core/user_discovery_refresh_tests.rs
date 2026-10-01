@@ -73,6 +73,7 @@ fn restore_adopts_legacy_unowned_cache_without_social_rank() {
     );
     core.app_store
         .replace_user_discovery(&UserDiscoveryCache {
+            follow_event_json: None,
             owner_pubkey_hex: None,
             follow_event_id: Some("legacy-head".to_string()),
             follow_created_at_secs: 1,
@@ -119,6 +120,7 @@ fn restoring_another_account_clears_personalized_ranking() {
     );
     core.app_store
         .replace_user_discovery(&UserDiscoveryCache {
+            follow_event_json: None,
             owner_pubkey_hex: Some(owner.public_key().to_hex()),
             follow_event_id: Some("head".to_string()),
             follow_created_at_secs: 1,

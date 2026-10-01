@@ -26,6 +26,7 @@ enum IrisChatListRowMetrics {
 struct IrisChatRow: View {
     @Environment(\.irisPalette) private var palette
 
+    let socialConnection: SocialConnectionSnapshot?
     let title: String
     let isMuted: Bool
     let isPinned: Bool
@@ -42,6 +43,7 @@ struct IrisChatRow: View {
     let onTap: () -> Void
 
     init(
+        socialConnection: SocialConnectionSnapshot? = nil,
         title: String,
         isMuted: Bool = false,
         isPinned: Bool = false,
@@ -57,6 +59,7 @@ struct IrisChatRow: View {
         previewLeading: AnyView? = nil,
         onTap: @escaping () -> Void
     ) {
+        self.socialConnection = socialConnection
         self.title = title
         self.isMuted = isMuted
         self.isPinned = isPinned
@@ -80,6 +83,7 @@ struct IrisChatRow: View {
                     leading
                 } else {
                     IrisAvatar(
+                        socialConnection: socialConnection,
                         label: title,
                         size: IrisChatListRowMetrics.avatarSize,
                         emphasize: unreadCount > 0,

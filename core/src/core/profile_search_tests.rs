@@ -55,7 +55,8 @@ fn people_search_connection() -> Connection {
              display_name TEXT,
              picture TEXT,
              about TEXT,
-             nickname TEXT
+             nickname TEXT,
+             contact_memory_json TEXT
          );
          CREATE TABLE profile_search_candidates (
              owner_pubkey_hex TEXT PRIMARY KEY,
@@ -190,6 +191,7 @@ fn personalized_global_rank_restores_and_is_account_scoped() {
     let unsupported = globals[0].clone();
     let supported = globals[1].clone();
     let cache = UserDiscoveryCache {
+        follow_event_json: None,
         owner_pubkey_hex: Some(root.clone()),
         follow_event_id: Some("verified-head".to_string()),
         follow_created_at_secs: 10,
@@ -280,7 +282,7 @@ fn canonical_profile_fields_override_stale_index_hints() {
     )
     .unwrap();
     conn.execute(
-        "INSERT INTO owner_profiles VALUES (?1, 'Current', NULL, NULL, NULL, NULL)",
+        "INSERT INTO owner_profiles VALUES (?1, 'Current', NULL, NULL, NULL, NULL, NULL)",
         [&owner],
     )
     .unwrap();

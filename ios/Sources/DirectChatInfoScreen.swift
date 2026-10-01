@@ -80,9 +80,15 @@ struct DirectChatInfoScreen: View {
                     .frame(maxWidth: .infinity)
                     .padding(.top, 22)
 
+                    if let connection = chat.socialConnection {
+                        IrisSocialConnectionLabel(connection: connection)
+                    }
+
                     if let about = trimmedText(chat.about) {
                         profileAboutRow(about)
                     }
+
+                    IrisContactActions(manager: manager, chat: chat)
 
                     nicknameCard(chat)
 
@@ -338,6 +344,7 @@ struct DirectChatInfoScreen: View {
 
     private func directChatAvatarImage(_ chat: CurrentChatSnapshot) -> some View {
         IrisAvatar(
+            socialConnection: chat.socialConnection,
             label: chat.displayName,
             size: 96,
             emphasize: true,

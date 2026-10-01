@@ -273,7 +273,10 @@ where
         row.set_subtitle(sub);
     }
     let avatar = adw::Avatar::new(32, Some(&chat.display_name), true);
-    row.add_prefix(&avatar);
+    row.add_prefix(&crate::widgets::social_badge::avatar(
+        &avatar,
+        chat.social_connection.as_ref(),
+    ));
     let plus = gtk::Image::from_icon_name("list-add-symbolic");
     plus.add_css_class("dim-label");
     row.add_suffix(&plus);

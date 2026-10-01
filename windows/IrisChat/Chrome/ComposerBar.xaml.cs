@@ -18,6 +18,13 @@ public partial class ComposerBar : UserControl
     public event Action? StoppedTyping;
 
     private bool _wasTyping;
+    private bool _directSendAllowed;
+    public bool DirectSendAllowed
+    {
+        get => _directSendAllowed;
+        set { _directSendAllowed = value; if (!value) DirectMode.IsChecked = false; UpdateStagedVisibility(); }
+    }
+    public bool SendDirectly => DirectSendAllowed && DirectMode.IsChecked == true;
     private readonly ObservableCollection<StagedAttachmentItem> _staged = new();
 
     public ComposerBar()
@@ -152,6 +159,8 @@ public partial class ComposerBar : UserControl
     private void UpdateStagedVisibility()
     {
         StagedAttachmentsList.Visibility = _staged.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        DirectMode.Visibility = _staged.Count > 0 && DirectSendAllowed ? Visibility.Visible : Visibility.Collapsed;
+        if (_staged.Count == 0) DirectMode.IsChecked = false;
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::DirectFileTransferSnapshot;
 use serde::{Deserialize, Serialize};
 
 #[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
@@ -289,6 +290,8 @@ pub struct CallHistorySnapshot {
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ChatMessageSnapshot {
+    #[uniffi(default = None)]
+    pub direct_transfer: Option<DirectFileTransferSnapshot>,
     pub id: String,
     pub chat_id: String,
     pub kind: ChatMessageKind,
@@ -324,8 +327,27 @@ pub struct TypingIndicatorSnapshot {
     pub expires_at_secs: u64,
 }
 
+/// A social connection, not identity verification. Computed by nostr-social-graph.
+#[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
+pub enum SocialBadge {
+    Warning,
+    Following,
+    Friend,
+    Trusted,
+    Muted,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct SocialConnectionSnapshot {
+    pub badge: Option<SocialBadge>,
+    pub follow_distance: Option<u32>,
+    pub followed_by_friends: u32,
+    pub description: String,
+}
+
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ChatThreadSnapshot {
+    pub social_connection: Option<SocialConnectionSnapshot>,
     pub chat_id: String,
     pub kind: ChatKind,
     pub display_name: String,
@@ -360,6 +382,7 @@ pub struct ChatThreadSnapshot {
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ChatParticipantSnapshot {
+    pub social_connection: Option<SocialConnectionSnapshot>,
     pub owner_pubkey_hex: String,
     pub display_name: String,
     pub picture_url: Option<String>,
@@ -378,7 +401,20 @@ pub enum DirectChatCapabilityState {
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct ContactIdentitySnapshot {
+    pub is_following: bool,
+    pub can_follow: bool,
+    pub updating_follow: bool,
+    pub first_seen_name: Option<String>,
+    pub saved_name: Option<String>,
+    pub pending_name: Option<String>,
+    pub is_favorite: bool,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct CurrentChatSnapshot {
+    pub contact_identity: Option<ContactIdentitySnapshot>,
+    pub social_connection: Option<SocialConnectionSnapshot>,
     pub chat_id: String,
     pub kind: ChatKind,
     pub display_name: String,
@@ -406,6 +442,7 @@ pub struct CurrentChatSnapshot {
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct GroupMemberSnapshot {
+    pub social_connection: Option<SocialConnectionSnapshot>,
     pub owner_pubkey_hex: String,
     pub display_name: String,
     pub npub: String,
@@ -539,6 +576,7 @@ pub struct MessageSearchHit {
 /// shells only render these fields.
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct FollowedUserSearchResult {
+    pub social_connection: Option<SocialConnectionSnapshot>,
     pub owner_pubkey_hex: String,
     pub display_label: String,
     pub profile_label: Option<String>,

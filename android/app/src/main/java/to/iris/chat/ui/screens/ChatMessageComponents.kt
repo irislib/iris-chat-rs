@@ -82,6 +82,7 @@ import to.iris.chat.rust.AccountSnapshot
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatMessageKind
 import to.iris.chat.rust.ChatMessageSnapshot
+import to.iris.chat.rust.SocialConnectionSnapshot
 import to.iris.chat.rust.CurrentChatSnapshot
 import to.iris.chat.rust.DeliveryState
 import to.iris.chat.rust.MessageAttachmentSnapshot
@@ -428,6 +429,9 @@ internal fun MessageBubble(
                                         MaterialTheme.colorScheme.onSurface
                                     }).copy(alpha = 0.85f),
                             )
+                        }
+                        message.directTransfer?.let { transfer ->
+                            ChatDirectFileTransfer(transfer, chat?.chatId.orEmpty(), isOutgoing = message.isOutgoing) { action -> appManager?.dispatch(action) }
                         }
                         val imageAttachments = message.attachments.filter { it.isImage }
                         val nonImageAttachments = message.attachments.filter { !it.isImage }
@@ -1742,6 +1746,7 @@ private data class ParticipantInfo(
     val name: String,
     val pictureUrl: String?,
     val isMe: Boolean,
+    val socialConnection: SocialConnectionSnapshot?,
 )
 
 private fun messageAuthorInfo(
@@ -1808,6 +1813,7 @@ private fun participantInfo(
         name = name,
         pictureUrl = participant?.pictureUrl ?: pictureUrl,
         isMe = participant?.isLocalOwner ?: false,
+        socialConnection = participant?.socialConnection,
     )
 }
 
@@ -1852,7 +1858,7 @@ private fun MessageInfoUserRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IrisAvatar(label = info.name, size = 32.dp, imageUrl = info.pictureUrl)
+        IrisAvatar(label = info.name, size = 32.dp, imageUrl = info.pictureUrl, socialConnection = info.socialConnection)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = info.name,

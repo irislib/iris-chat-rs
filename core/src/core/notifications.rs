@@ -115,6 +115,7 @@ mod tests {
         preview: Option<&str>,
     ) -> ChatThreadSnapshot {
         ChatThreadSnapshot {
+            social_connection: None,
             chat_id: id.to_string(),
             kind: ChatKind::Direct,
             display_name: format!("name-{id}"),

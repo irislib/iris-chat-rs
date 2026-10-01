@@ -19,6 +19,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 mod iris_cli_run;
+mod iris_contacts;
 mod iris_service;
 mod iris_service_transport;
 use iris_cli_run::run;
@@ -54,6 +55,9 @@ Messages:
   search     Search messages
   tail       Show recent messages
   listen     Watch for messages
+
+Contacts:
+  contact    Saved names, private favorites, public follows
 
 Groups:
   group      Group chat tools
@@ -92,6 +96,10 @@ struct Cli {
     #[arg(long, global = true, env = "IRIS_DATA_DIR")]
     data_dir: Option<PathBuf>,
 
+    /// Do not start a background sync process after this command exits.
+    #[arg(long, global = true)]
+    no_background_sync: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -102,6 +110,8 @@ enum Commands {
     Account(AccountTopCommands),
     #[command(flatten)]
     Messages(MessageTopCommands),
+    #[command(subcommand)]
+    Contact(iris_contacts::ContactCommands),
     #[command(flatten)]
     Groups(GroupTopCommands),
     #[command(flatten)]
@@ -699,6 +709,7 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
     match command {
         Commands::Account(command) => handle_account_top_command(cli, data_dir, command),
         Commands::Messages(command) => handle_message_top_command(cli, command),
+        Commands::Contact(command) => iris_contacts::handle(cli, command),
         Commands::Groups(GroupTopCommands::Group(command)) => handle_group_command(cli, command),
         Commands::InvitesAndDevices(command) => handle_invite_device_command(cli, command),
         Commands::MessageServers(MessageServerTopCommands::Relay(command)) => {
@@ -1541,16 +1552,18 @@ fn print_output(json_output: bool, command: &str, data: Value) -> Result<()> {
 }
 
 fn should_spawn_background_sync(state: &AppState, data: &Value) -> bool {
-    !state.preferences.nostr_relay_urls.is_empty()
-        && data
-            .get("is_outgoing")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
+    let public_follow_pending = data.get("contact_identity").is_some()
+        && data.get("network_publication").and_then(Value::as_str) == Some("not_verified");
+    let message_pending = data
+        .get("is_outgoing")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
         && data.get("id").and_then(Value::as_str).is_some()
         && data
             .get("delivery")
             .and_then(Value::as_str)
-            .is_some_and(|delivery| matches!(delivery, "queued" | "pending"))
+            .is_some_and(|delivery| matches!(delivery, "queued" | "pending"));
+    !state.preferences.nostr_relay_urls.is_empty() && (public_follow_pending || message_pending)
 }
 
 fn spawn_background_sync(data_dir: &Path) {
@@ -1613,6 +1626,7 @@ fn command_name(command: &Commands) -> &'static str {
             MessageTopCommands::Tail { .. } => "tail",
             MessageTopCommands::Listen { .. } => "listen",
         },
+        Commands::Contact(_) => "contact",
         Commands::Groups(_) => "group",
         Commands::InvitesAndDevices(command) => match command {
             InviteDeviceTopCommands::Invite(_) => "invite",
@@ -1679,6 +1693,7 @@ fn thread_json(thread: &ChatThreadSnapshot) -> Value {
         "unread_count": thread.unread_count,
         "muted": thread.is_muted,
         "pinned": thread.is_pinned,
+        "social_connection": thread.social_connection.as_ref().map(iris_contacts::connection_json),
     })
 }
 
@@ -1690,6 +1705,8 @@ fn chat_summary_json(chat: &CurrentChatSnapshot) -> Value {
         "group_id": chat.group_id,
         "member_count": chat.member_count,
         "message_count": chat.messages.len(),
+        "contact_identity": chat.contact_identity.as_ref().map(iris_contacts::identity_json),
+        "social_connection": chat.social_connection.as_ref().map(iris_contacts::connection_json),
         "message_ttl_seconds": chat.message_ttl_seconds,
         "muted": chat.is_muted,
     })

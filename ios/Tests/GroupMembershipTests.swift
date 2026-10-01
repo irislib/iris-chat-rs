@@ -16,7 +16,7 @@ final class GroupMembershipTests: XCTestCase {
         state.currentChat?.groupId = "membership-test"
         state.currentChat?.displayName = "Weekend plans"
         state.currentChat?.directChatCapability = nil
-        state.currentChat?.participants = [ChatParticipantSnapshot(ownerPubkeyHex: "local", displayName: "You", pictureUrl: nil, isLocalOwner: true)]
+        state.currentChat?.participants = [ChatParticipantSnapshot(socialConnection: nil, ownerPubkeyHex: "local", displayName: "You", pictureUrl: nil, isLocalOwner: true)]
         let chatId = try XCTUnwrap(state.currentChat?.chatId)
         let rust = MockRustApp(state: state)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -82,7 +82,7 @@ final class GroupMembershipTests: XCTestCase {
             try png.write(to: URL(fileURLWithPath: output).appendingPathComponent("removed-group-chat.png"))
         }
         state.rev += 1
-        state.currentChat?.participants = [ChatParticipantSnapshot(ownerPubkeyHex: "local", displayName: "You", pictureUrl: nil, isLocalOwner: true)]
+        state.currentChat?.participants = [ChatParticipantSnapshot(socialConnection: nil, ownerPubkeyHex: "local", displayName: "You", pictureUrl: nil, isLocalOwner: true)]
         rust.emit(.fullState(state))
         try await Task.sleep(nanoseconds: 100_000_000)
         rust.clearDispatchedActions()

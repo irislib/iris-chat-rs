@@ -40,6 +40,8 @@ pub fn build_large_test_app_state(
         .map(|index| fixture_message(&current_thread.chat_id, index))
         .collect();
     let current_chat = CurrentChatSnapshot {
+        contact_identity: None,
+        social_connection: None,
         chat_id: current_thread.chat_id.clone(),
         kind: current_thread.kind.clone(),
         display_name: current_thread.display_name.clone(),
@@ -128,6 +130,7 @@ pub fn build_large_test_search_result(
         scope_chat_id: None,
         people: (0..person_count)
             .map(|index| FollowedUserSearchResult {
+                social_connection: None,
                 owner_pubkey_hex: fixture_hex(10_000 + index),
                 display_label: format!("{} Person {:04}", title_token(&query), index + 1),
                 profile_label: Some(format!("Public Person {:04}", index + 1)),
@@ -186,6 +189,7 @@ fn fixture_thread(kind: ChatKind, index: u32) -> ChatThreadSnapshot {
     };
 
     ChatThreadSnapshot {
+        social_connection: None,
         chat_id: format!("{prefix}-{:04}", index + 1),
         kind,
         display_name: format!("{display_prefix} {:04}", index + 1),
@@ -229,6 +233,7 @@ fn fixture_thread(kind: ChatKind, index: u32) -> ChatThreadSnapshot {
 fn fixture_message(chat_id: &str, index: u32) -> ChatMessageSnapshot {
     let outgoing = index.is_multiple_of(2);
     ChatMessageSnapshot {
+        direct_transfer: None,
         call: None,
         id: format!("{chat_id}-message-{:05}", index + 1),
         chat_id: chat_id.to_string(),
@@ -339,6 +344,7 @@ fn fixture_group_details(group_count: u32) -> GroupDetailsSnapshot {
         revision: 1,
         members: (0..member_count)
             .map(|index| GroupMemberSnapshot {
+                social_connection: None,
                 owner_pubkey_hex: fixture_hex(40_000 + index),
                 display_name: format!("Member {:02}", index + 1),
                 npub: format!("npub1fixturemember{:02}", index + 1),

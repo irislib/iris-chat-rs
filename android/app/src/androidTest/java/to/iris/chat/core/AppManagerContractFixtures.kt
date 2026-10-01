@@ -85,8 +85,7 @@ internal class MockRustAppClient(
         currentState.currentChat?.takeIf { it.chatId == trimmed }?.let { return it }
         val thread = currentState.chatList.firstOrNull { it.chatId == trimmed }
         val groupId = trimmed.removePrefix("group:").takeIf { trimmed.startsWith("group:") }
-        return CurrentChatSnapshot(
-            chatId = trimmed,
+        return CurrentChatSnapshot(contactIdentity = null, socialConnection = null, chatId = trimmed,
             kind = thread?.kind ?: if (groupId == null) ChatKind.DIRECT else ChatKind.GROUP,
             displayName = thread?.displayName ?: trimmed,
             nickname = thread?.nickname,

@@ -179,8 +179,7 @@ final class MockRustApp: RustAppClient {
         }
         let thread = currentState.chatList.first { $0.chatId == trimmed }
         let groupId = trimmed.hasPrefix("group:") ? String(trimmed.dropFirst("group:".count)) : nil
-        return CurrentChatSnapshot(
-            chatId: trimmed,
+        return CurrentChatSnapshot(contactIdentity: nil, socialConnection: nil, chatId: trimmed,
             kind: thread?.kind ?? (groupId == nil ? .direct : .group),
             displayName: thread?.displayName ?? trimmed,
             nickname: thread?.nickname,

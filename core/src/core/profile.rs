@@ -154,6 +154,7 @@ impl AppCore {
             .next_local_profile_timestamp(&local_owner_hex)
             .as_secs();
         if let Some(existing) = self.owner_profiles.get(&local_owner_hex) {
+            record.contact_memory = existing.contact_memory.clone();
             record.nickname = existing.nickname.clone();
             record.contact_note = existing.contact_note.clone();
             record.contact_updated_at_ms = existing.contact_updated_at_ms;
@@ -309,6 +310,7 @@ impl AppCore {
     }
 
     pub(super) fn apply_profile_metadata_event(&mut self, event: &Event) -> bool {
+        self.remember_contact_name(&event.pubkey.to_hex());
         self.cache_local_fips_identity(event);
         let owner_hex = event.pubkey.to_hex();
         let extra_tags: Vec<Vec<String>> = event
@@ -326,12 +328,14 @@ impl AppCore {
             if existing.updated_at_secs > record.updated_at_secs {
                 return false;
             }
+            record.contact_memory = existing.contact_memory.clone();
             record.nickname = existing.nickname.clone();
             record.contact_note = existing.contact_note.clone();
             record.contact_updated_at_ms = existing.contact_updated_at_ms;
         }
 
         self.owner_profiles.insert(owner_hex.clone(), record);
+        self.remember_contact_name(&owner_hex);
         self.push_debug_log("relay.metadata", format!("owner={owner_hex}"));
         // Mobile-push snapshot embeds the display label per session.
         self.mark_mobile_push_dirty();

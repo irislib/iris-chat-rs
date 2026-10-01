@@ -2,6 +2,18 @@ use crate::state::{OutgoingAttachment, Screen};
 
 #[derive(uniffi::Enum, Clone, Debug)]
 pub enum AppAction {
+    SetPublicFollow {
+        owner_pubkey_hex: String,
+        following: bool,
+    },
+    ApproveContactName {
+        owner_pubkey_hex: String,
+        name: String,
+    },
+    SetContactFavorite {
+        owner_pubkey_hex: String,
+        favorite: bool,
+    },
     StartCall {
         chat_id: String,
         video: bool,
@@ -151,6 +163,23 @@ pub enum AppAction {
         chat_id: String,
         attachments: Vec<OutgoingAttachment>,
         caption: String,
+    },
+    SendDirectFiles {
+        chat_id: String,
+        attachments: Vec<OutgoingAttachment>,
+        caption: String,
+    },
+    AcceptDirectFiles {
+        chat_id: String,
+        transfer_id: String,
+    },
+    DeclineDirectFiles {
+        chat_id: String,
+        transfer_id: String,
+    },
+    CancelDirectFiles {
+        chat_id: String,
+        transfer_id: String,
     },
     ToggleReaction {
         chat_id: String,

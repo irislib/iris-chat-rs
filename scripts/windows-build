@@ -37,6 +37,7 @@ commands:
   windows-gen-cs     Generate C# bindings on the Windows host via uniffi-bindgen-cs
   windows-dotnet     Run dotnet publish for the WPF C# app
   windows-build      Full pipeline: sync, rust, bindings, dotnet publish
+  windows-direct-file-tests  Run native direct file transfer and WPF controls tests after build
   windows-idle-cpu   Build, seed direct/group chats, and gate idle app CPU
   windows-installer  Build a Release publish + NSIS x86_64 setup .exe
   windows-zip        Zip the latest Release publish directory into dist/windows
@@ -552,6 +553,7 @@ case "${1:-}" in
   windows-gen-cs) run_gen_cs ;;
   windows-dotnet) run_dotnet ;;
   windows-build) run_full_build ;;
+  windows-direct-file-tests) run_native_entrypoint direct-file-tests ;;
   windows-idle-cpu) run_idle_cpu_gate ;;
   windows-installer) run_installer ;;
   windows-zip) run_zip ;;

@@ -261,6 +261,7 @@ struct ShareTargetSheet: View {
         } label: {
             HStack(spacing: 12) {
                 IrisAvatar(
+                    socialConnection: chat.socialConnection,
                     label: chat.displayName,
                     size: 40,
                     emphasize: false,

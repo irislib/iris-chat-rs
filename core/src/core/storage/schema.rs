@@ -7,9 +7,14 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 37;
+const SCHEMA_VERSION: u32 = 39;
 
 const INITIAL_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS direct_file_transfers (
+    id TEXT PRIMARY KEY,
+    record_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS app_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -45,6 +50,7 @@ CREATE TABLE IF NOT EXISTS preferences (
 
 CREATE TABLE IF NOT EXISTS owner_profiles (
     owner_pubkey_hex TEXT PRIMARY KEY,
+    contact_memory_json TEXT NOT NULL DEFAULT '{}',
     nickname TEXT,
     contact_note TEXT,
     contact_updated_at_ms INTEGER NOT NULL DEFAULT 0,
@@ -67,6 +73,7 @@ CREATE TABLE IF NOT EXISTS user_discovery_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     owner_pubkey_hex TEXT,
     follow_event_id TEXT,
+    follow_event_json TEXT,
     follow_created_at_secs INTEGER NOT NULL DEFAULT 0,
     social_rank_ready INTEGER NOT NULL DEFAULT 0,
     social_graph BLOB
@@ -509,6 +516,7 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
             "CREATE TABLE IF NOT EXISTS user_discovery_state (
                  id INTEGER PRIMARY KEY CHECK (id = 1),
                  follow_event_id TEXT,
+    follow_event_json TEXT,
                  follow_created_at_secs INTEGER NOT NULL DEFAULT 0
              );
              CREATE TABLE IF NOT EXISTS user_discovery_users (
@@ -596,6 +604,14 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
         tx.execute_batch(
             "ALTER TABLE preferences ADD COLUMN timed_chat_mutes_json TEXT NOT NULL DEFAULT '[]';",
         )?;
+    }
+    if current < 38 && !column_exists(&tx, "owner_profiles", "contact_memory_json")? {
+        tx.execute_batch(
+            "ALTER TABLE owner_profiles ADD COLUMN contact_memory_json TEXT NOT NULL DEFAULT '{}';",
+        )?;
+    }
+    if current < 38 && !column_exists(&tx, "user_discovery_state", "follow_event_json")? {
+        tx.execute_batch("ALTER TABLE user_discovery_state ADD COLUMN follow_event_json TEXT;")?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;

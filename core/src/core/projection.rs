@@ -134,6 +134,7 @@ impl AppCore {
             self.owner_display_label(owner_hex)
         };
         ChatParticipantSnapshot {
+            social_connection: self.social_connection(owner_hex),
             owner_pubkey_hex: owner_hex.to_string(),
             display_name,
             picture_url: self.owner_picture_url(owner_hex),
@@ -343,6 +344,7 @@ impl AppCore {
                     local_owner_hex.as_deref(),
                 );
                 ChatThreadSnapshot {
+                    social_connection: self.social_connection(&thread.chat_id),
                     chat_id: thread.chat_id.clone(),
                     kind: thread_kind,
                     display_name,
@@ -422,6 +424,8 @@ impl AppCore {
                     local_owner_hex.as_deref(),
                 );
                 CurrentChatSnapshot {
+                    contact_identity: self.contact_identity(&thread.chat_id),
+                    social_connection: self.social_connection(&thread.chat_id),
                     chat_id: thread.chat_id.clone(),
                     kind: current_chat_kind.clone(),
                     display_name: group_snapshot
@@ -714,6 +718,7 @@ impl AppCore {
                     .rev()
                     .find(|m| !self.is_live_call_history(m));
                 Some(ChatThreadSnapshot {
+                    social_connection: None,
                     chat_id,
                     kind: ChatKind::Group,
                     display_name: group.name.clone(),
@@ -770,6 +775,7 @@ impl AppCore {
                 let owner_hex = owner.to_string();
                 let owner = PublicKey::parse(&owner_hex).ok();
                 GroupMemberSnapshot {
+                    social_connection: self.social_connection(&owner_hex),
                     owner_pubkey_hex: owner_hex.clone(),
                     display_name: self.owner_display_label(&owner_hex),
                     npub: owner

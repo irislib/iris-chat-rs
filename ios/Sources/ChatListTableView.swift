@@ -59,6 +59,7 @@ struct ChatListRowContainer: View {
             return chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"
         }()
         return IrisChatRow(
+            socialConnection: chat.socialConnection,
             title: chat.displayName,
             isMuted: chat.isMuted,
             isPinned: chat.isPinned,
@@ -513,6 +514,7 @@ struct ChatListTableView: UIViewRepresentable {
             cell.selectionStyle = .default
             cell.contentConfiguration = UIHostingConfiguration {
                 ChatListTableRowContent(
+                    socialConnection: chat.socialConnection,
                     title: chat.displayName,
                     isMuted: chat.isMuted,
                     isPinned: chat.isPinned,
@@ -656,6 +658,7 @@ final class ChatListScrollTableView: UITableView {
 struct ChatListTableRowContent: View {
     @Environment(\.irisPalette) private var palette
 
+    let socialConnection: SocialConnectionSnapshot?
     let title: String
     let isMuted: Bool
     let isPinned: Bool
@@ -671,6 +674,7 @@ struct ChatListTableRowContent: View {
     let previewLeading: AnyView?
 
     init(
+        socialConnection: SocialConnectionSnapshot? = nil,
         title: String,
         isMuted: Bool = false,
         isPinned: Bool = false,
@@ -685,6 +689,7 @@ struct ChatListTableRowContent: View {
         leading: AnyView? = nil,
         previewLeading: AnyView? = nil
     ) {
+        self.socialConnection = socialConnection
         self.title = title
         self.isMuted = isMuted
         self.isPinned = isPinned
@@ -706,7 +711,8 @@ struct ChatListTableRowContent: View {
                 leading
             } else {
                 IrisAvatar(
-                    label: title,
+                        socialConnection: socialConnection,
+                        label: title,
                     size: IrisChatListRowMetrics.avatarSize,
                     emphasize: unreadCount > 0,
                     pictureUrl: pictureUrl,

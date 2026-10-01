@@ -283,6 +283,7 @@ impl AppCore {
                 .push(normalized.clone());
             self.preferences.blocked_owner_pubkeys.sort();
             self.preferences.blocked_owner_pubkeys.dedup();
+            self.cancel_direct_files_for_chat(&normalized);
             // Stop ringing and media now, before any queued answer or frame
             // can run; the periodic call tick is only a fallback.
             if self.calls.active.is_some()

@@ -841,7 +841,7 @@ private fun ChatListConversationRow(
             onDeleteRequest = { onDeleteRequest(chat) },
         ) {
             IrisChatListRow(
-                title = chat.displayName,
+                socialConnection = chat.socialConnection, title = chat.displayName,
                 isMuted = chat.isMuted,
                 isPinned = chat.isPinned,
                 preview = chat.chatListPreview(),

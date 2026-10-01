@@ -4,6 +4,18 @@ impl AppCore {
     pub(in crate::core) fn handle_action(&mut self, action: AppAction) {
         self.state.toast = None;
         match action {
+            AppAction::SetPublicFollow {
+                owner_pubkey_hex,
+                following,
+            } => self.set_public_follow(&owner_pubkey_hex, following),
+            AppAction::ApproveContactName {
+                owner_pubkey_hex,
+                name,
+            } => self.approve_contact_name(&owner_pubkey_hex, &name),
+            AppAction::SetContactFavorite {
+                owner_pubkey_hex,
+                favorite,
+            } => self.set_contact_favorite(&owner_pubkey_hex, favorite),
             AppAction::StartCall { chat_id, video } => self.start_call(&chat_id, video),
             AppAction::AnswerCall { call_id } => self.answer_call(&call_id, false),
             AppAction::AnswerCallWithVoice { call_id } => self.answer_call(&call_id, true),
@@ -127,6 +139,23 @@ impl AppCore {
                 attachments,
                 caption,
             } => self.send_attachments(&chat_id, &attachments, &caption),
+            AppAction::SendDirectFiles {
+                chat_id,
+                attachments,
+                caption,
+            } => self.send_direct_files(&chat_id, attachments, caption),
+            AppAction::AcceptDirectFiles {
+                chat_id,
+                transfer_id,
+            } => self.act_on_direct_files(&chat_id, &transfer_id, direct_files::Action::Accept),
+            AppAction::DeclineDirectFiles {
+                chat_id,
+                transfer_id,
+            } => self.act_on_direct_files(&chat_id, &transfer_id, direct_files::Action::Decline),
+            AppAction::CancelDirectFiles {
+                chat_id,
+                transfer_id,
+            } => self.act_on_direct_files(&chat_id, &transfer_id, direct_files::Action::Cancel),
             AppAction::ToggleReaction {
                 chat_id,
                 message_id,

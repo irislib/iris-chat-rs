@@ -5,3 +5,4 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 "$ROOT/scripts/windows-build" windows-build
+"$ROOT/scripts/windows-build" windows-direct-file-tests

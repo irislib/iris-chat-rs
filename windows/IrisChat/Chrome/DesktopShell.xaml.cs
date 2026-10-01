@@ -258,6 +258,7 @@ public partial class DesktopShell : UserControl
     {
         var avatar = new Avatar
         {
+            SocialConnection = person.socialConnection,
             Label = person.displayLabel,
             PictureUrl = person.pictureUrl,
             Size = 44,

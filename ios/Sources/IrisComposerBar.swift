@@ -16,6 +16,8 @@ struct IrisComposerBar: View {
 
     @ObservedObject var composerState: IrisComposerState
     @Binding var attachments: [StagedAttachment]
+    @Binding var sendFilesDirectly: Bool
+    let directFilesAllowed: Bool
     @State private var showingAttachmentPicker = false
     @State private var showingEmojiPicker = false
     @State private var isPreparingAttachments = false
@@ -71,6 +73,13 @@ struct IrisComposerBar: View {
 
     var body: some View {
         VStack(spacing: 8) {
+            if !attachments.isEmpty && sendFilesDirectly {
+                Label("Send directly · Both devices must stay online", systemImage: "arrow.up.arrow.down")
+                    .font(.caption)
+                    .foregroundStyle(palette.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("chatDirectFileMode")
+            }
             if !attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -80,6 +89,7 @@ struct IrisComposerBar: View {
                                 enabled: !isSending && !isUploading
                             ) {
                                 attachments.removeAll { $0 == attachment }
+                                if attachments.isEmpty { sendFilesDirectly = false }
                             }
                         }
                     }
@@ -140,6 +150,7 @@ struct IrisComposerBar: View {
             allowsMultipleSelection: true
         ) { result in
             guard case .success(let urls) = result, !urls.isEmpty else {
+                if attachments.isEmpty { sendFilesDirectly = false }
                 return
             }
             prepareAttachments { urls }
@@ -169,11 +180,14 @@ struct IrisComposerBar: View {
         } message: { Text(voiceRecorder.errorMessage ?? "") }
         .sheet(isPresented: $showingAttachmentSheet, onDismiss: presentAttachmentSource) {
             IrisAttachmentPicker(
+                directFilesAllowed: directFilesAllowed,
                 onSource: { source in
+                    sendFilesDirectly = irisDirectFileSendMode(current: sendFilesDirectly, hasFiles: !attachments.isEmpty, selectedDirectly: source == .directFiles)
                     pendingAttachmentSource = source
                     showingAttachmentSheet = false
                 },
                 onPhotos: { items in
+                    if attachments.isEmpty { sendFilesDirectly = false }
                     showingAttachmentSheet = false
                     handlePickedPhotos(items)
                 }
@@ -382,8 +396,18 @@ struct IrisComposerBar: View {
         .disabled(isSending || isUploading || isPreparingAttachments)
         .accessibilityIdentifier("chatAttachButton")
         #else
-        Button {
-            showingAttachmentPicker = true
+        Menu {
+            Button {
+                if attachments.isEmpty { sendFilesDirectly = false }
+                showingAttachmentPicker = true
+            } label: { Label("Files", systemImage: "doc.fill") }
+            if directFilesAllowed {
+                Button {
+                    sendFilesDirectly = true
+                    showingAttachmentPicker = true
+                } label: { Label("Send directly", systemImage: "arrow.up.arrow.down") }
+                .accessibilityIdentifier("chatDirectFileButton")
+            }
         } label: {
             attachmentControlLabel
         }
@@ -411,7 +435,7 @@ struct IrisComposerBar: View {
         switch source {
         case .camera: showingAttachmentCamera = true
         case .photos: showingPhotoPicker = true
-        case .files: showingAttachmentPicker = true
+        case .files, .directFiles: showingAttachmentPicker = true
         case nil: break
         }
     }

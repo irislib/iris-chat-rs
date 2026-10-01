@@ -368,7 +368,7 @@ fn search_people_candidates(
          SELECT c.owner_pubkey_hex, d.follow_position, d.petname,
                 p.name, p.display_name, p.picture, p.about,
                 p.owner_pubkey_hex IS NOT NULL,
-                s.name, s.aliases_json, s.nip05, s.picture, r.friend_support, p.nickname
+                s.name, s.aliases_json, s.nip05, s.picture, r.friend_support, p.nickname, p.contact_memory_json
          FROM candidate_owners c
          LEFT JOIN current_discovery d
            ON d.owner_pubkey_hex = c.owner_pubkey_hex
@@ -401,6 +401,7 @@ fn search_people_candidates(
             row.get::<_, Option<String>>(11)?,
             row.get::<_, Option<u16>>(12)?.map(usize::from),
             row.get::<_, Option<String>>(13)?,
+            row.get::<_, Option<String>>(14)?,
         ))
     })?;
 
@@ -421,7 +422,12 @@ fn search_people_candidates(
             indexed_picture,
             personalized_friend_support,
             nickname,
+            contact_memory_json,
         ) = row?;
+        let contact_memory: crate::contact_memory::ContactMemory = contact_memory_json
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
         if excluded_owner_hexes.contains(&owner_hex) {
             continue;
         }
@@ -459,6 +465,7 @@ fn search_people_candidates(
             .or_else(|| indexed_name.clone());
         let display_label = nickname
             .clone()
+            .or_else(|| contact_memory.accepted_name.clone())
             .or_else(|| petname.clone())
             .or_else(|| profile_label.clone())
             .unwrap_or_else(|| fallback_profile_name_for_identity(&owner_hex));
@@ -469,6 +476,7 @@ fn search_people_candidates(
         });
         let mut fields = vec![
             nickname.as_deref().unwrap_or_default(),
+            contact_memory.accepted_name.as_deref().unwrap_or_default(),
             petname.as_deref().unwrap_or_default(),
             profile_name.as_deref().unwrap_or_default(),
             profile_display_name.as_deref().unwrap_or_default(),
@@ -516,6 +524,11 @@ fn search_people_candidates(
             friend_support,
             owner_hex.clone(),
             FollowedUserSearchResult {
+                social_connection: super::social_connection::social_connection(
+                    current_owner_hex,
+                    &owner_hex,
+                    personal_graph.as_deref(),
+                ),
                 owner_pubkey_hex: owner_hex,
                 display_label,
                 profile_label,

@@ -53,6 +53,7 @@ impl AppCore {
         let data_dir = PathBuf::from(data_dir);
         let data_dir_lock = DataDirLock::acquire(&data_dir)?;
         let mut app_store = AppStore::new(open_database(&data_dir)?);
+        direct_files::interrupt_stored(&app_store.shared());
 
         let mut state = AppState::empty();
         if let Some(persisted_preferences) = app_store.load_preferences_snapshot()? {
@@ -95,6 +96,8 @@ impl AppCore {
             profile_metadata_fetch_inflight: HashSet::new(),
             app_keys: BTreeMap::new(),
             direct_chat_capability_runtime: DirectChatCapabilityRuntime::default(),
+            pending_follow: None,
+            social_graph: None,
             user_discovery: UserDiscoveryCache::default(),
             user_discovery_runtime: UserDiscoveryRuntime::default(),
             profile_search_runtime: ProfileSearchRuntime::default(),
@@ -187,6 +190,8 @@ impl AppCore {
                 | InternalEvent::RemoteSignerConnected { .. }
                 | InternalEvent::RemoteSignerSigned { .. }
                 | InternalEvent::RemoteSignerFailed { .. } => "RemoteSigner",
+                InternalEvent::DirectFilesPrepared { .. } => "DirectFilesPrepared",
+                InternalEvent::DirectFile { .. } => "DirectFile",
                 InternalEvent::CallPacket { .. } => "CallPacket",
                 InternalEvent::CallMediaBatch { .. } => "CallMediaBatch",
                 InternalEvent::CallTick { .. } => "CallTick",
@@ -205,6 +210,7 @@ impl AppCore {
                 InternalEvent::DirectChatCapabilityFetchFinished { .. } => {
                     "DirectChatCapabilityFetchFinished"
                 }
+                InternalEvent::FollowUpdateReady { .. } => "FollowUpdateReady",
                 InternalEvent::UserDiscoveryFetchFinished { .. } => "UserDiscoveryFetchFinished",
                 InternalEvent::ProfileSearchRequested { .. } => "ProfileSearchRequested",
                 InternalEvent::ProfileSearchDebounceElapsed { .. } => {
@@ -448,6 +454,14 @@ impl AppCore {
             | InternalEvent::RemoteSignerConnected { .. }
             | InternalEvent::RemoteSignerSigned { .. }
             | InternalEvent::RemoteSignerFailed { .. }) => self.handle_remote_signer_event(event),
+            InternalEvent::DirectFilesPrepared {
+                generation,
+                device,
+                result,
+            } => self.direct_files_prepared(generation, device, result),
+            InternalEvent::DirectFile { generation, event } => {
+                self.handle_direct_file_event(generation, event)
+            }
             InternalEvent::CallPacket {
                 source_pubkey_hex,
                 source_port,
@@ -624,6 +638,9 @@ impl AppCore {
                 &owner_pubkey_hex,
                 result,
             ),
+            InternalEvent::FollowUpdateReady { request_id, result } => {
+                self.finish_follow_update(&request_id, result)
+            }
             InternalEvent::UserDiscoveryFetchFinished { token, result } => {
                 self.handle_user_discovery_fetch_finished(token, result);
             }

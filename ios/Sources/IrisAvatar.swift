@@ -213,6 +213,7 @@ func irisAvatarImageSource(
 struct IrisAvatar: View {
     @Environment(\.irisPalette) private var palette
 
+    let socialConnection: SocialConnectionSnapshot?
     let label: String
     let size: CGFloat
     let emphasize: Bool
@@ -224,6 +225,7 @@ struct IrisAvatar: View {
     @State private var avatarImage: PlatformImage?
 
     init(
+        socialConnection: SocialConnectionSnapshot? = nil,
         label: String,
         size: CGFloat = 42,
         emphasize: Bool = false,
@@ -232,6 +234,7 @@ struct IrisAvatar: View {
         manager: AppManager? = nil,
         loadedImageIdentifier: String? = nil
     ) {
+        self.socialConnection = socialConnection
         self.label = label
         self.size = size
         self.emphasize = emphasize
@@ -269,6 +272,12 @@ struct IrisAvatar: View {
             }
         }
         .frame(width: size, height: size)
+        .overlay(alignment: .topTrailing) {
+            if let socialConnection, socialConnection.badge != nil {
+                IrisSocialBadge(connection: socialConnection, size: max(14, min(22, size * 0.3)))
+                    .offset(x: 2, y: -2)
+            }
+        }
         .task(id: imageSourceKey) {
             await loadAvatarImage()
         }

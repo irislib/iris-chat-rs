@@ -104,6 +104,10 @@ pub(crate) struct CorePerfCountersSnapshot {
 
 #[derive(Debug)]
 pub(crate) enum InternalEvent {
+    FollowUpdateReady {
+        request_id: String,
+        result: Result<Vec<Event>, String>,
+    },
     RemoteSignerProgress {
         token: String,
         phase: crate::RemoteSignerPhase,
@@ -121,6 +125,15 @@ pub(crate) enum InternalEvent {
     RemoteSignerFailed {
         token: String,
         message: String,
+    },
+    DirectFilesPrepared {
+        generation: u64,
+        device: String,
+        result: Result<crate::core::direct_files::Record, String>,
+    },
+    DirectFile {
+        generation: u64,
+        event: crate::core::direct_file_tcp::DirectFileEvent,
     },
     CallPacket {
         source_pubkey_hex: String,

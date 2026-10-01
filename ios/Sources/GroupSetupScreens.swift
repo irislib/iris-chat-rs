@@ -263,7 +263,7 @@ struct NewGroupScreen: View {
                     memberInput = ""
                 } label: {
                     HStack(spacing: 12) {
-                        IrisAvatar(label: chat.displayName, size: 38, emphasize: selectedOwners.contains(chat.chatId))
+                        IrisAvatar(socialConnection: chat.socialConnection, label: chat.displayName, size: 38, emphasize: selectedOwners.contains(chat.chatId))
                         VStack(alignment: .leading, spacing: 4) {
                             Text(chat.displayName)
                                 .font(.system(.headline, design: .rounded, weight: .semibold))

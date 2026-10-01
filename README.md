@@ -160,6 +160,11 @@ and listeners do not mark messages seen. Agents should call
 Delivery receipts remain automatic for accepted conversations when receipts
 are enabled. Interactive apps retain their normal read behavior.
 
+For scripts that manage sync themselves, use `--no-background-sync` to prevent
+a one-shot command from starting a background process that keeps the profile
+open. Pending messages and public follows stay saved for the next `iris sync`
+or app session. An already running `iris service` continues normally.
+
 Messages can travel over Nostr relays, and nearby transports can keep local
 device messages off a remote server when the devices are close enough.
 

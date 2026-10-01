@@ -42,7 +42,7 @@ internal fun SearchChatRow(
 ) {
     val avatarData by rememberNhashImageData(appManager, chat.pictureUrl)
     IrisChatListRow(
-        title = chat.displayName,
+        socialConnection = chat.socialConnection, title = chat.displayName,
         isMuted = chat.isMuted,
         isPinned = chat.isPinned,
         preview = chat.chatListPreview(),
@@ -68,7 +68,7 @@ internal fun FollowedPersonSearchRow(
         ?: person.about
         ?: ""
     IrisChatListRow(
-        title = person.displayLabel,
+        socialConnection = person.socialConnection, title = person.displayLabel,
         preview = preview,
         timeLabel = null,
         imageRequest = proxiedAvatarUrl(person.pictureUrl, preferences),

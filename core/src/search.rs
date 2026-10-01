@@ -11,6 +11,12 @@ pub(crate) fn include_note_to_self(chats: &mut Vec<ChatThreadSnapshot>, account:
         return;
     }
     chats.push(ChatThreadSnapshot {
+        social_connection: Some(crate::SocialConnectionSnapshot {
+            badge: Some(crate::SocialBadge::Following),
+            follow_distance: Some(0),
+            followed_by_friends: 0,
+            description: "You".into(),
+        }),
         chat_id: account.public_key_hex.clone(),
         kind: ChatKind::Direct,
         display_name: NOTE_TO_SELF.to_string(),

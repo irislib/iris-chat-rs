@@ -20,5 +20,10 @@
                 <ImageBrush x:Name="ImageBrush" Stretch="UniformToFill" />
             </Border.Background>
         </Border>
+        <Border x:Name="SocialMark" Width="16" Height="16" CornerRadius="8"
+                HorizontalAlignment="Right" VerticalAlignment="Top" Visibility="Collapsed">
+            <TextBlock x:Name="SocialMarkText" Foreground="White" FontSize="12" FontWeight="Bold"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Border>
     </Grid>
 </UserControl>
