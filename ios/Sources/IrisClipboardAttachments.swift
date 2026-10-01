@@ -19,12 +19,19 @@ struct IrisClipboardAttachments {
 
     static func preferredType(_ identifiers: [String], suggestedName: String? = nil) -> String? {
         if identifiers.contains(UTType.fileURL.identifier) { return UTType.fileURL.identifier }
-        let isNamedFile = !(suggestedName.map { ($0 as NSString).pathExtension } ?? "").isEmpty
+        let name = suggestedFilename(suggestedName)
+        let ext = name.map { ($0 as NSString).pathExtension } ?? ""
+        let isNamedFile = !ext.isEmpty
         let supported = identifiers.filter { identifier in
             guard let type = UTType(identifier), type.conforms(to: .data),
                   !type.conforms(to: .url), !type.conforms(to: .text) || isNamedFile else { return false }
             return type.conforms(to: .content) || type.conforms(to: .archive) || isNamedFile
         }
+        if !ext.isEmpty, let filenameType = UTType(filenameExtension: ext) {
+            if let exact = supported.first(where: { UTType($0) == filenameType }) { return exact }
+            if let matching = supported.first(where: { UTType($0)?.conforms(to: filenameType) == true }) { return matching }
+        }
+        if name == nil, supported.contains(UTType.png.identifier) { return UTType.png.identifier }
         return supported.first { UTType($0)?.preferredFilenameExtension != nil } ?? supported.first
     }
 
@@ -50,7 +57,7 @@ struct IrisClipboardAttachments {
                 let itemDirectory = directory.appendingPathComponent(String(index), isDirectory: true)
                 let destination = itemDirectory.appendingPathComponent(Self.filename(provider.suggestedName, type: type))
                 let materialized = await Self.materialize(provider, type: type, destination: destination)
-                url = materialized.map { Self.restoreImageExtension($0, type: type) }
+                url = materialized.flatMap { Self.prepareImage($0, type: type, suggestedName: provider.suggestedName) }
             }
             // Never silently turn a partly unreadable selection into a partial send.
             guard let url, !Task.isCancelled else { return [] }
@@ -59,23 +66,59 @@ struct IrisClipboardAttachments {
         return urls
     }
 
-    private static func filename(_ suggested: String?, type: String) -> String {
+    private static func suggestedFilename(_ suggested: String?) -> String? {
         let name = (suggested.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let base = name.isEmpty || name == "." || name == ".." ? "Pasted file" : name
+        return name.isEmpty || name == "." || name == ".." ? nil : name
+    }
+
+    private static func filename(_ suggested: String?, type: String) -> String {
+        let base = suggestedFilename(suggested) ?? "Pasted file"
         guard (base as NSString).pathExtension.isEmpty,
               let ext = UTType(type)?.preferredFilenameExtension else { return base }
         return "\(base).\(ext)"
     }
 
-    private static func restoreImageExtension(_ url: URL, type: String) -> URL {
-        guard url.pathExtension.isEmpty, UTType(type)?.conforms(to: .image) == true,
+    private static func prepareImage(_ url: URL, type: String, suggestedName: String?) -> URL? {
+        guard UTType(type)?.conforms(to: .image) == true,
               let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
               let detected = CGImageSourceGetType(source),
-              let ext = UTType(detected as String)?.preferredFilenameExtension else { return url }
-        let named = url.appendingPathExtension(ext)
+              let imageType = UTType(detected as String),
+              let ext = imageType.preferredFilenameExtension else { return url }
+        // Raw clipboard pixels should preview on every client. Keep original
+        // named files intact, including animations and documents with images.
+        let inlineExtensions: Set<String> = ["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "avif"]
+        if suggestedFilename(suggestedName) == nil, !inlineExtensions.contains(ext.lowercased()) {
+            return makePNG(source, replacing: url)
+        }
+        let filenameType = url.pathExtension.isEmpty ? nil : UTType(filenameExtension: url.pathExtension)
+        let matches = filenameType.map { imageType.conforms(to: $0) } ?? false
+        guard url.pathExtension.isEmpty || (filenameType?.conforms(to: .image) == true && !matches) else {
+            return url
+        }
+        let named = url.deletingPathExtension().appendingPathExtension(ext)
         do { try FileManager.default.moveItem(at: url, to: named); return named }
         catch { return url }
+    }
+
+    private static func makePNG(_ source: CGImageSource, replacing url: URL) -> URL? {
+        guard !Task.isCancelled,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(1, max(width, height))
+        ]
+        guard let pixels = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary), !Task.isCancelled else { return nil }
+        let png = url.deletingLastPathComponent().appendingPathComponent("Pasted image.png")
+        guard let destination = CGImageDestinationCreateWithURL(png as CFURL, UTType.png.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, pixels, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        try? FileManager.default.removeItem(at: url)
+        return png
     }
 
     private static func materialize(_ provider: NSItemProvider, type: String, destination: URL) async -> URL? {

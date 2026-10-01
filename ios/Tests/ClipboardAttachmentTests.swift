@@ -102,6 +102,107 @@ final class ClipboardAttachmentTests: XCTestCase {
         }
     }
 
+    func testRawImagePrefersAdvertisedPNGWithoutReencodingIt() async throws {
+        let png = try encodedImage(.png)
+        let image = NSItemProvider()
+        image.registerDataRepresentation(forTypeIdentifier: UTType.tiff.identifier, visibility: .all) { completion in
+            XCTFail("Raw clipboard image must prefer its PNG representation")
+            completion(nil, CocoaError(.fileReadUnknown))
+            return nil
+        }
+        image.registerDataRepresentation(forTypeIdentifier: UTType.png.identifier, visibility: .all) { completion in
+            completion(png, nil)
+            return nil
+        }
+        let clipboard = try XCTUnwrap(IrisClipboardAttachments(providers: [image]))
+        await clipboard.withURLs { load in
+            let urls = await load()
+            XCTAssertEqual(urls.count, 1)
+            XCTAssertEqual(urls.first?.pathExtension, "png")
+            XCTAssertEqual(urls.first.flatMap { try? Data(contentsOf: $0) }, png)
+        }
+    }
+
+    func testRawTIFFBecomesFullSizeOrientedPNG() async throws {
+        let tiff = try encodedImage(.tiff, orientation: 6)
+        let clipboard = try XCTUnwrap(IrisClipboardAttachments(providers: [provider(.tiff, data: tiff)]))
+        await clipboard.withURLs { load in
+            let urls = await load()
+            XCTAssertEqual(urls.count, 1)
+            XCTAssertEqual(urls.first?.pathExtension, "png")
+            guard let url = urls.first, let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+                return XCTFail("Missing converted PNG")
+            }
+            XCTAssertEqual(CGImageSourceGetType(source).map { $0 as String }, UTType.png.identifier)
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+            XCTAssertEqual(properties?[kCGImagePropertyPixelWidth] as? Int, 16)
+            XCTAssertEqual(properties?[kCGImagePropertyPixelHeight] as? Int, 24)
+        }
+    }
+
+    func testRawHEICBecomesPNGWhenPlatformCanProvideHEIC() async throws {
+        let heic: Data
+        do { heic = try encodedImage(.heic) }
+        catch { throw XCTSkip("The platform cannot encode the HEIC clipboard fixture") }
+        let clipboard = try XCTUnwrap(IrisClipboardAttachments(providers: [provider(.heic, data: heic)]))
+        await clipboard.withURLs { load in
+            let urls = await load()
+            XCTAssertEqual(urls.count, 1)
+            XCTAssertEqual(urls.first?.pathExtension, "png")
+            guard let url = urls.first, let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+                return XCTFail("Missing converted PNG")
+            }
+            XCTAssertEqual(CGImageSourceGetType(source).map { $0 as String }, UTType.png.identifier)
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+            XCTAssertEqual(properties?[kCGImagePropertyPixelWidth] as? Int, 24)
+            XCTAssertEqual(properties?[kCGImagePropertyPixelHeight] as? Int, 16)
+        }
+    }
+
+    func testOriginalFilesAndNamedImageRepresentationsPreserveBytes() async throws {
+        let root = try temporaryDirectory()
+        let tiff = try encodedImage(.tiff)
+        let png = try encodedImage(.png)
+        let original = root.appendingPathComponent("original.tiff")
+        try tiff.write(to: original)
+        let file = NSItemProvider(item: original as NSURL, typeIdentifier: UTType.fileURL.identifier)
+        let namedTIFF = provider(.png, data: png, name: "kept.tif")
+        namedTIFF.registerDataRepresentation(forTypeIdentifier: UTType.tiff.identifier, visibility: .all) { completion in
+            completion(tiff, nil)
+            return nil
+        }
+        let namedPNG = provider(.tiff, data: tiff, name: "kept.png")
+        namedPNG.registerDataRepresentation(forTypeIdentifier: UTType.png.identifier, visibility: .all) { completion in
+            completion(png, nil)
+            return nil
+        }
+        let mismatchedName = provider(.tiff, data: tiff, name: "mismatch.png")
+        let clipboard = try XCTUnwrap(IrisClipboardAttachments(providers: [file, namedTIFF, namedPNG, mismatchedName]))
+        await clipboard.withURLs { load in
+            let urls = await load()
+            XCTAssertEqual(urls.map(\.lastPathComponent), ["original.tiff", "kept.tif", "kept.png", "mismatch.tiff"])
+            XCTAssertEqual(urls.map { try? Data(contentsOf: $0) }, [tiff, tiff, png, tiff])
+        }
+        XCTAssertEqual(try Data(contentsOf: original), tiff)
+    }
+
+    private func encodedImage(_ type: UTType, orientation: Int = 1) throws -> Data {
+        guard let context = CGContext(data: nil, width: 24, height: 16, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        context.setFillColor(CGColor(red: 0.1, green: 0.4, blue: 0.8, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 24, height: 16))
+        let data = NSMutableData()
+        guard let image = context.makeImage(),
+              let destination = CGImageDestinationCreateWithData(data as CFMutableData, type.identifier as CFString, 1, nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        CGImageDestinationAddImage(destination, image, [kCGImagePropertyOrientation: orientation] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
+        return data as Data
+    }
+
     @MainActor
     func testNativeImageClipboardProviderProducesRecognizableImageFile() async throws {
         #if os(iOS)
@@ -128,6 +229,7 @@ final class ClipboardAttachmentTests: XCTestCase {
             let urls = await load()
             XCTAssertEqual(urls.count, 1)
             guard let url = urls.first else { return }
+            XCTAssertEqual(url.pathExtension, "png")
             XCTAssertEqual(chatAttachmentCategory(from: url.lastPathComponent), .image)
             XCTAssertNotNil(CGImageSourceCreateWithURL(url as CFURL, nil))
         }

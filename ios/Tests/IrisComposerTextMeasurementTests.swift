@@ -66,7 +66,7 @@ final class IrisComposerTextMeasurementTests: XCTestCase {
             view.text = text
             let storage = view.textStorage
             let lineHeight = ceil(try XCTUnwrap(view.font).lineHeight)
-            let nativeHeight = view.sizeThatFits(CGSize(width: 240, height: .greatestFiniteMagnitude)).height
+            let nativeHeight = view.sizeThatFits(CGSize(width: 240, height: CGFloat.greatestFiniteMagnitude)).height
             #else
             let view = IrisComposerNSTextView()
             view.font = .systemFont(ofSize: 16)
@@ -74,7 +74,7 @@ final class IrisComposerTextMeasurementTests: XCTestCase {
             let storage = try XCTUnwrap(view.textStorage)
             let lineHeight = IrisAppKitComposerTextView.lineHeight(for: view)
             let nativeHeight = view.attributedString().boundingRect(
-                with: CGSize(width: 240, height: .greatestFiniteMagnitude),
+                with: CGSize(width: 240, height: CGFloat.greatestFiniteMagnitude),
                 options: [.usesLineFragmentOrigin, .usesFontLeading]
             ).height
             #endif
