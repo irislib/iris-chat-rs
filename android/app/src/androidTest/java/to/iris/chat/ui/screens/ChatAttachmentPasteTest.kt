@@ -27,6 +27,7 @@ import androidx.core.view.inputmethod.InputContentInfoCompat
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.*
 import org.junit.After
@@ -37,6 +38,7 @@ import to.iris.chat.rust.AppAction
 import to.iris.chat.ui.theme.IrisChatTheme
 
 /** Exercises Android's actual clipboard and IME input connection, not a synthetic callback. */
+@OptIn(ExperimentalTestApi::class)
 class ChatAttachmentPasteTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -116,24 +118,36 @@ class ChatAttachmentPasteTest {
     }
 
     @Test fun sendingOrLeavingDuringImportDiscardsLateCopies() {
-        showComposer()
-        compose.onNodeWithTag("chatMessageInput").performClick()
-        val image = sharedFile(".png", pngBytes())
-        val output = File(context.cacheDir, "attachments/outgoing")
-        val before = output.listFiles().orEmpty().map { it.name }.toSet()
-        // Both operations run on the UI thread before the asynchronous copy can
-        // deliver. The first models Send; the second models leaving this chat.
-        for (leave in listOf(false, true)) {
-            compose.runOnIdle {
-                commitFromKeyboardOnMain(uri(image), "image/png")
-                if (leave) paste.close() else paste.sent(emptyList())
-            }
-            runBlocking { scope.coroutineContext[Job]!!.children.toList().joinAll() }
-            assertTrue(attachments.value.isEmpty())
-            assertEquals(before, output.listFiles().orEmpty().map { it.name }.toSet())
+        val copied = Semaphore(0)
+        val resume = Semaphore(0)
+        val receiver = ChatAttachmentPaste(context, scope) { ctx, uri ->
+            val attachment = copySharedAttachmentToCache(ctx, uri)
+            copied.release()
+            check(resume.tryAcquire(5, TimeUnit.SECONDS)) { "Cancellation test did not release copy" }
+            attachment
         }
-        compose.onNodeWithTag("chatMessageInput").assertTextEquals("Caption")
-        assertTrue(sent.isEmpty())
+        try {
+            showComposer(receiver)
+            val image = sharedFile(".png", pngBytes())
+            val output = File(context.cacheDir, "attachments/outgoing")
+            val before = output.listFiles().orEmpty().map { it.name }.toSet()
+            // Hold the copy explicitly: a tiny cached file can finish before
+            // commitContent returns, which would already belong to the draft.
+            for (leave in listOf(false, true)) {
+                commitFromKeyboard(uri(image), "image/png")
+                assertTrue("Clipboard copy started", copied.tryAcquire(5, TimeUnit.SECONDS))
+                compose.runOnIdle { if (leave) receiver.close() else receiver.sent(emptyList()) }
+                resume.release()
+                runBlocking { withTimeout(5_000) { scope.coroutineContext[Job]!!.children.toList().joinAll() } }
+                assertTrue(attachments.value.isEmpty())
+                assertEquals(before, output.listFiles().orEmpty().map { it.name }.toSet())
+            }
+            compose.onNodeWithTag("chatMessageInput").assertTextEquals("Caption")
+            assertTrue(sent.isEmpty())
+        } finally {
+            resume.release(2)
+            compose.runOnUiThread { receiver.close() }
+        }
     }
 
     @Test fun fileClipboardSuppressesAccompanyingTextAndRejectedContentDoesNotChangeTheDraft() {
