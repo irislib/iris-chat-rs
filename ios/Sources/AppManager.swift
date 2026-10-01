@@ -3054,7 +3054,7 @@ final class AppManager: ObservableObject {
         }
         let seedChatId = state.currentChat?.chatId ?? state.chatList.first?.chatId
         if seedChatId == nil {
-            let normalized = normalizePeerInput(input: seed.peer)
+            let normalized = normalizePeerInput(input: seed.peer == "self" ? state.account?.publicKeyHex ?? "" : seed.peer)
             guard !normalized.isEmpty, isValidPeerInput(input: normalized) else {
                 pendingTestSeed = nil
                 return

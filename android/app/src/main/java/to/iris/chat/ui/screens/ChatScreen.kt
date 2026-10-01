@@ -272,21 +272,9 @@ fun ChatScreen(
         }
     }
 
-    LaunchedEffect(listState, chat?.messages?.size) {
-        snapshotFlow {
-            val total = chat?.messages?.size ?: 0
-            if (total == 0) {
-                true
-            } else {
-                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-                lastVisible >= total - 2
-            }
-        }
-            .distinctUntilChanged()
-            .collect { isNearBottom ->
-                shouldFollowLatest = isNearBottom
-            }
-    }
+    ObserveChatTimelineViewport(
+        listState, chat?.messages?.size ?: 0, preserveAnchor = !initialScrollPending,
+    ) { shouldFollowLatest = it }
 
     val pendingScrollMessage by appManager.pendingScrollMessage.collectAsStateWithLifecycle()
 

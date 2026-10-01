@@ -238,6 +238,9 @@ enum ChatMessageBubbleSwipeMetrics {
 final class ChatTimelineInteractionCoordinator: ObservableObject {
 #if os(iOS)
     weak var scrollView: UIScrollView?
+    var pendingViewportResize: (height: CGFloat, offset: CGFloat)?
+    var viewportHeight: CGFloat = 0
+    var keyboardViewportAnchor: ChatKeyboardViewportAnchor?
 #endif
     var messageBubbleFrames: [String: CGRect] = [:]
     var audioControlFrames: [CGRect] = []

@@ -148,6 +148,9 @@ struct ChatScreen: View {
                                         // column instead of the chat pane edge.
                                         .frame(width: viewport.size.width)
                                         .frame(minHeight: viewport.size.height, alignment: .bottom)
+                                        .observeChatTimelineScroll(coordinator: timelineCoordinator, viewportHeight: viewport.size.height) { translationY, velocityY in
+                                            handleTimelineUserPan(translationY: translationY, velocityY: velocityY)
+                                        }
 
                                         // Trailing bottom anchor sits OUTSIDE
                                         // the LazyVStack so SwiftUI always
@@ -177,9 +180,6 @@ struct ChatScreen: View {
                                     .irisDefaultScrollAnchorBottom()
                                     .coordinateSpace(name: ChatTimelineCoordinateSpace.name)
                                     .accessibilityIdentifier("chatTimeline")
-                                    .observeChatTimelineScroll(coordinator: timelineCoordinator) { translationY, velocityY in
-                                        handleTimelineUserPan(translationY: translationY, velocityY: velocityY)
-                                    }
                                     .overlay {
                                         GeometryReader { geometry in
                                             let frame = geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))
@@ -240,6 +240,7 @@ struct ChatScreen: View {
                                         bottomMaxY: timelineBottomMaxY
                                     )
                                     if !chatTimelineGeometryMatches(timelineViewportMaxY, value) {
+                                        timelineCoordinator.resizeViewport(from: timelineViewportMaxY, to: value)
                                         timelineViewportMaxY = value
                                     }
                                     updateTimelineFollowState(

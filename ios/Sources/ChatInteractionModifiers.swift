@@ -11,6 +11,7 @@ extension View {
     @ViewBuilder
     func observeChatTimelineScroll(
         coordinator: ChatTimelineInteractionCoordinator,
+        viewportHeight: CGFloat,
         onPan: @escaping (CGFloat, CGFloat) -> Void
     ) -> some View {
 #if os(iOS)
@@ -19,7 +20,7 @@ extension View {
                 timelineCoordinator: coordinator,
                 onPan: onPan
             )
-            .frame(width: 0, height: 0)
+            .frame(width: 0, height: viewportHeight)
             .allowsHitTesting(false)
         )
 #else
@@ -212,6 +213,7 @@ final class ChatTimelineScrollObserverView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         bindToEnclosingScrollView()
+        timelineCoordinator?.applyPendingViewportResize()
     }
 
     func bindToEnclosingScrollView() {
@@ -225,9 +227,12 @@ final class ChatTimelineScrollObserverView: UIView {
         observedScrollView = scrollView
         timelineCoordinator?.scrollView = scrollView
         scrollView.panGestureRecognizer.addTarget(self, action: #selector(handleScrollPan(_:)))
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillResize), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardDidResize), name: UIResponder.keyboardDidChangeFrameNotification, object: nil)
     }
 
     func unbind() {
+        NotificationCenter.default.removeObserver(self)
         if let scrollView = observedScrollView {
             scrollView.panGestureRecognizer.removeTarget(self, action: #selector(handleScrollPan(_:)))
         }
@@ -236,6 +241,10 @@ final class ChatTimelineScrollObserverView: UIView {
         }
         observedScrollView = nil
     }
+
+    @objc private func keyboardWillResize() { timelineCoordinator?.captureKeyboardViewportAnchor() }
+
+    @objc private func keyboardDidResize() { timelineCoordinator?.keyboardViewportAnchor = nil }
 
     @objc private func handleScrollPan(_ recognizer: UIPanGestureRecognizer) {
         guard let scrollView = observedScrollView else { return }
