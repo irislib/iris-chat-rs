@@ -21,9 +21,9 @@ struct IrisSocialBadge: View {
     private func color(_ badge: SocialBadge) -> Color {
         switch badge {
         case .warning: palette.accentAlt
-        case .following: palette.accent
-        case .friend: Color(red: 0.39, green: 0.45, blue: 0.55)
-        case .trusted: palette.accentAlt
+        case .following: Color(red: 10.0 / 255, green: 132.0 / 255, blue: 1)
+        case .friend: Color(red: 142.0 / 255, green: 142.0 / 255, blue: 147.0 / 255)
+        case .trusted: Color(red: 212.0 / 255, green: 160.0 / 255, blue: 23.0 / 255)
         case .muted: .red
         }
     }

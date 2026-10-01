@@ -27,9 +27,9 @@ fun IrisSocialBadge(connection: SocialConnectionSnapshot, modifier: Modifier = M
     val badge = connection.badge ?: return
     val color = when (badge) {
         SocialBadge.WARNING -> IrisTheme.palette.accentAlt
-        SocialBadge.FOLLOWING -> IrisTheme.palette.accent
-        SocialBadge.FRIEND -> Color(0xFF64748B)
-        SocialBadge.TRUSTED -> IrisTheme.palette.accentAlt
+        SocialBadge.FOLLOWING -> Color(0xFF0A84FF)
+        SocialBadge.FRIEND -> Color(0xFF8E8E93)
+        SocialBadge.TRUSTED -> Color(0xFFD4A017)
         SocialBadge.MUTED -> MaterialTheme.colorScheme.error
     }
     Icon(

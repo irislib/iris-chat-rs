@@ -43,8 +43,9 @@ pub fn description(connection: &SocialConnectionSnapshot) -> gtk::Label {
 }
 
 pub const CSS: &str = r#"
-.social-badge { border-radius: 50%; min-width: 16px; min-height: 16px; font-weight: bold; font-size: 11px; color: white; background: #777; }
-.social-badge.following { background: @iris_accent; }
-.social-badge.warning, .social-badge.trusted { background: @iris_accent_alt; }
+.social-badge { border-radius: 50%; min-width: 16px; min-height: 16px; font-weight: bold; font-size: 11px; color: white; background: #8e8e93; }
+.social-badge.following { background: #0a84ff; }
+.social-badge.trusted { background: #d4a017; }
+.social-badge.warning { background: @iris_accent_alt; }
 .social-badge.muted { background: #c53030; }
 "#;

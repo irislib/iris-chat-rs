@@ -56,10 +56,10 @@ public partial class Avatar : UserControl
         SocialMark.Background = connection.badge switch
         {
             SocialBadge.Warning => (Brush)FindResource("AccentAlt"),
-            SocialBadge.Following => (Brush)FindResource("Accent"),
-            SocialBadge.Trusted => (Brush)FindResource("AccentAlt"),
+            SocialBadge.Following => new SolidColorBrush(Color.FromRgb(0x0a, 0x84, 0xff)),
+            SocialBadge.Trusted => new SolidColorBrush(Color.FromRgb(0xd4, 0xa0, 0x17)),
             SocialBadge.Muted => Brushes.Firebrick,
-            _ => Brushes.Gray,
+            _ => new SolidColorBrush(Color.FromRgb(0x8e, 0x8e, 0x93)),
         };
         SocialMarkText.Text = connection.badge == SocialBadge.Warning ? "!" : connection.badge == SocialBadge.Muted ? "−" : "✓";
         System.Windows.Automation.AutomationProperties.SetName(SocialMark, connection.description);
