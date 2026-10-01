@@ -7,8 +7,8 @@ impl AppCore {
         device: Option<PublicKey>,
         rumor: &RuntimeRumor,
     ) -> Option<bool> {
-        if self.private_sibling_control_waits_for_roster(owner, device, rumor.kind) {
-            return Some(false);
+        if let Some(disposition) = self.private_sibling_control_disposition(owner, device, rumor) {
+            return Some(disposition);
         }
         match rumor.kind {
             // An old client would bridge these facts into static-key relay records.

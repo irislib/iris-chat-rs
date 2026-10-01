@@ -298,11 +298,21 @@ fn private_contact_decrypted_journal_waits_for_both_devices_after_restart() {
             .retain(|device| device.identity_pubkey_hex != missing.to_hex());
         pair.b.app_keys.insert(owner.clone(), stale);
         for kind in [10449, 10450, 10452, 10453] {
-            assert!(pair.b.private_sibling_control_waits_for_roster(
+            let (content, _) = runtime_rumor_json(
                 pair.owner.public_key(),
-                Some(pair.a_device.public_key()),
                 kind,
-            ));
+                "{}",
+                unix_now().get(),
+                vec![vec!["p".into(), owner.clone()]],
+            );
+            assert_eq!(
+                pair.b.private_sibling_control_disposition(
+                    pair.owner.public_key(),
+                    Some(pair.a_device.public_key()),
+                    &parse_runtime_rumor(&content).unwrap(),
+                ),
+                Some(false)
+            );
         }
         pair.b
             .retry_protocol_engine_pending_work("stale_private_roster");
@@ -346,12 +356,106 @@ fn private_contact_decrypted_journal_waits_for_both_devices_after_restart() {
     .unwrap()
     .contacts
     .contains_key(&contact));
+}
+
+#[test]
+fn private_contact_journal_rejects_signed_device_removal_despite_stale_app_roster() {
+    let mut pair = chat_read_receipt_pair("private-contact-revoked-journal");
+    let contact = Keys::generate().public_key().to_hex();
+    pair.a.edit_private_contact_fields(
+        &contact,
+        private_contact_patch(serde_json::json!({"favorite":true,"note":"must not apply"})),
+    );
+    for event in pending_events_with_kind(&pair.a, MESSAGE_EVENT_KIND) {
+        let delivery = pair
+            .b
+            .protocol_engine
+            .as_mut()
+            .unwrap()
+            .process_direct_message_event(&event)
+            .unwrap()
+            .unwrap();
+        let rumor = parse_runtime_rumor(&delivery.content).unwrap();
+        assert!(
+            rumor
+                .tags
+                .iter()
+                .any(|tag| { tag.as_slice() == ["p", pair.owner.public_key().to_hex().as_str()] }),
+            "valid recipient must not hide the revocation check"
+        );
+    }
     assert!(
-        !pair.b.private_sibling_control_waits_for_roster(
-            Keys::generate().public_key(),
-            Some(pair.a_device.public_key()),
-            10452,
+        pair.b
+            .protocol_engine
+            .as_ref()
+            .unwrap()
+            .pending_decrypted_deliveries_len_for_test()
+            > 0
+    );
+    let removal = AppKeys::new(vec![DeviceEntry::new(pair.b_device.public_key(), 1)])
+        .get_event_at(pair.owner.public_key(), unix_now().get())
+        .sign_with_keys(&pair.owner)
+        .unwrap();
+    let batch = pair
+        .b
+        .protocol_engine
+        .as_mut()
+        .unwrap()
+        .ingest_app_keys_event(&removal)
+        .unwrap();
+    assert!(
+        pair.b
+            .device_sync_peer_is_authorized(&pair.a_device.public_key().to_hex()),
+        "app projection intentionally still trusts the removed sender"
+    );
+    assert!(!pair
+        .b
+        .protocol_engine
+        .as_ref()
+        .unwrap()
+        .owner_device_binding_is_verified(pair.owner.public_key(), pair.a_device.public_key(),));
+    pair.b
+        .process_protocol_engine_retry_batch("removed_private_sender", batch);
+    assert!(!pair.b.owner_profiles.contains_key(&contact));
+    for (kind, body) in [
+        (
+            10449,
+            serde_json::json!({"type":"chat-mute","v":1,"mute":{
+                "chatId":contact,"untilSecs":0,"updatedAtMs":unix_now_ms()
+            }}),
         ),
-        "foreign owner remains a permanent rejection, never a roster wait"
+        (
+            10450,
+            serde_json::json!({"type":"chat-pin","v":1,"pin":{
+                "chatId":contact,"pinned":true,"updatedAtMs":unix_now_ms()
+            }}),
+        ),
+    ] {
+        let (rumor, _) = runtime_rumor_json(
+            pair.owner.public_key(),
+            kind,
+            &body.to_string(),
+            unix_now().get(),
+            vec![vec!["p".into(), pair.owner.public_key().to_hex()]],
+        );
+        assert!(pair.b.apply_decrypted_runtime_message_with_metadata(
+            pair.owner.public_key(),
+            Some(pair.a_device.public_key()),
+            Some(pair.owner.public_key()),
+            rumor,
+            None,
+            unix_now().get(),
+        ));
+        assert!(!pair.b.is_chat_muted(&contact));
+        assert!(!pair.b.is_chat_pinned(&contact));
+    }
+    assert_eq!(
+        pair.b
+            .protocol_engine
+            .as_ref()
+            .unwrap()
+            .pending_decrypted_deliveries_len_for_test(),
+        0,
+        "revoked control is permanently discarded, not held for roster catchup"
     );
 }
