@@ -136,6 +136,161 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("existing_version = !edit_version.nil?", workflow)
 
     @unittest.skipUnless(shutil.which("ruby"), "Ruby is needed to exercise the Fastfile")
+    def test_testflight_only_distributes_to_verified_internal_groups(self) -> None:
+        workflow = (ROOT / ".github/workflows/ios-distribution.yml").read_text()
+        fastfile = textwrap.dedent(
+            workflow.split("<<'RUBY'\n", 1)[1].split("\n          RUBY", 1)[0]
+        )
+        # Run the production lane with read-only API stubs. Every publishing
+        # action is recorded, including the pinned Pilot beta-review default.
+        stub = r'''
+          require "tempfile"
+          module Deliver
+            class UploadMetadata
+            end
+          end
+          $LOADED_FEATURES << "deliver/upload_metadata.rb"
+          class UserError < StandardError
+          end
+          module UI
+            def self.user_error!(message)
+              raise UserError, message
+            end
+          end
+          Group = Struct.new(:name, :is_internal_group)
+          class FakeApp
+            def id
+              "test-app"
+            end
+            def get_beta_groups(client:)
+              $events << :read_groups
+              $groups
+            end
+            def get_app_store_versions(**)
+              $events << :app_store
+              raise "TestFlight entered the App Store route"
+            end
+          end
+          module Spaceship
+            module ConnectAPI
+              module Token
+                def self.create(**)
+                  :test_token
+                end
+              end
+              class Client
+                def initialize(token:)
+                end
+              end
+              module App
+                def self.find(*, **)
+                  FakeApp.new
+                end
+              end
+              module Build
+                def self.all(**)
+                  $existing_build ? [Object.new] : []
+                end
+              end
+              module Platform
+                IOS = "IOS"
+              end
+            end
+          end
+          def default_platform(*)
+          end
+          def platform(*)
+            yield
+          end
+          def lane(*, &block)
+            $distribution_lane = block
+          end
+          def app_store_connect_api_key(**)
+            :test_api_key
+          end
+          def upload_to_testflight(**options)
+            $events << :testflight
+            $uploaded_options = options
+            # Fastlane 2.237.0 submits beta review for any supplied groups
+            # unless this option explicitly overrides its true default.
+            if options.fetch(:submit_beta_review, true) &&
+               (options[:groups] || options[:distribute_external])
+              $events << :beta_review
+            end
+            if options[:distribute_external] || options[:notify_external_testers] != false
+              $events << :external_distribution_or_notification
+            end
+          end
+          def upload_to_app_store(**)
+            $events << :app_store
+            raise "TestFlight called upload_to_app_store"
+          end
+          eval(STDIN.read, TOPLEVEL_BINDING, "Fastfile")
+          ENV.update(
+            "IRIS_ASC_AUTH_KEY_ID" => "test-key",
+            "IRIS_ASC_AUTH_KEY_ISSUER_ID" => "test-issuer",
+            "IRIS_ASC_AUTH_KEY_PATH" => "unused.p8",
+            "IRIS_IOS_BUNDLE_ID" => "test.iris",
+            "APP_VERSION" => "2026.10.100",
+            "BUILD_NUMBER" => "1",
+            "DISTRIBUTION_TARGET" => "testflight",
+            "IPA_PATH" => "attested.ipa"
+          )
+          Tempfile.create("iris-testflight-notes") do |notes|
+            notes.write("Internal release notes\n")
+            notes.flush
+            ENV["RELEASE_NOTES_PATH"] = notes.path
+            internal = [Group.new("Team", true), Group.new("QA", true)]
+            cases = [
+              [" Team, QA, Team ", internal, nil],
+              ["Team, Missing", internal, "not found"],
+              ["Team, Public", internal + [Group.new("Public", false)], "internal"],
+              ["Team", internal + [Group.new("Team", false)], "internal"],
+              ["Unknown", [Group.new("Unknown", nil)], "internal"],
+              [" , ", internal, "at least one internal group"]
+            ]
+            [false, true].each do |existing|
+              cases.each do |configured, available, expected_error|
+                ENV["IRIS_TESTFLIGHT_GROUPS"] = configured
+                $groups = available
+                $existing_build = existing
+                $events = []
+                $uploaded_options = nil
+                error = nil
+                begin
+                  $distribution_lane.call
+                rescue UserError => failure
+                  error = failure.message
+                end
+                if expected_error
+                  raise "Missing expected rejection: #{configured}" unless error&.include?(expected_error)
+                  raise "Mutation before rejection: #{$events}" unless ($events - [:read_groups]).empty?
+                else
+                  raise error if error
+                  raise "Unexpected actions: #{$events}" unless $events == [:read_groups, :testflight]
+                  options = $uploaded_options
+                  raise "Wrong groups" unless options[:groups] == ["Team", "QA"]
+                  raise "Wrong release notes" unless options[:changelog] == "Internal release notes"
+                  if existing
+                    raise "Existing build was re-uploaded" unless options[:distribute_only] == true && !options.key?(:ipa)
+                  else
+                    raise "New IPA was skipped" unless options[:ipa] == "attested.ipa" && !options.key?(:distribute_only)
+                  end
+                end
+              end
+            end
+          end
+        '''
+        result = subprocess.run(
+            [shutil.which("ruby"), "-e", textwrap.dedent(stub)],
+            input=fastfile,
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(shutil.which("ruby"), "Ruby is needed to exercise the Fastfile")
     def test_app_store_preserves_review_attachments_without_skipping_metadata(self) -> None:
         workflow = (ROOT / ".github/workflows/ios-distribution.yml").read_text()
         fastfile = textwrap.dedent(

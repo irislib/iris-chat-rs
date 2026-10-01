@@ -287,9 +287,18 @@ jobs:
                   .split(",")
                   .map(&:strip)
                   .reject(&:empty?)
+                  .uniq
                 UI.user_error!(
                   "IRIS_TESTFLIGHT_GROUPS must name at least one internal group"
                 ) if groups.empty?
+                available_groups = app.get_beta_groups(client: client)
+                groups.each do |name|
+                  matches = available_groups.select { |group| group.name == name }
+                  UI.user_error!("TestFlight group #{name.inspect} was not found") if matches.empty?
+                  unless matches.all? { |group| group.is_internal_group == true }
+                    UI.user_error!("TestFlight group #{name.inspect} must be an internal group")
+                  end
+                end
                 testflight_options = {
                   api_key: api_key,
                   app_identifier: ENV.fetch("IRIS_IOS_BUNDLE_ID"),
@@ -298,6 +307,8 @@ jobs:
                   changelog: File.read(ENV.fetch("RELEASE_NOTES_PATH")).strip,
                   groups: groups,
                   distribute_external: false,
+                  submit_beta_review: false,
+                  notify_external_testers: false,
                   skip_waiting_for_build_processing: false,
                   uses_non_exempt_encryption: false
                 }
