@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.State
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.*
@@ -25,6 +26,8 @@ import androidx.core.view.inputmethod.InputConnectionCompat
 import androidx.core.view.inputmethod.InputContentInfoCompat
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.*
 import org.junit.After
 import org.junit.Assert.*
@@ -141,9 +144,9 @@ class ChatAttachmentPasteTest {
         })
         waitForAttachments(1)
         compose.onNodeWithTag("chatMessageInput").assertTextEquals("Caption")
-        val privateFile = File.createTempFile("private-paste", ".txt", context.filesDir).also(sourceFiles::add)
-        privateFile.writeText("Not an attachment")
-        pasteClipboard(ClipData.newRawUri("Unsupported", Uri.fromFile(privateFile)))
+        // Android forbids putting file:// URIs on the system clipboard before
+        // our receiver runs. Use another unsupported scheme to reach the input.
+        pasteClipboard(ClipData.newRawUri("Unsupported", Uri.parse("android.resource://${context.packageName}/raw/unsupported")))
         compose.onNodeWithTag("chatMessageInput").assertTextEquals("Caption")
         assertEquals(1, attachments.value.size)
         assertTrue(sent.isEmpty())
@@ -168,6 +171,22 @@ class ChatAttachmentPasteTest {
         assertTrue(sent.isEmpty())
     }
 
+    @Test fun unsupportedUriRejectsTheWholeFileBatchBeforeMakingCopies() {
+        showComposer()
+        val readable = sharedFile(".png", pngBytes())
+        val output = File(context.cacheDir, "attachments/outgoing")
+        val before = output.listFiles().orEmpty().map { it.name }.toSet()
+        pasteClipboard(ClipData.newUri(context.contentResolver, "Files", uri(readable)).apply {
+            addItem(ClipData.Item(Uri.parse("android.resource://${context.packageName}/raw/unsupported")))
+            addItem(ClipData.Item("File labels"))
+        })
+        compose.onNodeWithTag("chatMessageInput").assertTextEquals("Caption")
+        assertTrue(attachments.value.isEmpty())
+        assertFalse(scope.coroutineContext[Job]!!.children.any())
+        assertEquals(before, output.listFiles().orEmpty().map { it.name }.toSet())
+        assertTrue(sent.isEmpty())
+    }
+
     @Test fun largeTextPasteIsOneDraftEditAndDoesNoAttachmentWork() {
         showComposer()
         val text = "A paragraph pasted from another app.\n".repeat(2_800)
@@ -177,7 +196,12 @@ class ChatAttachmentPasteTest {
         val started = SystemClock.uptimeMillis()
         pasteClipboard(ClipData.newPlainText("Text", text))
         compose.waitUntil(5_000) { draftUpdates.lastOrNull() == expected }
-        assertTrue("A 100 KB text paste should finish promptly", SystemClock.uptimeMillis() - started < 5_000)
+        val elapsedMs = SystemClock.uptimeMillis() - started
+        File(checkNotNull(context.getExternalFilesDir("screenshots")), "android-clipboard-large-text.json").apply {
+            parentFile?.mkdirs()
+            writeText("{\"characters\":${text.length},\"elapsed_ms\":$elapsedMs,\"draft_updates\":${draftUpdates.size}}")
+        }
+        assertTrue("A 100 KB text paste should finish promptly", elapsedMs < 5_000)
         assertEquals(listOf(expected), draftUpdates)
         assertEquals(expected, draft.text.toString())
         assertTrue(attachments.value.isEmpty())
@@ -186,20 +210,59 @@ class ChatAttachmentPasteTest {
         assertTrue(sent.isEmpty())
     }
 
-    private fun showComposer() {
+    @Test fun removingOnlyTheComposerCancelsImportAndReopeningKeepsTheDraftUsable() {
+        val copied = CountDownLatch(1)
+        val resume = CountDownLatch(1)
+        val receiver = ChatAttachmentPaste(context, scope) { ctx, uri ->
+            val attachment = copySharedAttachmentToCache(ctx, uri)
+            copied.countDown()
+            check(resume.await(5, TimeUnit.SECONDS)) { "Receiver-disposal test did not release copy" }
+            attachment
+        }
+        val visible = mutableStateOf(true)
+        val output = File(context.cacheDir, "attachments/outgoing")
+        val before = output.listFiles().orEmpty().map { it.name }.toSet()
+        try {
+            showComposer(receiver, visible)
+            val image = sharedFile(".png", pngBytes())
+            commitFromKeyboard(uri(image), "image/png")
+            assertTrue("Clipboard copy started", copied.await(5, TimeUnit.SECONDS))
+            compose.runOnIdle { visible.value = false }
+            compose.waitForIdle()
+            compose.onNodeWithTag("chatMessageInput").assertDoesNotExist()
+            // Keep the screen's receiver owner alive, as blocking a chat does.
+            // Only the composer's DisposableEffect may invalidate this import.
+            resume.countDown()
+            runBlocking { withTimeout(5_000) { scope.coroutineContext[Job]!!.children.toList().joinAll() } }
+            assertTrue(attachments.value.isEmpty())
+            assertEquals(before, output.listFiles().orEmpty().map { it.name }.toSet())
+            assertEquals("Caption", draft.text.toString())
+            assertTrue(sent.isEmpty())
+            compose.runOnIdle { visible.value = true }
+            compose.onNodeWithTag("chatMessageInput").performClick().assertTextEquals("Caption")
+            commitFromKeyboard(uri(image), "image/png")
+            waitForAttachments(1)
+            assertTrue(sent.isEmpty())
+        } finally {
+            resume.countDown()
+            compose.runOnUiThread { receiver.close() }
+        }
+    }
+
+    private fun showComposer(receiver: ChatAttachmentPaste = paste, visible: State<Boolean> = mutableStateOf(true)) {
         compose.setContent {
             IrisChatTheme(darkTheme = false) {
                 Column(Modifier.fillMaxSize()) {
                     Spacer(Modifier.weight(1f))
-                    ComposerBar(draft, attachments.value, false, false, null,
-                        inputContentModifier = paste.receiverModifier(true, sendDirectly.value) {
+                    if (visible.value) ComposerBar(draft, attachments.value, false, false, null,
+                        inputContentModifier = receiver.receiverModifier(true, sendDirectly.value) {
                             attachments.value += it
                         },
                         onDraftChange = { draftUpdates.add(it) }, onAttach = {},
-                        onRemoveAttachment = { paste.remove(it); attachments.value -= it },
+                        onRemoveAttachment = { receiver.remove(it); attachments.value -= it },
                         onSend = {
                             sent += attachmentSendAction("paste-chat", attachments.value, draft.text.toString(), sendDirectly.value)
-                            paste.sent(attachments.value)
+                            receiver.sent(attachments.value)
                         }, sendFilesDirectly = sendDirectly.value)
                 }
             }

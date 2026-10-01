@@ -1,6 +1,7 @@
 package to.iris.chat.ui.screens
 
 import android.content.Context
+import android.net.Uri
 import android.view.inputmethod.InputContentInfo
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -30,6 +31,7 @@ import kotlinx.coroutines.withContext
 internal class ChatAttachmentPaste(
     private val context: Context,
     private val scope: CoroutineScope,
+    private val copyAttachment: (Context, Uri) -> PickedAttachment? = ::copySharedAttachmentToCache,
 ) {
     private var generation = 0
     private var closed = false
@@ -41,6 +43,15 @@ internal class ChatAttachmentPaste(
     fun receiverModifier(enabled: Boolean, sendDirectly: Boolean, onAttachments: (List<PickedAttachment>) -> Unit): Modifier {
         val callback by rememberUpdatedState(onAttachments)
         val expectedContext = enabled to sendDirectly
+        DisposableEffect(this) {
+            onDispose {
+                // Blocking/removal can replace just the composer while this
+                // chat's draft owner stays alive. Its old receiver must not
+                // deliver a pending copy into the hidden draft.
+                invalidatePending()
+                draftContext = null
+            }
+        }
         SideEffect {
             if (draftContext != expectedContext) {
                 invalidatePending()
@@ -63,8 +74,16 @@ internal class ChatAttachmentPaste(
         onFailure: () -> Unit,
     ): TransferableContent? {
         if (closed || !isCurrent()) return content
-        val uris = droppedAttachmentUris(content.clipEntry.clipData)
+        val clip = content.clipEntry.clipData
+        val uris = droppedAttachmentUris(clip)
         if (uris.isEmpty()) return content
+        if ((0 until clip.itemCount).any { clip.getItemAt(it).uri?.let { uri -> uri.scheme != "content" } == true }) {
+            // Labels may accompany files, but an unsupported URI-bearing item
+            // must not silently disappear from an otherwise accepted batch.
+            releaseImeContent(content)
+            onFailure()
+            return null
+        }
         val receivingGeneration = generation
         val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             // Keep the payload (including the IME grant) alive throughout the copy.
@@ -73,7 +92,7 @@ internal class ChatAttachmentPaste(
             var delivered = false
             try {
                 withContext(Dispatchers.IO) {
-                    for (uri in uris) copySharedAttachmentToCache(context, uri)?.let(copies::add)
+                    for (uri in uris) copyAttachment(context, uri)?.let(copies::add)
                 }
                 if (!closed && generation == receivingGeneration && isCurrent()) {
                     if (copies.size == uris.size) {
