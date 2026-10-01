@@ -268,6 +268,7 @@ jobs:
         with:
           name: macos-composer-tests
           path: iris-chat-rs/macos/.build/DerivedData/Logs/Test/*.xcresult
+          include-hidden-files: true
           retention-days: 14
 
   ios:
