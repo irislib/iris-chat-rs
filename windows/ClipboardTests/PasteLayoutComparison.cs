@@ -16,23 +16,34 @@ internal static class PasteLayoutComparison
         var input = (TextBox)composer.FindName("Input");
         var originalMode = TextOptions.GetTextFormattingMode(input);
         var originalScroll = input.VerticalScrollBarVisibility;
+        var originalMaxLength = input.MaxLength;
         var results = new List<object>();
         try
         {
-            foreach (var (name, mode, scroll) in new[]
+            foreach (var (name, mode, scroll, native) in new[]
             {
-                ("Ideal+Auto", TextFormattingMode.Ideal, ScrollBarVisibility.Auto),
-                ("Ideal+Visible", TextFormattingMode.Ideal, ScrollBarVisibility.Visible),
-                ("Ideal+Hidden", TextFormattingMode.Ideal, ScrollBarVisibility.Hidden),
+                ("Ideal+Auto", TextFormattingMode.Ideal, ScrollBarVisibility.Auto, false),
+                ("Ideal+Visible", TextFormattingMode.Ideal, ScrollBarVisibility.Visible, false),
+                ("Ideal+Hidden", TextFormattingMode.Ideal, ScrollBarVisibility.Hidden, false),
+                ("Native+Visible", TextFormattingMode.Ideal, ScrollBarVisibility.Visible, true),
             })
             {
                 composer.Clear();
                 TextOptions.SetTextFormattingMode(input, mode);
                 input.VerticalScrollBarVisibility = scroll;
+                // The production custom path defers constrained controls to
+                // native WPF. This limit is larger than the complete fixture.
+                input.MaxLength = native ? int.MaxValue : 0;
                 input.Focus(); pump();
                 Clipboard.SetText(text);
                 var changes = 0;
-                TextChangedEventHandler changed = (_, _) => changes++;
+                TextChangedEventHandler changed = (_, _) =>
+                {
+                    changes++;
+                    // Keep diagnostic variants explicit despite the composer's
+                    // production policy selecting Visible for bulk drafts.
+                    input.VerticalScrollBarVisibility = scroll;
+                };
                 input.TextChanged += changed;
                 double? firstExtent = null, firstOffset = null, firstViewport = null;
                 using var probe = new PasteLayoutProbe(() =>
@@ -116,11 +127,12 @@ internal static class PasteLayoutComparison
         finally
         {
             composer.Clear();
+            input.MaxLength = originalMaxLength;
             TextOptions.SetTextFormattingMode(input, originalMode);
             input.VerticalScrollBarVisibility = originalScroll;
             pump();
         }
-        Console.WriteLine("PASS: real composer Auto/Visible/Hidden layout comparison preserves whole text, visible caret and next edit");
+        Console.WriteLine("PASS: real composer layout and native-paste comparison preserves whole text, visible caret and next edit");
     }
 
     private static bool IsCaretVisible(TextBox input, Rect caret) =>

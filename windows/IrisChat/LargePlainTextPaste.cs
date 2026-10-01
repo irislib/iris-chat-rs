@@ -6,16 +6,14 @@ namespace IrisChat;
 
 internal static class LargePlainTextPaste
 {
-    // Keep everyday pastes on WPF's command. Bulk documents can make its
-    // full-content ValidateLayout synchronously format thousands of lines.
-    private const int MinimumLength = 32 * 1024;
-
+    // Keep everyday pastes on WPF's command. Bulk insertion lets the composer's
+    // TextChanged layout policy reserve scrollbar width before final geometry.
     internal static bool TryPaste(TextBox input, IDataObject? data, Func<bool> isCurrent)
     {
         if (data == null || input.IsReadOnly || !input.IsEnabled || !input.AcceptsReturn ||
             input.MaxLength != 0 || input.CharacterCasing != CharacterCasing.Normal ||
             !data.GetDataPresent(DataFormats.UnicodeText) ||
-            data.GetData(DataFormats.UnicodeText) is not string text || text.Length < MinimumLength)
+            data.GetData(DataFormats.UnicodeText) is not string text || text.Length < ComposerTextLayout.BulkLength)
             return false;
 
         // Canceling from inside WPF's own Pasting event still runs its forced
@@ -42,6 +40,7 @@ internal static class LargePlainTextPaste
             input.Select(start + replacement.Length, 0);
         }
         finally { input.EndChange(); }
+        if (isCurrent()) ComposerTextLayout.CompletePaste(input);
         return true;
     }
 }

@@ -135,11 +135,18 @@ internal static class Program
             window.UpdateLayout();
             var layoutCompleteMs = elapsed.Elapsed.TotalMilliseconds;
             Pump();
+            var finalDrainCompleteMs = elapsed.Elapsed.TotalMilliseconds;
+            var pastedCaret = input.GetRectFromCharacterIndex(input.CaretIndex);
+            window.UpdateLayout(); Pump();
+            pastedCaret = input.GetRectFromCharacterIndex(input.CaretIndex);
             elapsed.Stop();
             layoutProbe.Finish();
             var pasteMs = elapsed.Elapsed.TotalMilliseconds;
             var pasteChanges = changes;
             Check(input.Text == large && changes == 1, "large plain text is one native editor change");
+            Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Visible && !pastedCaret.IsEmpty &&
+                pastedCaret.Top >= 0 && pastedCaret.Bottom <= input.ActualHeight,
+                "production bulk paste completes layout with its caret visible");
             Check(composer.StagedFilePaths.Count == 0 && submitted == 1, "large text does not stage or send files");
             input.CaretIndex = input.Text.Length;
             elapsed.Restart();
@@ -166,7 +173,8 @@ internal static class Program
                     execute = executeCompleteMs - canExecuteMs,
                     first_dispatcher_drain = firstDrainCompleteMs - executeCompleteMs,
                     layout = layoutCompleteMs - firstDrainCompleteMs,
-                    final_dispatcher_drain = pasteMs - layoutCompleteMs,
+                    final_dispatcher_drain = finalDrainCompleteMs - layoutCompleteMs,
+                    caret_geometry_layout_drain = pasteMs - finalDrainCompleteMs,
                 },
                 subsequent_edit_phases_ms = new
                 {
@@ -176,7 +184,7 @@ internal static class Program
                 },
                 paste_change_events = pasteChanges, subsequent_edit_change_events = editChanges,
                 freeze_budget_ms = freezeBudgetMs,
-                boundary = "Clipboard already populated; native Paste command through forced window layout and background-priority dispatcher drain. Subsequent edit uses native SelectedText insertion through the same layout/drain.",
+                boundary = "Clipboard already populated; native Paste command through forced window layout, background-priority dispatcher drain, and refreshed end-caret geometry. Subsequent edit uses native SelectedText insertion through the same layout/drain.",
             }, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(Path.Combine(output, "windows-text-paste-timings.json"), timings);
             Console.WriteLine($"TIMING: Windows large text paste {pasteMs:F1} ms; subsequent edit {editMs:F1} ms; events {pasteChanges}/{editChanges}");
@@ -185,6 +193,7 @@ internal static class Program
             Check(executeCompleteMs - canExecuteMs < 500, "large native paste command returns without full-document synchronous layout");
             Save(window, Path.Combine(output, "windows-large-text-paste.png"));
             LargeTextPasteTests.Verify(composer, Pump, output);
+            RestoredDraftLayoutTests.Verify(window, composer, large, Pump, output);
             PasteLayoutComparison.Verify(window, composer, large, Pump, output);
             composer.Clear();
             Clipboard.SetImage(bitmap); Paste(input);

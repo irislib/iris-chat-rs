@@ -48,6 +48,8 @@ internal static class LargeTextPasteTests
         }, new JsonSerializerOptions { WriteIndented = true }));
         Check(input.Text == expected.Insert(caret, "!") && changes == 2,
             "large paste and immediate edit each change the native editor once");
+        Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Visible,
+            "bulk draft reserves its scrollbar width before layout");
         Check(pasteExecuteMs < 500 && immediateEditMs < 500,
             "bulk text command and immediate edit must not synchronously format the entire document");
         input.Undo();
@@ -56,9 +58,13 @@ internal static class LargeTextPasteTests
         input.Undo();
         Check(input.Text == original && input.SelectionStart == selectionStart && input.SelectionLength == selectionLength,
             "one Undo restores the entire replaced selection");
+        Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Auto,
+            "Undo restores the normal small-draft appearance");
         input.Redo();
         Check(input.Text == expected && input.SelectionStart == caret && input.SelectionLength == 0,
             "one Redo restores Unicode, line endings, native tab filtering and final caret");
+        Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Visible,
+            "Redo restores bulk layout without changing the selection");
         pump();
 
         composer.Clear();
@@ -94,6 +100,8 @@ internal static class LargeTextPasteTests
         Clipboard.SetText("small\t世界🙂\r\ntext");
         ApplicationCommands.Paste.Execute(null, input);
         Check(input.Text == "small 世界🙂\r\ntext", "ordinary native plaintext paste keeps its semantics");
+        Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Auto,
+            "ordinary small drafts keep automatic scrollbars");
         composer.Clear();
         pump();
         Console.WriteLine($"PASS: large text selection, Unicode/newlines/tabs, cancellation, replacement, undo/redo, native constraints; immediate edit {immediateEditMs:F1} ms");

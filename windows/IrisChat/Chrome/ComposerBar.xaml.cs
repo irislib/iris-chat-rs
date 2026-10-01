@@ -87,7 +87,9 @@ public partial class ComposerBar : UserControl
 
     private void OnInputTextChanged(object sender, TextChangedEventArgs e)
     {
-        var hasText = !string.IsNullOrWhiteSpace(Input.Text);
+        var text = Input.Text;
+        ComposerTextLayout.Update(Input, text.Length);
+        var hasText = !string.IsNullOrWhiteSpace(text);
         if (hasText && !_wasTyping) { _wasTyping = true; Typing?.Invoke(); }
         else if (!hasText && _wasTyping) { _wasTyping = false; StoppedTyping?.Invoke(); }
     }
