@@ -45,7 +45,16 @@ struct ScreenshotFixture {
         let memberCount: UInt64
         let isPinned: Bool
         let isMuted: Bool
+        var socialConnection: SocialConnectionSnapshot? = nil
+        var isFavorite: Bool = false
     }
+
+    private static let following = SocialConnectionSnapshot(
+        badge: .following, followDistance: 1, followedByFriends: 0, description: "Followed by you")
+    private static let friend = SocialConnectionSnapshot(
+        badge: .friend, followDistance: 2, followedByFriends: 3, description: "Followed by 3 friends")
+    private static let trusted = SocialConnectionSnapshot(
+        badge: .trusted, followDistance: 2, followedByFriends: 12, description: "Followed by 12 friends")
 
     struct Message {
         let body: String
@@ -87,16 +96,19 @@ struct ScreenshotFixture {
         threads: [
             Thread(chatId: "fx-chat-1", kind: .direct, displayName: "Brooke Taylor", subtitle: nil,
                    lastMessagePreview: "See you by the lake ☀️", lastMessageAgeSecs: 60 * 2,
-                   lastMessageIsOutgoing: false, unreadCount: 2, memberCount: 2, isPinned: true, isMuted: false),
+                   lastMessageIsOutgoing: false, unreadCount: 2, memberCount: 2, isPinned: true, isMuted: false,
+                   socialConnection: following, isFavorite: true),
             Thread(chatId: "fx-chat-2", kind: .group, displayName: "Weekend crew 🌲", subtitle: "5 members",
                    lastMessagePreview: "Blake: I'll bring the coffee", lastMessageAgeSecs: 60 * 12,
                    lastMessageIsOutgoing: false, unreadCount: 3, memberCount: 5, isPinned: true, isMuted: false),
             Thread(chatId: "fx-chat-3", kind: .direct, displayName: "Blake Archer", subtitle: nil,
                    lastMessagePreview: "Found a great trail for Saturday", lastMessageAgeSecs: 60 * 28,
-                   lastMessageIsOutgoing: false, unreadCount: 0, memberCount: 2, isPinned: false, isMuted: false),
+                   lastMessageIsOutgoing: false, unreadCount: 0, memberCount: 2, isPinned: false, isMuted: false,
+                   socialConnection: friend),
             Thread(chatId: "fx-chat-4", kind: .direct, displayName: "Heather Wells", subtitle: nil,
                    lastMessagePreview: "That sunset was unreal", lastMessageAgeSecs: 60 * 54,
-                   lastMessageIsOutgoing: false, unreadCount: 0, memberCount: 2, isPinned: false, isMuted: false),
+                   lastMessageIsOutgoing: false, unreadCount: 0, memberCount: 2, isPinned: false, isMuted: false,
+                   socialConnection: trusted),
             Thread(chatId: "fx-chat-5", kind: .group, displayName: "Sunday run", subtitle: "8 members",
                    lastMessagePreview: "Owen: Same time next week?", lastMessageAgeSecs: 60 * 60 * 3,
                    lastMessageIsOutgoing: false, unreadCount: 0, memberCount: 8, isPinned: false, isMuted: false),
@@ -105,7 +117,8 @@ struct ScreenshotFixture {
                    lastMessageIsOutgoing: false, unreadCount: 0, memberCount: 2, isPinned: false, isMuted: false),
             Thread(chatId: "fx-chat-7", kind: .direct, displayName: "Mum", subtitle: nil,
                    lastMessagePreview: "Sunday lunch at ours? ❤️", lastMessageAgeSecs: 60 * 60 * 24,
-                   lastMessageIsOutgoing: false, unreadCount: 0, memberCount: 2, isPinned: false, isMuted: false),
+                   lastMessageIsOutgoing: false, unreadCount: 0, memberCount: 2, isPinned: false, isMuted: false,
+                   socialConnection: following),
         ],
         timelines: [
             "fx-chat-1": [
@@ -173,7 +186,9 @@ struct ScreenshotFixture {
                 unreadCount: 2,
                 memberCount: 2,
                 isPinned: true,
-                isMuted: false
+                isMuted: false,
+                socialConnection: following,
+                isFavorite: true
             ),
             Thread(
                 chatId: "\(chatIdPrefix)2",
@@ -199,7 +214,8 @@ struct ScreenshotFixture {
                 unreadCount: 0,
                 memberCount: 2,
                 isPinned: false,
-                isMuted: false
+                isMuted: false,
+                socialConnection: friend
             ),
             Thread(
                 chatId: "\(chatIdPrefix)4",
@@ -212,7 +228,8 @@ struct ScreenshotFixture {
                 unreadCount: 0,
                 memberCount: 2,
                 isPinned: false,
-                isMuted: false
+                isMuted: false,
+                socialConnection: trusted
             ),
             Thread(
                 chatId: "\(chatIdPrefix)5",
@@ -251,7 +268,8 @@ struct ScreenshotFixture {
                 unreadCount: 0,
                 memberCount: 2,
                 isPinned: false,
-                isMuted: false
+                isMuted: false,
+                socialConnection: following
             ),
         ],
         timelines: [
@@ -404,7 +422,7 @@ extension ScreenshotFixture {
         referenceDate: Date
     ) -> ChatThreadSnapshot {
         let timestamp = referenceDate.addingTimeInterval(-thread.lastMessageAgeSecs)
-        return ChatThreadSnapshot(socialConnection: nil, chatId: thread.chatId,
+        return ChatThreadSnapshot(socialConnection: thread.socialConnection, chatId: thread.chatId,
             kind: thread.kind,
             displayName: thread.displayName,
             nickname: nil,
@@ -442,7 +460,11 @@ extension ScreenshotFixture {
                 referenceDate: referenceDate
             )
         }
-        return CurrentChatSnapshot(contactIdentity: nil, socialConnection: nil, chatId: thread.chatId,
+        let identity: ContactIdentitySnapshot? = thread.kind == .direct ? ContactIdentitySnapshot(
+            isFollowing: thread.socialConnection?.followDistance == 1, canFollow: true, updatingFollow: false,
+            firstSeenName: thread.displayName, savedName: thread.displayName, pendingName: nil,
+            isFavorite: thread.isFavorite) : nil
+        return CurrentChatSnapshot(contactIdentity: identity, socialConnection: thread.socialConnection, chatId: thread.chatId,
             kind: thread.kind,
             displayName: thread.displayName,
             nickname: nil,
@@ -455,7 +477,9 @@ extension ScreenshotFixture {
             memberCount: thread.memberCount,
             messageTtlSeconds: nil,
             isMuted: thread.isMuted,
-            participants: [],
+            participants: thread.kind == .group ? [ChatParticipantSnapshot(
+                socialConnection: nil, ownerPubkeyHex: ownerHex, displayName: ownerDisplayName,
+                pictureUrl: Self.avatarURL(for: ownerDisplayName), isLocalOwner: true)] : [],
             messages: messages,
             typingIndicators: [],
             draft: "",
