@@ -18,6 +18,7 @@ mod forwarding;
 pub mod image_proxy;
 pub mod local_relay;
 pub mod perflog;
+mod private_contact_sync;
 mod qr;
 mod search;
 mod state;

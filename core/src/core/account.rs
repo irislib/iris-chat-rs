@@ -63,6 +63,7 @@ impl AppCore {
             self.push_debug_log("messages.expired", format!("removed={expired}"));
         }
         self.push_debug_log("app.foreground", "refresh relay session");
+        self.start_private_contact_sync();
         self.reconcile_device_sync();
         self.schedule_session_connect();
         self.request_protocol_subscription_refresh_forced_reconnect_if_offline();
@@ -778,6 +779,7 @@ impl AppCore {
         self.ingest_restored_app_keys_for_protocol();
         self.retry_all_pending_private_invite_responses();
         self.load_pending_relay_publish_queue(owner_pubkey);
+        self.start_private_contact_sync();
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
         self.start_relay_status_watchers();

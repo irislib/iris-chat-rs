@@ -89,6 +89,8 @@ enum DeviceSyncPacket {
         chat_mutes: Vec<ChatMuteState>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         chat_pins: Vec<ChatPinState>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        private_contacts: Vec<crate::private_contact_sync::PrivateContactDocument>,
         #[serde(default)]
         app_keys: Vec<DeviceSyncAppKeys>,
         #[serde(default)]
@@ -197,6 +199,7 @@ struct DeviceSyncSnapshot {
     deleted_chats: Vec<DeviceSyncChatDeletion>,
     chat_mutes: Vec<ChatMuteState>,
     chat_pins: Vec<ChatPinState>,
+    private_contacts: Vec<crate::private_contact_sync::PrivateContactDocument>,
     app_keys: Vec<DeviceSyncAppKeys>,
     groups: Vec<DeviceSyncGroup>,
     messages: Vec<DeviceSyncMessage>,
@@ -207,6 +210,7 @@ enum DeviceSyncItem {
     Deletion(DeviceSyncChatDeletion),
     Mute(ChatMuteState),
     Pin(ChatPinState),
+    PrivateContact(crate::private_contact_sync::PrivateContactDocument),
     AppKeys(DeviceSyncAppKeys),
     Group(DeviceSyncGroup),
     Message(DeviceSyncMessage),
@@ -216,6 +220,7 @@ impl DeviceSyncItem {
         match self {
             Self::Mute(value) => snapshot.chat_mutes.push(value.clone()),
             Self::Pin(value) => snapshot.chat_pins.push(value.clone()),
+            Self::PrivateContact(value) => snapshot.private_contacts.push(value.clone()),
             Self::Chat(value) => snapshot.chats.push(value.clone()),
             Self::Deletion(value) => snapshot.deleted_chats.push(value.clone()),
             Self::AppKeys(value) => snapshot.app_keys.push(value.clone()),
@@ -226,6 +231,9 @@ impl DeviceSyncItem {
 
     fn pop(&self, snapshot: &mut DeviceSyncSnapshot) {
         match self {
+            Self::PrivateContact(_) => {
+                snapshot.private_contacts.pop();
+            }
             Self::Deletion(_) => {
                 snapshot.deleted_chats.pop();
             }
@@ -260,6 +268,7 @@ impl DeviceSyncSnapshot {
             deleted_chats: self.deleted_chats.clone(),
             chat_mutes: self.chat_mutes.clone(),
             chat_pins: self.chat_pins.clone(),
+            private_contacts: self.private_contacts.clone(),
             app_keys: self.app_keys.clone(),
             groups: self.groups.clone(),
             messages: self.messages.clone(),
@@ -268,6 +277,7 @@ impl DeviceSyncSnapshot {
 
     fn is_empty(&self) -> bool {
         self.chat_pins.is_empty()
+            && self.private_contacts.is_empty()
             && self.chat_mutes.is_empty()
             && self.deleted_chats.is_empty()
             && self.chats.is_empty()
@@ -313,6 +323,7 @@ impl AppCore {
                 deleted_chats,
                 chat_mutes,
                 chat_pins,
+                private_contacts,
                 app_keys,
                 groups,
                 messages,
@@ -323,6 +334,7 @@ impl AppCore {
                     deleted_chats,
                     chat_mutes,
                     chat_pins,
+                    private_contacts,
                     app_keys,
                     groups,
                     messages,
@@ -539,6 +551,7 @@ impl AppCore {
             chats,
             chat_mutes: self.chat_mute_snapshot(),
             chat_pins: self.chat_pin_snapshot(),
+            private_contacts: self.private_contact_snapshot(),
             deleted_chats: self
                 .chat_deletions
                 .iter()
@@ -675,6 +688,9 @@ impl AppCore {
                     changed |= self.apply_chat_read_state(&chat.id, read_state);
                 }
             }
+        }
+        for document in snapshot.private_contacts {
+            changed |= self.merge_private_contact_from_sibling(&document);
         }
         let now = unix_now().get();
         for message in snapshot.messages {
@@ -894,6 +910,12 @@ fn encode_device_sync_chunks(snapshot: DeviceSyncSnapshot) -> Vec<Vec<u8>> {
         .map(DeviceSyncItem::Deletion)
         .chain(snapshot.chat_mutes.into_iter().map(DeviceSyncItem::Mute))
         .chain(snapshot.chat_pins.into_iter().map(DeviceSyncItem::Pin))
+        .chain(
+            snapshot
+                .private_contacts
+                .into_iter()
+                .map(DeviceSyncItem::PrivateContact),
+        )
         .chain(snapshot.chats.into_iter().map(DeviceSyncItem::Chat))
         .chain(snapshot.app_keys.into_iter().map(DeviceSyncItem::AppKeys))
         .chain(snapshot.groups.into_iter().map(DeviceSyncItem::Group))

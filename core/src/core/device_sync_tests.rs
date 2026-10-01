@@ -7,6 +7,7 @@ fn chunks_are_bounded_additive_camel_case_snapshots() {
         deleted_chats: Vec::new(),
         chat_mutes: Vec::new(),
         chat_pins: Vec::new(),
+        private_contacts: Vec::new(),
         chats: vec![DeviceSyncChat {
             id: "a".repeat(64),
             updated_at: 41,

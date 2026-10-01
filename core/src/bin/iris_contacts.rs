@@ -9,6 +9,10 @@ pub(super) enum ContactCommands {
     Favorite { contact: String },
     /// Remove a private favorite star.
     Unfavorite { contact: String },
+    /// Save a private nickname; an empty value removes it.
+    Nickname { contact: String, name: String },
+    /// Save a private note; an empty value removes it.
+    Note { contact: String, text: String },
     /// Approve the exact new name shown by `contact show`.
     ApproveName { contact: String, name: String },
     /// Follow this contact publicly using your Nostr follow list.
@@ -22,6 +26,8 @@ pub(super) fn handle(cli: &CliApp, command: ContactCommands) -> Result<Value> {
         ContactCommands::Show { contact } => Ok(contact_json(&direct_contact(cli, &contact)?)),
         ContactCommands::Favorite { contact } => set_favorite(cli, &contact, true),
         ContactCommands::Unfavorite { contact } => set_favorite(cli, &contact, false),
+        ContactCommands::Nickname { contact, name } => set_details(cli, &contact, Some(name), None),
+        ContactCommands::Note { contact, text } => set_details(cli, &contact, None, Some(text)),
         ContactCommands::ApproveName { contact, name } => approve_name(cli, &contact, &name),
         ContactCommands::Follow { contact } => set_follow(cli, &contact, true),
         ContactCommands::Unfollow { contact } => set_follow(cli, &contact, false),
@@ -83,17 +89,18 @@ fn set_favorite(cli: &CliApp, input: &str, favorite: bool) -> Result<Value> {
     if chat
         .contact_identity
         .as_ref()
-        .is_some_and(|identity| identity.is_favorite != favorite)
+        .is_some_and(|identity| identity.is_favorite == favorite)
     {
-        let state = cli.dispatch_and_wait(
-            AppAction::SetContactFavorite {
-                owner_pubkey_hex: chat.chat_id.clone(),
-                favorite,
-            },
-            Duration::from_secs(2),
-        )?;
-        fail_on_toast_except(&state, &["Public follow saved", "Public follow removed"])?;
+        return Ok(contact_json(&chat));
     }
+    let state = cli.dispatch_and_wait(
+        AppAction::SetContactFavorite {
+            owner_pubkey_hex: chat.chat_id.clone(),
+            favorite,
+        },
+        Duration::from_secs(2),
+    )?;
+    fail_on_toast_except(&state, &["Public follow saved", "Public follow removed"])?;
     let updated = direct_contact(cli, &chat.chat_id)?;
     anyhow::ensure!(
         updated
@@ -102,7 +109,36 @@ fn set_favorite(cli: &CliApp, input: &str, favorite: bool) -> Result<Value> {
             .is_some_and(|identity| identity.is_favorite == favorite),
         "Could not save the favorite."
     );
-    Ok(contact_json(&updated))
+    Ok(private_sync_result(&updated))
+}
+
+fn set_details(
+    cli: &CliApp,
+    input: &str,
+    nickname: Option<String>,
+    note: Option<String>,
+) -> Result<Value> {
+    let chat = direct_contact(cli, input)?;
+    let nickname = nickname.unwrap_or_else(|| chat.nickname.clone().unwrap_or_default());
+    let note = note.unwrap_or_else(|| chat.contact_note.clone().unwrap_or_default());
+    let state = cli.dispatch_and_wait(
+        AppAction::SetContactDetails {
+            owner_pubkey_hex: chat.chat_id.clone(),
+            nickname,
+            note,
+        },
+        Duration::from_secs(2),
+    )?;
+    fail_on_toast_except(&state, &["Nickname and note saved"])?;
+    Ok(private_sync_result(&direct_contact(cli, &chat.chat_id)?))
+}
+
+fn private_sync_result(chat: &CurrentChatSnapshot) -> Value {
+    let mut result = contact_json(chat);
+    // Local success is durable. Delivery is asynchronous and linked devices
+    // may need their main device online before other apps can receive it.
+    result["private_contact_sync"] = json!("queued");
+    result
 }
 
 fn approve_name(cli: &CliApp, input: &str, expected: &str) -> Result<Value> {
@@ -203,6 +239,7 @@ fn contact_json(chat: &CurrentChatSnapshot) -> Value {
         "user_id": chat.chat_id,
         "name": chat.display_name,
         "nickname": chat.nickname,
+        "note": chat.contact_note,
         "profile_name": chat.profile_name,
         "picture_url": chat.picture_url,
         "about": chat.about,

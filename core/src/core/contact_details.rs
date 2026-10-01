@@ -65,22 +65,31 @@ impl AppCore {
             nickname.split_whitespace().collect::<Vec<_>>().join(" "),
         ));
         let note = normalize_profile_field(Some(note.replace("\r\n", "\n").replace('\r', "\n")));
-        if nickname
-            .as_ref()
-            .is_some_and(|text| text.chars().count() > MAX_NICKNAME_CHARS)
-            || note
-                .as_ref()
-                .is_some_and(|text| text.chars().count() > MAX_NOTE_CHARS)
-        {
+        let previous = self.owner_profiles.get(&owner_hex);
+        if nickname.as_ref().is_some_and(|text| {
+            text.chars().count() > MAX_NICKNAME_CHARS
+                && previous.is_none_or(|profile| profile.nickname != nickname)
+        }) || note.as_ref().is_some_and(|text| {
+            text.chars().count() > MAX_NOTE_CHARS
+                && previous.is_none_or(|profile| profile.contact_note != note)
+        }) {
             self.state.toast =
                 Some("Use up to 80 characters for a nickname and 240 for a note.".to_string());
             self.emit_state();
             return;
         }
-        let profile = self.owner_profiles.entry(owner_hex.clone()).or_default();
-        if profile.nickname != nickname || profile.contact_note != note {
-            profile.nickname = nickname;
-            profile.contact_note = note;
+        let mut patch = BTreeMap::new();
+        if previous.and_then(|profile| profile.nickname.as_ref()) != nickname.as_ref() {
+            patch.insert("nickname".into(), serde_json::json!(nickname));
+        }
+        if previous.and_then(|profile| profile.contact_note.as_ref()) != note.as_ref() {
+            patch.insert("note".into(), serde_json::json!(note));
+        }
+        if !patch.is_empty() {
+            if !self.edit_private_contact_fields(&owner_hex, patch) {
+                return;
+            }
+            let profile = self.owner_profiles.entry(owner_hex.clone()).or_default();
             profile.contact_updated_at_ms =
                 crate::perflog::now_ms().max(profile.contact_updated_at_ms.saturating_add(1));
             self.persist_best_effort();
@@ -131,6 +140,7 @@ impl AppCore {
         profile.nickname = incoming.nickname;
         profile.contact_note = incoming.note;
         profile.contact_updated_at_ms = incoming.updated_at_ms;
+        self.seed_legacy_private_contact(owner_hex);
         self.mark_mobile_push_dirty();
         true
     }

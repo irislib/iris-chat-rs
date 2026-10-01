@@ -11,6 +11,9 @@ impl AppCore {
         if event.verify().is_err() {
             return;
         }
+        if self.receive_private_contact_event(&event) {
+            return;
+        }
         // A shared bootstrap author can match another device's subscription.
         // Route explicit recipients before owner resolution or group fallback.
         if self

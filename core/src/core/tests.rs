@@ -164,6 +164,7 @@ include!("tests/call_history_multi_device.rs");
 include!("tests/direct_files.rs");
 
 include!("tests/contact_details.rs");
+include!("tests/private_contacts.rs");
 
 include!("tests/timed_mute.rs");
 

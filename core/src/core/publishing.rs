@@ -720,6 +720,7 @@ impl AppCore {
             .and_then(|pending| Some((pending.chat_id.clone()?, pending.inner_event_id.clone()?)));
         let mut should_retry = false;
         if success {
+            self.acknowledge_private_contact_publish(&event_id);
             self.forget_pending_relay_publish(&event_id);
         } else if let Some(pending) = self.pending_relay_publishes.get_mut(&event_id) {
             if pending.last_error.as_deref() != Some(PENDING_RELAY_PUBLISH_IN_PROGRESS) {

@@ -118,6 +118,7 @@ mod model;
 pub(crate) mod notifications;
 mod payloads;
 mod persistence;
+mod private_contacts;
 mod profile;
 pub(crate) use profile::fallback_profile_name_for_identity;
 mod profile_helpers;
@@ -607,6 +608,7 @@ pub struct AppCore {
     data_dir: PathBuf,
     state: AppState,
     logged_in: Option<LoggedInState>,
+    private_contacts: private_contacts::PrivateContactRuntime,
     protocol_engine: Option<ProtocolEngine>,
     pending_linked_device: Option<PendingLinkedDeviceState>,
     pending_signer_login: Option<account_signer::PendingSignerLogin>,

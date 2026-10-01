@@ -2,6 +2,7 @@ use super::*;
 
 impl AppCore {
     pub(super) fn logout(&mut self) {
+        self.private_contacts.reset();
         self.stop_remote_signer();
         self.pending_signer_login = None;
         self.finish_call("Call ended");

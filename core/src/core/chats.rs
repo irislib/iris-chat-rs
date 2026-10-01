@@ -1421,6 +1421,13 @@ impl AppCore {
                 &runtime_rumor.content,
             );
         }
+        if runtime_rumor.kind == private_contacts::PRIVATE_CONTACT_CONTROL_KIND {
+            return self.receive_private_contact_control(
+                effective_sender_owner,
+                sender_device,
+                &runtime_rumor.content,
+            );
+        }
         let kind = runtime_rumor.kind;
         let created_at_secs = runtime_rumor.created_at_secs;
         let expires_at_secs = message_expiration_from_tags(runtime_rumor.tags.iter());

@@ -104,6 +104,9 @@ pub(crate) struct CorePerfCountersSnapshot {
 
 #[derive(Debug)]
 pub(crate) enum InternalEvent {
+    PrivateContactSyncTick {
+        generation: u64,
+    },
     FollowUpdateReady {
         request_id: String,
         result: Result<Vec<Event>, String>,

@@ -30,13 +30,21 @@ private favorites, approve an exact pending name, or change public follows:
 iris contact show <user-id>
 iris contact favorite <user-id>
 iris contact unfavorite <user-id>
+iris contact nickname <user-id> "Tea friend"
+iris contact note <user-id> "Met at lunch"
 iris contact approve-name <user-id> "New name"
 iris contact follow <user-id>
 iris contact unfollow <user-id>
 ```
 
-Names and favorite stars stay local. Name approval preserves the first known name
-and records the approved change in the chat. Public follows use your Nostr follow
+Favorite stars, nicknames, and notes sync privately between your devices and
+compatible Iris apps. An empty nickname or note removes it. Changes are saved
+locally first and retried after reconnecting. Linked devices exchange changes
+through their authorized device channel; your main device must be online to
+bridge those changes to other apps. Older timestamp-only clients can provide
+initial nicknames and notes but cannot override newer synced edits or removals.
+Observed names and name approvals stay local; approval preserves the first known
+name and records the approved change in the chat. Public follows use your Nostr follow
 list and require your main device's secret key and a configured message server.
 `contact show` and chat reads include `contact_identity` and `social_connection`
 in JSON output, and do not mark messages seen.

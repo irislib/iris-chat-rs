@@ -81,7 +81,12 @@ impl AppCore {
         if profile.contact_memory.favorite == favorite {
             return;
         }
-        profile.contact_memory.favorite = favorite;
+        if !self.edit_private_contact_fields(
+            owner,
+            BTreeMap::from([("favorite".into(), serde_json::json!(favorite))]),
+        ) {
+            return;
+        }
         self.rebuild_persist_and_emit_state();
     }
 }

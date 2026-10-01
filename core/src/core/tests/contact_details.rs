@@ -27,7 +27,11 @@ fn contact_details_persist_privately_and_survive_public_profile_changes() {
         current.contact_note.as_deref(),
         Some("Met at lunch.\nLikes tea.")
     );
-    assert_eq!(pair.a.pending_relay_publishes.len(), pending);
+    assert!(pair.a.pending_relay_publishes.len() > pending);
+    for pending in pair.a.pending_relay_publishes.values() {
+        assert!(!pending.event_json.contains("Work Alice"));
+        assert!(!pending.event_json.contains("Likes tea"));
+    }
     let profile = &pair.a.owner_profiles[&id];
     let public = build_profile_metadata_json(profile);
     assert!(!public.contains("Work Alice"));
@@ -140,6 +144,13 @@ fn contact_details_converge_after_offline_edits_and_ignore_older_clients() {
     }
     save_contact_details(&mut pair.a, &peer, "Alice", "First edit");
     save_contact_details(&mut pair.b, &peer, "Alice", "Second edit");
+    let expected_note = if pair.a.private_contacts.state.as_ref().unwrap().writer
+        > pair.b.private_contacts.state.as_ref().unwrap().writer
+    {
+        "First edit"
+    } else {
+        "Second edit"
+    };
     let timestamp = pair.a.owner_profiles[&id].contact_updated_at_ms;
     pair.b
         .owner_profiles
@@ -153,7 +164,7 @@ fn contact_details_converge_after_offline_edits_and_ignore_older_clients() {
     assert_eq!(pair.a.owner_profiles[&id], pair.b.owner_profiles[&id]);
     assert_eq!(
         pair.a.owner_profiles[&id].contact_note.as_deref(),
-        Some("Second edit")
+        Some(expected_note)
     );
     let without_details = from_a
         .iter()
@@ -170,6 +181,6 @@ fn contact_details_converge_after_offline_edits_and_ignore_older_clients() {
     deliver_chat_read_packets(&mut pair.b, &pair.a_device, &without_details);
     assert_eq!(
         pair.b.owner_profiles[&id].contact_note.as_deref(),
-        Some("Second edit")
+        Some(expected_note)
     );
 }

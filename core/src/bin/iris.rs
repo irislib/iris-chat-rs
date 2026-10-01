@@ -1552,6 +1552,9 @@ fn print_output(json_output: bool, command: &str, data: Value) -> Result<()> {
 }
 
 fn should_spawn_background_sync(state: &AppState, data: &Value) -> bool {
+    if data.get("private_contact_sync").and_then(Value::as_str) == Some("queued") {
+        return true;
+    }
     let public_follow_pending = data.get("contact_identity").is_some()
         && data.get("network_publication").and_then(Value::as_str) == Some("not_verified");
     let message_pending = data

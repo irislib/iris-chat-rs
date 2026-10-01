@@ -31,6 +31,8 @@ mod store_outgoing_events;
 #[path = "store_preferences.rs"]
 mod store_preferences;
 use store_preferences::{hash_preferences, load_preferences, write_preferences};
+#[path = "store_private_contacts.rs"]
+mod store_private_contacts;
 #[path = "store_profile_search.rs"]
 mod store_profile_search;
 #[path = "store_user_discovery.rs"]

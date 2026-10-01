@@ -7,7 +7,7 @@ fn run(data_dir: &Path, args: &[&str], success: bool) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_iris"))
         .env("IRIS_DEMO_RELAYS", "")
         .env("IRIS_FIPS_WEBSOCKET_SEED_URLS", "")
-        .args(["--json", "--data-dir"])
+        .args(["--json", "--no-background-sync", "--data-dir"])
         .arg(data_dir)
         .args(args)
         .output()
@@ -52,6 +52,22 @@ fn cli_contact_favorite_and_exact_name_approval_persist_without_changing_public_
     let favorite = run(dir.path(), &["contact", "favorite", &peer], true);
     assert_eq!(favorite["data"]["contact_identity"]["is_favorite"], true);
     assert_eq!(favorite["data"]["contact_identity"]["is_following"], false);
+    let nickname = run(
+        dir.path(),
+        &["contact", "nickname", &peer, "Tea friend"],
+        true,
+    );
+    assert_eq!(nickname["data"]["nickname"], "Tea friend");
+    assert_eq!(nickname["data"]["private_contact_sync"], "queued");
+    let note = run(
+        dir.path(),
+        &["contact", "note", &peer, "Met at lunch"],
+        true,
+    );
+    assert_eq!(note["data"]["nickname"], "Tea friend");
+    assert_eq!(note["data"]["note"], "Met at lunch");
+    run(dir.path(), &["contact", "nickname", &peer, ""], true);
+    run(dir.path(), &["contact", "note", &peer, ""], true);
     let stale = run(
         dir.path(),
         &["contact", "approve-name", &peer, "Unseen name"],

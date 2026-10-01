@@ -73,6 +73,7 @@ impl AppCore {
             data_dir,
             state: state.clone(),
             logged_in: None,
+            private_contacts: private_contacts::PrivateContactRuntime::default(),
             protocol_engine: None,
             pending_linked_device: None,
             pending_signer_login: None,
@@ -248,6 +249,7 @@ impl AppCore {
                 InternalEvent::RelayPublishDrainFinished { .. } => "RelayPublishDrainFinished",
                 InternalEvent::RelayPublishDrainProgress { .. } => "RelayPublishDrainProgress",
                 InternalEvent::SessionStartupFollowUp => "SessionStartupFollowUp",
+                InternalEvent::PrivateContactSyncTick { .. } => "PrivateContactSyncTick",
                 InternalEvent::RetryPendingRelayPublishes { .. } => "RetryPendingRelayPublishes",
                 InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
                 InternalEvent::AttachmentUploadProgress { .. } => "AttachmentUploadProgress",
@@ -398,6 +400,7 @@ impl AppCore {
         // without touching SQLite. The persist below is the only write we
         // want before iOS suspends us.
         self.suspended = true;
+        self.private_contacts.stop_network();
         self.push_debug_log("app.suspend", "pausing network and flushing storage");
         self.pause_pending_linked_device();
         self.stop_device_sync();
@@ -450,6 +453,9 @@ impl AppCore {
             return;
         }
         match event {
+            InternalEvent::PrivateContactSyncTick { generation } => {
+                self.private_contact_sync_tick(generation);
+            }
             event @ (InternalEvent::RemoteSignerProgress { .. }
             | InternalEvent::RemoteSignerConnected { .. }
             | InternalEvent::RemoteSignerSigned { .. }

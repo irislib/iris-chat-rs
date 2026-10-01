@@ -60,7 +60,13 @@ fn contact_identity_keeps_first_name_until_exact_approval_and_persists_private_h
         owner_pubkey_hex: id.clone(),
         favorite: true,
     });
-    assert_eq!(pair.a.pending_relay_publishes.len(), pending);
+    // A private encrypted contact head may be queued; no public follow or
+    // metadata event is needed to save a favorite.
+    assert!(pair.a.pending_relay_publishes.len() > pending);
+    assert!(pair.a.private_contacts.state.as_ref().unwrap().records[&id]
+        .event
+        .as_ref()
+        .is_some_and(|event| event.kind == Kind::from(30078)));
     let stored = pair.a.load_persisted().unwrap().unwrap();
     let memory = &stored.owner_profiles[&id].contact_memory;
     assert_eq!(memory.first_seen_name.as_deref(), Some("Alice"));
