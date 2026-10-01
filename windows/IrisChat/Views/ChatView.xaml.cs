@@ -393,11 +393,27 @@ public partial class ChatView : UserControl
             liveHeader.Children.Clear();
             liveHeader.Children.Add(BuildDirectInfoHeader(current));
             if (current.socialConnection is { } connection)
-                liveHeader.Children.Add(new TextBlock {
-                    Text = (connection.badge is null ? "" : connection.badge == SocialBadge.Warning ? "⚠ " : connection.badge == SocialBadge.Muted ? "− " : "✓ ") + connection.description,
+            {
+                var relationship = new DockPanel { Margin = new Thickness(0, 0, 0, 12) };
+                if (connection.badge is not null)
+                    relationship.Children.Add(new Border {
+                        Width = 16, Height = 16, CornerRadius = new CornerRadius(8),
+                        Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center,
+                        Background = Avatar.SocialBadgeBackground(connection.badge, ResourceBrush("AccentAlt")),
+                        Child = new TextBlock {
+                            Text = Avatar.SocialBadgeGlyph(connection.badge), Foreground = Brushes.White,
+                            FontSize = 11, FontWeight = FontWeights.Bold,
+                            HorizontalAlignment = HorizontalAlignment.Center,
+                            VerticalAlignment = VerticalAlignment.Center,
+                        },
+                    });
+                relationship.Children.Add(new TextBlock {
+                    Text = connection.description,
                     Foreground = ResourceBrush("TextMuted"), TextWrapping = TextWrapping.Wrap,
-                    Margin = new Thickness(0, 0, 0, 12),
+                    VerticalAlignment = VerticalAlignment.Center,
                 });
+                liveHeader.Children.Add(relationship);
+            }
         }
         PropertyChangedEventHandler updateHeader = (_, _) => RefreshHeader();
         App.CurrentManager.PropertyChanged += updateHeader;
@@ -467,7 +483,6 @@ public partial class ChatView : UserControl
 
         var avatar = new Avatar
         {
-            SocialConnection = chat.socialConnection,
             Label = chat.displayName,
             PictureUrl = chat.pictureUrl,
             Size = 64,
