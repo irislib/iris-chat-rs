@@ -82,7 +82,21 @@ jobs:
           cargo fmt --manifest-path linux/Cargo.toml -- --check
 
       - name: Rust tests
-        run: ./scripts/test_rust.sh
+        run: |
+          mkdir -p work/private-controls
+          IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT="$PWD/work/private-controls/native-private-controls.json" ./scripts/test_rust.sh
+          test -s work/private-controls/native-private-controls.json
+          git rev-parse HEAD > work/private-controls/source-commit.txt
+          cd work/private-controls
+          sha256sum native-private-controls.json > SHA256SUMS
+
+      - name: Upload native private-control interoperability fixture
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-private-control-fixture
+          path: iris-chat-rs/work/private-controls/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Verify protocol package
         id: protocol-package
