@@ -53,7 +53,7 @@ pub(super) struct DeviceSyncRuntime {
     _attachment_blobs: Option<Arc<super::attachment_upload::AttachmentBlobRuntime>>,
     pub(super) pubsub: Option<Arc<FipsPubsubClient>>,
     pub(super) protocol_subscriptions: super::mesh_pubsub::MeshProtocolSubscriptions,
-    _update_relay_pubsub: Option<Arc<RelayEventBus>>,
+    _update_provider: Option<Arc<dyn nostr_pubsub::NostrEventSubscriber>>,
     recent_peers: Option<Arc<RwLock<DeviceSyncRecentPeers>>>,
     tasks: Vec<JoinHandle<()>>,
 }

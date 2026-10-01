@@ -1,7 +1,5 @@
 use super::*;
-use crate::core::update_pubsub::{
-    run_relay_update_announcement_subscription, run_update_announcement_subscription,
-};
+use crate::update_announcements::{register_update_provider, websocket_seed_urls};
 use fips_core::config::{
     BleConfig, NostrDiscoveryPolicy, PeerConfig, TransportInstances, UdpConfig, WebSocketConfig,
 };
@@ -17,10 +15,6 @@ const LOCAL_RENDEZVOUS_ADDR_ENV: &str = "IRIS_CHAT_FIPS_LOCAL_RENDEZVOUS_ADDR";
 const WEBSOCKET_SEED_URLS_ENV: &str = "IRIS_FIPS_WEBSOCKET_SEED_URLS";
 const RECENT_PEERS_FILE_NAME: &str = "fips-recent-peers.json";
 const RECENT_PEERS_OBSERVE_INTERVAL: Duration = Duration::from_secs(30);
-const DEFAULT_WEBSOCKET_SEED_URLS: &[&str] = &[
-    "wss://fips2.iris.to/fips", // osiris
-    "wss://fips1.iris.to/fips", // lnvps
-];
 
 #[derive(Default)]
 struct SharedFipsOptions {
@@ -496,39 +490,24 @@ impl AppCore {
                 None
             }
         };
-        let update_relay_pubsub = config.relay_client.clone().and_then(|client| {
-            match self.runtime.block_on(RelayEventBus::with_client(
-                client,
-                config.relay_urls.clone(),
-                Duration::from_secs(8),
-            )) {
-                Ok(pubsub) => Some(Arc::new(pubsub)),
-                Err(error) => {
-                    self.push_debug_log("update.pubsub.relay.start.error", error.to_string());
-                    None
-                }
-            }
-        });
-        let update_filter = match crate::update_announcements::update_announcement_filter() {
-            Ok(filter) => Some(filter),
-            Err(error) => {
-                self.push_debug_log("update.pubsub.filter.error", error.to_string());
-                None
-            }
-        };
-        if let (Some(pubsub), Some(filter)) = (&update_pubsub, &update_filter) {
-            let pubsub = pubsub.clone();
-            let filter = filter.clone();
-            tasks.push(self.runtime.spawn(async move {
-                run_update_announcement_subscription(pubsub, filter).await;
-            }));
-        }
-        if let (Some(pubsub), Some(filter)) = (&update_relay_pubsub, &update_filter) {
-            let pubsub = pubsub.clone();
-            let filter = filter.clone();
-            tasks.push(self.runtime.spawn(async move {
-                run_relay_update_announcement_subscription(pubsub, filter).await;
-            }));
+        let update_provider: Option<Arc<dyn nostr_pubsub::NostrEventSubscriber>> =
+            match &update_pubsub {
+                Some(client) => Some(Arc::new(client.fresh_subscriber())),
+                None => config.relay_client.clone().and_then(|client| {
+                    self.runtime
+                        .block_on(RelayEventBus::with_client(
+                            client,
+                            config.relay_urls.clone(),
+                            Duration::from_secs(8),
+                        ))
+                        .ok()
+                        .map(|provider| {
+                            Arc::new(provider) as Arc<dyn nostr_pubsub::NostrEventSubscriber>
+                        })
+                }),
+            };
+        if let Some(provider) = &update_provider {
+            register_update_provider(provider);
         }
         #[cfg(feature = "stack-fixture")]
         if let (Some(pubsub), Some(logged_in)) = (&update_pubsub, &self.logged_in) {
@@ -640,7 +619,7 @@ impl AppCore {
             _attachment_blobs: attachment_store,
             pubsub: update_pubsub,
             protocol_subscriptions: super::super::mesh_pubsub::MeshProtocolSubscriptions::default(),
-            _update_relay_pubsub: update_relay_pubsub,
+            _update_provider: update_provider,
             recent_peers,
             tasks,
         });
@@ -873,17 +852,6 @@ fn configured_websocket_seeds() -> Option<WebSocketConfig> {
         seed_urls,
         ..WebSocketConfig::default()
     })
-}
-
-fn websocket_seed_urls(configured: Option<&str>) -> Vec<String> {
-    configured
-        .map(|value| value.split(',').collect::<Vec<_>>())
-        .unwrap_or_else(|| DEFAULT_WEBSOCKET_SEED_URLS.to_vec())
-        .into_iter()
-        .map(str::trim)
-        .filter(|url| !url.is_empty())
-        .map(ToOwned::to_owned)
-        .collect()
 }
 
 fn configured_local_rendezvous_addr() -> Result<Option<SocketAddrV4>, String> {
