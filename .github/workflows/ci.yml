@@ -12,10 +12,11 @@ on:
       - "**/*.md"
   workflow_dispatch:
     inputs:
-      core_only:
-        description: Run only Rust and repository checks
-        type: boolean
-        default: false
+      scope:
+        description: Checks to run (releases require all)
+        type: choice
+        default: all
+        options: [all, core, windows]
 
 permissions:
   contents: read
@@ -30,6 +31,7 @@ env:
 
 jobs:
   rust:
+    if: ${{ inputs.scope != 'windows' }}
     name: Rust and repo checks
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -83,7 +85,7 @@ jobs:
         run: ./scripts/test_rust.sh
 
   android:
-    if: ${{ !inputs.core_only }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' }}
     name: Android build and unit tests
     runs-on: ubuntu-24.04
     timeout-minutes: 75
@@ -158,7 +160,7 @@ jobs:
           retention-days: 14
 
   linux:
-    if: ${{ !inputs.core_only }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' }}
     name: Linux build and tests (Rust ${{ matrix.toolchain }})
     strategy:
       fail-fast: false
@@ -234,7 +236,7 @@ jobs:
           retention-days: 14
 
   macos:
-    if: ${{ !inputs.core_only }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' }}
     name: macOS build and tests
     runs-on: macos-15
     timeout-minutes: 75
@@ -281,7 +283,7 @@ jobs:
           retention-days: 14
 
   ios:
-    if: ${{ !inputs.core_only }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' }}
     name: iOS simulator build and composer tests
     runs-on: macos-15
     timeout-minutes: 75
@@ -335,7 +337,7 @@ jobs:
           retention-days: 14
 
   windows-ui:
-    if: ${{ !inputs.core_only }}
+    if: ${{ inputs.scope != 'core' }}
     name: Windows native clipboard and composer tests
     runs-on: windows-2025
     timeout-minutes: 90
@@ -380,7 +382,7 @@ jobs:
           retention-days: 14
 
   cli-service:
-    if: ${{ !inputs.core_only }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' }}
     name: CLI service (${{ matrix.os }})
     strategy:
       fail-fast: false
