@@ -23,6 +23,7 @@ internal static class PasteLayoutComparison
             {
                 ("Ideal+Auto", TextFormattingMode.Ideal, ScrollBarVisibility.Auto),
                 ("Ideal+Visible", TextFormattingMode.Ideal, ScrollBarVisibility.Visible),
+                ("Ideal+Hidden", TextFormattingMode.Ideal, ScrollBarVisibility.Hidden),
             })
             {
                 composer.Clear();
@@ -33,7 +34,15 @@ internal static class PasteLayoutComparison
                 var changes = 0;
                 TextChangedEventHandler changed = (_, _) => changes++;
                 input.TextChanged += changed;
-                using var probe = new PasteLayoutProbe();
+                double? firstExtent = null, firstOffset = null, firstViewport = null;
+                using var probe = new PasteLayoutProbe(() =>
+                {
+                    // These getters read existing scroll metrics without
+                    // validating caret geometry or formatting the document tail.
+                    firstExtent = input.ExtentHeight;
+                    firstOffset = input.VerticalOffset;
+                    firstViewport = input.ViewportHeight;
+                });
                 ApplicationCommands.Paste.Execute(null, input);
                 var executeMs = probe.ElapsedMs;
                 pump();
@@ -62,6 +71,7 @@ internal static class PasteLayoutComparison
                 }
                 var caretReadyMs = probe.ElapsedMs;
                 var caretVisible = IsCaretVisible(input, caret);
+                var completedExtent = input.ExtentHeight;
                 input.SelectedText = "!";
                 window.UpdateLayout(); pump();
                 probe.Finish();
@@ -77,6 +87,12 @@ internal static class PasteLayoutComparison
                     final_dispatcher_drain_ms = finalDrainMs - layoutMs,
                     first_render_wait_ms = renderedMs - finalDrainMs,
                     first_render_ms = probe.FirstRenderMs,
+                    first_render_extent_height = firstExtent,
+                    first_render_vertical_offset = firstOffset,
+                    first_render_viewport_height = firstViewport,
+                    completed_extent_height = completedExtent,
+                    first_render_document_tail_visible = firstExtent >= completedExtent - 1 &&
+                        firstOffset + firstViewport >= completedExtent - 1,
                     longest_gap_before_forced_caret_ms = gapBeforeForcedCaretMs,
                     caret_geometry_layout_drain_ms = geometryReadyMs - renderedMs,
                     caret_visible_before_explicit_scroll = visibleBeforeScroll,
@@ -90,7 +106,7 @@ internal static class PasteLayoutComparison
                 });
                 File.WriteAllText(Path.Combine(output, "windows-layout-comparison-timings.json"), JsonSerializer.Serialize(new
                 {
-                    boundary = "Native Paste through first WPF Rendering callback, explicit end-caret geometry (forces pending tail layout), native ScrollToLine only if caret remains outside viewport after drain, then SelectedText edit and layout/drain. Input-priority 1 ms heartbeat gaps include scheduling noise; not a frame-rate measurement.",
+                    boundary = "Native Paste through first WPF Rendering callback (only existing scroll metrics sampled), explicit end-caret geometry (forces pending tail layout), native ScrollToLine only if caret remains outside viewport after drain, then SelectedText edit and layout/drain. First-frame document-tail visibility compares that frame's viewport with the completed extent; final caret visibility uses refreshed geometry. Input-priority 1 ms heartbeat gaps include scheduling noise; not a frame-rate measurement.",
                     configurations = results,
                 }, new JsonSerializerOptions { WriteIndented = true }));
                 if (!correct || !caretVisible || probe.ElapsedMs >= 5_000)
@@ -104,7 +120,7 @@ internal static class PasteLayoutComparison
             input.VerticalScrollBarVisibility = originalScroll;
             pump();
         }
-        Console.WriteLine("PASS: real composer Auto/Visible layout comparison preserves whole text, visible caret and next edit");
+        Console.WriteLine("PASS: real composer Auto/Visible/Hidden layout comparison preserves whole text, visible caret and next edit");
     }
 
     private static bool IsCaretVisible(TextBox input, Rect caret) =>
