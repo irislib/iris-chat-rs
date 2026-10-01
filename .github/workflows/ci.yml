@@ -201,7 +201,18 @@ jobs:
           cargo test --manifest-path core/Cargo.toml --features desktop-media --locked --lib desktop_call -- --nocapture
 
       - name: Linux tests
-        run: dbus-run-session -- xvfb-run -a cargo test --manifest-path linux/Cargo.toml --locked --features ui-tests
+        run: |
+          mkdir -p work/clipboard
+          IRIS_CLIPBOARD_UI_SCREENSHOT="$PWD/work/clipboard/linux.png" \
+            dbus-run-session -- xvfb-run -a cargo test --manifest-path linux/Cargo.toml --locked --features ui-tests
+
+      - name: Upload Linux clipboard results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-clipboard-tests-${{ matrix.toolchain }}
+          path: iris-chat-rs/work/clipboard/
+          retention-days: 14
 
   macos:
     name: macOS build and tests
