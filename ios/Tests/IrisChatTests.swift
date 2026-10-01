@@ -782,10 +782,12 @@ final class IrisChatTests: XCTestCase {
 
         rust.emit(.fullState(makeLargeFixtureState(rev: 2, account: makeAccount())))
 
-        let sentAfterRestore = await waitUntil {
-            rust.dispatchedActions.contains(.sendMessage(chatId: "owner", text: "hello from share"))
+        let sentAndOpenedAfterRestore = await waitUntil {
+            let actions = rust.dispatchedActions
+            return actions.contains(.sendMessage(chatId: "owner", text: "hello from share"))
+                && actions.contains(.openChat(chatId: "owner"))
         }
-        XCTAssertTrue(sentAfterRestore)
+        XCTAssertTrue(sentAndOpenedAfterRestore)
         XCTAssertTrue(rust.dispatchedActions.contains(.openChat(chatId: "owner")))
         XCTAssertNil(manager.pendingShare)
         let removed = await waitUntil { !FileManager.default.fileExists(atPath: payloadURL.path) }
@@ -817,10 +819,13 @@ final class IrisChatTests: XCTestCase {
             environment: ["IRIS_SHARE_CONTAINER_DIR": shareContainer.path]
         )
 
-        let sentOnLaunch = await waitUntil {
-            rust.dispatchedActions.contains(.sendMessage(chatId: "owner", text: "queued while closed"))
+        // Opening the chat is dispatched on the optimistic-navigation queue after sending.
+        let sentAndOpenedOnLaunch = await waitUntil {
+            let actions = rust.dispatchedActions
+            return actions.contains(.sendMessage(chatId: "owner", text: "queued while closed"))
+                && actions.contains(.openChat(chatId: "owner"))
         }
-        XCTAssertTrue(sentOnLaunch)
+        XCTAssertTrue(sentAndOpenedOnLaunch)
         XCTAssertTrue(rust.dispatchedActions.contains(.openChat(chatId: "owner")))
         XCTAssertNil(manager.pendingShare)
         let removed = await waitUntil { !FileManager.default.fileExists(atPath: payloadURL.path) }
