@@ -120,7 +120,9 @@ fn remember_update_event(
     {
         *guard = Some((reference.clone(), UpdateEventCache::new(reference)?));
     }
-    let cache = &mut guard.as_mut().unwrap().1;
+    let (_, cache) = guard.as_mut().ok_or_else(|| {
+        UpdateError::Announcement("update event cache was not initialized".into())
+    })?;
     cache.ingest_event(event)?;
     if cache
         .latest()

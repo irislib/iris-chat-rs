@@ -278,12 +278,7 @@ impl AppCore {
         let relay_urls = self.device_approval_relay_urls.clone();
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
-            ensure_session_relays_configured(&client, &relay_urls).await;
-            connect_client_with_timeout(
-                &client,
-                Duration::from_secs(PENDING_DEVICE_LINK_CONNECT_TIMEOUT_SECS),
-            )
-            .await;
+            connect_pending_device_link_client(&client, &relay_urls).await;
             for (id, filter) in ["link-device-response", "link-device-approval"]
                 .into_iter()
                 .zip(filters.iter().cloned())
@@ -1095,4 +1090,23 @@ pub(super) fn nostr_identity_profile_id_for_owner(owner_pubkey: PublicKey) -> No
         *target = *source;
     }
     NostrIdentityId::from_uuid(uuid::Uuid::from_bytes(bytes))
+}
+
+pub(super) async fn connect_pending_device_link_client(client: &Client, relay_urls: &[RelayUrl]) {
+    // SDK disconnect reports Terminated before its connection task has stopped.
+    // Reusing that relay immediately can set Pending while the old task is still
+    // running, leaving reconnect stuck in its backoff. This dedicated client uses
+    // default relay options and Client-level notifications, so replace only its
+    // terminated relay instances; normal network reconnection stays untouched.
+    for (url, relay) in client.relays().await {
+        if relay_urls.contains(&url) && relay.status() == RelayStatus::Terminated {
+            let _ = client.force_remove_relay(url).await;
+        }
+    }
+    ensure_session_relays_configured(client, relay_urls).await;
+    connect_client_with_timeout(
+        client,
+        Duration::from_secs(PENDING_DEVICE_LINK_CONNECT_TIMEOUT_SECS),
+    )
+    .await;
 }

@@ -1259,6 +1259,15 @@ fn pending_linked_device_survives_suspend_and_resumes() {
 
 #[test]
 fn local_relay_pairing_recovers_after_subscription_disconnect() {
+    assert_local_relay_pairing_recovers_after_disconnect(false);
+}
+
+#[test]
+fn local_relay_pairing_recovers_after_suspend_and_resume() {
+    assert_local_relay_pairing_recovers_after_disconnect(true);
+}
+
+fn assert_local_relay_pairing_recovers_after_disconnect(suspend: bool) {
     let owner = Keys::generate();
     let relay = crate::local_relay::TestRelay::start();
     let relay_url = relay.url().to_string();
@@ -1331,7 +1340,10 @@ fn local_relay_pairing_recovers_after_subscription_disconnect() {
         .inviter_ephemeral_public_key
         .to_nostr()
         .expect("pairing response pubkey");
-    let initial_refresh_deadline = Instant::now() + Duration::from_secs(3);
+    let initial_refresh_deadline = Instant::now()
+        + Duration::from_secs(
+            PENDING_DEVICE_LINK_CONNECT_TIMEOUT_SECS + PENDING_DEVICE_LINK_FETCH_TIMEOUT_SECS + 2,
+        );
     while Instant::now() < initial_refresh_deadline
         && linked
             .pending_linked_device
@@ -1343,18 +1355,47 @@ fn local_relay_pairing_recovers_after_subscription_disconnect() {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+    assert!(
+        linked
+            .pending_linked_device
+            .as_ref()
+            .is_some_and(|pending| !pending.refresh_in_flight),
+        "initial pairing history fetch must finish before disconnecting"
+    );
     let pairing_client = linked
         .pending_linked_device
         .as_ref()
         .expect("pending linked device")
         .pairing_client
         .clone();
+    assert_eq!(
+        linked
+            .runtime
+            .block_on(connected_relay_count_for_client(&pairing_client)),
+        1
+    );
+    if suspend {
+        linked.prepare_for_suspend();
+        assert!(linked.suspended);
+    } else {
+        linked.runtime.block_on(async {
+            pairing_client.unsubscribe_all().await;
+            pairing_client.disconnect().await;
+        });
+    }
     linked.runtime.block_on(async {
-        pairing_client.unsubscribe_all().await;
-        pairing_client.disconnect().await;
+        assert!(pairing_client
+            .relays()
+            .await
+            .values()
+            .all(|relay| relay.status() == RelayStatus::Terminated));
     });
     dispatch_device_approval_for_test(&mut primary, &relay_url, pairing_url);
     assert_eq!(primary.state.toast.as_deref(), Some("Device added"));
+    if suspend {
+        linked.handle_app_foregrounded();
+        assert!(!linked.suspended);
+    }
 
     let recovery_timeout = Duration::from_secs(
         PENDING_DEVICE_LINK_RETRY_SECS
@@ -2439,4 +2480,48 @@ fn runtime_message_from_known_sender_is_kept_when_unknowns_are_blocked() {
         .messages
         .iter()
         .any(|message| message.id == inner_id && message.body == "known direct"));
+}
+
+#[test]
+fn pending_device_link_reconnects_immediately_after_sdk_termination() {
+    let relay = crate::local_relay::TestRelay::start();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime");
+    runtime.block_on(async {
+        let client = Client::new(Keys::generate());
+        let urls = relay_urls_from_strings(&[relay.url().to_owned()]);
+        super::account::connect_pending_device_link_client(&client, &urls).await;
+        assert_eq!(connected_relay_count_for_client(&client).await, 1);
+        let subscription = SubscriptionId::new("pairing-reconnect-test");
+        client
+            .subscribe_with_id(
+                subscription.clone(),
+                Filter::new().kind(Kind::Metadata),
+                None,
+            )
+            .await
+            .expect("subscribe before reconnect");
+        client.disconnect().await;
+        // A current-thread runtime keeps the old connection task from consuming
+        // its termination signal before the production reconnect starts.
+        super::account::connect_pending_device_link_client(&client, &urls).await;
+        assert!(
+            !client.subscription(&subscription).await.is_empty(),
+            "pool subscription must survive relay replacement"
+        );
+        let statuses = client
+            .relays()
+            .await
+            .values()
+            .map(|relay| relay.status())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            connected_relay_count_for_client(&client).await,
+            1,
+            "immediate reconnect states={statuses:?}"
+        );
+        client.shutdown().await;
+    });
 }

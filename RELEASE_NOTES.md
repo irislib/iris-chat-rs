@@ -2,7 +2,7 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
-## v2026.10.1.4
+## v2026.10.1.5
 
 ### GitHub
 
@@ -12,6 +12,8 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Add read-only contact inspection, favorites, exact-name approval, and public follow commands to the CLI; drain queued public updates before a one-shot command exits.
 - Add Note to self shortcuts to profiles and search across native apps.
 - Send multiple files directly to an accepting device over FIPS, including between your own linked devices, without uploading the files to Blossom or Hashtree.
+- Recover device linking after suspension by replacing terminated pairing connections before reconnecting, preserving subscriptions and the existing recovery deadline.
+- Use the shared signed update transport and published dependencies while retaining protection against older release announcements.
 
 ### Apple
 
@@ -20,6 +22,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Add private favorite stars and follow people publicly from their profile.
 - Find Note to self from your profile or search.
 - Send files directly to someone who accepts them, including another device of your own.
+- Fix device linking after leaving and returning to the app.
 
 ### Zapstore
 
@@ -28,6 +31,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Add private favorite stars and follow people publicly from their profile.
 - Find Note to self from your profile or search.
 - Send files directly to someone who accepts them, including another device of your own.
+- Fix device linking after leaving and returning to the app.
 
 ## v2026.9.30.3
 
