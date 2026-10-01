@@ -61,8 +61,12 @@ impl ReadBudget {
     }
 
     fn consume(counter: &AtomicUsize, amount: usize) -> bool {
+        #[allow(
+            deprecated,
+            reason = "The Linux release toolchain uses Rust 1.93, before Atomic::try_update stabilized."
+        )]
         let previous = counter
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
                 Some(left.saturating_sub(amount))
             })
             .unwrap_or_else(|left| left);

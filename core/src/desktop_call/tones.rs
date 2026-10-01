@@ -23,9 +23,13 @@ impl DesktopCallTone {
     }
     pub fn set_ringing(&self, ringing: bool) {
         // Stop is terminal: a stale UI snapshot cannot revive a retired worker.
+        #[allow(
+            deprecated,
+            reason = "The Linux release toolchain uses Rust 1.93, before Atomic::try_update stabilized."
+        )]
         let _ = self
             .state
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |old| {
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
                 (old != 0).then_some(if ringing { 2 } else { 1 })
             });
     }
