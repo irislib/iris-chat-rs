@@ -1,3 +1,4 @@
+use crate::DirectFileTransferSnapshot;
 use serde::{Deserialize, Serialize};
 
 #[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
@@ -289,6 +290,8 @@ pub struct CallHistorySnapshot {
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ChatMessageSnapshot {
+    #[uniffi(default = None)]
+    pub direct_transfer: Option<DirectFileTransferSnapshot>,
     pub id: String,
     pub chat_id: String,
     pub kind: ChatMessageKind,

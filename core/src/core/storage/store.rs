@@ -330,7 +330,9 @@ impl AppStore {
                     reactors_json, source_event_id, recipient_deliveries_json, delivery_trace_json, call_json
              FROM messages
              WHERE kind = 'user' AND created_at_secs >= ?1
-               AND delivery NOT IN ('queued', 'pending', 'failed')
+               AND (delivery NOT IN ('queued', 'pending', 'failed')
+                    OR (delivery IN ('queued', 'pending') AND is_outgoing = 1
+                        AND chat_id = author_owner_pubkey_hex AND body LIKE 'iris-direct-file-v1:%'))
                AND (expires_at_secs IS NULL OR expires_at_secs > ?2)
                AND (created_at_secs > ?3
                     OR (created_at_secs = ?3 AND chat_id > ?4)
@@ -528,6 +530,7 @@ impl AppStore {
 }
 
 const TABLES_TO_CLEAR: &[&str] = &[
+    "direct_file_transfers",
     "messages",
     "threads",
     "seen_events",
@@ -1291,7 +1294,7 @@ pub(crate) fn search_messages_fts(
             chat_id: row.get(0)?,
             message_id: row.get(1)?,
             author: row.get(2)?,
-            body: row.get(3)?,
+            body: super::super::attachments::chat_message_body_preview(&row.get::<_, String>(3)?),
             is_outgoing: row.get::<_, i64>(4)? != 0,
             created_at_secs: row.get::<_, i64>(5)?.max(0) as u64,
         })
@@ -1640,6 +1643,7 @@ mod tests {
 
     fn sample_message(id: &str, body: &str, ts: u64) -> ChatMessageSnapshot {
         ChatMessageSnapshot {
+            direct_transfer: None,
             call: None,
             id: id.to_string(),
             chat_id: "chat".to_string(),

@@ -126,6 +126,15 @@ pub(crate) enum InternalEvent {
         token: String,
         message: String,
     },
+    DirectFilesPrepared {
+        generation: u64,
+        device: String,
+        result: Result<crate::core::direct_files::Record, String>,
+    },
+    DirectFile {
+        generation: u64,
+        event: crate::core::direct_file_tcp::DirectFileEvent,
+    },
     CallPacket {
         source_pubkey_hex: String,
         source_port: u16,

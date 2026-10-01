@@ -207,6 +207,7 @@ internal fun ComposerBar(
     onRemoveAttachment: (PickedAttachment) -> Unit,
     onSend: () -> Unit,
     sendAllowed: Boolean = true,
+    sendFilesDirectly: Boolean = false,
 ) {
     val haptics = rememberIrisHapticFeedback()
     val isBusy = isSending || isUploading
@@ -252,6 +253,14 @@ internal fun ComposerBar(
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            if (selectedAttachments.isNotEmpty() && sendFilesDirectly) {
+                Text(
+                    "Send directly · Both devices must stay online",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = IrisTheme.palette.muted,
+                    modifier = Modifier.testTag("chatDirectFileMode"),
+                )
+            }
             if (selectedAttachments.isNotEmpty()) {
                 Row(
                     modifier =

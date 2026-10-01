@@ -17,6 +17,8 @@ mod messages;
 mod recent_peers;
 mod runtime;
 mod settings;
+#[cfg(test)]
+mod test_support;
 
 pub(super) const DEVICE_SYNC_PORT: u16 = 7369;
 const DEVICE_SYNC_VERSION: u8 = 1;
@@ -40,6 +42,7 @@ pub(super) struct DeviceSyncRuntime {
     key: String,
     peer_refresh_key: String,
     pub(super) endpoint: Arc<FipsEndpoint>,
+    pub(super) direct_files: Option<super::direct_file_tcp::DirectFileSender>,
     pub(super) calls_tx: Option<Sender<super::calls::MediaSend>>,
     tcp: Option<DeviceSyncTcpSender>,
     siblings: Vec<FipsPeerIdentity>,
@@ -360,10 +363,16 @@ impl AppCore {
 
     pub(super) fn broadcast_device_sync_message(&mut self, message: &ChatMessageSnapshot) {
         if !matches!(&message.kind, ChatMessageKind::User)
-            || matches!(
+            || matches!(&message.delivery, DeliveryState::Failed)
+            || (matches!(
                 &message.delivery,
-                DeliveryState::Queued | DeliveryState::Pending | DeliveryState::Failed
-            )
+                DeliveryState::Queued | DeliveryState::Pending
+            ) && !super::direct_files::is_pending_self_offer(
+                &message.body,
+                &message.chat_id,
+                message.author_owner_pubkey_hex.as_deref(),
+                message.is_outgoing,
+            ))
         {
             return;
         }
@@ -703,6 +712,7 @@ impl AppCore {
                 thread.unread_count = thread.unread_count.saturating_add(1);
             }
             thread.insert_message_sorted(ChatMessageSnapshot {
+                direct_transfer: None,
                 call: None,
                 id: message.id,
                 chat_id: chat_id.clone(),
@@ -743,53 +753,6 @@ impl AppCore {
         if !app_keys_retry_batch.is_empty() {
             self.process_protocol_engine_retry_batch("device_sync_app_keys", app_keys_retry_batch);
         }
-    }
-
-    #[cfg(test)]
-    pub(super) fn build_device_sync_packets_for_test(
-        &self,
-        roster_at: u64,
-        include_messages: bool,
-    ) -> Vec<Vec<u8>> {
-        encode_device_sync_chunks(self.build_device_sync_snapshot(roster_at, include_messages))
-    }
-
-    #[cfg(test)]
-    pub(super) fn install_device_sync_sender_for_test(
-        &mut self,
-        endpoint: Arc<FipsEndpoint>,
-        tcp: DeviceSyncTcpSender,
-        siblings: Vec<FipsPeerIdentity>,
-    ) {
-        self.device_sync = Some(DeviceSyncRuntime {
-            calls_tx: None,
-            key: "test".to_string(),
-            peer_refresh_key: "test".to_string(),
-            endpoint,
-            tcp: Some(tcp),
-            siblings,
-            snapshot_pending: false,
-            nearby_enabled: false,
-            nearby_bootstrap_payloads: Arc::new(RwLock::new(Vec::new())),
-            nearby_outbox: Arc::new(RwLock::new(super::fips_nearby::FipsNearbyOutbox::default())),
-            _attachment_blobs: None,
-            pubsub: None,
-            protocol_subscriptions: super::mesh_pubsub::MeshProtocolSubscriptions::default(),
-            _update_relay_pubsub: None,
-            recent_peers: None,
-            tasks: Vec::new(),
-        });
-    }
-
-    #[cfg(test)]
-    pub(super) fn take_device_sync_control_for_test(
-        &self,
-        peer: FipsPeerIdentity,
-    ) -> Option<Vec<u8>> {
-        self.device_sync
-            .as_ref()
-            .and_then(|runtime| runtime.tcp.as_ref())
-            .and_then(|tcp| tcp.take_control_for_test(peer))
     }
 
     fn device_sync_roster_at(&self) -> Option<u64> {

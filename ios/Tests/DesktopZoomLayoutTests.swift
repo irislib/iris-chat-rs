@@ -67,7 +67,7 @@ private struct ZoomFixture: View {
             Text("Weekend plans").font(.title2)
             Spacer()
             Text("Shall we meet at the park?").padding().background(IrisPalette.dark.bubbleTheirs, in: RoundedRectangle(cornerRadius: 16))
-            IrisComposerBar(composerState: model.composer, attachments: .constant([]), placeholder: "Message", isSending: false,
+            IrisComposerBar(composerState: model.composer, attachments: .constant([]), sendFilesDirectly: .constant(false), directFilesAllowed: false, placeholder: "Message", isSending: false,
                 isUploading: false, uploadFraction: nil, isFocused: $focused, onUserEdit: { _ in }, onDraftChange: {},
                 onAttach: { _ in }, voiceRecordingAllowed: true, onStageVoice: { _ in [] }, onSendVoice: { _ in false }, onSend: { _ in })
         }

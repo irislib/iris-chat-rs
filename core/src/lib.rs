@@ -1,4 +1,8 @@
 mod actions;
+mod direct_file_smoke;
+mod direct_files;
+pub use direct_file_smoke::run_direct_file_transfer_smoke;
+pub use direct_files::*;
 mod call_audio;
 mod desktop_call;
 mod device_names;

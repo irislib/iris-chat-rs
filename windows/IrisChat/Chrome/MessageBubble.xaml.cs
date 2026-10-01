@@ -96,6 +96,10 @@ public partial class MessageBubble : UserControl
             _ => string.Empty,
         };
 
+        DirectTransfer.Content = message.directTransfer is {} transfer
+            ? new DirectFileTransferCard(message.chatId, transfer) : null;
+        DirectTransfer.Visibility = message.directTransfer is null ? Visibility.Collapsed : Visibility.Visible;
+
         if (message.attachments != null && message.attachments.Length > 0)
         {
             AttachmentsList.ItemsSource = null;

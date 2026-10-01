@@ -49,11 +49,9 @@ impl AppCore {
                 .await;
             let mut complete = false;
             let mut events = Vec::new();
-            for reply in replies {
-                if let Ok(reply) = reply {
-                    complete = true;
-                    events.extend(reply.iter().cloned());
-                }
+            for reply in replies.into_iter().flatten() {
+                complete = true;
+                events.extend(reply.iter().cloned());
             }
             let result = if complete {
                 Ok(events)

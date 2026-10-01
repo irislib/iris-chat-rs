@@ -53,6 +53,7 @@ impl AppCore {
         let data_dir = PathBuf::from(data_dir);
         let data_dir_lock = DataDirLock::acquire(&data_dir)?;
         let mut app_store = AppStore::new(open_database(&data_dir)?);
+        direct_files::interrupt_stored(&app_store.shared());
 
         let mut state = AppState::empty();
         if let Some(persisted_preferences) = app_store.load_preferences_snapshot()? {
@@ -189,6 +190,8 @@ impl AppCore {
                 | InternalEvent::RemoteSignerConnected { .. }
                 | InternalEvent::RemoteSignerSigned { .. }
                 | InternalEvent::RemoteSignerFailed { .. } => "RemoteSigner",
+                InternalEvent::DirectFilesPrepared { .. } => "DirectFilesPrepared",
+                InternalEvent::DirectFile { .. } => "DirectFile",
                 InternalEvent::CallPacket { .. } => "CallPacket",
                 InternalEvent::CallMediaBatch { .. } => "CallMediaBatch",
                 InternalEvent::CallTick { .. } => "CallTick",
@@ -451,6 +454,14 @@ impl AppCore {
             | InternalEvent::RemoteSignerConnected { .. }
             | InternalEvent::RemoteSignerSigned { .. }
             | InternalEvent::RemoteSignerFailed { .. }) => self.handle_remote_signer_event(event),
+            InternalEvent::DirectFilesPrepared {
+                generation,
+                device,
+                result,
+            } => self.direct_files_prepared(generation, device, result),
+            InternalEvent::DirectFile { generation, event } => {
+                self.handle_direct_file_event(generation, event)
+            }
             InternalEvent::CallPacket {
                 source_pubkey_hex,
                 source_port,

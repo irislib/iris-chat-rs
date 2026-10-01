@@ -8,6 +8,9 @@ struct FileLinkMatch {
 }
 
 pub(super) fn extract_message_attachments(text: &str) -> (String, Vec<MessageAttachmentSnapshot>) {
+    if direct_files::preview(text).is_some() {
+        return (text.to_string(), Vec::new());
+    }
     let matches = find_file_links(text);
     if matches.is_empty() {
         return (text.trim().to_string(), Vec::new());
@@ -46,7 +49,7 @@ pub(super) fn message_preview(message: &ChatMessageSnapshot) -> String {
 }
 
 pub(super) fn chat_message_body_preview(body: &str) -> String {
-    strip_reply_quote(body).trim().to_string()
+    direct_files::preview(body).unwrap_or_else(|| strip_reply_quote(body).trim().to_string())
 }
 
 fn strip_reply_quote(body: &str) -> &str {
@@ -288,6 +291,7 @@ mod tests {
         attachments: Vec<MessageAttachmentSnapshot>,
     ) -> ChatMessageSnapshot {
         ChatMessageSnapshot {
+            direct_transfer: None,
             call: None,
             id: "message-1".to_string(),
             chat_id: "chat-1".to_string(),

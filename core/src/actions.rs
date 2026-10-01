@@ -164,6 +164,23 @@ pub enum AppAction {
         attachments: Vec<OutgoingAttachment>,
         caption: String,
     },
+    SendDirectFiles {
+        chat_id: String,
+        attachments: Vec<OutgoingAttachment>,
+        caption: String,
+    },
+    AcceptDirectFiles {
+        chat_id: String,
+        transfer_id: String,
+    },
+    DeclineDirectFiles {
+        chat_id: String,
+        transfer_id: String,
+    },
+    CancelDirectFiles {
+        chat_id: String,
+        transfer_id: String,
+    },
     ToggleReaction {
         chat_id: String,
         message_id: String,

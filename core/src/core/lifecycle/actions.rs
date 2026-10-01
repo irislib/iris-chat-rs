@@ -139,6 +139,23 @@ impl AppCore {
                 attachments,
                 caption,
             } => self.send_attachments(&chat_id, &attachments, &caption),
+            AppAction::SendDirectFiles {
+                chat_id,
+                attachments,
+                caption,
+            } => self.send_direct_files(&chat_id, attachments, caption),
+            AppAction::AcceptDirectFiles {
+                chat_id,
+                transfer_id,
+            } => self.act_on_direct_files(&chat_id, &transfer_id, direct_files::Action::Accept),
+            AppAction::DeclineDirectFiles {
+                chat_id,
+                transfer_id,
+            } => self.act_on_direct_files(&chat_id, &transfer_id, direct_files::Action::Decline),
+            AppAction::CancelDirectFiles {
+                chat_id,
+                transfer_id,
+            } => self.act_on_direct_files(&chat_id, &transfer_id, direct_files::Action::Cancel),
             AppAction::ToggleReaction {
                 chat_id,
                 message_id,

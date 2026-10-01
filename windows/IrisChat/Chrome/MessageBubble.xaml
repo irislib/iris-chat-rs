@@ -43,6 +43,7 @@
                        Cursor="Hand"
                        MouseLeftButtonUp="OnToggleShowMore"
                        Text="Show more" />
+            <ContentControl x:Name="DirectTransfer" Visibility="Collapsed" Margin="0,4,0,0" />
             <ItemsControl x:Name="AttachmentsList"
                           Visibility="Collapsed"
                           Margin="0,4,0,0" />

@@ -68,3 +68,9 @@ name = "audio"
 path = "tests/audio.rs"
 harness = false
 required-features = ["ui-tests"]
+
+[[test]]
+name = "direct_files"
+path = "tests/direct_files.rs"
+harness = false
+required-features = ["ui-tests"]

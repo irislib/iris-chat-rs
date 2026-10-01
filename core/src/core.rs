@@ -84,6 +84,8 @@ pub use attachment_upload::{
 };
 mod attachments;
 mod calls;
+pub(crate) mod direct_file_tcp;
+pub(crate) mod direct_files;
 pub(crate) use calls::push::{build_call_push_subscription_request, resolve_call_push_invite};
 mod chat_deletions;
 mod chat_mute_sync;
@@ -356,7 +358,10 @@ fn build_chat_snapshot_with_messages(
         .unwrap_or_else(|| fallback_chat_participants(state, thread, chat_id, &kind));
     messages = messages
         .into_iter()
-        .map(|message| {
+        .map(|mut message| {
+            if let Some(db) = shared_db {
+                direct_files::decorate(&mut message, state.account.as_ref(), db);
+            }
             decorate_chat_page_message(
                 message,
                 chat_id,

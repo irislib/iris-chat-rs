@@ -157,6 +157,7 @@ public partial class ChatView : UserControl
         };
         RemovedGroupPanel.Visibility = removedFromGroup ? Visibility.Visible : Visibility.Collapsed;
         Composer.SendAllowed = !capabilityBlocked && !removedFromGroup;
+        Composer.DirectSendAllowed = chat.kind == ChatKind.Direct;
         Composer.Visibility = userBlocked || messageRequest || removedFromGroup
             ? Visibility.Collapsed
             : Visibility.Visible;
@@ -175,7 +176,7 @@ public partial class ChatView : UserControl
 
         var messages = chat.messages ?? Array.Empty<ChatMessageSnapshot>();
         var messageSignature = removedFromGroup + ":" + string.Join("|", messages.Select(m =>
-            $"{m.id}:{m.delivery}:{m.body}:{m.reactions?.Length ?? 0}:{m.reactors?.Length ?? 0}"));
+            $"{m.id}:{m.delivery}:{m.body}:{m.reactions?.Length ?? 0}:{m.reactors?.Length ?? 0}:{m.directTransfer?.status}:{m.directTransfer?.transferredBytes}:{m.directTransfer?.error}"));
         var shouldPinToBottom = chatChanged
             || ScrollHost.ScrollableHeight <= 0
             || ScrollHost.VerticalOffset >= ScrollHost.ScrollableHeight - 24;
@@ -230,7 +231,8 @@ public partial class ChatView : UserControl
         if (string.IsNullOrEmpty(chatId)) return;
         if (stagedAttachments != null && stagedAttachments.Count > 0)
         {
-            App.CurrentManager.SendAttachments(chatId, stagedAttachments, text);
+            if (Composer.SendDirectly) App.CurrentManager.SendDirectFiles(chatId, stagedAttachments, text);
+            else App.CurrentManager.SendAttachments(chatId, stagedAttachments, text);
             return;
         }
         if (!string.IsNullOrEmpty(text))

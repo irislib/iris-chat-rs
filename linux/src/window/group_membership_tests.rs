@@ -67,6 +67,7 @@ pub(super) fn run(
         author_picture_url: None,
         body: "Meet at the park at noon".into(),
         attachments: vec![],
+        direct_transfer: None,
         reactions: vec![MessageReactionSnapshot {
             emoji: "👍".into(),
             count: 1,

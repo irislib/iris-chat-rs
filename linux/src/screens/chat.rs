@@ -22,6 +22,9 @@ pub use image_clipboard::verify_ui as verify_image_clipboard_ui;
 mod contact_details;
 use contact_details::nickname_card;
 mod composer;
+mod direct_files;
+#[cfg(feature = "ui-tests")]
+pub use direct_files::verify_ui as verify_direct_files_ui;
 mod safety;
 mod view;
 pub use view::ChatView;
@@ -1022,6 +1025,10 @@ fn render_message(
         .filter(|a| !a.is_image && audio_message::is_audio(a))
     {
         bubble.append(&audio_message::widget(&message.id, attachment));
+    }
+
+    if let Some(transfer) = &message.direct_transfer {
+        bubble.append(&direct_files::card(&chat.chat_id, transfer, manager));
     }
 
     if !other_attachments.is_empty() {
