@@ -167,15 +167,16 @@ fn private_contact_upgrade_retires_plaintext_intents_only_after_durable_migratio
             relay_urls: Vec::new(),
             authorization_state: LocalAuthorizationState::Authorized,
         });
-        core.flush_private_contact_events();
+        core.start_private_contact_sync();
         let queued = saved_sibling_rumors(&core, &owner, &device);
-        assert_eq!(queued.len(), 3);
+        assert_eq!(queued.len(), 4);
         assert_eq!(
             queued
                 .iter()
                 .filter(|event| event.kind.as_u16() == 10452)
                 .count(),
-            1
+            2,
+            "startup queues the V2 recovery request and migrated document"
         );
         assert!(
             core.private_contact_state().unwrap().pending.is_empty(),
@@ -224,21 +225,30 @@ fn private_contact_upgrade_retires_plaintext_intents_only_after_durable_migratio
             .collect();
         assert_eq!(
             rumors.len(),
-            3,
-            "only V2 data and unrelated intents are delivered"
+            4,
+            "only V2 recovery/data and unrelated intents are delivered"
         );
-        let event = rumors
+        let controls = rumors
             .iter()
-            .find(|event| event.kind.as_u16() == 10452)
-            .unwrap();
-        let control = parse_private_contact_control_v2(
-            &serde_json::from_str(&event.content).unwrap(),
-            &owner.public_key().to_hex(),
-        )
-        .unwrap();
-        let PrivateContactControlV2::Sync { document, .. } = control else {
-            panic!("expected migrated document");
-        };
+            .filter(|event| event.kind.as_u16() == 10452)
+            .map(|event| {
+                parse_private_contact_control_v2(
+                    &serde_json::from_str(&event.content).unwrap(),
+                    &owner.public_key().to_hex(),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert!(controls
+            .iter()
+            .any(|control| matches!(control, PrivateContactControlV2::Request { .. })));
+        let document = controls
+            .into_iter()
+            .find_map(|control| match control {
+                PrivateContactControlV2::Sync { document, .. } => Some(document),
+                PrivateContactControlV2::Request { .. } => None,
+            })
+            .expect("migrated document delivered");
         assert_eq!(document.fields, migrated.contacts[&contact]);
     }
 }
