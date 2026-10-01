@@ -603,7 +603,9 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
         (uiView as? IrisComposerUITextView)?.onPasteAttachments = onPasteAttachments
         Self.activeTextView = uiView
         context.coordinator.parent = self
+        var needsSelectionReveal = false
         if uiView.markedTextRange == nil, uiView.text != text {
+            needsSelectionReveal = true
             let selectedRange = uiView.selectedRange
             uiView.text = text
             let textLength = (text as NSString).length
@@ -619,7 +621,9 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
         let shouldScroll = measuredHeight(for: uiView, width: uiView.bounds.width) >= maxHeight(for: uiView)
         if uiView.isScrollEnabled != shouldScroll {
             uiView.isScrollEnabled = shouldScroll
+            needsSelectionReveal = true
         }
+        if needsSelectionReveal { (uiView as? IrisComposerUITextView)?.revealSelectionAfterNextLayout() }
         if isFocused && !uiView.isFirstResponder {
             DispatchQueue.main.async {
                 uiView.becomeFirstResponder()
@@ -671,6 +675,7 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             guard parent.text != textView.text else { return }
             parent.text = textView.text
+            (textView as? IrisComposerUITextView)?.revealSelectionAfterNextLayout()
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {

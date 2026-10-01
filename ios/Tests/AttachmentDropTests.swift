@@ -14,7 +14,10 @@ final class AttachmentDropTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let sources = [directory.appendingPathComponent("first.txt"), directory.appendingPathComponent("second.pdf")]
         for (index, url) in sources.enumerated() { try Data([UInt8(index)]).write(to: url) }
-        let providers = sources.map { NSItemProvider(contentsOf: $0)! }
+        // Exercise the file-URL contract requested by IrisAttachmentDropModifier.
+        // contentsOf: advertises file contents rather than a URL on iOS.
+        let providers = sources.map { NSItemProvider(item: $0 as NSURL, typeIdentifier: UTType.fileURL.identifier) }
+        XCTAssertTrue(providers.allSatisfy { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) })
         let loaded = await IrisDroppedFiles.load(providers)
         XCTAssertEqual(loaded, sources)
         let staging = IrisAttachmentStaging(dataDir: directory.appendingPathComponent("cache"), fileManager: .default)

@@ -21,14 +21,30 @@ final class ComposerAvailabilityLayoutTests: XCTestCase {
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
-        try await Task.sleep(nanoseconds: 200_000_000)
-        window.layoutIfNeeded()
+        let initialDraft = try XCTUnwrap(state.currentChat?.draft)
+        let restorationDeadline = ProcessInfo.processInfo.systemUptime + 5
+        while findEditor(host.view)?.text != initialDraft, ProcessInfo.processInfo.systemUptime < restorationDeadline {
+            window.layoutIfNeeded()
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
         let editor = try XCTUnwrap(findEditor(host.view))
+        XCTAssertEqual(editor.text, initialDraft, "Wait for the initial persisted draft before editing it")
         XCTAssertTrue(editor.isEditable)
-        editor.becomeFirstResponder()
-        editor.text = "See you soon"
-        editor.delegate?.textViewDidChange?(editor)
-        try await Task.sleep(nanoseconds: 400_000_000)
+        let keyboardShown = expectation(forNotification: UIResponder.keyboardDidShowNotification, object: nil)
+        XCTAssertTrue(editor.becomeFirstResponder())
+        defer { editor.resignFirstResponder() }
+        await fulfillment(of: [keyboardShown], timeout: 5)
+        let draftSaved = expectation(description: "Native edit reaches draft persistence")
+        rust.onDispatch = { action in
+            if case .setChatDraft(let changedChatId, let text) = action, changedChatId == chatId, text == "See you soon" {
+                draftSaved.fulfill()
+            }
+        }
+        editor.selectedRange = NSRange(location: 0, length: (initialDraft as NSString).length)
+        editor.insertText("See you soon")
+        await fulfillment(of: [draftSaved], timeout: 5)
+        rust.onDispatch = nil
+        window.layoutIfNeeded()
         let frame = editor.convert(editor.bounds, to: window)
         try await Task.sleep(nanoseconds: 2_100_000_000)
         window.layoutIfNeeded()

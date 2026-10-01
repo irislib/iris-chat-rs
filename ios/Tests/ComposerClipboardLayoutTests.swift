@@ -67,7 +67,9 @@ final class ComposerClipboardLayoutTests: XCTestCase {
                 let caret = editor.convert(window.convertFromScreen(caretOnScreen), from: nil)
                 return ComposerGeometry(frame: editor.convert(editor.bounds, to: host), viewport: editor.visibleRect,
                                         caret: caret, height: viewport.contentView.bounds.height,
-                                        maximumHeight: IrisAppKitComposerTextView.maxHeight(for: editor), selection: selection)
+                                        maximumHeight: IrisAppKitComposerTextView.maxHeight(for: editor), selection: selection,
+                                        scrollingEnabled: viewport.hasVerticalScroller,
+                                        firstResponder: window.firstResponder === editor, hasMarkedText: editor.hasMarkedText())
             }
             let screenshot: () throws -> Data = {
                 let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
@@ -98,7 +100,9 @@ final class ComposerClipboardLayoutTests: XCTestCase {
                 let caret = editor.caretRect(for: try XCTUnwrap(editor.selectedTextRange).end)
                 return ComposerGeometry(frame: editor.convert(editor.bounds, to: host.view), viewport: editor.bounds,
                                         caret: caret, height: editor.bounds.height,
-                                        maximumHeight: ceil(try XCTUnwrap(editor.font).lineHeight * 5), selection: selection)
+                                        maximumHeight: ceil(try XCTUnwrap(editor.font).lineHeight * 5), selection: selection,
+                                        scrollingEnabled: editor.isScrollEnabled, firstResponder: editor.isFirstResponder,
+                                        hasMarkedText: editor.markedTextRange != nil)
             }
             let screenshot: () throws -> Data = {
                 try XCTUnwrap(UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
@@ -174,6 +178,7 @@ final class ComposerClipboardLayoutTests: XCTestCase {
             "settledElapsedMs": elapsedMs, "intentionalObservationDelayMs": observationDelayMs,
             "editNotifications": updates, "stableGeometrySamples": stableSamples,
             "caretVisible": previous?.caretVisible ?? false, "settled": settled,
+            "geometry": previous?.diagnostics ?? [:],
             "attachments": draft.files.count, "directMode": draft.directly, "didSend": draft.didSend
         ]
         let evidence = XCTAttachment(data: try JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]),
@@ -243,6 +248,19 @@ private struct ComposerGeometry: Equatable {
     let height: CGFloat
     let maximumHeight: CGFloat
     let selection: NSRange
+    let scrollingEnabled: Bool
+    let firstResponder: Bool
+    let hasMarkedText: Bool
+
+    var diagnostics: [String: Any] {
+        func rect(_ value: CGRect) -> [Any] {
+            [value.minX, value.minY, value.width, value.height].map { $0.isFinite ? Double($0) as Any : NSNull() }
+        }
+        return ["frame": rect(frame), "viewport": rect(viewport), "caret": rect(caret),
+                "height": Double(height), "maximumHeight": Double(maximumHeight),
+                "selectionLocation": selection.location, "selectionLength": selection.length,
+                "scrollingEnabled": scrollingEnabled, "firstResponder": firstResponder, "hasMarkedText": hasMarkedText]
+    }
 
     var caretVisible: Bool {
         !caret.isNull && !caret.isInfinite && caret.height > 0 &&

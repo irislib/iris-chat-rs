@@ -4,6 +4,26 @@ import UIKit
 final class IrisComposerUITextView: UITextView {
     let composerMeasurement = IrisComposerTextMeasurement()
     var onPasteAttachments: ((IrisClipboardAttachments) -> Void)?
+    private var pendingSelectionReveal: NSRange?
+    private var selectionRevealScheduled = false
+
+    func revealSelectionAfterNextLayout() {
+        guard isFirstResponder, markedTextRange == nil else { return }
+        pendingSelectionReveal = selectedRange
+        guard !selectionRevealScheduled else { return }
+        selectionRevealScheduled = true
+        setNeedsLayout()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.selectionRevealScheduled = false
+            let selection = self.pendingSelectionReveal
+            self.pendingSelectionReveal = nil
+            guard let selection, self.isFirstResponder, self.isScrollEnabled, self.markedTextRange == nil,
+                  self.selectedRange == selection else { return }
+            self.layoutIfNeeded()
+            self.scrollRangeToVisible(self.selectedRange)
+        }
+    }
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(paste(_:)), onPasteAttachments != nil,
