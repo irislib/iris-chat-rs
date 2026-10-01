@@ -29,7 +29,7 @@ final class ComposerRunLoopProbe {
                 self.activeSince = now
             }
         }
-        if let observer { CFRunLoopAddObserver(CFRunLoopGetMain(), observer, kCFRunLoopCommonModes) }
+        if let observer { CFRunLoopAddObserver(CFRunLoopGetMain(), observer, CFRunLoopMode.commonModes) }
         let timer = Timer(timeInterval: 0.01, repeats: true) { [weak self] _ in
             guard let self else { return }
             let now = ProcessInfo.processInfo.systemUptime
@@ -57,7 +57,7 @@ final class ComposerRunLoopProbe {
     func invalidate() {
         timer?.invalidate()
         timer = nil
-        if let observer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, kCFRunLoopCommonModes) }
+        if let observer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, CFRunLoopMode.commonModes) }
         observer = nil
     }
 
