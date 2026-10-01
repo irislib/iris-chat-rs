@@ -90,7 +90,9 @@ enum DeviceSyncPacket {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         chat_pins: Vec<ChatPinState>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        private_contacts: Vec<crate::private_contact_sync::PrivateContactDocument>,
+        private_contacts_v2: Vec<crate::private_contact_sync_v2::PrivateContactDocumentV2>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        private_device_labels_v2: Vec<super::private_device_labels::PrivateDeviceLabel>,
         #[serde(default)]
         app_keys: Vec<DeviceSyncAppKeys>,
         #[serde(default)]
@@ -106,8 +108,6 @@ struct DeviceSyncChat {
     updated_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     read_state: Option<ChatReadState>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    contact_details: Option<super::contact_details::ContactDetails>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -127,12 +127,6 @@ struct DeviceSyncAppKeys {
 struct DeviceSyncAppKeyDevice {
     identity_pubkey: String,
     created_at: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    device_label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    client_label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    label_updated_at: Option<u64>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -199,7 +193,8 @@ struct DeviceSyncSnapshot {
     deleted_chats: Vec<DeviceSyncChatDeletion>,
     chat_mutes: Vec<ChatMuteState>,
     chat_pins: Vec<ChatPinState>,
-    private_contacts: Vec<crate::private_contact_sync::PrivateContactDocument>,
+    private_contacts_v2: Vec<crate::private_contact_sync_v2::PrivateContactDocumentV2>,
+    private_device_labels_v2: Vec<super::private_device_labels::PrivateDeviceLabel>,
     app_keys: Vec<DeviceSyncAppKeys>,
     groups: Vec<DeviceSyncGroup>,
     messages: Vec<DeviceSyncMessage>,
@@ -210,7 +205,8 @@ enum DeviceSyncItem {
     Deletion(DeviceSyncChatDeletion),
     Mute(ChatMuteState),
     Pin(ChatPinState),
-    PrivateContact(crate::private_contact_sync::PrivateContactDocument),
+    PrivateContact(crate::private_contact_sync_v2::PrivateContactDocumentV2),
+    PrivateDeviceLabel(super::private_device_labels::PrivateDeviceLabel),
     AppKeys(DeviceSyncAppKeys),
     Group(DeviceSyncGroup),
     Message(DeviceSyncMessage),
@@ -220,7 +216,10 @@ impl DeviceSyncItem {
         match self {
             Self::Mute(value) => snapshot.chat_mutes.push(value.clone()),
             Self::Pin(value) => snapshot.chat_pins.push(value.clone()),
-            Self::PrivateContact(value) => snapshot.private_contacts.push(value.clone()),
+            Self::PrivateContact(value) => snapshot.private_contacts_v2.push(value.clone()),
+            Self::PrivateDeviceLabel(value) => {
+                snapshot.private_device_labels_v2.push(value.clone())
+            }
             Self::Chat(value) => snapshot.chats.push(value.clone()),
             Self::Deletion(value) => snapshot.deleted_chats.push(value.clone()),
             Self::AppKeys(value) => snapshot.app_keys.push(value.clone()),
@@ -231,8 +230,11 @@ impl DeviceSyncItem {
 
     fn pop(&self, snapshot: &mut DeviceSyncSnapshot) {
         match self {
+            Self::PrivateDeviceLabel(_) => {
+                snapshot.private_device_labels_v2.pop();
+            }
             Self::PrivateContact(_) => {
-                snapshot.private_contacts.pop();
+                snapshot.private_contacts_v2.pop();
             }
             Self::Deletion(_) => {
                 snapshot.deleted_chats.pop();
@@ -268,7 +270,8 @@ impl DeviceSyncSnapshot {
             deleted_chats: self.deleted_chats.clone(),
             chat_mutes: self.chat_mutes.clone(),
             chat_pins: self.chat_pins.clone(),
-            private_contacts: self.private_contacts.clone(),
+            private_contacts_v2: self.private_contacts_v2.clone(),
+            private_device_labels_v2: self.private_device_labels_v2.clone(),
             app_keys: self.app_keys.clone(),
             groups: self.groups.clone(),
             messages: self.messages.clone(),
@@ -277,7 +280,8 @@ impl DeviceSyncSnapshot {
 
     fn is_empty(&self) -> bool {
         self.chat_pins.is_empty()
-            && self.private_contacts.is_empty()
+            && self.private_contacts_v2.is_empty()
+            && self.private_device_labels_v2.is_empty()
             && self.chat_mutes.is_empty()
             && self.deleted_chats.is_empty()
             && self.chats.is_empty()
@@ -323,7 +327,8 @@ impl AppCore {
                 deleted_chats,
                 chat_mutes,
                 chat_pins,
-                private_contacts,
+                private_contacts_v2,
+                private_device_labels_v2,
                 app_keys,
                 groups,
                 messages,
@@ -334,7 +339,8 @@ impl AppCore {
                     deleted_chats,
                     chat_mutes,
                     chat_pins,
-                    private_contacts,
+                    private_contacts_v2,
+                    private_device_labels_v2,
                     app_keys,
                     groups,
                     messages,
@@ -475,10 +481,7 @@ impl AppCore {
                         },
                         |thread| thread.updated_at_secs,
                     ),
-                    contact_details: self
-                        .owner_profiles
-                        .get(&id)
-                        .and_then(OwnerProfileRecord::contact_details),
+                    // Legacy receivers would bridge these fields to static-key records.
                     id,
                     read_state,
                 })
@@ -551,7 +554,8 @@ impl AppCore {
             chats,
             chat_mutes: self.chat_mute_snapshot(),
             chat_pins: self.chat_pin_snapshot(),
-            private_contacts: self.private_contact_snapshot(),
+            private_contacts_v2: self.private_contact_snapshot(),
+            private_device_labels_v2: self.private_device_label_snapshot(),
             deleted_chats: self
                 .chat_deletions
                 .iter()
@@ -681,15 +685,15 @@ impl AppCore {
         }
         for chat in snapshot.chats {
             if valid_device_sync_chat_id(&chat.id) {
-                if let Some(details) = chat.contact_details {
-                    changed |= self.apply_contact_details(&chat.id, details);
-                }
                 if let Some(read_state) = chat.read_state {
                     changed |= self.apply_chat_read_state(&chat.id, read_state);
                 }
             }
         }
-        for document in snapshot.private_contacts {
+        for label in snapshot.private_device_labels_v2 {
+            changed |= self.merge_private_device_label(label);
+        }
+        for document in snapshot.private_contacts_v2 {
             changed |= self.merge_private_contact_from_sibling(&document);
         }
         let now = unix_now().get();
@@ -853,11 +857,6 @@ impl DeviceSyncAppKeys {
                         .ok()?
                         .to_hex(),
                     created_at: device.created_at_secs,
-                    device_label: device.device_label.clone(),
-                    client_label: device.client_label.clone(),
-                    label_updated_at: (device.device_label.is_some()
-                        || device.client_label.is_some())
-                    .then_some(device.label_updated_at_secs),
                 })
             })
             .collect::<Option<Vec<_>>>()?;
@@ -880,23 +879,6 @@ impl DeviceSyncAppKeys {
                 return None;
             }
             incoming.add_device(DeviceEntry::new(identity, device.created_at));
-            if device
-                .label_updated_at
-                .is_some_and(|at| at <= unix_now().get().saturating_add(300))
-            {
-                incoming.set_device_labels(
-                    identity,
-                    device
-                        .device_label
-                        .as_deref()
-                        .and_then(account_app_keys::normalize_device_label),
-                    device
-                        .client_label
-                        .as_deref()
-                        .and_then(account_app_keys::normalize_device_label),
-                    device.label_updated_at,
-                );
-            }
         }
         Some((owner, incoming, self.created_at))
     }
@@ -912,9 +894,15 @@ fn encode_device_sync_chunks(snapshot: DeviceSyncSnapshot) -> Vec<Vec<u8>> {
         .chain(snapshot.chat_pins.into_iter().map(DeviceSyncItem::Pin))
         .chain(
             snapshot
-                .private_contacts
+                .private_contacts_v2
                 .into_iter()
                 .map(DeviceSyncItem::PrivateContact),
+        )
+        .chain(
+            snapshot
+                .private_device_labels_v2
+                .into_iter()
+                .map(DeviceSyncItem::PrivateDeviceLabel),
         )
         .chain(snapshot.chats.into_iter().map(DeviceSyncItem::Chat))
         .chain(snapshot.app_keys.into_iter().map(DeviceSyncItem::AppKeys))

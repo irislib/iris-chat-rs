@@ -8,7 +8,7 @@ fn save_contact_details(core: &mut AppCore, peer: &Keys, nickname: &str, note: &
 
 #[test]
 fn contact_details_persist_privately_and_survive_public_profile_changes() {
-    let mut pair = chat_read_sync_pair("contact-details");
+    let mut pair = chat_read_receipt_pair("contact-details");
     let peer = Keys::generate();
     let id = peer.public_key().to_hex();
     pair.a.handle_action(AppAction::CreateChat {
@@ -96,7 +96,11 @@ fn contact_details_sync_only_to_authorized_devices_and_removal_wins_over_stale_d
         assert!(core.owner_profiles[&id].contact_note.is_none());
         let saved = core.load_persisted().unwrap().unwrap();
         assert!(saved.owner_profiles[&id].contact_note.is_none());
-        assert!(saved.owner_profiles[&id].contact_updated_at_ms > 0);
+        assert!(
+            core.private_contacts.state.as_ref().unwrap().contacts[&id]["note"]
+                .value
+                .is_null()
+        );
     }
 }
 

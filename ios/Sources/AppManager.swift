@@ -1980,10 +1980,10 @@ final class AppManager: ObservableObject {
             bundle.flatMap { resolveCallPushInvite(dataDir: dataDir.path,
                 deviceNsec: $0.deviceNsec, payloadJson: payload) }
         }
-        // Report before returning to PushKit, including cold launches. Network
-        // recovery happens concurrently and cannot delay the system call UI.
+        // Cold first calls allow at most two seconds to retrieve their signed
+        // setup message. Report promptly even when authentication is unavailable.
         calls.receivePushInvite(invite, completion: completion)
-        guard invite != nil, let payload else { return }
+        guard let payload else { return }
         backgroundSuspendPrepared = false
         dispatchToRust(.ingestMobilePushPayload(payloadJson: payload), showsToastOnFailure: false)
         if state.preferences.nearbyEnabled && state.preferences.nearbyLanEnabled {

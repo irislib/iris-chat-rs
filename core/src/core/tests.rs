@@ -159,6 +159,7 @@ include!("tests/mesh_chat.rs");
 include!("tests/image_proxy_preferences.rs");
 
 include!("tests/calls.rs");
+include!("tests/call_wake_v2.rs");
 include!("tests/call_quality.rs");
 include!("tests/call_history_multi_device.rs");
 include!("tests/direct_files.rs");

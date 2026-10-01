@@ -26,7 +26,8 @@ fn calls_require_known_accepted_unblocked_device_and_matching_call() {
     let peer = Keys::generate();
     let device = Keys::generate();
     let stranger = Keys::generate();
-    let (mut core, _updates, _dir) = logged_in_test_core_with_updates("call-policy", &owner, &local);
+    let (mut core, _updates, _dir) =
+        logged_in_test_core_with_updates("call-policy", &owner, &local);
     let id = "00112233445566778899aabbccddeeff";
     let offer = call_control(id, "offer", true);
     core.handle_call_packet(&device.public_key().to_hex(), 39511, &offer);
@@ -131,7 +132,10 @@ fn call_settings_persist_and_allow_voice_answer_when_video_disabled() {
         &call_control("ffeeddccbbaa99887766554433221100", "offer", true),
     );
     assert!(core.state.call.is_none());
-    core.handle_action(AppAction::SetCallQuality { quality: "custom".into(), max_bitrate_bps: 777_000 });
+    core.handle_action(AppAction::SetCallQuality {
+        quality: "custom".into(),
+        max_bitrate_bps: 777_000,
+    });
     drop(core);
     let restarted = AppCore::new(
         flume::unbounded().0,
@@ -291,6 +295,7 @@ fn exercise_local_fips_call(resume_recipient: bool, push_wakeup: bool) {
         call_test_peer(core, &ao, &ad);
         call_test_peer(core, &bo, &bd);
     }
+    install_call_ratchet_for_test(&mut a, &mut b, &ao, &bo, &ad, &bd);
     let (at, ar) = flume::unbounded();
     a.core_sender = at.clone();
     a.priority_sender = at;
@@ -334,22 +339,40 @@ fn exercise_local_fips_call(resume_recipient: bool, push_wakeup: bool) {
         Some(std::thread::spawn(move || {
             use std::io::{Read, Write};
             let (mut stream, _) = listener.accept().unwrap();
-            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-            let mut bytes = Vec::new(); let mut buffer = [0u8; 4096];
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            let mut buffer = [0u8; 4096];
             loop {
                 let count = stream.read(&mut buffer).unwrap();
-                assert!(count > 0); bytes.extend_from_slice(&buffer[..count]);
+                assert!(count > 0);
+                bytes.extend_from_slice(&buffer[..count]);
                 if let Some(end) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
                     let headers = String::from_utf8_lossy(&bytes[..end]);
-                    let length: usize = headers.lines().find_map(|line| line.to_lowercase().strip_prefix("content-length:").map(|n| n.trim().parse().unwrap())).unwrap();
+                    let length: usize = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|n| n.trim().parse().unwrap())
+                        })
+                        .unwrap();
                     if bytes.len() >= end + 4 + length {
-                        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}").unwrap();
-                        break serde_json::from_slice::<serde_json::Value>(&bytes[end+4..end+4+length]).unwrap();
+                        stream
+                            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+                            .unwrap();
+                        break serde_json::from_slice::<serde_json::Value>(
+                            &bytes[end + 4..end + 4 + length],
+                        )
+                        .unwrap();
                     }
                 }
             }
         }))
-    } else { None };
+    } else {
+        None
+    };
     a.handle_action(AppAction::StartCall {
         chat_id: bo.public_key().to_hex(),
         video: true,
@@ -363,10 +386,21 @@ fn exercise_local_fips_call(resume_recipient: bool, push_wakeup: bool) {
         }
         if let Some(server) = wake_server {
             let event = server.join().unwrap();
+            let wake: serde_json::Value =
+                serde_json::from_str(event["content"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                wake["events"].as_array().unwrap().len(),
+                1,
+                "established call wake carries only ratchet ciphertext"
+            );
             let payload = serde_json::json!({"event": event}).to_string();
             b.persist_best_effort();
             assert!(super::calls::push::resolve_call_push_invite(
-                _bdir.path().to_string_lossy().into(), bd.secret_key().to_secret_hex(), payload.clone()).is_some());
+                _bdir.path().to_string_lossy().into(),
+                bd.secret_key().to_secret_hex(),
+                payload.clone()
+            )
+            .is_some());
             b.ingest_mobile_push_payload(&payload);
             assert_eq!(b.state.call.as_ref().unwrap().phase, "incoming");
             b.ingest_mobile_push_payload(&payload); // Duplicate push cannot create another call.
@@ -426,25 +460,68 @@ fn exercise_local_fips_call(resume_recipient: bool, push_wakeup: bool) {
     }
     au.try_iter().for_each(drop);
     bu.try_iter().for_each(drop);
-    let codec=crate::CallAudioCodec::new().unwrap();
-    let audio=codec.encode((0..960).map(|i|((i as f32*0.1).sin()*10000.0) as i16).collect()).unwrap();
-    let mut video=vec![42;12000];video[..4].copy_from_slice(&[0,0,0,1]);
-    for core in [&mut a,&mut b] {
-        core.handle_action(AppAction::SendCallMedia {call_id:id.clone(),kind:1,timestamp_us:0,key_frame:true,data:audio.clone()});
-        core.handle_action(AppAction::SendCallMedia {call_id:id.clone(),kind:2,timestamp_us:0,key_frame:true,data:video.clone()});
+    let codec = crate::CallAudioCodec::new().unwrap();
+    let audio = codec
+        .encode(
+            (0..960)
+                .map(|i| ((i as f32 * 0.1).sin() * 10000.0) as i16)
+                .collect(),
+        )
+        .unwrap();
+    let mut video = vec![42; 12000];
+    video[..4].copy_from_slice(&[0, 0, 0, 1]);
+    for core in [&mut a, &mut b] {
+        core.handle_action(AppAction::SendCallMedia {
+            call_id: id.clone(),
+            kind: 1,
+            timestamp_us: 0,
+            key_frame: true,
+            data: audio.clone(),
+        });
+        core.handle_action(AppAction::SendCallMedia {
+            call_id: id.clone(),
+            kind: 2,
+            timestamp_us: 0,
+            key_frame: true,
+            data: video.clone(),
+        });
     }
-    let mut seen_a=Vec::new();let mut seen_b=Vec::new();let deadline=std::time::Instant::now()+Duration::from_secs(10);
-    while seen_a.len()<2 || seen_b.len()<2 {
-        pump_call_pair(&mut a,&ar,&mut b,&br);
-        for (updates,seen) in [(&au,&mut seen_a),(&bu,&mut seen_b)] {
+    let mut seen_a = Vec::new();
+    let mut seen_b = Vec::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while seen_a.len() < 2 || seen_b.len() < 2 {
+        pump_call_pair(&mut a, &ar, &mut b, &br);
+        for (updates, seen) in [(&au, &mut seen_a), (&bu, &mut seen_b)] {
             for update in updates.try_iter() {
-                if let AppUpdate::CallMedia{call_id,kind,sequence,timestamp_us,key_frame,data}=update {
-                    assert_eq!(call_id,id);assert_eq!(sequence,0);assert_eq!(timestamp_us,0);assert!(key_frame);
-                    assert_eq!(data,if kind==1 {audio.clone()}else {video.clone()});seen.push(kind);
+                if let AppUpdate::CallMedia {
+                    call_id,
+                    kind,
+                    sequence,
+                    timestamp_us,
+                    key_frame,
+                    data,
+                } = update
+                {
+                    assert_eq!(call_id, id);
+                    assert_eq!(sequence, 0);
+                    assert_eq!(timestamp_us, 0);
+                    assert!(key_frame);
+                    assert_eq!(
+                        data,
+                        if kind == 1 {
+                            audio.clone()
+                        } else {
+                            video.clone()
+                        }
+                    );
+                    seen.push(kind);
                 }
             }
         }
-        assert!(std::time::Instant::now()<deadline,"Bidirectional codec packets missing: {seen_a:?}/{seen_b:?}");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Bidirectional codec packets missing: {seen_a:?}/{seen_b:?}"
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
     a.handle_action(AppAction::SetCallMuted { muted: true });
@@ -501,14 +578,21 @@ fn device_sync_contact_refresh_preserves_live_fips_sessions() {
     core.reconcile_device_sync_with_websocket_for_test(websocket.clone());
     let before = core.device_sync_endpoint_for_test().unwrap();
     let contact = Keys::generate().public_key().to_hex();
-    let mut roster = core.app_keys.get(&owner.public_key().to_hex()).unwrap().clone();
+    let mut roster = core
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .unwrap()
+        .clone();
     roster.owner_pubkey_hex = contact.clone();
     roster.devices[0].identity_pubkey_hex = Keys::generate().public_key().to_hex();
     roster.devices.truncate(1);
     core.app_keys.insert(contact, roster);
     core.reconcile_device_sync_with_websocket_for_test(websocket);
     let after = core.device_sync_endpoint_for_test().unwrap();
-    assert!(Arc::ptr_eq(&before, &after), "learning a contact must not replace active FIPS sessions");
+    assert!(
+        Arc::ptr_eq(&before, &after),
+        "learning a contact must not replace active FIPS sessions"
+    );
     core.stop_device_sync_now();
 }
 
@@ -522,12 +606,18 @@ fn device_sync_keeps_fixed_websocket_listener_after_roster_refresh() {
     configure_test_device_sync_profile(&mut core, &owner, &local, &sibling, None);
     let address = reserve_tcp_addr();
     for generation in 0..3 {
-        core.app_keys.get_mut(&owner.public_key().to_hex()).unwrap().created_at_secs += 1;
+        core.app_keys
+            .get_mut(&owner.public_key().to_hex())
+            .unwrap()
+            .created_at_secs += 1;
         core.reconcile_device_sync_with_websocket_for_test(fips_core::config::WebSocketConfig {
             bind_addr: Some(address.to_string()),
             ..Default::default()
         });
-        assert!(core.device_sync.is_some(), "endpoint lost on refresh {generation}");
+        assert!(
+            core.device_sync.is_some(),
+            "endpoint lost on refresh {generation}"
+        );
         std::thread::sleep(Duration::from_millis(200));
         std::net::TcpStream::connect_timeout(&address, Duration::from_secs(1))
             .expect("FIPS WebSocket listener must survive roster refresh");

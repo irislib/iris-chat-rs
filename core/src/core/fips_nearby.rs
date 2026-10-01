@@ -354,8 +354,7 @@ impl AppCore {
             );
         }
         app_keys
-            .get_encrypted_event_at(owner_keys, created_at)
-            .ok()?
+            .get_event_at(owner_keys.public_key(), created_at)
             .sign_with_keys(owner_keys)
             .ok()
     }

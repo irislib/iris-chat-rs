@@ -1407,6 +1407,13 @@ impl AppCore {
             return true;
         }
 
+        if let Some(handled) = self.receive_private_runtime_control(
+            effective_sender_owner,
+            sender_device,
+            &runtime_rumor,
+        ) {
+            return handled;
+        }
         if runtime_rumor.kind == chat_mute_sync::CHAT_MUTE_KIND {
             return self.receive_chat_mute_control(
                 effective_sender_owner,
@@ -1416,13 +1423,6 @@ impl AppCore {
         }
         if runtime_rumor.kind == chat_pin_sync::CHAT_PIN_KIND {
             return self.receive_chat_pin_control(
-                effective_sender_owner,
-                sender_device,
-                &runtime_rumor.content,
-            );
-        }
-        if runtime_rumor.kind == private_contacts::PRIVATE_CONTACT_CONTROL_KIND {
-            return self.receive_private_contact_control(
                 effective_sender_owner,
                 sender_device,
                 &runtime_rumor.content,

@@ -7,12 +7,12 @@ fn chunks_are_bounded_additive_camel_case_snapshots() {
         deleted_chats: Vec::new(),
         chat_mutes: Vec::new(),
         chat_pins: Vec::new(),
-        private_contacts: Vec::new(),
+        private_contacts_v2: Vec::new(),
+        private_device_labels_v2: Vec::new(),
         chats: vec![DeviceSyncChat {
             id: "a".repeat(64),
             updated_at: 41,
             read_state: None,
-            contact_details: None,
         }],
         app_keys: vec![DeviceSyncAppKeys {
             owner_pubkey: "a".repeat(64),
@@ -20,9 +20,6 @@ fn chunks_are_bounded_additive_camel_case_snapshots() {
             devices: vec![DeviceSyncAppKeyDevice {
                 identity_pubkey: "b".repeat(64),
                 created_at: 40,
-                device_label: None,
-                client_label: None,
-                label_updated_at: None,
             }],
         }],
         groups: vec![DeviceSyncGroup {

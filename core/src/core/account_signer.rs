@@ -1,6 +1,5 @@
 use super::account_signer_relay::{fetch_signer_roster, publish_signer_authorization};
 use super::*;
-use nostr_double_ratchet::APP_KEYS_ENCRYPTED_DEVICE_LABELS_FACT;
 
 const SIGNER_LOGIN_TIMEOUT: Duration = Duration::from_secs(120);
 // Device authorization must fit the protocol's carried handshake proof.
@@ -292,21 +291,8 @@ pub(super) fn prepare_signer_authorization(
         "Too many linked devices."
     );
     let mut unsigned = app_keys.get_event_at(owner, created_at);
-    if let Some(previous) = previous {
-        // Labels are identity-encrypted. Carry them unchanged so a one-time
-        // signing approval never erases existing names or needs decryption.
-        unsigned.tags.extend(
-            previous
-                .tags
-                .iter()
-                .filter(|tag| {
-                    tag.as_slice()
-                        .first()
-                        .is_some_and(|name| name == APP_KEYS_ENCRYPTED_DEVICE_LABELS_FACT)
-                })
-                .cloned(),
-        );
-    }
+    // Device authorization is public. Private labels travel only over the
+    // authenticated device-sync channels, including when adding a device.
     unsigned.id = None;
     unsigned.ensure_id();
     anyhow::ensure!(

@@ -18,7 +18,9 @@ mod forwarding;
 pub mod image_proxy;
 pub mod local_relay;
 pub mod perflog;
+#[cfg(test)]
 mod private_contact_sync;
+mod private_contact_sync_v2;
 mod qr;
 mod search;
 mod state;

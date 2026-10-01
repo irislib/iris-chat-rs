@@ -94,14 +94,8 @@ fn remote_signer_client_and_bunker_login_preserve_roster_and_restart_without_sig
         let roster = AppKeys::from_event_with_labels(&published, &owner).unwrap();
         assert!(roster.get_device(&old_device.public_key()).is_some());
         assert!(roster.get_device(&device_key).is_some());
-        assert_eq!(
-            roster
-                .get_device_labels(&old_device.public_key())
-                .unwrap()
-                .device_label
-                .as_deref(),
-            Some("Original phone")
-        );
+        assert!(roster.get_device_labels(&old_device.public_key()).is_none());
+        assert!(published.content.is_empty());
         let mut saved = None;
         for update in updates.try_iter() {
             match update {

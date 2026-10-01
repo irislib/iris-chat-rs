@@ -64,7 +64,7 @@ pub(super) fn preserve_known_app_key_labels(
         return;
     };
     for device in &current.devices {
-        if device.device_label.is_none() && device.client_label.is_none() {
+        if device.label_updated_at_secs == 0 {
             continue;
         }
         let Ok(pubkey) = PublicKey::parse(&device.identity_pubkey_hex) else {
@@ -116,7 +116,7 @@ pub(super) fn normalize_device_label(label: &str) -> Option<String> {
     if normalized.is_empty() {
         return None;
     }
-    Some(normalized.chars().take(160).collect())
+    Some(normalized.chars().take(128).collect())
 }
 
 pub(super) fn known_app_keys_to_ndr(known: &KnownAppKeys) -> AppKeys {
@@ -132,7 +132,7 @@ pub(super) fn known_app_keys_to_ndr(known: &KnownAppKeys) -> AppKeys {
             .collect(),
     );
     for device in &known.devices {
-        if device.device_label.is_none() && device.client_label.is_none() {
+        if device.label_updated_at_secs == 0 {
             continue;
         }
         let Ok(pubkey) = PublicKey::parse(&device.identity_pubkey_hex) else {

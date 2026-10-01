@@ -1,6 +1,6 @@
 #[test]
 fn contact_identity_keeps_first_name_until_exact_approval_and_persists_private_history() {
-    let mut pair = chat_read_sync_pair("contact-identity");
+    let mut pair = chat_read_receipt_pair("contact-identity");
     let peer = Keys::generate();
     let id = peer.public_key().to_hex();
     let metadata = |name: &str, time| {
@@ -60,13 +60,15 @@ fn contact_identity_keeps_first_name_until_exact_approval_and_persists_private_h
         owner_pubkey_hex: id.clone(),
         favorite: true,
     });
-    // A private encrypted contact head may be queued; no public follow or
-    // metadata event is needed to save a favorite.
+    // Favorites queue authenticated sibling ratchet events, never public follow metadata.
     assert!(pair.a.pending_relay_publishes.len() > pending);
-    assert!(pair.a.private_contacts.state.as_ref().unwrap().records[&id]
-        .event
-        .as_ref()
-        .is_some_and(|event| event.kind == Kind::from(30078)));
+    assert!(pending_events_with_kind(&pair.a, 30078).is_empty());
+    assert!(
+        pair.a.private_contacts.state.as_ref().unwrap().contacts[&id]["favorite"]
+            .value
+            .as_bool()
+            .unwrap()
+    );
     let stored = pair.a.load_persisted().unwrap().unwrap();
     let memory = &stored.owner_profiles[&id].contact_memory;
     assert_eq!(memory.first_seen_name.as_deref(), Some("Alice"));
