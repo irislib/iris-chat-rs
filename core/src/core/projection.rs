@@ -175,6 +175,11 @@ impl AppCore {
             .iter()
             .map(|reactor| self.decorate_reactor(reactor))
             .collect();
+        direct_files::decorate(
+            &mut decorated,
+            self.state.account.as_ref(),
+            &self.app_store.shared(),
+        );
         decorated
     }
 

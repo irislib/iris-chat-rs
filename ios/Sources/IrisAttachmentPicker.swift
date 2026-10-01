@@ -39,27 +39,25 @@ struct IrisAttachmentPicker: View {
                         .accessibilityIdentifier("chatAttachmentRecentPhotos")
                 }
 
-                HStack(alignment: .top, spacing: 12) {
-                    sourceButton("Camera", icon: "camera.fill", source: .camera,
-                                 identifier: "chatAttachmentCameraButton")
-                        .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
-                        .opacity(UIImagePickerController.isSourceTypeAvailable(.camera) ? 1 : 0.4)
-                    sourceButton("Photos", icon: "photo.on.rectangle.angled", source: .photos,
-                                 identifier: "chatAttachmentPhotosButton")
-                    sourceButton("Files", icon: "doc.fill", source: .files,
-                                 identifier: "chatAttachmentFilesButton")
-                }
-                .padding(.horizontal, 22)
-                if directFilesAllowed {
-                    Button { onSource(.directFiles) } label: {
-                        Label("Send directly", systemImage: "arrow.up.arrow.down")
-                            .frame(maxWidth: .infinity)
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: 12) {
+                        sourceButton("Camera", icon: "camera.fill", source: .camera,
+                                     identifier: "chatAttachmentCameraButton")
+                            .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
+                            .opacity(UIImagePickerController.isSourceTypeAvailable(.camera) ? 1 : 0.4)
+                        sourceButton("Photos", icon: "photo.on.rectangle.angled", source: .photos,
+                                     identifier: "chatAttachmentPhotosButton")
+                        sourceButton("Files", icon: "doc.fill", source: .files,
+                                     identifier: "chatAttachmentFilesButton")
+                        if directFilesAllowed {
+                            sourceButton("Send directly", icon: "arrow.up.arrow.down", source: .directFiles,
+                                         identifier: "chatDirectFileButton")
+                        }
                     }
-                    .buttonStyle(.irisPlain)
-                    .foregroundStyle(palette.textPrimary)
-                    .padding(.vertical, 8)
-                    .accessibilityIdentifier("chatDirectFileButton")
+                    .padding(.horizontal, 22)
                 }
+                .scrollIndicators(.hidden)
+                .accessibilityIdentifier("chatAttachmentSources")
             }
             .padding(.top, 16)
             .padding(.bottom, 18)
@@ -77,8 +75,8 @@ struct IrisAttachmentPicker: View {
     }
 
     private var sheetHeight: CGFloat {
-        if #available(iOS 17.0, *) { return directFilesAllowed ? 385 : 330 }
-        return directFilesAllowed ? 235 : 180
+        if #available(iOS 17.0, *) { return 330 }
+        return 180
     }
 
     private func sourceButton(
@@ -95,9 +93,10 @@ struct IrisAttachmentPicker: View {
                     .background(palette.panelAlt.opacity(0.6), in: RoundedRectangle(cornerRadius: 20))
                 Text(title)
                     .font(.system(.subheadline, design: .rounded, weight: .medium))
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundStyle(palette.textPrimary)
-            .frame(maxWidth: .infinity)
+            .frame(minWidth: 88)
             .contentShape(Rectangle())
         }
         .buttonStyle(.irisPlain)

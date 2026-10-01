@@ -3,12 +3,18 @@ package to.iris.chat.ui.screens
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -85,6 +91,11 @@ class DirectFileTransferComposeTest {
                 }
             }
         }
+        composeRule.onNodeWithTag("chatDirectFileButton").assertIsDisplayed()
+        val screenshot = composeRule.onNode(isDialog()).captureToImage().asAndroidBitmap()
+        val menuImage = File(context.getExternalFilesDir("screenshots"), "direct-file-source-menu.png")
+        menuImage.parentFile?.mkdirs()
+        menuImage.outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
         composeRule.onNodeWithTag("chatDirectFileButton").performClick()
         val offer = action as AppAction.SendDirectFiles
         assertEquals("self-chat", offer.chatId)
@@ -94,6 +105,31 @@ class DirectFileTransferComposeTest {
         files.forEach { assertEquals(it.filename, File(it.path).readText()); File(it.path).delete() }
         sources.forEach { it.delete() }
         directory.delete()
+    }
+
+    @Test
+    fun directFilesStayInTheScrollableSourceRowOnNarrowScreens() {
+        var direct: Boolean? = null
+        composeRule.setContent {
+            IrisChatTheme(darkTheme = false) {
+                Surface {
+                    Box(Modifier.width(180.dp)) { ChatAttachmentSourceRow { direct = it } }
+                }
+            }
+        }
+        val files = composeRule.onNodeWithTag("chatAttachmentFilesButton")
+        files.assertIsDisplayed()
+        val fileTop = files.fetchSemanticsNode().boundsInRoot.top
+        val send = composeRule.onNodeWithTag("chatDirectFileButton")
+        send.performScrollTo().assertIsDisplayed()
+        assertEquals(fileTop, send.fetchSemanticsNode().boundsInRoot.top, 1f)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val output = File(context.getExternalFilesDir("screenshots"), "direct-file-source-row.png")
+        output.parentFile?.mkdirs()
+        val image = composeRule.onNodeWithTag("chatAttachmentSources").captureToImage().asAndroidBitmap()
+        output.outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        send.performClick()
+        assertEquals(true, direct)
     }
 
     private fun fixture(isSender: Boolean) = DirectFileTransferSnapshot(

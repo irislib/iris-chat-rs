@@ -156,11 +156,11 @@ impl AppCore {
             record.offer.transport_files(&record.paths),
         )?;
         self.send_message(&record.chat_id, &record.wire, None);
-        if !self
-            .threads
-            .get(&record.chat_id)
-            .is_some_and(|t| t.messages.iter().any(|m| m.body == record.wire))
-        {
+        if !self.threads.get(&record.chat_id).is_some_and(|t| {
+            t.messages
+                .iter()
+                .any(|m| m.body == record.wire && m.delivery != DeliveryState::Failed)
+        }) {
             return Err("The file offer could not be sent.".into());
         }
         Ok(())
@@ -635,7 +635,13 @@ pub(super) fn decorate(
                 local_path: record
                     .as_ref()
                     .filter(|r| r.status == DirectFileTransferStatus::Completed)
-                    .and_then(|r| r.paths.get(i).cloned()),
+                    .and_then(|r| r.paths.get(i))
+                    .filter(|path| {
+                        std::fs::metadata(path).is_ok_and(|metadata| {
+                            metadata.is_file() && metadata.len() == f.size_bytes
+                        })
+                    })
+                    .cloned(),
             })
             .collect(),
         status,

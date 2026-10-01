@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
@@ -70,23 +69,6 @@ internal val DirectFileTransferSnapshot.displayStatus: String
         DirectFileTransferStatus.FAILED -> "Transfer failed"
         DirectFileTransferStatus.UNAVAILABLE -> "Files unavailable"
     }
-
-@Composable
-internal fun ChatAttachmentSourceDialog(onDismiss: () -> Unit, onPick: (Boolean) -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Add files") },
-        text = {
-            Column {
-                TextButton(onClick = { onPick(false) }, modifier = Modifier.fillMaxWidth()) { Text("Files") }
-                TextButton(onClick = { onPick(true) }, modifier = Modifier.fillMaxWidth().testTag("chatDirectFileButton")) {
-                    Text("Send directly")
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
-}
 
 @Composable
 internal fun ChatDirectFileTransfer(

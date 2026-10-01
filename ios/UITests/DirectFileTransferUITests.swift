@@ -30,6 +30,17 @@ final class DirectFileTransferUITests: IrisChatUITestCase {
 #endif
         let direct = element(app, "chatDirectFileButton")
         XCTAssertTrue(direct.waitForExistence(timeout: 10))
+#if os(iOS)
+        let sources = element(app, "chatAttachmentSources")
+        XCTAssertTrue(sources.exists)
+        let files = element(app, "chatAttachmentFilesButton")
+        XCTAssertEqual(files.frame.midY, direct.frame.midY, accuracy: 2, "Direct files belong in the same source row")
+        let rowScreenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        rowScreenshot.name = "direct-file-source-row"
+        rowScreenshot.lifetime = .keepAlways
+        add(rowScreenshot)
+        sources.swipeLeft()
+#endif
         XCTAssertTrue(waitUntil(timeout: 5) { direct.isHittable })
         let menuScreenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         menuScreenshot.name = "direct-file-choice"
