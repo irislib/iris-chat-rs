@@ -1,7 +1,7 @@
 use super::account_signer::{prepare_signer_authorization, validate_signer_authorization};
 
 #[test]
-fn signer_authorization_preserves_devices_and_private_labels() {
+fn signer_authorization_preserves_devices_without_republishing_private_labels() {
     let owner = Keys::generate();
     let old_device = Keys::generate();
     let new_device = Keys::generate();
@@ -43,14 +43,10 @@ fn signer_authorization_preserves_devices_and_private_labels() {
             .created_at,
         now
     );
-    assert_eq!(
-        restored
-            .get_device_labels(&old_device.public_key())
-            .unwrap()
-            .device_label
-            .as_deref(),
-        Some("Old phone")
-    );
+    assert!(restored
+        .get_device_labels(&old_device.public_key())
+        .is_none());
+    assert!(signed.content.is_empty());
 }
 
 #[test]

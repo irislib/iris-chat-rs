@@ -1,17 +1,13 @@
-use crate::private_contact_sync::{
-    create_private_contact_sync, edit_private_contact, open_private_contact_event,
-    prepare_private_contact_event, private_contact_values,
-};
+use crate::private_contact_sync_v2::*;
 
-fn private_contact_patch(
-    value: serde_json::Value,
-) -> crate::private_contact_sync::PrivateContactPatch {
+fn private_contact_patch(value: serde_json::Value) -> PrivateContactPatchV2 {
     serde_json::from_value(value).unwrap()
 }
 
 #[test]
-fn private_contacts_encrypt_favorites_and_restore_exact_pending_bytes() {
-    let mut pair = chat_read_sync_pair("private-favorite");
+fn private_contacts_ratcheted_outbox_restores_and_linked_device_converges() {
+    let mut pair = chat_read_receipt_pair("private-v2-outbox");
+    pair.b.logged_in.as_mut().unwrap().owner_keys = None;
     let peer = Keys::generate();
     let id = peer.public_key().to_hex();
     pair.a.handle_action(AppAction::CreateChat {
@@ -21,144 +17,174 @@ fn private_contacts_encrypt_favorites_and_restore_exact_pending_bytes() {
         owner_pubkey_hex: id.clone(),
         favorite: true,
     });
-    let state = pair.a.private_contacts.state.as_ref().unwrap().clone();
-    let record = &state.records[&id];
-    let event = record.event.as_ref().unwrap();
-    assert_eq!(event.kind, Kind::from(30078));
-    assert!(!event.content.contains(&id));
-    assert!(!event
-        .tags
-        .iter()
-        .any(|tag| tag.as_slice().iter().any(|value| value == &id)));
-    assert!(pair
-        .a
-        .pending_relay_publishes
-        .contains_key(&event.id.to_hex()));
-    assert_eq!(
-        open_private_contact_event(event, &pair.owner.public_key().to_hex(), &pair.owner)
+    save_contact_details(&mut pair.a, &peer, "Tea friend", "Met at the park");
+    let events = pending_events_with_kind(&pair.a, MESSAGE_EVENT_KIND);
+    assert!(!events.is_empty());
+    for event in &events {
+        assert!(!event.content.contains("Tea friend"));
+        assert!(!event.content.contains(&id));
+        assert!(!event.content.contains("private-contact"));
+    }
+    assert!(pending_events_with_kind(&pair.a, 30078).is_empty());
+    assert!(
+        pair.a
+            .private_contacts
+            .state
+            .as_ref()
             .unwrap()
-            .fields["favorite"]
-            .value,
-        true
+            .pending
+            .is_empty(),
+        "durable DR handoff acknowledged"
     );
-    let first = pair.a.owner_profiles[&id]
-        .contact_memory
-        .first_seen_name
-        .clone();
     pair.a.private_contacts.state = None;
     let restored = pair.a.private_contact_state().unwrap();
-    assert_eq!(restored.records[&id].event, Some(event.clone()));
-    assert_eq!(
-        pair.a.owner_profiles[&id].contact_memory.first_seen_name,
-        first
-    );
-    pair.a
-        .handle_relay_publish_finished(event.id.to_hex(), true, vec![], "accepted".into());
-    assert!(!pair.a.private_contacts.state.as_ref().unwrap().records[&id].pending);
-}
-
-#[test]
-fn private_contacts_linked_device_snapshot_and_control_converge_without_owner_key() {
-    let mut pair = chat_read_sync_pair("private-linked");
-    let peer = Keys::generate();
-    let id = peer.public_key().to_hex();
-    for core in [&mut pair.a, &mut pair.b] {
-        core.handle_action(AppAction::CreateChat {
-            peer_input: id.clone(),
-        });
-    }
-    pair.b.logged_in.as_mut().unwrap().owner_keys = None;
-    pair.b.handle_action(AppAction::SetContactFavorite {
-        owner_pubkey_hex: id.clone(),
-        favorite: true,
-    });
-    assert!(pair.b.private_contacts.state.as_ref().unwrap().records[&id]
-        .event
-        .is_none());
-    let snapshots = pair.b.build_device_sync_packets_for_test(100, false);
-    deliver_chat_read_packets(&mut pair.a, &Keys::generate(), &snapshots);
-    assert!(pair
-        .a
-        .owner_profiles
-        .get(&id)
-        .is_none_or(|profile| !profile.contact_memory.favorite));
-    deliver_chat_read_packets(&mut pair.a, &pair.b_device, &snapshots);
-    assert!(pair.a.owner_profiles[&id].contact_memory.favorite);
-    assert!(pair.a.private_contacts.state.as_ref().unwrap().records[&id]
-        .event
-        .is_some());
-    save_contact_details(&mut pair.a, &peer, "Tea friend", "Met at the park");
-    let document = pair
-        .a
-        .private_contact_snapshot()
-        .into_iter()
-        .find(|document| document.contact == id)
-        .unwrap();
-    let content =
-        serde_json::json!({"type":"private-contact-sync", "v":1, "document":document}).to_string();
-    pair.b.receive_private_contact_control(
-        pair.owner.public_key(),
-        Some(Keys::generate().public_key()),
-        &content,
-    );
-    assert!(pair.b.owner_profiles[&id].nickname.is_none());
-    pair.b.receive_private_contact_control(
-        pair.owner.public_key(),
-        Some(pair.a_device.public_key()),
-        &content,
-    );
+    assert!(private_contact_values_v2(&restored, &id).favorite);
+    deliver_pending_relay_events_for_test(&pair.a, &mut pair.b);
+    assert!(pair.b.owner_profiles[&id].contact_memory.favorite);
     assert_eq!(
         pair.b.owner_profiles[&id].nickname.as_deref(),
         Some("Tea friend")
     );
-    assert!(pair.b.owner_profiles[&id].contact_memory.favorite);
+    assert_eq!(
+        pair.b.owner_profiles[&id].contact_note.as_deref(),
+        Some("Met at the park")
+    );
+    assert!(pair.b.threads.is_empty(), "private control creates no chat");
+    let old = pair.b.private_contact_snapshot().remove(0);
+    pair.b.edit_private_contact_fields(
+        &id,
+        private_contact_patch(serde_json::json!({"favorite":false,"note":null})),
+    );
+    deliver_pending_relay_events_for_test(&pair.b, &mut pair.a);
+    pair.a.merge_private_contact_from_sibling(&old);
+    assert!(!pair.a.owner_profiles[&id].contact_memory.favorite);
+    assert!(pair.a.owner_profiles[&id].contact_note.is_none());
+    assert_eq!(
+        pair.a.owner_profiles[&id].nickname.as_deref(),
+        Some("Tea friend")
+    );
 }
 
 #[test]
-fn private_contacts_cross_app_signed_event_preserves_independent_edits_and_tombstones() {
-    let mut pair = chat_read_sync_pair("private-cross-app");
-    let peer = Keys::generate();
-    let id = peer.public_key().to_hex();
-    pair.a.handle_action(AppAction::CreateChat {
-        peer_input: id.clone(),
-    });
-    save_contact_details(&mut pair.a, &peer, "Native name", "Native note");
-    let other =
-        create_private_contact_sync(&pair.owner.public_key().to_hex(), &"b".repeat(32)).unwrap();
-    let other = edit_private_contact(
-        &other,
+fn private_contacts_snapshot_uses_v2_fields_and_rejects_legacy_and_foreign_controls() {
+    let mut pair = chat_read_sync_pair("private-v2-snapshot");
+    let id = Keys::generate().public_key().to_hex();
+    pair.b.edit_private_contact_fields(
         &id,
-        &private_contact_patch(serde_json::json!({"favorite":true})),
-        Some(&"c".repeat(32)),
+        private_contact_patch(serde_json::json!({"favorite":true,"note":"private"})),
+    );
+    let snapshots = pair.b.build_device_sync_packets_for_test(100, false);
+    for packet in &snapshots {
+        let json: serde_json::Value = serde_json::from_slice(packet).unwrap();
+        assert!(json.get("privateContacts").is_none());
+        for chat in json["chats"].as_array().unwrap() {
+            assert!(chat.get("contactDetails").is_none());
+        }
+    }
+    deliver_chat_read_packets(&mut pair.a, &Keys::generate(), &snapshots);
+    assert!(!pair.a.owner_profiles.contains_key(&id));
+    deliver_chat_read_packets(&mut pair.a, &pair.b_device, &snapshots);
+    assert!(pair.a.owner_profiles[&id].contact_memory.favorite);
+    let document = pair.b.private_contact_snapshot().remove(0);
+    let mut changed = document.clone();
+    changed.fields.get_mut("note").unwrap().value = serde_json::json!("foreign edit");
+    changed.fields.get_mut("note").unwrap().counter += 1;
+    for content in [
+        serde_json::json!({"type":"private-contact-sync","v":1,"document":changed}),
+        serde_json::json!({"type":"private-contact-sync","v":2,"document":changed,"request":true}),
+    ] {
+        pair.a.receive_private_contact_control(
+            pair.owner.public_key(),
+            Some(pair.b_device.public_key()),
+            &content.to_string(),
+        );
+    }
+    let content =
+        serde_json::to_string(&build_private_contact_control_v2(&changed).unwrap()).unwrap();
+    pair.a.receive_private_contact_control(
+        pair.owner.public_key(),
+        Some(Keys::generate().public_key()),
+        &content,
+    );
+    assert_eq!(
+        pair.a.owner_profiles[&id].contact_note.as_deref(),
+        Some("private")
+    );
+}
+
+#[test]
+fn private_contacts_migrate_saved_registers_but_never_read_or_publish_legacy_ciphertext() {
+    use crate::private_contact_sync as old;
+    let mut pair = chat_read_sync_pair("private-v2-migration");
+    let owner = pair.owner.public_key().to_hex();
+    let id = Keys::generate().public_key().to_hex();
+    let legacy = old::create_private_contact_sync(&owner, &"a".repeat(32)).unwrap();
+    let legacy = old::edit_private_contact(
+        &legacy,
+        &id,
+        &private_contact_patch(serde_json::json!({"favorite":true,"note":"legacy saved"})),
+        Some(&"b".repeat(32)),
     )
     .unwrap();
     let prepared =
-        prepare_private_contact_event(&other, &id, &pair.owner, unix_now().get()).unwrap();
-    pair.a.handle_relay_event(prepared.event.unwrap());
-    assert!(pair.a.owner_profiles[&id].contact_memory.favorite);
+        old::prepare_private_contact_event(&legacy, &id, &pair.owner, unix_now().get()).unwrap();
+    let sealed = prepared.event.unwrap();
+    pair.a.handle_relay_event(sealed.clone());
+    assert!(!pair.a.owner_profiles.contains_key(&id));
+    pair.a
+        .app_store
+        .shared()
+        .lock()
+        .unwrap()
+        .execute(
+            "DELETE FROM app_meta WHERE key = 'private_contact_sync_v2'",
+            [],
+        )
+        .unwrap();
+    pair.a
+        .app_store
+        .shared()
+        .lock()
+        .unwrap()
+        .execute(
+            "INSERT INTO app_meta(key,value) VALUES('private_contact_sync_v1',?1)",
+            [serde_json::to_string(&prepared.state).unwrap()],
+        )
+        .unwrap();
+    pair.a.private_contacts.state = None;
+    let migrated = pair.a.private_contact_state().unwrap();
+    assert_eq!(migrated.version, 2);
+    assert_eq!(migrated.clock, legacy.clock);
     assert_eq!(
-        pair.a.owner_profiles[&id].nickname.as_deref(),
-        Some("Native name")
+        migrated.contacts[&id]["note"].counter,
+        legacy.contacts[&id]["note"].counter
     );
-    let old = pair.a.private_contact_snapshot().remove(0);
-    save_contact_details(&mut pair.a, &peer, "", "");
-    pair.a.merge_private_contact_from_sibling(&old);
-    assert!(pair.a.owner_profiles[&id].nickname.is_none());
-    assert!(pair.a.owner_profiles[&id].contact_note.is_none());
-    let state = pair.a.private_contacts.state.as_ref().unwrap();
-    assert!(private_contact_values(state, &id).favorite);
+    assert_eq!(
+        pair.a.owner_profiles[&id].contact_note.as_deref(),
+        Some("legacy saved")
+    );
+    assert!(!pair
+        .a
+        .publish_runtime_event(sealed, "private-contact-sync", None));
+    let saved = pair
+        .a
+        .app_store
+        .load_private_contact_sync(&owner)
+        .unwrap()
+        .unwrap();
+    assert!(!saved.contains("ciphertext"));
+    assert!(!saved.contains("30078"));
 }
 
 #[test]
-fn private_contacts_failed_durable_write_does_not_mutate_the_visible_favorite() {
-    let mut pair = chat_read_sync_pair("private-failed-write");
-    let peer = Keys::generate();
-    let id = peer.public_key().to_hex();
+fn private_contacts_failed_durable_write_does_not_mutate_visible_favorite() {
+    let mut pair = chat_read_sync_pair("private-v2-failed-write");
+    let id = Keys::generate().public_key().to_hex();
     pair.a.handle_action(AppAction::CreateChat {
         peer_input: id.clone(),
     });
     pair.a.private_contact_state().unwrap();
-    pair.a.app_store.shared().lock().unwrap().execute_batch("CREATE TRIGGER reject_private_contact BEFORE UPDATE ON app_meta WHEN NEW.key = 'private_contact_sync_v1' BEGIN SELECT RAISE(ABORT, 'test write failure'); END;").unwrap();
+    pair.a.app_store.shared().lock().unwrap().execute_batch("CREATE TRIGGER reject_private_contact BEFORE UPDATE ON app_meta WHEN NEW.key = 'private_contact_sync_v2' BEGIN SELECT RAISE(ABORT, 'test write failure'); END;").unwrap();
     pair.a.handle_action(AppAction::SetContactFavorite {
         owner_pubkey_hex: id.clone(),
         favorite: true,
@@ -174,137 +200,74 @@ fn private_contacts_failed_durable_write_does_not_mutate_the_visible_favorite() 
 }
 
 #[test]
-fn private_contacts_relay_subscription_recovers_another_app_and_acknowledges_local_edits() {
-    let relay = crate::local_relay::TestRelay::start();
-    let owner = Keys::generate();
-    let peer = Keys::generate().public_key().to_hex();
-    let (mut core, _, _dir) =
-        logged_in_test_core_with_updates("private-relay", &owner, &Keys::generate());
-    let (tx, rx) = flume::unbounded();
-    core.core_sender = tx.clone();
-    core.priority_sender = tx;
-    core.logged_in.as_mut().unwrap().relay_urls = relay_urls_from_strings(&[relay.url().into()]);
-    core.preferences.nostr_relay_urls = vec![relay.url().into()];
-    core.start_notifications_loop(core.logged_in.as_ref().unwrap().client.clone());
-    let state = create_private_contact_sync(&owner.public_key().to_hex(), &"8".repeat(32)).unwrap();
-    let state = edit_private_contact(
-        &state,
-        &peer,
-        &private_contact_patch(
-            serde_json::json!({"favorite":true,"note":"Private cross-app note"}),
-        ),
-        Some(&"9".repeat(32)),
+fn private_contacts_snapshot_request_replays_current_facts_and_notification_mutes() {
+    let mut pair = chat_read_receipt_pair("private-v2-recovery");
+    let id = Keys::generate().public_key().to_hex();
+    pair.a.edit_private_contact_fields(
+        &id,
+        private_contact_patch(serde_json::json!({"favorite":true,"note":"recovered"})),
+    );
+    pair.a.set_synced_chat_mute(&id, Some(0));
+    pair.a.pending_relay_publishes.clear();
+    let request = serde_json::to_string(
+        &build_private_contact_request_v2(&pair.owner.public_key().to_hex()).unwrap(),
     )
     .unwrap();
-    let event = prepare_private_contact_event(&state, &peer, &owner, unix_now().get())
-        .unwrap()
-        .event
-        .unwrap();
-    publish_signer_test_event(&core, &relay, &event);
-    core.start_private_contact_sync();
-    core.schedule_session_connect();
-    pump_signer_core_until(&mut core, &rx, |core| {
-        core.owner_profiles
-            .get(&peer)
-            .is_some_and(|profile| profile.contact_memory.favorite)
-    });
-    assert_eq!(
-        core.owner_profiles[&peer].contact_note.as_deref(),
-        Some("Private cross-app note")
+    pair.a.receive_private_contact_control(
+        pair.owner.public_key(),
+        Some(pair.b_device.public_key()),
+        &request,
     );
-    core.handle_action(AppAction::CreateChat {
-        peer_input: peer.clone(),
-    });
-    core.handle_action(AppAction::SetContactFavorite {
-        owner_pubkey_hex: peer.clone(),
-        favorite: false,
-    });
-    pump_signer_core_until(&mut core, &rx, |core| {
-        core.private_contacts.state.as_ref().is_some_and(|state| {
-            state
-                .records
-                .get(&peer)
-                .is_some_and(|record| !record.pending)
-        })
-    });
-    let local = core.private_contacts.state.as_ref().unwrap().records[&peer]
-        .event
-        .as_ref()
-        .unwrap();
-    assert!(relay
-        .events()
-        .iter()
-        .any(|event| event["id"] == local.id.to_hex()));
-    assert!(!local.content.contains("Private cross-app note"));
-    let restored = crate::private_contact_sync::restore_private_contact_sync(
-        &core
-            .app_store
-            .load_private_contact_sync(&owner.public_key().to_hex())
-            .unwrap()
-            .unwrap(),
-        &owner.public_key().to_hex(),
-    )
-    .unwrap();
-    assert!(!private_contact_values(&restored, &peer).favorite);
-    assert_eq!(
-        private_contact_values(&restored, &peer).note.as_deref(),
-        Some("Private cross-app note")
-    );
+    deliver_pending_relay_events_for_test(&pair.a, &mut pair.b);
+    assert!(pair.b.owner_profiles[&id].contact_memory.favorite);
+    assert!(pair.b.is_chat_muted(&id));
+    assert!(pair.b.threads.is_empty());
 }
 
 #[test]
-fn private_contacts_reject_other_owner_ciphertext_and_keep_large_imported_notes() {
-    let mut pair = chat_read_sync_pair("private-owner-boundary");
-    let peer = Keys::generate();
-    let id = peer.public_key().to_hex();
-    pair.a.handle_action(AppAction::CreateChat {
-        peer_input: id.clone(),
-    });
-    let other_owner = Keys::generate();
-    let make = |owner: &Keys| {
-        let state =
-            create_private_contact_sync(&owner.public_key().to_hex(), &"8".repeat(32)).unwrap();
-        let state = edit_private_contact(
-            &state,
-            &id,
-            &private_contact_patch(serde_json::json!({"note":"n".repeat(4096)})),
-            Some(&"9".repeat(32)),
-        )
-        .unwrap();
-        prepare_private_contact_event(&state, &id, owner, unix_now().get())
+fn device_labels_v2_authenticate_membership_preserve_tombstones_and_hide_legacy_snapshot_fields() {
+    let mut pair = chat_read_receipt_pair("labels-v2");
+    pair.a
+        .set_current_device_labels("Kitchen tablet", "Iris Chat");
+    deliver_pending_relay_events_for_test(&pair.a, &mut pair.b);
+    let owner = pair.owner.public_key().to_hex();
+    let device = pair.a_device.public_key().to_hex();
+    let label = |core: &AppCore| {
+        core.app_keys[&owner]
+            .devices
+            .iter()
+            .find(|entry| entry.identity_pubkey_hex == device)
             .unwrap()
-            .event
-            .unwrap()
+            .device_label
+            .clone()
     };
-    pair.a.handle_relay_event(make(&other_owner));
-    assert!(pair
-        .a
-        .owner_profiles
-        .get(&id)
-        .is_none_or(|profile| profile.contact_note.is_none()));
-    pair.a.handle_relay_event(make(&pair.owner));
-    assert_eq!(
-        pair.a.owner_profiles[&id]
-            .contact_note
-            .as_ref()
-            .unwrap()
-            .len(),
-        4096
+    assert_eq!(label(&pair.b).as_deref(), Some("Kitchen tablet"));
+    let timestamp = unix_now().get() + 2;
+    let clear = serde_json::json!({"type":"device-labels","v":2,"owner":owner,"device":device,"deviceLabel":null,"clientLabel":null,"updatedAtSecs":timestamp}).to_string();
+    pair.b.receive_private_device_label_control(
+        pair.owner.public_key(),
+        Some(Keys::generate().public_key()),
+        &clear,
     );
-    pair.a.handle_action(AppAction::SetContactNickname {
-        owner_pubkey_hex: id.clone(),
-        nickname: "Friend".into(),
-    });
-    assert_eq!(
-        pair.a.owner_profiles[&id].nickname.as_deref(),
-        Some("Friend")
+    assert!(label(&pair.b).is_some());
+    pair.b.receive_private_device_label_control(
+        pair.owner.public_key(),
+        Some(pair.a_device.public_key()),
+        &clear,
     );
-    assert_eq!(
-        pair.a.owner_profiles[&id]
-            .contact_note
-            .as_ref()
-            .unwrap()
-            .len(),
-        4096
-    );
+    assert!(label(&pair.b).is_none());
+    pair.b.persist_best_effort();
+    let packets = pair.b.build_device_sync_packets_for_test(100, false);
+    let json = String::from_utf8(packets.concat()).unwrap();
+    assert!(json.contains("privateDeviceLabelsV2"));
+    for packet in packets {
+        let value: serde_json::Value = serde_json::from_slice(&packet).unwrap();
+        for roster in value["appKeys"].as_array().unwrap() {
+            for entry in roster["devices"].as_array().unwrap() {
+                assert!(entry.get("deviceLabel").is_none());
+                assert!(entry.get("clientLabel").is_none());
+                assert!(entry.get("labelUpdatedAt").is_none());
+            }
+        }
+    }
 }

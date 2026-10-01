@@ -503,6 +503,9 @@ fn decrypted_mobile_push_resolution(
     inner_content: String,
     inner_json: String,
 ) -> MobilePushNotificationResolution {
+    if inner_kind == super::calls::push::CALL_OFFER_KIND as u64 {
+        return suppressed_resolution();
+    }
     let sender_name = lookup_sender_display_name(data_dir, &sender_owner)
         .or_else(|| lookup_direct_thread_sender_name(data_dir, &sender_owner));
     let group_title = group_id
@@ -875,6 +878,43 @@ pub(super) fn is_chat_muted_in(conn: &rusqlite::Connection, chat_id: &str) -> bo
         .and_then(|json| serde_json::from_str::<Vec<ChatMuteDeadline>>(&json).ok())
         .unwrap_or_default();
     super::chat_settings::chat_is_muted_at(&indefinite, &timed, chat_id, unix_now().get())
+}
+
+/// Read-through ratchet preview. All ratchet writes remain in memory, including
+/// while the foreground process has the same database open.
+pub(in crate::core) fn preview_direct_messages(
+    data_dir: &str,
+    owner: PublicKey,
+    keys: &Keys,
+    events: &[Event],
+) -> Option<ProtocolDecryptedMessage> {
+    let conn = open_lookup_connection(data_dir)?;
+    conn.busy_timeout(Duration::from_millis(200)).ok()?;
+    super::storage::validate_account_storage(&conn, &owner.to_hex()).ok()?;
+    let base = Arc::new(super::storage::SqliteStorageAdapter::new(
+        Arc::new(Mutex::new(conn)),
+        owner.to_hex(),
+        keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+    let overlay = Arc::new(NotificationPreviewStorage::new(base)) as Arc<dyn StorageAdapter>;
+    let mut engine = ProtocolEngine::load_or_create_for_local_device(overlay, owner, keys).ok()?;
+    let expected = events.last()?.id.to_hex();
+    let mut decrypted = None;
+    for event in events {
+        if event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND {
+            let batch = engine.observe_invite_response_event(event).ok()?;
+            if let Some(message) = batch
+                .direct_messages
+                .into_iter()
+                .find(|message| message.event_id.as_deref() == Some(&expected))
+            {
+                decrypted = Some(message);
+            }
+        } else if let Some(message) = engine.process_direct_message_event(event).ok()? {
+            decrypted = Some(message);
+        }
+    }
+    decrypted
 }
 
 struct NotificationPreviewStorage {

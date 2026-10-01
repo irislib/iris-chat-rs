@@ -119,6 +119,7 @@ pub(crate) mod notifications;
 mod payloads;
 mod persistence;
 mod private_contacts;
+mod private_device_labels;
 mod profile;
 pub(crate) use profile::fallback_profile_name_for_identity;
 mod profile_helpers;

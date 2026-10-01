@@ -26,9 +26,9 @@ impl AppCore {
                 .filter(|_| !self.defer_owner_app_keys_publish)
                 .and_then(|keys| {
                     app_keys
-                        .get_encrypted_event_at(&keys, created_at)
+                        .get_event_at(keys.public_key(), created_at)
+                        .sign_with_keys(&keys)
                         .ok()
-                        .and_then(|event| event.sign_with_keys(&keys).ok())
                 });
             let result = if let Some(event) = signed {
                 protocol_engine.ingest_app_keys_event(&event)
@@ -90,12 +90,10 @@ impl AppCore {
         }
 
         if let (true, Some(keys), Some(app_keys)) = (publish_app_keys, owner_keys, local_app_keys) {
-            if let Ok(unsigned) = known_app_keys_to_ndr(&app_keys)
-                .get_encrypted_event_at(&keys, app_keys.created_at_secs)
-            {
-                if let Ok(event) = unsigned.sign_with_keys(&keys) {
-                    durable_events.push(("app-keys", event));
-                }
+            let unsigned = known_app_keys_to_ndr(&app_keys)
+                .get_event_at(keys.public_key(), app_keys.created_at_secs);
+            if let Ok(event) = unsigned.sign_with_keys(&keys) {
+                durable_events.push(("app-keys", event));
             }
         }
 

@@ -92,6 +92,8 @@ impl AppCore {
             self.publish_local_app_keys();
         }
         if changed {
+            self.persist_best_effort();
+            self.broadcast_private_device_labels();
             self.broadcast_device_sync_snapshot();
         }
         self.rebuild_persist_and_emit_state();
@@ -865,6 +867,26 @@ impl AppCore {
             .load_pending_relay_publishes(&owner_pubkey_hex)
         {
             Ok(pending) => {
+                let pending = pending
+                    .into_iter()
+                    .filter(|pending| {
+                        let obsolete = serde_json::from_str::<Event>(&pending.event_json)
+                            .is_ok_and(|event| {
+                                private_contacts::obsolete_private_contact_event(&event)
+                            });
+                        if obsolete {
+                            let _ = self
+                                .app_store
+                                .delete_pending_relay_publish(&pending.event_id);
+                        }
+                        !obsolete
+                            && !serde_json::from_str::<Event>(&pending.event_json).is_ok_and(
+                                |event| {
+                                    private_device_labels::obsolete_private_app_keys_event(&event)
+                                },
+                            )
+                    })
+                    .collect::<Vec<_>>();
                 self.pending_relay_publishes = pending
                     .into_iter()
                     .map(|pending| (pending.event_id.clone(), pending))

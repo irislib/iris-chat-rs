@@ -29,6 +29,7 @@ impl AppCore {
     }
 
     pub(super) fn publish_protocol_event(&mut self, publish: ProtocolPublish) -> bool {
+        self.publish_call_push_for_protocol(&publish);
         self.publish_runtime_event_with_metadata(
             publish.event,
             APPCORE_PROTOCOL_LABEL,
@@ -65,7 +66,7 @@ impl AppCore {
             .map(|known| known.created_at_secs)
             .unwrap_or_else(|| unix_now().get());
         let app_keys_event = local_app_keys
-            .get_encrypted_event_at(owner_keys, created_at)?
+            .get_event_at(owner_keys.public_key(), created_at)
             .sign_with_keys(owner_keys)?;
         self.runtime.block_on(async {
             let (app_keys_result, response_result) = tokio::join!(
@@ -119,6 +120,11 @@ impl AppCore {
         chat_id: Option<String>,
         inner_event_id: Option<String>,
     ) -> bool {
+        if private_contacts::obsolete_private_contact_event(&event)
+            || private_device_labels::obsolete_private_app_keys_event(&event)
+        {
+            return false;
+        }
         if inner_event_id.is_some()
             && chat_id
                 .as_deref()
@@ -720,7 +726,13 @@ impl AppCore {
             .and_then(|pending| Some((pending.chat_id.clone()?, pending.inner_event_id.clone()?)));
         let mut should_retry = false;
         if success {
-            self.acknowledge_private_contact_publish(&event_id);
+            self.call_push_bootstrap_accepted(&event_id);
+            if let Some(event) = pending
+                .as_ref()
+                .and_then(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
+            {
+                self.retire_private_label_publications_after_ack(&event);
+            }
             self.forget_pending_relay_publish(&event_id);
         } else if let Some(pending) = self.pending_relay_publishes.get_mut(&event_id) {
             if pending.last_error.as_deref() != Some(PENDING_RELAY_PUBLISH_IN_PROGRESS) {

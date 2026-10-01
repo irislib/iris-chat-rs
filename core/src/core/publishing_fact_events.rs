@@ -50,8 +50,8 @@ impl AppCore {
             return false;
         };
         let event = match known_app_keys_to_ndr(&local_app_keys)
-            .get_encrypted_event_at(&owner_keys, local_app_keys.created_at_secs)
-            .and_then(|unsigned| unsigned.sign_with_keys(&owner_keys).map_err(Into::into))
+            .get_event_at(owner_keys.public_key(), local_app_keys.created_at_secs)
+            .sign_with_keys(&owner_keys)
         {
             Ok(event) => event,
             Err(error) => {
