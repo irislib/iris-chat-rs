@@ -62,7 +62,7 @@ fn contact_identity_keeps_first_name_until_exact_approval_and_persists_private_h
     });
     // Favorites queue authenticated sibling ratchet events, never public follow metadata.
     assert!(pair.a.pending_relay_publishes.len() > pending);
-    assert!(pending_events_with_kind(&pair.a, 30078).is_empty());
+    assert_only_public_invites_pending(&pair.a);
     assert!(
         pair.a.private_contacts.state.as_ref().unwrap().contacts[&id]["favorite"]
             .value

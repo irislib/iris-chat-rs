@@ -64,7 +64,12 @@ pub(super) fn preserve_known_app_key_labels(
         return;
     };
     for device in &current.devices {
-        if device.label_updated_at_secs == 0 {
+        // Legacy local labels have no revision; only a completely absent value
+        // lacks state. Timestamped nulls are explicit deletion tombstones.
+        if device.label_updated_at_secs == 0
+            && device.device_label.is_none()
+            && device.client_label.is_none()
+        {
             continue;
         }
         let Ok(pubkey) = PublicKey::parse(&device.identity_pubkey_hex) else {
@@ -132,7 +137,12 @@ pub(super) fn known_app_keys_to_ndr(known: &KnownAppKeys) -> AppKeys {
             .collect(),
     );
     for device in &known.devices {
-        if device.label_updated_at_secs == 0 {
+        // Legacy local labels have no revision; only a completely absent value
+        // lacks state. Timestamped nulls are explicit deletion tombstones.
+        if device.label_updated_at_secs == 0
+            && device.device_label.is_none()
+            && device.client_label.is_none()
+        {
             continue;
         }
         let Ok(pubkey) = PublicKey::parse(&device.identity_pubkey_hex) else {
