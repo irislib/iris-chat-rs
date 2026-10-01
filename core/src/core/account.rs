@@ -507,6 +507,7 @@ impl AppCore {
         );
         self.stop_pending_linked_device();
         self.stop_device_sync();
+        self.private_contacts.reset();
         self.reset_pending_invite_acceptance();
         self.pending_private_invite_responses.clear();
         self.pending_private_invite_cleanup_retry = false;
@@ -710,6 +711,9 @@ impl AppCore {
 
         let mut protocol_engine =
             ProtocolEngine::load_or_create_for_local_device(storage, owner_pubkey, &device_keys)?;
+        // No restored intent may reach discovery or encryption before the durable
+        // privacy migration completes. On failure the engine remains unavailable.
+        self.retire_legacy_private_contact_intents(&mut protocol_engine, owner_pubkey)?;
         if let Some(owner_keys) = owner_keys.as_ref() {
             protocol_engine.authenticate_local_owner_for_sending(owner_keys)?;
         }

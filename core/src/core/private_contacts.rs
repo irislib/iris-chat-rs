@@ -1,6 +1,8 @@
 use super::*;
 use crate::private_contact_sync_v2::*;
 
+mod migration;
+mod readiness;
 mod transport;
 pub(super) use transport::obsolete_private_contact_event;
 pub(super) const PRIVATE_CONTACT_CONTROL_KIND: u32 =
@@ -47,9 +49,16 @@ impl AppCore {
         {
             return Ok(state.clone());
         }
-        let mut state = match self.app_store.load_private_contact_sync(&owner)? {
-            Some(json) => migrate_private_contact_sync_v2(&serde_json::from_str(&json)?, &owner)?,
-            None => create_private_contact_sync_v2(&owner, &opaque_id())?,
+        self.restore_private_contact_state(&owner)
+    }
+
+    pub(super) fn restore_private_contact_state(
+        &mut self,
+        owner: &str,
+    ) -> anyhow::Result<PrivateContactSyncStateV2> {
+        let mut state = match self.app_store.load_private_contact_sync(owner)? {
+            Some(json) => migrate_private_contact_sync_v2(&serde_json::from_str(&json)?, owner)?,
+            None => create_private_contact_sync_v2(owner, &opaque_id())?,
         };
         // Absence is not a deletion. Counter-zero migration cannot overwrite a
         // real edit from another app, even when that edit is learned later.
