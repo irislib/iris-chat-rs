@@ -262,6 +262,14 @@ jobs:
       - name: macOS tests
         run: ./scripts/test-macos
 
+      - name: Upload macOS test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-composer-tests
+          path: iris-chat-rs/macos/.build/DerivedData/Logs/Test/*.xcresult
+          retention-days: 14
+
   ios:
     name: iOS simulator build and composer tests
     runs-on: macos-15
