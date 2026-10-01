@@ -2,7 +2,7 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
-## v2026.10.1.7
+## v2026.10.1.8
 
 ### GitHub
 
@@ -12,6 +12,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Keep chat messages anchored as the keyboard opens and closes on iPhone and Android.
 - Keep internal TestFlight delivery restricted to internal tester groups without submitting the build for public beta review.
 - Check CLI and app update discovery with separate empty data directories and shipped transport settings.
+- Preserve atomic state updates on both the Linux packaging compiler and current Rust toolchains.
 
 ### Apple
 
