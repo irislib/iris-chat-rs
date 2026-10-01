@@ -12,10 +12,10 @@ from pathlib import Path
 def verify(cli: Path, tag: str) -> None:
     environment = {
         name: value for name, value in os.environ.items()
-        if not name.startswith("IRIS_UPDATE_")
+        if not name.startswith(("IRIS_UPDATE_", "IRIS_FIPS_"))
     }
-    with tempfile.TemporaryDirectory(prefix="iris-release-update-") as data_dir:
-        for app in (False, True):
+    for app in (False, True):
+        with tempfile.TemporaryDirectory(prefix="iris-release-update-") as data_dir:
             arguments = [str(cli.resolve()), "--data-dir", data_dir,
                          "update", "check", "--source", "hashtree", "--json"]
             if app:

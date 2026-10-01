@@ -132,5 +132,86 @@ class HomebrewPackagingTests(unittest.TestCase):
             self.assertIn(b'class Iris < Formula', formula.stdout)
 
 
+class ReleaseUpdaterVerificationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.receipt = self.root / "calls.jsonl"
+        self.cli = self.root / "iris"
+        self.cli.write_text(f"#!{sys.executable}\n" + '''
+import json
+import os
+import sys
+from pathlib import Path
+
+data = Path(sys.argv[sys.argv.index("--data-dir") + 1])
+app = "--app" in sys.argv
+record = {
+    "arguments": sys.argv[1:],
+    "data_dir": str(data),
+    "existing_files": sorted(path.name for path in data.iterdir()),
+    "override_names": sorted(name for name in os.environ
+                             if name.startswith(("IRIS_UPDATE_", "IRIS_FIPS_"))),
+    "unrelated_setting": os.environ.get("IRIS_CHECK_FIXTURE_KEEP"),
+}
+with Path(os.environ["CHECK_FIXTURE_RECEIPT"]).open("a") as output:
+    output.write(json.dumps(record) + "\\n")
+(data / "warm-cache").write_text("must not reach the next check")
+tag = os.environ.get("CHECK_FIXTURE_TAG", "v2026.10.1.7")
+prefix = "iris-chat-" if app else "iris-"
+print(json.dumps({"tag": tag, "verified": True,
+                  "source": "hashtree-nostr-blossom", "asset": prefix + tag + "-fixture"}))
+''')
+        self.cli.chmod(0o755)
+        self.env = {
+            **os.environ,
+            "CHECK_FIXTURE_RECEIPT": str(self.receipt),
+            "IRIS_UPDATE_TEST_REFERENCE": "test-reference",
+            "IRIS_FIPS_TEST_ENDPOINT": "test-endpoint",
+            "IRIS_CHECK_FIXTURE_KEEP": "preserved",
+        }
+
+    def run_check(self, **environment: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(ROOT / "scripts/check-release-updater.py"),
+             "--cli", str(self.cli), "--tag", "v2026.10.1.7"],
+            env={**self.env, **environment}, capture_output=True, text=True, timeout=10,
+        )
+
+    def calls(self) -> list[dict]:
+        return [json.loads(line) for line in self.receipt.read_text().splitlines()]
+
+    def test_removes_both_override_families_but_keeps_unrelated_settings(self) -> None:
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls()
+        self.assertEqual(len(calls), 2)
+        for call in calls:
+            self.assertEqual(call["override_names"], [])
+            self.assertEqual(call["unrelated_setting"], "preserved")
+
+    def test_cli_and_app_each_start_with_an_independent_empty_directory(self) -> None:
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls()
+        self.assertEqual(len(calls), 2)
+        self.assertNotEqual(calls[0]["data_dir"], calls[1]["data_dir"])
+        for index, call in enumerate(calls):
+            self.assertEqual(call["existing_files"], [])
+            self.assertEqual(call["arguments"], ["--data-dir", call["data_dir"],
+                             "update", "check", "--source", "hashtree", "--json"]
+                             + (["--app"] if index else []))
+            self.assertFalse(Path(call["data_dir"]).exists())
+
+    def test_wrong_release_still_fails_closed_and_cleans_its_directory(self) -> None:
+        result = self.run_check(CHECK_FIXTURE_TAG="v2026.10.1.6")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("different or unverified release", result.stderr)
+        calls = self.calls()
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(Path(calls[0]["data_dir"]).exists())
+
+
 if __name__ == "__main__":
     unittest.main()
