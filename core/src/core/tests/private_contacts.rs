@@ -77,7 +77,11 @@ fn private_contacts_linked_device_snapshot_and_control_converge_without_owner_ke
         .is_none());
     let snapshots = pair.b.build_device_sync_packets_for_test(100, false);
     deliver_chat_read_packets(&mut pair.a, &Keys::generate(), &snapshots);
-    assert!(!pair.a.owner_profiles[&id].contact_memory.favorite);
+    assert!(pair
+        .a
+        .owner_profiles
+        .get(&id)
+        .is_none_or(|profile| !profile.contact_memory.favorite));
     deliver_chat_read_packets(&mut pair.a, &pair.b_device, &snapshots);
     assert!(pair.a.owner_profiles[&id].contact_memory.favorite);
     assert!(pair.a.private_contacts.state.as_ref().unwrap().records[&id]
@@ -273,7 +277,11 @@ fn private_contacts_reject_other_owner_ciphertext_and_keep_large_imported_notes(
             .unwrap()
     };
     pair.a.handle_relay_event(make(&other_owner));
-    assert!(pair.a.owner_profiles[&id].contact_note.is_none());
+    assert!(pair
+        .a
+        .owner_profiles
+        .get(&id)
+        .is_none_or(|profile| profile.contact_note.is_none()));
     pair.a.handle_relay_event(make(&pair.owner));
     assert_eq!(
         pair.a.owner_profiles[&id]
