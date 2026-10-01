@@ -124,8 +124,15 @@ internal static class Program
             input.TextChanged += changed;
             Clipboard.SetText(large);
             var elapsed = Stopwatch.StartNew();
-            Paste(input);
-            window.UpdateLayout(); Pump();
+            Check(ApplicationCommands.Paste.CanExecute(null, input), "native Paste enabled");
+            var canExecuteMs = elapsed.Elapsed.TotalMilliseconds;
+            ApplicationCommands.Paste.Execute(null, input);
+            var executeCompleteMs = elapsed.Elapsed.TotalMilliseconds;
+            Pump();
+            var firstDrainCompleteMs = elapsed.Elapsed.TotalMilliseconds;
+            window.UpdateLayout();
+            var layoutCompleteMs = elapsed.Elapsed.TotalMilliseconds;
+            Pump();
             elapsed.Stop();
             var pasteMs = elapsed.Elapsed.TotalMilliseconds;
             var pasteChanges = changes;
@@ -134,7 +141,10 @@ internal static class Program
             input.CaretIndex = input.Text.Length;
             elapsed.Restart();
             input.SelectedText = "!";
-            window.UpdateLayout(); Pump();
+            var editInsertMs = elapsed.Elapsed.TotalMilliseconds;
+            window.UpdateLayout();
+            var editLayoutCompleteMs = elapsed.Elapsed.TotalMilliseconds;
+            Pump();
             elapsed.Stop();
             var editMs = elapsed.Elapsed.TotalMilliseconds;
             var editChanges = changes - pasteChanges;
@@ -145,6 +155,20 @@ internal static class Program
                 platform = "windows", utf16_code_units = large.Length,
                 utf8_bytes = Encoding.UTF8.GetByteCount(large),
                 paste_ms = pasteMs, subsequent_edit_ms = editMs,
+                paste_phases_ms = new
+                {
+                    can_execute = canExecuteMs,
+                    execute = executeCompleteMs - canExecuteMs,
+                    first_dispatcher_drain = firstDrainCompleteMs - executeCompleteMs,
+                    layout = layoutCompleteMs - firstDrainCompleteMs,
+                    final_dispatcher_drain = pasteMs - layoutCompleteMs,
+                },
+                subsequent_edit_phases_ms = new
+                {
+                    insert = editInsertMs,
+                    layout = editLayoutCompleteMs - editInsertMs,
+                    dispatcher_drain = editMs - editLayoutCompleteMs,
+                },
                 paste_change_events = pasteChanges, subsequent_edit_change_events = editChanges,
                 freeze_budget_ms = freezeBudgetMs,
                 boundary = "Clipboard already populated; native Paste command through forced window layout and background-priority dispatcher drain. Subsequent edit uses native SelectedText insertion through the same layout/drain.",
