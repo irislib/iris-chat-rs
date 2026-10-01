@@ -108,6 +108,7 @@ impl AppCore {
         };
         let unsigned = EventBuilder::new(Kind::from(PRIVATE_CONTACT_CONTROL_KIND as u16), content)
             .tag(nostr::Tag::public_key(owner))
+            .allow_self_tagging()
             .build(owner);
         self.send_protocol_engine_unsigned_event_to_local_siblings(
             owner,

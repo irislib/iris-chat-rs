@@ -74,6 +74,7 @@ impl AppCore {
             };
             let unsigned = EventBuilder::new(Kind::from(DEVICE_LABEL_CONTROL_KIND as u16), content)
                 .tag(nostr::Tag::public_key(owner))
+                .allow_self_tagging()
                 .build(owner);
             if self.send_protocol_engine_unsigned_event_to_local_siblings(
                 owner,
@@ -185,6 +186,7 @@ impl AppCore {
         for (kind, content) in controls {
             let unsigned = EventBuilder::new(Kind::from(kind as u16), content.to_string())
                 .tag(nostr::Tag::public_key(owner))
+                .allow_self_tagging()
                 .build(owner);
             self.send_protocol_engine_unsigned_event_to_local_siblings(
                 owner,

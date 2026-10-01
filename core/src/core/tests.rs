@@ -167,6 +167,7 @@ include!("tests/direct_files.rs");
 include!("tests/contact_details.rs");
 include!("tests/private_contacts.rs");
 include!("tests/private_contact_migration.rs");
+include!("tests/private_control_interop.rs");
 
 include!("tests/timed_mute.rs");
 

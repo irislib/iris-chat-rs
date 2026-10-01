@@ -23,9 +23,11 @@ impl AppCore {
             .tags
             .iter()
             .filter(|tag| tag.as_slice().first().is_some_and(|name| name == "p"));
-        if !recipients
+        // The original native builder normalized p=author away. Permit that
+        // historical form only with the verified sibling authority checked below.
+        if recipients
             .next()
-            .is_some_and(|tag| tag.as_slice() == ["p", owner_hex.as_str()])
+            .is_some_and(|tag| tag.as_slice() != ["p", owner_hex.as_str()])
             || recipients.next().is_some()
         {
             return Some(true);
