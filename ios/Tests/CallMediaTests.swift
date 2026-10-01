@@ -143,6 +143,7 @@ final class CallMediaTests: XCTestCase {
     }
 
     func testHardwareEncoderPreservesOriginalCapturePermission() throws {
+        try CallVideoTestSupport.requireHardwareH264Encoder()
         let gate = IrisCallSendGate()
         gate.update(callID: "video", muted: false, video: true)
         let stale = gate.permission(callID: "video", kind: 2)
@@ -174,6 +175,7 @@ final class CallMediaTests: XCTestCase {
     }
 
     func testHardwareH264AccessUnitIncludesRecoveryHeadersAndDecodesAt720p() throws {
+        try CallVideoTestSupport.requireHardwareH264Encoder()
         let decoded = expectation(description: "hardware encoded access unit decodes")
         let queue = DispatchQueue(label: "iris.codec.test")
         let decoder = IrisH264Decoder { pixel, _ in

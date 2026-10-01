@@ -12,6 +12,7 @@ import XCTest
 /// Unlike single-frame tests, no encoder flush is allowed to make the stream pass.
 final class CallVideoQualityTests: XCTestCase {
     func testLiveBitrateReductionChangesEncodedTrafficAndRecovers() throws {
+        try CallVideoTestSupport.requireHardwareH264Encoder()
         let pixels = try (0..<2).map(Self.movingFrame)
         let queue = DispatchQueue(label: "iris.call.bitrate.decode")
         let lock = NSLock()
@@ -58,6 +59,7 @@ final class CallVideoQualityTests: XCTestCase {
     }
 
     func testDelayedKeyframeRepairStillDecodesBufferedVideo() throws {
+        try CallVideoTestSupport.requireHardwareH264Encoder()
         let queue = DispatchQueue(label: "iris.call.repair.decode")
         let decoded = expectation(description: "all frames decode after repaired reference")
         let lock = NSLock()
@@ -93,6 +95,7 @@ final class CallVideoQualityTests: XCTestCase {
     }
 
     func testSustainedVideoLatency() throws {
+        try CallVideoTestSupport.requireHardwareH264Encoder()
         let pixels = try (0..<12).map(Self.movingFrame)
         let lock = NSLock()
         let decodeQueue = DispatchQueue(label: "iris.call.quality.decode")

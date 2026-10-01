@@ -32,6 +32,7 @@ SWIFT
         "$ROOT/ios/Sources/IrisH264Encoder.swift" \
         "$ROOT/ios/Sources/IrisH264Decoder.swift" \
         "$ROOT/ios/Sources/IrisCallVideoReceiver.swift" \
+        "$ROOT/ios/Tests/CallVideoTestSupport.swift" \
         "$ROOT/ios/Tests/CallVideoQualityTests.swift" \
         "$BUILD_DIR/main.swift" -o "$BUILD_DIR/call-video-quality"
     "$BUILD_DIR/call-video-quality"
