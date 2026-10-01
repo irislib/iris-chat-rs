@@ -17,7 +17,7 @@ pub fn avatar(avatar: &adw::Avatar, connection: Option<&SocialConnectionSnapshot
 }
 
 fn badge(connection: &SocialConnectionSnapshot) -> Option<gtk::Label> {
-    connection.badge?;
+    connection.badge.as_ref()?;
     let badge = gtk::Label::new(Some(if connection.badge == Some(SocialBadge::Warning) {
         "!"
     } else if connection.badge == Some(SocialBadge::Muted) {
