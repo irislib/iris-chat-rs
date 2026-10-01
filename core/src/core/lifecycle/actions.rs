@@ -4,6 +4,18 @@ impl AppCore {
     pub(in crate::core) fn handle_action(&mut self, action: AppAction) {
         self.state.toast = None;
         match action {
+            AppAction::SetPublicFollow {
+                owner_pubkey_hex,
+                following,
+            } => self.set_public_follow(&owner_pubkey_hex, following),
+            AppAction::ApproveContactName {
+                owner_pubkey_hex,
+                name,
+            } => self.approve_contact_name(&owner_pubkey_hex, &name),
+            AppAction::SetContactFavorite {
+                owner_pubkey_hex,
+                favorite,
+            } => self.set_contact_favorite(&owner_pubkey_hex, favorite),
             AppAction::StartCall { chat_id, video } => self.start_call(&chat_id, video),
             AppAction::AnswerCall { call_id } => self.answer_call(&call_id, false),
             AppAction::AnswerCallWithVoice { call_id } => self.answer_call(&call_id, true),

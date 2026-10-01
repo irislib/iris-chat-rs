@@ -4,6 +4,7 @@ mod desktop_call;
 mod device_names;
 pub use call_audio::{CallAudioCodec, CallAudioError};
 pub use desktop_call::*;
+pub mod contact_memory;
 mod core;
 mod desktop_nearby;
 mod desktop_update;

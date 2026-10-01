@@ -94,7 +94,10 @@ impl AppCore {
         let cache_changed = result.cache != self.user_discovery;
         if cache_changed {
             match self.app_store.replace_user_discovery(&result.cache) {
-                Ok(()) => self.user_discovery = result.cache,
+                Ok(()) => {
+                    self.user_discovery = result.cache;
+                    self.refresh_social_graph();
+                }
                 Err(error) => {
                     self.push_debug_log("user.discovery.persist.error", format!("error={error}"))
                 }
@@ -143,6 +146,7 @@ impl AppCore {
                 self.push_debug_log("user.discovery.restore.error", error.to_string());
             }
         }
+        self.refresh_social_graph();
     }
 
     pub(super) fn reset_user_discovery_runtime(&mut self) {
@@ -152,6 +156,8 @@ impl AppCore {
         let invalidated_discovery_token = self.user_discovery_runtime.token.wrapping_add(1).max(1);
         let invalidated_search_token = self.profile_search_runtime.token.wrapping_add(1).max(1);
         self.user_discovery = UserDiscoveryCache::default();
+        self.social_graph = None;
+        self.pending_follow = None;
         self.user_discovery_runtime = UserDiscoveryRuntime::default();
         self.user_discovery_runtime.token = invalidated_discovery_token;
         self.profile_search_runtime = ProfileSearchRuntime::default();
@@ -377,6 +383,7 @@ async fn fetch_user_discovery(
 
     UserDiscoveryFetchResult {
         cache: UserDiscoveryCache {
+            follow_event_json: Some(serde_json::to_string(&follow_event).unwrap_or_default()),
             owner_pubkey_hex: Some(local_owner_hex),
             follow_event_id: Some(follow_event_id),
             follow_created_at_secs: follow_event.created_at.as_secs(),

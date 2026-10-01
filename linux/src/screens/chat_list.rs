@@ -435,7 +435,10 @@ fn person_row(
     if let Some(url) = person.picture_url.as_ref() {
         image_cache::fetch_proxied_into_avatar(&avatar, url, prefs, 80);
     }
-    row.add_prefix(&avatar);
+    row.add_prefix(&crate::widgets::social_badge::avatar(
+        &avatar,
+        person.social_connection.as_ref(),
+    ));
     let manager = manager.clone();
     let owner = person.owner_pubkey_hex.clone();
     row.connect_activated(move |_| {
@@ -676,6 +679,7 @@ fn nearby_peer_chat_info(
 ) -> ChatInfoSnapshot {
     let name = nearby_peer_resolved_name(peer, manager, "Nearby user");
     ChatInfoSnapshot {
+        social_connection: None,
         chat_id: owner.to_string(),
         display_name: name,
         nickname: None,
@@ -706,7 +710,10 @@ fn row_for(
     if let Some(url) = chat.picture_url.as_ref() {
         image_cache::fetch_proxied_into_avatar(&avatar, url, prefs, 80);
     }
-    row.add_prefix(&avatar);
+    row.add_prefix(&crate::widgets::social_badge::avatar(
+        &avatar,
+        chat.social_connection.as_ref(),
+    ));
 
     let draft = chat.draft.trim();
     let subtitle = if chat.is_typing {

@@ -220,6 +220,24 @@ is older than the latest full snapshot.
 This simple model remains acceptable until profiling shows that FFI transfer
 size or snapshot cloning is a real bottleneck.
 
+## Contact Memory and Social Connections
+
+Public follow distance and avatar checkmarks come from the account-rooted
+`nostr-social-graph`. Native shells render the shared connection snapshot.
+Public follow edits preserve the latest signed contact list's content and tags;
+private favorites never change that list or imply a social checkmark.
+
+Private contact memory stores the first observed name, the accepted name,
+favorite status, and approved name changes. The portable record and approval
+rules match `nostr-social-memory`; `core/src/contact_memory.rs` is a source
+snapshot until its API is released. SQLite stores that JSON separately from
+public metadata. A changed public name is a proposal: an explicit approval of
+that exact current name updates the accepted name and adds a local chat notice.
+Custom nicknames still take precedence. Storage, UI, and chat notices belong to
+this app; the portable record has no database or transport dependency. These
+records currently stay in this app's account storage; cross-app synchronization
+is separate from sharing their schema and behavior.
+
 ## Persistence Model
 
 There are two persistence layers.

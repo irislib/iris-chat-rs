@@ -23,6 +23,24 @@ iris listen
 
 Use `--json` for scripts and agents.
 
+For an existing direct chat, inspect the saved name and social connection, keep
+private favorites, approve an exact pending name, or change public follows:
+
+```sh
+iris contact show <user-id>
+iris contact favorite <user-id>
+iris contact unfavorite <user-id>
+iris contact approve-name <user-id> "New name"
+iris contact follow <user-id>
+iris contact unfollow <user-id>
+```
+
+Names and favorite stars stay local. Name approval preserves the first known name
+and records the approved change in the chat. Public follows use your Nostr follow
+list and require your main device's secret key and a configured message server.
+`contact show` and chat reads include `contact_identity` and `social_connection`
+in JSON output, and do not mark messages seen.
+
 Use a separate `--data-dir` for each account, including bots. A data folder is
 bound to one account; restoring another key there is rejected without deleting
 its history or replacing its saved credentials. Devices of the same account

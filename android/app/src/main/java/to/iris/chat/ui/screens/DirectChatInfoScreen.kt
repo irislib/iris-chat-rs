@@ -164,7 +164,7 @@ fun DirectChatInfoScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         IrisAvatar(
-                            label = chat.displayName,
+                            socialConnection = chat.socialConnection, label = chat.displayName,
                             size = 72.dp,
                             emphasize = true,
                             imageRequest = proxiedAvatarUrl,
@@ -188,10 +188,14 @@ fun DirectChatInfoScreen(
                             }
                         }
                     }
+                    chat.socialConnection?.let { connection ->
+                        to.iris.chat.ui.components.IrisSocialConnectionLabel(connection)
+                    }
                     ProfileAboutCard(
                         about = chat.about,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    to.iris.chat.ui.components.IrisContactActions(appManager, chat)
                     ContactNicknameCard(
                         chat = chat,
                         nicknameDraft = nicknameDraft,

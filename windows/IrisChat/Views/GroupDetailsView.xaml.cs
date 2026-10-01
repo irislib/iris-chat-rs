@@ -136,6 +136,8 @@ public partial class GroupDetailsView : UserControl
         var avatar = new IrisChat.Chrome.Avatar
         {
             Label = chat.displayName ?? string.Empty,
+            SocialConnection = chat.socialConnection,
+            PictureUrl = chat.pictureUrl,
             Size = 32,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -250,6 +252,7 @@ public partial class GroupDetailsView : UserControl
         var avatar = new IrisChat.Chrome.Avatar
         {
             Label = m.displayName,
+            SocialConnection = m.socialConnection,
             PictureUrl = m.pictureUrl,
             Size = 36,
             VerticalAlignment = VerticalAlignment.Center,

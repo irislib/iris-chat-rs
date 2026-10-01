@@ -312,6 +312,7 @@ struct ParticipantInfo {
     let name: String
     let pictureUrl: String?
     let isMe: Bool
+    var socialConnection: SocialConnectionSnapshot? = nil
 }
 
 func participantInfo(
@@ -331,7 +332,8 @@ func participantInfo(
         ownerPubkeyHex: owner?.isEmpty == false ? owner : nil,
         name: name,
         pictureUrl: participant?.pictureUrl ?? pictureUrl,
-        isMe: participant?.isLocalOwner ?? false
+        isMe: participant?.isLocalOwner ?? false,
+        socialConnection: participant?.socialConnection
     )
 }
 
@@ -543,6 +545,7 @@ struct MessageInfoUserRow<Trailing: View>: View {
     private var rowContent: some View {
         HStack(alignment: .center, spacing: 12) {
             IrisAvatar(
+                socialConnection: info.socialConnection,
                 label: info.name,
                 size: 32,
                 pictureUrl: info.pictureUrl,

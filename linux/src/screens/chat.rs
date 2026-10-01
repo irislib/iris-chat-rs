@@ -34,6 +34,7 @@ use safety::{
 
 #[derive(Clone)]
 pub struct ChatInfoSnapshot {
+    pub social_connection: Option<iris_chat_core::SocialConnectionSnapshot>,
     pub chat_id: String,
     pub display_name: String,
     pub nickname: Option<String>,
@@ -84,7 +85,10 @@ pub fn present_chat_info(
             image_cache::fetch_proxied_into_avatar(&avatar, url, &info.preferences, 144);
         }
     }
-    header_row.append(&avatar);
+    header_row.append(&crate::widgets::social_badge::avatar(
+        &avatar,
+        info.social_connection.as_ref(),
+    ));
 
     let text_column = gtk::Box::new(gtk::Orientation::Vertical, 4);
     text_column.set_valign(gtk::Align::Center);
@@ -107,6 +111,9 @@ pub fn present_chat_info(
     }
     header_row.append(&text_column);
     content.append(&header_row);
+    if let Some(connection) = &info.social_connection {
+        content.append(&crate::widgets::social_badge::description(connection));
+    }
 
     if let Some(about) = info
         .about
@@ -117,6 +124,16 @@ pub fn present_chat_info(
         content.append(&profile_about_card(about));
     }
 
+    if let Some(chat) = manager
+        .current_state()
+        .current_chat
+        .as_ref()
+        .filter(|chat| chat.chat_id == info.chat_id)
+    {
+        content.append(&crate::widgets::contact_actions::profile(
+            chat, &manager, &dialog,
+        ));
+    }
     let common_groups = manager.mutual_groups(&info.chat_id);
     if !common_groups.is_empty() {
         content.append(&common_groups_card(

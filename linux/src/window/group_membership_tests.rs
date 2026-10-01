@@ -44,12 +44,14 @@ pub(super) fn run(
     chat.display_name = "Weekend plans".into();
     chat.participants = vec![
         ChatParticipantSnapshot {
+            social_connection: None,
             owner_pubkey_hex: local_owner,
             display_name: "You".into(),
             picture_url: None,
             is_local_owner: true,
         },
         ChatParticipantSnapshot {
+            social_connection: None,
             owner_pubkey_hex: PEER.into(),
             display_name: "Alex".into(),
             picture_url: None,

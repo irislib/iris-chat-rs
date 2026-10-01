@@ -251,6 +251,7 @@ fn nearby_peer_chat_info(
 ) -> ChatInfoSnapshot {
     let name = nearby_peer_resolved_name(peer, manager, "Nearby user");
     ChatInfoSnapshot {
+        social_connection: None,
         chat_id: owner.to_string(),
         display_name: name,
         nickname: None,

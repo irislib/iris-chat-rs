@@ -37,6 +37,34 @@ public partial class Avatar : UserControl
         DependencyProperty.Register(nameof(Size), typeof(double), typeof(Avatar),
             new PropertyMetadata(44.0, OnSizeChanged));
 
+    public static readonly DependencyProperty SocialConnectionProperty =
+        DependencyProperty.Register(nameof(SocialConnection), typeof(SocialConnectionSnapshot), typeof(Avatar),
+            new PropertyMetadata(null, (d, _) => ((Avatar)d).UpdateSocialBadge()));
+
+    public SocialConnectionSnapshot? SocialConnection
+    {
+        get => (SocialConnectionSnapshot?)GetValue(SocialConnectionProperty);
+        set => SetValue(SocialConnectionProperty, value);
+    }
+
+    private void UpdateSocialBadge()
+    {
+        var connection = SocialConnection;
+        SocialMark.Visibility = connection?.badge == null ? Visibility.Collapsed : Visibility.Visible;
+        if (connection?.badge == null) return;
+        SocialMark.ToolTip = connection.description;
+        SocialMark.Background = connection.badge switch
+        {
+            SocialBadge.Warning => (Brush)FindResource("AccentAlt"),
+            SocialBadge.Following => (Brush)FindResource("Accent"),
+            SocialBadge.Trusted => (Brush)FindResource("AccentAlt"),
+            SocialBadge.Muted => Brushes.Firebrick,
+            _ => Brushes.Gray,
+        };
+        SocialMarkText.Text = connection.badge == SocialBadge.Warning ? "!" : connection.badge == SocialBadge.Muted ? "−" : "✓";
+        System.Windows.Automation.AutomationProperties.SetName(SocialMark, connection.description);
+    }
+
     public string Label
     {
         get => (string)GetValue(LabelProperty);

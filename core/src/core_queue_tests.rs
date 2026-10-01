@@ -142,6 +142,7 @@ fn ffi_chat_pages_keep_participants_and_load_requested_database_range() {
     let current = state.current_chat.as_mut().unwrap();
     let chat_id = current.chat_id.clone();
     let participants = vec![ChatParticipantSnapshot {
+        social_connection: None,
         owner_pubkey_hex: chat_id.clone(),
         display_name: "Page author".to_string(),
         picture_url: None,

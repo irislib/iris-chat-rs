@@ -80,6 +80,8 @@ impl ChatView {
             self.body.append(&ttl_strip(chat, manager));
             self.body
                 .append(&messages_view(chat, &state.preferences, manager));
+            self.body
+                .append(&crate::widgets::contact_actions::name_notice(chat, manager));
             self.rendered = Some(key);
         }
 

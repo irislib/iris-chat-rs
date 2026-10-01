@@ -104,7 +104,10 @@
                       Padding="14,10"
                       VerticalContentAlignment="Bottom"
                       HorizontalContentAlignment="Stretch">
-            <ItemsControl x:Name="MessagesList" VerticalAlignment="Bottom" />
+            <StackPanel>
+                <ItemsControl x:Name="MessagesList" VerticalAlignment="Bottom" />
+                <chrome:ContactActions x:Name="NameChangeNotice" />
+            </StackPanel>
         </ScrollViewer>
 
         <TextBlock x:Name="TypingText"

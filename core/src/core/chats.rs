@@ -54,6 +54,7 @@ impl AppCore {
         self.prune_expired_messages(now);
         self.fetch_missing_profile_metadata(&chat_id, "open_chat");
         self.ensure_thread_record(&chat_id, now).unread_count = 0;
+        self.remember_contact_name(&chat_id);
         self.load_latest_message_page_for_chat(&chat_id);
 
         self.active_chat_id = Some(chat_id.clone());
@@ -313,6 +314,7 @@ impl AppCore {
         // its history on the same render that flips the screen.
         let now = unix_now().get();
         self.ensure_thread_record(&chat_id, now).unread_count = 0;
+        self.remember_contact_name(&chat_id);
         self.load_latest_message_page_for_chat(&chat_id);
         self.active_chat_id = Some(chat_id.clone());
         self.screen_stack = vec![Screen::Chat {

@@ -218,7 +218,11 @@ fn load_iris_css(provider: &gtk::CssProvider, dark: bool) {
         "{}\n{}\n{}",
         palette_css(palette),
         CUSTOM_CSS,
-        widgets::audio_message::CSS
+        format!(
+            "{}\n{}",
+            widgets::audio_message::CSS,
+            widgets::social_badge::CSS
+        )
     );
     provider.load_from_string(&css);
 }

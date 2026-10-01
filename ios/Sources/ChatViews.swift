@@ -418,6 +418,7 @@ struct ChatScreen: View {
                                 let capability = chat.kind == .direct ? chat.directChatCapability : nil
                                 let capabilityBlocked = capability != nil && capability != .available
                                 VStack(spacing: 0) {
+                                    IrisNameChangeNotice(manager: manager, chat: chat)
                                     if let replyTarget, !composerBlocked, !isRequest, !chat.isRemovedFromGroup {
                                         IrisReplyComposerStrip(message: replyTarget) {
                                             self.replyTarget = nil
@@ -677,6 +678,7 @@ struct ChatScreen: View {
         )
 
         return EquatableView(content: ChatMessageRow(
+            socialConnection: chat.participants.first { $0.ownerPubkeyHex == message.authorOwnerPubkeyHex }?.socialConnection,
             message: message,
             chatKind: chat.kind,
             showDayChip: showDayChip,

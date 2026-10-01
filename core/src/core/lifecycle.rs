@@ -95,6 +95,8 @@ impl AppCore {
             profile_metadata_fetch_inflight: HashSet::new(),
             app_keys: BTreeMap::new(),
             direct_chat_capability_runtime: DirectChatCapabilityRuntime::default(),
+            pending_follow: None,
+            social_graph: None,
             user_discovery: UserDiscoveryCache::default(),
             user_discovery_runtime: UserDiscoveryRuntime::default(),
             profile_search_runtime: ProfileSearchRuntime::default(),
@@ -205,6 +207,7 @@ impl AppCore {
                 InternalEvent::DirectChatCapabilityFetchFinished { .. } => {
                     "DirectChatCapabilityFetchFinished"
                 }
+                InternalEvent::FollowUpdateReady { .. } => "FollowUpdateReady",
                 InternalEvent::UserDiscoveryFetchFinished { .. } => "UserDiscoveryFetchFinished",
                 InternalEvent::ProfileSearchRequested { .. } => "ProfileSearchRequested",
                 InternalEvent::ProfileSearchDebounceElapsed { .. } => {
@@ -624,6 +627,9 @@ impl AppCore {
                 &owner_pubkey_hex,
                 result,
             ),
+            InternalEvent::FollowUpdateReady { request_id, result } => {
+                self.finish_follow_update(&request_id, result)
+            }
             InternalEvent::UserDiscoveryFetchFinished { token, result } => {
                 self.handle_user_discovery_fetch_finished(token, result);
             }

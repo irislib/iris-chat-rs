@@ -152,6 +152,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) -> Option<Rc<Ap
                 crate::screens::chat::present_chat_info(
                     parent.as_ref(),
                     crate::screens::chat::ChatInfoSnapshot {
+                        social_connection: chat.social_connection.clone(),
                         chat_id: chat.chat_id.clone(),
                         display_name: chat.display_name.clone(),
                         nickname: chat.nickname.clone(),
@@ -609,6 +610,7 @@ fn attach_chat_title_click(slot: &gtk::Box, manager: &Rc<AppManager>, chat: &Cur
         crate::screens::chat::present_chat_info(
             widget.as_ref(),
             crate::screens::chat::ChatInfoSnapshot {
+                social_connection: chat.social_connection.clone(),
                 chat_id: chat.chat_id.clone(),
                 display_name: chat.display_name.clone(),
                 nickname: chat.nickname.clone(),

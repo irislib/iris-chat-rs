@@ -48,6 +48,7 @@ public partial class ChatRow : UserControl
         var chat = Chat;
         if (chat == null) return;
 
+        AvatarView.SocialConnection = chat.socialConnection;
         AvatarView.Label = string.IsNullOrEmpty(chat.displayName)
             ? "Iris user"
             : chat.displayName;

@@ -433,7 +433,7 @@ fun ChatScreen(
                     if (chat != null) {
                         {
                             IrisAvatar(
-                                label = chat.displayName,
+                                socialConnection = chat.socialConnection, label = chat.displayName,
                                 size = 36.dp,
                                 emphasize = false,
                                 imageRequest =
@@ -521,6 +521,7 @@ fun ChatScreen(
                     },
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
+                to.iris.chat.ui.components.IrisNameChangeNotice(appManager, chat)
                 Box(
                     modifier =
                         Modifier

@@ -926,7 +926,7 @@ private fun ShareTargetRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IrisAvatar(
-            label = chat.displayName,
+            socialConnection = chat.socialConnection, label = chat.displayName,
             size = 40.dp,
             imageRequest = avatarUrl,
             imageData = avatarData,

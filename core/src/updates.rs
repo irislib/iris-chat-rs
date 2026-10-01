@@ -104,6 +104,10 @@ pub(crate) struct CorePerfCountersSnapshot {
 
 #[derive(Debug)]
 pub(crate) enum InternalEvent {
+    FollowUpdateReady {
+        request_id: String,
+        result: Result<Vec<Event>, String>,
+    },
     RemoteSignerProgress {
         token: String,
         phase: crate::RemoteSignerPhase,

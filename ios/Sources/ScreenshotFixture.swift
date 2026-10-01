@@ -404,8 +404,7 @@ extension ScreenshotFixture {
         referenceDate: Date
     ) -> ChatThreadSnapshot {
         let timestamp = referenceDate.addingTimeInterval(-thread.lastMessageAgeSecs)
-        return ChatThreadSnapshot(
-            chatId: thread.chatId,
+        return ChatThreadSnapshot(socialConnection: nil, chatId: thread.chatId,
             kind: thread.kind,
             displayName: thread.displayName,
             nickname: nil,
@@ -443,8 +442,7 @@ extension ScreenshotFixture {
                 referenceDate: referenceDate
             )
         }
-        return CurrentChatSnapshot(
-            chatId: thread.chatId,
+        return CurrentChatSnapshot(contactIdentity: nil, socialConnection: nil, chatId: thread.chatId,
             kind: thread.kind,
             displayName: thread.displayName,
             nickname: nil,

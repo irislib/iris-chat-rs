@@ -304,7 +304,7 @@ struct GroupDetailsScreen: View {
                                     toggleSelectedAddMember(chat.chatId)
                                 } label: {
                                     HStack(spacing: 12) {
-                                        IrisAvatar(label: chat.displayName, size: 38, emphasize: selected)
+                                        IrisAvatar(socialConnection: chat.socialConnection, label: chat.displayName, size: 38, emphasize: selected)
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(chat.displayName)
                                                 .font(.system(.headline, design: .rounded, weight: .semibold))

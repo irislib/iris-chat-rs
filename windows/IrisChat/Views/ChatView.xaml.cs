@@ -119,6 +119,8 @@ public partial class ChatView : UserControl
             HeaderSubtitle.Text = chat.subtitle ?? string.Empty;
             HeaderSubtitle.Visibility = Visibility.Visible;
         }
+        NameChangeNotice.ChatId = chat.chatId;
+        HeaderAvatar.SocialConnection = chat.socialConnection;
         HeaderAvatar.Label = chat.displayName;
         HeaderAvatar.PictureUrl = chat.pictureUrl;
         MuteChatButton.Visibility = Visibility.Visible;
@@ -374,7 +376,31 @@ public partial class ChatView : UserControl
             Padding = new Thickness(20, 18, 20, 18),
         };
         var stack = new StackPanel { Orientation = Orientation.Vertical };
-        stack.Children.Add(BuildDirectInfoHeader(chat));
+        var liveHeader = new StackPanel();
+        object? renderedHeader = null;
+        stack.Children.Add(liveHeader);
+        void RefreshHeader()
+        {
+            var current = App.CurrentManager.CurrentChat;
+            if (current?.chatId != chat.chatId) return;
+            var key = (current.displayName, current.pictureUrl, current.subtitle,
+                current.socialConnection?.badge, current.socialConnection?.description);
+            if (object.Equals(renderedHeader, key)) return;
+            renderedHeader = key;
+            window.Title = current.displayName;
+            liveHeader.Children.Clear();
+            liveHeader.Children.Add(BuildDirectInfoHeader(current));
+            if (current.socialConnection is { } connection)
+                liveHeader.Children.Add(new TextBlock {
+                    Text = (connection.badge is null ? "" : connection.badge == SocialBadge.Warning ? "⚠ " : connection.badge == SocialBadge.Muted ? "− " : "✓ ") + connection.description,
+                    Foreground = ResourceBrush("TextMuted"), TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 0, 0, 12),
+                });
+        }
+        PropertyChangedEventHandler updateHeader = (_, _) => RefreshHeader();
+        App.CurrentManager.PropertyChanged += updateHeader;
+        window.Closed += (_, _) => App.CurrentManager.PropertyChanged -= updateHeader;
+        RefreshHeader();
         if (!string.IsNullOrWhiteSpace(chat.about))
         {
             stack.Children.Add(BuildAboutSection(chat.about!));
@@ -385,6 +411,7 @@ public partial class ChatView : UserControl
             stack.Children.Add(BuildCommonGroupsSection(commonGroups, window));
         }
 
+        stack.Children.Add(new ContactActions { ChatId = chat.chatId, ShowProfileActions = true });
         stack.Children.Add(BuildNicknameSection(chat));
         var pin = new Button { Margin = new Thickness(0, 0, 0, 8), HorizontalAlignment = HorizontalAlignment.Left };
         void RefreshPin() => pin.Content = App.CurrentManager.Preferences.pinnedChatIds.Contains(chat.chatId) ? "Unpin chat" : "Pin chat";
@@ -438,6 +465,7 @@ public partial class ChatView : UserControl
 
         var avatar = new Avatar
         {
+            SocialConnection = chat.socialConnection,
             Label = chat.displayName,
             PictureUrl = chat.pictureUrl,
             Size = 64,

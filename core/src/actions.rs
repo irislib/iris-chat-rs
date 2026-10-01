@@ -2,6 +2,18 @@ use crate::state::{OutgoingAttachment, Screen};
 
 #[derive(uniffi::Enum, Clone, Debug)]
 pub enum AppAction {
+    SetPublicFollow {
+        owner_pubkey_hex: String,
+        following: bool,
+    },
+    ApproveContactName {
+        owner_pubkey_hex: String,
+        name: String,
+    },
+    SetContactFavorite {
+        owner_pubkey_hex: String,
+        favorite: bool,
+    },
     StartCall {
         chat_id: String,
         video: bool,

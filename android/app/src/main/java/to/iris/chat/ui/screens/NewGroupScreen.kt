@@ -44,6 +44,7 @@ import kotlinx.coroutines.withContext
 import to.iris.chat.core.AppManager
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.ChatKind
+import to.iris.chat.rust.SocialConnectionSnapshot
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.isValidPeerInput
 import to.iris.chat.rust.normalizePeerInput
@@ -224,6 +225,7 @@ fun NewGroupScreen(
                                 ExistingMemberRow(
                                     title = presentation.primary,
                                     subtitle = presentation.secondary,
+                                    socialConnection = chat.socialConnection,
                                     selected = selected,
                                     onClick = {
                                         selectedOwners =
@@ -585,6 +587,7 @@ private fun MemberChip(
 
 @Composable
 private fun ExistingMemberRow(
+    socialConnection: SocialConnectionSnapshot?,
     title: String,
     subtitle: String?,
     selected: Boolean,
@@ -607,7 +610,7 @@ private fun ExistingMemberRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IrisAvatar(label = title, emphasize = selected, size = 38.dp)
+        IrisAvatar(label = title, emphasize = selected, size = 38.dp, socialConnection = socialConnection)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = title,

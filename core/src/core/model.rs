@@ -115,6 +115,8 @@ pub(super) struct DirectChatCapabilityRuntime {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct UserDiscoveryCache {
+    #[serde(default)]
+    pub(super) follow_event_json: Option<String>,
     pub(super) owner_pubkey_hex: Option<String>,
     pub(super) follow_event_id: Option<String>,
     pub(super) follow_created_at_secs: u64,
@@ -185,6 +187,8 @@ pub(super) struct CurrentDeviceLabels {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct OwnerProfileRecord {
     #[serde(default)]
+    pub(super) contact_memory: crate::contact_memory::ContactMemory,
+    #[serde(default)]
     pub(super) nickname: Option<String>,
     #[serde(default)]
     pub(super) contact_note: Option<String>,
@@ -216,6 +220,7 @@ fn default_extra_metadata_json() -> String {
 impl Default for OwnerProfileRecord {
     fn default() -> Self {
         Self {
+            contact_memory: Default::default(),
             nickname: None,
             contact_note: None,
             contact_updated_at_ms: 0,

@@ -98,6 +98,7 @@ mod chat_typing;
 mod chats;
 mod config;
 mod contact_details;
+mod contact_identity;
 mod device_approval;
 mod device_sync;
 mod device_sync_tcp;
@@ -124,12 +125,14 @@ mod profile_search_remote;
 mod projection;
 mod protocol;
 mod protocol_filters;
+mod public_follow;
 mod publish_helpers;
 mod publishing;
 mod publishing_fact_events;
 mod publishing_identity;
 mod relay;
 mod routing;
+mod social_connection;
 mod storage;
 mod support;
 #[cfg(test)]
@@ -193,6 +196,7 @@ pub(crate) fn chat_read_state(
     let chat_id = chat_id.trim();
     AppState {
         account: state.account.clone(),
+        preferences: state.preferences.clone(),
         chat_list: state
             .chat_list
             .iter()
@@ -219,6 +223,8 @@ fn clone_chat_with_messages(
     messages: &[ChatMessageSnapshot],
 ) -> CurrentChatSnapshot {
     CurrentChatSnapshot {
+        contact_identity: chat.contact_identity.clone(),
+        social_connection: chat.social_connection.clone(),
         chat_id: chat.chat_id.clone(),
         kind: chat.kind.clone(),
         display_name: chat.display_name.clone(),
@@ -369,6 +375,13 @@ fn build_chat_snapshot_with_messages(
             matches!(kind, ChatKind::Direct).then_some(DirectChatCapabilityState::Checking)
         });
     Some(CurrentChatSnapshot {
+        contact_identity: state
+            .current_chat
+            .as_ref()
+            .filter(|chat| chat.chat_id == chat_id)
+            .and_then(|chat| chat.contact_identity.clone())
+            .or_else(|| contact_identity::contact_identity_from_db(state, shared_db, thread)),
+        social_connection: thread.and_then(|thread| thread.social_connection.clone()),
         chat_id: chat_id.to_string(),
         kind,
         display_name: thread
@@ -456,6 +469,7 @@ fn fallback_chat_participants(
     let mut participants = Vec::new();
     if let Some(account) = state.account.as_ref() {
         participants.push(ChatParticipantSnapshot {
+            social_connection: None,
             owner_pubkey_hex: account.public_key_hex.clone(),
             display_name: account.display_name.trim().to_string(),
             picture_url: account.picture_url.clone(),
@@ -469,6 +483,7 @@ fn fallback_chat_participants(
             .is_none_or(|account| account.public_key_hex != chat_id)
     {
         participants.push(ChatParticipantSnapshot {
+            social_connection: thread.and_then(|thread| thread.social_connection.clone()),
             owner_pubkey_hex: chat_id.to_string(),
             display_name: thread
                 .map(|thread| thread.display_name.trim().to_string())
@@ -609,6 +624,8 @@ pub struct AppCore {
     profile_metadata_fetch_inflight: HashSet<String>,
     app_keys: BTreeMap<String, KnownAppKeys>,
     direct_chat_capability_runtime: DirectChatCapabilityRuntime,
+    pending_follow: Option<(String, String, String, bool)>,
+    social_graph: Option<nostr_social_graph::SocialGraph>,
     user_discovery: UserDiscoveryCache,
     user_discovery_runtime: UserDiscoveryRuntime,
     profile_search_runtime: ProfileSearchRuntime,
