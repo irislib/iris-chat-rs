@@ -25,6 +25,15 @@ class ReleasePublishGuardTests(unittest.TestCase):
         distributor = self.root / "scripts/distribute"
         distributor.write_text("#!/bin/bash\nexit 1\n")
         distributor.chmod(0o755)
+        # Python 3.14 correctly rejects empty discovery; reach the scan through
+        # the same nonempty test gate that the real repository uses.
+        (self.root / "scripts/test_fixture.py").write_text(
+            "import unittest\n"
+            "from pathlib import Path\n\n"
+            "class FixtureTests(unittest.TestCase):\n"
+            "    def test_distribution_entrypoint_exists(self):\n"
+            "        self.assertTrue(Path(__file__).with_name('distribute').is_file())\n"
+        )
         (self.root / "scripts/distribution_common.sh").write_text("# clean\n")
         (self.root / "RELEASE.md").write_text("Release documentation.\n")
         binaries = self.root / "bin"
@@ -36,7 +45,10 @@ class ReleasePublishGuardTests(unittest.TestCase):
         self.env = {**os.environ, "PATH": str(binaries)}
 
     def run_guard(self) -> subprocess.CompletedProcess:
-        return subprocess.run([str(self.guard)], env=self.env, capture_output=True, text=True)
+        result = subprocess.run([str(self.guard)], env=self.env, capture_output=True, text=True)
+        self.assertIn("Ran 1 test", result.stderr)
+        self.assertIn("\nOK\n", result.stderr)
+        return result
 
     def test_clean_inputs_pass_without_ripgrep(self) -> None:
         result = self.run_guard()
@@ -56,6 +68,8 @@ class ReleasePublishGuardTests(unittest.TestCase):
         (self.root / "scripts/distribution_common.sh").unlink()
         result = self.run_guard()
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FileNotFoundError", result.stderr)
+        self.assertIn("distribution_common.sh", result.stderr)
         self.assertNotIn("Release publication contract passed", result.stdout)
 
 
