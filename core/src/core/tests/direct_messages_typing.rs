@@ -1765,13 +1765,15 @@ fn web_runtime_chat_message_expiration_tag_is_persisted() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let sender = Keys::generate();
+    let now = unix_now().get();
+    let expires_at = now.saturating_add(600);
     let mut core = logged_in_test_core("web-runtime-expiring-message", &owner, &device);
     let (content, inner_id) = runtime_rumor_json(
         sender.public_key(),
         CHAT_MESSAGE_KIND,
         "secret",
-        1_777_159_483,
-        vec![vec!["expiration".to_string(), "1777159543".to_string()]],
+        now,
+        vec![vec!["expiration".to_string(), expires_at.to_string()]],
     );
 
     core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("f".repeat(64)));
@@ -1780,10 +1782,10 @@ fn web_runtime_chat_message_expiration_tag_is_persisted() {
     let thread = core.threads.get(&chat_id).expect("thread");
     assert_eq!(thread.messages.len(), 1);
     assert_eq!(thread.messages[0].body, "secret");
-    assert_eq!(thread.messages[0].expires_at_secs, Some(1_777_159_543));
+    assert_eq!(thread.messages[0].expires_at_secs, Some(expires_at));
     assert_eq!(
         stored_message_expiration(&core, &chat_id, &inner_id),
-        Some(1_777_159_543)
+        Some(expires_at)
     );
 }
 
@@ -1792,14 +1794,16 @@ fn runtime_controls_settings_reactions_and_expiration_flow() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let sender = Keys::generate();
+    let now = unix_now().get();
+    let expires_at = now.saturating_add(600);
     let mut core = logged_in_test_core("runtime-controls-flow", &owner, &device);
     let chat_id = sender.public_key().to_hex();
     let (message_content, message_id) = runtime_rumor_json(
         sender.public_key(),
         CHAT_MESSAGE_KIND,
         "runtime message",
-        1_777_159_483,
-        vec![vec!["expiration".to_string(), "1777159543".to_string()]],
+        now.saturating_sub(2),
+        vec![vec!["expiration".to_string(), expires_at.to_string()]],
     );
     core.apply_decrypted_runtime_message(
         sender.public_key(),
@@ -1811,7 +1815,7 @@ fn runtime_controls_settings_reactions_and_expiration_flow() {
     let thread = core.threads.get(&chat_id).expect("thread after message");
     assert_eq!(thread.messages.len(), 1);
     assert_eq!(thread.messages[0].body, "runtime message");
-    assert_eq!(thread.messages[0].expires_at_secs, Some(1_777_159_543));
+    assert_eq!(thread.messages[0].expires_at_secs, Some(expires_at));
 
     core.apply_typing_event(
         chat_id.clone(),
@@ -1841,7 +1845,7 @@ fn runtime_controls_settings_reactions_and_expiration_flow() {
             "messageTtlSeconds": 3600u64,
         })
         .to_string(),
-        1_777_159_485,
+        now,
         Vec::new(),
     );
     core.apply_decrypted_runtime_message(
@@ -1856,7 +1860,7 @@ fn runtime_controls_settings_reactions_and_expiration_flow() {
     core.handle_action(AppAction::SendDisappearingMessage {
         chat_id: chat_id.clone(),
         text: "local expiring reply".to_string(),
-        expires_at_secs: 1_777_160_000,
+        expires_at_secs: expires_at,
     });
     let reply = core
         .threads
@@ -1868,10 +1872,10 @@ fn runtime_controls_settings_reactions_and_expiration_flow() {
                 .find(|message| message.body == "local expiring reply")
         })
         .expect("local expiring reply");
-    assert_eq!(reply.expires_at_secs, Some(1_777_160_000));
+    assert_eq!(reply.expires_at_secs, Some(expires_at));
     assert_eq!(
         stored_message_expiration(&core, &chat_id, &reply.id),
-        Some(1_777_160_000)
+        Some(expires_at)
     );
 }
 
@@ -2092,6 +2096,15 @@ fn group_delivered_receipt_is_queued_directly_to_message_author() {
 
 #[test]
 fn group_seen_receipt_sent_directly_to_author_updates_sender_copy() {
+    assert_group_seen_receipt_updates_sender_copy(false);
+}
+
+#[test]
+fn group_seen_receipt_for_unloaded_message_survives_batch() {
+    assert_group_seen_receipt_updates_sender_copy(true);
+}
+
+fn assert_group_seen_receipt_updates_sender_copy(batched_unloaded: bool) {
     let alice_owner = Keys::generate();
     let alice_device = Keys::generate();
     let bob_owner = Keys::generate();
@@ -2170,7 +2183,31 @@ fn group_seen_receipt_sent_directly_to_author_updates_sender_copy() {
         Some(alice_owner.public_key().to_hex()),
         Some("group-outer".to_string()),
     );
+    if batched_unloaded {
+        bob.push_outgoing_message_with_id(
+            "newer-preview".to_string(),
+            &chat_id,
+            "newer outgoing preview".to_string(),
+            1_777_159_484,
+            None,
+            DeliveryState::Sent,
+        );
+        bob.persist_best_effort();
+        bob.threads
+            .get_mut(&chat_id)
+            .unwrap()
+            .messages
+            .retain(|message| message.id == "newer-preview");
+        bob.enter_batch();
+    }
     bob.mark_messages_seen(&chat_id, std::slice::from_ref(&message_id));
+    if batched_unloaded {
+        assert!(bob.pending_relay_publishes.is_empty());
+        bob.exit_batch();
+        let messages = &bob.threads[&chat_id].messages;
+        assert_eq!(messages.len(), 1, "receipt routing must preserve pagination");
+        assert_eq!(messages[0].id, "newer-preview");
+    }
 
     let receipt_publishes = bob
         .pending_relay_publishes

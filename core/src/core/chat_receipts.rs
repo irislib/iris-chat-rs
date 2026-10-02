@@ -390,16 +390,21 @@ impl AppCore {
     }
 
     fn group_receipt_message_ids_by_author(
-        &self,
+        &mut self,
         chat_id: &str,
         message_ids: Vec<String>,
     ) -> BTreeMap<String, Vec<String>> {
-        let requested = message_ids.into_iter().collect::<HashSet<_>>();
         let mut by_author = BTreeMap::<String, Vec<String>>::new();
+        // A batch can flush after explicitly acknowledged rows have left the
+        // visible window. Resolve their authors without changing pagination.
+        let Some(stored_messages) = self.load_stored_receipt_messages(chat_id, &message_ids) else {
+            return by_author;
+        };
+        let requested = message_ids.into_iter().collect::<HashSet<_>>();
         let Some(thread) = self.threads.get(chat_id) else {
             return by_author;
         };
-        for message in &thread.messages {
+        for message in thread.messages.iter().chain(&stored_messages) {
             if message.is_outgoing || !requested.contains(&message.id) {
                 continue;
             }

@@ -1,6 +1,7 @@
 use super::*;
 
 mod direct_queue;
+mod group_send;
 mod helpers;
 
 use self::direct_queue::is_queued_direct_text_message;
@@ -595,113 +596,6 @@ impl AppCore {
         self.drain_queued_direct_text_messages("message.direct.send");
     }
 
-    pub(super) fn send_group_message(
-        &mut self,
-        chat_id: &str,
-        text: &str,
-        now: UnixSeconds,
-        expires_at_secs: Option<u64>,
-    ) {
-        if self.reject_removed_group_send(chat_id) {
-            return;
-        }
-        let Some(group_id) = parse_group_id_from_chat_id(chat_id) else {
-            self.state.toast = Some("Invalid group id.".to_string());
-            return;
-        };
-        let Some(owner_pubkey) = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| logged_in.owner_pubkey)
-        else {
-            self.state.toast = Some("Create or restore a profile first.".to_string());
-            return;
-        };
-        let mut tags = Vec::new();
-        if let Ok(group_tag) = nostr::Tag::parse(["l", group_id.as_str()]) {
-            tags.push(group_tag);
-        }
-        if let Some(expires_at_secs) = expires_at_secs {
-            let expiration = expires_at_secs.to_string();
-            if let Ok(expiration_tag) = nostr::Tag::parse(["expiration", expiration.as_str()]) {
-                tags.push(expiration_tag);
-            }
-        }
-        let mut rumor = UnsignedEvent::new(
-            owner_pubkey,
-            Timestamp::from_secs(now.get()),
-            Kind::Custom(CHAT_MESSAGE_KIND as u16),
-            tags,
-            text.to_string(),
-        );
-        rumor.ensure_id();
-        let message_id = rumor
-            .id
-            .as_ref()
-            .map(ToString::to_string)
-            .unwrap_or_else(|| self.allocate_message_id());
-        let payload = match serde_json::to_vec(&rumor) {
-            Ok(payload) => payload,
-            Err(error) => {
-                self.state.toast = Some(error.to_string());
-                return;
-            }
-        };
-        let result = self
-            .protocol_engine
-            .as_mut()
-            .map(|engine| engine.send_group_payload(&group_id, payload, Some(message_id.clone())));
-        match result {
-            Some(Ok(result)) => {
-                let delivery = if result.event_ids.is_empty() {
-                    DeliveryState::Queued
-                } else {
-                    DeliveryState::Pending
-                };
-                let publish_effects = result
-                    .effects
-                    .iter()
-                    .filter(|effect| matches!(effect, ProtocolEffect::Publish(_)))
-                    .count();
-                let delivery_publish_effects = result
-                    .effects
-                    .iter()
-                    .filter(|effect| {
-                        matches!(
-                            effect,
-                            ProtocolEffect::Publish(publish) if publish.inner_event_id.is_some()
-                        )
-                    })
-                    .count();
-                self.push_debug_log(
-                    "message.group.send.appcore",
-                    format!(
-                        "chat_id={chat_id} message_id={message_id} event_ids={} effects={} signed={} delivery_publish={} targets={}",
-                        result.event_ids.len(),
-                        result.effects.len(),
-                        publish_effects,
-                        delivery_publish_effects,
-                        summarize_group_send_effect_targets(&result.effects)
-                    ),
-                );
-                self.push_outgoing_message_with_id(
-                    message_id.clone(),
-                    chat_id,
-                    text.to_string(),
-                    now.get(),
-                    expires_at_secs,
-                    delivery,
-                );
-                self.process_protocol_engine_effects(result.effects);
-                self.sync_message_delivery_trace(chat_id, &message_id);
-                self.reconcile_outgoing_message_delivery(chat_id, &message_id);
-                self.request_protocol_subscription_refresh();
-            }
-            Some(Err(error)) => self.state.toast = Some(error.to_string()),
-            None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
-        }
-    }
-
     pub(super) fn update_message_delivery(
         &mut self,
         chat_id: &str,
@@ -1234,72 +1128,6 @@ impl AppCore {
         self.emit_state();
     }
 
-    pub(super) fn send_group_event(
-        &mut self,
-        chat_id: &str,
-        kind: u32,
-        content: &str,
-        tags: Vec<Vec<String>>,
-        now_ms: Option<u64>,
-    ) {
-        if self.is_removed_from_group(chat_id) {
-            return;
-        }
-        if kind == CHAT_MESSAGE_KIND {
-            self.send_group_message(chat_id, content, unix_now(), None);
-            return;
-        }
-        let Some(group_id) = parse_group_id_from_chat_id(chat_id) else {
-            return;
-        };
-        let Some(owner_pubkey) = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| logged_in.owner_pubkey)
-        else {
-            return;
-        };
-        let created_at = unix_now();
-        let mut nostr_tags = Vec::new();
-        for tag in tags {
-            if let Ok(tag) = nostr::Tag::parse(tag) {
-                nostr_tags.push(tag);
-            }
-        }
-        if let Ok(group_tag) = nostr::Tag::parse(["l", group_id.as_str()]) {
-            nostr_tags.push(group_tag);
-        }
-        let mut unsigned = UnsignedEvent::new(
-            owner_pubkey,
-            Timestamp::from_secs(created_at.get()),
-            Kind::Custom(kind as u16),
-            nostr_tags,
-            content.to_string(),
-        );
-        unsigned.ensure_id();
-        let payload = match serde_json::to_vec(&unsigned) {
-            Ok(payload) => payload,
-            Err(error) => {
-                self.push_debug_log("group.control.encode", error.to_string());
-                return;
-            }
-        };
-        let inner_event_id = unsigned.id.as_ref().map(ToString::to_string);
-        let result = self
-            .protocol_engine
-            .as_mut()
-            .map(|engine| engine.send_group_payload(&group_id, payload, inner_event_id.clone()));
-        match result {
-            Some(Ok(result)) => {
-                self.process_protocol_engine_effects(result.effects);
-                self.request_protocol_subscription_refresh();
-            }
-            Some(Err(error)) => self.push_debug_log("group.control.send", error.to_string()),
-            None => {}
-        }
-        let _ = now_ms;
-    }
-
     #[cfg(test)]
     pub(super) fn apply_decrypted_runtime_message(
         &mut self,
@@ -1763,6 +1591,9 @@ impl AppCore {
         message_id: Option<String>,
         source_event_id: Option<String>,
     ) {
+        if expires_at_secs.is_some_and(|expires_at| expires_at <= unix_now().get()) {
+            return;
+        }
         if body.len() > MAX_CHAT_MESSAGE_BODY_BYTES {
             self.push_debug_log(
                 "message.reject.oversized",

@@ -447,7 +447,7 @@ fn internal_prune_expired_messages_event_ignores_stale_tokens_and_updates_state(
 
     assert_eq!(stored_message_count(&core), 1);
     let thread = core.threads.get(&chat_id).expect("thread after prune");
-    assert_eq!(thread.unread_count, 0);
+    assert_eq!(thread.unread_count, 1, "newer unread message survives");
     assert_eq!(thread.messages.len(), 1);
     assert_eq!(thread.messages[0].body, "stays");
     assert_eq!(

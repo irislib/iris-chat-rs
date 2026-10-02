@@ -59,7 +59,14 @@ impl AppCore {
             let expired_unread = thread
                 .messages
                 .iter()
-                .filter(|message| message_is_expired(message, now_secs) && !message.is_outgoing)
+                .rev()
+                .filter(|message| {
+                    !message.is_outgoing && !matches!(message.delivery, DeliveryState::Seen)
+                })
+                // The badge covers only the latest unread messages. Older
+                // Received rows can already have had their badges cleared.
+                .take(usize::try_from(thread.unread_count).unwrap_or(usize::MAX))
+                .filter(|message| message_is_expired(message, now_secs))
                 .count() as u64;
             let original_len = thread.messages.len();
             thread

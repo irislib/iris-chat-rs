@@ -28,6 +28,22 @@ impl Store for RecordedAttachmentStore {
 }
 
 #[tokio::test]
+async fn oversized_attachment_is_rejected_before_uploading_any_chunks() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("large.bin");
+    fs::File::create(&path)
+        .unwrap()
+        .set_len(MAX_ATTACHMENT_BYTES + 1)
+        .unwrap();
+    let store = Arc::new(RecordedAttachmentStore::default());
+
+    let error = upload_file_to_store(&path, store.clone()).await.unwrap_err();
+
+    assert!(error.to_string().contains("too large"), "{error}");
+    assert!(store.0.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn attachment_upload_encrypts_every_stored_chunk_and_requires_the_key() {
     use hashtree_core::{decrypt_chk, try_decode_tree_node, DEFAULT_CHUNK_SIZE};
     let dir = tempfile::tempdir().unwrap();

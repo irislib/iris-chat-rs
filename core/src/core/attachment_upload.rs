@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
 use std::time::Duration;
+use tokio::io::AsyncReadExt;
 use tokio::sync::RwLock as AsyncRwLock;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
@@ -244,8 +245,7 @@ impl AppCore {
         }];
         let total_bytes: u64 = prepared
             .iter()
-            .filter_map(|attachment| std::fs::metadata(&attachment.file_path).ok())
-            .map(|meta| meta.len())
+            .map(|attachment| attachment.size_bytes)
             .sum();
         self.state.busy.uploading_attachment = true;
         self.state.busy.upload_progress = Some(crate::state::UploadProgress {
@@ -371,6 +371,7 @@ pub fn download_hashtree_attachment_with_limit(
 struct PreparedOutgoingAttachment {
     file_path: PathBuf,
     filename: String,
+    size_bytes: u64,
 }
 
 fn prepare_outgoing_attachments(
@@ -382,12 +383,19 @@ fn prepare_outgoing_attachments(
         if file_path.as_os_str().is_empty() {
             return Err("Attachment could not be sent.");
         }
-        if !file_path.is_file() {
+        let metadata = file_path
+            .metadata()
+            .map_err(|_| "Attachment file was not found.")?;
+        if !metadata.is_file() {
             return Err("Attachment file was not found.");
+        }
+        if metadata.len() > MAX_ATTACHMENT_BYTES {
+            return Err("Attachment is too large (64 MB maximum).");
         }
         prepared.push(PreparedOutgoingAttachment {
             filename: display_filename(&attachment.filename, &file_path),
             file_path,
+            size_bytes: metadata.len(),
         });
     }
     Ok(prepared)
@@ -454,10 +462,19 @@ async fn upload_file_to_store<S: Store + 'static>(
         ..HashTreeConfig::new(store)
     });
     let file = tokio::fs::File::open(path).await?;
-    let (cid, _size) = tree
-        .put_stream(file.compat())
+    let metadata = file.metadata().await?;
+    if !metadata.is_file() || metadata.len() > MAX_ATTACHMENT_BYTES {
+        anyhow::bail!("attachment is too large or is not a regular file");
+    }
+    // Recheck the opened file and cap the stream in case it grows during upload.
+    // Never send a link that the attachment download limit makes unusable.
+    let (cid, size) = tree
+        .put_stream(file.take(MAX_ATTACHMENT_BYTES + 1).compat())
         .await
         .map_err(|error| anyhow::anyhow!("hashtree upload failed: {error}"))?;
+    if size > MAX_ATTACHMENT_BYTES {
+        anyhow::bail!("attachment is too large");
+    }
 
     nhash_encode_full(&NHashData {
         hash: cid.hash,
@@ -803,7 +820,30 @@ mod tests {
 
         assert_eq!(prepared.len(), 2);
         assert_eq!(prepared[0].filename, "photo.png");
+        assert_eq!(prepared[0].size_bytes, 3);
         assert_eq!(prepared[1].filename, "second.bin");
+        assert_eq!(prepared[1].size_bytes, 3);
+    }
+
+    #[test]
+    fn outgoing_attachments_obey_the_download_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large.bin");
+        let file = fs::File::create(&path).unwrap();
+        let attachment = OutgoingAttachment {
+            file_path: path.to_string_lossy().into_owned(),
+            filename: String::new(),
+        };
+
+        file.set_len(MAX_ATTACHMENT_BYTES).unwrap();
+        let prepared = prepare_outgoing_attachments(std::slice::from_ref(&attachment)).unwrap();
+        assert_eq!(prepared[0].size_bytes, MAX_ATTACHMENT_BYTES);
+
+        file.set_len(MAX_ATTACHMENT_BYTES + 1).unwrap();
+        assert_eq!(
+            prepare_outgoing_attachments(&[attachment]).unwrap_err(),
+            "Attachment is too large (64 MB maximum)."
+        );
     }
 }
 
