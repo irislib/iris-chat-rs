@@ -510,6 +510,81 @@ fn group_metadata_changes_create_system_notices() {
 }
 
 #[test]
+fn group_metadata_member_batches_create_one_notice() {
+    for (added_count, expected) in [
+        (1, "Alice joined the group"),
+        (2, "Alice and Bob joined the group"),
+        (3, "Alice, Bob and Carol joined the group"),
+        (5, "Alice, Bob and 3 others joined the group"),
+    ] {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let mut core = logged_in_test_core("group-member-batch-notice", &owner, &device);
+        let group_id = "group-member-batch";
+        let chat_id = group_chat_id(group_id);
+        let existing_member = Keys::generate().public_key();
+        let initial = test_group_snapshot(
+            group_id,
+            "Trip crew",
+            owner.public_key(),
+            vec![owner.public_key(), existing_member],
+            vec![owner.public_key()],
+            1,
+        );
+        core.apply_group_decrypted_event(GroupIncomingEvent::MetadataUpdated(initial.clone()));
+        let original_message_count = core.threads[&chat_id].messages.len();
+        let original_unread_count = core.threads[&chat_id].unread_count;
+        let mut updated = initial;
+        updated.revision += 1;
+        for name in ["Alice", "Bob", "Carol", "Dave", "Eve"]
+            .into_iter()
+            .take(added_count)
+        {
+            let member = Keys::generate().public_key();
+            core.owner_profiles.insert(
+                member.to_hex(),
+                OwnerProfileRecord {
+                    display_name: Some(name.to_string()),
+                    ..Default::default()
+                },
+            );
+            updated.members.push(ndr_owner_pubkey(member));
+        }
+
+        core.apply_group_decrypted_event(GroupIncomingEvent::MetadataUpdated(updated.clone()));
+        let thread = &core.threads[&chat_id];
+        assert_eq!(
+            thread.messages.len(),
+            original_message_count + 1,
+            "One addition batch should produce one notice"
+        );
+        assert_eq!(thread.unread_count, original_unread_count + 1);
+        let notice = thread.messages.last().expect("joined notice");
+        assert_eq!(notice.body, expected);
+        assert_eq!(notice.kind, ChatMessageKind::System);
+        core.rebuild_state();
+        assert_eq!(
+            core.state
+                .chat_list
+                .iter()
+                .find(|chat| chat.chat_id == chat_id)
+                .unwrap()
+                .last_message_preview
+                .as_deref(),
+            Some(expected),
+            "The chat preview should describe the whole batch"
+        );
+
+        core.apply_group_decrypted_event(GroupIncomingEvent::MetadataUpdated(updated));
+        assert_eq!(
+            core.threads[&chat_id].messages.len(),
+            original_message_count + 1,
+            "Replayed metadata must not repeat the notice"
+        );
+    }
+}
+
+#[test]
 fn appcore_restart_restores_threads_groups_and_seen_events() {
     // End-to-end check that the persistence/load round trip survives a
     // full AppCore drop+recreate against the same `data_dir`.

@@ -639,17 +639,25 @@ impl AppCore {
                         now,
                     );
                 }
-                for owner in group
+                let joined_members = group
                     .members
                     .iter()
                     .filter(|owner| !previous.members.iter().any(|existing| existing == *owner))
-                {
+                    .map(|owner| self.owner_display_label(&owner.to_string()))
+                    .collect::<Vec<_>>();
+                let joined_label = match joined_members.as_slice() {
+                    [] => None,
+                    [name] => Some(name.clone()),
+                    [first, second] => Some(format!("{first} and {second}")),
+                    [first, second, third] => Some(format!("{first}, {second} and {third}")),
+                    [first, second, others @ ..] => {
+                        Some(format!("{first}, {second} and {} others", others.len()))
+                    }
+                };
+                if let Some(joined_label) = joined_label {
                     self.push_system_notice(
                         &chat_id,
-                        format!(
-                            "{} joined the group",
-                            self.owner_display_label(&owner.to_string())
-                        ),
+                        format!("{joined_label} joined the group"),
                         now,
                     );
                 }
