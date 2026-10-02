@@ -22,7 +22,10 @@ impl AppCore {
             let id = rumor.id.map(|id| id.to_hex()).unwrap_or_default();
             // Two intentional identical sends can arrive in the same millisecond.
             // Advance only the event's ms tag so each send has its own final ID.
-            if !self.app_store.message_exists(chat_id, Some(&id), None)? {
+            if !self
+                .app_store
+                .message_exists_or_deleted(chat_id, Some(&id), None)?
+            {
                 return Ok(rumor);
             }
             options.millis = options.millis.saturating_add(1);

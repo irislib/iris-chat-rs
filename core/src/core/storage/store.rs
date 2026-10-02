@@ -17,6 +17,9 @@ use std::hash::{Hash, Hasher};
 #[path = "store_chat_deletions.rs"]
 mod store_chat_deletions;
 
+#[path = "store_message_deletions.rs"]
+mod store_message_deletions;
+
 #[path = "store_chat_read_states.rs"]
 mod store_chat_read_states;
 
@@ -503,7 +506,14 @@ impl AppStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let tx = conn.transaction()?;
-        if store_chat_deletions::message_was_deleted(&tx, chat_id, message.created_at_secs)? {
+        if store_chat_deletions::message_was_deleted(&tx, chat_id, message.created_at_secs)?
+            || store_message_deletions::contains(
+                &tx,
+                chat_id,
+                Some(&message.id),
+                message.source_event_id.as_deref(),
+            )?
+        {
             return Ok(());
         }
         let message_exists = tx
@@ -892,6 +902,14 @@ fn upsert_message_row(
     chat_id: &str,
     message: &ChatMessageSnapshot,
 ) -> anyhow::Result<()> {
+    if store_message_deletions::contains(
+        tx,
+        chat_id,
+        Some(&message.id),
+        message.source_event_id.as_deref(),
+    )? {
+        return Ok(());
+    }
     tx.execute(
         "INSERT INTO messages(
             chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs,

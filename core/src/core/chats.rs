@@ -3,6 +3,7 @@ use super::*;
 mod direct_queue;
 mod group_send;
 mod helpers;
+mod local_delete;
 
 use self::direct_queue::is_queued_direct_text_message;
 use self::helpers::{
@@ -944,7 +945,7 @@ impl AppCore {
         }
         match self
             .app_store
-            .message_exists(chat_id, message_id_ref, source_event_id_ref)
+            .message_exists_or_deleted(chat_id, message_id_ref, source_event_id_ref)
         {
             Ok(true) => {
                 if !self.threads.contains_key(chat_id) {
@@ -1095,37 +1096,6 @@ impl AppCore {
             source_event_id: None,
         });
         self.bump_typing_floor(chat_id, created_at_secs);
-    }
-
-    pub(super) fn delete_local_message(&mut self, chat_id: &str, message_id: &str) {
-        if chat_id.is_empty() || message_id.is_empty() {
-            return;
-        }
-        let Some(thread) = self.threads.get_mut(chat_id) else {
-            return;
-        };
-        let original_len = thread.messages.len();
-        thread.messages.retain(|message| message.id != message_id);
-        if thread.messages.len() == original_len {
-            return;
-        }
-        thread.updated_at_secs = thread
-            .messages
-            .last()
-            .map(|message| message.created_at_secs)
-            .unwrap_or(thread.updated_at_secs);
-        if self.active_chat_id.as_deref() == Some(chat_id) {
-            thread.unread_count = 0;
-        }
-        if let Err(error) = self.app_store.delete_message(chat_id, message_id) {
-            self.push_debug_log(
-                "storage.message.delete.error",
-                format!("chat_id={chat_id} message_id={message_id} error={error}"),
-            );
-        }
-        self.persist_best_effort();
-        self.rebuild_state();
-        self.emit_state();
     }
 
     #[cfg(test)]
@@ -1614,6 +1584,15 @@ impl AppCore {
         }
         self.clear_typing_indicator(&chat_id, &sender_owner.to_hex());
         if sender_owner == local_owner {
+            match self.app_store.message_was_locally_deleted(
+                &chat_id,
+                message_id.as_deref(),
+                source_event_id.as_deref(),
+            ) {
+                Ok(true) => return,
+                Ok(false) => {}
+                Err(error) => self.push_debug_log("storage.message.exists.error", error.to_string()),
+            }
             let message_id = message_id.unwrap_or_else(|| self.allocate_message_id());
             if self.threads.get(&chat_id).is_some_and(|thread| {
                 thread

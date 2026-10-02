@@ -121,7 +121,7 @@ impl AppCore {
                 .any(|message| message.id == message_id)
         }) || self
             .app_store
-            .message_exists(owner, Some(&message_id), None)
+            .message_exists_or_deleted(owner, Some(&message_id), None)
             .unwrap_or(false)
     }
 }

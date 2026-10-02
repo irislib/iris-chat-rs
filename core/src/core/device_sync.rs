@@ -712,7 +712,7 @@ impl AppCore {
                 })
                 || self
                     .app_store
-                    .message_exists(&message.chat_id, Some(&message.id), None)
+                    .message_exists_or_deleted(&message.chat_id, Some(&message.id), None)
                     .unwrap_or(true)
             {
                 continue;
