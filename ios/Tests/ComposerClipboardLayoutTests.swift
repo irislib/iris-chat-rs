@@ -144,8 +144,80 @@ final class ComposerClipboardLayoutTests: XCTestCase {
             XCTAssertEqual(draft.files, attachments)
             XCTAssertTrue(draft.directly)
             XCTAssertFalse(draft.didSend)
+            #if os(iOS)
+            if name == "single-paragraph" { try await measureNativeControl(text, matching: editor) }
+            #endif
         }
     }
+
+    #if os(iOS)
+    private func measureNativeControl(_ text: String, matching source: UITextView) async throws {
+        let sourceWindow = try XCTUnwrap(source.window)
+        let scene = try XCTUnwrap(sourceWindow.windowScene)
+        let frame = source.convert(source.bounds, to: sourceWindow)
+        let controller = UIViewController()
+        controller.view.backgroundColor = .white
+        let window = UIWindow(windowScene: scene)
+        window.frame = sourceWindow.frame
+        window.rootViewController = controller
+        // This is a fixed native viewport, without SwiftUI, an Iris text view,
+        // the fitting manager, or our deferred selection-reveal implementation.
+        let editor = UITextView(frame: frame)
+        editor.font = source.font
+        editor.adjustsFontForContentSizeCategory = source.adjustsFontForContentSizeCategory
+        editor.textContainerInset = source.textContainerInset
+        editor.textContainer.lineFragmentPadding = source.textContainer.lineFragmentPadding
+        editor.allowsEditingTextAttributes = source.allowsEditingTextAttributes
+        editor.autocapitalizationType = source.autocapitalizationType
+        editor.returnKeyType = source.returnKeyType
+        editor.keyboardDismissMode = source.keyboardDismissMode
+        editor.isScrollEnabled = true
+        controller.view.addSubview(editor)
+        let draft = ClipboardComposerDraft(files: [])
+        let delegate = ClipboardNativeDraftDelegate(draft: draft)
+        editor.delegate = delegate
+        window.makeKeyAndVisible()
+        defer {
+            editor.resignFirstResponder()
+            editor.delegate = nil
+            window.isHidden = true
+            withExtendedLifetime(delegate) {}
+        }
+        try await Task.sleep(nanoseconds: 250_000_000)
+        controller.view.layoutIfNeeded()
+        XCTAssertEqual(editor.bounds.size, source.bounds.size)
+        XCTAssertTrue(editor.becomeFirstResponder())
+        let operations = ComposerOperationProbe()
+        let sample: () throws -> ComposerGeometry = {
+            operations.measure("sample-host-layout") { controller.view.layoutIfNeeded() }
+            operations.measure("sample-transaction-flush") { CATransaction.flush() }
+            let caret = try operations.measure("sample-caret-query") {
+                editor.caretRect(for: try XCTUnwrap(editor.selectedTextRange).end)
+            }
+            return ComposerGeometry(frame: editor.convert(editor.bounds, to: controller.view), viewport: editor.bounds,
+                                    caret: caret, height: editor.bounds.height,
+                                    maximumHeight: ceil(try XCTUnwrap(editor.font).lineHeight * 5), selection: editor.selectedRange,
+                                    scrollingEnabled: editor.isScrollEnabled, firstResponder: editor.isFirstResponder,
+                                    hasMarkedText: editor.markedTextRange != nil)
+        }
+        let provider = NSItemProvider(object: text as NSString)
+        let enginePresence = { editor.textLayoutManager != nil }
+        try await Task.sleep(nanoseconds: 400_000_000)
+        _ = try sample()
+        let changes: [(String, String, () -> Void)] = [
+            ("paste", text, { editor.paste(itemProviders: [provider]) }),
+            ("following-edit", text + "!", { editor.insertText("!") })
+        ]
+        for (name, expected, action) in changes {
+            try await measureChange("native-control-single-paragraph-\(name)", expected: expected, draft: draft,
+                                    operations: operations, enginePresence: enginePresence, action: action, sample: sample)
+            let image = UIGraphicsImageRenderer(bounds: controller.view.bounds).image { _ in
+                controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
+            }
+            attachScreenshot(try XCTUnwrap(image.pngData()), name: "native-control-single-paragraph-\(name)")
+        }
+    }
+    #endif
 
     private func measureChange(_ name: String, expected: String, draft: ClipboardComposerDraft,
                                operations: ComposerOperationProbe, enginePresence: () -> Bool,
@@ -291,6 +363,21 @@ private final class ClipboardComposerDraft: ObservableObject {
 
     init(files: [StagedAttachment]) { self.files = files }
 }
+
+#if os(iOS)
+@MainActor
+private final class ClipboardNativeDraftDelegate: NSObject, UITextViewDelegate {
+    private let draft: ClipboardComposerDraft
+
+    init(draft: ClipboardComposerDraft) { self.draft = draft }
+
+    func textViewDidChange(_ textView: UITextView) {
+        let text = textView.text ?? ""
+        draft.composer.text = text
+        draft.onUserEdit(text)
+    }
+}
+#endif
 
 private struct ComposerGeometry: Equatable {
     let frame: CGRect
