@@ -7,10 +7,13 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import java.io.IOException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -29,12 +32,23 @@ class MessageFontSizePreference(
     private val scope: CoroutineScope,
 ) {
     private val key = intPreferencesKey("message_font_size")
+    private val initialRead = CompletableDeferred<Unit>()
     val size = store.data
+        // DataStore 1.1.7 can lose an update that races a collector's initial
+        // read (AndroidX b/431787506). Reuse this collector to order our writes
+        // after real data, not stateIn's initial Normal placeholder.
+        .onEach { initialRead.complete(Unit) }
+        .onCompletion { cause ->
+            if (!initialRead.isCompleted) {
+                initialRead.completeExceptionally(cause ?: IllegalStateException("Font preference data ended before loading"))
+            }
+        }
         .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
         .map { values -> MessageFontSize.entries.firstOrNull { it.body == values[key] } ?: MessageFontSize.Normal }
         .stateIn(scope, SharingStarted.Eagerly, MessageFontSize.Normal)
 
     fun set(size: MessageFontSize) = scope.launch {
+        initialRead.await()
         store.edit { it[key] = size.body }
     }
 }

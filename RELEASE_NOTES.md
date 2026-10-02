@@ -8,6 +8,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 - Paste images and multiple files into native chat drafts, preserving captions and direct-send mode without sending automatically.
 - Reduce repeated layout of long drafts on Apple and Windows, keep the cursor visible, and avoid updating the whole Android chat screen on each edit.
+- Keep Android message-size changes from racing the initial preference read.
 - Move private contacts and device labels to ratcheted device messages, direct transfer, and pairing snapshots. Retire the retained static-encryption sync formats while preserving existing accounts, sessions, and linked devices.
 - Publish iris-chat-protocol 0.1.12 with selective retirement of obsolete queued device-sync messages, and verify native-to-web private controls through the production receive path.
 - Authenticate background call notifications through ratcheted messages and signed session setup, and retain notifications for retry when a cold lookup fails.
@@ -24,6 +25,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 - Paste photos and files into a chat before sending.
 - Improve typing after long text pastes.
+- Reliably save message-size changes made just after opening the app.
 - Improve privacy when syncing favorites, nicknames, notes, and device names.
 - Update your other devices and calling contacts too. Calls to an older app may not ring while it is closed. Existing chats and linked devices stay connected.
 

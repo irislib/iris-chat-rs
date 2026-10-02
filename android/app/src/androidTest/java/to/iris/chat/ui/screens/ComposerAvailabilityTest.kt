@@ -11,6 +11,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.selects.select
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -103,21 +104,46 @@ class ComposerAvailabilityTest {
     @Test fun fontSizePersistsAcrossPreferenceRecreation() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val file = File(context.cacheDir, "font-test-${System.nanoTime()}.preferences_pb")
-        val firstScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val secondScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val failure = CompletableDeferred<Throwable>()
+        val handler = CoroutineExceptionHandler { context, error ->
+            failure.complete(AssertionError("${context[CoroutineName]?.name} failed asynchronously", error))
+        }
+        val firstScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + handler + CoroutineName("first font preference"))
+        val secondScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + handler + CoroutineName("restored font preference"))
         try {
             val first = MessageFontSizePreference(PreferenceDataStoreFactory.create(scope = firstScope) { file }, firstScope)
-            first.set(MessageFontSize.ExtraLarge).join()
-            withTimeout(5_000) { first.size.first { it == MessageFontSize.ExtraLarge } }
+            preferencePhase("initial write", failure) { first.set(MessageFontSize.ExtraLarge).join() }
+            preferencePhase("initial value emission", failure) { first.size.first { it == MessageFontSize.ExtraLarge } }
             firstScope.coroutineContext[Job]!!.cancelAndJoin()
             val restored = MessageFontSizePreference(PreferenceDataStoreFactory.create(scope = secondScope) { file }, secondScope)
-            assertEquals(MessageFontSize.ExtraLarge, withTimeout(5_000) { restored.size.first { it == MessageFontSize.ExtraLarge } })
+            assertEquals(MessageFontSize.ExtraLarge, preferencePhase("restored value emission", failure) {
+                restored.size.first { it == MessageFontSize.ExtraLarge }
+            })
         } finally {
             firstScope.coroutineContext[Job]!!.cancelAndJoin()
             secondScope.coroutineContext[Job]!!.cancelAndJoin()
             file.delete()
         }
     }
+
+    private suspend fun <T> preferencePhase(name: String, failure: Deferred<Throwable>, block: suspend () -> T): T =
+        try {
+            withTimeout(5_000) {
+                coroutineScope {
+                    val result = async { block() }
+                    try {
+                        select {
+                            failure.onAwait { throw it }
+                            result.onAwait { it }
+                        }
+                    } finally {
+                        result.cancel()
+                    }
+                }
+            }
+        } catch (error: Throwable) {
+            throw AssertionError("Font preference $name failed", error)
+        }
 
     private fun screenshot(name: String) {
         compose.waitForIdle()

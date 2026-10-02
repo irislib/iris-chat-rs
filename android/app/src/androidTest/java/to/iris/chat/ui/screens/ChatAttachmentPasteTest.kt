@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.SystemClock
+import android.view.Choreographer
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
@@ -35,6 +36,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.*
 import org.junit.After
 import org.junit.Assert.*
@@ -57,12 +59,16 @@ class ChatAttachmentPasteTest {
     private val draftUpdates = mutableListOf<String>()
     private val pasteKeyDownAt = AtomicLong(-1)
     private val draftUpdatedAt = AtomicLong(-1)
+    private val activeFrames = AtomicReference<DraftFrames?>()
+    private val frameProbes = mutableListOf<DraftFrames>()
     private val sourceFiles = mutableListOf<File>()
     private var previousClip: ClipData? = null
     private var clipboardChanged = false
 
     @After fun cleanup() {
         compose.runOnUiThread {
+            activeFrames.set(null)
+            frameProbes.forEach { it.cancel() }
             paste.close()
             if (clipboardChanged) {
                 val clipboard = context.getSystemService(ClipboardManager::class.java)
@@ -215,12 +221,14 @@ class ChatAttachmentPasteTest {
         val expected = "Caption$text"
         val output = File(context.cacheDir, "attachments/outgoing")
         val before = output.listFiles().orEmpty().map { it.name }.toSet()
+        val pasteFrames = probeNextDraftFrames()
         val started = SystemClock.uptimeMillis()
         val pasteTiming = pasteClipboard(ClipData.newPlainText("Text", text))
         compose.waitUntil(5_000) { draftUpdates.lastOrNull() == expected }
         val elapsedMs = SystemClock.uptimeMillis() - started
         val pasteKeyAt = pasteKeyDownAt.get()
         val pasteDraftAt = draftUpdatedAt.get()
+        val pasteFrameWaitMs = pasteFrames.awaitWithin(started)
         val pasteUpdates = draftUpdates.size
         assertEquals(listOf(expected), draftUpdates)
         assertEquals(expected, draft.text.toString())
@@ -229,6 +237,7 @@ class ChatAttachmentPasteTest {
         // Keep the paste's caret and editor state: the next ordinary edit must
         // complete once without replacing or resetting the large draft.
         val edited = "$expected!"
+        val editFrames = probeNextDraftFrames()
         val editStarted = SystemClock.uptimeMillis()
         compose.onNodeWithTag("chatMessageInput").performTextInput("!")
         val editActionReturnedAt = SystemClock.uptimeMillis()
@@ -237,6 +246,7 @@ class ChatAttachmentPasteTest {
         compose.waitUntil(5_000) { draftUpdates.lastOrNull() == edited }
         val editElapsedMs = SystemClock.uptimeMillis() - editStarted
         val editDraftAt = draftUpdatedAt.get()
+        val editFrameWaitMs = editFrames.awaitWithin(editStarted)
         val editUpdates = draftUpdates.size - pasteUpdates
         File(checkNotNull(context.getExternalFilesDir("screenshots")), "android-clipboard-large-text.json").apply {
             parentFile?.mkdirs()
@@ -244,6 +254,8 @@ class ChatAttachmentPasteTest {
                 "characters":${text.length},"elapsed_ms":$elapsedMs,"draft_updates":$pasteUpdates,
                 "subsequent_edit_ms":$editElapsedMs,"subsequent_edit_draft_updates":$editUpdates,
                 "freeze_budget_ms":5000,
+                "paste_frame_progress":${pasteFrames.json(pasteKeyAt, pasteFrameWaitMs)},
+                "subsequent_edit_frame_progress":${editFrames.json(editStarted, editFrameWaitMs)},
                 "paste_phases_ms":{
                     "clipboard_setup":${pasteTiming.clipboardReadyAt - started},
                     "clipboard_set_primary_clip":${pasteTiming.clipboardWriteMs},
@@ -261,11 +273,14 @@ class ChatAttachmentPasteTest {
                 },
                 "paste_boundary":"Clipboard setup through native Ctrl+V, Compose idle, and observed draft callback",
                 "subsequent_edit_boundary":"Compose semantics text input through idle and observed draft callback",
-                "phase_boundary":"Action durations include Compose test synchronization. Preview event is captured on the input before default Ctrl+V handling; draft callback follows snapshotFlow delivery and is not a render or frame-rate measurement. Nested phase intervals overlap."
+                "phase_boundary":"Action durations include Compose test synchronization. Preview event is captured on the input before default Ctrl+V handling; draft callback follows snapshotFlow delivery and is not a render or frame-rate measurement. Nested phase intervals overlap.",
+                "frame_boundary":"Two successive real UI-thread Choreographer callbacks scheduled from the matching draft callback, timestamped at actual dispatch. Input origin is Ctrl+V preview for paste and semantics-action start for the next edit. Original totals exclude separately reported extra frame waits; all frame waits use the original operation's remaining 5-second budget. Frame progress does not prove text pixels were displayed or GPU work completed."
             }""".trimIndent())
         }
         assertTrue("Ctrl+V preview event must precede the paste draft callback", pasteKeyAt in started..pasteDraftAt)
         assertTrue("Subsequent draft callback must belong to this edit", editDraftAt in editStarted..(editStarted + editElapsedMs))
+        pasteFrames.assertFor(pasteDraftAt, started)
+        editFrames.assertFor(editDraftAt, editStarted)
         assertTrue("A 100 KB text paste should finish promptly", elapsedMs < 5_000)
         assertTrue("The next edit after a 100 KB paste should finish promptly", editElapsedMs < 5_000)
         assertEquals(1, editUpdates)
@@ -332,8 +347,10 @@ class ChatAttachmentPasteTest {
                             false
                         },
                         onDraftChange = {
-                            draftUpdatedAt.set(SystemClock.uptimeMillis())
+                            val at = SystemClock.uptimeMillis()
+                            draftUpdatedAt.set(at)
                             draftUpdates.add(it)
+                            activeFrames.get()?.afterDraftUpdate(draftUpdates.size, at)
                         }, onAttach = {},
                         onRemoveAttachment = { receiver.remove(it); attachments.value -= it },
                         onSend = {
@@ -352,6 +369,59 @@ class ChatAttachmentPasteTest {
         val keyActionReturnedAt: Long,
         val idleAt: Long,
     )
+
+    private fun probeNextDraftFrames() = DraftFrames(draftUpdates.size + 1).also {
+        frameProbes.add(it)
+        activeFrames.set(it)
+    }
+
+    private class DraftFrames(private val updateNumber: Int) {
+        private val draftAt = AtomicLong(-1)
+        private val firstAt = AtomicLong(-1)
+        private val secondAt = AtomicLong(-1)
+        private val complete = CountDownLatch(1)
+        private var choreographer: Choreographer? = null
+        private val second = Choreographer.FrameCallback {
+            secondAt.set(SystemClock.uptimeMillis())
+            complete.countDown()
+        }
+        private val first = Choreographer.FrameCallback {
+            firstAt.set(SystemClock.uptimeMillis())
+            checkNotNull(choreographer).postFrameCallback(second)
+        }
+
+        fun afterDraftUpdate(number: Int, at: Long) {
+            if (number != updateNumber || !draftAt.compareAndSet(-1, at)) return
+            choreographer = Choreographer.getInstance().also { it.postFrameCallback(first) }
+        }
+
+        fun awaitWithin(started: Long): Long {
+            val before = SystemClock.uptimeMillis()
+            complete.await((started + 5_000 - before).coerceAtLeast(0), TimeUnit.MILLISECONDS)
+            return SystemClock.uptimeMillis() - before
+        }
+
+        fun json(inputAt: Long, waitedMs: Long) = """{
+            "draft_update":$updateNumber,
+            "input_to_first_frame_ms":${firstAt.get() - inputAt},
+            "input_to_second_frame_ms":${secondAt.get() - inputAt},
+            "draft_callback_to_first_frame_ms":${firstAt.get() - draftAt.get()},
+            "draft_callback_to_second_frame_ms":${secondAt.get() - draftAt.get()},
+            "extra_wait_ms":$waitedMs,"completed":${complete.count == 0L}
+        }""".trimIndent()
+
+        fun assertFor(expectedDraftAt: Long, started: Long) {
+            assertEquals("Frames must follow this edit's draft callback", expectedDraftAt, draftAt.get())
+            assertTrue("Two matching UI frames must progress within the operation budget",
+                firstAt.get() >= expectedDraftAt && secondAt.get() >= firstAt.get() &&
+                    secondAt.get() in started..(started + 5_000))
+        }
+
+        fun cancel() {
+            choreographer?.removeFrameCallback(first)
+            choreographer?.removeFrameCallback(second)
+        }
+    }
 
     private fun pasteClipboard(clip: ClipData): ClipboardPasteTiming {
         var clipboardWriteMs = 0L
