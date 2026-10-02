@@ -183,8 +183,10 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
         central.stopScan()
         scanRequest = nil
         for (identifier, peripheral) in peripherals {
-            if connectRequests[identifier] == nil, !hasOutgoingConnection(identifier) {
-                central.cancelPeripheralConnection(peripheral)
+            if bootstrapDiscovery.isPending(identifier)
+                || (peripheral.state != .disconnected
+                    && connectRequests[identifier] == nil && !hasOutgoingConnection(identifier)) {
+                retirePeripheral(peripheral)
             }
         }
         bootstrapDiscovery.reset()
@@ -198,6 +200,10 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
         }
         guard let identifier = UUID(uuidString: peerToken) else {
             emit(.failed(requestId: requestId, message: "Invalid Apple BLE peer token"))
+            return
+        }
+        guard outgoingConnections.canConnect(identifier) else {
+            emit(.failed(requestId: requestId, message: "BLE peripheral is still disconnecting"))
             return
         }
         let peripheral = peripherals[identifier] ?? central.retrievePeripherals(withIdentifiers: [identifier]).first
@@ -260,7 +266,9 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
                         connecting: connectRequests[peerIdentifier] != nil
                     ),
                        let peripheral = peripherals[peerIdentifier] {
-                        central.cancelPeripheralConnection(peripheral)
+                        retirePeripheral(peripheral)
+                    } else if let peripheral = peripherals[peerIdentifier] {
+                        cancelRetiredPeripheralIfIdle(peripheral)
                     }
                 }
                 emit(.disconnected(connectionId: id, reason: reason))
@@ -287,14 +295,24 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
         }
     }
 
+    private func retirePeripheral(_ peripheral: CBPeripheral) {
+        outgoingConnections.retire(peripheral.identifier)
+        cancelRetiredPeripheralIfIdle(peripheral)
+    }
+
+    private func cancelRetiredPeripheralIfIdle(_ peripheral: CBPeripheral) {
+        if outgoingConnections.beginCancellation(
+            peripheral.identifier, connecting: connectRequests[peripheral.identifier] != nil
+        ) {
+            central.cancelPeripheralConnection(peripheral)
+        }
+    }
+
     private func failDiscovery(_ peripheral: CBPeripheral) {
         guard bootstrapDiscovery.isPending(peripheral.identifier) else { return }
         bootstrapDiscovery.fail(peripheral.identifier)
+        retirePeripheral(peripheral)
         scheduleBootstrapRetry()
-        if connectRequests[peripheral.identifier] == nil,
-           !hasOutgoingConnection(peripheral.identifier) {
-            central.cancelPeripheralConnection(peripheral)
-        }
     }
 
     private func scheduleBootstrapRetry() {
@@ -308,10 +326,8 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
             guard let self, self.scanRequest != nil, self.central.state == .poweredOn else { return }
             let now = ProcessInfo.processInfo.systemUptime
             for identifier in self.bootstrapDiscovery.expirePending(now: now) {
-                if let peripheral = self.peripherals[identifier],
-                   self.connectRequests[identifier] == nil,
-                   !self.hasOutgoingConnection(identifier) {
-                    self.central.cancelPeripheralConnection(peripheral)
+                if let peripheral = self.peripherals[identifier] {
+                    self.retirePeripheral(peripheral)
                 }
             }
             for identifier in self.bootstrapDiscovery.dueRetries(
@@ -330,6 +346,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
     }
 
     private func canDiscoverBootstrap(_ identifier: UUID) -> Bool {
+        guard outgoingConnections.canConnect(identifier) else { return false }
         #if os(macOS)
         return !bluetoothAudio.isActive || identifiedServicePeers.contains(identifier)
         #else
@@ -503,6 +520,7 @@ extension AppleFipsBlePlatform: CBCentralManagerDelegate {
     }
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        guard !outgoingConnections.isCancelling(peripheral.identifier) else { return }
         peripheral.delegate = self
         if bootstrapDiscovery.isPending(peripheral.identifier) {
             peripheral.discoverServices([fipsServiceUuid])
@@ -517,7 +535,9 @@ extension AppleFipsBlePlatform: CBCentralManagerDelegate {
         didFailToConnect peripheral: CBPeripheral,
         error: Error?
     ) {
-        failDiscovery(peripheral)
+        bootstrapDiscovery.fail(peripheral.identifier)
+        outgoingConnections.didDisconnect(peripheral.identifier)
+        scheduleBootstrapRetry()
         if let request = connectRequests.removeValue(forKey: peripheral.identifier) {
             emit(.failed(
                 requestId: request.requestId,
@@ -532,6 +552,7 @@ extension AppleFipsBlePlatform: CBCentralManagerDelegate {
         error: Error?
     ) {
         bootstrapDiscovery.fail(peripheral.identifier)
+        outgoingConnections.didDisconnect(peripheral.identifier)
         scheduleBootstrapRetry()
         if let request = connectRequests.removeValue(forKey: peripheral.identifier) {
             emit(.failed(
@@ -597,7 +618,9 @@ extension AppleFipsBlePlatform: CBPeripheralDelegate {
         didOpen channel: CBL2CAPChannel?,
         error: Error?
     ) {
-        guard let request = connectRequests.removeValue(forKey: peripheral.identifier) else {
+        defer { cancelRetiredPeripheralIfIdle(peripheral) }
+        guard !outgoingConnections.isCancelling(peripheral.identifier),
+              let request = connectRequests.removeValue(forKey: peripheral.identifier) else {
             channel?.inputStream.close()
             channel?.outputStream.close()
             return

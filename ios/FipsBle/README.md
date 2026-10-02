@@ -33,3 +33,11 @@ Run the adapter tests with `swift test --package-path ios/FipsBle`. For changes
 to radio behavior, also check Bluetooth audio during app startup and across
 playback stop/start transitions; passing state tests alone does not establish
 that discovery coexists with audio on real hardware.
+
+Cancellation is asynchronous. Expired discovery and stopped scans prevent new
+reads or L2CAP opens on that peripheral until CoreBluetooth delivers its terminal
+disconnect/failure callback. An existing open or channel is allowed to finish
+before cancellation. The retry backoff alone never authorizes reusing the
+peripheral. If that terminal callback is missing, the peripheral stays unavailable
+until the adapter restarts; commands are rejected immediately, not queued, and no
+retry timer spins for that peripheral. A scan restart does not clear this boundary.
