@@ -112,6 +112,14 @@ final class IrisFipsBleRuntime: IrisFipsBleSession, @unchecked Sendable {
     private var connectionCount = 0
     private var bytesReceivedCount = 0
     private var writeCompletedCount = 0
+    // Explicit diagnostics for signed development/release builds; no payloads.
+    private let traceEnabled: Bool = {
+#if DEBUG
+        return true
+#else
+        return ProcessInfo.processInfo.environment["IRIS_FIPS_BLE_TRACE"] == "1"
+#endif
+    }()
 
     init?(app: FfiApp) {
         do {
@@ -127,9 +135,9 @@ final class IrisFipsBleRuntime: IrisFipsBleSession, @unchecked Sendable {
                 guard let self, !isStopped else { return }
                 recordDebugEvent(event)
                 let accepted = bridge.emit(event: event.rustEvent)
-#if DEBUG
-                NSLog("Iris FIPS BLE: %@ accepted=%@", event.debugSummary, String(accepted))
-#endif
+                if traceEnabled {
+                    NSLog("Iris FIPS BLE: %@ accepted=%@", event.debugSummary, String(accepted))
+                }
             }
         }
         commandQueue.async { [weak self] in self?.pumpCommands() }
@@ -186,9 +194,9 @@ final class IrisFipsBleRuntime: IrisFipsBleSession, @unchecked Sendable {
                 continue
             }
             let platformCommand = command.platformCommand
-#if DEBUG
-            NSLog("Iris FIPS BLE: command %@", platformCommand.debugSummary)
-#endif
+            if traceEnabled {
+                NSLog("Iris FIPS BLE: command %@", platformCommand.debugSummary)
+            }
             runner.submit(platformCommand)
         }
     }
