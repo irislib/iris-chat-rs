@@ -9,45 +9,82 @@ struct IrisFipsBleDebugSnapshot {
 }
 
 protocol IrisFipsBleSession: AnyObject, Sendable {
-    func close()
+    func close() throws
+    func stopPlatform()
     func debugSnapshot() -> IrisFipsBleDebugSnapshot
+}
+
+extension IrisFipsBleSession {
+    func stopPlatform() {}
 }
 
 /// Only desired state is changed by UI callbacks. Blocking bridge work runs on
 /// one worker, which rechecks that state after every constructor/close returns.
+/// LAN changes need a new endpoint; detach its single-use BLE bridge before reattaching.
 final class IrisFipsBleLifecycle: @unchecked Sendable {
+    enum DisableError: Error { case bridgeStillAttached }
+
     private let queue = DispatchQueue(label: "fi.siriusbusiness.irischat.fips-ble.lifecycle")
     private let lock = NSLock()
+    private let shutdownCore: @Sendable () -> Void
     private let makeSession: @Sendable () -> IrisFipsBleSession?
     private var desiredEnabled = false
+    private var desiredNearbyLanEnabled = false
+    private var sessionNearbyLanEnabled = false
+    private var sessionNeedsDetach = false
     private var terminated = false
     private var scheduled = false
+    private var requestGeneration: UInt64 = 0
     private var session: IrisFipsBleSession?
 
-    init(makeSession: @escaping @Sendable () -> IrisFipsBleSession?) {
+    init(
+        shutdownCore: @escaping @Sendable () -> Void,
+        makeSession: @escaping @Sendable () -> IrisFipsBleSession?
+    ) {
+        self.shutdownCore = shutdownCore
         self.makeSession = makeSession
     }
 
-    func setEnabled(_ enabled: Bool) {
+    func setEnabled(_ enabled: Bool, nearbyLanEnabled: Bool? = nil) {
         lock.withLock {
             guard !terminated else { return }
+            requestGeneration &+= 1
             desiredEnabled = enabled
+            if let nearbyLanEnabled { desiredNearbyLanEnabled = nearbyLanEnabled }
             scheduleLocked()
         }
     }
 
-    func disableAndWait() async {
+    func disableAndWait() async throws {
         setEnabled(false)
         await settle()
+        guard lock.withLock({ session == nil && !desiredEnabled }) else {
+            throw DisableError.bridgeStillAttached
+        }
     }
 
     func shutdown() async {
         lock.withLock {
+            requestGeneration &+= 1
             terminated = true
             desiredEnabled = false
             scheduleLocked()
         }
         await settle()
+    }
+
+    func coreDidShutdown() async {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                let previous = self.lock.withLock { () -> IrisFipsBleSession? in
+                    guard self.terminated else { return nil }
+                    defer { self.session = nil }
+                    return self.session
+                }
+                previous?.stopPlatform()
+                continuation.resume()
+            }
+        }
     }
 
     func debugSnapshot() -> IrisFipsBleDebugSnapshot? {
@@ -61,7 +98,7 @@ final class IrisFipsBleLifecycle: @unchecked Sendable {
         queue.async { self.reconcile() }
     }
 
-    private func settle() async {
+    func settle() async {
         await withCheckedContinuation { continuation in
             queue.async { continuation.resume() }
         }
@@ -70,18 +107,44 @@ final class IrisFipsBleLifecycle: @unchecked Sendable {
     private func reconcile() {
         while true {
             lock.lock()
-            if !desiredEnabled, let previous = session {
-                session = nil
+            let generation = requestGeneration
+            if (!desiredEnabled || sessionNeedsDetach || desiredNearbyLanEnabled != sessionNearbyLanEnabled),
+               let previous = session {
+                sessionNeedsDetach = true
                 lock.unlock()
-                previous.close()
+                do {
+                    try previous.close()
+                } catch {
+                    // Keep the old owner until its native detach is acknowledged.
+                    // A later update can retry; never attach a replacement early.
+                    NSLog("Iris FIPS BLE could not detach: %@", "\(error)")
+                    lock.lock()
+                    if generation != requestGeneration {
+                        lock.unlock()
+                        continue
+                    }
+                    scheduled = false
+                    lock.unlock()
+                    return
+                }
+                lock.withLock {
+                    session = nil
+                    sessionNeedsDetach = false
+                }
             } else if desiredEnabled, session == nil {
+                let nearbyLanEnabled = desiredNearbyLanEnabled
                 lock.unlock()
                 let created = makeSession()
                 lock.lock()
                 session = created
+                sessionNearbyLanEnabled = nearbyLanEnabled
                 if created == nil {
-                    // A later state update may retry a failed attachment; never
-                    // spin on an unavailable core from this worker.
+                    // Preserve requests received while construction was blocked.
+                    if generation != requestGeneration {
+                        lock.unlock()
+                        continue
+                    }
+                    // With no new request, wait for a later state update to retry.
                     scheduled = false
                     lock.unlock()
                     return
@@ -96,7 +159,15 @@ final class IrisFipsBleLifecycle: @unchecked Sendable {
     }
 
     deinit {
-        if let session { queue.async { session.close() } }
+        if let session {
+            let shutdownCore = shutdownCore
+            // The lifecycle can no longer own a retry after deallocation.
+            // Retain the session/pump through terminal native shutdown instead.
+            queue.async {
+                shutdownCore()
+                session.stopPlatform()
+            }
+        }
     }
 }
 
@@ -153,15 +224,21 @@ final class IrisFipsBleRuntime: IrisFipsBleSession, @unchecked Sendable {
         )
     }
 
-    func close() {
-        stateLock.lock()
-        let wasStopped = stopped
-        stopped = true
-        stateLock.unlock()
-        if !wasStopped {
-            runner.close()
-            bridge.detach()
+    func close() throws {
+        guard !isStopped else { return }
+        // FIPS shutdown requests advertising/scan cleanup through this pump.
+        // Keep it and the event sink alive until the core acknowledges detach.
+        try bridge.detach()
+        stopPlatform()
+    }
+
+    func stopPlatform() {
+        let wasStopped = stateLock.withLock {
+            let previous = stopped
+            stopped = true
+            return previous
         }
+        if !wasStopped { runner.close() }
     }
 
     private var isStopped: Bool {

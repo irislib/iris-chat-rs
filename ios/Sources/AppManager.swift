@@ -301,13 +301,13 @@ protocol RustAppClient: AnyObject {
     func exportSupportBundleJson() -> String
     func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot?
     func prepareForSuspend()
-    func setFipsBleEnabled(_ enabled: Bool)
+    func setFipsBleEnabled(_ enabled: Bool, nearbyLanEnabled: Bool)
     func shutdown() async
     func listenForUpdates(reconciler: AppReconciler)
 }
 
 extension RustAppClient {
-    func setFipsBleEnabled(_ enabled: Bool) {}
+    func setFipsBleEnabled(_ enabled: Bool, nearbyLanEnabled: Bool) {}
 }
 
 final class LiveRustAppClient: RustAppClient {
@@ -317,18 +317,21 @@ final class LiveRustAppClient: RustAppClient {
 
     func beginReviewDemoLink() -> FfiApp {
         reviewDemoLinkActive = true
-        setFipsBleEnabled(false)
+        setFipsBleEnabled(false, nearbyLanEnabled: false)
         return ffi
     }
 
-    func waitForFipsBleDisabled() async {
-        await fipsBle.disableAndWait()
+    func waitForFipsBleDisabled() async throws {
+        try await fipsBle.disableAndWait()
     }
 
     func endReviewDemoLink() {
         reviewDemoLinkActive = false
         let snapshot = state()
-        setFipsBleEnabled(snapshot.account != nil && snapshot.preferences.nearbyBluetoothEnabled)
+        setFipsBleEnabled(
+            snapshot.account != nil && snapshot.preferences.nearbyBluetoothEnabled,
+            nearbyLanEnabled: snapshot.preferences.nearbyLanEnabled
+        )
     }
 #endif
 #if os(iOS) || os(macOS)
@@ -339,7 +342,10 @@ final class LiveRustAppClient: RustAppClient {
         let app = FfiApp(dataDir: dataDir, keychainGroup: "", appVersion: appVersion)
         self.ffi = app
 #if os(iOS) || os(macOS)
-        self.fipsBle = IrisFipsBleLifecycle { IrisFipsBleRuntime(app: app) }
+        self.fipsBle = IrisFipsBleLifecycle(
+            shutdownCore: { app.shutdownSafely() },
+            makeSession: { IrisFipsBleRuntime(app: app) }
+        )
 #endif
     }
 
@@ -388,12 +394,12 @@ final class LiveRustAppClient: RustAppClient {
         ffi.prepareForSuspendSafely()
     }
 
-    func setFipsBleEnabled(_ enabled: Bool) {
+    func setFipsBleEnabled(_ enabled: Bool, nearbyLanEnabled: Bool) {
 #if os(iOS)
         guard !enabled || !reviewDemoLinkActive else { return }
 #endif
 #if os(iOS) || os(macOS)
-        fipsBle.setEnabled(enabled)
+        fipsBle.setEnabled(enabled, nearbyLanEnabled: nearbyLanEnabled)
 #endif
     }
 
@@ -409,6 +415,9 @@ final class LiveRustAppClient: RustAppClient {
 #endif
         let app = ffi
         await Task.detached(priority: .userInitiated) { app.shutdownSafely() }.value
+#if os(iOS) || os(macOS)
+        await fipsBle.coreDidShutdown()
+#endif
     }
 
     func listenForUpdates(reconciler: AppReconciler) {
@@ -1218,7 +1227,10 @@ final class AppManager: ObservableObject {
 
 #if os(iOS) || os(macOS)
         if initialState.preferences.nearbyBluetoothEnabled {
-            resolvedRust.setFipsBleEnabled(initialState.account != nil)
+            resolvedRust.setFipsBleEnabled(
+                initialState.account != nil,
+                nearbyLanEnabled: initialState.preferences.nearbyLanEnabled
+            )
             nearbyIris.setFipsBluetoothVisible(initialState.account != nil)
         }
         if initialState.preferences.nearbyLanEnabled {
@@ -2469,7 +2481,7 @@ final class AppManager: ObservableObject {
         let generation = reconciliationGeneration
         reviewDemoTask = Task { [weak self] in
             let preparation = Task.detached(priority: .userInitiated) {
-                await live.waitForFipsBleDisabled()
+                try await live.waitForFipsBleDisabled()
                 try Task.checkCancellation()
                 try await IosReviewDemo.populate(primary: ffi, directory: directory)
             }
@@ -3439,15 +3451,20 @@ final class AppManager: ObservableObject {
         let wasVisible = oldState.preferences.nearbyEnabled && oldState.preferences.nearbyBluetoothEnabled
         let shouldBeVisible = nextState.account != nil && nextState.preferences.nearbyEnabled && nextState.preferences.nearbyBluetoothEnabled
         if shouldBeVisible {
-            setNearbyBluetoothTransportVisible(true)
+            setNearbyBluetoothTransportVisible(
+                true, nearbyLanEnabled: nextState.preferences.nearbyLanEnabled
+            )
         } else if wasVisible || nearbyIris.isVisible {
             setNearbyBluetoothTransportVisible(false)
         }
     }
 
-    private func setNearbyBluetoothTransportVisible(_ enabled: Bool) {
+    private func setNearbyBluetoothTransportVisible(_ enabled: Bool, nearbyLanEnabled: Bool? = nil) {
         nearbyIris.setFipsBluetoothVisible(enabled && state.account != nil)
-        rust.setFipsBleEnabled(enabled && state.account != nil)
+        rust.setFipsBleEnabled(
+            enabled && state.account != nil,
+            nearbyLanEnabled: nearbyLanEnabled ?? state.preferences.nearbyLanEnabled
+        )
     }
 
     func fipsBleDebugSnapshot() -> IrisFipsBleDebugSnapshot? {

@@ -4,19 +4,41 @@ import Foundation
 /// Connects the demo's two real messaging engines inside this process. It uses
 /// the existing host-transport boundary; it does not advertise over Bluetooth.
 final class IosDemoLocalLink: @unchecked Sendable {
+    private let pump: IosDemoLocalLinkPump
+
+    init(first: FfiApp, second: FfiApp) throws {
+        let firstBridge = try FfiFipsBle(app: first)
+        // If the second constructor fails, the first bridge's scoped Drop
+        // cancels its attachment. No reader has been started yet.
+        let secondBridge = try FfiFipsBle(app: second)
+        pump = IosDemoLocalLinkPump(bridges: [firstBridge, secondBridge])
+    }
+
+    func close() throws { try pump.close() }
+
+    deinit {
+        // Abandonment must release the in-process readers even after a failed
+        // detach. Releasing their bridges invokes scoped native cancellation;
+        // it does not claim acknowledgement or authorize a replacement.
+        pump.stop()
+    }
+}
+
+/// The readers retain this pump, not the link owner. The owner's final release
+/// can therefore stop them; there is no self-retained abandoned demo session.
+private final class IosDemoLocalLinkPump: @unchecked Sendable {
     private let bridges: [FfiFipsBle]
     private let queue = DispatchQueue(label: "iris.demo.link")
     private let lock = NSLock()
+    private let closeLock = NSLock()
     private var stopped = false
     private var scanning: Set<Int> = []
     private var advertisements: [Int: Data] = [:]
     private var connections: Set<UInt64> = []
     private var nextConnection: UInt64 = 1
 
-    init(first: FfiApp, second: FfiApp) throws {
-        let firstBridge = try FfiFipsBle(app: first)
-        do { bridges = [firstBridge, try FfiFipsBle(app: second)] }
-        catch { firstBridge.detach(); throw error }
+    init(bridges: [FfiFipsBle]) {
+        self.bridges = bridges
         for side in 0...1 {
             DispatchQueue(label: "iris.demo.link.reader.\(side)").async { [weak self] in
                 self?.readCommands(side: side)
@@ -24,13 +46,25 @@ final class IosDemoLocalLink: @unchecked Sendable {
         }
     }
 
-    func close() {
+    func close() throws {
+        closeLock.lock()
+        defer { closeLock.unlock() }
+        guard !isStopped else { return }
+        // Native shutdown asks this pump to stop advertising. Neither readers
+        // nor their event queue may stop or block while detach awaits that ACK.
+        var failure: Error?
+        for bridge in bridges {
+            do { try bridge.detach() }
+            catch { if failure == nil { failure = error } }
+        }
+        if let failure { throw failure }
+        stop()
+    }
+
+    func stop() {
         lock.lock()
-        let alreadyStopped = stopped
         stopped = true
         lock.unlock()
-        guard !alreadyStopped else { return }
-        queue.sync { bridges.forEach { $0.detach() } }
     }
 
     private var isStopped: Bool {

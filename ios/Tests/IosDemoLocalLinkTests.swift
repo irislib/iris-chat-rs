@@ -14,7 +14,6 @@ final class IosDemoLocalLinkTests: XCTestCase {
             app.dispatch(action: .setNearbyBluetoothEnabled(enabled: true))
         }
         let link = try IosDemoLocalLink(first: a, second: b)
-        defer { link.close() }
         a.dispatch(action: .createAccount(name: "Demo reviewer"))
         b.dispatch(action: .createAccount(name: "Demo helper"))
         try await eventually("accounts") { a.state().account != nil && b.state().account != nil }
@@ -39,6 +38,11 @@ final class IosDemoLocalLinkTests: XCTestCase {
         try await eventually("both ends stop") {
             [a.state().call, b.state().call].allSatisfy { $0 == nil || $0?.phase == "ended" }
         }
+        // Active endpoints must process their shutdown commands before close
+        // returns and before either core accepts a replacement host adapter.
+        try link.close()
+        let replacement = try IosDemoLocalLink(first: a, second: b)
+        try replacement.close()
     }
 
     private func eventually(_ description: String, _ ready: () -> Bool) async throws {

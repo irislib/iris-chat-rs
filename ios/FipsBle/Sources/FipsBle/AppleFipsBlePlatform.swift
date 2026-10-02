@@ -49,7 +49,8 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
     }
 
     public func close() {
-        onMain { [weak self] in self?.closeOnMain() }
+        // Final owners may disappear before the main queue runs this cleanup.
+        onMain { self.closeOnMain() }
     }
 
     private func handle(_ command: HostBleCommand) {
