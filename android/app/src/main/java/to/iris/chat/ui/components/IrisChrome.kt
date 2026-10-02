@@ -332,6 +332,7 @@ fun IrisAvatar(
     imageUrl: String? = null,
     imageRequest: ImageLoadRequest? = null,
     imageData: ByteArray? = null,
+    showsNearbyBadge: Boolean = true,
 ) {
     val palette = IrisTheme.palette
     val targetPx = with(LocalDensity.current) { (size.toPx() * 2f).roundToInt().coerceAtLeast(1) }
@@ -415,7 +416,7 @@ fun IrisAvatar(
         socialConnection?.let { connection ->
             IrisSocialBadge(connection, Modifier.align(Alignment.TopEnd))
         }
-        if (ownerPubkeyHex != null && ownerPubkeyHex in LocalNearbyAvatarOwners.current) {
+        if (showsNearbyBadge && ownerPubkeyHex != null && ownerPubkeyHex in LocalNearbyAvatarOwners.current) {
             IrisNearbyBadge((size * 0.36f).coerceIn(14.dp, 22.dp), Modifier.align(Alignment.BottomEnd))
         }
     }

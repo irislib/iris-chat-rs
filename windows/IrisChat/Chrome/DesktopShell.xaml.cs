@@ -605,6 +605,7 @@ public partial class DesktopShell : UserControl
                 Label = name,
                 PictureUrl = peer.pictureUrl,
                 OwnerPubkeyHex = peer.ownerPubkeyHex,
+                ShowsNearbyBadge = false,
                 HorizontalAlignment = HorizontalAlignment.Center,
             });
             stack.Children.Add(new TextBlock

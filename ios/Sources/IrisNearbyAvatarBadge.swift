@@ -47,7 +47,7 @@ struct IrisNearbyBadge: View {
             .font(.system(size: size * 0.6, weight: .semibold))
             .foregroundStyle(.white)
             .frame(width: size, height: size)
-            .background(palette.accent, in: Circle())
+            .background(palette.action, in: Circle())
             .overlay(Circle().strokeBorder(palette.panel, lineWidth: 1.5))
             .accessibilityLabel("Nearby")
             .accessibilityIdentifier("nearbyAvatarBadge")

@@ -49,6 +49,16 @@ public partial class Avatar : UserControl
         DependencyProperty.Register(nameof(IsNearby), typeof(bool), typeof(Avatar),
             new PropertyMetadata(false, (d, _) => ((Avatar)d).UpdateNearbyBadge()));
 
+    public static readonly DependencyProperty ShowsNearbyBadgeProperty =
+        DependencyProperty.Register(nameof(ShowsNearbyBadge), typeof(bool), typeof(Avatar),
+            new PropertyMetadata(true, (d, _) => ((Avatar)d).UpdateNearbyBadge()));
+
+    public bool ShowsNearbyBadge
+    {
+        get => (bool)GetValue(ShowsNearbyBadgeProperty);
+        set => SetValue(ShowsNearbyBadgeProperty, value);
+    }
+
     public string? OwnerPubkeyHex
     {
         get => (string?)GetValue(OwnerPubkeyHexProperty);
@@ -69,7 +79,7 @@ public partial class Avatar : UserControl
     }
 
     private void UpdateNearbyBadge() =>
-        NearbyMark.Visibility = IsNearby ? Visibility.Visible : Visibility.Collapsed;
+        NearbyMark.Visibility = ShowsNearbyBadge && IsNearby ? Visibility.Visible : Visibility.Collapsed;
 
     public SocialConnectionSnapshot? SocialConnection
     {

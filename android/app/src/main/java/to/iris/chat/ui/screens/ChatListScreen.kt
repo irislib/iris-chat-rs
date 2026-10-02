@@ -76,6 +76,7 @@ import kotlin.math.roundToInt
 import java.util.concurrent.ConcurrentHashMap
 import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
+import to.iris.chat.ui.components.NearbyActiveBlue
 import to.iris.chat.ui.components.rememberChatMuteAction
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.PreferencesSnapshot
@@ -656,7 +657,6 @@ private fun SwipeableChatListRow(
 }
 
 private val ChatSwipeActionsWidth = 176.dp
-private val NearbyActiveBlue = Color(0xFF2267F5)
 private val NearbyChatRowHeight = 88.dp
 
 @Composable
@@ -900,6 +900,7 @@ private fun NearbyPeerAvatar(
             label = displayName,
             size = 48.dp,
             imageUrl = peer.pictureUrl,
+            showsNearbyBadge = false,
         )
         Text(
             text = name,

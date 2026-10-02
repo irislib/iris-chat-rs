@@ -248,7 +248,8 @@ struct NearbyPeerStripRow: View {
                                     size: avatarSize,
                                     pictureUrl: peer.pictureURL,
                                     preferences: manager.state.preferences,
-                                    manager: manager
+                                    manager: manager,
+                                    showsNearbyBadge: false
                                 )
                                 Text(nearbyPeerDisplayName(name))
                                     .font(.caption2.weight(.medium))
@@ -684,7 +685,8 @@ struct NearbyIrisScreen: View {
                                     size: 42,
                                     pictureUrl: peer.pictureURL,
                                     preferences: manager.state.preferences,
-                                    manager: manager
+                                    manager: manager,
+                                    showsNearbyBadge: false
                                 )
                                 Text(name)
                                     .font(.system(.caption, design: .rounded, weight: .semibold))

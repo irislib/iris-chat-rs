@@ -462,6 +462,7 @@ private fun NearbyPeerRow(
                 size = 42.dp,
                 imageRequest = avatarUrl,
                 imageData = avatarData,
+                showsNearbyBadge = false,
             )
         },
         modifier = Modifier.testTag("nearbyIrisPeer-${peer.id.take(12)}"),

@@ -17,6 +17,7 @@ import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.ui.theme.IrisTheme
 
 val LocalNearbyAvatarOwners = compositionLocalOf<Set<String>> { emptySet() }
+val NearbyActiveBlue = Color(0xFF2267F5)
 
 fun nearbyAvatarOwners(snapshot: IrisNearbyService.Snapshot, enabled: Boolean, localOwner: String?): Set<String> {
     if (!enabled || localOwner.isNullOrBlank() || (!snapshot.visible && !snapshot.localNetworkVisible)) return emptySet()
@@ -30,7 +31,7 @@ fun IrisNearbyBadge(size: Dp, modifier: Modifier = Modifier) {
         contentDescription = "Nearby",
         tint = Color.White,
         modifier = modifier.size(size)
-            .background(IrisTheme.palette.accent, CircleShape)
+            .background(NearbyActiveBlue, CircleShape)
             .border(1.5.dp, IrisTheme.palette.panel, CircleShape)
             .padding(size * 0.18f)
             .testTag("nearbyAvatarBadge"),

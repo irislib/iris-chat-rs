@@ -222,6 +222,7 @@ struct IrisAvatar: View {
     let preferences: PreferencesSnapshot?
     let manager: AppManager?
     let loadedImageIdentifier: String?
+    let showsNearbyBadge: Bool
 
     @State private var avatarImage: PlatformImage?
 
@@ -234,7 +235,8 @@ struct IrisAvatar: View {
         pictureUrl: String? = nil,
         preferences: PreferencesSnapshot? = nil,
         manager: AppManager? = nil,
-        loadedImageIdentifier: String? = nil
+        loadedImageIdentifier: String? = nil,
+        showsNearbyBadge: Bool = true
     ) {
         self.socialConnection = socialConnection
         self.ownerPubkeyHex = ownerPubkeyHex
@@ -245,6 +247,7 @@ struct IrisAvatar: View {
         self.preferences = preferences
         self.manager = manager
         self.loadedImageIdentifier = loadedImageIdentifier
+        self.showsNearbyBadge = showsNearbyBadge
         let source = irisAvatarImageSource(
             pictureUrl: pictureUrl,
             preferences: preferences,
@@ -282,7 +285,7 @@ struct IrisAvatar: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            if let ownerPubkeyHex, let manager {
+            if showsNearbyBadge, let ownerPubkeyHex, let manager {
                 IrisNearbyAvatarBadge(ownerPubkeyHex: ownerPubkeyHex, manager: manager, size: max(14, min(22, size * 0.36)))
                     .offset(x: 2, y: 2)
             }
