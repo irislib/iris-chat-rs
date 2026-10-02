@@ -13,7 +13,6 @@ internal sealed class PasteLayoutProbe : IDisposable
         Interval = TimeSpan.FromMilliseconds(1),
     };
     private double lastHeartbeatMs;
-    private readonly Action? firstRender;
     private DispatcherFrame? renderWait;
     private bool finished;
 
@@ -21,9 +20,8 @@ internal sealed class PasteLayoutProbe : IDisposable
     internal double? FirstRenderMs { get; private set; }
     internal double LongestDispatcherGapMs { get; private set; }
 
-    internal PasteLayoutProbe(Action? firstRender = null)
+    internal PasteLayoutProbe()
     {
-        this.firstRender = firstRender;
         heartbeat.Tick += OnHeartbeat;
         CompositionTarget.Rendering += OnRendering;
         heartbeat.Start();
@@ -43,15 +41,8 @@ internal sealed class PasteLayoutProbe : IDisposable
         if (FirstRenderMs == null)
         {
             FirstRenderMs = ElapsedMs;
-            firstRender?.Invoke();
         }
         if (renderWait != null) renderWait.Continue = false;
-    }
-
-    internal double CheckpointGap()
-    {
-        RecordGap();
-        return LongestDispatcherGapMs;
     }
 
     internal void WaitForFirstRender()

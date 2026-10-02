@@ -13,7 +13,7 @@ using IrisChat.Chrome;
 
 internal static class LargeTextPasteTests
 {
-    internal static void Verify(ComposerBar composer, Action pump, string output)
+    internal static (double CompleteMs, double EditSettleMs) Verify(ComposerBar composer, Action pump, string output)
     {
         var input = (TextBox)composer.FindName("Input");
         const string original = "Before [replace me] after";
@@ -32,6 +32,7 @@ internal static class LargeTextPasteTests
         var changes = 0;
         TextChangedEventHandler changed = (_, _) => changes++;
         input.TextChanged += changed;
+        using var probe = new PasteLayoutProbe();
         var elapsed = Stopwatch.StartNew();
         IReadOnlyDictionary<string, double>? nativePastePhases = null;
         PastePhaseDiagnostics.Observer = phases => nativePastePhases = phases;
@@ -43,19 +44,30 @@ internal static class LargeTextPasteTests
         elapsed.Restart();
         input.SelectedText = "!";
         var immediateEditMs = elapsed.Elapsed.TotalMilliseconds;
+        input.UpdateLayout(); pump();
+        _ = input.GetRectFromCharacterIndex(input.CaretIndex);
+        input.UpdateLayout(); pump();
+        probe.WaitForFirstRender();
+        var completedCaret = input.GetRectFromCharacterIndex(input.CaretIndex);
+        elapsed.Stop();
+        probe.Finish();
+        var completeMs = probe.ElapsedMs;
+        var editSettleMs = elapsed.Elapsed.TotalMilliseconds;
         input.TextChanged -= changed;
         File.WriteAllText(Path.Combine(output, "windows-immediate-edit-timings.json"), JsonSerializer.Serialize(new
         {
             utf16_code_units = text.Length, utf8_bytes = Encoding.UTF8.GetByteCount(text),
             paste_execute_ms = pasteExecuteMs, immediate_edit_ms = immediateEditMs,
             native_paste_phases_ms = nativePastePhases,
-            text_change_events = changes, command_budget_ms = 500,
-            boundary = "Native Paste Execute then SelectedText insertion before any dispatcher drain."
+            complete_paste_and_edit_ms = completeMs, subsequent_edit_settle_ms = editSettleMs,
+            first_render_ms = probe.FirstRenderMs, longest_dispatcher_gap_ms = probe.LongestDispatcherGapMs,
+            text_change_events = changes, subsequent_edit_budget_ms = 500, complete_operation_budget_ms = 5_000,
+            boundary = "Native Paste Execute then SelectedText insertion before any dispatcher drain; complete-operation and subsequent-edit times include forced layout, drain, refreshed current-caret geometry and first WPF Rendering callback (not display scanout)."
         }, new JsonSerializerOptions { WriteIndented = true }));
         Check(input.Text == expected.Insert(caret, "!") && changes == 2,
             "large paste and immediate edit each change the native editor once");
-        Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Visible,
-            "bulk draft reserves its scrollbar width before layout");
+        Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Visible && ComposerViewport.Contains(input, completedCaret),
+            "bulk draft reserves scrollbar width and keeps the complete edited caret visible");
         input.Undo();
         Check(input.Text == expected && input.SelectionStart == caret && input.SelectionLength == 0,
             "one Undo removes only the subsequent edit and restores the pasted caret");
@@ -122,8 +134,7 @@ internal static class LargeTextPasteTests
         composer.Clear();
         pump();
         Console.WriteLine($"PASS: large text selection, Unicode/newlines/tabs, cancellation, replacement, undo/redo, native constraints, delayed destination guard and actual caret viewport; immediate edit {immediateEditMs:F1} ms");
-        Check(pasteExecuteMs < 500 && immediateEditMs < 500,
-            "bulk text command and immediate edit must not synchronously format the entire document");
+        return (completeMs, editSettleMs);
     }
 
     private static void VerifyPartiallyClippedCaret(ComposerBar composer, TextBox input, string text, Action pump)
