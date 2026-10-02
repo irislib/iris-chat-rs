@@ -98,6 +98,9 @@ final class ComposerClipboardLayoutTests: XCTestCase {
             try await Task.sleep(nanoseconds: 250_000_000)
             host.view.layoutIfNeeded()
             let editor = try XCTUnwrap(find(IrisComposerUITextView.self, in: host.view))
+            XCTAssertNil(editor.textLayoutManager)
+            XCTAssertTrue(editor.isScrollEnabled)
+            XCTAssertFalse(editor.scrollsToTop)
             XCTAssertTrue(editor.becomeFirstResponder())
             defer { editor.resignFirstResponder() }
             var scrollingDelegate: ClipboardScrollingDelegate?
@@ -144,6 +147,11 @@ final class ComposerClipboardLayoutTests: XCTestCase {
             _ = try sample()
             try await measureChange("\(name)-paste", expected: text, draft: draft, operations: operations,
                                     enginePresence: enginePresence, action: paste, sample: sample)
+            #if os(iOS)
+            // Native provider paste invokes shouldChange; direct insertText
+            // need not, so validate this control at the paste boundary.
+            if let scrollingDelegate { XCTAssertGreaterThanOrEqual(scrollingDelegate.insertions, 1) }
+            #endif
             attachScreenshot(try screenshot(), name: "\(name)-paste")
             XCTAssertEqual(draft.files, attachments)
             XCTAssertTrue(draft.directly)
@@ -155,7 +163,9 @@ final class ComposerClipboardLayoutTests: XCTestCase {
             XCTAssertTrue(draft.directly)
             XCTAssertFalse(draft.didSend)
             #if os(iOS)
-            if let scrollingDelegate { XCTAssertGreaterThanOrEqual(scrollingDelegate.insertions, 2) }
+            XCTAssertNil(editor.textLayoutManager)
+            XCTAssertTrue(editor.isScrollEnabled)
+            XCTAssertFalse(editor.scrollsToTop)
             if name == "single-paragraph" {
                 try await measureNativeControl(text, matching: editor)
                 try await measureNativeControl(text, matching: editor, label: "native-shared-fitting", sharedFitting: true)

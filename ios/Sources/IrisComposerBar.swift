@@ -576,7 +576,9 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
     var onPasteAttachments: ((IrisClipboardAttachments) -> Void)? = nil
 
     func makeUIView(context: Context) -> UITextView {
-        let textView = IrisComposerUITextView()
+        // Explicit legacy layout keeps large paragraphs responsive while
+        // retaining native keyboard, selection and undo behavior.
+        let textView = IrisComposerUITextView(usingTextLayoutManager: false)
         textView.onPasteAttachments = onPasteAttachments
         Self.activeTextView = textView
         textView.delegate = context.coordinator
@@ -587,7 +589,10 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
         textView.tintColor = UIColor.tintColor
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
-        textView.isScrollEnabled = false
+        // sizeThatFits owns the one-to-five-line height. Keep scrolling enabled
+        // before insertion so a large paste does not change layout modes.
+        textView.isScrollEnabled = true
+        textView.scrollsToTop = false
         textView.returnKeyType = .default
         textView.keyboardDismissMode = .interactive
         textView.autocapitalizationType = .sentences
@@ -617,11 +622,6 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
             } else {
                 uiView.selectedRange = NSRange(location: textLength, length: 0)
             }
-        }
-        let shouldScroll = measuredHeight(for: uiView, width: uiView.bounds.width) >= maxHeight(for: uiView)
-        if uiView.isScrollEnabled != shouldScroll {
-            uiView.isScrollEnabled = shouldScroll
-            needsSelectionReveal = true
         }
         if needsSelectionReveal { (uiView as? IrisComposerUITextView)?.revealSelectionAfterNextLayout() }
         if isFocused && !uiView.isFirstResponder {
