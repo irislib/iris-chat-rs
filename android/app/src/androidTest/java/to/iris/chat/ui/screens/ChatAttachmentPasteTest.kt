@@ -18,6 +18,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.State
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.text.TextRange
@@ -29,6 +34,7 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.*
 import org.junit.After
 import org.junit.Assert.*
@@ -49,6 +55,8 @@ class ChatAttachmentPasteTest {
     private val sendDirectly = mutableStateOf(false)
     private val sent = mutableListOf<AppAction>()
     private val draftUpdates = mutableListOf<String>()
+    private val pasteKeyDownAt = AtomicLong(-1)
+    private val draftUpdatedAt = AtomicLong(-1)
     private val sourceFiles = mutableListOf<File>()
     private var previousClip: ClipData? = null
     private var clipboardChanged = false
@@ -208,9 +216,11 @@ class ChatAttachmentPasteTest {
         val output = File(context.cacheDir, "attachments/outgoing")
         val before = output.listFiles().orEmpty().map { it.name }.toSet()
         val started = SystemClock.uptimeMillis()
-        pasteClipboard(ClipData.newPlainText("Text", text))
+        val pasteTiming = pasteClipboard(ClipData.newPlainText("Text", text))
         compose.waitUntil(5_000) { draftUpdates.lastOrNull() == expected }
         val elapsedMs = SystemClock.uptimeMillis() - started
+        val pasteKeyAt = pasteKeyDownAt.get()
+        val pasteDraftAt = draftUpdatedAt.get()
         val pasteUpdates = draftUpdates.size
         assertEquals(listOf(expected), draftUpdates)
         assertEquals(expected, draft.text.toString())
@@ -221,9 +231,12 @@ class ChatAttachmentPasteTest {
         val edited = "$expected!"
         val editStarted = SystemClock.uptimeMillis()
         compose.onNodeWithTag("chatMessageInput").performTextInput("!")
+        val editActionReturnedAt = SystemClock.uptimeMillis()
         compose.waitForIdle()
+        val editIdleAt = SystemClock.uptimeMillis()
         compose.waitUntil(5_000) { draftUpdates.lastOrNull() == edited }
         val editElapsedMs = SystemClock.uptimeMillis() - editStarted
+        val editDraftAt = draftUpdatedAt.get()
         val editUpdates = draftUpdates.size - pasteUpdates
         File(checkNotNull(context.getExternalFilesDir("screenshots")), "android-clipboard-large-text.json").apply {
             parentFile?.mkdirs()
@@ -231,10 +244,28 @@ class ChatAttachmentPasteTest {
                 "characters":${text.length},"elapsed_ms":$elapsedMs,"draft_updates":$pasteUpdates,
                 "subsequent_edit_ms":$editElapsedMs,"subsequent_edit_draft_updates":$editUpdates,
                 "freeze_budget_ms":5000,
+                "paste_phases_ms":{
+                    "clipboard_setup":${pasteTiming.clipboardReadyAt - started},
+                    "clipboard_set_primary_clip":${pasteTiming.clipboardWriteMs},
+                    "key_action":${pasteTiming.keyActionReturnedAt - pasteTiming.clipboardReadyAt},
+                    "key_action_start_to_preview_event":${pasteKeyAt - pasteTiming.clipboardReadyAt},
+                    "preview_event_to_draft_callback":${pasteDraftAt - pasteKeyAt},
+                    "idle_after_key_action":${pasteTiming.idleAt - pasteTiming.keyActionReturnedAt},
+                    "draft_wait_after_idle":${started + elapsedMs - pasteTiming.idleAt}
+                },
+                "subsequent_edit_phases_ms":{
+                    "semantics_action":${editActionReturnedAt - editStarted},
+                    "action_start_to_draft_callback":${editDraftAt - editStarted},
+                    "idle_after_action":${editIdleAt - editActionReturnedAt},
+                    "draft_wait_after_idle":${editStarted + editElapsedMs - editIdleAt}
+                },
                 "paste_boundary":"Clipboard setup through native Ctrl+V, Compose idle, and observed draft callback",
-                "subsequent_edit_boundary":"Compose semantics text input through idle and observed draft callback"
+                "subsequent_edit_boundary":"Compose semantics text input through idle and observed draft callback",
+                "phase_boundary":"Action durations include Compose test synchronization. Preview event is captured on the input before default Ctrl+V handling; draft callback follows snapshotFlow delivery and is not a render or frame-rate measurement. Nested phase intervals overlap."
             }""".trimIndent())
         }
+        assertTrue("Ctrl+V preview event must precede the paste draft callback", pasteKeyAt in started..pasteDraftAt)
+        assertTrue("Subsequent draft callback must belong to this edit", editDraftAt in editStarted..(editStarted + editElapsedMs))
         assertTrue("A 100 KB text paste should finish promptly", elapsedMs < 5_000)
         assertTrue("The next edit after a 100 KB paste should finish promptly", editElapsedMs < 5_000)
         assertEquals(1, editUpdates)
@@ -294,8 +325,16 @@ class ChatAttachmentPasteTest {
                     if (visible.value) ComposerBar(draft, attachments.value, false, false, null,
                         inputContentModifier = receiver.receiverModifier(true, sendDirectly.value) {
                             attachments.value += it
+                        }.onPreviewKeyEvent {
+                            if (it.type == KeyEventType.KeyDown && it.key == Key.V && it.isCtrlPressed) {
+                                pasteKeyDownAt.set(SystemClock.uptimeMillis())
+                            }
+                            false
                         },
-                        onDraftChange = { draftUpdates.add(it) }, onAttach = {},
+                        onDraftChange = {
+                            draftUpdatedAt.set(SystemClock.uptimeMillis())
+                            draftUpdates.add(it)
+                        }, onAttach = {},
                         onRemoveAttachment = { receiver.remove(it); attachments.value -= it },
                         onSend = {
                             sent += attachmentSendAction("paste-chat", attachments.value, draft.text.toString(), sendDirectly.value)
@@ -307,16 +346,29 @@ class ChatAttachmentPasteTest {
         compose.onNodeWithTag("chatMessageInput").performClick().performTextInputSelection(TextRange(draft.text.length))
     }
 
-    private fun pasteClipboard(clip: ClipData) {
+    private data class ClipboardPasteTiming(
+        val clipboardReadyAt: Long,
+        val clipboardWriteMs: Long,
+        val keyActionReturnedAt: Long,
+        val idleAt: Long,
+    )
+
+    private fun pasteClipboard(clip: ClipData): ClipboardPasteTiming {
+        var clipboardWriteMs = 0L
         compose.runOnIdle {
             val clipboard = context.getSystemService(ClipboardManager::class.java)
             if (!clipboardChanged) { previousClip = clipboard.primaryClip; clipboardChanged = true }
+            val started = SystemClock.uptimeMillis()
             clipboard.setPrimaryClip(clip)
+            clipboardWriteMs = SystemClock.uptimeMillis() - started
         }
+        val clipboardReadyAt = SystemClock.uptimeMillis()
         compose.onNodeWithTag("chatMessageInput").performKeyInput {
             keyDown(Key.CtrlLeft); pressKey(Key.V); keyUp(Key.CtrlLeft)
         }
+        val keyActionReturnedAt = SystemClock.uptimeMillis()
         compose.waitForIdle()
+        return ClipboardPasteTiming(clipboardReadyAt, clipboardWriteMs, keyActionReturnedAt, SystemClock.uptimeMillis())
     }
 
     private fun commitFromKeyboard(uri: Uri, mime: String) {

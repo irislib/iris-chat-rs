@@ -53,7 +53,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -183,9 +182,6 @@ fun ChatScreen(
     var imageViewerItem by remember(chatId) { mutableStateOf<ImageViewerItem?>(null) }
     var lastTypingSentMs by remember(chatId) { mutableStateOf(0L) }
     var hasSentTyping by remember(chatId) { mutableStateOf(false) }
-    val latestDraft by rememberUpdatedState(draft.text.toString())
-    val latestLastPersistedDraft by rememberUpdatedState(lastPersistedDraft)
-    val latestHasSentTyping by rememberUpdatedState(hasSentTyping)
     var composerBounds by remember { mutableStateOf<Rect?>(null) }
     var showMessageRequestBlockDialog by remember(chatId) { mutableStateOf(false) }
     var showMessageRequestBlockAndReportDialog by remember(chatId) { mutableStateOf(false) }
@@ -263,15 +259,17 @@ fun ChatScreen(
     // Debounced persist: 500ms after the user stops typing, push the
     // current text into the thread's `draft` column. The Rust side
     // dedups against the previous value so no-op writes are cheap.
-    LaunchedEffect(chatId, draft.text.toString()) {
-        val currentDraft = draft.text.toString()
-        if (lastPersistedDraft == currentDraft) {
-            return@LaunchedEffect
-        }
-        delay(500)
-        if (lastPersistedDraft != currentDraft) {
-            appManager.dispatch(AppAction.SetChatDraft(chatId, currentDraft))
-            lastPersistedDraft = currentDraft
+    LaunchedEffect(chatId, draft) {
+        // Observe edits outside composition so typing does not recompose the
+        // entire transcript. A newer edit cancels the pending draft save.
+        snapshotFlow { draft.text.toString() }.collectLatest { currentDraft ->
+            if (lastPersistedDraft != currentDraft) {
+                delay(500)
+                if (draft.text.toString() == currentDraft && lastPersistedDraft != currentDraft) {
+                    appManager.dispatch(AppAction.SetChatDraft(chatId, currentDraft))
+                    lastPersistedDraft = currentDraft
+                }
+            }
         }
     }
 
@@ -382,15 +380,15 @@ fun ChatScreen(
 
     DisposableEffect(chatId) {
         onDispose {
-            if (latestHasSentTyping) {
+            if (hasSentTyping) {
                 hasSentTyping = false
                 lastTypingSentMs = 0L
                 appManager.dispatch(AppAction.StopTyping(chatId))
             }
             // Flush any pending draft on the way out so the latest
             // text always hits SQLite before this screen tears down.
-            val draftOnDispose = latestDraft
-            if (latestLastPersistedDraft != draftOnDispose) {
+            val draftOnDispose = draft.text.toString()
+            if (lastPersistedDraft != draftOnDispose) {
                 appManager.dispatch(AppAction.SetChatDraft(chatId, draftOnDispose))
             }
         }

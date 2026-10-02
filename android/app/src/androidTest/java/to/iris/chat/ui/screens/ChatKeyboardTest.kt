@@ -58,6 +58,24 @@ class ChatKeyboardTest {
             val latest = compose.onNodeWithText(latestText)
             try {
                 compose.waitUntil(10_000) { compose.onAllNodesWithText(latestText).fetchSemanticsNodes().isNotEmpty() }
+                latest.assertIsDisplayed()
+                val latestBubble = compose.onNodeWithTag("chatMessage-${chat.messages.last().id}")
+                val geometry = {
+                    Triple(timeline.getUnclippedBoundsInRoot(), latestBubble.getUnclippedBoundsInRoot(), input.getUnclippedBoundsInRoot())
+                }
+                var previous = geometry()
+                var stableAt = System.nanoTime()
+                // A displayed text node can still have its bubble's timestamp
+                // clipped. Let production initial scrolling settle without
+                // scrolling here or opening the keyboard to repair its position.
+                compose.waitUntil(5_000) {
+                    val next = geometry()
+                    if (next != previous) { previous = next; stableAt = System.nanoTime() }
+                    val (viewport, bubble, composer) = next
+                    bubble.top >= viewport.top && bubble.bottom <= viewport.bottom &&
+                        viewport.bottom <= composer.top && System.nanoTime() - stableAt > 250_000_000
+                }
+                compose.waitForIdle()
             } catch (failure: Throwable) {
                 screenshot("android-initial-failure")
                 File(base.getExternalFilesDir("screenshots"), "android-initial-semantics.txt").writeText(

@@ -7,7 +7,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### GitHub
 
 - Paste images and multiple files into native chat drafts, preserving captions and direct-send mode without sending automatically.
-- Reduce repeated layout of long drafts on Apple and Windows, keep the cursor visible, and preserve Android's native editor state during input.
+- Reduce repeated layout of long drafts on Apple and Windows, keep the cursor visible, and avoid updating the whole Android chat screen on each edit.
 - Move private contacts and device labels to ratcheted device messages, direct transfer, and pairing snapshots. Retire the retained static-encryption sync formats while preserving existing accounts, sessions, and linked devices.
 - Publish iris-chat-protocol 0.1.12 with selective retirement of obsolete queued device-sync messages, and verify native-to-web private controls through the production receive path.
 - Authenticate background call notifications through ratcheted messages and signed session setup, and retain notifications for retry when a cold lookup fails.
