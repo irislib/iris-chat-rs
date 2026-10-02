@@ -15,7 +15,6 @@ internal static class PasteLayoutComparison
     {
         var input = (TextBox)composer.FindName("Input");
         var originalMode = TextOptions.GetTextFormattingMode(input);
-        var originalScroll = input.VerticalScrollBarVisibility;
         var originalMaxLength = input.MaxLength;
         var results = new List<object>();
         try
@@ -129,7 +128,7 @@ internal static class PasteLayoutComparison
             composer.Clear();
             input.MaxLength = originalMaxLength;
             TextOptions.SetTextFormattingMode(input, originalMode);
-            input.VerticalScrollBarVisibility = originalScroll;
+            // Clear restores the production small-draft scrollbar policy.
             pump();
         }
         Console.WriteLine("PASS: real composer layout and native-paste comparison preserves whole text, visible caret and next edit");
