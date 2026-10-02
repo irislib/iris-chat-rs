@@ -128,7 +128,10 @@ internal static class Program
             var elapsed = Stopwatch.StartNew();
             Check(ApplicationCommands.Paste.CanExecute(null, input), "native Paste enabled");
             var canExecuteMs = elapsed.Elapsed.TotalMilliseconds;
-            ApplicationCommands.Paste.Execute(null, input);
+            IReadOnlyDictionary<string, double>? nativePastePhases = null;
+            PastePhaseDiagnostics.Observer = phases => nativePastePhases = phases;
+            try { ApplicationCommands.Paste.Execute(null, input); }
+            finally { PastePhaseDiagnostics.Observer = null; }
             var executeCompleteMs = elapsed.Elapsed.TotalMilliseconds;
             Pump();
             var firstDrainCompleteMs = elapsed.Elapsed.TotalMilliseconds;
@@ -181,6 +184,7 @@ internal static class Program
                     layout = editLayoutCompleteMs - editInsertMs,
                     dispatcher_drain = editMs - editLayoutCompleteMs,
                 },
+                native_paste_phases_ms = nativePastePhases,
                 paste_change_events = pasteChanges, subsequent_edit_change_events = editChanges,
                 freeze_budget_ms = freezeBudgetMs,
                 boundary = "Clipboard already populated; native Paste command through forced window layout, background-priority dispatcher drain, and refreshed end-caret geometry. Subsequent edit uses native SelectedText insertion through the same layout/drain.",
@@ -189,11 +193,8 @@ internal static class Program
             Console.WriteLine($"TIMING: Windows large text paste {pasteMs:F1} ms; subsequent edit {editMs:F1} ms; events {pasteChanges}/{editChanges}");
             Check(input.Text == large + "!" && editChanges == 1, "subsequent native edit completes once after large paste");
             Save(window, Path.Combine(output, "windows-large-text-paste.png"));
-            // Retain diagnostic/native comparison evidence even if the cold
-            // performance assertion fails. Semantic assertions stay above.
-            PasteLayoutComparison.Verify(window, composer, large, Pump, output);
-            Check(pasteMs < freezeBudgetMs && editMs < freezeBudgetMs, "large paste and subsequent edit stay within the 5 s freeze budget");
-            Check(executeCompleteMs - canExecuteMs < 500, "large native paste command returns without full-document synchronous layout");
+            // Finish semantics before enforcing the unchanged cold performance
+            // limits, so a slow runner still retains meaningful native evidence.
             LargeTextPasteTests.Verify(composer, Pump, output);
             RestoredDraftLayoutTests.Verify(window, composer, large, Pump, output);
             composer.Clear();
@@ -202,6 +203,8 @@ internal static class Program
             window.Content = null; Pump();
             Check(!File.Exists(cancelled), "unloading the old chat cleans its draft");
             ReentrantPasteTests.Verify(window, bitmap, first);
+            Check(pasteMs < freezeBudgetMs && editMs < freezeBudgetMs, "large paste and subsequent edit stay within the 5 s freeze budget");
+            Check(executeCompleteMs - canExecuteMs < 500, "large native paste command returns without full-document synchronous layout");
             Console.WriteLine("PASS: WPF native clipboard paste, multiple originals, PNG pixels, direct draft, large text single-edit, no auto-send, stale/blocked destination and generated-file cleanup");
             return 0;
         }

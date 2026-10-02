@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -7,6 +8,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using IrisChat;
 using IrisChat.Chrome;
 
 internal static class LargeTextPasteTests
@@ -31,7 +33,10 @@ internal static class LargeTextPasteTests
         TextChangedEventHandler changed = (_, _) => changes++;
         input.TextChanged += changed;
         var elapsed = Stopwatch.StartNew();
-        ApplicationCommands.Paste.Execute(null, input);
+        IReadOnlyDictionary<string, double>? nativePastePhases = null;
+        PastePhaseDiagnostics.Observer = phases => nativePastePhases = phases;
+        try { ApplicationCommands.Paste.Execute(null, input); }
+        finally { PastePhaseDiagnostics.Observer = null; }
         var pasteExecuteMs = elapsed.Elapsed.TotalMilliseconds;
         // Edit before any dispatcher drain: deferring expensive validation to
         // the next edit must not make the paste optimization appear to pass.
@@ -43,6 +48,7 @@ internal static class LargeTextPasteTests
         {
             utf16_code_units = text.Length, utf8_bytes = Encoding.UTF8.GetByteCount(text),
             paste_execute_ms = pasteExecuteMs, immediate_edit_ms = immediateEditMs,
+            native_paste_phases_ms = nativePastePhases,
             text_change_events = changes, command_budget_ms = 500,
             boundary = "Native Paste Execute then SelectedText insertion before any dispatcher drain."
         }, new JsonSerializerOptions { WriteIndented = true }));
@@ -50,8 +56,6 @@ internal static class LargeTextPasteTests
             "large paste and immediate edit each change the native editor once");
         Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Visible,
             "bulk draft reserves its scrollbar width before layout");
-        Check(pasteExecuteMs < 500 && immediateEditMs < 500,
-            "bulk text command and immediate edit must not synchronously format the entire document");
         input.Undo();
         Check(input.Text == expected && input.SelectionStart == caret && input.SelectionLength == 0,
             "one Undo removes only the subsequent edit and restores the pasted caret");
@@ -77,6 +81,8 @@ internal static class LargeTextPasteTests
         DataObject.RemovePastingHandler(input, cancel);
         Check(pasteEvents == 1 && input.Text == original && input.SelectionStart == selectionStart && input.SelectionLength == selectionLength,
             "Pasting cancellation preserves text and selection without running native paste again");
+        Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Auto,
+            "canceled bulk paste restores actual small-draft scrollbar policy");
 
         DataObjectPastingEventHandler replace = (_, e) =>
         {
@@ -89,23 +95,35 @@ internal static class LargeTextPasteTests
         DataObject.RemovePastingHandler(input, replace);
         Check(pasteEvents == 2 && input.Text == "Before replacement🙂 after",
             "custom Pasting data replacement is respected once");
+        Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Auto,
+            "short replacement restores actual small-draft scrollbar policy");
 
         composer.Clear();
         input.MaxLength = 8;
         Clipboard.SetText(new string('a', 40_000));
         ApplicationCommands.Paste.Execute(null, input);
         Check(input.Text == "aaaaaaaa", "constrained editors retain WPF's native paste filtering");
+        Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Auto,
+            "native length filtering restores the actual small-draft policy");
         input.MaxLength = 0;
+        composer.Clear();
+        input.CharacterCasing = CharacterCasing.Upper;
+        ApplicationCommands.Paste.Execute(null, input);
+        Check(input.Text == new string('A', 40_000), "large paste retains native character casing");
+        input.CharacterCasing = CharacterCasing.Normal;
         composer.Clear();
         Clipboard.SetText("small\t世界🙂\r\ntext");
         ApplicationCommands.Paste.Execute(null, input);
         Check(input.Text == "small 世界🙂\r\ntext", "ordinary native plaintext paste keeps its semantics");
         Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Auto,
             "ordinary small drafts keep automatic scrollbars");
+        NativePasteDestinationTests.Verify(composer, input, text);
         VerifyPartiallyClippedCaret(composer, input, text, pump);
         composer.Clear();
         pump();
-        Console.WriteLine($"PASS: large text selection, Unicode/newlines/tabs, cancellation, replacement, undo/redo, native constraints; immediate edit {immediateEditMs:F1} ms");
+        Console.WriteLine($"PASS: large text selection, Unicode/newlines/tabs, cancellation, replacement, undo/redo, native constraints, delayed destination guard and actual caret viewport; immediate edit {immediateEditMs:F1} ms");
+        Check(pasteExecuteMs < 500 && immediateEditMs < 500,
+            "bulk text command and immediate edit must not synchronously format the entire document");
     }
 
     private static void VerifyPartiallyClippedCaret(ComposerBar composer, TextBox input, string text, Action pump)
