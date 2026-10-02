@@ -668,6 +668,12 @@ impl FfiApp {
         self.shutdown_inner(cfg!(any(target_os = "ios", target_os = "macos")));
     }
 
+    /// Waits until the core and its runtime have released their resources.
+    /// Hosts must call this from a background worker before terminal cleanup.
+    pub fn shutdown_and_wait(&self) {
+        self.shutdown_inner(true);
+    }
+
     fn support_bundle_json_with_ffi_diagnostics(
         &self,
         rust_json: String,
@@ -827,7 +833,8 @@ impl FfiApp {
             let (reply_tx, reply_rx) = flume::bounded(1);
             let _ = self.foreground_tx.send(CoreMsg::Shutdown(Some(reply_tx)));
             if wait_for_completion {
-                // Apple shells await this on a worker before resetting local files.
+                // Hosts await this on a worker before resetting local files or
+                // releasing platform services used during core teardown.
                 // The message acknowledgement precedes AppCore/runtime destruction;
                 // only joining guarantees the old core has released its directory.
                 if let Some(worker) = worker.take() {

@@ -22,7 +22,7 @@ fn shutdown_drains_a_direct_search_waiting_for_the_database() {
     let worker_app = app.clone();
     let (finished_tx, finished_rx) = flume::bounded(1);
     let worker = thread::spawn(move || {
-        worker_app.shutdown_inner(true);
+        worker_app.shutdown_and_wait();
         finished_tx.send(()).unwrap();
     });
     let returned_while_reading = finished_rx.recv_timeout(Duration::from_millis(100)).is_ok();
@@ -42,7 +42,7 @@ fn shutdown_drains_a_direct_search_waiting_for_the_database() {
 }
 
 #[test]
-fn shutdown_waits_for_core_exit_before_resetting_apple_storage() {
+fn shutdown_and_wait_releases_core_before_terminal_cleanup() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let data_dir = temp_dir.path().to_string_lossy().to_string();
     let app = new_ffi_app_inner(data_dir.clone());
@@ -55,7 +55,7 @@ fn shutdown_waits_for_core_exit_before_resetting_apple_storage() {
     let (finished_tx, finished_rx) = flume::bounded(1);
     let worker_app = app.clone();
     let worker = thread::spawn(move || {
-        worker_app.shutdown_inner(true);
+        worker_app.shutdown_and_wait();
         finished_tx.send(()).unwrap();
     });
     let returned_while_busy = finished_rx
@@ -70,11 +70,11 @@ fn shutdown_waits_for_core_exit_before_resetting_apple_storage() {
     );
     assert!(app.shared_db_read().is_none());
     // No sleep or retry: shutdown must release the directory lock before
-    // the Apple shell deletes files and creates the replacement core.
+    // a host deletes files and creates the replacement core.
     let replacement = new_ffi_app_inner(data_dir);
     assert!(replacement.shared_db_read().is_some());
-    replacement.shutdown_inner(true);
-    app.shutdown_inner(true);
+    replacement.shutdown_and_wait();
+    app.shutdown_and_wait();
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn shutdown_returns_when_startup_failed_without_a_core_worker() {
     let app = ffi_app_failure("startup failed".into());
     let (finished_tx, finished_rx) = flume::bounded(1);
     thread::spawn(move || {
-        app.shutdown_inner(true);
+        app.shutdown_and_wait();
         let _ = finished_tx.send(());
     });
     assert!(finished_rx.recv_timeout(Duration::from_secs(1)).is_ok());
