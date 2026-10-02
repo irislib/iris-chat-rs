@@ -497,7 +497,7 @@ fn group_metadata_changes_create_system_notices() {
         .any(|message| message.body == "Group renamed to Renamed"));
     assert!(messages
         .iter()
-        .any(|message| message.body.contains("joined the group")));
+        .any(|message| message.body.contains("added to the group")));
     assert!(messages
         .iter()
         .any(|message| message.body.contains("left the group")));
@@ -512,10 +512,10 @@ fn group_metadata_changes_create_system_notices() {
 #[test]
 fn group_metadata_member_batches_create_one_notice() {
     for (added_count, expected) in [
-        (1, "Alice joined the group"),
-        (2, "Alice and Bob joined the group"),
-        (3, "Alice, Bob and Carol joined the group"),
-        (5, "Alice, Bob and 3 others joined the group"),
+        (1, "Alice was added to the group"),
+        (2, "Alice and Bob were added to the group"),
+        (3, "Alice, Bob and Carol were added to the group"),
+        (5, "Alice, Bob and 3 others were added to the group"),
     ] {
         let owner = Keys::generate();
         let device = Keys::generate();
@@ -559,7 +559,7 @@ fn group_metadata_member_batches_create_one_notice() {
             "One addition batch should produce one notice"
         );
         assert_eq!(thread.unread_count, original_unread_count + 1);
-        let notice = thread.messages.last().expect("joined notice");
+        let notice = thread.messages.last().expect("member addition notice");
         assert_eq!(notice.body, expected);
         assert_eq!(notice.kind, ChatMessageKind::System);
         core.rebuild_state();

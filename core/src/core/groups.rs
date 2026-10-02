@@ -639,13 +639,13 @@ impl AppCore {
                         now,
                     );
                 }
-                let joined_members = group
+                let added_members = group
                     .members
                     .iter()
                     .filter(|owner| !previous.members.iter().any(|existing| existing == *owner))
                     .map(|owner| self.owner_display_label(&owner.to_string()))
                     .collect::<Vec<_>>();
-                let joined_label = match joined_members.as_slice() {
+                let added_label = match added_members.as_slice() {
                     [] => None,
                     [name] => Some(name.clone()),
                     [first, second] => Some(format!("{first} and {second}")),
@@ -654,10 +654,15 @@ impl AppCore {
                         Some(format!("{first}, {second} and {} others", others.len()))
                     }
                 };
-                if let Some(joined_label) = joined_label {
+                if let Some(added_label) = added_label {
+                    let verb = if added_members.len() == 1 {
+                        "was"
+                    } else {
+                        "were"
+                    };
                     self.push_system_notice(
                         &chat_id,
-                        format!("{joined_label} joined the group"),
+                        format!("{added_label} {verb} added to the group"),
                         now,
                     );
                 }
