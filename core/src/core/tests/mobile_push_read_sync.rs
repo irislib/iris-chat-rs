@@ -107,20 +107,32 @@ fn mobile_push_read_sync_does_not_initialize_or_migrate_the_database() {
 }
 
 #[test]
-fn mobile_push_large_group_notification_cleanup_has_one_protocol_load_and_bounded_checkpoint_bytes() {
+fn mobile_push_large_group_notification_cleanup_has_one_protocol_load_and_bounded_checkpoint_bytes()
+{
     let mut pair = chat_read_receipt_pair("large-group-notification-work");
     let peers: Vec<_> = (0..100).map(|_| Keys::generate()).collect();
-    pair.b.create_group("Large group", &peers.iter().map(|p| p.public_key().to_hex()).collect::<Vec<_>>());
+    pair.b.create_group(
+        "Large group",
+        &peers
+            .iter()
+            .map(|p| p.public_key().to_hex())
+            .collect::<Vec<_>>(),
+    );
     let mut payloads = Vec::new();
     let mut events = Vec::new();
     for (i, peer) in peers.iter().take(16).enumerate() {
         let body = format!("read notification {i}");
         let event = appcore_direct_message_event_for_test(
-            pair.b.protocol_engine.as_mut().unwrap(), peer, &body, 200,
+            pair.b.protocol_engine.as_mut().unwrap(),
+            peer,
+            &body,
+            200,
         );
-        let (_, id) = runtime_rumor_json(peer.public_key(), CHAT_MESSAGE_KIND, &body, 200, Vec::new());
+        let (_, id) =
+            runtime_rumor_json(peer.public_key(), CHAT_MESSAGE_KIND, &body, 200, Vec::new());
         chat_read_sync_incoming(&mut pair.b, peer, &id, 200);
-        pair.b.mark_messages_seen(&peer.public_key().to_hex(), &[id]);
+        pair.b
+            .mark_messages_seen(&peer.public_key().to_hex(), &[id]);
         payloads.push(serde_json::json!({"event": event}).to_string());
         events.push(event);
     }
@@ -131,22 +143,139 @@ fn mobile_push_large_group_notification_cleanup_has_one_protocol_load_and_bounde
     payloads.push(payloads[0].clone());
     let expected: Vec<u64> = (0..payloads.len() as u64).collect();
     let conn = rusqlite::Connection::open(pair._b_dir.path().join("core.sqlite3")).unwrap();
-    let read_state = || conn.query_row(
-        "SELECT value FROM ndr_kv WHERE key = 'appcore/protocol-engine-state-v1'",
-        [], |row| row.get::<_, String>(0),
-    ).unwrap();
+    let read_state = || {
+        conn.query_row(
+            "SELECT value FROM ndr_kv WHERE key = 'appcore/protocol-engine-state-v1'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap()
+    };
     let before = read_state();
     super::mobile_push::PREVIEW_WORK.with(|work| work.set((0, 0)));
     let started = std::time::Instant::now();
     let indexes = read_mobile_push_notification_indexes(
         pair._b_dir.path().to_string_lossy().into_owned(),
-        pair.owner.public_key().to_hex(), pair.b_device.secret_key().to_secret_hex(), payloads,
+        pair.owner.public_key().to_hex(),
+        pair.b_device.secret_key().to_secret_hex(),
+        payloads,
     );
     let (loads, checkpoint_bytes) = super::mobile_push::PREVIEW_WORK.with(|work| work.get());
     eprintln!("large-group notification cleanup: {:?}, loads={loads}, checkpoint_bytes={checkpoint_bytes}, state_bytes={}", started.elapsed(), before.len());
     assert_eq!(indexes, expected);
-    assert_eq!(read_state(), before, "preview must leave the durable ratchet untouched");
-    assert_eq!(loads, 1, "a notification batch must not reload all groups and sessions for each alert");
-    assert!(checkpoint_bytes < before.len() * 2, "read-only preview must not serialize the entire protocol state for each alert");
-    for event in events { pair.b.handle_relay_event(event); }
+    assert_eq!(
+        read_state(),
+        before,
+        "preview must leave the durable ratchet untouched"
+    );
+    assert_eq!(
+        loads, 1,
+        "a notification batch must not reload all groups and sessions for each alert"
+    );
+    assert!(
+        checkpoint_bytes < before.len() * 2,
+        "read-only preview must not serialize the entire protocol state for each alert"
+    );
+    // A real receive must persist its ratchet and delivery journal immediately,
+    // but must not rewrite the unrelated multi-megabyte group/fanout history.
+    let storage = Arc::new(super::storage::SqliteStorageAdapter::new(
+        pair.b.app_store.shared(),
+        pair.owner.public_key().to_hex(),
+        pair.b_device.public_key().to_hex(),
+    ));
+    let mut engine = ProtocolEngine::load_or_create_for_local_device(
+        storage.clone(),
+        pair.owner.public_key(),
+        &pair.b_device,
+    )
+    .unwrap();
+    let shared = pair.b.app_store.shared();
+    let sqlite_written_pages = |shared: &iris_chat_protocol::SharedConnection| {
+        let conn = shared.lock().unwrap();
+        let mut current = 0;
+        let mut highwater = 0;
+        // The locked connection owns the handle throughout this read-only
+        // SQLite counter query; both output pointers refer to live integers.
+        let status = unsafe {
+            rusqlite::ffi::sqlite3_db_status(
+                conn.handle(),
+                rusqlite::ffi::SQLITE_DBSTATUS_CACHE_WRITE,
+                &mut current,
+                &mut highwater,
+                0,
+            )
+        };
+        assert_eq!(status, rusqlite::ffi::SQLITE_OK);
+        current as u64
+    };
+    let page_size: u64 = shared
+        .lock()
+        .unwrap()
+        .pragma_query_value(None, "page_size", |r| r.get(0))
+        .unwrap();
+    let written_before = sqlite_written_pages(&shared);
+    let received = engine
+        .process_direct_message_event(&events[0])
+        .unwrap()
+        .expect("real foreground decryption");
+    let written = (sqlite_written_pages(&shared) - written_before) * page_size;
+    eprintln!(
+        "large-group foreground receive: sqlite_page_bytes_written={written}, state_bytes={}",
+        before.len()
+    );
+    assert!(
+        written < before.len() as u64 / 4,
+        "one receive must not rewrite unrelated large-group state"
+    );
+    drop(engine);
+    let reopened = Arc::new(std::sync::Mutex::new(
+        rusqlite::Connection::open(pair._b_dir.path().join("core.sqlite3")).unwrap(),
+    ));
+    let storage = Arc::new(super::storage::SqliteStorageAdapter::new(
+        reopened.clone(),
+        pair.owner.public_key().to_hex(),
+        pair.b_device.public_key().to_hex(),
+    ));
+    let mut restarted = ProtocolEngine::load_or_create_for_local_device(
+        storage.clone(),
+        pair.owner.public_key(),
+        &pair.b_device,
+    )
+    .unwrap();
+    let recovered = restarted
+        .retry_pending_protocol(iris_chat_protocol::NdrUnixSeconds(unix_now().0))
+        .unwrap();
+    assert!(
+        recovered
+            .direct_messages
+            .iter()
+            .any(|message| message.event_id == received.event_id
+                && message.content == received.content),
+        "this unacknowledged decrypted delivery must survive a fresh database connection"
+    );
+    let ids = std::collections::HashSet::from([received.event_id.expect("durable event id")]);
+    let written_before = sqlite_written_pages(&reopened);
+    restarted.ack_decrypted_delivery_ids(&ids).unwrap();
+    let written = (sqlite_written_pages(&reopened) - written_before) * page_size;
+    eprintln!("large-group delivery acknowledgement: sqlite_page_bytes_written={written}");
+    assert!(
+        written < before.len() as u64 / 4,
+        "delivery acknowledgement must not rewrite unrelated large-group state"
+    );
+    drop(restarted);
+    let mut restarted = ProtocolEngine::load_or_create_for_local_device(
+        storage,
+        pair.owner.public_key(),
+        &pair.b_device,
+    )
+    .unwrap();
+    assert!(
+        restarted
+            .retry_pending_protocol(iris_chat_protocol::NdrUnixSeconds(unix_now().0))
+            .unwrap()
+            .direct_messages
+            .iter()
+            .all(|message| !message.event_id.as_ref().is_some_and(|id| ids.contains(id))),
+        "acknowledged delivery must stay acknowledged after restart"
+    );
 }

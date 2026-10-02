@@ -15,7 +15,7 @@ nostr = { version = "0.44.7", default-features = false, features = ["std", "nip4
 nostr-double-ratchet = "0.0.168"
 nostr-double-ratchet-pairwise-codec = "0.0.168"
 rand = "0.8"
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.31", features = ["bundled", "blob"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

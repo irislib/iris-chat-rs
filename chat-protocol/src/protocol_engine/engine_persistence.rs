@@ -49,8 +49,10 @@ impl ProtocolEngine {
             subscription_generation: self.subscription_generation,
         };
         self.batch_persist_dirty.set(false);
-        self.storage
-            .put(PROTOCOL_ENGINE_STATE_KEY, serde_json::to_string(&state)?)?;
+        self.storage.put(
+            PROTOCOL_ENGINE_STATE_KEY,
+            layout_protocol_checkpoint(serde_json::to_string(&state)?),
+        )?;
         Ok(())
     }
 

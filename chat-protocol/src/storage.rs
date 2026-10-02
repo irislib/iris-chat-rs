@@ -1,3 +1,5 @@
+mod incremental;
+
 use super::SharedConnection;
 use std::collections::HashMap;
 use std::fs;
@@ -371,10 +373,19 @@ impl StorageAdapter for SqliteStorageAdapter {
     }
 
     fn put(&self, key: &str, value: String) -> StorageResult<()> {
-        let conn = self
+        let mut conn = self
             .conn
             .lock()
             .map_err(|_| StorageError::new("ndr_kv connection mutex poisoned"))?;
+        if incremental::try_put(
+            &mut conn,
+            &self.owner_pubkey_hex,
+            &self.device_pubkey_hex,
+            key,
+            &value,
+        )? {
+            return Ok(());
+        }
         conn.execute(
             "INSERT INTO ndr_kv (owner_pubkey_hex, device_pubkey_hex, key, value)
              VALUES (?1, ?2, ?3, ?4)
