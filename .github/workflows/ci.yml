@@ -180,7 +180,7 @@ jobs:
         run: ./scripts/android-build android-assemble
 
       - name: Android unit and compile checks
-        run: ./gradlew :app:testDebugUnitTest :app:assembleDebugAndroidTest
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebugAndroidTest -Piris.testRunner=to.iris.chat.calls.NativeCallTestRunner
         working-directory: iris-chat-rs/android
 
       - name: Upload Android native test packages
