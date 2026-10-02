@@ -501,15 +501,13 @@ struct ChatScreen: View {
                                             guard canAttachToCurrentChat else { return }
                                             let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
                                             guard !text.isEmpty || !selectedAttachments.isEmpty else { return }
-                                            stopTypingIfNeeded()
                                             resumeTimelineAutoFollow()
                                             shouldFollowLatest = true
                                             forceScrollToLatest = true
                                             let outgoingText = replyEncodedMessage(reply: replyTarget, text: text)
                                             replyTarget = nil
-                                            composerState.clearForSend { text in
-                                                manager.dispatch(.setChatDraft(chatId: chatId, text: text))
-                                            }
+                                            // Queue the message before typing or draft cleanup can
+                                            // block the core on encryption or storage.
                                             if selectedAttachments.isEmpty {
                                                 manager.dispatch(.sendMessage(chatId: chatId, text: outgoingText))
                                             } else {
@@ -518,6 +516,10 @@ struct ChatScreen: View {
                                                 manager.dispatch(irisAttachmentSendAction(chatId: chatId, attachments: attachments, caption: outgoingText, sendDirectly: sendFilesDirectly))
                                                 sendFilesDirectly = false
                                             }
+                                            composerState.clearForSend { text in
+                                                manager.dispatch(.setChatDraft(chatId: chatId, text: text))
+                                            }
+                                            stopTypingIfNeeded()
                                         }
                                         .overlay(alignment: .top) {
                                             IrisDelayedCapabilityStatus(state: capability) {
