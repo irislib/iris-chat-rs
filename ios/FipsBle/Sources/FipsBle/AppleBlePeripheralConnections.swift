@@ -12,7 +12,8 @@ struct AppleBlePeripheralConnections {
     private var outgoing: [UInt64: UUID] = [:]
 
     mutating func insert(_ id: UInt64, peer: UUID) { outgoing[id] = peer }
-    mutating func remove(_ id: UInt64) { outgoing.removeValue(forKey: id) }
+    @discardableResult
+    mutating func remove(_ id: UInt64) -> Bool { outgoing.removeValue(forKey: id) != nil }
     mutating func reset() {
         outgoing.removeAll()
         retiring.removeAll()
@@ -26,6 +27,10 @@ struct AppleBlePeripheralConnections {
         return cancelling.insert(peer).inserted
     }
     mutating func didDisconnect(_ peer: UUID) {
+        // Stream close callbacks can arrive after the central's terminal callback
+        // and even after a replacement has opened. Those IDs no longer own the
+        // peripheral and must not initiate another cancellation.
+        outgoing = outgoing.filter { $0.value != peer }
         retiring.remove(peer)
         cancelling.remove(peer)
     }

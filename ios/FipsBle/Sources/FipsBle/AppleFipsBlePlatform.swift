@@ -255,8 +255,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
             closed: { [weak self] id, reason in
                 guard let self else { return }
                 connections.removeValue(forKey: id)
-                if isOutgoing {
-                    outgoingConnections.remove(id)
+                if isOutgoing, outgoingConnections.remove(id) {
                     // L2CAP channels share a peripheral connection. Cancelling
                     // it here races a queued replacement open and disconnects
                     // other channels. Keep the discovered GATT connection while

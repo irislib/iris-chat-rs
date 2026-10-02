@@ -45,6 +45,23 @@ final class AppleBlePeripheralConnectionsTests: XCTestCase {
         XCTAssertTrue(connections.canConnect(peer))
     }
 
+    func testTerminalDisconnectInvalidatesOldChannelsBeforeTheirLateClose() {
+        let peer = UUID()
+        var connections = AppleBlePeripheralConnections()
+        connections.insert(1, peer: peer)
+        connections.didDisconnect(peer)
+        XCTAssertFalse(connections.contains(peer), "The terminal callback ends ownership of every old channel")
+        XCTAssertTrue(connections.canConnect(peer))
+        // This is the close callback's admission check: an old ID cannot cancel
+        // either an idle peripheral or a replacement, even with scanning off.
+        if connections.remove(1) { connections.retire(peer) }
+        XCTAssertTrue(connections.canConnect(peer))
+        connections.insert(2, peer: peer)
+        XCTAssertFalse(connections.remove(1))
+        XCTAssertTrue(connections.contains(peer))
+        XCTAssertFalse(connections.canDisconnect(peer, scanning: false, connecting: false))
+    }
+
     func testClosingOldChannelKeepsReplacementOnTheSamePeripheral() {
         let peer = UUID()
         var connections = AppleBlePeripheralConnections()
