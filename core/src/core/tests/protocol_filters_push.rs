@@ -1925,6 +1925,7 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
             unread_count: 1,
             updated_at_secs: 200,
             messages: vec![ChatMessageSnapshot {
+                system_notice_owner_pubkey_hex: None,
                 direct_transfer: None,
                 call: None,
                 id: "rumor-1".to_string(),

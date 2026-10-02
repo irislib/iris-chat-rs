@@ -46,6 +46,7 @@ public partial class MessageBubble : UserControl
     public void Bind(ChatMessageSnapshot message, bool showAuthor = false, string? authorLabel = null)
     {
         _message = message;
+        SystemNoticeProfile.Visibility = Visibility.Collapsed;
         BuildContextMenu(message);
 
         if (showAuthor && !string.IsNullOrEmpty(authorLabel))
@@ -70,6 +71,12 @@ public partial class MessageBubble : UserControl
             BodyText.Foreground = (Brush)FindResource("TextMuted");
             BodyText.HorizontalAlignment = HorizontalAlignment.Center;
             DeliveryText.Visibility = Visibility.Collapsed;
+            if (!string.IsNullOrWhiteSpace(message.systemNoticeOwnerPubkeyHex))
+            {
+                SystemNoticeProfile.Visibility = Visibility.Visible;
+                SystemNoticeProfileText.Text = message.body;
+                BodyText.Visibility = Visibility.Collapsed;
+            }
         }
         else if (message.isOutgoing)
         {
@@ -115,6 +122,13 @@ public partial class MessageBubble : UserControl
         {
             AttachmentsList.Visibility = Visibility.Collapsed;
         }
+    }
+
+    private void OnOpenSystemNoticeProfile(object sender, RoutedEventArgs e)
+    {
+        if (_message?.kind == ChatMessageKind.System &&
+            !string.IsNullOrWhiteSpace(_message.systemNoticeOwnerPubkeyHex))
+            App.CurrentManager.Push(new Screen.DirectChatInfo(_message.systemNoticeOwnerPubkeyHex));
     }
 
     private void BuildContextMenu(ChatMessageSnapshot message)

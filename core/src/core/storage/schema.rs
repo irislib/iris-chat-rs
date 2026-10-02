@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 39;
+const SCHEMA_VERSION: u32 = 40;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS direct_file_transfers (
@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS messages (
     recipient_deliveries_json TEXT NOT NULL DEFAULT '[]',
     delivery_trace_json TEXT NOT NULL DEFAULT '{}',
     call_json TEXT,
+    system_notice_owner_pubkey_hex TEXT,
     outgoing_event_json TEXT,
     PRIMARY KEY (chat_id, id)
 );
@@ -612,6 +613,9 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
     }
     if current < 38 && !column_exists(&tx, "user_discovery_state", "follow_event_json")? {
         tx.execute_batch("ALTER TABLE user_discovery_state ADD COLUMN follow_event_json TEXT;")?;
+    }
+    if current < 40 && !column_exists(&tx, "messages", "system_notice_owner_pubkey_hex")? {
+        tx.execute_batch("ALTER TABLE messages ADD COLUMN system_notice_owner_pubkey_hex TEXT;")?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;

@@ -191,6 +191,7 @@ mod tests {
 
     fn sample_message(id: &str, created_at_secs: u64, is_outgoing: bool) -> ChatMessageSnapshot {
         ChatMessageSnapshot {
+            system_notice_owner_pubkey_hex: None,
             direct_transfer: None,
             call: None,
             id: id.to_string(),

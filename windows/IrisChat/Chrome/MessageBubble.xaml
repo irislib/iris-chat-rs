@@ -29,6 +29,12 @@
                      Background="Transparent"
                      HorizontalScrollBarVisibility="Disabled"
                      VerticalScrollBarVisibility="Disabled" />
+            <Button x:Name="SystemNoticeProfile" Visibility="Collapsed"
+                    Click="OnOpenSystemNoticeProfile" ToolTip="Open profile"
+                    Background="Transparent" BorderThickness="0" Padding="0">
+                <TextBlock x:Name="SystemNoticeProfileText" TextWrapping="Wrap"
+                           TextAlignment="Center" Foreground="{StaticResource TextMuted}" />
+            </Button>
             <!-- Foreground is plain white (not Accent purple) — text and
                  icons are never the brand purple. Opacity matches the
                  timestamp/meta row so the toggle reads as a subtle

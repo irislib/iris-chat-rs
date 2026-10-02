@@ -290,6 +290,9 @@ pub struct CallHistorySnapshot {
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ChatMessageSnapshot {
+    /// Profile subject of a system notice, independent of the message author.
+    #[uniffi(default = None)]
+    pub system_notice_owner_pubkey_hex: Option<String>,
     #[uniffi(default = None)]
     pub direct_transfer: Option<DirectFileTransferSnapshot>,
     pub id: String,

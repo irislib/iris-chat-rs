@@ -98,7 +98,18 @@ final class MessageBodyUITests: IrisChatUITestCase {
         capture(app, named: "outgoing-short-quote-compact-reply")
     }
 
-    private func openMessage(_ body: String, largeText: Bool = false, outgoing: Bool = false) -> XCUIApplication {
+    func testGroupAddedNoticeOpensTheNamedMembersProfile() {
+        let app = openMessage("", systemNotice: true)
+        let notice = app.buttons.matching(NSPredicate(format: "label == %@", "Sam Park was added to the group")).firstMatch
+        XCTAssertTrue(notice.waitForExistence(timeout: 10))
+        capture(app, named: "group-added-notice")
+        notice.tap()
+        XCTAssertTrue(element(app, "directChatCopyUserIdButton").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Sam Park"].firstMatch.waitForExistence(timeout: 5))
+        capture(app, named: "group-added-notice-profile")
+    }
+
+    private func openMessage(_ body: String, largeText: Bool = false, outgoing: Bool = false, systemNotice: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
         app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = "message-body-\(UUID().uuidString)"
@@ -106,6 +117,7 @@ final class MessageBodyUITests: IrisChatUITestCase {
         app.launchEnvironment["IRIS_DISABLE_NOTIFICATIONS"] = "1"
         app.launchEnvironment["IRIS_DEMO_RELAYS"] = "ws://127.0.0.1:9"
         app.launchEnvironment["IRIS_UI_TEST_SCREENSHOT_FIXTURE"] = "1"
+        app.launchEnvironment["IRIS_UI_TEST_GROUP_NOTICE"] = systemNotice ? "1" : "0"
         app.launchEnvironment["IRIS_UI_TEST_MESSAGE_BODY"] = body
         app.launchEnvironment["IRIS_UI_TEST_MESSAGE_OUTGOING"] = outgoing ? "1" : "0"
         if largeText {
@@ -115,7 +127,7 @@ final class MessageBodyUITests: IrisChatUITestCase {
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
         submitWelcomeName(app, name: "Alex Rivera", assertFocus: false)
         XCTAssertTrue(waitForChatList(app, timeout: 30))
-        let row = element(app, "chatRow-fx-chat-1")
+        let row = element(app, systemNotice ? "chatRow-fx-chat-2" : "chatRow-fx-chat-1")
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         row.tap()
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 15))

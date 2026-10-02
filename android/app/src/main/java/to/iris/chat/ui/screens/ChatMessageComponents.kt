@@ -138,7 +138,7 @@ internal fun MessageBubble(
         return
     }
     if (message.kind == ChatMessageKind.SYSTEM) {
-        SystemMessageChip(message = message)
+        SystemMessageChip(message = message, appManager = appManager)
         return
     }
 
@@ -534,12 +534,17 @@ internal fun MessageBubble(
 }
 
 @Composable
-private fun SystemMessageChip(message: ChatMessageSnapshot) {
+private fun SystemMessageChip(message: ChatMessageSnapshot, appManager: AppManager?) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
         horizontalArrangement = Arrangement.Center,
     ) {
         Surface(
+            modifier = if (message.systemNoticeOwnerPubkeyHex != null && appManager != null) {
+                Modifier.clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = "Open profile") {
+                    appManager.pushScreen(to.iris.chat.rust.Screen.DirectChatInfo(message.systemNoticeOwnerPubkeyHex!!))
+                }
+            } else Modifier,
             color = IrisTheme.palette.panel.copy(alpha = 0.68f),
             shape = RoundedCornerShape(100.dp),
         ) {

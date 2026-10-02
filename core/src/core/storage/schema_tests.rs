@@ -3,6 +3,27 @@ use nostr::Keys;
 use nostr_double_ratchet::DeviceEntry;
 
 #[test]
+fn migrates_v39_notices_without_guessing_a_profile_from_the_name() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    ensure_schema(&mut conn).unwrap();
+    conn.execute_batch("ALTER TABLE messages DROP COLUMN system_notice_owner_pubkey_hex;
+        INSERT INTO threads(chat_id) VALUES ('group:test');
+        INSERT INTO messages(chat_id, id, kind, author, body, is_outgoing, created_at_secs, delivery)
+        VALUES ('group:test', 'notice', 'system', 'Iris', 'Alice was added to the group', 0, 10, 'received');
+        PRAGMA user_version = 39;").unwrap();
+    ensure_schema(&mut conn).unwrap();
+    let saved: (String, Option<String>) = conn
+        .query_row(
+            "SELECT body, system_notice_owner_pubkey_hex FROM messages WHERE id = 'notice'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(saved, ("Alice was added to the group".into(), None));
+    assert_eq!(user_version(&conn), SCHEMA_VERSION);
+}
+
+#[test]
 fn migrates_v35_messages_without_changing_existing_ids_or_content() {
     let mut conn = Connection::open_in_memory().unwrap();
     ensure_schema(&mut conn).unwrap();

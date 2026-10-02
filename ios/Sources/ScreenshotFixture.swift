@@ -70,6 +70,7 @@ struct ScreenshotFixture {
         /// into the author slot. Ignored for direct chats / outgoing
         /// bubbles.
         let groupAuthorName: String?
+        let systemNoticeOwnerPubkeyHex: String?
 
         init(
             body: String,
@@ -78,7 +79,8 @@ struct ScreenshotFixture {
             delivery: DeliveryState,
             reactions: [MessageReactionSnapshot] = [],
             groupAuthorName: String? = nil,
-            attachments: [MessageAttachmentSnapshot] = []
+            attachments: [MessageAttachmentSnapshot] = [],
+            systemNoticeOwnerPubkeyHex: String? = nil
         ) {
             self.body = body
             self.isOutgoing = isOutgoing
@@ -87,6 +89,7 @@ struct ScreenshotFixture {
             self.reactions = reactions
             self.attachments = attachments
             self.groupAuthorName = groupAuthorName
+            self.systemNoticeOwnerPubkeyHex = systemNoticeOwnerPubkeyHex
         }
     }
 
@@ -316,7 +319,12 @@ extension ScreenshotFixture {
         }
         fixture.prepareAvatars(environment: environment)
         var timelines = fixture.timelines
-        if environment["IRIS_UI_TEST_AUDIO_MESSAGES"] == "1" {
+        if environment["IRIS_UI_TEST_GROUP_NOTICE"] == "1" {
+            timelines["\(chatIdPrefix)2"] = [Message(
+                body: "Sam Park was added to the group", isOutgoing: false,
+                ageSecs: 60, delivery: .received,
+                systemNoticeOwnerPubkeyHex: "\(chatIdPrefix)3")]
+        } else if environment["IRIS_UI_TEST_AUDIO_MESSAGES"] == "1" {
             timelines["\(chatIdPrefix)1"] = [false, true].map { outgoing in
                 Message(body: "", isOutgoing: outgoing, ageSecs: outgoing ? 30 : 60, delivery: .seen,
                         attachments: [MessageAttachmentSnapshot(
@@ -527,10 +535,11 @@ extension ScreenshotFixture {
         }
         let id = "\(chat.chatId)-msg-\(index)"
         return ChatMessageSnapshot(
+            systemNoticeOwnerPubkeyHex: message.systemNoticeOwnerPubkeyHex,
             id: id,
             chatId: chat.chatId,
-            kind: .user,
-            author: author,
+            kind: message.systemNoticeOwnerPubkeyHex == nil ? .user : .system,
+            author: message.systemNoticeOwnerPubkeyHex == nil ? author : "Iris",
             authorOwnerPubkeyHex: authorOwnerPubkeyHex,
             authorPictureUrl: nil,
             body: message.body,

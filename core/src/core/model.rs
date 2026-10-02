@@ -633,6 +633,8 @@ pub(super) struct PersistedThread {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PersistedMessage {
+    #[serde(default)]
+    pub(super) system_notice_owner_pubkey_hex: Option<String>,
     pub(super) id: String,
     #[serde(alias = "peer_input")]
     pub(super) chat_id: String,

@@ -233,6 +233,7 @@ fn fixture_thread(kind: ChatKind, index: u32) -> ChatThreadSnapshot {
 fn fixture_message(chat_id: &str, index: u32) -> ChatMessageSnapshot {
     let outgoing = index.is_multiple_of(2);
     ChatMessageSnapshot {
+        system_notice_owner_pubkey_hex: None,
         direct_transfer: None,
         call: None,
         id: format!("{chat_id}-message-{:05}", index + 1),

@@ -643,9 +643,12 @@ impl AppCore {
                     .members
                     .iter()
                     .filter(|owner| !previous.members.iter().any(|existing| existing == *owner))
+                    .collect::<Vec<_>>();
+                let added_names = added_members
+                    .iter()
                     .map(|owner| self.owner_display_label(&owner.to_string()))
                     .collect::<Vec<_>>();
-                let added_label = match added_members.as_slice() {
+                let added_label = match added_names.as_slice() {
                     [] => None,
                     [name] => Some(name.clone()),
                     [first, second] => Some(format!("{first} and {second}")),
@@ -660,10 +663,14 @@ impl AppCore {
                     } else {
                         "were"
                     };
-                    self.push_system_notice(
+                    self.push_system_notice_with_profile(
                         &chat_id,
                         format!("{added_label} {verb} added to the group"),
                         now,
+                        match added_members.as_slice() {
+                            [owner] => Some(owner.to_string()),
+                            _ => None,
+                        },
                     );
                 }
                 for owner in previous

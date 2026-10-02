@@ -633,6 +633,9 @@ impl AppCore {
                                     let (body, parsed_attachments) =
                                         extract_message_attachments(&message.body);
                                     ChatMessageSnapshot {
+                                        system_notice_owner_pubkey_hex: message
+                                            .system_notice_owner_pubkey_hex
+                                            .clone(),
                                         direct_transfer: None,
                                         call: message.call.clone(),
                                         id: message.id.clone(),

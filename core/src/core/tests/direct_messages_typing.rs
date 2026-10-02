@@ -903,6 +903,7 @@ fn open_chat_populates_current_chat_for_preview_only_thread() {
     // event ingest, which the suspended app didn't have a chance to
     // run).
     let preview = ChatMessageSnapshot {
+        system_notice_owner_pubkey_hex: None,
         direct_transfer: None,
         call: None,
         id: "1".to_string(),
@@ -965,6 +966,7 @@ fn duplicate_persisted_incoming_message_surfaces_missing_chat_row() {
     );
 
     let preview = ChatMessageSnapshot {
+        system_notice_owner_pubkey_hex: None,
         direct_transfer: None,
         call: None,
         id: inner_id.clone(),

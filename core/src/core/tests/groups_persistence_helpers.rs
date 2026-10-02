@@ -281,9 +281,7 @@ fn create_group_allows_self_only_group() {
             serde_json::from_str::<Event>(&pending.event_json)
                 .ok()
                 .filter(nostr_double_ratchet::is_group_roster_fact_event)
-                .and_then(|event| {
-                    nostr_double_ratchet::parse_group_roster_fact_event(&event).ok()
-                })
+                .and_then(|event| nostr_double_ratchet::parse_group_roster_fact_event(&event).ok())
                 .is_some_and(|fact| fact.group_id == group_id && fact.snapshot.name == "Notes")
         }),
         "creating a group should queue a signed group roster fact"
@@ -510,6 +508,82 @@ fn group_metadata_changes_create_system_notices() {
 }
 
 #[test]
+fn group_added_notice_profiles_keep_identity_across_duplicate_names_and_storage() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("group-notice-profile", &owner, &device);
+    let group_id = "group-notice-profiles";
+    let chat_id = group_chat_id(group_id);
+    let first = Keys::generate().public_key();
+    let second = Keys::generate().public_key();
+    for member in [first, second] {
+        core.owner_profiles.insert(
+            member.to_hex(),
+            OwnerProfileRecord {
+                display_name: Some("Alice".into()),
+                ..Default::default()
+            },
+        );
+    }
+    let mut group = test_group_snapshot(
+        group_id,
+        "Group",
+        owner.public_key(),
+        vec![owner.public_key()],
+        vec![owner.public_key()],
+        1,
+    );
+    core.apply_group_decrypted_event(GroupIncomingEvent::MetadataUpdated(group.clone()));
+    for member in [first, second] {
+        group.revision += 1;
+        group.members.push(ndr_owner_pubkey(member));
+        core.apply_group_decrypted_event(GroupIncomingEvent::MetadataUpdated(group.clone()));
+    }
+    let notices: Vec<_> = core.threads[&chat_id]
+        .messages
+        .iter()
+        .filter(|m| m.body == "Alice was added to the group")
+        .cloned()
+        .collect();
+    assert_eq!(
+        notices.len(),
+        2,
+        "Distinct people with the same name need separate notices"
+    );
+    assert_eq!(
+        notices[0].system_notice_owner_pubkey_hex,
+        Some(first.to_hex())
+    );
+    assert_eq!(
+        notices[1].system_notice_owner_pubkey_hex,
+        Some(second.to_hex())
+    );
+    assert!(notices
+        .iter()
+        .all(|m| m.author == "Iris" && m.author_owner_pubkey_hex.is_none()));
+    core.persist_best_effort_inner();
+    let conn = core.app_store.shared();
+    let conn = conn.lock().unwrap();
+    let restored = storage::load_recent_messages(&conn, &chat_id, 50).unwrap();
+    for notice in &notices {
+        let saved = restored.iter().find(|m| m.id == notice.id).unwrap();
+        assert_eq!(
+            chats::chat_message_from_persisted(saved).system_notice_owner_pubkey_hex,
+            notice.system_notice_owner_pubkey_hex
+        );
+        let around = storage::load_messages_around(&conn, &chat_id, &notice.id, 1, 1).unwrap();
+        assert_eq!(
+            around
+                .iter()
+                .find(|m| m.id == notice.id)
+                .unwrap()
+                .system_notice_owner_pubkey_hex,
+            notice.system_notice_owner_pubkey_hex
+        );
+    }
+}
+
+#[test]
 fn group_metadata_member_batches_create_one_notice() {
     for (added_count, expected) in [
         (1, "Alice was added to the group"),
@@ -562,6 +636,14 @@ fn group_metadata_member_batches_create_one_notice() {
         let notice = thread.messages.last().expect("member addition notice");
         assert_eq!(notice.body, expected);
         assert_eq!(notice.kind, ChatMessageKind::System);
+        assert_eq!(
+            notice.system_notice_owner_pubkey_hex,
+            if added_count == 1 {
+                updated.members.last().map(ToString::to_string)
+            } else {
+                None
+            }
+        );
         core.rebuild_state();
         assert_eq!(
             core.state
@@ -643,6 +725,7 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                 updated_at_secs: 200,
                 messages: vec![
                     ChatMessageSnapshot {
+                        system_notice_owner_pubkey_hex: None,
                         direct_transfer: None,
                         call: None,
                         id: "m1".to_string(),
@@ -664,6 +747,7 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                         source_event_id: None,
                     },
                     ChatMessageSnapshot {
+                        system_notice_owner_pubkey_hex: None,
                         direct_transfer: None,
                         call: None,
                         id: "m2".to_string(),
@@ -696,6 +780,7 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                 unread_count: 0,
                 updated_at_secs: 50,
                 messages: vec![ChatMessageSnapshot {
+                    system_notice_owner_pubkey_hex: None,
                     direct_transfer: None,
                     call: None,
                     id: "g-system".to_string(),
@@ -850,6 +935,7 @@ fn delete_chat_removes_thread_and_navigates_back() {
             unread_count: 2,
             updated_at_secs: 100,
             messages: vec![ChatMessageSnapshot {
+                system_notice_owner_pubkey_hex: None,
                 direct_transfer: None,
                 call: None,
                 id: "m1".to_string(),

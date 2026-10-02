@@ -548,14 +548,17 @@ struct ChatMessageRow: View, Equatable {
             } else if message.kind == .system {
                 HStack {
                     Spacer(minLength: 24)
-                    Text(message.body)
-                        .font(.system(.caption, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.muted)
-                        .multilineTextAlignment(.center)
-                        .irisDesktopTextSelection()
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(Capsule(style: .continuous).fill(palette.panel.opacity(0.74)))
+                    if let owner = message.systemNoticeOwnerPubkeyHex, let manager {
+                        Button {
+                            manager.dispatch(.pushScreen(screen: .directChatInfo(chatId: owner)))
+                        } label: {
+                            systemNoticeLabel
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Open profile")
+                    } else {
+                        systemNoticeLabel.irisDesktopTextSelection()
+                    }
                     Spacer(minLength: 24)
                 }
                 .padding(.vertical, 8)
@@ -848,6 +851,16 @@ struct ChatMessageRow: View, Equatable {
                 onActionDockActiveChange(isPresented || isPointerInside)
             }
         )
+    }
+
+    private var systemNoticeLabel: some View {
+        Text(message.body)
+            .font(.system(.caption, design: .rounded, weight: .semibold))
+            .foregroundStyle(palette.muted)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Capsule(style: .continuous).fill(palette.panel.opacity(0.74)))
     }
 
     @ViewBuilder

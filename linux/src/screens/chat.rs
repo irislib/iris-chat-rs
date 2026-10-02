@@ -979,6 +979,24 @@ fn render_message(
         label.set_selectable(true);
         label.set_margin_top(8);
         label.set_margin_bottom(8);
+        if let Some(owner) = &message.system_notice_owner_pubkey_hex {
+            label.set_selectable(false);
+            let button = gtk::Button::new();
+            button.add_css_class("flat");
+            button.set_halign(gtk::Align::Center);
+            button.set_tooltip_text(Some("Open profile"));
+            button.set_child(Some(&label));
+            let manager = manager.clone();
+            let owner = owner.clone();
+            button.connect_clicked(move |_| {
+                manager.dispatch(AppAction::PushScreen {
+                    screen: iris_chat_core::Screen::DirectChatInfo {
+                        chat_id: owner.clone(),
+                    },
+                })
+            });
+            return button.upcast();
+        }
         return label.upcast();
     }
 

@@ -291,6 +291,7 @@ mod tests {
         attachments: Vec<MessageAttachmentSnapshot>,
     ) -> ChatMessageSnapshot {
         ChatMessageSnapshot {
+            system_notice_owner_pubkey_hex: None,
             direct_transfer: None,
             call: None,
             id: "message-1".to_string(),

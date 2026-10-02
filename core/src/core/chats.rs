@@ -843,6 +843,7 @@ impl AppCore {
             .as_ref()
             .and_then(|owner_hex| self.owner_picture_url(owner_hex));
         let message = ChatMessageSnapshot {
+            system_notice_owner_pubkey_hex: None,
             direct_transfer: None,
             call: None,
             id: message_id,
@@ -987,6 +988,7 @@ impl AppCore {
             push_unique(&mut delivery_trace.transport_channels, &channel);
         }
         let message = ChatMessageSnapshot {
+            system_notice_owner_pubkey_hex: None,
             direct_transfer: None,
             call: None,
             id: message_id,
@@ -1050,6 +1052,16 @@ impl AppCore {
     }
 
     pub(super) fn push_system_notice(&mut self, chat_id: &str, body: String, created_at_secs: u64) {
+        self.push_system_notice_with_profile(chat_id, body, created_at_secs, None);
+    }
+
+    pub(super) fn push_system_notice_with_profile(
+        &mut self,
+        chat_id: &str,
+        body: String,
+        created_at_secs: u64,
+        system_notice_owner_pubkey_hex: Option<String>,
+    ) {
         let message_id = self.allocate_message_id();
         let should_count_unread = !self.is_chat_visible(chat_id);
         let thread = self
@@ -1067,7 +1079,10 @@ impl AppCore {
             .iter()
             .rev()
             .find(|message| message.author == "Iris")
-            .is_some_and(|message| message.body == body)
+            .is_some_and(|message| {
+                message.body == body
+                    && message.system_notice_owner_pubkey_hex == system_notice_owner_pubkey_hex
+            })
         {
             return;
         }
@@ -1076,6 +1091,7 @@ impl AppCore {
         }
         thread.updated_at_secs = thread.updated_at_secs.max(created_at_secs);
         thread.insert_message_sorted(ChatMessageSnapshot {
+            system_notice_owner_pubkey_hex,
             direct_transfer: None,
             call: None,
             id: message_id,
@@ -1592,7 +1608,9 @@ impl AppCore {
             ) {
                 Ok(true) => return,
                 Ok(false) => {}
-                Err(error) => self.push_debug_log("storage.message.exists.error", error.to_string()),
+                Err(error) => {
+                    self.push_debug_log("storage.message.exists.error", error.to_string())
+                }
             }
             let message_id = message_id.unwrap_or_else(|| self.allocate_message_id());
             if self.threads.get(&chat_id).is_some_and(|thread| {
@@ -1674,6 +1692,7 @@ impl AppCore {
 pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMessageSnapshot {
     let (body, parsed_attachments) = extract_message_attachments(&message.body);
     ChatMessageSnapshot {
+        system_notice_owner_pubkey_hex: message.system_notice_owner_pubkey_hex.clone(),
         direct_transfer: None,
         call: message.call.clone(),
         id: message.id.clone(),

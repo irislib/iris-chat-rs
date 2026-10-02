@@ -59,6 +59,7 @@ pub(super) fn run(
         },
     ];
     chat.messages = vec![ChatMessageSnapshot {
+        system_notice_owner_pubkey_hex: None,
         id: "membership-history".into(),
         chat_id: chat_id.clone(),
         kind: ChatMessageKind::User,
