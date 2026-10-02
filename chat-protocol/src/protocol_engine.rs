@@ -964,4 +964,5 @@ mod tests {
     }
 
     include!("protocol_engine/test_helpers.rs");
+    include!("protocol_engine/repair_response_throttle_tests.rs");
 }

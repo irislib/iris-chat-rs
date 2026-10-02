@@ -574,6 +574,8 @@ impl ProtocolEngine {
     ) -> bool {
         let requester_owner_hex = requester_owner.to_hex();
         let sender_event_pubkey_hex = request.sender_event_pubkey.to_hex();
+        // Peers may recreate the same repair with a fresh timestamp. The missing
+        // stream/key/revision owns the backoff, not the request envelope.
         self.answered_group_sender_key_repairs
             .iter()
             .any(|answered| {
@@ -583,7 +585,6 @@ impl ProtocolEngine {
                     && answered.key_id == request.key_id
                     && answered.message_number == request.message_number
                     && answered.required_revision == request.required_revision
-                    && answered.request_created_at_secs == request.created_at.get()
                     && answered.next_response_at_secs > now.get()
             })
     }
@@ -606,7 +607,6 @@ impl ProtocolEngine {
                     && answered.key_id == request.key_id
                     && answered.message_number == request.message_number
                     && answered.required_revision == request.required_revision
-                    && answered.request_created_at_secs == request.created_at.get()
             });
         let response_count = position
             .and_then(|index| {
@@ -620,6 +620,7 @@ impl ProtocolEngine {
         if let Some(index) = position {
             if let Some(answered) = self.answered_group_sender_key_repairs.get_mut(index) {
                 answered.last_responded_at_secs = now.get();
+                answered.request_created_at_secs = request.created_at.get();
                 answered.response_count = response_count;
                 answered.next_response_at_secs = next_response_at_secs;
             }
