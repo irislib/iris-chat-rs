@@ -411,16 +411,17 @@ jobs:
           key: all-builds-windows-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/windows/**/*.csproj') }}
           restore-keys: all-builds-windows-
       - name: Build native app
+        id: native-build
         run: ./scripts/windows-build-local.ps1 build
       - name: Exercise real WPF clipboard and draft lifecycle
         run: |
           dotnet run --project windows/ClipboardTests/ClipboardTests.csproj -c Release -- work/clipboard
           if ($LASTEXITCODE -ne 0) { throw 'Native clipboard tests failed' }
       - name: Exercise native direct files and WPF transfer controls
-        if: ${{ inputs.scope == '' || inputs.scope == 'all' }}
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' && (inputs.scope == '' || inputs.scope == 'all') }}
         run: ./scripts/windows-build-local.ps1 direct-file-tests
       - name: Exercise WPF nearby avatars and chat headers
-        if: ${{ inputs.scope == '' || inputs.scope == 'all' }}
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' && (inputs.scope == '' || inputs.scope == 'all') }}
         run: ./scripts/windows-build-local.ps1 nearby-avatar-tests
       - name: Upload Windows clipboard results
         if: always()
