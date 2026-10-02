@@ -4,8 +4,10 @@ import android.content.Context
 import android.content.ContextWrapper
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.text.AnnotatedString
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
@@ -57,7 +59,7 @@ class ChatDraftPersistenceTest {
         compose.waitForIdle()
         assertEquals(listOf("Send the current text"), fixture.rust.dispatchedActions
             .filterIsInstance<AppAction.SendMessage>().map { it.text })
-        input.assertTextEquals("")
+        input.assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
         assertEquals(listOf(""), fixture.saves())
 
         input.performTextInput("Keep this on leaving")
