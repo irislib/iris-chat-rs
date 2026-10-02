@@ -5,7 +5,7 @@ use gtk::glib;
 use iris_chat_core::{AppAction, ChatKind, DesktopNearbyPeerSnapshot, DesktopNearbySnapshot};
 
 use crate::app_manager::AppManager;
-use crate::screens::chat::{present_chat_info, ChatInfoSnapshot};
+use crate::screens::chat::{chat_info_for_owner, present_chat_info, ChatInfoSnapshot};
 use crate::widgets::clickable::PointerCursorExt;
 
 pub fn present(parent: Option<&gtk::Window>, manager: Rc<AppManager>) {
@@ -250,20 +250,12 @@ fn nearby_peer_chat_info(
     manager: &Rc<AppManager>,
 ) -> ChatInfoSnapshot {
     let name = nearby_peer_resolved_name(peer, manager, "Nearby user");
-    ChatInfoSnapshot {
-        social_connection: None,
-        chat_id: owner.to_string(),
-        display_name: name,
-        nickname: None,
-        contact_note: None,
-        profile_name: None,
-        subtitle: None,
-        picture_url: peer.picture_url.clone(),
-        about: None,
-        is_muted: false,
-        show_message_action: true,
-        preferences: manager.current_state().preferences,
-    }
+    chat_info_for_owner(
+        owner,
+        &name,
+        peer.picture_url.as_deref(),
+        &manager.current_state(),
+    )
 }
 
 fn nearby_peer_resolved_name(

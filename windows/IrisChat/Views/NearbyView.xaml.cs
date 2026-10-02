@@ -134,7 +134,7 @@ public partial class NearbyView : UserControl
             return;
         }
 
-        NearbyPeerProfileWindow.Show(Window.GetWindow(this), App.CurrentManager, peer);
+        PeerProfileWindow.Show(Window.GetWindow(this), App.CurrentManager, peer);
     }
 
     private void OnLanChanged(object sender, RoutedEventArgs e)

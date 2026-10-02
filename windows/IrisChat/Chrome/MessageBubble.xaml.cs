@@ -128,7 +128,13 @@ public partial class MessageBubble : UserControl
     {
         if (_message?.kind == ChatMessageKind.System &&
             !string.IsNullOrWhiteSpace(_message.systemNoticeOwnerPubkeyHex))
-            App.CurrentManager.Push(new Screen.DirectChatInfo(_message.systemNoticeOwnerPubkeyHex));
+        {
+            const string suffix = " was added to the group";
+            var label = _message.body.EndsWith(suffix, StringComparison.Ordinal)
+                ? _message.body[..^suffix.Length] : "Profile";
+            PeerProfileWindow.ShowProfile(Window.GetWindow(this), App.CurrentManager,
+                _message.systemNoticeOwnerPubkeyHex, label);
+        }
     }
 
     private void BuildContextMenu(ChatMessageSnapshot message)

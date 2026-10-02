@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -6,7 +7,7 @@ using IrisChat.Bindings;
 
 namespace IrisChat.Chrome;
 
-public static class NearbyPeerProfileWindow
+public static class PeerProfileWindow
 {
     public static void Show(
         Window? owner,
@@ -16,8 +17,20 @@ public static class NearbyPeerProfileWindow
     {
         if (string.IsNullOrWhiteSpace(peer.ownerPubkeyHex)) return;
 
-        var ownerPubkeyHex = peer.ownerPubkeyHex!;
-        var displayName = NearbyPeerNames.Resolve(manager, peer);
+        ShowProfile(owner, manager, peer.ownerPubkeyHex!,
+            NearbyPeerNames.Resolve(manager, peer), peer.pictureUrl, onMessage);
+    }
+
+    public static void ShowProfile(
+        Window? owner, AppManager manager, string ownerPubkeyHex,
+        string fallbackName, string? fallbackPictureUrl = null,
+        Action<string>? onMessage = null)
+    {
+        if (string.IsNullOrWhiteSpace(ownerPubkeyHex)) return;
+        var chat = manager.ChatList.FirstOrDefault(c => c.kind == ChatKind.Direct && c.chatId == ownerPubkeyHex);
+        var person = manager.CurrentChat?.participants.FirstOrDefault(p => p.ownerPubkeyHex == ownerPubkeyHex);
+        var displayName = chat?.displayName ?? person?.displayName ?? fallbackName;
+        var pictureUrl = chat?.pictureUrl ?? person?.pictureUrl ?? fallbackPictureUrl;
         var window = new Window
         {
             Title = displayName,
@@ -42,8 +55,8 @@ public static class NearbyPeerProfileWindow
         header.Children.Add(new Avatar
         {
             Label = displayName,
-            OwnerPubkeyHex = peer.ownerPubkeyHex,
-            PictureUrl = peer.pictureUrl,
+            OwnerPubkeyHex = ownerPubkeyHex,
+            PictureUrl = pictureUrl,
             Size = 64,
             Margin = new Thickness(0, 0, 14, 0),
         });

@@ -128,6 +128,51 @@ fn send_disappearing_message_action_uses_explicit_expiration_and_persists() {
 /// list. Mirrors the group-details flow but for the direct-message case
 /// after we converted both UIs from local overlays to the router push.
 #[test]
+fn member_profile_from_group_survives_updates_and_returns_to_group() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let member = Keys::generate();
+    let mut core = logged_in_test_core("member-profile-from-group", &owner, &device);
+    let group = test_group_snapshot(
+        "profile-routing",
+        "Our group",
+        owner.public_key(),
+        vec![owner.public_key(), member.public_key()],
+        vec![owner.public_key()],
+        1,
+    );
+    let group_chat_id = group_chat_id(&group.group_id);
+    let member_id = member.public_key().to_hex();
+    core.apply_group_decrypted_event(GroupIncomingEvent::MetadataUpdated(group));
+    core.handle_action(AppAction::OpenChat {
+        chat_id: group_chat_id.clone(),
+    });
+    core.handle_action(AppAction::PushScreen {
+        screen: Screen::DirectChatInfo {
+            chat_id: member_id.clone(),
+        },
+    });
+    for _ in 0..2 {
+        core.rebuild_state();
+        assert_eq!(core.state.current_chat.as_ref().unwrap().chat_id, member_id);
+        assert_eq!(
+            core.state.current_chat.as_ref().unwrap().kind,
+            ChatKind::Direct
+        );
+        assert_eq!(core.active_chat_id.as_deref(), Some(group_chat_id.as_str()));
+        assert!(!core.is_chat_visible(&member_id));
+    }
+    let mut stack = core.screen_stack.clone();
+    stack.pop();
+    core.handle_action(AppAction::UpdateScreenStack { stack });
+    assert_eq!(
+        core.state.current_chat.as_ref().unwrap().chat_id,
+        group_chat_id
+    );
+    assert!(core.is_chat_visible(&group_chat_id));
+}
+
+#[test]
 fn back_from_direct_chat_info_returns_to_chat() {
     let owner = Keys::generate();
     let device = Keys::generate();

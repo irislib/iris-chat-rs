@@ -664,7 +664,7 @@ public partial class DesktopShell : UserControl
     }
 
     private void ShowNearbyPeerProfile(DesktopNearbyPeerSnapshot peer) =>
-        NearbyPeerProfileWindow.Show(
+        PeerProfileWindow.Show(
             Window.GetWindow(this),
             _manager,
             peer,

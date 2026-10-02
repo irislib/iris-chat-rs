@@ -1429,6 +1429,19 @@ final class AppManager: ObservableObject {
             }
 #endif
             return true
+        case .pushScreen(.directChatInfo(let chatId)):
+            guard fixture.chatIsFixture(chatId) else { return false }
+            pendingNavigationOverride = nil
+            var stack = state.router.screenStack
+            let profile = Screen.directChatInfo(chatId: chatId)
+            if stack.last != profile { stack.append(profile) }
+            applyLocalScreenStack(stack)
+            state = fixture.applyTo(
+                state: state,
+                referenceDate: screenshotFixtureReferenceDate,
+                showNearbyTransportPeers: screenshotFixtureShowsNearbyTransportPeers
+            )
+            return true
         case .sendMessage(let chatId, _),
              .sendDisappearingMessage(let chatId, _, _),
              .sendAttachment(let chatId, _, _, _),

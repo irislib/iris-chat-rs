@@ -394,12 +394,12 @@ impl AppCore {
             })
             .collect();
 
-        let current_chat_id = self.active_chat_id.as_ref().or_else(|| {
-            self.screen_stack.last().and_then(|screen| match screen {
-                Screen::DirectChatInfo { chat_id } => Some(chat_id),
-                _ => None,
-            })
-        });
+        // A profile can be opened over another conversation. Keep that chat
+        // active for Back, but project the profile's own identity while visible.
+        let current_chat_id = match self.screen_stack.last() {
+            Some(Screen::DirectChatInfo { chat_id }) => Some(chat_id),
+            _ => self.active_chat_id.as_ref(),
+        };
 
         self.state.current_chat = current_chat_id
             .and_then(|chat_id| self.threads.get(chat_id))

@@ -54,6 +54,45 @@ pub struct ChatInfoSnapshot {
     pub preferences: PreferencesSnapshot,
 }
 
+pub fn chat_info_for_owner(
+    owner: &str,
+    fallback_name: &str,
+    fallback_picture: Option<&str>,
+    state: &AppState,
+) -> ChatInfoSnapshot {
+    let chat = state
+        .chat_list
+        .iter()
+        .find(|chat| chat.chat_id == owner && chat.kind == ChatKind::Direct);
+    let participant = state.current_chat.as_ref().and_then(|chat| {
+        chat.participants
+            .iter()
+            .find(|person| person.owner_pubkey_hex == owner)
+    });
+    ChatInfoSnapshot {
+        chat_id: owner.to_string(),
+        display_name: chat
+            .map(|c| c.display_name.clone())
+            .or_else(|| participant.map(|p| p.display_name.clone()))
+            .unwrap_or_else(|| fallback_name.to_string()),
+        social_connection: chat
+            .and_then(|c| c.social_connection.clone())
+            .or_else(|| participant.and_then(|p| p.social_connection.clone())),
+        picture_url: chat
+            .and_then(|c| c.picture_url.clone())
+            .or_else(|| participant.and_then(|p| p.picture_url.clone()))
+            .or_else(|| fallback_picture.map(str::to_string)),
+        nickname: chat.and_then(|c| c.nickname.clone()),
+        contact_note: chat.and_then(|c| c.contact_note.clone()),
+        profile_name: chat.and_then(|c| c.profile_name.clone()),
+        subtitle: chat.and_then(|c| c.subtitle.clone()),
+        about: chat.and_then(|c| c.about.clone()),
+        is_muted: chat.is_some_and(|c| c.is_muted),
+        show_message_action: true,
+        preferences: state.preferences.clone(),
+    }
+}
+
 struct ParticipantInfo {
     owner_pubkey_hex: Option<String>,
     name: String,
@@ -988,12 +1027,17 @@ fn render_message(
             button.set_child(Some(&label));
             let manager = manager.clone();
             let owner = owner.clone();
-            button.connect_clicked(move |_| {
-                manager.dispatch(AppAction::PushScreen {
-                    screen: iris_chat_core::Screen::DirectChatInfo {
-                        chat_id: owner.clone(),
-                    },
-                })
+            let label = message
+                .body
+                .strip_suffix(" was added to the group")
+                .unwrap_or("Profile")
+                .to_string();
+            button.connect_clicked(move |button| {
+                let parent = button
+                    .root()
+                    .and_then(|root| root.downcast::<gtk::Window>().ok());
+                let info = chat_info_for_owner(&owner, &label, None, &manager.current_state());
+                present_chat_info(parent.as_ref(), info, manager.clone());
             });
             return button.upcast();
         }
