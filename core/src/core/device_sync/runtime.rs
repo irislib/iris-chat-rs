@@ -705,16 +705,7 @@ impl AppCore {
         let local_hex = logged_in.device_keys.public_key().to_hex();
         let local_npub = fips_peer_from_hex(&local_hex)?.npub();
         let roster = self.app_keys.get(&owner_hex);
-        let roster_at = roster
-            .filter(|roster| {
-                roster.created_at_secs > 0
-                    && roster
-                        .devices
-                        .iter()
-                        .any(|device| device.identity_pubkey_hex == local_hex)
-            })
-            .map(|roster| roster.created_at_secs)
-            .unwrap_or_default();
+        let roster_at = self.device_sync_roster_at().unwrap_or_default();
         let siblings = roster
             .into_iter()
             .flat_map(|roster| roster.devices.iter())

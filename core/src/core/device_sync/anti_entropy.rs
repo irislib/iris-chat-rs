@@ -10,7 +10,10 @@ impl AppCore {
         let Some(local_roster_at) = self.device_sync_roster_at() else {
             return;
         };
-        let cutoff = local_roster_at.max(requested_roster_at);
+        let Some(peer_since) = self.device_sync_peer_since(source_pubkey_hex) else {
+            return;
+        };
+        let cutoff = local_roster_at.max(requested_roster_at).max(peer_since);
         let (mut packets, next) = match page.unwrap_or(DeviceSyncPage::Metadata { offset: 0 }) {
             DeviceSyncPage::Metadata { offset } => {
                 (metadata_page_packets(self, cutoff, offset), None)

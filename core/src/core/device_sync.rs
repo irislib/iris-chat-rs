@@ -431,7 +431,14 @@ impl AppCore {
         // Flush when possible before enqueueing. During a batched event this is
         // deferred; anti-entropy also reads the in-memory message projection.
         self.persist_best_effort();
-        send_device_sync_packets(&tcp, &siblings, std::slice::from_ref(&packet));
+        let recipients = siblings
+            .into_iter()
+            .filter(|peer| {
+                self.device_sync_peer_since(&peer.pubkey().to_string())
+                    .is_some_and(|since| message.created_at_secs >= since)
+            })
+            .collect::<Vec<_>>();
+        send_device_sync_packets(&tcp, &recipients, std::slice::from_ref(&packet));
     }
 
     pub(super) fn device_sync_tracks_app_keys_owner(&self, owner: PublicKey) -> bool {
@@ -778,11 +785,21 @@ impl AppCore {
     fn device_sync_roster_at(&self) -> Option<u64> {
         let logged_in = self.logged_in.as_ref()?;
         let roster = self.app_keys.get(&logged_in.owner_pubkey.to_hex())?;
-        roster
+        // Membership updates must not move an existing device's history window.
+        roster.devices.iter()
+            .find(|device| device.identity_pubkey_hex == logged_in.device_keys.public_key().to_hex())
+            .map(|device| device.created_at_secs)
+            .filter(|created_at| *created_at > 0)
+    }
+
+    fn device_sync_peer_since(&self, source_pubkey_hex: &str) -> Option<u64> {
+        let logged_in = self.logged_in.as_ref()?;
+        self.app_keys
+            .get(&logged_in.owner_pubkey.to_hex())?
             .devices
             .iter()
-            .any(|device| device.identity_pubkey_hex == logged_in.device_keys.public_key().to_hex())
-            .then_some(roster.created_at_secs)
+            .find(|device| device.identity_pubkey_hex.eq_ignore_ascii_case(source_pubkey_hex))
+            .map(|device| device.created_at_secs)
             .filter(|created_at| *created_at > 0)
     }
 

@@ -443,7 +443,7 @@ async fn sibling_metadata_broadcast_waits_for_the_outermost_batch_and_uses_lates
     assert!(!delivery.records.is_empty());
     for bytes in delivery.records {
         let packet: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(packet["rosterAt"], 200);
+        assert_eq!(packet["rosterAt"], 1, "membership changes do not move the history boundary");
     }
     assert!(records.try_recv().is_err(), "intermediate snapshots must be coalesced");
     core.broadcast_device_sync_snapshot();
@@ -863,4 +863,28 @@ fn device_sync_rejects_malformed_app_keys_rosters() {
 #[test]
 fn device_sync_uses_single_original_service_port() {
     assert_eq!(DEVICE_SYNC_PORT, 7369);
+}
+
+#[test]
+fn device_sync_keeps_link_boundary_when_another_device_is_added() {
+    let owner = Keys::generate();
+    let local = Keys::generate();
+    let sibling = Keys::generate();
+    let peer = Keys::generate();
+    let (mut core, _updates, _dir) = logged_in_test_core_with_updates("stable-sync-window", &owner, &local);
+    configure_test_device_sync_profile(&mut core, &owner, &local, &sibling, None);
+    let roster = core.app_keys.get_mut(&owner.public_key().to_hex()).unwrap();
+    roster.created_at_secs = 500;
+    roster.devices.push(KnownAppKeyDevice {
+        identity_pubkey_hex: Keys::generate().public_key().to_hex(),
+        created_at_secs: 500, device_label: None, client_label: None, label_updated_at_secs: 0,
+    });
+    let data = serde_json::to_vec(&serde_json::json!({
+        "type":"snapshot", "v":1, "rosterAt":100,
+        "messages":[{"chatId":peer.public_key().to_hex(), "id":"offline-gap",
+            "body":"bWlzc2luZw==", "author":peer.public_key().to_hex(), "createdAt":150}]
+    })).unwrap();
+    core.handle_device_sync_packet(&sibling.public_key().to_hex(), DEVICE_SYNC_PORT, &data);
+    assert!(has_device_sync_message(&core, &peer.public_key().to_hex(), "offline-gap"),
+        "adding a third device must not hide earlier eligible gaps between existing devices");
 }
