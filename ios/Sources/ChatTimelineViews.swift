@@ -241,6 +241,7 @@ final class ChatTimelineInteractionCoordinator: ObservableObject {
     var pendingViewportResize: (height: CGFloat, offset: CGFloat)?
     var viewportHeight: CGFloat = 0
     var keyboardViewportAnchor: ChatKeyboardViewportAnchor?
+    var appliedViewportLayout: ChatTimelineViewportLayout?
 #endif
     var messageBubbleFrames: [String: CGRect] = [:]
     var audioControlFrames: [CGRect] = []
@@ -474,6 +475,7 @@ struct ChatMessageRow: View, Equatable {
     @State private var isPointerInside = false
     @State private var showReactionPicker = false
     @State private var showActionsSheet = false
+    @State private var replyAfterActionsDismiss = false
     @State private var showOverflowActions = false
 
     private var showActionDock: Bool {
@@ -689,7 +691,12 @@ struct ChatMessageRow: View, Equatable {
                             }
                         }
 #endif
-                        .sheet(isPresented: $showActionsSheet) {
+                        .sheet(isPresented: $showActionsSheet, onDismiss: {
+                            if replyAfterActionsDismiss {
+                                replyAfterActionsDismiss = false
+                                onReply()
+                            }
+                        }) {
                             ChatMessageActionsSheet(
                                 message: message,
                                 bodyText: parsed.body,
@@ -703,8 +710,8 @@ struct ChatMessageRow: View, Equatable {
                                     showReactionPicker = true
                                 },
                                 onReply: {
+                                    replyAfterActionsDismiss = true
                                     showActionsSheet = false
-                                    onReply()
                                 },
                                 onForward: {
                                     showActionsSheet = false

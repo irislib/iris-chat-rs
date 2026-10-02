@@ -48,7 +48,7 @@ struct ChatScreen: View {
     @State private var messageRequestBlockChat: MessageRequestActionTarget?
     @State private var messageRequestReportChat: MessageRequestActionTarget?
     @State private var messageRequestDeleteChat: MessageRequestActionTarget?
-    @FocusState private var isComposerFocused: Bool
+    @State private var isComposerFocused = false
 
     private var chat: CurrentChatSnapshot? {
         manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil

@@ -1,6 +1,30 @@
 import XCTest
 
 final class ChatKeyboardUITests: IrisChatUITestCase {
+    func testReplyFromMessageActionsOpensKeyboard() throws {
+#if os(macOS)
+        throw XCTSkip("The message actions sheet and on-screen keyboard are iOS-specific")
+#else
+        continueAfterFailure = false
+        let app = launchCleanApp(seedPeer: "self", seedCount: 8)
+        submitWelcomeName(app)
+        XCTAssertTrue(waitForChatList(app, timeout: 60))
+        openSeededChat(app)
+        let message = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "LAST_SCROLL_SENTINEL")).firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        message.press(forDuration: 0.6)
+        let reply = app.buttons["Reply"].firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        reply.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Reply must focus the message input after dismissing its actions sheet")
+        let input = editableElement(app, "chatMessageInput")
+        input.typeText("Reply without tapping the input")
+        XCTAssertEqual(input.value as? String, "Reply without tapping the input")
+        capture(app, "ios-reply-keyboard-open")
+#endif
+    }
+
     func testKeyboardKeepsLatestVisibleAndPreservesOlderReadingPosition() throws {
 #if os(macOS)
         throw XCTSkip("On-screen keyboard layout is iOS-specific")

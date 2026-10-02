@@ -61,7 +61,7 @@ private final class ZoomFixtureModel: ObservableObject {
 
 private struct ZoomFixture: View {
     @ObservedObject var model: ZoomFixtureModel
-    @FocusState private var focused: Bool
+    @State private var focused = false
     var body: some View {
         VStack {
             Text("Weekend plans").font(.title2)

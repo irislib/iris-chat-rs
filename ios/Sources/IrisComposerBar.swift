@@ -39,7 +39,7 @@ struct IrisComposerBar: View {
     let isSending: Bool
     let isUploading: Bool
     let uploadFraction: Double?
-    @FocusState.Binding var isFocused: Bool
+    @Binding var isFocused: Bool
     let onUserEdit: (String) -> Void
     let onDraftChange: () -> Void
     let onAttach: (() async -> [URL]) async -> Void
@@ -572,7 +572,7 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
     }
 
     @Binding var text: String
-    @FocusState.Binding var isFocused: Bool
+    @Binding var isFocused: Bool
     var onPasteAttachments: ((IrisClipboardAttachments) -> Void)? = nil
 
     func makeUIView(context: Context) -> UITextView {
@@ -632,7 +632,8 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
         }
         if needsSelectionReveal { (uiView as? IrisComposerUITextView)?.revealSelectionAfterNextLayout() }
         if isFocused && !uiView.isFirstResponder {
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak uiView, weak coordinator = context.coordinator] in
+                guard let uiView, coordinator?.parent.isFocused == true else { return }
                 uiView.becomeFirstResponder()
             }
         }
@@ -719,7 +720,7 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
     }
 
     @Binding var text: String
-    @FocusState.Binding var isFocused: Bool
+    @Binding var isFocused: Bool
     let onSubmit: (String) -> IrisComposerSubmitResult
     var onPasteAttachments: ((IrisClipboardAttachments) -> Void)? = nil
 

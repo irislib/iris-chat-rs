@@ -143,7 +143,6 @@ final class IrisComposerTextMeasurementTests: XCTestCase {
             var pasteToEditMs: Double = 0
             var started: TimeInterval = 0
             let didPaste = expectation(description: "native \(name) paste publishes complete draft")
-            let focus = FocusState<Bool>()
             var richRepresentations: [(UTType, Data)] = []
             if name == "rich-large" {
                 let richText = NSAttributedString(string: text)
@@ -159,7 +158,7 @@ final class IrisComposerTextMeasurementTests: XCTestCase {
                 didPaste.fulfill()
             }
             #if os(iOS)
-            let parent = IrisUIKitComposerTextView(text: binding, isFocused: focus.projectedValue,
+            let parent = IrisUIKitComposerTextView(text: binding, isFocused: .constant(false),
                                                   onPasteAttachments: { _ in XCTFail("Text must not stage attachments") })
             let coordinator = parent.makeCoordinator()
             let view = IrisComposerUITextView(frame: CGRect(x: 0, y: 0, width: 300, height: 100))
@@ -176,7 +175,7 @@ final class IrisComposerTextMeasurementTests: XCTestCase {
             started = ProcessInfo.processInfo.systemUptime
             view.paste(itemProviders: [provider])
             #else
-            let parent = IrisAppKitComposerTextView(text: binding, isFocused: focus.projectedValue,
+            let parent = IrisAppKitComposerTextView(text: binding, isFocused: .constant(false),
                                                    onSubmit: { _ in .rejected },
                                                    onPasteAttachments: { _ in XCTFail("Text must not stage attachments") })
             let coordinator = parent.makeCoordinator()

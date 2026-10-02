@@ -238,6 +238,7 @@ final class ChatTimelineScrollObserverView: UIView {
         }
         if timelineCoordinator?.scrollView === observedScrollView {
             timelineCoordinator?.scrollView = nil
+            timelineCoordinator?.appliedViewportLayout = nil
         }
         observedScrollView = nil
     }
@@ -246,7 +247,7 @@ final class ChatTimelineScrollObserverView: UIView {
         timelineCoordinator?.captureKeyboardViewportAnchor(notification: notification)
     }
 
-    @objc private func keyboardDidResize() { timelineCoordinator?.keyboardViewportAnchor = nil }
+    @objc private func keyboardDidResize() { timelineCoordinator?.clearKeyboardViewportAnchor() }
 
     @objc private func handleScrollPan(_ recognizer: UIPanGestureRecognizer) {
         guard let scrollView = observedScrollView else { return }

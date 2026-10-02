@@ -31,13 +31,12 @@ final class IrisChatMacComposerTests: XCTestCase {
         box: TextBox,
         coordinator: IrisAppKitComposerTextView.Coordinator
     ) {
-        let focusState = FocusState<Bool>()
         let parent = IrisAppKitComposerTextView(
             text: Binding(
                 get: { box.value },
                 set: { box.value = $0 }
             ),
-            isFocused: focusState.projectedValue,
+            isFocused: .constant(false),
             onSubmit: onSubmit
         )
         return (box, parent.makeCoordinator())
@@ -509,7 +508,7 @@ final class IrisChatMacComposerTests: XCTestCase {
 
 private struct IrisComposerHostingHarness: View {
     @State private var text = "first"
-    @FocusState private var isFocused: Bool
+    @State private var isFocused = false
 
     var body: some View {
         IrisAppKitComposerTextView(

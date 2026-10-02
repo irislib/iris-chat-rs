@@ -377,7 +377,7 @@ private struct ComposerGeometry: Equatable {
 @MainActor
 private struct ClipboardComposerFixture: View {
     @ObservedObject var draft: ClipboardComposerDraft
-    @FocusState private var focused: Bool
+    @State private var focused = false
 
     var body: some View {
         IrisComposerBar(composerState: draft.composer, attachments: $draft.files, sendFilesDirectly: $draft.directly,
