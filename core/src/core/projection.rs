@@ -223,6 +223,15 @@ fn state_content_eq(a: &AppState, b: &AppState) -> bool {
 }
 
 impl AppCore {
+    /// A send action needs its pending row visible while its protocol work is
+    /// still running, including inside the FFI pump's coalesced batch. Keep
+    /// storage, protocol checkpoints and other updates under the normal batch
+    /// guard; only publish this immediate user feedback.
+    pub(super) fn emit_pending_message_state(&mut self) {
+        self.rebuild_state_inner();
+        self.emit_state_inner();
+    }
+
     pub(super) fn rebuild_state(&mut self) {
         if self.batch_depth > 0 {
             self.batch_dirty_state = true;

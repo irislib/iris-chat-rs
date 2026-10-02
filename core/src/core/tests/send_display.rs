@@ -52,7 +52,7 @@ impl StorageAdapter for SendDisplayStorage {
     }
 }
 
-fn send_display_scenario(group: bool, fail: bool) {
+fn send_display_scenario(group: bool, fail: bool, batched: bool) {
     let owner = Keys::generate();
     let device = Keys::generate();
     let (mut core, updates, _dir) =
@@ -91,7 +91,14 @@ fn send_display_scenario(group: bool, fail: bool) {
     let body = "visible before encryption and checkpoint";
     let _: Vec<_> = updates.try_iter().collect();
     *storage.expected.lock().unwrap() = Some(body.into());
-    core.send_message(&chat_id, body, None);
+    if batched {
+        core.handle_messages(vec![CoreMsg::Action(AppAction::SendMessage {
+            chat_id: chat_id.clone(),
+            text: body.into(),
+        })]);
+    } else {
+        core.send_message(&chat_id, body, None);
+    }
     assert!(
         !storage.first_save.load(std::sync::atomic::Ordering::SeqCst),
         "real protocol checkpoint must be exercised"
@@ -121,13 +128,22 @@ fn send_display_scenario(group: bool, fail: bool) {
 
 #[test]
 fn direct_pending_bubble_is_emitted_before_protocol_checkpoint() {
-    send_display_scenario(false, false);
+    send_display_scenario(false, false, false);
 }
 #[test]
 fn group_pending_bubble_is_emitted_before_protocol_checkpoint() {
-    send_display_scenario(true, false);
+    send_display_scenario(true, false, false);
 }
 #[test]
 fn group_pending_bubble_survives_checkpoint_failure_as_failed() {
-    send_display_scenario(true, true);
+    send_display_scenario(true, true, false);
+}
+
+#[test]
+fn batched_direct_pending_bubble_precedes_checkpoint() {
+    send_display_scenario(false, false, true);
+}
+#[test]
+fn batched_group_pending_bubble_precedes_checkpoint() {
+    send_display_scenario(true, false, true);
 }

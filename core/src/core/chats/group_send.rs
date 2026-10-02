@@ -44,8 +44,7 @@ impl AppCore {
             expires_at_secs,
             DeliveryState::Queued,
         );
-        self.rebuild_state();
-        self.emit_state();
+        self.emit_pending_message_state();
         let result = self
             .protocol_engine
             .as_mut()

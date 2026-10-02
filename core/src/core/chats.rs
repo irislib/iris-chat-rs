@@ -581,10 +581,9 @@ impl AppCore {
             expires_at_secs,
             DeliveryState::Queued,
         );
-        // The pending row must reach the UI before any storage or protocol
-        // work. Its stable authored ID is also used by delivery and retries.
-        self.rebuild_state();
-        self.emit_state();
+        // Cross the FFI batch boundary before storage or protocol work. Its
+        // stable authored ID is also used by delivery and retries.
+        self.emit_pending_message_state();
         if let Some(thread) = self.threads.get(&normalized_chat_id) {
             if let Err(error) = self.app_store.save_outgoing_event(thread, &message, &rumor) {
                 self.update_message_delivery(
