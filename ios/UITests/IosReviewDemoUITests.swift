@@ -53,9 +53,10 @@ final class IosReviewDemoUITests: IrisChatUITestCase {
         let app = launchCleanApp()
         submitWelcomeName(app, name: "AppStoreDemoUserMode")
         XCTAssertTrue(waitForChatList(app, timeout: 45))
-        let sample = app.staticTexts["Sample conversation"].firstMatch
+        let sample = sampleConversationRow(app)
         XCTAssertTrue(sample.waitForExistence(timeout: 45))
         XCTAssertTrue(waitUntil(timeout: 45) { !app.staticTexts["Preparing sample messages…"].exists })
+        XCTAssertTrue(waitUntil(timeout: 10) { sample.isHittable })
         sample.tap()
         let play = app.buttons["chatAudioPlayButton"].firstMatch
         XCTAssertTrue(play.waitForExistence(timeout: 15))
@@ -96,10 +97,11 @@ final class IosReviewDemoUITests: IrisChatUITestCase {
         acceptOnboardingTermsIfNeeded(app)
         element(app, "generateKeyButton").tap()
         XCTAssertTrue(waitForChatList(app, timeout: 45))
-        let sample = app.staticTexts["Sample conversation"].firstMatch
+        let sample = sampleConversationRow(app)
         XCTAssertTrue(sample.waitForExistence(timeout: 45), app.debugDescription)
         XCTAssertTrue(waitUntil(timeout: 45) { !app.staticTexts["Preparing sample messages…"].exists })
         XCTAssertFalse(app.staticTexts["Demo setup failed. Tap Retry."].exists)
+        XCTAssertTrue(waitUntil(timeout: 10) { sample.isHittable })
         sample.tap()
         let play = app.buttons["chatAudioPlayButton"].firstMatch
         XCTAssertTrue(play.waitForExistence(timeout: 15), app.debugDescription)
@@ -122,6 +124,13 @@ final class IosReviewDemoUITests: IrisChatUITestCase {
         element(restored, "navigationBackButton").tap()
         XCTAssertTrue(waitForChatList(restored, timeout: 10))
         XCTAssertTrue(restored.staticTexts["Sample group"].exists)
+    }
+
+    private func sampleConversationRow(_ app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@",
+            "chatRow-", "Sample conversation,"
+        )).firstMatch
     }
 
     private func captureDemo(_ app: XCUIApplication, name: String) {
