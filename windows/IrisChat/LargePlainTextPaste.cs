@@ -15,15 +15,17 @@ internal static class LargePlainTextPaste
             return false;
         if (!isCurrent()) return true;
 
-        var timing = PastePhaseDiagnostics.Begin();
+        var timing = PastePhaseDiagnostics.Begin(input);
         DataObjectPastingEventHandler guard = (_, e) =>
         {
+            timing?.Mark("native_before_pasting_event");
             if (!isCurrent()) { e.CancelCommand(); return; }
             if (e.CommandCancelled) return;
             // Native Paste flushes pending typing before this event. If that
             // changed the draft policy, settle the old text at the final width
             // again before WPF inserts clipboard content.
             if (ComposerTextLayout.Update(input, ComposerTextLayout.BulkLength)) input.UpdateLayout();
+            timing?.Mark("native_pasting_event_policy_layout");
             // Snapshot the native plaintext choice while checking each provider
             // read. WPF's Unicode-null fallback reads SourceDataObject directly,
             // so wrapping only e.DataObject would leave that fallback unguarded.
@@ -42,6 +44,7 @@ internal static class LargePlainTextPaste
             if (!isCurrent()) throw new StalePasteException();
             e.DataObject = new DataObject(format, replacement);
             e.FormatToApply = format;
+            timing?.PayloadMaterialized();
         };
         DataObject.AddPastingHandler(input, guard);
         try
@@ -54,8 +57,9 @@ internal static class LargePlainTextPaste
             // This public method invokes the native editor directly, without
             // routing another Paste command through PreviewExecuted. WPF owns
             // pending input, format/filter handling, selection and undo/redo.
+            timing?.BeginNativePaste();
             input.Paste();
-            timing?.Mark("native_paste");
+            timing?.NativePasteReturned();
             if (isCurrent()) ComposerTextLayout.CompletePaste(input, timing);
         }
         catch (StalePasteException) { timing?.Mark("stale_native_paste"); }

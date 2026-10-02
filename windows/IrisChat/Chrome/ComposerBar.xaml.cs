@@ -87,11 +87,17 @@ public partial class ComposerBar : UserControl
 
     private void OnInputTextChanged(object sender, TextChangedEventArgs e)
     {
-        var text = Input.Text;
-        ComposerTextLayout.Update(Input, text.Length);
-        var hasText = !string.IsNullOrWhiteSpace(text);
-        if (hasText && !_wasTyping) { _wasTyping = true; Typing?.Invoke(); }
-        else if (!hasText && _wasTyping) { _wasTyping = false; StoppedTyping?.Invoke(); }
+        var timing = PastePhaseDiagnostics.For(Input);
+        timing?.TextChangedStarted();
+        try
+        {
+            var text = Input.Text;
+            ComposerTextLayout.Update(Input, text.Length);
+            var hasText = !string.IsNullOrWhiteSpace(text);
+            if (hasText && !_wasTyping) { _wasTyping = true; Typing?.Invoke(); }
+            else if (!hasText && _wasTyping) { _wasTyping = false; StoppedTyping?.Invoke(); }
+        }
+        finally { timing?.Mark("composer_text_changed_callback"); }
     }
 
     private void OnSend(object sender, RoutedEventArgs e) => Submit();
