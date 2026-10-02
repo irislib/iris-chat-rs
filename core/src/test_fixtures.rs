@@ -324,6 +324,8 @@ fn fixture_search_hit(query: &str, index: u32) -> MessageSearchHit {
         chat_picture_url: None,
         chat_kind: kind,
         author_pubkey: fixture_hex(30_000 + index),
+        author_display_name: format!("Sender {:04}", index + 1),
+        author_picture_url: None,
         body: format!("{query} search fixture message body {:05}", index + 1),
         is_outgoing: index.is_multiple_of(2),
         created_at_secs: BASE_TIME_SECS.saturating_sub(u64::from(index) * 30),

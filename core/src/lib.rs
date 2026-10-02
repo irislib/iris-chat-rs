@@ -513,7 +513,7 @@ impl FfiApp {
                     },
                     None => (Vec::new(), Vec::new()),
                 };
-                let enriched = enrich_message_hits(messages, &chat_list);
+                let enriched = enrich_message_hits(messages, &chat_list, account.as_ref());
                 // The shortcut row only makes sense for global search.
                 // Once the user has scoped to a single chat, an npub
                 // paste should still search that chat's messages, not
@@ -1307,6 +1307,7 @@ mod ffi_lifecycle_tests;
 fn enrich_message_hits(
     hits: Vec<crate::core::PersistedMessageSearchHit>,
     chat_list: &[ChatThreadSnapshot],
+    account: Option<&AccountSnapshot>,
 ) -> Vec<MessageSearchHit> {
     use std::collections::HashMap;
     let lookup: HashMap<&str, &ChatThreadSnapshot> = chat_list
@@ -1323,13 +1324,43 @@ fn enrich_message_hits(
             let kind = parent
                 .map(|chat| chat.kind.clone())
                 .unwrap_or(ChatKind::Direct);
+            // Older messages can lack a stored author identity. Only infer
+            // one when direction and chat kind identify the sender unambiguously.
+            let author_pubkey = hit.author_owner_pubkey_hex.or_else(|| {
+                if hit.kind != ChatMessageKind::User {
+                    None
+                } else if hit.is_outgoing {
+                    account.map(|account| account.public_key_hex.clone())
+                } else {
+                    parent
+                        .filter(|chat| chat.kind == ChatKind::Direct)
+                        .map(|chat| chat.chat_id.clone())
+                }
+            });
+            let local_author = account.filter(|account| {
+                author_pubkey.as_deref() == Some(account.public_key_hex.as_str())
+            });
+            let direct_author = parent.filter(|chat| {
+                chat.kind == ChatKind::Direct
+                    && author_pubkey.as_deref() == Some(chat.chat_id.as_str())
+            });
+            let author_display_name = local_author
+                .map(|account| account.display_name.clone())
+                .or_else(|| direct_author.map(|chat| chat.display_name.clone()))
+                .unwrap_or(hit.author);
+            let author_picture_url = local_author
+                .and_then(|account| account.picture_url.clone())
+                .or(hit.author_picture_url)
+                .or_else(|| direct_author.and_then(|chat| chat.picture_url.clone()));
             MessageSearchHit {
                 chat_id: hit.chat_id,
                 message_id: hit.message_id,
                 chat_display_name: display_name,
                 chat_picture_url: picture_url,
                 chat_kind: kind,
-                author_pubkey: hit.author,
+                author_pubkey: author_pubkey.unwrap_or_default(),
+                author_display_name,
+                author_picture_url,
                 body: hit.body,
                 is_outgoing: hit.is_outgoing,
                 created_at_secs: hit.created_at_secs,

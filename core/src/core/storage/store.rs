@@ -1274,6 +1274,9 @@ pub(crate) struct PersistedMessageSearchHit {
     pub chat_id: String,
     pub message_id: String,
     pub author: String,
+    pub author_owner_pubkey_hex: Option<String>,
+    pub author_picture_url: Option<String>,
+    pub kind: ChatMessageKind,
     pub body: String,
     pub is_outgoing: bool,
     pub created_at_secs: u64,
@@ -1299,16 +1302,26 @@ pub(crate) fn search_messages_fts(
             body: super::super::attachments::chat_message_body_preview(&row.get::<_, String>(3)?),
             is_outgoing: row.get::<_, i64>(4)? != 0,
             created_at_secs: row.get::<_, i64>(5)?.max(0) as u64,
+            author_owner_pubkey_hex: row.get(6)?,
+            author_picture_url: row.get(7)?,
+            kind: parse_message_kind(&row.get::<_, String>(8)?),
         })
     };
     let mut hits = Vec::new();
     match scope_chat_id {
         Some(chat_id) => {
             let mut stmt = conn.prepare(
-                "SELECT messages.chat_id, messages.id, messages.author, messages.body,
-                        messages.is_outgoing, messages.created_at_secs
+                "SELECT messages.chat_id, messages.id,
+                        COALESCE(NULLIF(TRIM(author.nickname), ''),
+                                 NULLIF(TRIM(json_extract(author.contact_memory_json, '$.accepted_name')), ''),
+                                 NULLIF(TRIM(author.display_name), ''),
+                                 NULLIF(TRIM(author.name), ''), messages.author), messages.body,
+                        messages.is_outgoing, messages.created_at_secs,
+                        messages.author_owner_pubkey_hex, author.picture, messages.kind
                  FROM messages_fts
                  JOIN messages ON messages.rowid = messages_fts.rowid
+                 LEFT JOIN owner_profiles AS author
+                    ON author.owner_pubkey_hex = messages.author_owner_pubkey_hex
                  WHERE messages_fts MATCH ?1 AND messages.chat_id = ?2
                  ORDER BY messages.created_at_secs DESC, messages.rowid DESC
                  LIMIT ?3",
@@ -1320,10 +1333,17 @@ pub(crate) fn search_messages_fts(
         }
         None => {
             let mut stmt = conn.prepare(
-                "SELECT messages.chat_id, messages.id, messages.author, messages.body,
-                        messages.is_outgoing, messages.created_at_secs
+                "SELECT messages.chat_id, messages.id,
+                        COALESCE(NULLIF(TRIM(author.nickname), ''),
+                                 NULLIF(TRIM(json_extract(author.contact_memory_json, '$.accepted_name')), ''),
+                                 NULLIF(TRIM(author.display_name), ''),
+                                 NULLIF(TRIM(author.name), ''), messages.author), messages.body,
+                        messages.is_outgoing, messages.created_at_secs,
+                        messages.author_owner_pubkey_hex, author.picture, messages.kind
                  FROM messages_fts
                  JOIN messages ON messages.rowid = messages_fts.rowid
+                 LEFT JOIN owner_profiles AS author
+                    ON author.owner_pubkey_hex = messages.author_owner_pubkey_hex
                  WHERE messages_fts MATCH ?1
                  ORDER BY messages.created_at_secs DESC, messages.rowid DESC
                  LIMIT ?2",
@@ -1600,6 +1620,10 @@ fn serialize_delivery(state: &DeliveryState) -> &'static str {
         DeliveryState::Failed => "failed",
     }
 }
+
+#[cfg(test)]
+#[path = "search_message_tests.rs"]
+mod search_message_tests;
 
 #[cfg(test)]
 mod tests {

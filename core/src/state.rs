@@ -555,9 +555,9 @@ pub struct MobilePushSubscriptionRequest {
 }
 
 /// One row inside the "Messages" section of a search result. Shells
-/// render this as a single conversation list row whose subtitle is the
-/// matched body and whose title is the chat's display name (resolved
-/// here so the UI doesn't have to look up the parent thread).
+/// use the conversation identity for global results and the author identity
+/// for results within a chat. Both are resolved from persisted history so
+/// searching older messages does not depend on the loaded timeline.
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct MessageSearchHit {
     pub chat_id: String,
@@ -566,6 +566,8 @@ pub struct MessageSearchHit {
     pub chat_picture_url: Option<String>,
     pub chat_kind: ChatKind,
     pub author_pubkey: String,
+    pub author_display_name: String,
+    pub author_picture_url: Option<String>,
     pub body: String,
     pub is_outgoing: bool,
     pub created_at_secs: u64,

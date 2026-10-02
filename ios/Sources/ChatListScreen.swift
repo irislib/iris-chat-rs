@@ -840,15 +840,15 @@ struct InChatSearchSheet: View {
                         LazyVStack(spacing: 0) {
                             ForEach(results.messages, id: \.messageId) { hit in
                                 IrisChatRow(
-                                    ownerPubkeyHex: hit.chatKind == .direct ? hit.chatId : nil,
-                                    title: hit.chatDisplayName,
+                                    ownerPubkeyHex: hit.authorPubkey.isEmpty ? nil : hit.authorPubkey,
+                                    title: hit.authorDisplayName,
                                     isMuted: false,
                                     isPinned: false,
                                     preview: hit.body,
                                     subtitle: nil,
                                     timeLabel: irisRelativeTime(hit.createdAtSecs, relativeTo: now),
                                     unreadCount: 0,
-                                    pictureUrl: hit.chatPictureUrl,
+                                    pictureUrl: hit.authorPictureUrl,
                                     preferences: preferences,
                                     manager: manager,
                                     onTap: {

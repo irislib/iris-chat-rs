@@ -292,6 +292,14 @@ final class IrisChatTimelineUITests: IrisChatUITestCase {
 
         let oldestSearchHit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'inChatMessageHit-'")).firstMatch
         XCTAssertTrue(oldestSearchHit.waitForExistence(timeout: 15))
+        XCTAssertTrue(
+            oldestSearchHit.staticTexts["ios tester"].exists || oldestSearchHit.label.contains("ios tester"),
+            "Outgoing search result must show the sender, not the other participant"
+        )
+        let searchResult = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        searchResult.name = "in-chat-search-outgoing-author"
+        searchResult.lifetime = .keepAlways
+        add(searchResult)
         oldestSearchHit.tap()
         XCTAssertTrue(waitUntil(timeout: 5) { !searchField.exists })
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))

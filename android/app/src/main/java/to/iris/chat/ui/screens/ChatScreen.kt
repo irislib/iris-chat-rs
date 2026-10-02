@@ -982,6 +982,7 @@ internal fun InChatSearchSheet(
     chatDisplayName: String,
     onDismiss: () -> Unit,
 ) {
+    val state by appManager.state.collectAsStateWithLifecycle()
     var query by remember(chatId) { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
@@ -1083,15 +1084,25 @@ internal fun InChatSearchSheet(
                     } else {
                         val nowMs = System.currentTimeMillis()
                         items(current.messages, key = { it.messageId }) { hit ->
+                            val avatarData by rememberNhashImageData(appManager, hit.authorPictureUrl)
+                            val avatarRequest = hit.authorPictureUrl
+                                ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                                ?.let { imageLoadRequest(
+                                    originalSrc = it,
+                                    preferences = state.preferences,
+                                    width = 84u,
+                                    height = 84u,
+                                    square = true,
+                                ) }
                             IrisChatListRow(
-                                ownerPubkeyHex = hit.chatId.takeIf { hit.chatKind == ChatKind.DIRECT },
-                                title = hit.chatDisplayName,
+                                ownerPubkeyHex = hit.authorPubkey.takeIf { it.isNotEmpty() },
+                                title = hit.authorDisplayName,
                                 isMuted = false,
                                 isPinned = false,
                                 preview = hit.body,
                                 timeLabel = formatRelativeTime(hit.createdAtSecs.toLong(), nowMs),
-                                imageUrl = null,
-                                imageData = null,
+                                imageRequest = avatarRequest,
+                                imageData = avatarData,
                                 unreadCount = 0L,
                                 lastMessageMine = false,
                                 lastDelivery = null,
