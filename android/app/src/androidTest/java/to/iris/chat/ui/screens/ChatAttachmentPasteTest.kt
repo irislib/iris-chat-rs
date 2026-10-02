@@ -211,13 +211,36 @@ class ChatAttachmentPasteTest {
         pasteClipboard(ClipData.newPlainText("Text", text))
         compose.waitUntil(5_000) { draftUpdates.lastOrNull() == expected }
         val elapsedMs = SystemClock.uptimeMillis() - started
-        File(checkNotNull(context.getExternalFilesDir("screenshots")), "android-clipboard-large-text.json").apply {
-            parentFile?.mkdirs()
-            writeText("{\"characters\":${text.length},\"elapsed_ms\":$elapsedMs,\"draft_updates\":${draftUpdates.size}}")
-        }
-        assertTrue("A 100 KB text paste should finish promptly", elapsedMs < 5_000)
+        val pasteUpdates = draftUpdates.size
         assertEquals(listOf(expected), draftUpdates)
         assertEquals(expected, draft.text.toString())
+        assertEquals(TextRange(expected.length), draft.selection)
+
+        // Keep the paste's caret and editor state: the next ordinary edit must
+        // complete once without replacing or resetting the large draft.
+        val edited = "$expected!"
+        val editStarted = SystemClock.uptimeMillis()
+        compose.onNodeWithTag("chatMessageInput").performTextInput("!")
+        compose.waitForIdle()
+        compose.waitUntil(5_000) { draftUpdates.lastOrNull() == edited }
+        val editElapsedMs = SystemClock.uptimeMillis() - editStarted
+        val editUpdates = draftUpdates.size - pasteUpdates
+        File(checkNotNull(context.getExternalFilesDir("screenshots")), "android-clipboard-large-text.json").apply {
+            parentFile?.mkdirs()
+            writeText("""{
+                "characters":${text.length},"elapsed_ms":$elapsedMs,"draft_updates":$pasteUpdates,
+                "subsequent_edit_ms":$editElapsedMs,"subsequent_edit_draft_updates":$editUpdates,
+                "freeze_budget_ms":5000,
+                "paste_boundary":"Clipboard setup through native Ctrl+V, Compose idle, and observed draft callback",
+                "subsequent_edit_boundary":"Compose semantics text input through idle and observed draft callback"
+            }""".trimIndent())
+        }
+        assertTrue("A 100 KB text paste should finish promptly", elapsedMs < 5_000)
+        assertTrue("The next edit after a 100 KB paste should finish promptly", editElapsedMs < 5_000)
+        assertEquals(1, editUpdates)
+        assertEquals(listOf(expected, edited), draftUpdates)
+        assertEquals(edited, draft.text.toString())
+        assertEquals(TextRange(edited.length), draft.selection)
         assertTrue(attachments.value.isEmpty())
         assertFalse(scope.coroutineContext[Job]!!.children.any())
         assertEquals(before, output.listFiles().orEmpty().map { it.name }.toSet())
