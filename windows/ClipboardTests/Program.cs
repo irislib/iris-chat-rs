@@ -195,6 +195,7 @@ internal static class Program
             Save(window, Path.Combine(output, "windows-large-text-paste.png"));
             // Finish semantics before enforcing the unchanged cold performance
             // limits, so a slow runner still retains meaningful native evidence.
+            NativePasteFormattingTests.Verify(window, composer, large, Pump, output);
             LargeTextPasteTests.Verify(composer, Pump, output);
             RestoredDraftLayoutTests.Verify(window, composer, large, Pump, output);
             composer.Clear();

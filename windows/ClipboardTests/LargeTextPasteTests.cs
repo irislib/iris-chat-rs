@@ -117,7 +117,7 @@ internal static class LargeTextPasteTests
         Check(input.Text == "small 世界🙂\r\ntext", "ordinary native plaintext paste keeps its semantics");
         Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Auto,
             "ordinary small drafts keep automatic scrollbars");
-        NativePasteDestinationTests.Verify(composer, input, text);
+        NativePasteDestinationTests.Verify(composer, input, text, output);
         VerifyPartiallyClippedCaret(composer, input, text, pump);
         composer.Clear();
         pump();

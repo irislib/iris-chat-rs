@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -7,10 +10,11 @@ using IrisChat.Chrome;
 
 internal static class NativePasteDestinationTests
 {
-    internal static void Verify(ComposerBar composer, TextBox input, string text)
+    internal static void Verify(ComposerBar composer, TextBox input, string text, string output)
     {
         var originalScope = composer.AttachmentPasteScope;
         var direct = (CheckBox)composer.FindName("DirectMode");
+        var results = new List<object>();
         try
         {
             foreach (var action in new[] { "clear", "chat", "mode", "typing" })
@@ -22,12 +26,25 @@ internal static class NativePasteDestinationTests
                 input.CaretIndex = input.Text.Length;
                 direct.IsChecked = true;
                 Clipboard.SetText(text);
+                int? caretBeforeTyping = null, caretAfterAppend = null, deferredLengthAfterAppend = null, caretAfterTyping = null;
                 var delayed = new DelayedText(text, () =>
                 {
                     if (action == "clear") composer.Clear();
                     else if (action == "chat") chat = "another-chat";
                     else if (action == "mode") direct.IsChecked = false;
-                    else { input.AppendText("typed "); input.CaretIndex = input.Text.Length; }
+                    else
+                    {
+                        const string typed = "typed ";
+                        caretBeforeTyping = input.CaretIndex;
+                        input.AppendText(typed);
+                        caretAfterAppend = input.CaretIndex;
+                        deferredLengthAfterAppend = input.Text.Length;
+                        // Native Paste holds a change block: the Text DP can
+                        // still contain the old draft until that block closes.
+                        // Real typing advances the live insertion position.
+                        input.CaretIndex = caretBeforeTyping.Value + typed.Length;
+                        caretAfterTyping = input.CaretIndex;
+                    }
                 });
                 DataObjectPastingEventHandler replace = (_, e) =>
                 {
@@ -37,6 +54,18 @@ internal static class NativePasteDestinationTests
                 DataObject.AddPastingHandler(input, replace);
                 try { ApplicationCommands.Paste.Execute(null, input); }
                 finally { DataObject.RemovePastingHandler(input, replace); }
+                results.Add(new
+                {
+                    action, data_reads = delayed.Reads,
+                    caret_before_typing = caretBeforeTyping, caret_after_append = caretAfterAppend,
+                    deferred_text_length_after_append = deferredLengthAfterAppend,
+                    live_caret_after_typing = caretAfterTyping,
+                    final_text_length = input.Text.Length,
+                    typed_caption_and_native_payload_preserved = action == "typing"
+                        ? input.Text == "Caption typed " + text.Replace('\t', ' ') : (bool?)null,
+                });
+                File.WriteAllText(Path.Combine(output, "windows-reentrant-text-timings.json"),
+                    JsonSerializer.Serialize(new { cases = results }, new JsonSerializerOptions { WriteIndented = true }));
                 Check(delayed.Reads == 1, "native Paste reads delayed replacement exactly once");
                 if (action == "typing")
                     Check(input.Text == "Caption typed " + text.Replace('\t', ' '),
