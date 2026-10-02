@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 pub(super) fn dismissed_resolution() -> MobilePushNotificationResolution {
     MobilePushNotificationResolution {
@@ -47,6 +48,8 @@ pub(crate) fn read_mobile_push_notification_indexes(
         return Vec::new();
     }
     drop(conn);
+    let mut preview_engine = None;
+    let mut dismissed: HashMap<nostr::EventId, bool> = HashMap::new();
     payloads
         .into_iter()
         .enumerate()
@@ -55,6 +58,10 @@ pub(crate) fn read_mobile_push_notification_indexes(
             if event.kind.as_u16() as u64 != MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND {
                 return None;
             }
+            if let Some(is_read) = dismissed.get(&event.id) {
+                return (*is_read).then_some(index as u64);
+            }
+            let event_id = event.id;
             let clean_payload = serde_json::json!({"event": event}).to_string();
             let resolution = decrypt_mobile_push_notification_inner(
                 data_dir.clone(),
@@ -62,14 +69,13 @@ pub(crate) fn read_mobile_push_notification_indexes(
                 device_nsec.clone(),
                 clean_payload,
                 false,
+                &mut preview_engine,
             );
             let resolved: serde_json::Value =
                 serde_json::from_str(&resolution.payload_json).ok()?;
-            (resolved
-                .get("iris_dismiss")
-                .and_then(|value| value.as_bool())
-                == Some(true))
-            .then_some(index as u64)
+            let is_read = resolved.get("iris_dismiss").and_then(|value| value.as_bool()) == Some(true);
+            dismissed.insert(event_id, is_read);
+            is_read.then_some(index as u64)
         })
         .collect()
 }

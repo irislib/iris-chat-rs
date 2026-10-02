@@ -105,3 +105,48 @@ fn mobile_push_read_sync_does_not_initialize_or_migrate_the_database() {
     let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
     assert_eq!(version, 0, "notification cleanup must never migrate the live database");
 }
+
+#[test]
+fn mobile_push_large_group_notification_cleanup_has_one_protocol_load_and_bounded_checkpoint_bytes() {
+    let mut pair = chat_read_receipt_pair("large-group-notification-work");
+    let peers: Vec<_> = (0..100).map(|_| Keys::generate()).collect();
+    pair.b.create_group("Large group", &peers.iter().map(|p| p.public_key().to_hex()).collect::<Vec<_>>());
+    let mut payloads = Vec::new();
+    let mut events = Vec::new();
+    for (i, peer) in peers.iter().take(16).enumerate() {
+        let body = format!("read notification {i}");
+        let event = appcore_direct_message_event_for_test(
+            pair.b.protocol_engine.as_mut().unwrap(), peer, &body, 200,
+        );
+        let (_, id) = runtime_rumor_json(peer.public_key(), CHAT_MESSAGE_KIND, &body, 200, Vec::new());
+        chat_read_sync_incoming(&mut pair.b, peer, &id, 200);
+        pair.b.mark_messages_seen(&peer.public_key().to_hex(), &[id]);
+        payloads.push(serde_json::json!({"event": event}).to_string());
+        events.push(event);
+    }
+    pair.b.persist_best_effort();
+    // Notification delivery can repeat or arrive out of order. The resolver must
+    // preserve each index while sharing one read-only protocol preview.
+    payloads.reverse();
+    payloads.push(payloads[0].clone());
+    let expected: Vec<u64> = (0..payloads.len() as u64).collect();
+    let conn = rusqlite::Connection::open(pair._b_dir.path().join("core.sqlite3")).unwrap();
+    let read_state = || conn.query_row(
+        "SELECT value FROM ndr_kv WHERE key = 'appcore/protocol-engine-state-v1'",
+        [], |row| row.get::<_, String>(0),
+    ).unwrap();
+    let before = read_state();
+    super::mobile_push::PREVIEW_WORK.with(|work| work.set((0, 0)));
+    let started = std::time::Instant::now();
+    let indexes = read_mobile_push_notification_indexes(
+        pair._b_dir.path().to_string_lossy().into_owned(),
+        pair.owner.public_key().to_hex(), pair.b_device.secret_key().to_secret_hex(), payloads,
+    );
+    let (loads, checkpoint_bytes) = super::mobile_push::PREVIEW_WORK.with(|work| work.get());
+    eprintln!("large-group notification cleanup: {:?}, loads={loads}, checkpoint_bytes={checkpoint_bytes}, state_bytes={}", started.elapsed(), before.len());
+    assert_eq!(indexes, expected);
+    assert_eq!(read_state(), before, "preview must leave the durable ratchet untouched");
+    assert_eq!(loads, 1, "a notification batch must not reload all groups and sessions for each alert");
+    assert!(checkpoint_bytes < before.len() * 2, "read-only preview must not serialize the entire protocol state for each alert");
+    for event in events { pair.b.handle_relay_event(event); }
+}

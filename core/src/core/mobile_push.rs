@@ -263,6 +263,7 @@ pub(crate) fn decrypt_mobile_push_notification(
         device_nsec,
         raw_payload_json,
         true,
+        &mut None,
     );
     if let (Some(event), Ok(mut payload)) = (
         event,
@@ -282,6 +283,7 @@ fn decrypt_mobile_push_notification_inner(
     device_nsec: String,
     raw_payload_json: String,
     wait_for_cache: bool,
+    preview_engine: &mut Option<ProtocolEngine>,
 ) -> MobilePushNotificationResolution {
     let fallback = || resolve_mobile_push_notification(raw_payload_json.clone());
 
@@ -380,9 +382,11 @@ fn decrypt_mobile_push_notification_inner(
     // Preview work must never initialize or migrate the live database. The
     // read-only connection also avoids journal changes and write locks while
     // iOS is preparing to suspend notification cleanup.
-    let mut engine = match direct_message_preview_engine(&data_dir, owner_pubkey, &device_keys) {
-        Some(engine) => engine,
-        None => return cached_fallback(),
+    if preview_engine.is_none() {
+        *preview_engine = direct_message_preview_engine(&data_dir, owner_pubkey, &device_keys);
+    }
+    let Some(engine) = preview_engine.as_mut() else {
+        return cached_fallback();
     };
 
     let outer_has_header = mobile_push_event_has_tag(&outer_event, "header");
@@ -884,6 +888,11 @@ pub(in crate::core) fn direct_message_preview_engine(
     owner: PublicKey,
     keys: &Keys,
 ) -> Option<ProtocolEngine> {
+    #[cfg(test)]
+    PREVIEW_WORK.with(|work| {
+        let (loads, bytes) = work.get();
+        work.set((loads + 1, bytes));
+    });
     let conn = open_lookup_connection(data_dir)?;
     conn.busy_timeout(Duration::from_millis(200)).ok()?;
     super::storage::validate_account_storage(&conn, &owner.to_hex()).ok()?;
@@ -893,7 +902,11 @@ pub(in crate::core) fn direct_message_preview_engine(
         keys.public_key().to_hex(),
     )) as Arc<dyn StorageAdapter>;
     let overlay = Arc::new(NotificationPreviewStorage::new(base)) as Arc<dyn StorageAdapter>;
-    ProtocolEngine::load_or_create_for_local_device(overlay, owner, keys).ok()
+    let engine = ProtocolEngine::load_or_create_for_local_device(overlay, owner, keys).ok()?;
+    // This engine is discarded after previewing. Its mutations must stay in
+    // memory, without serializing a full checkpoint after each notification.
+    engine.enter_batch();
+    Some(engine)
 }
 
 pub(in crate::core) fn preview_direct_messages_in_engine(
@@ -919,6 +932,11 @@ pub(in crate::core) fn preview_direct_messages_in_engine(
         }
     }
     decrypted
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(in crate::core) static PREVIEW_WORK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 struct NotificationPreviewStorage {
@@ -953,6 +971,11 @@ impl StorageAdapter for NotificationPreviewStorage {
     }
 
     fn put(&self, key: &str, value: String) -> StorageResult<()> {
+        #[cfg(test)]
+        PREVIEW_WORK.with(|work| {
+            let (loads, bytes) = work.get();
+            work.set((loads, bytes + value.len()));
+        });
         lock_preview_storage(&self.overlay).insert(key.to_string(), value);
         lock_preview_storage(&self.deleted).remove(key);
         Ok(())
