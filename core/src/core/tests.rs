@@ -144,6 +144,7 @@ include!("tests/direct_messages_typing.rs");
 include!("tests/direct_messages_runtime_regressions.rs");
 include!("tests/direct_group_sender_key_ack.rs");
 include!("tests/groups_sender_key.rs");
+include!("tests/group_reactions.rs");
 include!("tests/groups_sender_key_retry.rs");
 include!("tests/groups_scale.rs");
 include!("tests/groups_persistence_helpers.rs");

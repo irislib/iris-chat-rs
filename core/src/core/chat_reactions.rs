@@ -45,9 +45,12 @@ impl AppCore {
             return;
         };
         if parse_group_id_from_chat_id(chat_id).is_some() {
-            self.push_debug_log(
-                "group.reaction.skipped",
-                "group reactions are deferred on the experimental group protocol",
+            self.send_group_event(
+                chat_id,
+                REACTION_KIND,
+                emoji,
+                vec![vec!["e".to_string(), message_id.to_string()]],
+                None,
             );
             return;
         }
