@@ -1,6 +1,8 @@
 use super::*;
 use crate::core::protocol::PROTOCOL_RECONNECT_CHECK_SECS;
 
+mod nearby;
+
 const PENDING_RELAY_DRAIN_CONCURRENCY: usize = 4;
 const PENDING_RELAY_DRAIN_BATCH_SIZE: usize = 16;
 const PENDING_RELAY_DRAIN_STALE_AFTER: Duration = RELAY_PUBLISH_ATTEMPT_TIMEOUT;
@@ -240,19 +242,9 @@ impl AppCore {
 
     pub(super) fn retry_pending_relay_publishes(&mut self, reason: &str) {
         self.discard_removed_group_publications();
-        self.replay_mesh_outbox();
+        self.replay_pending_nearby_publishes();
         if self.pending_relay_publishes.is_empty() {
             return;
-        }
-        let nearby_events = self
-            .pending_relay_publishes
-            .values()
-            .rev()
-            .take(64)
-            .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
-            .collect::<Vec<_>>();
-        for event in &nearby_events {
-            self.publish_fips_nearby(event);
         }
         let Some((client, relay_urls)) = self
             .logged_in
