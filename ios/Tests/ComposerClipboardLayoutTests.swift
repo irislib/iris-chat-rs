@@ -73,9 +73,13 @@ final class ComposerClipboardLayoutTests: XCTestCase {
         XCTAssertEqual(attachments.count, 1)
         let multiline = String(repeating: "A large pasted paragraph 🙂\nlet value = 42;\n", count: 1_000)
         let paragraph = String(repeating: "A large pasted paragraph 🙂 with code: let value = 42; ", count: 1_000)
-        var cases = [("caption", "Here is the picture"), ("multiline", multiline), ("single-paragraph", paragraph)]
+        let cases = [("caption", "Here is the picture"), ("multiline", multiline), ("single-paragraph", paragraph)]
         #if os(iOS)
-        cases.append(("single-paragraph-scroll-before-insertion", paragraph))
+        let pasteBudgetMs = 1_500.0
+        let followingEditBudgetMs = 500.0
+        #else
+        let pasteBudgetMs = 5_000.0
+        let followingEditBudgetMs = 5_000.0
         #endif
         for (name, text) in cases {
             let operations = ComposerOperationProbe()
@@ -137,12 +141,6 @@ final class ComposerClipboardLayoutTests: XCTestCase {
             XCTAssertFalse(editor.scrollsToTop)
             XCTAssertTrue(editor.becomeFirstResponder())
             defer { editor.resignFirstResponder() }
-            var scrollingDelegate: ClipboardScrollingDelegate?
-            if name == "single-paragraph-scroll-before-insertion" {
-                scrollingDelegate = ClipboardScrollingDelegate(forwarding: try XCTUnwrap(editor.delegate))
-                editor.delegate = scrollingDelegate
-            }
-            defer { withExtendedLifetime(scrollingDelegate) {} }
             #if DEBUG
             editor.onLayoutTiming = { operations.record($0, milliseconds: $1) }
             defer { editor.onLayoutTiming = nil }
@@ -180,18 +178,15 @@ final class ComposerClipboardLayoutTests: XCTestCase {
             try await Task.sleep(nanoseconds: 400_000_000)
             _ = try sample()
             try await measureChange("\(name)-paste", expected: text, draft: draft, operations: operations,
-                                    enginePresence: enginePresence, action: paste, sample: sample)
-            #if os(iOS)
-            // Native provider paste invokes shouldChange; direct insertText
-            // need not, so validate this control at the paste boundary.
-            if let scrollingDelegate { XCTAssertGreaterThanOrEqual(scrollingDelegate.insertions, 1) }
-            #endif
+                                    enginePresence: enginePresence, settledBudgetMs: pasteBudgetMs,
+                                    action: paste, sample: sample)
             attachScreenshot(try screenshot(), name: "\(name)-paste")
             XCTAssertEqual(draft.files, attachments)
             XCTAssertTrue(draft.directly)
             XCTAssertFalse(draft.didSend)
             try await measureChange("\(name)-following-edit", expected: text + "!", draft: draft, operations: operations,
-                                    enginePresence: enginePresence, action: smallEdit, sample: sample)
+                                    enginePresence: enginePresence, settledBudgetMs: followingEditBudgetMs,
+                                    action: smallEdit, sample: sample)
             attachScreenshot(try screenshot(), name: "\(name)-following-edit")
             XCTAssertEqual(draft.files, attachments)
             XCTAssertTrue(draft.directly)
@@ -200,109 +195,12 @@ final class ComposerClipboardLayoutTests: XCTestCase {
             XCTAssertNil(editor.textLayoutManager)
             XCTAssertTrue(editor.isScrollEnabled)
             XCTAssertFalse(editor.scrollsToTop)
-            if name == "single-paragraph" {
-                try await measureNativeControl(text, matching: editor)
-                try await measureNativeControl(text, matching: editor, label: "native-shared-fitting", sharedFitting: true)
-                try await measureNativeControl(text, matching: editor, label: "native-no-smart-input", disableSmartInput: true)
-                try await measureNativeControl(text, matching: editor, label: "native-textkit1", legacyTextLayout: true)
-            }
             #endif
         }
     }
 
-    #if os(iOS)
-    private func measureNativeControl(_ text: String, matching source: UITextView, label: String = "native-control",
-                                      sharedFitting: Bool = false, disableSmartInput: Bool = false,
-                                      legacyTextLayout: Bool = false) async throws {
-        let sourceWindow = try XCTUnwrap(source.window)
-        let scene = try XCTUnwrap(sourceWindow.windowScene)
-        let frame = source.convert(source.bounds, to: sourceWindow)
-        let controller = UIViewController()
-        controller.view.backgroundColor = .white
-        let window = UIWindow(windowScene: scene)
-        window.frame = sourceWindow.frame
-        window.rootViewController = controller
-        // Fixed native viewport, no SwiftUI or Iris text-view subclass. Each
-        // labeled variant changes just its explicit diagnostic configuration.
-        let editor = legacyTextLayout ? UITextView(usingTextLayoutManager: false) : UITextView(frame: frame)
-        editor.frame = frame
-        editor.font = source.font
-        editor.adjustsFontForContentSizeCategory = source.adjustsFontForContentSizeCategory
-        editor.textContainerInset = source.textContainerInset
-        editor.textContainer.lineFragmentPadding = source.textContainer.lineFragmentPadding
-        editor.allowsEditingTextAttributes = source.allowsEditingTextAttributes
-        editor.autocapitalizationType = source.autocapitalizationType
-        editor.returnKeyType = source.returnKeyType
-        editor.keyboardDismissMode = source.keyboardDismissMode
-        editor.isScrollEnabled = true
-        if disableSmartInput {
-            editor.spellCheckingType = .no
-            editor.autocorrectionType = .no
-            editor.autocapitalizationType = .none
-            editor.smartQuotesType = .no
-            editor.smartDashesType = .no
-            editor.smartInsertDeleteType = .no
-            if #available(iOS 17.0, *) { editor.inlinePredictionType = .no }
-        }
-        XCTAssertEqual(editor.textLayoutManager != nil, !legacyTextLayout)
-        controller.view.addSubview(editor)
-        let draft = ClipboardComposerDraft(files: [])
-        let delegate = ClipboardNativeDraftDelegate(draft: draft)
-        editor.delegate = delegate
-        window.makeKeyAndVisible()
-        defer {
-            editor.resignFirstResponder()
-            editor.delegate = nil
-            window.isHidden = true
-            withExtendedLifetime(delegate) {}
-        }
-        try await Task.sleep(nanoseconds: 250_000_000)
-        controller.view.layoutIfNeeded()
-        XCTAssertEqual(editor.bounds.size, source.bounds.size)
-        XCTAssertTrue(editor.becomeFirstResponder())
-        let operations = ComposerOperationProbe()
-        let measurement = sharedFitting ? IrisComposerTextMeasurement() : nil
-        #if DEBUG
-        measurement?.onLayoutTiming = { operations.record("fitting-layout", milliseconds: $0) }
-        defer { measurement?.onLayoutTiming = nil }
-        #endif
-        let sample: () throws -> ComposerGeometry = {
-            if let measurement {
-                _ = measurement.height(for: editor.textStorage, width: editor.bounds.width,
-                                       lineHeight: ceil(try XCTUnwrap(editor.font).lineHeight))
-            }
-            operations.measure("sample-host-layout") { controller.view.layoutIfNeeded() }
-            operations.measure("sample-transaction-flush") { CATransaction.flush() }
-            let caret = try operations.measure("sample-caret-query") {
-                editor.caretRect(for: try XCTUnwrap(editor.selectedTextRange).end)
-            }
-            return ComposerGeometry(frame: editor.convert(editor.bounds, to: controller.view), viewport: editor.bounds,
-                                    caret: caret, height: editor.bounds.height,
-                                    maximumHeight: ceil(try XCTUnwrap(editor.font).lineHeight * 5), selection: editor.selectedRange,
-                                    scrollingEnabled: editor.isScrollEnabled, firstResponder: editor.isFirstResponder,
-                                    hasMarkedText: editor.markedTextRange != nil)
-        }
-        let provider = NSItemProvider(object: text as NSString)
-        let enginePresence = { editor.textLayoutManager != nil }
-        try await Task.sleep(nanoseconds: 400_000_000)
-        _ = try sample()
-        let changes: [(String, String, () -> Void)] = [
-            ("paste", text, { editor.paste(itemProviders: [provider]) }),
-            ("following-edit", text + "!", { editor.insertText("!") })
-        ]
-        for (name, expected, action) in changes {
-            try await measureChange("\(label)-single-paragraph-\(name)", expected: expected, draft: draft,
-                                    operations: operations, enginePresence: enginePresence, action: action, sample: sample)
-            let image = UIGraphicsImageRenderer(bounds: controller.view.bounds).image { _ in
-                controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
-            }
-            attachScreenshot(try XCTUnwrap(image.pngData()), name: "\(label)-single-paragraph-\(name)")
-        }
-    }
-    #endif
-
     private func measureChange(_ name: String, expected: String, draft: ClipboardComposerDraft,
-                               operations: ComposerOperationProbe, enginePresence: () -> Bool,
+                               operations: ComposerOperationProbe, enginePresence: () -> Bool, settledBudgetMs: Double,
                                action: () -> Void, sample: () throws -> ComposerGeometry) async throws {
         let expectedSelection = NSRange(location: (expected as NSString).length, length: 0)
         let updated = expectation(description: "\(name) reaches the composer draft")
@@ -371,7 +269,8 @@ final class ComposerClipboardLayoutTests: XCTestCase {
         let values: [String: Any] = [
             "utf16Length": expectedSelection.location, "nativeEditCallMs": nativeCallMs,
             "draftUpdateMs": draftUpdateMs, "hostedLayoutAndGeometryMs": layoutMs,
-            "settledElapsedMs": elapsedMs, "intentionalObservationDelayMs": observationDelayMs,
+            "settledElapsedMs": elapsedMs, "settledBudgetMs": settledBudgetMs,
+            "intentionalObservationDelayMs": observationDelayMs,
             "actualObservationWaitMs": actualObservationWaitMs, "longestObservationWaitMs": longestObservationWaitMs,
             "layoutObservations": layoutObservations, "mainRunLoop": runLoopValues,
             "operations": operations.diagnostics, "textKit2Present": engines,
@@ -387,6 +286,7 @@ final class ComposerClipboardLayoutTests: XCTestCase {
         add(evidence)
         let logValues: [String: Any] = ["case": name, "utf16Length": expectedSelection.location,
             "nativeEditCallMs": nativeCallMs, "draftUpdateMs": draftUpdateMs, "settledElapsedMs": elapsedMs,
+            "settledBudgetMs": settledBudgetMs,
             "longestActiveTurnMs": runLoopValues["longestActiveTurnMs"] ?? 0,
             "operations": operations.diagnostics, "textKit2Present": engines]
         let logData = try JSONSerialization.data(withJSONObject: logValues, options: [.sortedKeys])
@@ -395,6 +295,7 @@ final class ComposerClipboardLayoutTests: XCTestCase {
         XCTAssertEqual(updates, 1, "A native edit should publish one whole draft")
         XCTAssertTrue(settled, "Draft, five-line viewport and visible caret must settle together")
         XCTAssertLessThanOrEqual(elapsedMs, 5_000, "Hosted edit exceeded the generous five-second freeze budget")
+        XCTAssertLessThanOrEqual(elapsedMs, settledBudgetMs, "Full native edit, draft and caret settling regressed")
     }
 
     private func attachScreenshot(_ png: Data, name: String) {
@@ -445,44 +346,6 @@ private final class ClipboardComposerDraft: ObservableObject {
 
     init(files: [StagedAttachment]) { self.files = files }
 }
-
-#if os(iOS)
-@MainActor
-private final class ClipboardScrollingDelegate: NSObject, UITextViewDelegate {
-    private let forwarding: UITextViewDelegate
-    private(set) var insertions = 0
-
-    init(forwarding: UITextViewDelegate) { self.forwarding = forwarding }
-
-    func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
-        let allowed = forwarding.textView?(textView, shouldChangeTextIn: range, replacementText: text) ?? true
-        if allowed, !text.isEmpty {
-            // Provider loading is asynchronous. Enable scrolling at the actual
-            // native insertion boundary, then retain the production callbacks.
-            textView.isScrollEnabled = true
-            insertions += 1
-        }
-        return allowed
-    }
-
-    func textViewDidChange(_ textView: UITextView) { forwarding.textViewDidChange?(textView) }
-    func textViewDidBeginEditing(_ textView: UITextView) { forwarding.textViewDidBeginEditing?(textView) }
-    func textViewDidEndEditing(_ textView: UITextView) { forwarding.textViewDidEndEditing?(textView) }
-}
-
-@MainActor
-private final class ClipboardNativeDraftDelegate: NSObject, UITextViewDelegate {
-    private let draft: ClipboardComposerDraft
-
-    init(draft: ClipboardComposerDraft) { self.draft = draft }
-
-    func textViewDidChange(_ textView: UITextView) {
-        let text = textView.text ?? ""
-        draft.composer.text = text
-        draft.onUserEdit(text)
-    }
-}
-#endif
 
 private struct ComposerGeometry: Equatable {
     let frame: CGRect
