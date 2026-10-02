@@ -20,18 +20,30 @@ internal static class Program
     private static int Main(string[] args)
     {
         if (args.Length == 2 && args[0] == "--clipboard-child") return Run(args[1]);
+        if (args.Length == 2 && args[0] == "--cold-font-control-child") return ColdFontPasteControl.Run(args[1]);
         var output = Path.GetFullPath(args.Length > 0 ? args[0] : "work/clipboard-ui");
         Directory.CreateDirectory(output);
+        var productionExit = RunChild("--clipboard-child", output);
+        if (productionExit == 0)
+        {
+            foreach (var name in File.ReadAllLines(Path.Combine(output, "generated-file-names.txt")))
+                Check(!File.Exists(Path.Combine(Path.GetTempPath(), name)), "process exit removes submitted clipboard PNGs");
+            Console.WriteLine("PASS: generated clipboard sources removed after native process exit");
+        }
+        // Run diagnostics afterward in a separate process, including when the
+        // original cold performance gate fails. Never warm or mask that case.
+        var controlExit = RunChild("--cold-font-control-child", output);
+        return productionExit != 0 ? productionExit : controlExit;
+    }
+
+    private static int RunChild(string mode, string output)
+    {
         var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false };
-        start.ArgumentList.Add("--clipboard-child");
+        start.ArgumentList.Add(mode);
         start.ArgumentList.Add(output);
         using var child = Process.Start(start)!;
         if (!child.WaitForExit(180_000)) { child.Kill(entireProcessTree: true); return 1; }
-        if (child.ExitCode != 0) return child.ExitCode;
-        foreach (var name in File.ReadAllLines(Path.Combine(output, "generated-file-names.txt")))
-            Check(!File.Exists(Path.Combine(Path.GetTempPath(), name)), "process exit removes submitted clipboard PNGs");
-        Console.WriteLine("PASS: generated clipboard sources removed after native process exit");
-        return 0;
+        return child.ExitCode;
     }
 
     private static int Run(string output)
