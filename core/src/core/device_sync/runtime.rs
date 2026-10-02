@@ -189,7 +189,7 @@ impl AppCore {
         // Learning another contact changes routing, not our transport or Noise
         // identity. Keep established sessions (including an in-progress call).
         let peer_refresh_key = format!(
-            "{}:{}:{}:{:?}:{:?}:{}:{}:{}:{:?}:{:?}:{}",
+            "{}:{}:{}:{:?}:{:?}:{}:{}:{}:{}:{:?}:{:?}:{}",
             config.owner_hex,
             config.local_npub,
             config.roster_at,
@@ -197,11 +197,14 @@ impl AppCore {
             config.relay_urls,
             options.same_host_hashtree,
             nearby_enabled,
+            config.nearby_ip_enabled,
             host_ble_requested,
             options.udp_bind_addr,
             options.rendezvous_addr,
             discovery_scope,
         );
+        // Host BLE I/O is single-use. Native hosts serialize detach/reattach
+        // when LAN settings change; keep this bridge alive until that detach.
         let refresh_peers = self.host_ble_attached
             || self.device_sync.as_ref().is_some_and(|runtime| {
                 runtime.key != runtime_key && runtime.peer_refresh_key == peer_refresh_key

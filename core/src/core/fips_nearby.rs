@@ -10,15 +10,47 @@ const FIPS_NEARBY_MAX_PACKET_BYTES: usize = 48 * 1024;
 pub(super) const FIPS_NEARBY_OUTBOX_MAX_EVENTS: usize = 256;
 const FIPS_NEARBY_OUTBOX_MAX_LINKS_PER_EVENT: usize = 32;
 
-pub(crate) struct HostBleAttachment(Option<HostBleIo>);
+#[derive(Clone, Debug)]
+pub(crate) struct HostBleOwnership(Arc<std::sync::atomic::AtomicBool>);
+
+impl HostBleOwnership {
+    pub(crate) fn cancel(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub(crate) fn matches(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+pub(crate) struct HostBleAttachment {
+    io: Option<HostBleIo>,
+    ownership: HostBleOwnership,
+}
 
 impl HostBleAttachment {
     pub(crate) fn new(io: HostBleIo) -> Self {
-        Self(Some(io))
+        Self {
+            io: Some(io),
+            ownership: HostBleOwnership(Arc::new(std::sync::atomic::AtomicBool::new(false))),
+        }
+    }
+
+    pub(crate) fn ownership(&self) -> HostBleOwnership {
+        self.ownership.clone()
     }
 
     pub(super) fn take(&mut self) -> Option<HostBleIo> {
-        self.0.take()
+        let io = self.io.take();
+        if self.ownership.is_cancelled() {
+            None
+        } else {
+            io
+        }
     }
 }
 
@@ -26,7 +58,7 @@ impl std::fmt::Debug for HostBleAttachment {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("HostBleAttachment")
-            .field("available", &self.0.is_some())
+            .field("available", &self.io.is_some())
             .finish()
     }
 }
@@ -205,14 +237,37 @@ pub(super) fn is_fips_nearby_bootstrap_event(event: &Event) -> bool {
 
 impl AppCore {
     pub(super) fn attach_host_ble(&mut self, attachment: HostBleAttachment) -> Result<(), String> {
+        if attachment.ownership.is_cancelled() {
+            return Err("FIPS BLE attachment was cancelled".to_string());
+        }
         if self.pending_host_ble.is_some() || self.host_ble_attached {
             return Err("FIPS BLE is already attached".to_string());
         }
+        self.host_ble_ownership = Some(attachment.ownership());
         self.pending_host_ble = Some(attachment);
         Ok(())
     }
 
+    pub(super) fn detach_owned_host_ble(&mut self, ownership: &HostBleOwnership) {
+        if !self
+            .host_ble_ownership
+            .as_ref()
+            .is_some_and(|current| current.matches(ownership))
+        {
+            return;
+        }
+        self.host_ble_ownership = None;
+        if self.host_ble_attached {
+            self.detach_host_ble();
+        } else {
+            // Cancelling an attachment before bind must not restart an
+            // unrelated, already-running endpoint without host BLE.
+            self.pending_host_ble = None;
+        }
+    }
+
     pub(super) fn detach_host_ble(&mut self) {
+        self.host_ble_ownership = None;
         self.pending_host_ble = None;
         self.stop_device_sync_now();
         self.host_ble_attached = false;
@@ -546,6 +601,9 @@ fn is_local_udp_address(address: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod ownership_tests;
 
 mod bootstrap;
 pub(super) use bootstrap::FipsNearbyBootstrapCache;

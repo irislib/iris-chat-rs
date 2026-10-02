@@ -375,6 +375,71 @@ fn host_ble_starts_without_configured_relays() {
 }
 
 #[test]
+fn nearby_lan_changes_apply_when_host_ble_bridge_is_replaced() {
+    use fips_core::transport::ble::host::{HostBleCommand, HostBleEvent};
+
+    let directory = tempfile::TempDir::new().unwrap();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        directory.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.create_account("Nearby settings");
+    core.preferences.nostr_relay_urls.clear();
+    core.logged_in.as_mut().unwrap().relay_urls.clear();
+    core.preferences.nearby_enabled = true;
+    core.preferences.nearby_lan_enabled = false;
+
+    let mut previous_adapter = None;
+    for (generation, enabled) in [false, true, false].into_iter().enumerate() {
+        core.handle_action(AppAction::SetNearbyLanEnabled { enabled });
+        // The native lifecycle closes the old bridge before constructing its
+        // replacement. These are the same core operations used by that FFI path.
+        core.detach_host_ble();
+        drop(previous_adapter.take());
+        let (io, adapter) = core
+            .runtime
+            .block_on(async { HostBleIo::channel("mobile", format!("settings-{generation}"), 32) })
+            .unwrap();
+        core.attach_host_ble(HostBleAttachment::new(io)).unwrap();
+        core.reconcile_device_sync();
+
+        let endpoint = core.device_sync_endpoint_for_test().unwrap();
+        let addresses = core
+            .runtime
+            .block_on(endpoint.bound_udp_listen_addrs())
+            .unwrap();
+        assert_eq!(
+            !addresses.is_empty(),
+            enabled,
+            "LAN listener must match the requested setting after bridge replacement"
+        );
+        let command = core.runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(2), adapter.next_command())
+                .await
+                .expect("fresh BLE listener command")
+                .expect("live BLE command channel")
+        });
+        let HostBleCommand::Listen { request_id, .. } = command else {
+            panic!("expected a fresh BLE listener, got {command:?}");
+        };
+        core.runtime
+            .block_on(adapter.emit(HostBleEvent::Listening {
+                request_id,
+                psm: 0x81,
+            }))
+            .unwrap();
+        assert!(
+            core.host_ble_attached,
+            "LAN changes must reattach Bluetooth"
+        );
+        previous_adapter = Some(adapter);
+    }
+    core.stop_device_sync_now();
+}
+
+#[test]
 fn app_keys_event_received_over_fips_installs_peer_roster() {
     let alice_dir = tempfile::TempDir::new().unwrap();
     let mut alice = AppCore::new(

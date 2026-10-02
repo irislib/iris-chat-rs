@@ -165,7 +165,7 @@ pub(crate) use config::{
 };
 use device_sync::*;
 use device_sync_tcp::*;
-pub(crate) use fips_nearby::HostBleAttachment;
+pub(crate) use fips_nearby::{HostBleAttachment, HostBleOwnership};
 use identity::*;
 pub(crate) use identity::{normalize_peer_input_for_display, parse_peer_input};
 pub(crate) use mobile_push::{
@@ -675,6 +675,7 @@ pub struct AppCore {
     device_sync: Option<DeviceSyncRuntime>,
     calls: calls::CallRuntime,
     pending_host_ble: Option<HostBleAttachment>,
+    host_ble_ownership: Option<HostBleOwnership>,
     host_ble_attached: bool,
     fips_nearby_links: Vec<crate::updates::FipsNearbyLinkSnapshot>,
     fips_nearby_bootstrap: std::cell::RefCell<Option<fips_nearby::FipsNearbyBootstrapCache>>,

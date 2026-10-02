@@ -132,6 +132,7 @@ impl AppCore {
             device_sync: None,
             calls: calls::CallRuntime::default(),
             pending_host_ble: None,
+            host_ble_ownership: None,
             host_ble_attached: false,
             fips_nearby_links: Vec::new(),
             fips_nearby_bootstrap: Default::default(),
@@ -271,7 +272,7 @@ impl AppCore {
             CoreMsg::PeerProfileDebug { .. } => "PeerProfileDebug",
             CoreMsg::MutualGroups { .. } => "MutualGroups",
             CoreMsg::AttachHostBle { .. } => "AttachHostBle",
-            CoreMsg::DetachHostBle(_) => "DetachHostBle",
+            CoreMsg::DetachHostBle { .. } => "DetachHostBle",
             CoreMsg::CorePerfCounters(_) => "CorePerfCounters",
             CoreMsg::PrepareForSuspend(_) => "PrepareForSuspend",
             CoreMsg::Shutdown(_) => "Shutdown",
@@ -301,15 +302,28 @@ impl AppCore {
                 attachment,
                 reply_tx,
             } => {
+                let ownership = attachment.ownership();
                 let result = self.attach_host_ble(attachment);
                 let accepted = result.is_ok();
-                let _ = reply_tx.send(result);
+                let delivered = reply_tx.send(result).is_ok();
                 if accepted {
-                    self.reconcile_device_sync();
+                    if !delivered || ownership.is_cancelled() {
+                        self.detach_owned_host_ble(&ownership);
+                    } else {
+                        self.reconcile_device_sync();
+                        // Cancellation may race the acknowledgement or bind.
+                        // The scoped cleanup message also covers a later race.
+                        if ownership.is_cancelled() {
+                            self.detach_owned_host_ble(&ownership);
+                        }
+                    }
                 }
             }
-            CoreMsg::DetachHostBle(reply_tx) => {
-                self.detach_host_ble();
+            CoreMsg::DetachHostBle {
+                ownership,
+                reply_tx,
+            } => {
+                self.detach_owned_host_ble(&ownership);
                 let _ = reply_tx.send(());
             }
             CoreMsg::PrepareForSuspend(reply_tx) => {

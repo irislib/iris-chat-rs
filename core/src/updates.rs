@@ -84,7 +84,10 @@ pub(crate) enum CoreMsg {
         attachment: crate::core::HostBleAttachment,
         reply_tx: Sender<Result<(), String>>,
     },
-    DetachHostBle(Sender<()>),
+    DetachHostBle {
+        ownership: crate::core::HostBleOwnership,
+        reply_tx: Sender<()>,
+    },
     PrepareForSuspend(Sender<()>),
     /// Snapshot of core-internal perf counters (debug-snapshot
     /// rebuild count etc.) — read by `FfiApp::core_perf_counters()`

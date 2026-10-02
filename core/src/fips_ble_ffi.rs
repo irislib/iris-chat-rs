@@ -12,17 +12,19 @@ pub struct FfiFipsBle {
     adapter: Arc<fips_core::transport::ble::host::HostBleAdapter>,
     core_tx: Sender<CoreMsg>,
     closed: AtomicBool,
+    ownership: crate::core::HostBleOwnership,
 }
 
 #[derive(Debug, Clone, uniffi::Error)]
 pub enum FipsBleBridgeError {
     Initialization(String),
+    Teardown(String),
 }
 
 impl std::fmt::Display for FipsBleBridgeError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Initialization(message) => formatter.write_str(message),
+            Self::Initialization(message) | Self::Teardown(message) => formatter.write_str(message),
         }
     }
 }
@@ -33,6 +35,36 @@ impl std::error::Error for FipsBleBridgeError {}
 impl FfiFipsBle {
     #[uniffi::constructor]
     pub fn new(app: Arc<FfiApp>) -> Result<Arc<Self>, FipsBleBridgeError> {
+        Self::connect(app.background_tx.clone(), Duration::from_secs(2))
+    }
+
+    pub fn next_command(&self, timeout_ms: u64) -> Option<FipsBleCommand> {
+        let timeout = Duration::from_millis(timeout_ms.clamp(1, 60_000));
+        self.runtime.block_on(async {
+            tokio::time::timeout(timeout, self.adapter.next_command())
+                .await
+                .ok()
+                .flatten()
+                .map(Into::into)
+        })
+    }
+
+    pub fn emit(&self, event: FipsBleEvent) -> bool {
+        self.runtime
+            .block_on(self.adapter.emit(event.into()))
+            .is_ok()
+    }
+
+    pub fn detach(&self) -> Result<(), FipsBleBridgeError> {
+        self.detach_with_timeout(Duration::from_secs(2))
+    }
+}
+
+impl FfiFipsBle {
+    pub(crate) fn connect(
+        core_tx: Sender<CoreMsg>,
+        timeout: Duration,
+    ) -> Result<Arc<Self>, FipsBleBridgeError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_time()
@@ -58,10 +90,22 @@ impl FfiFipsBle {
                     "Could not create the FIPS BLE bridge: {error}"
                 ))
             })?;
+        let attachment = crate::core::HostBleAttachment::new(io);
+        let ownership = attachment.ownership();
+        // Construct the owner before queueing attachment. Any error below drops
+        // it, cancelling this exact attachment even if the core replies late.
+        let bridge = Arc::new(Self {
+            runtime,
+            adapter: Arc::new(adapter),
+            core_tx,
+            closed: AtomicBool::new(false),
+            ownership,
+        });
         let (reply_tx, reply_rx) = flume::bounded(1);
-        app.background_tx
+        bridge
+            .core_tx
             .send(CoreMsg::AttachHostBle {
-                attachment: crate::core::HostBleAttachment::new(io),
+                attachment,
                 reply_tx,
             })
             .map_err(|error| {
@@ -69,46 +113,52 @@ impl FfiFipsBle {
                     "Could not request the FIPS BLE bridge attachment: {error}"
                 ))
             })?;
-        let attach_result = reply_rx
-            .recv_timeout(Duration::from_secs(2))
+        reply_rx
+            .recv_timeout(timeout)
             .map_err(|error| {
                 FipsBleBridgeError::Initialization(format!(
                     "The Iris core did not attach the FIPS BLE bridge: {error}"
                 ))
-            })?;
-        attach_result.map_err(FipsBleBridgeError::Initialization)?;
-        Ok(Arc::new(Self {
-            runtime,
-            adapter: Arc::new(adapter),
-            core_tx: app.background_tx.clone(),
-            closed: AtomicBool::new(false),
-        }))
+            })?
+            .map_err(FipsBleBridgeError::Initialization)?;
+        Ok(bridge)
     }
 
-    pub fn next_command(&self, timeout_ms: u64) -> Option<FipsBleCommand> {
-        let timeout = Duration::from_millis(timeout_ms.clamp(1, 60_000));
-        self.runtime.block_on(async {
-            tokio::time::timeout(timeout, self.adapter.next_command())
-                .await
-                .ok()
-                .flatten()
-                .map(Into::into)
-        })
-    }
-
-    pub fn emit(&self, event: FipsBleEvent) -> bool {
-        self.runtime
-            .block_on(self.adapter.emit(event.into()))
-            .is_ok()
-    }
-
-    pub fn detach(&self) {
-        if self.closed.swap(true, Ordering::SeqCst) {
-            return;
+    pub(crate) fn detach_with_timeout(&self, timeout: Duration) -> Result<(), FipsBleBridgeError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Ok(());
         }
+        self.ownership.cancel();
         let (reply_tx, reply_rx) = flume::bounded(1);
-        if self.core_tx.send(CoreMsg::DetachHostBle(reply_tx)).is_ok() {
-            let _ = reply_rx.recv_timeout(Duration::from_secs(2));
+        self.core_tx
+            .send(CoreMsg::DetachHostBle {
+                ownership: self.ownership.clone(),
+                reply_tx,
+            })
+            .map_err(|error| {
+                FipsBleBridgeError::Teardown(format!(
+                    "Could not request FIPS BLE teardown: {error}"
+                ))
+            })?;
+        reply_rx.recv_timeout(timeout).map_err(|error| {
+            FipsBleBridgeError::Teardown(format!(
+                "The Iris core has not acknowledged FIPS BLE teardown: {error}"
+            ))
+        })?;
+        self.closed.store(true, Ordering::Release);
+        Ok(())
+    }
+}
+
+impl Drop for FfiFipsBle {
+    fn drop(&mut self) {
+        if !self.closed.load(Ordering::Acquire) {
+            self.ownership.cancel();
+            let (reply_tx, _) = flume::bounded(1);
+            let _ = self.core_tx.send(CoreMsg::DetachHostBle {
+                ownership: self.ownership.clone(),
+                reply_tx,
+            });
         }
     }
 }
