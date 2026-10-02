@@ -34,6 +34,18 @@ impl AppCore {
                 return;
             }
         };
+        // Group encryption and checkpointing can be expensive with a backlog.
+        // Show the authored row first; completion updates this same ID.
+        self.push_outgoing_message_with_id(
+            message_id.clone(),
+            chat_id,
+            text.to_string(),
+            now.get(),
+            expires_at_secs,
+            DeliveryState::Queued,
+        );
+        self.rebuild_state();
+        self.emit_state();
         let result = self
             .protocol_engine
             .as_mut()
@@ -71,21 +83,20 @@ impl AppCore {
                         summarize_group_send_effect_targets(&result.effects)
                     ),
                 );
-                self.push_outgoing_message_with_id(
-                    message_id.clone(),
-                    chat_id,
-                    text.to_string(),
-                    now.get(),
-                    expires_at_secs,
-                    delivery,
-                );
+                self.update_message_delivery(chat_id, &message_id, delivery);
                 self.process_protocol_engine_effects(result.effects);
                 self.sync_message_delivery_trace(chat_id, &message_id);
                 self.reconcile_outgoing_message_delivery(chat_id, &message_id);
                 self.request_protocol_subscription_refresh();
             }
-            Some(Err(error)) => self.state.toast = Some(error.to_string()),
-            None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
+            Some(Err(error)) => {
+                self.update_message_delivery(chat_id, &message_id, DeliveryState::Failed);
+                self.state.toast = Some(error.to_string());
+            }
+            None => {
+                self.update_message_delivery(chat_id, &message_id, DeliveryState::Failed);
+                self.state.toast = Some("Protocol engine is not ready.".to_string());
+            }
         }
     }
 
