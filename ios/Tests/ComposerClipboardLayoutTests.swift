@@ -12,6 +12,40 @@ import AppKit
 
 @MainActor
 final class ComposerClipboardLayoutTests: XCTestCase {
+    #if os(iOS)
+    func testNativeComposerInitializesItsTextStorageAndFittingMeasurement() async throws {
+        let draft = ClipboardComposerDraft(files: [])
+        let host = UIHostingController(rootView: IrisTheme {
+            ClipboardComposerFixture(draft: draft).frame(width: 390)
+        })
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        while find(IrisComposerUITextView.self, in: host.view) == nil,
+              ProcessInfo.processInfo.systemUptime < deadline {
+            host.view.layoutIfNeeded()
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let editor = try XCTUnwrap(find(IrisComposerUITextView.self, in: host.view))
+        XCTAssertNil(editor.textLayoutManager)
+        XCTAssertTrue(editor.isScrollEnabled)
+        XCTAssertFalse(editor.scrollsToTop)
+        XCTAssertTrue(editor.textContainer.layoutManager?.textStorage === editor.textStorage)
+        // Exercise the Swift stored object before any clipboard or keyboard
+        // work, guarding against a factory that bypasses subclass initialization.
+        let measurement = editor.composerMeasurement
+        let height = measurement.height(for: editor.textStorage, width: 240,
+                                        lineHeight: ceil(try XCTUnwrap(editor.font).lineHeight))
+        XCTAssertGreaterThan(height, 0)
+        XCTAssertTrue(measurement.layoutManager.textStorage === editor.textStorage)
+        XCTAssertTrue(editor.composerMeasurement === measurement)
+    }
+    #endif
+
     func testPastedImagePreviewAndLargeDraftRenderWithoutGrowingPastFiveLines() async throws {
         #if os(macOS)
         let pasteboard = NSPasteboard.general

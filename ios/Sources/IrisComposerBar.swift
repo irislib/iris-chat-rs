@@ -578,7 +578,14 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
     func makeUIView(context: Context) -> UITextView {
         // Explicit legacy layout keeps large paragraphs responsive while
         // retaining native keyboard, selection and undo behavior.
-        let textView = IrisComposerUITextView(usingTextLayoutManager: false)
+        let storage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        let container = NSTextContainer()
+        storage.addLayoutManager(layoutManager)
+        layoutManager.addTextContainer(container)
+        // Use the designated initializer so Swift initializes the subclass's
+        // stored properties along with the native text view.
+        let textView = IrisComposerUITextView(frame: .zero, textContainer: container)
         textView.onPasteAttachments = onPasteAttachments
         Self.activeTextView = textView
         textView.delegate = context.coordinator
