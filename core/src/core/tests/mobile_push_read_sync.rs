@@ -80,3 +80,28 @@ fn mobile_push_read_sync_dismisses_only_authenticated_read_messages() {
     assert_eq!(resolve(payloads), vec![0]);
     assert_eq!(pair.b.threads[&chat_id].unread_count, 2);
 }
+
+#[test]
+fn mobile_push_read_sync_does_not_initialize_or_migrate_the_database() {
+    let mut pair = chat_read_receipt_pair("push-read-no-migrations");
+    let peer = Keys::generate();
+    let event = appcore_direct_message_event_for_test(
+        pair.b.protocol_engine.as_mut().unwrap(), &peer, "read", 200,
+    );
+    let (_, id) = runtime_rumor_json(peer.public_key(), CHAT_MESSAGE_KIND, "read", 200, Vec::new());
+    chat_read_sync_incoming(&mut pair.b, &peer, &id, 200);
+    pair.b.mark_messages_seen(&peer.public_key().to_hex(), &[id]);
+    pair.b.persist_best_effort();
+    let dir = pair._b_dir.path();
+    let conn = rusqlite::Connection::open(dir.join("core.sqlite3")).unwrap();
+    // An older schema marker makes a writable preview connection run migrations.
+    // Cleanup must only read the existing data, including before message ingestion.
+    conn.pragma_update(None, "user_version", 0).unwrap();
+    assert_eq!(read_mobile_push_notification_indexes(
+        dir.to_string_lossy().into_owned(), pair.owner.public_key().to_hex(),
+        pair.b_device.secret_key().to_secret_hex(),
+        vec![serde_json::json!({"event": event}).to_string()],
+    ), vec![0]);
+    let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+    assert_eq!(version, 0, "notification cleanup must never migrate the live database");
+}

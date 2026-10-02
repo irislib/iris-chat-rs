@@ -21,6 +21,8 @@ final class IrisSuspendBackgroundTask {
         }
     }
 
+    var isActive: Bool { identifier != .invalid }
+
     func finish() {
         guard identifier != .invalid else { return }
         let completed = identifier

@@ -377,25 +377,12 @@ fn decrypt_mobile_push_notification_inner(
         Err(_) => return cached_fallback(),
     };
 
-    let shared_conn = match super::storage::open_database(Path::new(&data_dir)) {
-        Ok(conn) => conn,
-        Err(_) => return cached_fallback(),
-    };
-    let base_storage = Arc::new(super::storage::SqliteStorageAdapter::new(
-        shared_conn.clone(),
-        owner_pubkey.to_hex(),
-        device_keys.public_key().to_hex(),
-    )) as Arc<dyn StorageAdapter>;
-    let storage =
-        Arc::new(NotificationPreviewStorage::new(base_storage)) as Arc<dyn StorageAdapter>;
-
-    let mut engine = match ProtocolEngine::load_or_create_for_local_device(
-        storage,
-        owner_pubkey,
-        &device_keys,
-    ) {
-        Ok(engine) => engine,
-        Err(_) => return cached_fallback(),
+    // Preview work must never initialize or migrate the live database. The
+    // read-only connection also avoids journal changes and write locks while
+    // iOS is preparing to suspend notification cleanup.
+    let mut engine = match direct_message_preview_engine(&data_dir, owner_pubkey, &device_keys) {
+        Some(engine) => engine,
+        None => return cached_fallback(),
     };
 
     let outer_has_header = mobile_push_event_has_tag(&outer_event, "header");
