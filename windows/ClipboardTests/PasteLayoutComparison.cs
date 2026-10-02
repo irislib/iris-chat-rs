@@ -136,5 +136,5 @@ internal static class PasteLayoutComparison
     }
 
     private static bool IsCaretVisible(TextBox input, Rect caret) =>
-        !caret.IsEmpty && caret.Top >= 0 && caret.Bottom <= input.ActualHeight;
+        ComposerViewport.Contains(input, caret);
 }

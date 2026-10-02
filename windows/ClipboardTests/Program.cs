@@ -144,8 +144,7 @@ internal static class Program
             var pasteMs = elapsed.Elapsed.TotalMilliseconds;
             var pasteChanges = changes;
             Check(input.Text == large && changes == 1, "large plain text is one native editor change");
-            Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Visible && !pastedCaret.IsEmpty &&
-                pastedCaret.Top >= 0 && pastedCaret.Bottom <= input.ActualHeight,
+            Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Visible && ComposerViewport.Contains(input, pastedCaret),
                 "production bulk paste completes layout with its caret visible");
             Check(composer.StagedFilePaths.Count == 0 && submitted == 1, "large text does not stage or send files");
             input.CaretIndex = input.Text.Length;

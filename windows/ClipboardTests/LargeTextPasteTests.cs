@@ -102,9 +102,40 @@ internal static class LargeTextPasteTests
         Check(input.Text == "small 世界🙂\r\ntext", "ordinary native plaintext paste keeps its semantics");
         Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Auto,
             "ordinary small drafts keep automatic scrollbars");
+        VerifyPartiallyClippedCaret(composer, input, text, pump);
         composer.Clear();
         pump();
         Console.WriteLine($"PASS: large text selection, Unicode/newlines/tabs, cancellation, replacement, undo/redo, native constraints; immediate edit {immediateEditMs:F1} ms");
+    }
+
+    private static void VerifyPartiallyClippedCaret(ComposerBar composer, TextBox input, string text, Action pump)
+    {
+        composer.Clear();
+        input.Text = "prefix\n" + string.Concat(Enumerable.Repeat("tail\n", 256));
+        input.CaretIndex = 7;
+        pump();
+        Clipboard.SetText(text);
+        var prepared = false;
+        var clippedInPadding = false;
+        TextChangedEventHandler clipIntoPadding = (_, _) =>
+        {
+            if (prepared) return;
+            prepared = true;
+            var caret = input.GetRectFromCharacterIndex(input.CaretIndex);
+            var viewport = ComposerViewport.Bounds(input);
+            input.ScrollToVerticalOffset(input.VerticalOffset + caret.Bottom - viewport.Bottom - 4);
+            input.UpdateLayout();
+            caret = input.GetRectFromCharacterIndex(input.CaretIndex);
+            clippedInPadding = caret.Bottom > viewport.Bottom + 1 && caret.Bottom <= input.ActualHeight;
+        };
+        input.TextChanged += clipIntoPadding;
+        try { ApplicationCommands.Paste.Execute(null, input); }
+        finally { input.TextChanged -= clipIntoPadding; }
+        Check(prepared && clippedInPadding,
+            "native fixture places the pasted caret partly inside bottom padding");
+        Check(ComposerViewport.Contains(input, input.GetRectFromCharacterIndex(input.CaretIndex)),
+            "bulk paste finishes with the complete caret in the actual content viewport");
+        pump();
     }
 
     private static void Check(bool value, string message)

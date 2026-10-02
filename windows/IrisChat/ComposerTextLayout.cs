@@ -20,9 +20,11 @@ internal static class ComposerTextLayout
         // Finish the tail once, within the paste operation. Background formatting
         // alone can leave the new caret outside the viewport after a bulk insert.
         var caret = input.GetRectFromCharacterIndex(input.CaretIndex);
-        if (caret.IsEmpty || (caret.Top >= 0 && caret.Bottom <= input.ActualHeight)) return;
+        if (caret.IsEmpty) return;
         var line = input.GetLineIndexFromCharacterIndex(input.CaretIndex);
         if (line < 0) return;
+        // Native minimal scrolling uses the actual content viewport, excluding
+        // the TextBox border/padding that ActualHeight includes.
         input.ScrollToLine(line);
         input.UpdateLayout();
     }
