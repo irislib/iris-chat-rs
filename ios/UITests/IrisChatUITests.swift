@@ -559,6 +559,93 @@ final class IrisChatComposerUITests: IrisChatUITestCase {
 
 final class IrisChatFlowUITests: IrisChatUITestCase {
 
+    func testGroupNameKeyboardDismissalPreservesDraftAndAllowsRefocus() throws {
+#if os(macOS)
+        throw XCTSkip("On-screen keyboard dismissal is iOS-specific")
+#else
+        continueAfterFailure = false
+        let app = launchCleanApp()
+        createAccount(app)
+        tapNewChat(app)
+        element(app, "newChatNewGroupButton").tap()
+        element(app, "newGroupNextButton").tap()
+
+        let input = editableElement(app, "newGroupNameInput")
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        input.typeText("Trip crew\n")
+        XCTAssertTrue(waitUntil(timeout: 5) { !app.keyboards.firstMatch.exists }, "Return should dismiss the group name keyboard")
+        XCTAssertEqual(input.value as? String, "Trip crew")
+        XCTAssertTrue(element(app, "newGroupCreateButton").exists, "Done must not create the group")
+
+        input.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        input.typeText(" weekend")
+        app.staticTexts["Group details"].tap()
+        XCTAssertTrue(waitUntil(timeout: 5) { !app.keyboards.firstMatch.exists }, "Tapping outside the name should dismiss the keyboard")
+        XCTAssertEqual(input.value as? String, "Trip crew weekend")
+
+        input.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let create = element(app, "newGroupCreateButton")
+        create.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1)).withOffset(CGVector(dx: 0, dy: 30)).tap()
+        XCTAssertTrue(waitUntil(timeout: 5) { !app.keyboards.firstMatch.exists }, "Tapping the empty background should dismiss the keyboard")
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "group-name-keyboard-dismissed"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        input.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.buttons["Done"].exists)
+        app.keyboards.buttons["Done"].tap()
+        XCTAssertTrue(waitUntil(timeout: 5) { !app.keyboards.firstMatch.exists })
+        create.tap()
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 45))
+#endif
+    }
+
+    func testGroupPhotoButtonsOpenFilePickerOnMac() throws {
+#if os(macOS)
+        continueAfterFailure = false
+        let app = launchCleanApp()
+        createAccount(app)
+        tapNewChat(app)
+        element(app, "newChatNewGroupButton").tap()
+        element(app, "newGroupNextButton").tap()
+        typeText("Photo group", into: editableElement(app, "newGroupNameInput"), app: app)
+
+        for photoButton in ["newGroupPhotoButton", "groupDetailsChangePhotoButton"] {
+            element(app, photoButton).tap()
+            let openButton = app.buttons["Open"].firstMatch
+            XCTAssertTrue(openButton.waitForExistence(timeout: 5), "Group photos should open the native file picker directly")
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "\(photoButton)-file-picker"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+            if photoButton == "newGroupPhotoButton" {
+                let image = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "cat", withExtension: "jpg", subdirectory: "Fixtures"))
+                app.typeKey("g", modifierFlags: [.command, .shift])
+                app.typeText(image.path)
+                app.typeKey(.return, modifierFlags: [])
+                XCTAssertTrue(waitUntil(timeout: 5) { openButton.isEnabled })
+                openButton.tap()
+                XCTAssertTrue(element(app, "newGroupRemovePhotoButton").waitForExistence(timeout: 10), "Selecting a disk image should add it to the group draft")
+                // Keep group creation local; uploading the photo is covered separately.
+                element(app, "newGroupRemovePhotoButton").tap()
+                element(app, "newGroupCreateButton").tap()
+                XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 45))
+                openGroupDetails(app)
+            } else {
+                app.buttons["Cancel"].firstMatch.tap()
+            }
+        }
+#else
+        throw XCTSkip("iOS offers photo sources; macOS opens files directly")
+#endif
+    }
+
     func testCreateSelfOnlyGroup() {
         let app = launchCleanApp()
 

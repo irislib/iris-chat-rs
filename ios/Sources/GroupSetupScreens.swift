@@ -91,6 +91,11 @@ struct NewGroupScreen: View {
                 groupDetailsStep
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            isNameFocused = false
+        }
+        .irisInteractiveKeyboardDismiss()
         .fileImporter(
             isPresented: $showingGroupPicturePicker,
             allowedContentTypes: [.image],
@@ -224,6 +229,8 @@ struct NewGroupScreen: View {
                     .textFieldStyle(.plain)
                     .irisInputField()
                     .focused($isNameFocused)
+                    .submitLabel(.done)
+                    .onSubmit { isNameFocused = false }
                     .accessibilityIdentifier("newGroupNameInput")
 
                 selectedMembersChips
@@ -320,7 +327,8 @@ struct NewGroupScreen: View {
     }
 
     private func presentGroupPictureSource() {
-        #if canImport(PhotosUI)
+        isNameFocused = false
+        #if os(iOS)
         showingGroupPictureSourceMenu = true
         #else
         showingGroupPicturePicker = true

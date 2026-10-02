@@ -419,7 +419,7 @@ struct GroupDetailsScreen: View {
     }
 
     private func presentGroupPictureSource() {
-        #if canImport(PhotosUI)
+        #if os(iOS)
         showingGroupPictureSourceMenu = true
         #else
         showingGroupPicturePicker = true
