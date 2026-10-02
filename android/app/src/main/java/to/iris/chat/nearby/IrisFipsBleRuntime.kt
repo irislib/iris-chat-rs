@@ -52,10 +52,19 @@ class IrisFipsBleRuntime(
         }
 
     override fun close() {
-        pump.cancel()
-        runner.close()
+        // Native shutdown still needs the pump to deliver stop commands and
+        // their platform acknowledgements. A failed detach leaves it retryable.
         bridge.detach()
-        scope.cancel()
+        stopPlatform()
+    }
+
+    internal fun stopPlatform() {
+        pump.cancel()
+        try {
+            runner.close()
+        } finally {
+            scope.cancel()
+        }
     }
 
     private companion object {

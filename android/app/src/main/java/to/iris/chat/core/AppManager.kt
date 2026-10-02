@@ -70,6 +70,8 @@ import to.iris.chat.rust.downloadHashtreeAttachment
 import to.iris.chat.push.AndroidMobilePushRuntime
 import to.iris.chat.update.AndroidSelfUpdateManager
 import to.iris.chat.nearby.IrisFipsBleRuntime
+import to.iris.chat.nearby.NearbyBleSession
+import to.iris.chat.nearby.NearbyBleUpdates
 
 interface RustAppClient {
     fun state(): AppState
@@ -97,7 +99,7 @@ interface RustAppClient {
 
     fun prepareForSuspend()
 
-    fun setFipsBleEnabled(enabled: Boolean) = Unit
+    fun setFipsBleEnabled(enabled: Boolean, nearbyLanEnabled: Boolean) = Unit
 
     fun listenForUpdates(reconciler: AppReconciler)
 
@@ -110,7 +112,10 @@ private class LiveRustAppClient(
     appVersion: String,
 ) : RustAppClient {
     private val ffi = FfiApp(dataDir = dataDir, keychainGroup = "", appVersion = appVersion)
-    private var fipsBle: IrisFipsBleRuntime? = null
+    private val fipsBle = NearbyBleSession { IrisFipsBleRuntime(context, ffi) }
+    private val fipsBleUpdates = NearbyBleUpdates(fipsBle::update) { error ->
+        IrisDebugLog.d("FipsBle", "FIPS BLE could not update", error)
+    }
 
     override fun state(): AppState = ffi.state()
 
@@ -152,19 +157,8 @@ private class LiveRustAppClient(
         ffi.prepareForSuspend()
     }
 
-    override fun setFipsBleEnabled(enabled: Boolean) {
-        if (enabled && fipsBle == null) {
-            fipsBle =
-                try {
-                    IrisFipsBleRuntime(context, ffi)
-                } catch (error: Exception) {
-                    IrisDebugLog.d("FipsBle", "FIPS BLE could not start", error)
-                    null
-                }
-        } else if (!enabled) {
-            fipsBle?.close()
-            fipsBle = null
-        }
+    override fun setFipsBleEnabled(enabled: Boolean, nearbyLanEnabled: Boolean) {
+        fipsBleUpdates.update(enabled, nearbyLanEnabled)
     }
 
     override fun listenForUpdates(reconciler: AppReconciler) {
@@ -172,9 +166,17 @@ private class LiveRustAppClient(
     }
 
     override fun shutdown() {
-        fipsBle?.close()
-        fipsBle = null
-        ffi.shutdown()
+        try {
+            try {
+                fipsBleUpdates.close()
+            } finally {
+                fipsBle.close()
+            }
+        } finally {
+            // Both reset callers run on ioDispatcher. Keep the old platform
+            // alive until the core worker has actually exited, not just ACKed.
+            fipsBle.shutdownCoreAndCleanup(ffi::shutdownAndWait) { it.stopPlatform() }
+        }
     }
 }
 
@@ -1853,6 +1855,7 @@ class AppManager(
                 snapshot.account != null &&
                 snapshot.preferences.nearbyEnabled &&
                 snapshot.preferences.nearbyBluetoothEnabled,
+            nearbyLanEnabled = snapshot.preferences.nearbyLanEnabled,
         )
         mutableState.value = snapshot
         if (snapshot.account != null) readNotificationCleanup.schedule {
