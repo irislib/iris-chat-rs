@@ -3,6 +3,41 @@ import Foundation
 import XCTest
 
 final class AppleBleBootstrapDiscoveryTests: XCTestCase {
+    func testMissingDiscoveryCallbackTimesOutAndRetriesWithoutAnotherAdvertisement() {
+        var discovery = AppleBleBootstrapDiscovery()
+        let peer = UUID()
+        XCTAssertTrue(discovery.begin(peer, now: 10))
+        XCTAssertEqual(discovery.nextWakeupAt(), 25)
+        XCTAssertTrue(discovery.expirePending(now: 24).isEmpty)
+        XCTAssertEqual(discovery.expirePending(now: 25), [peer])
+        XCTAssertFalse(discovery.complete(peer), "Late callbacks must not resolve an expired read")
+        XCTAssertEqual(discovery.nextWakeupAt(), 30)
+        XCTAssertTrue(discovery.dueRetries(now: 29).isEmpty)
+        XCTAssertEqual(discovery.dueRetries(now: 30), [peer])
+        XCTAssertTrue(discovery.begin(peer, now: 30))
+        XCTAssertTrue(discovery.complete(peer))
+        XCTAssertNil(discovery.nextWakeupAt())
+    }
+
+    func testFullPendingQueueStillSchedulesTimeouts() {
+        var discovery = AppleBleBootstrapDiscovery()
+        for _ in 0..<64 { XCTAssertTrue(discovery.begin(UUID(), now: 10)) }
+        XCTAssertEqual(discovery.nextWakeupAt(), 25)
+        XCTAssertEqual(discovery.expirePending(now: 25).count, 64)
+        XCTAssertTrue(discovery.begin(UUID(), now: 25))
+        XCTAssertEqual(discovery.nextWakeupAt(), 30)
+    }
+
+    func testTimedOutSpeculativeReadStillRespectsAudioProtection() {
+        var discovery = AppleBleBootstrapDiscovery()
+        let peer = UUID()
+        XCTAssertTrue(discovery.begin(peer, now: 10))
+        XCTAssertEqual(discovery.expirePending(now: 25), [peer])
+        XCTAssertNil(discovery.nextWakeupAt(allowing: { _ in false }))
+        XCTAssertTrue(discovery.dueRetries(now: 30, allowing: { _ in false }).isEmpty)
+        XCTAssertEqual(discovery.nextWakeupAt(), 30)
+    }
+
     func testResolvedPeerAdvertisementsDoNotReopenDiscardedAlternateLink() {
         var discovery = AppleBleBootstrapDiscovery()
         let peer = UUID()

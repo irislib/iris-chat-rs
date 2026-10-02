@@ -27,7 +27,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
     private let bluetoothAudio = MacBluetoothAudioActivity()
     #endif
     private var connectRequests: [UUID: (requestId: UInt64, psm: UInt16)] = [:]
-    private var activeOutgoingPeers: Set<UUID> = []
+    private var outgoingConnections = AppleBlePeripheralConnections()
     private var nextConnectionId: UInt64 = 1
     private var connections: [UInt64: AppleBleConnection] = [:]
     private var isClosed = false
@@ -183,7 +183,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
         central.stopScan()
         scanRequest = nil
         for (identifier, peripheral) in peripherals {
-            if connectRequests[identifier] == nil, !activeOutgoingPeers.contains(identifier) {
+            if connectRequests[identifier] == nil, !hasOutgoingConnection(identifier) {
                 central.cancelPeripheralConnection(peripheral)
             }
         }
@@ -240,7 +240,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
         let peerIdentifier = channel.peer.identifier
         let isOutgoing = outgoingRequest != nil
         if isOutgoing {
-            activeOutgoingPeers.insert(peerIdentifier)
+            outgoingConnections.insert(connectionId, peer: peerIdentifier)
         }
         let connection = AppleBleConnection(
             id: connectionId,
@@ -250,8 +250,16 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
                 guard let self else { return }
                 connections.removeValue(forKey: id)
                 if isOutgoing {
-                    activeOutgoingPeers.remove(peerIdentifier)
-                    if let peripheral = peripherals[peerIdentifier] {
+                    outgoingConnections.remove(id)
+                    // L2CAP channels share a peripheral connection. Cancelling
+                    // it here races a queued replacement open and disconnects
+                    // other channels. Keep the discovered GATT connection while
+                    // scanning; stopScanning/close owns its eventual release.
+                    if outgoingConnections.canDisconnect(
+                        peerIdentifier, scanning: scanRequest != nil,
+                        connecting: connectRequests[peerIdentifier] != nil
+                    ),
+                       let peripheral = peripherals[peerIdentifier] {
                         central.cancelPeripheralConnection(peripheral)
                     }
                 }
@@ -284,7 +292,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
         bootstrapDiscovery.fail(peripheral.identifier)
         scheduleBootstrapRetry()
         if connectRequests[peripheral.identifier] == nil,
-           !activeOutgoingPeers.contains(peripheral.identifier) {
+           !hasOutgoingConnection(peripheral.identifier) {
             central.cancelPeripheralConnection(peripheral)
         }
     }
@@ -293,13 +301,21 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
         bootstrapRetry?.cancel()
         bootstrapRetry = nil
         guard scanRequest != nil, central.state == .poweredOn,
-              let retryAt = bootstrapDiscovery.nextRetryAt(allowing: canDiscoverBootstrap) else { return }
+              let retryAt = bootstrapDiscovery.nextWakeupAt(allowing: canDiscoverBootstrap) else { return }
         // CoreBluetooth can coalesce unchanged advertisements. Retry transient
         // discovery failures even when no further advertisement callback arrives.
         let retry = DispatchWorkItem { [weak self] in
             guard let self, self.scanRequest != nil, self.central.state == .poweredOn else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            for identifier in self.bootstrapDiscovery.expirePending(now: now) {
+                if let peripheral = self.peripherals[identifier],
+                   self.connectRequests[identifier] == nil,
+                   !self.hasOutgoingConnection(identifier) {
+                    self.central.cancelPeripheralConnection(peripheral)
+                }
+            }
             for identifier in self.bootstrapDiscovery.dueRetries(
-                now: ProcessInfo.processInfo.systemUptime, allowing: self.canDiscoverBootstrap
+                now: now, allowing: self.canDiscoverBootstrap
             ) {
                 if let peripheral = self.peripherals[identifier] {
                     self.discoverBootstrap(peripheral)
@@ -342,6 +358,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
         guard bootstrapDiscovery.begin(
             identifier, refresh: refresh, canRead: canDiscoverBootstrap(identifier)
         ) else { return }
+        scheduleBootstrapRetry()
         if peripheral.state == .connected {
             peripheral.discoverServices([fipsServiceUuid])
         } else {
@@ -366,12 +383,16 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
         connections.values.forEach { $0.close(reason: nil) }
         connections.removeAll()
         connectRequests.removeAll()
-        activeOutgoingPeers.removeAll()
+        outgoingConnections.reset()
         peripherals.removeAll()
     }
 
     private func emit(_ event: HostBleEvent) {
         eventSink(event)
+    }
+
+    private func hasOutgoingConnection(_ peer: UUID) -> Bool {
+        outgoingConnections.contains(peer)
     }
 
     private func peripheralStateMessage() -> String {

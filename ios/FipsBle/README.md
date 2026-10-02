@@ -14,6 +14,10 @@ Failed GATT discovery retries back off from five seconds to one minute. These
 failures occur before FIPS receives a peer candidate, so its connection backoff
 cannot handle them. A timer retries
 discovery even when CoreBluetooth coalesces further advertisements.
+Connect/service/read attempts that never receive a callback expire after 15
+seconds and enter the same backoff. Closing one L2CAP channel preserves the
+underlying peripheral connection while discovery, another channel, or a new
+open still uses it; stopping discovery releases otherwise idle connections.
 
 On macOS, speculative bootstrap reads from Apple's tentative overflow UUID
 matches wait while a Bluetooth audio device is active. Explicit FIPS service
