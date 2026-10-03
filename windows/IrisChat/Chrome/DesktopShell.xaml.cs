@@ -27,6 +27,18 @@ public partial class DesktopShell : UserControl
     {
         InitializeComponent();
         KeyboardList.Install(ChatRows);
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != Key.T) return;
+            if (Keyboard.Modifiers == ModifierKeys.Control)
+                e.Handled = KeyboardList.Focus(ChatRows);
+            else if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift)
+                && MainHost.Content is ChatView chat)
+            {
+                chat.FocusComposer();
+                e.Handled = true;
+            }
+        };
         _manager = manager;
         _activeScreen = activeScreen;
 

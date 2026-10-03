@@ -8,9 +8,9 @@
         </ContextMenu>
     </UserControl.ContextMenu>
     <Border x:Name="Bubble"
-            CornerRadius="14"
+            CornerRadius="18"
             Padding="12,8"
-            Margin="0,3"
+            Margin="0,6"
             MaxWidth="540">
         <StackPanel>
             <TextBlock x:Name="AuthorText"

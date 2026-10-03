@@ -13,6 +13,7 @@ struct RowKey {
     day: Option<String>,
     start: bool,
     end: bool,
+    footer: bool,
 }
 impl Timeline {
     pub fn new(chat_id: &str, manager: &Rc<AppManager>) -> Self {
@@ -61,8 +62,9 @@ impl Timeline {
                     .filter(|p| day_label_secs(p.created_at_secs) == day)
                     .is_none()
                     .then_some(day),
-                start: previous.is_none_or(|p| cluster_break(p, message)),
-                end: next.is_none_or(|n| cluster_break(message, n)),
+                start: previous.is_none_or(|p| grouping::cluster_break(p, message, &chat.kind)),
+                end: next.is_none_or(|n| grouping::cluster_break(message, n, &chat.kind)),
+                footer: grouping::show_footer(message, next, &chat.kind),
             };
             let row = match self.rows.remove(&message.id) {
                 Some((old, widget)) if old == key => widget,
@@ -76,6 +78,7 @@ impl Timeline {
                         chat,
                         key.start,
                         key.end,
+                        key.footer,
                         unix_now(),
                         prefs,
                         manager,
@@ -92,13 +95,4 @@ impl Timeline {
         }
         self.viewport.update(rows);
     }
-}
-fn cluster_break(previous: &ChatMessageSnapshot, next: &ChatMessageSnapshot) -> bool {
-    previous.author != next.author
-        || previous.is_outgoing != next.is_outgoing
-        || next
-            .created_at_secs
-            .saturating_sub(previous.created_at_secs)
-            > 300
-        || day_label_secs(previous.created_at_secs) != day_label_secs(next.created_at_secs)
 }

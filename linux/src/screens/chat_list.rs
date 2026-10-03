@@ -27,6 +27,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     scrolled.set_vexpand(true);
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    body.set_widget_name("iris-keyboard-chat-list");
     if ui_state.is_active() {
         let results = manager.run_search(50);
         append_search_results(&body, state, manager, &results);

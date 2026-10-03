@@ -87,7 +87,7 @@
 
                 <TextBox x:Name="Input"
                          Grid.Column="2"
-                         AcceptsReturn="True"
+                         AcceptsReturn="True" AcceptsTab="True"
                          PreviewKeyDown="OnInputKeyDown"
                          TextChanged="OnInputTextChanged"
                          TextWrapping="Wrap"

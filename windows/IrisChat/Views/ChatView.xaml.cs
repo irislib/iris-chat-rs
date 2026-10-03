@@ -15,6 +15,8 @@ namespace IrisChat.Views;
 
 public partial class ChatView : UserControl
 {
+    public void FocusComposer() => Composer.FocusInput();
+
     private const string IrisSupportEmail = "irismessenger@pm.me";
 
     public string? ChatId { get; set; }

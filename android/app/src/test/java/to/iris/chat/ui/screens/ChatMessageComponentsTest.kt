@@ -1,6 +1,12 @@
 package to.iris.chat.ui.screens
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import java.time.LocalDate
+import java.time.ZoneId
+import to.iris.chat.rust.ChatKind
+import to.iris.chat.rust.CallHistorySnapshot
 import org.junit.Test
 import to.iris.chat.rust.ChatMessageKind
 import to.iris.chat.rust.ChatMessageSnapshot
@@ -10,6 +16,43 @@ import to.iris.chat.rust.MessageDeliveryTraceSnapshot
 import to.iris.chat.rust.MessageReactionSnapshot
 
 class ChatMessageComponentsTest {
+    @Test
+    fun groupingUsesStableAuthorsLocalDaysAndStrictThreeMinuteGap() {
+        val noon = LocalDate.now().atTime(12, 0).atZone(ZoneId.systemDefault()).toEpochSecond().toULong()
+        val first = makeMessage("Hello").copy(isOutgoing = false, createdAtSecs = noon)
+        val next = first.copy(id = "2", createdAtSecs = noon + 179UL)
+        assertFalse(startsMessageCluster(first, next, ChatKind.GROUP))
+        assertTrue(startsMessageCluster(first, next.copy(createdAtSecs = noon + 180UL), ChatKind.GROUP))
+        assertTrue(startsMessageCluster(first, next.copy(createdAtSecs = noon - 1UL), ChatKind.GROUP))
+        assertFalse(startsMessageCluster(first, next.copy(author = "Renamed"), ChatKind.GROUP))
+        assertTrue(startsMessageCluster(first, next.copy(authorOwnerPubkeyHex = "other"), ChatKind.GROUP))
+        assertTrue(startsMessageCluster(first, next.copy(isOutgoing = true), ChatKind.DIRECT))
+        val reaction = listOf(MessageReactionSnapshot("👍", 1UL, false))
+        assertTrue(startsMessageCluster(first.copy(reactions = reaction), next, ChatKind.DIRECT))
+        assertFalse(startsMessageCluster(first, next.copy(reactions = reaction), ChatKind.DIRECT))
+        val call = first.copy(call = CallHistorySnapshot("call", "incoming", "missed", false, noon, null, noon, 0UL))
+        assertTrue(startsMessageCluster(first, call, ChatKind.DIRECT))
+        assertTrue(startsMessageCluster(call, next, ChatKind.DIRECT))
+        assertTrue(startsMessageCluster(first, next.copy(kind = ChatMessageKind.SYSTEM), ChatKind.DIRECT))
+        val midnight = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toEpochSecond().toULong()
+        assertTrue(startsMessageCluster(first.copy(createdAtSecs = midnight - 1UL), next.copy(createdAtSecs = midnight), ChatKind.DIRECT))
+    }
+
+    @Test
+    fun footerPreservesMinuteDeliveryAndDisappearingStatusWithoutSplittingBubbles() {
+        val first = makeMessage("Hello").copy(createdAtSecs = 120UL)
+        val next = first.copy(id = "2", createdAtSecs = 121UL)
+        assertFalse(showsMessageFooter(first, next, ChatKind.DIRECT))
+        assertTrue(showsMessageFooter(first, null, ChatKind.DIRECT))
+        assertTrue(showsMessageFooter(first, next.copy(createdAtSecs = 180UL), ChatKind.DIRECT))
+        assertFalse(startsMessageCluster(first, next.copy(createdAtSecs = 180UL), ChatKind.DIRECT))
+        assertTrue(showsMessageFooter(first, next.copy(delivery = DeliveryState.SEEN), ChatKind.DIRECT))
+        for (status in listOf(DeliveryState.QUEUED, DeliveryState.PENDING, DeliveryState.FAILED)) {
+            assertTrue(showsMessageFooter(first.copy(delivery = status), next.copy(delivery = status), ChatKind.DIRECT))
+        }
+        assertTrue(showsMessageFooter(first.copy(expiresAtSecs = 1000UL), next, ChatKind.DIRECT))
+    }
+
     @Test
     fun postReactionSuggestionsIncludeExistingMessageEmoji() {
         val reactions =
