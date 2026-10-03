@@ -21,6 +21,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Reuse bounded event-signature validation proofs across transports and suppress unchanged Nearby updates, preserving content validation, delivery receipts, and device-list recovery.
 - Preserve an already recovered encrypted session when a direct connection catches up after a peer restarts, using the verified FIPS 0.4.93 dependency set.
 - Focus the composer when replying, follow the iOS keyboard animation, and emit pending messages before protocol checkpoint work.
+- Wait for audio replay to rewind before starting playback on Apple platforms, and preserve pause, message switching, and seeking while the rewind completes.
 - Paste photos and multiple files into drafts without sending automatically, and improve long-draft editing across native platforms.
 - Keep private contacts and device labels in ratcheted messages and direct pairing snapshots. Authenticate background call notifications and retain them for retry.
 - Serialize Nearby transport replacement and completion-confirmed shutdown, and keep group-member profile navigation consistent.
@@ -37,6 +38,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Open the keyboard when replying and keep your place as it appears.
 - Open chats and show outgoing messages faster, and improve typing after long pastes.
 - Paste photos and files into a chat before sending.
+- Reliably replay finished voice messages and keep playback controls responsive while seeking.
 - Improve private contact sync and Nearby connection recovery.
 - Update your other devices and calling contacts too. Calls to an older app may not ring while it is closed. Existing chats and linked devices stay connected.
 
