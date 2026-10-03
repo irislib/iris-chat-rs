@@ -1223,9 +1223,10 @@ final class AppManager: ObservableObject {
         let initialChat = initialState.currentChat
         syncChatPageScope(to: &initialState)
         if let initialChat, activeChatSnapshotID(in: initialState) == initialChat.chatId {
-            initialState.currentChat?.messages = chatHistory.replaceRecent(
+            let messages = chatHistory.replaceRecent(
                 initialChat.messages, in: initialState.currentChat?.messages ?? []
             )
+            initialState.currentChat?.messages = messages
         }
         self.state = initialState
         resolvedRust.listenForUpdates(reconciler: reconciler)

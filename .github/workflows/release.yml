@@ -102,9 +102,9 @@ jobs:
   mesh-resource:
     name: Relayless recovery and resource budgets
     needs: verify
-    uses: irislib/iris-stack/.github/workflows/product-lab.yml@234f7675e99175540385c207109314f6683031f4
+    uses: irislib/iris-stack/.github/workflows/product-lab.yml@ff7212a17394041c532b11f2522ee51732843b5f
     with:
-      lab_rev: 234f7675e99175540385c207109314f6683031f4
+      lab_rev: ff7212a17394041c532b11f2522ee51732843b5f
       chat_rev: ${{ needs.verify.outputs.sha }}
       drive_rev: 7cb74966ddaecf90fb91b8f36a44ecc4bbda7b02
       htree_version: 0.2.148
