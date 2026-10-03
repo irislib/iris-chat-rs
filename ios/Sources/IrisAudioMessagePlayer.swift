@@ -25,22 +25,27 @@ final class IrisAudioPlayback: ObservableObject {
     private let loadData: (() async -> Data?)?
     private let loadPreviewData: (() async -> Data?)?
     private let waveformCacheKey: String?
+    private let makePlayer: (AVPlayerItem) -> AVPlayer
     private var player: AVPlayer?
     private var itemObservation: NSKeyValueObservation?
     private var timeObserver: Any?
     private var notifications: [NSObjectProtocol] = []
     private var loadTask: Task<Void, Never>?
     private var activationTask: Task<Void, Never>?
+    private var seekTask: Task<Bool, Never>?
+    private var seekID = UUID()
     private var loadID = UUID()
     private var temporaryURL: URL?
     private var wantsToPlay = false
 
-    init(localURL: URL, duration: TimeInterval = 0) {
+    init(localURL: URL, duration: TimeInterval = 0,
+         makePlayer: @escaping (AVPlayerItem) -> AVPlayer = { AVPlayer(playerItem: $0) }) {
         self.localURL = localURL
         self.filename = localURL.lastPathComponent
         self.loadData = nil
         self.loadPreviewData = nil
         self.waveformCacheKey = nil
+        self.makePlayer = makePlayer
         self.duration = Self.validTime(duration)
         observeAudioLifecycle()
     }
@@ -52,6 +57,7 @@ final class IrisAudioPlayback: ObservableObject {
         self.loadData = loadData
         self.loadPreviewData = loadPreviewData
         self.waveformCacheKey = cacheKey
+        self.makePlayer = { AVPlayer(playerItem: $0) }
         self.duration = 0
         observeAudioLifecycle()
     }
@@ -59,6 +65,7 @@ final class IrisAudioPlayback: ObservableObject {
     deinit {
         loadTask?.cancel()
         activationTask?.cancel()
+        seekTask?.cancel()
         player?.pause()
         if let timeObserver { player?.removeTimeObserver(timeObserver) }
         for token in notifications { NotificationCenter.default.removeObserver(token) }
@@ -189,9 +196,23 @@ final class IrisAudioPlayback: ObservableObject {
     func seek(to seconds: TimeInterval) {
         guard let player, duration > 0 else { return }
         let position = min(duration, Self.validTime(seconds))
+        let requestID = UUID()
+        seekID = requestID
+        seekTask?.cancel()
         elapsed = position
-        player.seek(to: CMTime(seconds: position, preferredTimescale: 600),
-                    toleranceBefore: .zero, toleranceAfter: .zero)
+        seekTask = Task { @MainActor [weak self, weak player] in
+            guard let player, !Task.isCancelled else { return false }
+            let finished = await player.seek(to: CMTime(seconds: position, preferredTimescale: 600),
+                                             toleranceBefore: .zero, toleranceAfter: .zero)
+            guard let self, self.player === player, self.seekID == requestID,
+                  !Task.isCancelled else { return false }
+            self.seekTask = nil
+            if finished {
+                self.elapsed = min(self.duration, Self.validTime(player.currentTime().seconds))
+                if self.isPlaying, self.elapsed >= self.duration - 0.05 { self.pause() }
+            }
+            return finished
+        }
     }
 
     func cyclePlaybackRate() {
@@ -213,7 +234,7 @@ final class IrisAudioPlayback: ObservableObject {
 
     private func installPlayer(asset: AVURLAsset) {
         let item = AVPlayerItem(asset: asset)
-        let player = AVPlayer(playerItem: item)
+        let player = makePlayer(item)
         self.player = player
         itemObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             Task { @MainActor [weak self] in
@@ -231,10 +252,11 @@ final class IrisAudioPlayback: ObservableObject {
         }
         timeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main
-        ) { [weak self, weak player] time in
+        ) { [weak self, weak player] _ in
             Task { @MainActor [weak self, weak player] in
-                guard let self, let player, self.player === player else { return }
-                self.elapsed = min(self.duration, Self.validTime(time.seconds))
+                guard let self, let player, self.player === player, self.seekTask == nil else { return }
+                // A queued callback may describe the timeline before a seek.
+                self.elapsed = min(self.duration, Self.validTime(player.currentTime().seconds))
             }
         }
     }
@@ -249,9 +271,17 @@ final class IrisAudioPlayback: ObservableObject {
                 let available = try await Self.activatePlaybackSession()
                 guard let self, let player, self.player === player,
                       self.loadID == requestID, !Task.isCancelled else { return }
-                self.activationTask = nil
                 guard available, self.canPlay, self.wantsToPlay else { self.pause(); return }
                 if self.duration > 0, self.elapsed >= self.duration - 0.05 { self.seek(to: 0) }
+                while let seek = self.seekTask {
+                    let awaitedSeekID = self.seekID
+                    let finished = await seek.value
+                    guard self.player === player, self.loadID == requestID,
+                          !Task.isCancelled else { return }
+                    guard self.canPlay, self.wantsToPlay else { self.pause(); return }
+                    if !finished, self.seekID == awaitedSeekID { self.pause(); return }
+                }
+                self.activationTask = nil
                 player.playImmediately(atRate: self.playbackRate)
                 self.isPlaying = true
                 self.isLoading = false
@@ -270,6 +300,9 @@ final class IrisAudioPlayback: ObservableObject {
     }
 
     private func releasePlayer() {
+        seekID = UUID()
+        seekTask?.cancel()
+        seekTask = nil
         itemObservation = nil
         if let timeObserver { player?.removeTimeObserver(timeObserver) }
         timeObserver = nil
@@ -296,7 +329,8 @@ final class IrisAudioPlayback: ObservableObject {
             [weak self] notification in
             Task { @MainActor [weak self] in
                 guard let self, let item = notification.object as? AVPlayerItem,
-                      self.player?.currentItem === item else { return }
+                      self.player?.currentItem === item, self.isPlaying, self.seekTask == nil,
+                      Self.validTime(item.currentTime().seconds) >= self.duration - 0.05 else { return }
                 self.pause()
                 self.elapsed = self.duration
             }

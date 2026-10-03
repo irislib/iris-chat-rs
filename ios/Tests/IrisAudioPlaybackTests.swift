@@ -173,6 +173,165 @@ final class IrisAudioPlaybackTests: XCTestCase {
     }
 
     @MainActor
+    func testReplayRewindsTheMediaBeforePublishingPlayback() async throws {
+        let url = try await silentM4A()
+        defer { try? FileManager.default.removeItem(at: url) }
+        var mediaPlayer: HeldSeekPlayer?
+        let playback = IrisAudioPlayback(localURL: url, makePlayer: { item in
+            let player = HeldSeekPlayer(playerItem: item)
+            mediaPlayer = player
+            return player
+        })
+        defer { playback.stop(); mediaPlayer?.finishAllSeeks() }
+        playback.play()
+        await waitForPlayback(playback)
+        let player = try XCTUnwrap(mediaPlayer)
+        playback.pause()
+        playback.seek(to: playback.duration)
+        // Wait for the real media timeline to reach the end before replaying.
+        // Checking only the optimistic published elapsed value hides this race.
+        let atEnd = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            abs(player.currentTime().seconds - playback.duration) < 0.05
+        }, object: nil)
+        await fulfillment(of: [atEnd], timeout: 5)
+        XCTAssertEqual(player.currentTime().seconds, playback.duration, accuracy: 0.05)
+
+        let rewindRequested = expectation(description: "replay requests a rewind")
+        player.holdRequests = true
+        player.didHoldRequest = { rewindRequested.fulfill() }
+        let replayed = expectation(description: "replay starts from the beginning")
+        let observation = playback.$isPlaying.filter { $0 }.prefix(1).sink { _ in
+            XCTAssertLessThan(player.currentTime().seconds, 1, "The media itself must rewind before playback is announced")
+            XCTAssertLessThan(playback.elapsed, 1)
+            replayed.fulfill()
+        }
+        playback.play()
+        await fulfillment(of: [rewindRequested], timeout: 5)
+        XCTAssertFalse(playback.isPlaying, "Replay must wait for the media seek")
+        player.finishSeekRequests()
+        await fulfillment(of: [replayed], timeout: 5)
+        observation.cancel()
+    }
+
+    @MainActor
+    func testPauseStopAndAnotherMessageCancelPendingReplay() async throws {
+        let url = try await silentM4A()
+        defer { try? FileManager.default.removeItem(at: url) }
+        for action in ["pause", "stop", "another message"] {
+            var mediaPlayer: HeldSeekPlayer?
+            let playback = IrisAudioPlayback(localURL: url, makePlayer: { item in
+                let player = HeldSeekPlayer(playerItem: item)
+                mediaPlayer = player
+                return player
+            })
+            let other = IrisAudioPlayback(localURL: url)
+            defer { playback.stop(); other.stop(); mediaPlayer?.finishAllSeeks() }
+            playback.play()
+            await waitForPlayback(playback)
+            let player = try XCTUnwrap(mediaPlayer)
+            playback.pause()
+            playback.seek(to: playback.duration)
+            let atEnd = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                player.currentTime().seconds >= playback.duration - 0.05
+            }, object: nil)
+            await fulfillment(of: [atEnd], timeout: 5)
+            player.holdCompletions = true
+            let rewinding = expectation(description: "replay seek is pending for \(action)")
+            player.didHoldSeek = { rewinding.fulfill() }
+            playback.play()
+            await fulfillment(of: [rewinding], timeout: 5)
+            XCTAssertFalse(playback.isPlaying)
+            XCTAssertTrue(playback.isLoading)
+            switch action {
+            case "pause": playback.pause()
+            case "stop": playback.stop()
+            default: other.play(); await waitForPlayback(other)
+            }
+            let resumed = expectation(description: "cancelled replay must not resume")
+            resumed.isInverted = true
+            let observation = playback.$isPlaying.filter { $0 }.sink { _ in resumed.fulfill() }
+            player.finishAllSeeks()
+            await fulfillment(of: [resumed], timeout: 0.1)
+            XCTAssertFalse(playback.isPlaying)
+            XCTAssertFalse(playback.isLoading)
+            observation.cancel()
+        }
+    }
+
+    @MainActor
+    func testNewSeekAndPlaybackRateSupersedePendingReplay() async throws {
+        let url = try await silentM4A()
+        defer { try? FileManager.default.removeItem(at: url) }
+        var mediaPlayer: HeldSeekPlayer?
+        let playback = IrisAudioPlayback(localURL: url, makePlayer: { item in
+            let player = HeldSeekPlayer(playerItem: item)
+            mediaPlayer = player
+            return player
+        })
+        defer { playback.stop(); mediaPlayer?.finishAllSeeks() }
+        playback.play()
+        await waitForPlayback(playback)
+        let player = try XCTUnwrap(mediaPlayer)
+        playback.pause()
+        playback.seek(to: playback.duration)
+        let atEnd = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            player.currentTime().seconds >= playback.duration - 0.05
+        }, object: nil)
+        await fulfillment(of: [atEnd], timeout: 5)
+        player.holdCompletions = true
+        let rewinding = expectation(description: "replay seek is pending")
+        player.didHoldSeek = { rewinding.fulfill() }
+        playback.play()
+        await fulfillment(of: [rewinding], timeout: 5)
+        let scrubbed = expectation(description: "new scrub supersedes rewind")
+        player.didHoldSeek = { scrubbed.fulfill() }
+        playback.seek(to: 1.5)
+        playback.cyclePlaybackRate()
+        await fulfillment(of: [scrubbed], timeout: 5)
+        // Complete the newer seek before the cancelled older completion arrives.
+        let newSeekCompleted = expectation(description: "newer seek publishes its completed position")
+        let positionObservation = playback.$elapsed.dropFirst().prefix(1).sink { _ in newSeekCompleted.fulfill() }
+        player.finishSeek(at: 1)
+        await fulfillment(of: [newSeekCompleted], timeout: 5)
+        positionObservation.cancel()
+        player.finishSeek(at: 0)
+        await waitForPlayback(playback)
+        XCTAssertEqual(player.currentTime().seconds, 1.5, accuracy: 0.2)
+        XCTAssertEqual(player.rate, 1.5)
+    }
+
+    @MainActor
+    func testSeekingPlayingAudioToEndStopsAndStaleEndDoesNotStopReplay() async throws {
+        let url = try await silentM4A()
+        defer { try? FileManager.default.removeItem(at: url) }
+        var mediaPlayer: AVPlayer?
+        let playback = IrisAudioPlayback(localURL: url, makePlayer: { item in
+            let player = AVPlayer(playerItem: item)
+            mediaPlayer = player
+            return player
+        })
+        defer { playback.stop() }
+        playback.play()
+        await waitForPlayback(playback)
+        let stopped = expectation(description: "seeking to end stops active playback")
+        let stopObservation = playback.$isPlaying.filter { !$0 }.prefix(1).sink { _ in stopped.fulfill() }
+        playback.seek(to: playback.duration)
+        await fulfillment(of: [stopped], timeout: 5)
+        stopObservation.cancel()
+        playback.play()
+        await waitForPlayback(playback)
+        let unexpectedlyStopped = expectation(description: "old end notification must not stop replay")
+        unexpectedlyStopped.isInverted = true
+        let replayObservation = playback.$isPlaying.filter { !$0 }.sink { _ in unexpectedlyStopped.fulfill() }
+        NotificationCenter.default.post(name: .AVPlayerItemDidPlayToEndTime,
+                                        object: try XCTUnwrap(mediaPlayer?.currentItem))
+        await fulfillment(of: [unexpectedlyStopped], timeout: 0.1)
+        XCTAssertTrue(playback.isPlaying)
+        XCTAssertLessThan(playback.elapsed, 1)
+        replayObservation.cancel()
+    }
+
+    @MainActor
     func testPlaybackSpeedCyclesWithoutStartingPausedAudio() async throws {
         let url = try await silentM4A()
         defer { try? FileManager.default.removeItem(at: url) }
@@ -415,6 +574,57 @@ final class IrisAudioPlaybackTests: XCTestCase {
         XCTAssertNil(first.errorMessage)
         first.stop()
         second.stop()
+    }
+}
+
+/// Keep the real AVPlayer timeline, but control when its seek acknowledgement
+/// reaches playback so cancellation and reordered completions are reproducible.
+private final class HeldSeekPlayer: AVPlayer, @unchecked Sendable {
+    var holdRequests = false
+    var didHoldRequest: (() -> Void)?
+    var holdCompletions = false
+    var didHoldSeek: (() -> Void)?
+    private var completions: [() -> Void] = []
+    private var requests: [() -> Void] = []
+
+    override func seek(to time: CMTime, toleranceBefore: CMTime, toleranceAfter: CMTime) {
+        if holdRequests {
+            requests.append { [weak self] in self?.seek(to: time, toleranceBefore: toleranceBefore, toleranceAfter: toleranceAfter) }
+            didHoldRequest?()
+        } else {
+            super.seek(to: time, toleranceBefore: toleranceBefore, toleranceAfter: toleranceAfter)
+        }
+    }
+
+    override func seek(to time: CMTime, toleranceBefore: CMTime, toleranceAfter: CMTime,
+                       completionHandler: @escaping (Bool) -> Void) {
+        if holdRequests {
+            requests.append { [weak self] in self?.seek(to: time, toleranceBefore: toleranceBefore, toleranceAfter: toleranceAfter,
+                                                      completionHandler: completionHandler) }
+            didHoldRequest?()
+            return
+        }
+        super.seek(to: time, toleranceBefore: toleranceBefore, toleranceAfter: toleranceAfter) { [weak self] finished in
+            DispatchQueue.main.async {
+                guard let self, self.holdCompletions else { completionHandler(finished); return }
+                self.completions.append { completionHandler(finished) }
+                self.didHoldSeek?()
+            }
+        }
+    }
+
+    func finishSeek(at index: Int) {
+        guard completions.indices.contains(index) else { XCTFail("Missing held seek completion"); return }
+        completions.remove(at: index)()
+    }
+    func finishAllSeeks() {
+        holdCompletions = false
+        finishSeekRequests()
+        while !completions.isEmpty { finishSeek(at: 0) }
+    }
+    func finishSeekRequests() {
+        holdRequests = false
+        while !requests.isEmpty { requests.removeFirst()() }
     }
 }
 #endif
