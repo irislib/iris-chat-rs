@@ -782,11 +782,13 @@ impl AppCore {
             }
             return;
         }
-        if matches!(
+        let became_sent = matches!(
             message.delivery,
             DeliveryState::Pending | DeliveryState::Queued
-        ) {
-            message.delivery = DeliveryState::Sent;
+        );
+        if became_sent {
+            self.update_message_delivery(chat_id, message_id, DeliveryState::Sent);
+            return;
         }
         let now = unix_now().get();
         for recipient in &mut message.recipient_deliveries {

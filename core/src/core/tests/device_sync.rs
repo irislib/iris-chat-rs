@@ -553,7 +553,15 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
         DeliveryState::Pending,
     );
     assert!(records.try_recv().is_err());
-    core.update_message_delivery(&chat_id, "live-outgoing-id", DeliveryState::Sent);
+    assert!(!core
+        .build_device_sync_packets_for_test(100, true)
+        .iter()
+        .any(|packet| packet.windows("live-outgoing-id".len()).any(|window| {
+            window == "live-outgoing-id".as_bytes()
+        })), "an inventory taken before delivery finishes excludes pending messages");
+    // Relay/protocol drain completion uses this path, rather than an explicit
+    // delivery update. It must wake siblings whose earlier inventory was empty.
+    core.reconcile_outgoing_message_delivery(&chat_id, "live-outgoing-id");
     let queued = records
         .try_recv()
         .expect("the sibling reply should be queued only after it becomes sent");
@@ -564,6 +572,9 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     assert_eq!(messages[0]["id"], "live-outgoing-id");
     assert_eq!(messages[0]["author"], owner.public_key().to_hex());
     let outgoing_record = queued.records[0].clone();
+    core.reconcile_outgoing_message_delivery(&chat_id, "live-outgoing-id");
+    core.update_message_delivery(&chat_id, "live-outgoing-id", DeliveryState::Sent);
+    assert!(records.try_recv().is_err(), "unchanged delivery does not resend the message");
     core.update_message_delivery(&chat_id, "live-outgoing-id", DeliveryState::Failed);
     assert!(!core
         .build_device_sync_packets_for_test(100, true)
