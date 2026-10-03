@@ -105,13 +105,27 @@ public partial class ComposerBar : UserControl
     private void OnAttach(object sender, RoutedEventArgs e)
     {
         var menu = new ContextMenu { PlacementTarget = AttachButton, Placement = PlacementMode.Top };
-        var media = new MenuItem { Header = "Photos and videos" };
+        var media = new MenuItem { Header = "Photos and videos", Icon = AttachmentMenuIcon(true) };
         media.Click += (_, _) => AttachRequested?.Invoke(true);
-        var file = new MenuItem { Header = "File" };
+        var file = new MenuItem { Header = "File", Icon = AttachmentMenuIcon(false) };
         file.Click += (_, _) => AttachRequested?.Invoke(false);
         menu.Items.Add(media);
         menu.Items.Add(file);
         menu.IsOpen = true;
+    }
+
+    private System.Windows.Shapes.Path AttachmentMenuIcon(bool media)
+    {
+        var icon = new System.Windows.Shapes.Path
+        {
+            Data = System.Windows.Media.Geometry.Parse(media
+                ? "M2,3 L18,3 18,17 2,17 Z M2,14 L7,9 11,13 14,10 18,14 M12,7 A1,1 0 1 0 14,7 A1,1 0 1 0 12,7"
+                : "M4,1 L12,1 17,6 17,19 4,19 Z M12,1 L12,6 17,6"),
+            Width = 16, Height = 16, StrokeThickness = 1.5,
+            Stretch = System.Windows.Media.Stretch.Uniform,
+        };
+        icon.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, "TextPrimary");
+        return icon;
     }
 
     private Popup? _emojiPopup;

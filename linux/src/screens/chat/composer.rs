@@ -66,8 +66,15 @@ impl Composer {
         attach.set_sensitive(!state.busy.uploading_attachment);
         let popover = gtk::Popover::new();
         let sources = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        for (label, media_only) in [("Photos and videos", true), ("File", false)] {
-            let source = gtk::Button::with_label(label);
+        for (label, icon, media_only) in [
+            ("Photos and videos", "image-x-generic-symbolic", true),
+            ("File", "text-x-generic-symbolic", false),
+        ] {
+            let source = gtk::Button::new();
+            let content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+            content.append(&gtk::Image::from_icon_name(icon));
+            content.append(&gtk::Label::new(Some(label)));
+            source.set_child(Some(&content));
             source.add_css_class("flat");
             let popover = popover.downgrade();
             let manager_for_attach = manager.clone();
