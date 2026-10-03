@@ -439,11 +439,11 @@ impl AppCore {
                 let Ok(event) = serde_json::from_str::<Event>(&event_json) else {
                     return;
                 };
-                if event.id.to_string() != event_id || event.verify().is_err() {
+                if event.id.to_string() != event_id
+                    || !self.handle_relay_event_with_channel(event, "FIPS nearby")
+                {
                     return;
                 }
-                self.handle_relay_event_with_channel(event, "FIPS nearby");
-                self.emit_fips_nearby_peers();
                 let Some(source) = fips_peer_from_hex(source_pubkey_hex) else {
                     return;
                 };

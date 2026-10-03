@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "ingestion_tests.rs"]
+mod ingestion;
 #[path = "snapshot_tests.rs"]
 mod snapshots;
 

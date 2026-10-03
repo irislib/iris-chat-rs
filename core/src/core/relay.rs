@@ -1,16 +1,66 @@
 use super::*;
 
+type VerifiedSignature = (nostr::EventId, nostr::secp256k1::schnorr::Signature);
+
+/// In-memory authentication proofs, independent of persisted delivery IDs.
+/// Recompute the content ID before reusing a proof for that exact signature.
+#[derive(Default)]
+pub(super) struct EventValidationCache {
+    verified: HashSet<VerifiedSignature>,
+    order: VecDeque<VerifiedSignature>,
+    #[cfg(test)]
+    pub(super) signature_checks: usize,
+}
+
+impl EventValidationCache {
+    pub(super) fn verify(&mut self, event: &Event) -> bool {
+        if !event.verify_id() {
+            return false;
+        }
+        let key = (event.id, event.sig);
+        if self.verified.contains(&key) {
+            return true;
+        }
+        #[cfg(test)]
+        {
+            self.signature_checks += 1;
+        }
+        if !event.verify_signature() {
+            return false;
+        }
+        self.verified.insert(key);
+        self.order.push_back(key);
+        if self.order.len() > MAX_SEEN_EVENT_IDS {
+            if let Some(expired) = self.order.pop_front() {
+                self.verified.remove(&expired);
+            }
+        }
+        true
+    }
+}
+
+#[cfg(test)]
+#[path = "relay_validation_tests.rs"]
+mod validation_tests;
+
 impl AppCore {
     pub(super) fn handle_relay_event(&mut self, event: Event) {
         self.handle_relay_event_with_channel(event, "message servers");
     }
 
-    pub(super) fn handle_relay_event_with_channel(&mut self, event: Event, channel: &str) {
+    /// Return whether the event authenticated, including valid retransmissions
+    /// that still need a transport receipt but no repeated application effects.
+    pub(super) fn handle_relay_event_with_channel(&mut self, event: Event, channel: &str) -> bool {
         // Push payloads and other transports also enter here; do not rely on a
         // relay client having authenticated the event before touching any state.
-        if event.verify().is_err() {
-            return;
+        if !self.event_validation.verify(&event) {
+            return false;
         }
+        self.handle_verified_relay_event_with_channel(event, channel);
+        true
+    }
+
+    fn handle_verified_relay_event_with_channel(&mut self, event: Event, channel: &str) {
         if self.receive_private_contact_event(&event) {
             return;
         }

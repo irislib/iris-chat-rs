@@ -659,6 +659,7 @@ pub struct AppCore {
     recent_handshake_peers: BTreeMap<String, RecentHandshakePeer>,
     seen_event_ids: HashSet<String>,
     seen_event_order: VecDeque<String>,
+    event_validation: relay::EventValidationCache,
     device_invite_poll_token: u64,
     pending_device_link_poll_token: u64,
     message_expiry_token: u64,

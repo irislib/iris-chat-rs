@@ -138,6 +138,8 @@ fn seen_local_app_keys_event_repairs_missing_protocol_roster() {
     core.start_session(owner.public_key(), None, device.clone(), false, false)
         .expect("linked session awaiting roster recovery");
     let event = signed_app_keys_authorization_event(&owner, device.public_key(), 42);
+    assert!(core.event_validation.verify(&event));
+    let signature_checks = core.event_validation.signature_checks;
     core.remember_event(event.id.to_string());
 
     assert_eq!(
@@ -148,6 +150,7 @@ fn seen_local_app_keys_event_repairs_missing_protocol_roster() {
         DirectSendReadiness::MissingLocalAppKeys
     );
     core.handle_relay_event(event);
+    assert_eq!(core.event_validation.signature_checks, signature_checks);
     assert_ne!(
         core.protocol_engine
             .as_ref()

@@ -114,6 +114,7 @@ impl AppCore {
             recent_handshake_peers: BTreeMap::new(),
             seen_event_ids: HashSet::new(),
             seen_event_order: VecDeque::new(),
+            event_validation: Default::default(),
             device_invite_poll_token: 0,
             pending_device_link_poll_token: 0,
             message_expiry_token: 0,
