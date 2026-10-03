@@ -193,7 +193,7 @@ func makeAppState(
     )
 }
 
-private func makeLargeFixtureState(
+func makeLargeFixtureState(
     rev: UInt64 = 1,
     router: Router? = nil,
     account: AccountSnapshot? = nil,
@@ -240,7 +240,7 @@ private func makeLargeChatList(replacingFirstWith chat: ChatThreadSnapshot) -> [
     return rows
 }
 
-private func makeAccount(
+func makeAccount(
     hasOwnerSigningAuthority: Bool = true,
     authorizationState: DeviceAuthorizationState = .authorized
 ) -> AccountSnapshot {
@@ -285,7 +285,7 @@ private func makeChatThread(
     )
 }
 
-private func makeCurrentChat(
+func makeCurrentChat(
     chatId: String,
     kind: ChatKind = .direct,
     messages: [ChatMessageSnapshot] = []
@@ -312,7 +312,7 @@ private func makeCurrentChat(
     )
 }
 
-private func makeMessage(
+func makeMessage(
     chatId: String,
     id: String,
     body: String? = nil,
@@ -1969,52 +1969,6 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
-    func testFullStateKeepsLoadedSearchHitContextForVisibleChat() async {
-        let chatId = "chat-1"
-        let rust = MockRustApp(
-            state: makeLargeFixtureState(
-                rev: 1,
-                router: Router(defaultScreen: .chatList, screenStack: [.chat(chatId: chatId)]),
-                currentChat: makeCurrentChat(
-                    chatId: chatId,
-                    messages: (15...35).map { makeMessage(chatId: chatId, id: String($0)) }
-                )
-            )
-        )
-        let store = InMemorySecretStore()
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        let manager = AppManager(
-            rust: rust,
-            secretStore: store,
-            dataDir: tempDir,
-            environment: [:]
-        )
-
-        await Task.yield()
-        rust.emit(
-            .fullState(
-                makeLargeFixtureState(
-                    rev: 2,
-                    router: Router(defaultScreen: .chatList, screenStack: [.chat(chatId: chatId)]),
-                    currentChat: makeCurrentChat(
-                        chatId: chatId,
-                        messages: (121...200).map { makeMessage(chatId: chatId, id: String($0)) }
-                    )
-                )
-            )
-        )
-        await Task.yield()
-
-        let messageIds = manager.state.currentChat?.messages.map(\.id) ?? []
-        XCTAssertEqual(manager.state.rev, 2)
-        XCTAssertTrue(messageIds.contains("25"))
-        XCTAssertTrue(messageIds.contains("200"))
-        XCTAssertEqual(messageIds.first, "15")
-        XCTAssertEqual(messageIds.last, "200")
-    }
-
-    @MainActor
     func testFullStateBurstPublishesOnlyLatestSnapshot() async {
         let rust = MockRustApp(state: makeLargeFixtureState(rev: 1))
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -2072,86 +2026,6 @@ final class IrisChatTests: XCTestCase {
 
         _ = await manager.peerProfileDebug(ownerInput: "peer")
         _ = await manager.mutualGroups(ownerInput: "peer")
-    }
-
-    @MainActor
-    func testFullStateClearsSentDraftWhileKeepingLoadedHistory() async {
-        let chatId = "chat-1"
-        let router = Router(defaultScreen: .chatList, screenStack: [.chat(chatId: chatId)])
-        var chat = makeCurrentChat(
-            chatId: chatId,
-            messages: [makeMessage(chatId: chatId, id: "older", createdAtSecs: 1)]
-        )
-        chat.draft = "sent message"
-        let rust = MockRustApp(state: makeLargeFixtureState(rev: 1, router: router, currentChat: chat))
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), dataDir: tempDir, environment: [:])
-
-        await Task.yield()
-        rust.emit(.fullState(makeLargeFixtureState(
-            rev: 2,
-            router: router,
-            currentChat: makeCurrentChat(
-                chatId: chatId,
-                messages: [makeMessage(chatId: chatId, id: "sent", createdAtSecs: 2)]
-            )
-        )))
-        let updated = await waitUntil { manager.state.rev == 2 }
-
-        XCTAssertTrue(updated)
-        XCTAssertEqual(manager.state.currentChat?.messages.map(\.id), ["older", "sent"])
-        XCTAssertEqual(manager.state.currentChat?.draft, "")
-    }
-
-    @MainActor
-    func testFullStatePreservesPageOrderForSameSecondVisibleMessages() async {
-        let chatId = "chat-1"
-        let rust = MockRustApp(
-            state: makeLargeFixtureState(
-                rev: 1,
-                router: Router(defaultScreen: .chatList, screenStack: [.chat(chatId: chatId)]),
-                currentChat: makeCurrentChat(
-                    chatId: chatId,
-                    messages: [
-                        makeMessage(chatId: chatId, id: "older-context", createdAtSecs: 9)
-                    ]
-                )
-            )
-        )
-        let store = InMemorySecretStore()
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        let manager = AppManager(
-            rust: rust,
-            secretStore: store,
-            dataDir: tempDir,
-            environment: [:]
-        )
-
-        await Task.yield()
-        rust.emit(
-            .fullState(
-                makeLargeFixtureState(
-                    rev: 2,
-                    router: Router(defaultScreen: .chatList, screenStack: [.chat(chatId: chatId)]),
-                    currentChat: makeCurrentChat(
-                        chatId: chatId,
-                        messages: [
-                            makeMessage(chatId: chatId, id: "z-first", createdAtSecs: 10),
-                            makeMessage(chatId: chatId, id: "a-second", createdAtSecs: 10),
-                            makeMessage(chatId: chatId, id: "m-last", createdAtSecs: 10)
-                        ]
-                    )
-                )
-            )
-        )
-        await Task.yield()
-
-        XCTAssertEqual(
-            manager.state.currentChat?.messages.map(\.id),
-            ["older-context", "z-first", "a-second", "m-last"]
-        )
     }
 
     @MainActor

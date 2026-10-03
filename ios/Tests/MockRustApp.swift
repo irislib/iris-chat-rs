@@ -15,6 +15,7 @@ final class MockRustApp: RustAppClient {
     var onDispatch: ((AppAction) -> Void)?
     var pagesBefore: [String: CurrentChatSnapshot] = [:]
     var pagesAround: [String: CurrentChatSnapshot] = [:]
+    var onChatPageRead: (() -> Void)?
     var chatSnapshotGate: DispatchSemaphore?
     var chatSnapshotOverride: CurrentChatSnapshot?
     var onSearch: (() -> Void)?
@@ -203,11 +204,15 @@ final class MockRustApp: RustAppClient {
     }
 
     func chatSnapshotBefore(chatId: String, beforeMessageId: String, limit: UInt32) -> CurrentChatSnapshot? {
-        pagesBefore["\(chatId.trimmingCharacters(in: .whitespacesAndNewlines))|\(beforeMessageId.trimmingCharacters(in: .whitespacesAndNewlines))"]
+        let page = pagesBefore["\(chatId.trimmingCharacters(in: .whitespacesAndNewlines))|\(beforeMessageId.trimmingCharacters(in: .whitespacesAndNewlines))"]
+        onChatPageRead?()
+        return page
     }
 
     func chatSnapshotAroundMessage(chatId: String, messageId: String, beforeLimit: UInt32, afterLimit: UInt32) -> CurrentChatSnapshot? {
-        pagesAround["\(chatId.trimmingCharacters(in: .whitespacesAndNewlines))|\(messageId.trimmingCharacters(in: .whitespacesAndNewlines))"]
+        let page = pagesAround["\(chatId.trimmingCharacters(in: .whitespacesAndNewlines))|\(messageId.trimmingCharacters(in: .whitespacesAndNewlines))"]
+        onChatPageRead?()
+        return page
     }
 
     func exportSupportBundleJson() -> String {

@@ -1003,6 +1003,11 @@ final class AppManager: ObservableObject {
     private var exhaustedOlderChatPages = Set<String>()
     private var aroundChatPageLoads = Set<String>()
     private var initialChatPageLoads = Set<String>()
+    private var chatPageGeneration: UInt64 = 0
+    private var chatPageRoute: Screen?
+    private var chatPageAccountID: String?
+    private var chatHistory = ChatHistoryWindow()
+    private var authoritativeChatRev: UInt64?
     private var chatSnapshotCache: [String: CurrentChatSnapshot] = [:]
     private var chatSnapshotCacheOrder: [String] = []
     private var lastSyncedDeviceLabelsKey: String?
@@ -1216,6 +1221,8 @@ final class AppManager: ObservableObject {
         self.state = initialState
         irisSetDebugLoggingEnabled(initialState.preferences.debugLoggingEnabled)
         self.lastRevApplied = initialState.rev
+        syncChatPageScope(to: initialState)
+        authoritativeChatRev = initialState.rev
         resolvedRust.listenForUpdates(reconciler: reconciler)
         let initialDeviceRevoked = initialState.account?.authorizationState == .revoked
         if !initialDeviceRevoked {
@@ -1668,18 +1675,23 @@ final class AppManager: ObservableObject {
 
     private func loadInitialChatPage(chatId: String) {
         let trimmedChat = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedChat.isEmpty, !initialChatPageLoads.contains(trimmedChat) else {
+        guard !localResetInFlight, !trimmedChat.isEmpty, !initialChatPageLoads.contains(trimmedChat) else {
             return
         }
         initialChatPageLoads.insert(trimmedChat)
+        let generation = chatPageGeneration
+        let coreGeneration = reconciliationGeneration
+        let authorityRev = authoritativeChatRev
         let runner = ChatPageLoadRunner(rust: rust)
         let pageSize = Self.chatPageSize
         Self.chatPageQueue.async { [weak self] in
             let page = runner.latest(chatId: trimmedChat, limit: pageSize)
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.chatPageGeneration == generation,
+                      self.reconciliationGeneration == coreGeneration,
+                      self.activeChatSnapshotID(in: self.state) == trimmedChat else { return }
                 self.initialChatPageLoads.remove(trimmedChat)
-                guard let page else { return }
+                guard let page, self.authoritativeChatRev == authorityRev else { return }
                 if page.messages.count < Int(pageSize) {
                     self.exhaustedOlderChatPages.insert(trimmedChat)
                 } else {
@@ -1689,10 +1701,9 @@ final class AppManager: ObservableObject {
                     return
                 }
                 var nextState = self.state
-                nextState.currentChat = self.mergedLoadedChatPage(
-                    existing: self.state.currentChat,
-                    page: page
-                )
+                var current = self.state.currentChat ?? page
+                current.messages = self.chatHistory.replaceRecent(page.messages, in: current.messages)
+                nextState.currentChat = current
                 self.state = nextState
                 self.recordInteractionState(historyLoaded: true)
                 self.rememberChatSnapshot(nextState.currentChat)
@@ -1703,8 +1714,9 @@ final class AppManager: ObservableObject {
     @discardableResult
     func loadOlderMessages(chatId: String, completion: @escaping (Bool) -> Void = { _ in }) -> Bool {
         let trimmedChat = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedChat.isEmpty,
+        guard !localResetInFlight, !trimmedChat.isEmpty,
               !exhaustedOlderChatPages.contains(trimmedChat),
+              activeChatID(in: state) == trimmedChat,
               let current = state.currentChat,
               current.chatId == trimmedChat,
               let firstMessage = current.messages.first else {
@@ -1714,6 +1726,8 @@ final class AppManager: ObservableObject {
             return true
         }
         olderChatPageLoads.insert(trimmedChat)
+        let generation = chatPageGeneration
+        let coreGeneration = reconciliationGeneration
         let runner = ChatPageLoadRunner(rust: rust)
         let firstMessageId = firstMessage.id
         let pageSize = Self.chatPageSize
@@ -1724,7 +1738,12 @@ final class AppManager: ObservableObject {
                 limit: pageSize
             )
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.chatPageGeneration == generation,
+                      self.reconciliationGeneration == coreGeneration,
+                      self.activeChatID(in: self.state) == trimmedChat else {
+                    completion(false)
+                    return
+                }
                 self.olderChatPageLoads.remove(trimmedChat)
                 if page?.messages.isEmpty != false {
                     if page?.messages.isEmpty == true {
@@ -1747,7 +1766,8 @@ final class AppManager: ObservableObject {
     func loadChatAroundMessage(chatId: String, messageId: String) {
         let trimmedChat = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedMessage = messageId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedChat.isEmpty, !trimmedMessage.isEmpty else { return }
+        guard !localResetInFlight, !trimmedChat.isEmpty, !trimmedMessage.isEmpty,
+              activeChatID(in: state) == trimmedChat else { return }
         if state.currentChat?.chatId == trimmedChat,
            state.currentChat?.messages.contains(where: { $0.id == trimmedMessage }) == true {
             return
@@ -1755,6 +1775,8 @@ final class AppManager: ObservableObject {
         let key = "\(trimmedChat)\u{1f}\(trimmedMessage)"
         guard !aroundChatPageLoads.contains(key) else { return }
         aroundChatPageLoads.insert(key)
+        let generation = chatPageGeneration
+        let coreGeneration = reconciliationGeneration
         let runner = ChatPageLoadRunner(rust: rust)
         let beforeLimit = Self.chatAroundBeforeLimit
         let afterLimit = Self.chatAroundAfterLimit
@@ -1766,7 +1788,9 @@ final class AppManager: ObservableObject {
                 afterLimit: afterLimit
             )
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.chatPageGeneration == generation,
+                      self.reconciliationGeneration == coreGeneration,
+                      self.activeChatID(in: self.state) == trimmedChat else { return }
                 self.aroundChatPageLoads.remove(key)
                 if let page {
                     self.mergeCurrentChatSnapshot(page)
@@ -2886,6 +2910,8 @@ final class AppManager: ObservableObject {
         exhaustedOlderChatPages.removeAll()
         aroundChatPageLoads.removeAll()
         initialChatPageLoads.removeAll()
+        chatHistory = ChatHistoryWindow()
+        authoritativeChatRev = nil
         chatSnapshotCache.removeAll()
         chatSnapshotCacheOrder.removeAll()
         persistedRestoreInFlight = false
@@ -3026,10 +3052,24 @@ final class AppManager: ObservableObject {
             return
         }
         let oldState = state
-        var reconciledState = stateByPreservingVisibleChatPage(
-            from: oldState,
-            into: stateByReconcilingPendingNavigation(nextState)
-        )
+        if oldState.account?.publicKeyHex != nextState.account?.publicKeyHex {
+            pendingNavigationOverride = nil
+            chatSnapshotCache.removeAll()
+            chatSnapshotCacheOrder.removeAll()
+        }
+        var reconciledState = stateByReconcilingPendingNavigation(nextState)
+        syncChatPageScope(to: reconciledState)
+        if let rawChat = nextState.currentChat,
+           activeChatSnapshotID(in: reconciledState) == rawChat.chatId,
+           reconciledState.currentChat?.chatId == rawChat.chatId {
+            var chat = rawChat
+            chat.messages = chatHistory.replaceRecent(
+                rawChat.messages, in: oldState.currentChat?.chatId == rawChat.chatId
+                    ? oldState.currentChat!.messages : []
+            )
+            reconciledState.currentChat = chat
+            authoritativeChatRev = nextState.rev
+        }
 #if os(iOS)
         reconciledState = stateByApplyingUiTestSeedDaySplit(reconciledState)
 #endif
@@ -3293,96 +3333,29 @@ final class AppManager: ObservableObject {
         return stateByApplyingLocalScreenStack(pending.stack, to: nextState)
     }
 
-    private func stateByPreservingVisibleChatPage(from oldState: AppState, into nextState: AppState) -> AppState {
-        guard let oldChat = oldState.currentChat,
-              let newChat = nextState.currentChat,
-              oldChat.chatId == newChat.chatId,
-              activeChatID(in: nextState) == newChat.chatId else {
-            return nextState
-        }
-        let newMessageIDs = Set(newChat.messages.map(\.id))
-        guard oldChat.messages.contains(where: { !newMessageIDs.contains($0.id) }) else {
-            return nextState
-        }
-        var result = nextState
-        result.currentChat = mergedChatSnapshot(existing: oldChat, page: newChat)
-        return result
-    }
-
     private func mergeCurrentChatSnapshot(_ page: CurrentChatSnapshot) {
-        guard state.currentChat?.chatId == page.chatId else { return }
+        guard activeChatID(in: state) == page.chatId,
+              var current = state.currentChat, current.chatId == page.chatId else { return }
+        current.messages = chatHistory.addPage(page.messages, to: current.messages)
         var nextState = state
-        nextState.currentChat = mergedLoadedChatPage(existing: state.currentChat, page: page)
+        nextState.currentChat = current
         state = nextState
-        rememberChatSnapshot(nextState.currentChat)
+        rememberChatSnapshot(current)
     }
 
-    private func mergedChatSnapshot(existing: CurrentChatSnapshot?, page: CurrentChatSnapshot) -> CurrentChatSnapshot {
-        guard let existing, existing.chatId == page.chatId else {
-            return page
-        }
-        var merged = page
-        merged.messages = mergedChatMessages(existing: existing.messages, page: page.messages)
-        if merged.kind != .group && merged.participants.isEmpty {
-            merged.participants = existing.participants
-        }
-        if merged.typingIndicators.isEmpty {
-            merged.typingIndicators = existing.typingIndicators
-        }
-        // Keep the authoritative draft even when empty. Preserving loaded
-        // message history must not revive text that has already been sent.
-        return merged
-    }
-
-    private func mergedLoadedChatPage(existing: CurrentChatSnapshot?, page: CurrentChatSnapshot) -> CurrentChatSnapshot {
-        guard var current = existing, current.chatId == page.chatId else { return page }
-        // A page read can finish after a newer core update. Only merge history;
-        // never roll back capability, request acceptance, or other live metadata.
-        current.messages = mergedChatMessages(existing: current.messages, page: page.messages)
-        return current
-    }
-
-    private func mergedChatMessages(
-        existing: [ChatMessageSnapshot],
-        page: [ChatMessageSnapshot]
-    ) -> [ChatMessageSnapshot] {
-        // Drafts and typing updates usually repeat the unchanged latest page.
-        // Retain the browsed history's storage instead of rebuilding and
-        // sorting every loaded page on the UI actor for those updates.
-        if existing.count >= page.count,
-           existing.suffix(page.count).elementsEqual(page) {
-            return existing
-        }
-        var byID: [String: ChatMessageSnapshot] = [:]
-        var orderByID: [String: Int] = [:]
-        byID.reserveCapacity(existing.count + page.count)
-        orderByID.reserveCapacity(existing.count + page.count)
-
-        let pageIDs = Set(page.map(\.id))
-
-        func rememberOrder(_ id: String) {
-            if orderByID[id] == nil {
-                orderByID[id] = orderByID.count
-            }
-        }
-
-        for message in existing where !pageIDs.contains(message.id) {
-            byID[message.id] = message
-            rememberOrder(message.id)
-        }
-        // Rust page order is authoritative for equal-timestamp messages;
-        // sorting by event id here makes same-second local sends jump around.
-        for message in page {
-            byID[message.id] = message
-            rememberOrder(message.id)
-        }
-
-        return byID.values.sorted { lhs, rhs in
-            if lhs.createdAtSecs != rhs.createdAtSecs {
-                return lhs.createdAtSecs < rhs.createdAtSecs
-            }
-            return (orderByID[lhs.id] ?? .max) < (orderByID[rhs.id] ?? .max)
-        }
+    private func syncChatPageScope(to nextState: AppState) {
+        let route = nextState.router.screenStack.last ?? nextState.router.defaultScreen
+        let accountID = nextState.account?.publicKeyHex
+        guard route != chatPageRoute || accountID != chatPageAccountID else { return }
+        chatPageGeneration &+= 1
+        chatPageRoute = route
+        chatPageAccountID = accountID
+        initialChatPageLoads.removeAll()
+        olderChatPageLoads.removeAll()
+        aroundChatPageLoads.removeAll()
+        exhaustedOlderChatPages.removeAll()
+        chatHistory = ChatHistoryWindow(recent: nextState.currentChat?.messages ?? [])
+        authoritativeChatRev = nil
     }
 
     private func chatMessagePrecedes(_ lhs: ChatMessageSnapshot, _ rhs: ChatMessageSnapshot) -> Bool {
@@ -3404,7 +3377,9 @@ final class AppManager: ObservableObject {
     }
 
     private func applyLocalScreenStack(_ stack: [Screen]) {
-        state = stateByApplyingLocalScreenStack(stack, to: state)
+        let nextState = stateByApplyingLocalScreenStack(stack, to: state)
+        syncChatPageScope(to: nextState)
+        state = nextState
     }
 
     private func stateByApplyingLocalScreenStack(_ stack: [Screen], to baseState: AppState) -> AppState {
