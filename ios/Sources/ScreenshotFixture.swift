@@ -311,6 +311,13 @@ struct ScreenshotFixture {
 }
 
 extension ScreenshotFixture {
+    static func seedMessageBody(label: String, index: Int) -> String {
+        let body = "\(label) lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua"
+        guard ProcessInfo.processInfo.environment["IRIS_UI_TEST_SEED_MIXED_HEIGHTS"] == "1" else { return body }
+        if index % 3 == 0 { return label }
+        return body + String(repeating: "\nA taller synthetic message keeps a different measured row height.", count: index % 3 == 2 ? 3 : 0)
+    }
+
     static func configured(environment: [String: String]) -> ScreenshotFixture? {
         guard enabled(environment: environment) else { return nil }
         var fixture = environment["IRIS_UI_TEST_SCREENSHOT_STYLE"] == "marketing" ? Self.marketing : Self.default
@@ -324,6 +331,14 @@ extension ScreenshotFixture {
                 body: "Sam Park was added to the group", isOutgoing: false,
                 ageSecs: 60, delivery: .received,
                 systemNoticeOwnerPubkeyHex: "\(chatIdPrefix)3")]
+            if let count = environment["IRIS_UI_TEST_GROUP_NOTICE_PREFIX_COUNT"].flatMap(Int.init), count > 0 {
+                let prefix = (0..<min(count, 160)).map { index in
+                    Message(body: "Earlier group message \(index)" + String(repeating: "\nSynthetic mixed-height history.", count: index % 4),
+                            isOutgoing: index % 2 == 0, ageSecs: Double(120 + count - index),
+                            delivery: .seen, groupAuthorName: "Sam Park")
+                }
+                timelines["\(chatIdPrefix)2"] = prefix + (timelines["\(chatIdPrefix)2"] ?? [])
+            }
         } else if environment["IRIS_UI_TEST_AUDIO_MESSAGES"] == "1" {
             timelines["\(chatIdPrefix)1"] = [false, true].map { outgoing in
                 Message(body: "", isOutgoing: outgoing, ageSecs: outgoing ? 30 : 60, delivery: .seen,

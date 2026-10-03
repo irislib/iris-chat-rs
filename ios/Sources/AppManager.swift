@@ -3122,7 +3122,7 @@ final class AppManager: ObservableObject {
             } else {
                 label = "seed-msg-\(i)"
             }
-            let body = "\(label) lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua"
+            let body = ScreenshotFixture.seedMessageBody(label: label, index: i)
             dispatchToRust(.sendMessage(chatId: chatId, text: body))
         }
         // Return to the chat list so the test reopens an existing, populated chat.
