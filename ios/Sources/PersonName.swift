@@ -11,7 +11,7 @@ extension PersonNamePresentation {
 
 func personNameText(_ name: String, identity: String?, explicitName: String? = nil) -> Text {
     let presentation = PersonNamePresentation(name, identity: identity, explicitName: explicitName)
-    return presentation.isFallback ? Text(presentation.name).fontDesign(.default).italic() : Text(presentation.name)
+    return presentation.isFallback ? Text(presentation.name).italic() : Text(presentation.name)
 }
 
 func explicitPersonName(for owner: String?, state: AppState?) -> String? {
