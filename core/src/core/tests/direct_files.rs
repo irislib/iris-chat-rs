@@ -123,24 +123,11 @@ fn exercise_direct_files_actions(same_owner: bool, outcome: crate::DirectFileTra
     let (bt, br) = flume::unbounded();
     b.core_sender = bt.clone();
     b.priority_sender = bt;
-    if same_owner {
-        // Sibling roster events run normal reconciliation. A custom UDP test
-        // runtime has a different key and would be replaced mid-offer depending
-        // on event timing; use the same configuration as that production path.
-        a.reconcile_device_sync();
-        b.reconcile_device_sync();
-    } else {
-        let addr = || {
-            std::net::UdpSocket::bind("127.0.0.1:0")
-                .unwrap()
-                .local_addr()
-                .unwrap()
-        };
-        let aa = addr();
-        let ba = addr();
-        a.reconcile_calls_udp_for_test(aa, ba, &test_fips_peer(&bd).npub());
-        b.reconcile_calls_udp_for_test(ba, aa, &test_fips_peer(&ad).npub());
-    }
+    // Signed roster events run normal reconciliation while an offer is active.
+    // Use production discovery on both peers: a test-only UDP configuration has
+    // a different runtime key and would be replaced by that reconciliation.
+    a.reconcile_device_sync();
+    b.reconcile_device_sync();
     let ae = a.device_sync_endpoint_for_test().unwrap();
     let be = b.device_sync_endpoint_for_test().unwrap();
     direct_files_wait(&mut a, &ar, &mut b, &br, |a, _| {
