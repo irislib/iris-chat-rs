@@ -42,7 +42,7 @@ internal static class Program
             manager.CreateChat("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798");
             PumpUntil(() => manager.CurrentChat != null);
             var chat = manager.ChatList.First();
-            var first = new ChatRow { Uid = "first", Chat = chat with { chatId = "first", displayName = "First chat" } };
+            var first = new ChatRow { Chat = chat with { chatId = "first", displayName = "First chat" } };
             var second = new ChatRow { Chat = chat with { chatId = "second", displayName = "Second chat" } };
             var root = new StackPanel { Margin = new Thickness(16) };
             var search = new TextBox { Text = "Search" };
@@ -57,10 +57,32 @@ internal static class Program
             var composer = new ComposerBar();
             root.Children.Add(search); root.Children.Add(scroll); root.Children.Add(after); root.Children.Add(composer);
             window.Content = root; window.Show(); window.Activate(); Pump();
+            int opened = 0;
+            var rows = list.Items.OfType<ChatRow>().ToArray();
+            foreach (var row in rows) row.Activated += _ => opened++;
+            var activeChat = manager.CurrentChat!.chatId;
             search.Focus(); search.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
             Check(first.IsKeyboardFocused, $"Tab enters the list at its first chat (actual: {Keyboard.FocusedElement?.GetType().Name})");
-            int opened = 0; first.Activated += _ => opened++;
-            var activeChat = manager.CurrentChat!.chatId;
+            for (int i = 1; i < rows.Length; i++)
+            {
+                rows[i - 1].MoveFocus(new TraversalRequest(FocusNavigationDirection.Next)); Pump();
+                Check(rows[i].IsKeyboardFocused, $"Tab reaches chat {i}, across sections and beyond the viewport");
+            }
+            rows[^1].MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            Check(after.IsKeyboardFocused, "Tab leaves the list after its final chat");
+            after.MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous));
+            for (int i = rows.Length - 1; i > 0; i--)
+            {
+                Check(rows[i].IsKeyboardFocused, $"Shift-Tab reaches chat {i}");
+                rows[i].MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous)); Pump();
+            }
+            Check(first.IsKeyboardFocused, "Shift-Tab crosses section boundaries");
+            first.MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous));
+            Check(search.IsKeyboardFocused, "Shift-Tab exits to search");
+            search.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            Check(first.IsKeyboardFocused && opened == 0 && manager.CurrentChat.chatId == activeChat,
+                "Tab navigation preserves the active chat and never activates a row");
+            scroll.ScrollToTop(); Pump();
             for (int i = 0; i < 80; i++) Key(first, System.Windows.Input.Key.Down, Keyboard.PreviewKeyDownEvent);
             Check(scroll.VerticalOffset > 2000 && first.IsKeyboardFocused && opened == 0
                 && manager.CurrentChat.chatId == activeChat, "Long Down scroll preserves focus and active chat");
@@ -69,27 +91,31 @@ internal static class Program
             for (int i = 0; i < 80; i++) Key(first, System.Windows.Input.Key.Down, Keyboard.PreviewKeyDownEvent);
             Check(scroll.VerticalOffset > 2000 && first.IsKeyboardFocused, "Offscreen focused row keeps receiving arrows");
             var offset = scroll.VerticalOffset;
+            second.Focus(); Pump(); scroll.ScrollToVerticalOffset(offset); Pump();
             using ((IDisposable)Navigation.GetMethod("PreserveFocus")!.Invoke(null, new object[] { list })!)
             {
                 list.Items.Clear();
-                first = new ChatRow { Chat = first.Chat, Uid = "first" };
-                list.Items.Add(first);
-                for (int i = 1; i < 140; i++) list.Items.Add(new ChatRow { Chat = chat with { chatId = $"chat-{i}", displayName = $"Synthetic chat {i}" } });
+                first = new ChatRow { Chat = first.Chat };
+                second = new ChatRow { Chat = second.Chat };
+                list.Items.Add(new ChatRow { Chat = chat with { chatId = "new", displayName = "New chat" } });
+                list.Items.Add(first); list.Items.Add(second);
+                for (int i = 2; i < 140; i++) list.Items.Add(new ChatRow { Chat = chat with { chatId = $"chat-{i}", displayName = $"Synthetic chat {i}" } });
             }
-            Pump(); Check(first.IsKeyboardFocused && Math.Abs(scroll.VerticalOffset - offset) < 2,
-                "State refresh preserves offscreen focused identity and viewport");
-            Key(first, System.Windows.Input.Key.Home, Keyboard.PreviewKeyDownEvent);
-            Check(first.IsKeyboardFocused && scroll.VerticalOffset == 0, "Home scrolls only");
-            Key(first, System.Windows.Input.Key.End, Keyboard.PreviewKeyDownEvent);
-            Check(first.IsKeyboardFocused && Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) < 2, "End scrolls only");
-            first.Activated += _ => opened++;
-            Key(first, System.Windows.Input.Key.Enter, Keyboard.KeyDownEvent);
-            Key(first, System.Windows.Input.Key.Space, Keyboard.KeyDownEvent);
+            Pump(); Check(second.IsKeyboardFocused && Math.Abs(scroll.VerticalOffset - offset) < 2,
+                "State refresh preserves the offscreen focused identity and viewport after a preceding chat is inserted");
+            Key(second, System.Windows.Input.Key.Home, Keyboard.PreviewKeyDownEvent);
+            Check(second.IsKeyboardFocused && scroll.VerticalOffset == 0, "Home scrolls only");
+            Key(second, System.Windows.Input.Key.End, Keyboard.PreviewKeyDownEvent);
+            Check(second.IsKeyboardFocused && Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) < 2, "End scrolls only");
+            second.Activated += _ => opened++;
+            Key(second, System.Windows.Input.Key.Enter, Keyboard.KeyDownEvent);
+            Key(second, System.Windows.Input.Key.Space, Keyboard.KeyDownEvent);
             Check(opened == 2, "Enter and Space each activate focused row once");
-            first.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
-            Check(after.IsKeyboardFocused, "One Tab exits the complete chat list");
-            after.MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous));
-            Check(first.IsKeyboardFocused, "Shift-Tab returns to the focused chat");
+            second.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            Check(Keyboard.FocusedElement is ChatRow { Chat.chatId: "chat-2" },
+                "Tab continues from the restored chat identity");
+            ((UIElement)Keyboard.FocusedElement).MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous));
+            Check(second.IsKeyboardFocused, "Shift-Tab returns to the restored chat");
             composer.FocusInput();
             var input = (TextBox)composer.FindName("Input"); input.Text = "draft"; input.CaretIndex = 2;
             Check(input.AcceptsTab, "Composer accepts literal Tab");

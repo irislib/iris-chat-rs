@@ -1,23 +1,11 @@
 use gtk::prelude::*;
-use std::rc::Rc;
 
-// Native rows retain their activation/accessibility behavior. A roving focus
-// target makes all sidebar sections one Tab stop. Arrows only scroll the viewport.
+// Tab visits native chat rows; arrows only scroll the viewport.
 pub fn install(container: &impl IsA<gtk::Widget>) {
     let rows = rows(container.as_ref());
-    let weak_rows = Rc::new(rows.iter().map(|row| row.downgrade()).collect::<Vec<_>>());
-    for (index, row) in rows.iter().enumerate() {
-        row.set_focusable(index == 0);
-        let focus = gtk::EventControllerFocus::new();
-        let rows = weak_rows.clone();
-        focus.connect_enter(move |controller| {
-            if let Some(current) = controller.widget() {
-                for row in rows.iter().filter_map(|row| row.upgrade()) {
-                    row.set_focusable(row == current);
-                }
-            }
-        });
-        row.add_controller(focus);
+    let weak_rows = rows.iter().map(|row| row.downgrade()).collect::<Vec<_>>();
+    for row in &rows {
+        row.set_focusable(true);
     }
     let weak_container = container.as_ref().downgrade();
     let keys = gtk::EventControllerKey::new();
@@ -152,7 +140,6 @@ impl FocusBookmark {
     }
     pub fn restore(self, root: &gtk::Widget) {
         if let Some(widget) = find(root, &self.name) {
-            widget.set_focusable(true);
             widget.grab_focus();
             if let (Some(offset), Some(scroll)) = (self.offset, scroll(&widget)) {
                 // Restore after allocation; focusing an offscreen row must not

@@ -9,7 +9,7 @@ using System.Windows.Media;
 
 namespace IrisChat.Chrome;
 
-// Keep the sidebar a single Tab stop; arrows scroll without changing focus or chat.
+// Tab visits native chat rows; arrows scroll without changing focus or chat.
 internal static class KeyboardList
 {
     public static void Install(ItemsControl list)
@@ -18,7 +18,7 @@ internal static class KeyboardList
         // groups navigation, but only its chat rows should receive focus.
         list.Focusable = false;
         KeyboardNavigation.SetIsTabStop(list, false);
-        KeyboardNavigation.SetTabNavigation(list, KeyboardNavigationMode.Once);
+        KeyboardNavigation.SetTabNavigation(list, KeyboardNavigationMode.Continue);
         list.PreviewKeyDown += (_, e) =>
         {
             if (Keyboard.Modifiers != ModifierKeys.None) return;
