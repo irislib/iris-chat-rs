@@ -149,8 +149,7 @@ final class DesktopChatListViewport: NSView {
             origin.y += direction * (document.isFlipped ? 40 : -40)
         }
         origin.y = min(maximum, max(0, origin.y))
-        clip.scroll(to: origin)
-        scrollView.reflectScrolledClipView(clip)
+        document.scroll(origin)
     }
 }
 #endif
