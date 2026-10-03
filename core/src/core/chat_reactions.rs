@@ -66,15 +66,14 @@ impl AppCore {
                 self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "reaction");
             } else if emoji.is_empty() {
                 if let Ok(e_tag) = nostr::Tag::parse(["e", message_id]) {
+                    let Ok(ms_tag) = nostr::Tag::parse(["ms", &millis.to_string()]) else {
+                        return;
+                    };
                     let unsigned = UnsignedEvent::new(
                         owner_pubkey,
                         Timestamp::from_secs(millis / 1000),
                         Kind::Custom(REACTION_KIND as u16),
-                        vec![
-                            e_tag,
-                            nostr::Tag::parse(["ms", &millis.to_string()])
-                                .expect("valid millisecond tag"),
-                        ],
+                        vec![e_tag, ms_tag],
                         String::new(),
                     );
                     self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "reaction");

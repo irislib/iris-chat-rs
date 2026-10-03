@@ -169,7 +169,9 @@ impl AppCore {
             self.advance_device_history_partition(peer, state.scope);
             return;
         }
-        let plan = runtime.history.partitions.remove(&key).unwrap();
+        let Some(plan) = runtime.history.partitions.remove(&key) else {
+            return;
+        };
         let restart = runtime.history.restart.remove(&key);
         if plan.link_id.is_some() {
             if plan.withheld {

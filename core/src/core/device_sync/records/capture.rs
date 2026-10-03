@@ -27,9 +27,10 @@ impl AppCore {
     ) {
         let mut event = event.clone();
         event.ensure_id();
+        let Some(id) = event.id else { return };
         self.capture_device_sync_control(
             chat,
-            &event.id.unwrap().to_hex(),
+            &id.to_hex(),
             &event.pubkey.to_hex(),
             event.created_at.as_secs(),
             event.kind.as_u16() as u32,
@@ -68,12 +69,15 @@ impl AppCore {
             if targets.len() != 1 {
                 return true;
             }
+            let Some(target) = targets.first() else {
+                return false;
+            };
             let legacy = serde_json::from_str::<serde_json::Value>(content).ok();
             let emoji = legacy
                 .as_ref()
                 .filter(|value| {
                     value["type"] == "reaction"
-                        && value["messageId"].as_str() == Some(targets[0].as_str())
+                        && value["messageId"].as_str() == Some(target.as_str())
                 })
                 .and_then(|value| value["emoji"].as_str())
                 .unwrap_or(content);
