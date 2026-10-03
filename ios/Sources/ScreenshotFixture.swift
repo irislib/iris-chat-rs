@@ -332,10 +332,12 @@ extension ScreenshotFixture {
                 ageSecs: 60, delivery: .received,
                 systemNoticeOwnerPubkeyHex: "\(chatIdPrefix)3")]
             if let count = environment["IRIS_UI_TEST_GROUP_NOTICE_PREFIX_COUNT"].flatMap(Int.init), count > 0 {
-                let prefix = (0..<min(count, 160)).map { index in
-                    Message(body: "Earlier group message \(index)" + String(repeating: "\nSynthetic mixed-height history.", count: index % 4),
-                            isOutgoing: index % 2 == 0, ageSecs: Double(120 + count - index),
-                            delivery: .seen, groupAuthorName: "Sam Park")
+                let prefix: [Message] = (0..<min(count, 160)).map { index in
+                    let body = "Earlier group message \(index)"
+                        + String(repeating: "\nSynthetic mixed-height history.", count: index % 4)
+                    let age = TimeInterval(120 + count - index)
+                    return Message(body: body, isOutgoing: index % 2 == 0,
+                                   ageSecs: age, delivery: .seen, groupAuthorName: "Sam Park")
                 }
                 timelines["\(chatIdPrefix)2"] = prefix + (timelines["\(chatIdPrefix)2"] ?? [])
             }
