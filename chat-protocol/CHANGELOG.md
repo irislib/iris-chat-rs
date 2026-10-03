@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0
+
+- Replace ambiguous sender-and-second acknowledgements with bounded, durable
+  exact-ciphertext tracking. Replayed group messages no longer trigger repeated
+  decryption and repair requests after restart or event-cache eviction.
+- Preserve repair backoff for pending messages and retry decryption when group
+  metadata or sender keys change. Distinct messages from the same second remain
+  eligible for recovery.
+- Remove `acknowledge_delivered_group_sender_key_message`; callers no longer
+  need to acknowledge group ciphertext separately. This is a breaking API change.
+- Read existing checkpoints without migrating keys, sessions, or messages.
+
 ## 0.1.9
 
 - Let a runtime holding the profile secret key send immediately while its

@@ -6,7 +6,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 ### GitHub
 
-- Align desktop attachment menus with Photos and videos and File choices, while retaining direct file sending.
+- Align desktop attachment menus with icons for Photos and videos and File choices, while retaining direct file sending.
 - Show stable italic animal names for unnamed people instead of full or shortened user IDs, while preserving profile names and nicknames.
 - Unify device linking around NostrConnect, retaining existing Iris link input compatibility and existing account sessions.
 - Reuse unchanged signed device lists and repair equivalent duplicate snapshots during approved linking, so existing accounts can link without weakening conflict checks.
@@ -14,7 +14,8 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Reconcile messages and reaction changes over encrypted FIPS using the shared Negentropy codec. Sync current group details, settings, and verified contact profiles separately from old message history. Preserve link-time boundaries, local deletions, expiry, and device revocation during replay and recovery.
 - Notify linked devices when queued messages become sent, and retry unanswered WebRTC offers after authenticated session restarts without waiting for the old dial timeout.
 - Remove legacy paginated history and message-only reconciliation fallbacks. Keep large histories bounded by splitting Negentropy inventories, without changing the private history choice.
-- Keep unchanged protocol checkpoints in place to reduce message-receive writes; publish the storage fix in iris-chat-protocol 0.1.13.
+- Keep unchanged protocol checkpoints in place to reduce message-receive writes. Update iris-chat-protocol to 0.2.0 with durable exact group-ciphertext tracking and remove unsafe timestamp-only acknowledgements, preserving distinct same-second messages and repair backoff.
+- Respect message-server retry backoff when a batch reports failures before its completion event, avoiding repeated failed drains of a large queue.
 - Focus the composer when replying, follow the iOS keyboard animation, and emit pending messages before protocol checkpoint work.
 - Paste photos and multiple files into drafts without sending automatically, and improve long-draft editing across native platforms.
 - Keep private contacts and device labels in ratcheted messages and direct pairing snapshots. Authenticate background call notifications and retain them for retry.
@@ -23,7 +24,8 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 ### Apple
 
-- Choose photos and videos or any file from the Mac attachment menu.
+- Choose photos and videos or any file from the Mac attachment menu, with icons for each choice.
+- Reduce background work while catching up on group messages.
 - Give unnamed people a friendly animal name in italics instead of showing their user ID.
 - Choose whether to copy message history when linking a device, and see transfer progress.
 - Resume interrupted history transfers and keep deleted messages removed.
@@ -36,6 +38,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 ### Zapstore
 
+- Reduce background work while catching up on group messages.
 - Give unnamed people a friendly animal name in italics instead of showing their user ID.
 - Choose whether to copy message history when linking a device, and see transfer progress.
 - Resume interrupted history transfers and keep deleted messages removed.
