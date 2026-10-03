@@ -746,23 +746,31 @@ fn sibling_group_removal_requires_new_revision_to_restore_membership() {
 
 #[test]
 fn sibling_group_protocol_cannot_contradict_signed_roster_after_restart() {
-    let owner = Keys::generate();
+    let mut keys = [1, 2].map(|seed| Keys::new(nostr::SecretKey::from_slice(&[seed; 32]).unwrap()));
+    keys.sort_by_key(Keys::public_key);
+    for (admin, owner) in [(&keys[0], &keys[1]), (&keys[1], &keys[0])] {
+        assert_sibling_group_protocol_matches_signed_roster_after_restart(admin, owner);
+    }
+}
+
+fn assert_sibling_group_protocol_matches_signed_roster_after_restart(admin: &Keys, owner: &Keys) {
     let device = Keys::generate();
-    let admin = Keys::generate();
     let store = Arc::new(InMemoryStorage::new());
     let mut engine =
         ProtocolEngine::load_or_create_for_local_device(store.clone(), owner.public_key(), &device)
             .unwrap();
-    let original = group_snapshot_for_test(
+    let mut original = group_snapshot_for_test(
         "signed-group-protocol",
         "Friends",
         1,
-        &admin,
+        admin,
         &[admin.public_key(), owner.public_key()],
     );
     engine
-        .ingest_group_roster_fact_event(&group_roster_fact_event_for_test(&admin, &original))
+        .ingest_group_roster_fact_event(&group_roster_fact_event_for_test(admin, &original))
         .unwrap();
+    // Signed roster ingestion canonicalizes members regardless of their input order.
+    original.members.sort();
     engine =
         ProtocolEngine::load_or_create_for_local_device(store.clone(), owner.public_key(), &device)
             .unwrap();
