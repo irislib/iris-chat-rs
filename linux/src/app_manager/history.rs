@@ -12,6 +12,9 @@ pub(super) struct Paging {
     exhausted_before: Option<String>,
     recent_ids: Option<HashSet<String>>,
     read_ids: HashSet<String>,
+    raw_ids: Option<HashSet<String>>,
+    excluded_ids: HashSet<String>,
+    removed_ids: HashSet<String>,
 }
 impl Paging {
     pub(super) fn clear(&mut self) {
@@ -20,6 +23,9 @@ impl Paging {
         self.loading_before = None;
         self.exhausted_before = None;
         self.recent_ids = None;
+        self.raw_ids = None;
+        self.excluded_ids.clear();
+        self.removed_ids.clear();
         self.read_ids.clear();
     }
     fn scope(state: &AppState) -> Option<(String, String)> {
@@ -54,12 +60,26 @@ impl Paging {
         let recent_ids = (scope.is_some() && scope == self.scope)
             .then(|| self.recent_ids.clone())
             .flatten();
-        self.update_scope(incoming);
-        self.recent_ids = incoming
+        if scope != self.scope {
+            self.clear();
+            self.scope = scope;
+        }
+        let raw_ids: Option<HashSet<String>> = incoming
             .current_chat
             .as_ref()
             .map(|chat| chat.messages.iter().map(|m| m.id.clone()).collect());
-        preserve_page(previous, incoming, recent_ids.as_ref());
+        if let (Some(old), Some(raw)) = (&self.raw_ids, &raw_ids) {
+            self.removed_ids.extend(old.difference(raw).cloned());
+            self.removed_ids.retain(|id| !raw.contains(id));
+        }
+        self.recent_ids = project_page(
+            previous,
+            incoming,
+            recent_ids.as_ref(),
+            self.raw_ids.as_ref(),
+            &mut self.excluded_ids,
+        );
+        self.raw_ids = raw_ids;
     }
     fn complete(
         &mut self,
@@ -98,7 +118,10 @@ impl Paging {
         let valid_page: Vec<_> = page
             .messages
             .into_iter()
-            .filter(|m| !self.read_ids.contains(&m.id) || current_ids.contains(&m.id))
+            .filter(|m| {
+                !self.removed_ids.contains(&m.id)
+                    && (!self.read_ids.contains(&m.id) || current_ids.contains(&m.id))
+            })
             .collect();
         self.read_ids.clear();
         let messages = merge_messages(&valid_page, &chat.messages);
@@ -197,39 +220,62 @@ pub(super) fn merge_messages(
     result
 }
 
+#[cfg(feature = "ui-tests")]
 pub(super) fn preserve_page(
     previous: &AppState,
     next: &mut AppState,
     old_recent_ids: Option<&HashSet<String>>,
 ) {
+    project_page(previous, next, old_recent_ids, None, &mut HashSet::new());
+}
+
+fn project_page(
+    previous: &AppState,
+    next: &mut AppState,
+    old_recent_ids: Option<&HashSet<String>>,
+    old_raw_ids: Option<&HashSet<String>>,
+    excluded_ids: &mut HashSet<String>,
+) -> Option<HashSet<String>> {
+    let chat = next.current_chat.as_mut()?;
+    let raw = &chat.messages;
+    let first_shared = old_recent_ids.and_then(|ids| raw.iter().position(|m| ids.contains(&m.id)));
+    let start =
+        first_shared.or_else(|| old_raw_ids.is_none().then(|| raw.len().saturating_sub(80)));
+    if let Some(start) = start {
+        excluded_ids.extend(raw[..start].iter().map(|m| m.id.clone()));
+    }
+    let recent: Vec<_> = raw
+        .iter()
+        .filter(|m| !excluded_ids.contains(&m.id))
+        .cloned()
+        .collect();
+    let recent_ids = recent.iter().map(|m| m.id.clone()).collect();
+    let mut older = Vec::new();
     if previous
         .account
         .as_ref()
         .map(|account| &account.public_key_hex)
-        != next.account.as_ref().map(|account| &account.public_key_hex)
+        == next.account.as_ref().map(|account| &account.public_key_hex)
     {
-        return;
+        if let (Some(old), Some(ids)) = (previous.current_chat.as_ref(), old_recent_ids) {
+            if old.chat_id == chat.chat_id {
+                let fresh: std::collections::HashMap<_, _> =
+                    raw.iter().map(|m| (&m.id, m)).collect();
+                older = old
+                    .messages
+                    .iter()
+                    .filter(|m| !ids.contains(&m.id))
+                    .filter(|m| {
+                        fresh.contains_key(&m.id)
+                            || old_raw_ids.is_none_or(|ids| !ids.contains(&m.id))
+                    })
+                    .map(|m| fresh.get(&m.id).copied().unwrap_or(m).clone())
+                    .collect();
+            }
+        }
     }
-    let Some((old, current)) = previous
-        .current_chat
-        .as_ref()
-        .zip(next.current_chat.as_mut())
-    else {
-        return;
-    };
-    if old.chat_id != current.chat_id {
-        return;
-    }
-    let Some(recent_ids) = old_recent_ids else {
-        return;
-    };
-    let history: Vec<_> = old
-        .messages
-        .iter()
-        .filter(|m| !recent_ids.contains(&m.id))
-        .cloned()
-        .collect();
-    current.messages = merge_messages(&history, &current.messages);
+    chat.messages = merge_messages(&older, &recent);
+    Some(recent_ids)
 }
 
 #[cfg(feature = "ui-tests")]

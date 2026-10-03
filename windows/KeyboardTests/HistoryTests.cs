@@ -22,6 +22,7 @@ internal static class HistoryTests
             new MessageDeliveryTraceSnapshot(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), null), null)).ToArray();
         var chat = manager.CurrentChat! with { messages = all.Skip(160).ToArray() };
         MergeChecks(manager, all);
+        WarmWindowChecks(manager.State, all);
         int loads = 0;
         var list = new ItemsControl(); var scroll = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         var timeline = new MessageTimeline(scroll, list, () => loads++);
@@ -83,8 +84,44 @@ internal static class HistoryTests
                 new object[] { generation, freshChat.chatId, "82", latePage })!, "Late page adds unseen history");
             Check(manager.CurrentChat!.messages.Select(m => m.id).SequenceEqual(new[] { "79", "81" }), "Late page cannot revive a deleted overlap");
             Check(manager.CurrentChat.messages[1].body == "Newest edit" && manager.CurrentChat.displayName == "Newest metadata", "Late page retains live edit and metadata");
+            stateField.SetValue(manager, state with { currentChat = freshChat });
+            var removed = (System.Collections.Generic.HashSet<string>)typeof(AppManager).GetField("_historyRemovedIds", flags)!.GetValue(manager)!;
+            removed.Add("79");
+            readIds.SetValue(manager, all.Skip(80).Take(2).Select(m => m.id).ToHashSet());
+            Check(!(bool)typeof(AppManager).GetMethod("CompleteHistoryPage", flags)!.Invoke(manager,
+                new object[] { generation, freshChat.chatId, "82", latePage })!, "Late page cannot revive a raw-known deleted older row");
+            removed.Clear();
         } finally { stateField.SetValue(manager, state); }
 
+    }
+
+    private static void WarmWindowChecks(AppState state, ChatMessageSnapshot[] all)
+    {
+        var raw = state with { currentChat = state.currentChat! with { messages = all } };
+        var excluded = new System.Collections.Generic.HashSet<string>();
+        var shown = ChatHistory.PreservePage(state, raw, null, null, excluded, out var recent);
+        Check(shown.currentChat!.messages.Select(m => m.id).SequenceEqual(all.Skip(160).Select(m => m.id)), "Warm240 enters with newest80");
+        var rawIds = all.Select(m => m.id).ToHashSet();
+        var unchanged = ChatHistory.PreservePage(shown, raw, recent, rawIds, excluded, out recent);
+        Check(unchanged.currentChat!.messages.Length == 80, "Repeated warm snapshot stays80");
+        shown = shown with { currentChat = shown.currentChat with { messages = all.Skip(80).ToArray() } };
+        var changed = all.Where(m => m.id != "81").Select(m => m.id == "80"
+            ? m with { body = "Fresh older edit", reactions = new[] { new MessageReactionSnapshot("👍", 1, false) } } : m)
+            .Append(all[^1] with { id = "240", body = "Live arrival" }).ToArray();
+        var nextRaw = raw with { currentChat = raw.currentChat! with { messages = changed, displayName = "Fresh metadata" } };
+        shown = ChatHistory.PreservePage(shown, nextRaw, recent, rawIds, excluded, out recent);
+        Check(shown.currentChat!.messages.Length == 160 && shown.currentChat.messages[0].id == "80"
+            && shown.currentChat.messages[0].body == "Fresh older edit" && shown.currentChat.messages[0].reactions.Length == 1
+            && shown.currentChat.messages.All(m => m.id != "81") && shown.currentChat.messages[^1].id == "240",
+            "Loaded older rows receive edits/reactions/deletes; unseen prefix stays hidden and new arrival grows window");
+        rawIds = changed.Select(m => m.id).ToHashSet();
+        nextRaw = nextRaw with { currentChat = nextRaw.currentChat! with { messages = changed.Where(m => int.Parse(m.id) < 160).ToArray() } };
+        shown = ChatHistory.PreservePage(shown, nextRaw, recent, rawIds, excluded, out recent);
+        Check(shown.currentChat!.messages.Length == 79 && recent!.Count == 0, "Deleting all recent rows preserves only explicitly loaded older rows");
+        var empty = nextRaw with { currentChat = nextRaw.currentChat! with { messages = Array.Empty<ChatMessageSnapshot>() } };
+        shown = ChatHistory.PreservePage(shown, empty, recent, nextRaw.currentChat!.messages.Select(m => m.id).ToHashSet(), excluded, out _);
+        Check(shown.currentChat!.messages.Length == 0, "Authoritative deletion reaches known older pages");
+        Console.WriteLine("PASS: bounded warm240 window, raw older edits/reactions/deletes, live growth and same-timestamp ordering");
     }
 
     private static void ReadStoredHistory(AppManager manager)
@@ -95,14 +132,12 @@ internal static class HistoryTests
         Until(() => manager.CurrentChat!.messages.Count(m => m.body.StartsWith("History fixture ")) == 240, 60);
         manager.NavigateBack(); manager.OpenChat(own);
         var ffi = (FfiApp)typeof(AppManager).GetField("_ffi", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager)!;
-        // Windows projects the navigation immediately from the loaded 240-row
-        // snapshot. Wait for Rust to process the reopen and for that revision
-        // to reach the shell before asserting exact page sizes without arrivals.
-        Until(() => {
-            var core = ffi.State();
-            return core.currentChat?.chatId == own && core.currentChat.messages.Length == 80
-                && manager.State.rev >= core.rev && manager.CurrentChat?.messages.Length == 80;
-        });
+        // This existing FIFO query is a test-only barrier after OpenChat.
+        // Resident core history remains 240; the shell must keep its entry at80.
+        _ = ffi.ExportSupportBundleJson();
+        var reopened = ffi.State();
+        Check(reopened.currentChat?.messages.Length == 240, "Fixture retains a real warm240 core window");
+        Until(() => manager.State.rev >= reopened.rev && manager.CurrentChat?.messages.Length == 80);
         var before = manager.CurrentChat!.messages[0].id;
         var page = manager.LoadOlderMessagesAsync(own); Until(() => page.IsCompleted);
         CheckPage(page.GetAwaiter().GetResult(), 160, before, "First real older-page query");

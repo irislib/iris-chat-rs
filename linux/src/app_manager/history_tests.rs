@@ -52,12 +52,17 @@ pub fn verify_ui(manager: Rc<AppManager>) {
     manager.dispatch(AppAction::OpenChat {
         chat_id: own.clone(),
     });
+    // FIFO test barrier: process the reopen before checking its bounded shell window.
+    let _ = manager.ffi.export_support_bundle_json();
+    let reopened = manager.ffi.state();
+    assert_eq!(reopened.current_chat.as_ref().unwrap().messages.len(), 240);
     wait(&|| {
         manager
             .current_state()
             .current_chat
             .as_ref()
             .is_some_and(|chat| chat.messages.len() == 80)
+            && manager.current_state().rev >= reopened.rev
     });
     assert!(manager.load_older_messages(&own));
     assert!(
@@ -93,6 +98,7 @@ pub fn verify_ui(manager: Rc<AppManager>) {
     );
 
     let previous = manager.current_state();
+    warm_window_checks(&previous, &all);
     for fresh_messages in [all[161..].to_vec(), all[160..239].to_vec(), vec![]] {
         let mut fresh = previous.clone();
         let chat = fresh.current_chat.as_mut().unwrap();
@@ -156,6 +162,17 @@ pub fn verify_ui(manager: Rc<AppManager>) {
     );
     assert_eq!(chat.messages[1].body, "Newest edit");
     assert_eq!(chat.display_name, "Newest metadata");
+    let mut fresh = previous.clone();
+    fresh.current_chat.as_mut().unwrap().messages = vec![all[81].clone()];
+    let mut late_page = previous.current_chat.clone().unwrap();
+    late_page.messages = all[79..82].to_vec();
+    let mut request = Paging {
+        read_ids: all[80..82].iter().map(|m| m.id.clone()).collect(),
+        removed_ids: [all[79].id.clone()].into_iter().collect(),
+        ..Default::default()
+    };
+    assert!(!request.complete(0, &own, all[82].id.clone(), Some(late_page), &mut fresh));
+    assert_eq!(fresh.current_chat.unwrap().messages, all[81..82]);
 
     let generation = manager.history_paging.borrow().generation;
     let before = all[160].id.clone();
@@ -188,4 +205,83 @@ pub fn verify_ui(manager: Rc<AppManager>) {
     assert_ne!(manager.history_paging.borrow().generation, generation);
     manager.ffi.shutdown();
     println!("PASS: GTK actual 240-message SQLite paging, authoritative deletes, overlap edits/expiry, stable ties and route/account cancellation");
+}
+
+fn warm_window_checks(state: &AppState, all: &[ChatMessageSnapshot]) {
+    let mut raw = state.clone();
+    raw.current_chat.as_mut().unwrap().messages = all.to_vec();
+    let mut excluded = HashSet::new();
+    let mut shown = raw.clone();
+    let mut recent = project_page(state, &mut shown, None, None, &mut excluded).unwrap();
+    assert_eq!(shown.current_chat.as_ref().unwrap().messages, all[160..]);
+    let mut raw_ids: HashSet<_> = all.iter().map(|m| m.id.clone()).collect();
+    let mut next = raw.clone();
+    recent = project_page(
+        &shown,
+        &mut next,
+        Some(&recent),
+        Some(&raw_ids),
+        &mut excluded,
+    )
+    .unwrap();
+    assert_eq!(next.current_chat.as_ref().unwrap().messages.len(), 80);
+    shown.current_chat.as_mut().unwrap().messages = all[80..].to_vec();
+    let mut changed = all.to_vec();
+    changed[80].body = "Fresh older edit".into();
+    changed[80].reactions = vec![iris_chat_core::MessageReactionSnapshot {
+        emoji: "👍".into(),
+        count: 1,
+        reacted_by_me: false,
+    }];
+    changed.remove(81);
+    let mut arrival = all[239].clone();
+    arrival.id = "live-arrival".into();
+    changed.push(arrival);
+    next.current_chat.as_mut().unwrap().messages = changed.clone();
+    recent = project_page(
+        &shown,
+        &mut next,
+        Some(&recent),
+        Some(&raw_ids),
+        &mut excluded,
+    )
+    .unwrap();
+    let messages = &next.current_chat.as_ref().unwrap().messages;
+    assert_eq!(messages.len(), 160);
+    assert_eq!(messages[0].id, all[80].id);
+    assert_eq!(messages[0].body, "Fresh older edit");
+    assert_eq!(messages[0].reactions.len(), 1);
+    assert!(!messages.iter().any(|m| m.id == all[81].id));
+    assert_eq!(messages.last().unwrap().id, "live-arrival");
+    shown = next;
+    raw_ids = changed.iter().map(|m| m.id.clone()).collect();
+    let older_ids: HashSet<_> = all[..160].iter().map(|m| &m.id).collect();
+    let older_raw: Vec<_> = changed
+        .into_iter()
+        .filter(|m| older_ids.contains(&m.id))
+        .collect();
+    next = raw.clone();
+    next.current_chat.as_mut().unwrap().messages = older_raw.clone();
+    recent = project_page(
+        &shown,
+        &mut next,
+        Some(&recent),
+        Some(&raw_ids),
+        &mut excluded,
+    )
+    .unwrap();
+    assert_eq!(next.current_chat.as_ref().unwrap().messages.len(), 79);
+    assert!(recent.is_empty());
+    shown = next;
+    next = raw;
+    next.current_chat.as_mut().unwrap().messages.clear();
+    raw_ids = older_raw.iter().map(|m| m.id.clone()).collect();
+    project_page(
+        &shown,
+        &mut next,
+        Some(&recent),
+        Some(&raw_ids),
+        &mut excluded,
+    );
+    assert!(next.current_chat.as_ref().unwrap().messages.is_empty());
 }
