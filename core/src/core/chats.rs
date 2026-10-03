@@ -298,7 +298,7 @@ impl AppCore {
         };
 
         // Flip the screen first and emit, then queue the heavy work
-        // (subscriptions, identity republish, persist) as a follow-up
+        // (subscriptions, read receipts, persist) as a follow-up
         // InternalEvent on the same event loop. Any UI action enqueued
         // in the meantime (back tap, switch chat, …) interleaves
         // between the screen flip and the finalize, so navigation
@@ -336,9 +336,8 @@ impl AppCore {
     pub(super) fn open_chat_finalize(&mut self, chat_id: &str) {
         // If the user already navigated away from this chat before
         // the finalize runs, skip the heavy work — there's no
-        // point loading messages into a thread the user isn't
-        // looking at, and persisting + republishing identity for an
-        // open we abandoned is just wasted I/O.
+        // point updating subscriptions and read state for an open
+        // we abandoned.
         if !matches!(
             self.screen_stack.last(),
             Some(Screen::Chat { chat_id: current }) if current == chat_id
@@ -349,13 +348,13 @@ impl AppCore {
         self.prune_expired_messages(now);
         // `open_chat` already stubbed the thread and loaded its latest
         // page so the UI could paint without a "Loading chat…" flash;
-        // the finalize only needs to handle the rest (republish
-        // identity, subscriptions, persist, schedule peer catch-up).
+        // the finalize updates read state and subscriptions. Session startup
+        // and identity edits handle publication; navigation does not change
+        // our identity. Keep network catch-up coalesced below instead of
+        // starting an immediate global fetch ahead of queued user actions.
         self.sync_open_chat_read_state(chat_id);
-        self.republish_local_identity_artifacts();
         self.persist_best_effort();
         self.request_protocol_subscription_refresh();
-        self.fetch_recent_protocol_state();
         self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));
         self.rebuild_state();
         self.emit_state();
