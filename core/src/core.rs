@@ -123,7 +123,7 @@ mod persistence;
 mod private_contacts;
 mod private_device_labels;
 mod profile;
-pub(crate) use profile::fallback_profile_name_for_identity;
+pub(crate) use profile::{fallback_profile_name_for_identity, profile_name_for_identity};
 mod profile_helpers;
 mod profile_search;
 mod profile_search_capability;

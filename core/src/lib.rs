@@ -18,6 +18,8 @@ mod forwarding;
 pub mod image_proxy;
 pub mod local_relay;
 pub mod perflog;
+mod person_name;
+pub use person_name::{present_person_name, PersonNamePresentation};
 #[cfg(test)]
 mod private_contact_sync;
 mod private_contact_sync_v2;

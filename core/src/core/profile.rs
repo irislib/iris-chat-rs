@@ -445,7 +445,7 @@ pub(crate) fn fallback_profile_name_for_identity(identity: &str) -> String {
 
 // Older cached contact labels can contain an ID in place of a profile name.
 // Repair presentation without changing private nicknames or persisted profiles.
-fn profile_name_for_identity(name: &str, identity: &str) -> Option<String> {
+pub(crate) fn profile_name_for_identity(name: &str, identity: &str) -> Option<String> {
     let name = name.trim();
     if name.is_empty() {
         return None;
