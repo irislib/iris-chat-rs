@@ -161,12 +161,22 @@ impl AppCore {
         let tx = self.core_sender.clone();
         let (background_events, durable_events) = self.build_local_identity_artifacts();
 
+        let mut profile_projection_changed = false;
         for (_, event) in &background_events {
-            if event.kind == Kind::Metadata {
-                self.cache_device_sync_profile(event);
+            if event.kind == Kind::Metadata && self.cache_device_sync_profile(event) {
+                if let Some(profile) = self.owner_profiles.get_mut(&event.pubkey.to_hex()) {
+                    let id = Some(event.id.to_hex());
+                    if profile.source_event_id != id {
+                        profile.source_event_id = id;
+                        profile_projection_changed = true;
+                    }
+                }
             }
             self.remember_event(event.id.to_string());
             self.emit_nearby_published_event(event);
+        }
+        if profile_projection_changed {
+            self.persist_best_effort();
         }
         for (label, event) in durable_events {
             let app_keys_author = (label == "app-keys").then_some(event.pubkey);

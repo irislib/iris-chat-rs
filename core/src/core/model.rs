@@ -186,6 +186,9 @@ pub(super) struct CurrentDeviceLabels {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct OwnerProfileRecord {
+    // Last signed head durably projected into this local profile.
+    #[serde(default)]
+    pub(super) source_event_id: Option<String>,
     #[serde(default)]
     pub(super) contact_memory: crate::contact_memory::ContactMemory,
     #[serde(default)]
@@ -220,6 +223,7 @@ fn default_extra_metadata_json() -> String {
 impl Default for OwnerProfileRecord {
     fn default() -> Self {
         Self {
+            source_event_id: None,
             contact_memory: Default::default(),
             nickname: None,
             contact_note: None,

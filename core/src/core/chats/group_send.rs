@@ -117,7 +117,6 @@ impl AppCore {
         let Some(group_id) = parse_group_id_from_chat_id(chat_id) else {
             return;
         };
-        let millis = now_ms.unwrap_or_else(unix_now_ms);
         let tags = match tags
             .into_iter()
             .map(nostr::Tag::parse)
@@ -129,6 +128,12 @@ impl AppCore {
                 return;
             }
         };
+        let millis = self.next_device_sync_control_millis(
+            chat_id,
+            kind,
+            &tags,
+            now_ms.unwrap_or_else(unix_now_ms),
+        );
         let unsigned = match self.prepare_group_event(
             &group_id,
             kind,

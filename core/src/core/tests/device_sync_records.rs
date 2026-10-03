@@ -365,7 +365,7 @@ fn device_sync_profile_heads_reject_bad_signatures_and_preserve_latest_signed_ev
     let device = Keys::generate();
     let contact = Keys::generate();
     let chat = contact.public_key().to_hex();
-    let (mut core, _, _dir) = logged_in_test_core_with_updates("typed-profile", &owner, &device);
+    let (mut core, _, dir) = logged_in_test_core_with_updates("typed-profile", &owner, &device);
     core.ensure_thread_record(&chat, 1);
     let event = |name: &str, time| {
         EventBuilder::new(Kind::Metadata, serde_json::json!({"name":name}).to_string())
@@ -385,6 +385,31 @@ fn device_sync_profile_heads_reject_bad_signatures_and_preserve_latest_signed_ev
     assert!(core.apply_profile_metadata_event(&ties[1]));
     assert!(core.apply_profile_metadata_event(&ties[0]));
     assert!(!core.apply_profile_metadata_event(&ties[1]));
+
+    core.owner_profiles.get_mut(&chat).unwrap().extra_metadata_json =
+        r#"{"custom":{"keep":true}}"#.into();
+    core.persist_best_effort();
+    core.restore_device_sync_record_projection();
+    assert_eq!(core.owner_profiles[&chat].extra_metadata_json,
+        r#"{"custom":{"keep":true}}"#,
+        "already projected signed heads must not overwrite persisted local fields");
+
+    let mut interrupted = [event("Crash A", 202), event("Crash B", 202)];
+    interrupted.sort_by_key(|event| event.id);
+    assert!(core.apply_profile_metadata_event(&interrupted[1]));
+    core.persist_best_effort();
+    assert!(core.cache_device_sync_profile(&interrupted[0]));
+    assert_eq!(core.owner_profiles[&chat].source_event_id.as_deref(),
+        Some(interrupted[1].id.to_hex().as_str()));
+    drop(core);
+    let mut restored = logged_in_test_core_at_data_dir(&owner, &device,
+        dir.path().to_string_lossy().into_owned());
+    restored.owner_profiles = restored.load_persisted().unwrap().unwrap().owner_profiles;
+    restored.ensure_thread_record(&chat, 1);
+    restored.restore_device_sync_record_projection();
+    assert_eq!(restored.owner_profiles[&chat].source_event_id.as_deref(),
+        Some(interrupted[0].id.to_hex().as_str()),
+        "same-time winning head must finish projection after interrupted save");
 }
 
 #[test]

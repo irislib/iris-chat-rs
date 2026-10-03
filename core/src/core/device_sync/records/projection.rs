@@ -34,7 +34,16 @@ impl AppCore {
                         }
                     }
                     DeviceSyncRecord::Profile { event } => {
-                        self.apply_profile_metadata_event(&event);
+                        let projected = self
+                            .owner_profiles
+                            .get(&event.pubkey.to_hex())
+                            .is_some_and(|profile| {
+                                profile.source_event_id.as_deref()
+                                    == Some(event.id.to_hex().as_str())
+                            });
+                        if !projected {
+                            self.apply_profile_metadata_event(&event);
+                        }
                     }
                     _ => {}
                 }

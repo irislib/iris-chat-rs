@@ -56,7 +56,15 @@ impl AppCore {
         }
 
         if let Ok((_, peer)) = parse_peer_input(chat_id) {
-            let millis = unix_now_ms();
+            let Ok(target_tag) = nostr::Tag::parse(["e", message_id]) else {
+                return;
+            };
+            let millis = self.next_device_sync_control_millis(
+                chat_id,
+                REACTION_KIND,
+                &[target_tag],
+                unix_now_ms(),
+            );
             if let Ok(unsigned) = pairwise_codec::reaction_event(
                 owner_pubkey,
                 message_id.to_string(),

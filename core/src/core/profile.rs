@@ -335,6 +335,7 @@ impl AppCore {
         if !self.cache_device_sync_profile(event) {
             return false;
         }
+        record.source_event_id = Some(event.id.to_hex());
         self.remember_contact_name(&owner_hex);
         self.cache_local_fips_identity(event);
         self.owner_profiles.insert(owner_hex.clone(), record);

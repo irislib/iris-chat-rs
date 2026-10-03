@@ -44,6 +44,7 @@ pub(super) fn build_owner_profile_record(
     }
 
     Some(OwnerProfileRecord {
+        source_event_id: None,
         contact_memory: Default::default(),
         nickname: None,
         contact_note: None,
@@ -88,6 +89,7 @@ pub(super) fn parse_owner_profile_record(
         .unwrap_or_else(|_| default_extra_metadata_json_str());
 
     Some(OwnerProfileRecord {
+        source_event_id: None,
         contact_memory: Default::default(),
         nickname: None,
         contact_note: None,

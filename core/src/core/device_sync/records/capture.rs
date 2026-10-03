@@ -1,6 +1,42 @@
 use super::*;
 
 impl AppCore {
+    pub(in crate::core) fn next_device_sync_control_millis(
+        &self,
+        chat: &str,
+        kind: u32,
+        tags: &[nostr::Tag],
+        proposed: u64,
+    ) -> u64 {
+        let Some(account) = self.logged_in.as_ref() else {
+            return proposed;
+        };
+        let keys = match kind {
+            REACTION_KIND => message_ids_from_tags(tags.iter())
+                .into_iter()
+                .map(|target| {
+                    serde_json::json!(["reaction", chat, target, account.owner_pubkey.to_hex()])
+                        .to_string()
+                })
+                .collect::<Vec<_>>(),
+            CHAT_SETTINGS_KIND => parse_group_id_from_chat_id(chat)
+                .map(|id| vec![serde_json::json!(["groupSettings", id]).to_string()])
+                .unwrap_or_default(),
+            _ => return proposed,
+        };
+        keys.into_iter().fold(proposed, |millis, key| {
+            let previous = match self.load_sync_record(&RecordLocator::Head(key)) {
+                Some(DeviceSyncRecord::Reaction { reaction }) => {
+                    effective_ms(reaction.created_at, reaction.created_at_ms)
+                }
+                Some(DeviceSyncRecord::GroupSettings { settings }) => {
+                    effective_ms(settings.created_at, settings.created_at_ms)
+                }
+                _ => return millis,
+            };
+            millis.max(previous.saturating_add(1))
+        })
+    }
     pub(in crate::core) fn cache_device_sync_profile(&mut self, event: &Event) -> bool {
         if event.kind != Kind::Metadata
             || event.verify().is_err()
