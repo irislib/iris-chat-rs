@@ -154,6 +154,7 @@ final class ChatMessageGroupingTests: XCTestCase {
         message.isOutgoing = true
         message.createdAtSecs = seconds
         message.reactions = []
+        message.expiresAtSecs = nil
         return message
     }
 }
