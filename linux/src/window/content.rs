@@ -77,7 +77,15 @@ impl Content {
                 drop(section);
                 manager.dispatch(AppAction::OpenChat { chat_id });
             } else {
-                if crate::widgets::keyboard_list::focus_list(content.root.upcast_ref()) {
+                let preferred_chat = section
+                    .remembered_chat
+                    .as_ref()
+                    .filter(|(owner, _)| *owner == account.public_key_hex)
+                    .map(|(_, id)| id.as_str());
+                if crate::widgets::keyboard_list::focus_list(
+                    content.root.upcast_ref(),
+                    preferred_chat,
+                ) {
                     return glib::Propagation::Stop;
                 }
                 section.pending_composer = Some(false);
@@ -93,7 +101,10 @@ impl Content {
         let mut section = self.section.borrow_mut();
         let focused = match section.pending_composer {
             Some(true) => crate::widgets::keyboard_list::focus_composer(self.root.upcast_ref()),
-            Some(false) => crate::widgets::keyboard_list::focus_list(self.root.upcast_ref()),
+            Some(false) => crate::widgets::keyboard_list::focus_list(
+                self.root.upcast_ref(),
+                section.remembered_chat.as_ref().map(|(_, id)| id.as_str()),
+            ),
             None => false,
         };
         if focused {

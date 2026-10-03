@@ -270,7 +270,17 @@ fn main() {
         "Background list updates do not steal composer focus"
     );
     input.buffer().set_text("draft");
-    assert!(keyboard_list::focus_list(root.upcast_ref()));
+    assert!(keyboard_list::focus_list(root.upcast_ref(), Some("second")));
+    assert!(second.has_focus(), "Section shortcut focuses the current chat");
+    assert_eq!(activated.get(), 2, "Section focus does not activate a chat");
+    assert!(keyboard_list::focus_list(root.upcast_ref(), Some("removed")));
+    assert_eq!(
+        gtk::prelude::RootExt::focus(&window).unwrap().widget_name(),
+        "iris-keyboard-chat-new",
+        "A removed current chat falls back to the first available row"
+    );
+    second.grab_focus();
+    assert!(keyboard_list::focus_list(root.upcast_ref(), None));
     assert_eq!(
         gtk::prelude::RootExt::focus(&window).unwrap().widget_name(),
         "iris-keyboard-chat-new"

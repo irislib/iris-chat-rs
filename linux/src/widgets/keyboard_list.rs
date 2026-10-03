@@ -56,9 +56,18 @@ fn scroll(widget: &gtk::Widget) -> Option<gtk::ScrolledWindow> {
     None
 }
 
-pub fn focus_list(root: &gtk::Widget) -> bool {
+pub fn focus_list(root: &gtk::Widget, preferred_chat: Option<&str>) -> bool {
     find(root, "iris-keyboard-chat-list")
-        .and_then(|list| rows(&list).into_iter().find(|row| row.is_focusable()))
+        .and_then(|list| {
+            let rows = rows(&list);
+            preferred_chat
+                .and_then(|id| {
+                    let name = format!("iris-keyboard-chat-{id}");
+                    rows.iter().find(|row| row.widget_name() == name)
+                })
+                .or_else(|| rows.first())
+                .cloned()
+        })
         .is_some_and(|row| row.grab_focus())
 }
 
