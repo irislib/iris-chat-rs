@@ -125,7 +125,13 @@ final class ChatTimelineUITests: IrisChatUITestCase {
         XCTAssertTrue(waitForChatList(app, timeout: 45), "seed helper never returned to the chat list")
 
         openSeededChat(app, rowTimeout: 30)
-        Thread.sleep(forTimeInterval: 1.5)
+        let timeline = element(app, "chatTimeline")
+        let latest = timeline.staticTexts.matching(NSPredicate(
+            format: "label BEGINSWITH 'LAST_SCROLL_SENTINEL' OR value BEGINSWITH 'LAST_SCROLL_SENTINEL'"
+        )).firstMatch
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            latest.exists && !latest.frame.isEmpty && timeline.frame.intersects(latest.frame)
+        }, "The actual final message must land inside the viewport after opening")
 
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.lifetime = .keepAlways

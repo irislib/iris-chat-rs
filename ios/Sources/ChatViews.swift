@@ -31,7 +31,8 @@ struct ChatScreen: View {
     @State private var timelineBottomMaxY: CGFloat = .greatestFiniteMagnitude
     @State private var timelineContentHeight: CGFloat = 0
     @State private var timelineDaySeparatorFrames: [String: ChatTimelineDaySeparatorFrame] = [:]
-    @State private var initialScrollPending = true
+    @State private var initialPlacement = ChatTimelineInitialPlacement()
+    @State private var timelineChatGeneration = 0
     @State private var timelineReadyForDisplay = false
     @State private var renderedMessageCount = 0
     @State private var pendingPrependAnchorMessageId: String?
@@ -54,6 +55,11 @@ struct ChatScreen: View {
         manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
     }
 
+    private var timelineIsVisible: Bool {
+        timelineReadyForDisplay && (chat?.messages.isEmpty != false
+            || (!initialPlacement.isPending && !initialPlacement.isAwaitingVisibility))
+    }
+
     private var persistedDraftToken: String {
         "\(chatId)|\(persistedDraftForCurrentChat())"
     }
@@ -69,21 +75,9 @@ struct ChatScreen: View {
                                 GeometryReader { viewport in
                                     ScrollView {
                                         let visibleMessages = chat.messages
-                                        // Eager VStack instead of LazyVStack:
-                                        // SwiftUI's `LazyVStack` only realises
-                                        // & measures rows once they're scrolled
-                                        // into view, so on a freshly opened
-                                        // long chat `proxy.scrollTo(.bottom)`
-                                        // landed mid-timeline (the trailing
-                                        // anchor's resolved position was wrong
-                                        // because the rows above hadn't been
-                                        // measured yet). The chat already pages
-                                        // to ≤ `OPEN_CHAT_MESSAGES_PER_PAGE`
-                                        // (80) messages per open in the Rust
-                                        // core, so eager layout is fine —
-                                        // matches Signal-iOS, which also
-                                        // pre-measures every visible cell
-                                        // before the scroll lands.
+                                        // Measure the loaded page eagerly so the initial bottom
+                                        // placement has real row heights. Lazy rows can resolve
+                                        // a premature anchor mid-chat. Older pages load on demand.
                                         VStack(spacing: 0) {
                                             Color.clear
                                                 .frame(height: 1)
@@ -127,7 +121,7 @@ struct ChatScreen: View {
                                             // Publishes the timeline's
                                             // intrinsic content height —
                                             // this background sits on the
-                                            // padded LazyVStack, so its
+                                            // padded timeline stack, so its
                                             // size reflects "how tall do
                                             // all the bubbles want to be"
                                             // and changes only when bubbles
@@ -201,11 +195,16 @@ struct ChatScreen: View {
                                             dismissComposerFocus()
                                         }
                                     )
-                                    .opacity(timelineReadyForDisplay ? 1 : 0)
-                                    .allowsHitTesting(timelineReadyForDisplay)
+                                    .opacity(timelineIsVisible ? 1 : 0)
+                                    .allowsHitTesting(timelineIsVisible)
                                 }
                                 .irisOnChange(of: chatId) { _ in
-                                    initialScrollPending = true
+                                    timelineChatGeneration += 1
+                                    timelineScrollSettleGeneration += 1
+                                    pendingScrollSettle?.cancel()
+                                    pendingScrollSettle = nil
+                                    timelineCoordinator.messageBubbleFrames = [:]
+                                    initialPlacement.reset()
                                     timelineReadyForDisplay = false
                                     isNearBottom = true
                                     shouldFollowLatest = true
@@ -217,6 +216,7 @@ struct ChatScreen: View {
                                     activeMessageActionDockId = nil
                                     timelineCoordinator.bubblePanRejected = false
                                     timelineTopMinY = -.greatestFiniteMagnitude
+                                    timelineBottomMaxY = .greatestFiniteMagnitude
                                     timelineContentHeight = 0
                                     timelineDaySeparatorFrames = [:]
                                     composerState.lastTypingSentAt = nil
@@ -227,6 +227,7 @@ struct ChatScreen: View {
                                         timelineViewportMinY = value
                                     }
                                     maybeLoadOlderMessages(chat: chat)
+                                    advanceInitialPlacement(proxy: proxy, chat: chat)
                                     recordInteractionLayout()
                                 }
                                 .onPreferenceChange(ChatTimelineTopMinYPreferenceKey.self) { value in
@@ -248,6 +249,7 @@ struct ChatScreen: View {
                                         nearBottom: nearBottom,
                                         messageCount: chat.messages.count
                                     )
+                                    advanceInitialPlacement(proxy: proxy, chat: chat)
                                     recordInteractionLayout()
                                 }
                                 .onPreferenceChange(ChatTimelineBottomMaxYPreferenceKey.self) { value in
@@ -262,6 +264,7 @@ struct ChatScreen: View {
                                         nearBottom: nearBottom,
                                         messageCount: chat.messages.count
                                     )
+                                    advanceInitialPlacement(proxy: proxy, chat: chat)
                                 }
                                 .onPreferenceChange(ChatTimelineContentHeightPreferenceKey.self) { value in
                                     // Repin to the bottom when the timeline's
@@ -280,12 +283,14 @@ struct ChatScreen: View {
                                     let grew = previous > 0 && value > previous + 1
                                     let canAutoFollow = (shouldFollowLatest || isNearBottom)
                                         && !timelineAutoFollowIsSuppressed()
-                                    if !initialScrollPending, canAutoFollow, grew {
+                                    if !initialPlacement.isPending, canAutoFollow, grew {
                                         scrollToBottom(proxy: proxy, animated: false)
                                     }
+                                    advanceInitialPlacement(proxy: proxy, chat: chat)
                                 }
                                 .onPreferenceChange(ChatMessageBubbleFramePreferenceKey.self) { value in
                                     timelineCoordinator.messageBubbleFrames = value
+                                    advanceInitialPlacement(proxy: proxy, chat: chat)
                                     recordInteractionLayout()
                                 }
                                 .onPreferenceChange(ChatAudioControlFramePreferenceKey.self) { value in
@@ -296,7 +301,7 @@ struct ChatScreen: View {
                                 }
                                 .task(id: chatTimelineScrollTaskToken(for: chat)) {
                                     guard !chat.messages.isEmpty else {
-                                        initialScrollPending = true
+                                        initialPlacement.reset()
                                         revealTimelineAfterLayout()
                                         shouldFollowLatest = true
                                         forceScrollToLatest = false
@@ -307,7 +312,7 @@ struct ChatScreen: View {
                                     if let anchorId = pendingPrependAnchorMessageId,
                                        chat.messages.contains(where: { $0.id == anchorId }) {
                                         renderedMessageCount = messageCount
-                                        initialScrollPending = false
+                                        initialPlacement.cancel()
                                         scrollToMessage(proxy: proxy, messageId: anchorId, anchor: .top, animated: false)
                                         revealTimelineAfterLayout()
                                         pendingPrependAnchorMessageId = nil
@@ -325,7 +330,7 @@ struct ChatScreen: View {
                                     if let targetId = manager.pendingScrollMessageId {
                                         if chat.messages.contains(where: { $0.id == targetId }) {
                                             renderedMessageCount = messageCount
-                                            initialScrollPending = false
+                                            initialPlacement.cancel()
                                             shouldFollowLatest = false
                                             forceScrollToLatest = false
                                             scrollToMessage(proxy: proxy, messageId: targetId)
@@ -335,7 +340,7 @@ struct ChatScreen: View {
                                         }
                                         manager.loadChatAroundMessage(chatId: chat.chatId, messageId: targetId)
                                     }
-                                    let shouldScroll = initialScrollPending
+                                    let shouldScroll = initialPlacement.isPending
                                         || forceScrollToLatest
                                         || (
                                             messageCountIncreased
@@ -343,15 +348,12 @@ struct ChatScreen: View {
                                                 && !timelineAutoFollowIsSuppressed()
                                         )
                                     renderedMessageCount = messageCount
-                                    if shouldScroll {
-                                        let wasInitialScroll = initialScrollPending
-                                        scrollToBottom(proxy: proxy, animated: !wasInitialScroll)
-                                        initialScrollPending = false
+                                    if initialPlacement.isPending || initialPlacement.isAwaitingVisibility {
+                                        advanceInitialPlacement(proxy: proxy, chat: chat)
+                                    } else if shouldScroll {
+                                        scrollToBottom(proxy: proxy, animated: true)
                                         shouldFollowLatest = true
-                                        if wasInitialScroll {
-                                            revealTimelineAfterLayout()
-                                        }
-                                    } else {
+                                    } else if !initialPlacement.isAwaitingVisibility {
                                         revealTimelineAfterLayout()
                                     }
                                     if forceScrollToLatest {
@@ -375,7 +377,7 @@ struct ChatScreen: View {
                                     }
                                 }
 
-                                if timelineReadyForDisplay && !isNearBottom && !chat.messages.isEmpty {
+                                if timelineIsVisible && !isNearBottom && !chat.messages.isEmpty {
                                     ChatJumpToBottomButton {
                                         jumpToLatest(proxy: proxy)
                                     }
@@ -384,7 +386,7 @@ struct ChatScreen: View {
                                     .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
                                 }
 
-                                if timelineReadyForDisplay && !chat.typingIndicators.isEmpty {
+                                if timelineIsVisible && !chat.typingIndicators.isEmpty {
                                     IrisTypingIndicatorRow(indicators: chat.typingIndicators)
                                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                                         .padding(.leading, IrisLayout.usesDesktopChrome ? 22 : 16)
@@ -591,6 +593,8 @@ struct ChatScreen: View {
             manager: manager
         ))
         .onDisappear {
+            timelineChatGeneration += 1
+            timelineScrollSettleGeneration += 1
             composerState.invalidatePendingAttachments()
             pendingScrollSettle?.cancel()
             pendingScrollSettle = nil
@@ -790,7 +794,7 @@ struct ChatScreen: View {
     }
 
     private func maybeLoadOlderMessages(chat: CurrentChatSnapshot) {
-        guard !initialScrollPending,
+        guard timelineIsVisible, !initialPlacement.isPending,
               let firstMessageId = chat.messages.first?.id,
               timelineTopMinY.isFinite,
               timelineViewportMinY.isFinite,
@@ -940,13 +944,38 @@ struct ChatScreen: View {
         guard let timing = manager.interactionTiming, let chat else { return }
         timing.layout(chatID: chat.chatId, frames: timelineCoordinator.messageBubbleFrames,
                       viewportMinY: timelineViewportMinY, viewportMaxY: timelineViewportMaxY,
-                      ready: timelineReadyForDisplay, messageCount: chat.messages.count)
+                      ready: timelineIsVisible, messageCount: chat.messages.count)
+    }
+
+    private func advanceInitialPlacement(proxy: ScrollViewProxy, chat: CurrentChatSnapshot) {
+        guard manager.pendingScrollMessageId == nil, pendingPrependAnchorMessageId == nil,
+              manager.state.currentChat?.chatId == chat.chatId,
+              let last = chat.messages.last,
+              manager.state.currentChat?.messages.last?.id == last.id else { return }
+        let targetID = last.id
+        let endY = (last.call != nil || last.kind == .system) && timelineContentHeight > 0
+            && timelineBottomMaxY < .greatestFiniteMagnitude
+            ? timelineBottomMaxY - SignalConversationLayout.contentBottomMargin - 1 : nil
+        let step = initialPlacement.update(
+            targetID: targetID, frame: timelineCoordinator.messageBubbleFrames[targetID],
+            measuredEndY: endY,
+            viewportMinY: timelineViewportMinY, viewportMaxY: timelineViewportMaxY
+        )
+        if step == .scroll || step == .scrollAndReveal {
+            renderedMessageCount = chat.messages.count
+            shouldFollowLatest = true
+            scrollToBottom(proxy: proxy, animated: false)
+        }
+        if step == .reveal || step == .scrollAndReveal {
+            revealTimelineAfterLayout()
+        }
     }
 
     private func revealTimelineAfterLayout() {
         guard !timelineReadyForDisplay else { return }
+        let generation = timelineChatGeneration
         DispatchQueue.main.async {
-            guard !timelineReadyForDisplay else { return }
+            guard timelineChatGeneration == generation, !timelineReadyForDisplay else { return }
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) {
@@ -966,6 +995,9 @@ struct ChatScreen: View {
         anchor: UnitPoint = .center,
         animated: Bool = true
     ) {
+        pendingScrollSettle?.cancel()
+        pendingScrollSettle = nil
+        timelineScrollSettleGeneration += 1
         let scroll = {
             let action = {
                 proxy.scrollTo(messageId, anchor: anchor)
