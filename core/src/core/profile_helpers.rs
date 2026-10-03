@@ -1,13 +1,6 @@
 use super::*;
 
 impl OwnerProfileRecord {
-    pub(super) fn preferred_label(&self) -> Option<String> {
-        self.nickname
-            .clone()
-            .or_else(|| self.contact_memory.accepted_name.clone())
-            .or_else(|| self.profile_label())
-    }
-
     pub(super) fn profile_label(&self) -> Option<String> {
         self.display_name.clone().or_else(|| self.name.clone())
     }

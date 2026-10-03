@@ -349,9 +349,16 @@ impl AppCore {
     }
 
     pub(super) fn owner_display_name(&self, owner_hex: &str) -> Option<String> {
-        self.owner_profiles
-            .get(owner_hex)
-            .and_then(OwnerProfileRecord::preferred_label)
+        let profile = self.owner_profiles.get(owner_hex)?;
+        [
+            profile.nickname.as_deref(),
+            profile.contact_memory.accepted_name.as_deref(),
+            profile.display_name.as_deref(),
+            profile.name.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|name| profile_name_for_identity(name, owner_hex))
     }
 
     pub(super) fn owner_nickname(&self, owner_hex: &str) -> Option<String> {
@@ -361,9 +368,11 @@ impl AppCore {
     }
 
     pub(super) fn owner_profile_name(&self, owner_hex: &str) -> Option<String> {
-        self.owner_profiles
-            .get(owner_hex)
-            .and_then(OwnerProfileRecord::profile_label)
+        let profile = self.owner_profiles.get(owner_hex)?;
+        [profile.display_name.as_deref(), profile.name.as_deref()]
+            .into_iter()
+            .flatten()
+            .find_map(|name| profile_name_for_identity(name, owner_hex))
     }
 
     pub(super) fn owner_display_label(&self, owner_hex: &str) -> String {
@@ -408,13 +417,16 @@ pub(crate) fn fallback_profile_name_for_identity(identity: &str) -> String {
         "Velvet", "Wild",
     ];
     const NOUNS: [&str; 12] = [
-        "Aurora", "Comet", "Echo", "Falcon", "Harbor", "Listener", "Otter", "Raven", "Signal",
-        "Sparrow", "Tide", "Voyager",
+        "Badger", "Bear", "Dolphin", "Falcon", "Fox", "Hare", "Otter", "Raven", "Robin", "Sparrow",
+        "Tiger", "Wolf",
     ];
 
-    let trimmed = identity.trim();
+    let normalized = PublicKey::parse(identity.trim())
+        .ok()
+        .map(|key| key.to_hex());
+    let trimmed = normalized.as_deref().unwrap_or_else(|| identity.trim());
     if trimmed.is_empty() {
-        return "Quiet Listener".to_string();
+        return "Quiet Otter".to_string();
     }
 
     let hash = trimmed.bytes().fold(0_u32, |hash, byte| {
@@ -427,6 +439,93 @@ pub(crate) fn fallback_profile_name_for_identity(identity: &str) -> String {
     let noun = NOUNS
         .get(((hash as usize) / ADJECTIVES.len()) % NOUNS.len())
         .copied()
-        .unwrap_or("Listener");
+        .unwrap_or("Otter");
     format!("{adjective} {noun}")
+}
+
+// Older cached contact labels can contain an ID in place of a profile name.
+// Repair presentation without changing private nicknames or persisted profiles.
+fn profile_name_for_identity(name: &str, identity: &str) -> Option<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let lower = name.to_lowercase();
+    let owner = PublicKey::parse(identity).ok();
+    let candidates = [
+        Some(identity.to_lowercase()),
+        owner.map(|key| key.to_hex()),
+        owner.and_then(|key| key.to_bech32().ok()),
+    ];
+    let is_id = candidates.into_iter().flatten().any(|candidate| {
+        if lower == candidate {
+            return true;
+        }
+        let normalized = lower.replace('…', "...");
+        let Some((start, end)) = normalized.split_once("...") else {
+            return false;
+        };
+        start.len() >= 4
+            && end.len() >= 4
+            && candidate.starts_with(start)
+            && candidate.ends_with(end)
+    });
+    (!is_id).then(|| name.to_string())
+}
+
+#[cfg(test)]
+mod person_name_tests {
+    use super::*;
+
+    #[test]
+    fn animal_names_are_stable_across_identity_encodings() {
+        let hex = "ab".repeat(32);
+        let npub = PublicKey::from_hex(&hex).unwrap().to_bech32().unwrap();
+        assert_eq!(fallback_profile_name_for_identity(&hex), "Golden Hare");
+        assert_eq!(fallback_profile_name_for_identity(&npub), "Golden Hare");
+        assert_eq!(fallback_profile_name_for_identity(""), "Quiet Otter");
+    }
+
+    #[test]
+    fn cached_identifiers_are_not_profile_names_but_real_labels_are_preserved() {
+        let hex = "ab".repeat(32);
+        let npub = PublicKey::from_hex(&hex).unwrap().to_bech32().unwrap();
+        for value in [&hex, &npub, "abababab...abababab", "abababab…abababab", " "] {
+            assert_eq!(profile_name_for_identity(value, &hex), None);
+        }
+        for name in ["Alice", "Mum", "Golden Hare", "Amber Fox"] {
+            assert_eq!(profile_name_for_identity(name, &hex).as_deref(), Some(name));
+        }
+    }
+
+    #[test]
+    fn cached_identity_label_does_not_override_an_unnamed_contact_or_real_nickname() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut core = AppCore::new(
+            flume::unbounded().0,
+            flume::unbounded().0,
+            dir.path().to_string_lossy().into_owned(),
+            Arc::new(RwLock::new(AppState::empty())),
+        );
+        let owner = "ab".repeat(32);
+        let mut profile = build_owner_profile_record("abababab…abababab", None, None).unwrap();
+        profile.contact_memory.accepted_name = Some(owner.clone());
+        core.owner_profiles.insert(owner.clone(), profile);
+        assert_eq!(core.owner_display_label(&owner), "Golden Hare");
+        assert_eq!(core.owner_profile_name(&owner), None);
+        assert_eq!(
+            core.owner_profiles[&owner]
+                .contact_memory
+                .accepted_name
+                .as_deref(),
+            Some(owner.as_str())
+        );
+        core.owner_profiles.get_mut(&owner).unwrap().nickname = Some("Mum".into());
+        assert_eq!(core.owner_display_label(&owner), "Mum");
+        core.owner_profiles.get_mut(&owner).unwrap().nickname = Some("Golden Hare".into());
+        assert_eq!(
+            core.owner_display_name(&owner).as_deref(),
+            Some("Golden Hare")
+        );
+    }
 }
