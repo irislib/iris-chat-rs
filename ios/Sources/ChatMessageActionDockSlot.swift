@@ -1,6 +1,6 @@
 import SwiftUI
 
-// Keep bubble positioning stable while the hover controls are absent.
+// Reserve horizontal room without making short bubbles as tall as the toolbar.
 struct ChatMessageActionDockSlot<Content: View>: View {
     let isVisible: Bool
     let size: CGSize
@@ -8,8 +8,8 @@ struct ChatMessageActionDockSlot<Content: View>: View {
 
     var body: some View {
         Color.clear
-            .frame(width: size.width, height: size.height)
-            .overlay {
+            .frame(width: size.width, height: 0)
+            .overlay(alignment: .bottom) {
                 if isVisible {
                     content().fixedSize()
                 }

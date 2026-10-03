@@ -22,8 +22,6 @@ struct MessageInfoSelection: Identifiable {
     }
 }
 
-let irisMessageClusterGapSecs: UInt64 = 60
-
 enum SignalConversationLayout {
     static let bubbleWideCornerRadius: CGFloat = 18
     static let bubbleSharpCornerRadius: CGFloat = 4
@@ -99,78 +97,6 @@ let irisGroupSenderNameDarkColorHexes: [UInt32] = [
     0xA4A437, 0xF77389, 0x42B309, 0x4BAF5C, 0x7DA1E8,
     0xB89B0A, 0x09B397, 0x8FAA09, 0x00AED1, 0x43B42D,
 ]
-
-func irisStartsMessageCluster(
-    previous: ChatMessageSnapshot?,
-    message: ChatMessageSnapshot,
-    chatKind: ChatKind
-) -> Bool {
-    guard let previous else {
-        return true
-    }
-    if previous.kind == .system || message.kind == .system {
-        return true
-    }
-    if !irisSameTimelineDay(previous.createdAtSecs, message.createdAtSecs) {
-        return true
-    }
-    if previous.isOutgoing != message.isOutgoing {
-        return true
-    }
-    if chatKind == .group && !message.isOutgoing && previous.author != message.author {
-        return true
-    }
-    let gap = message.createdAtSecs >= previous.createdAtSecs
-        ? message.createdAtSecs - previous.createdAtSecs
-        : 0
-    if gap <= irisMessageClusterGapSecs {
-        return false
-    }
-    if chatKind == .direct {
-        let previousMinute = previous.createdAtSecs / 60
-        let messageMinute = message.createdAtSecs / 60
-        if messageMinute >= previousMinute && messageMinute - previousMinute <= 1 {
-            return false
-        }
-    }
-    return true
-}
-
-func irisIsIncomingGroupUserMessage(_ message: ChatMessageSnapshot, chatKind: ChatKind) -> Bool {
-    chatKind == .group && message.kind == .user && !message.isOutgoing
-}
-
-func irisShowsGroupSenderName(
-    previous: ChatMessageSnapshot?,
-    message: ChatMessageSnapshot,
-    chatKind: ChatKind
-) -> Bool {
-    guard irisIsIncomingGroupUserMessage(message, chatKind: chatKind) else {
-        return false
-    }
-    guard let previous,
-          irisIsIncomingGroupUserMessage(previous, chatKind: chatKind),
-          irisSameTimelineDay(previous.createdAtSecs, message.createdAtSecs) else {
-        return true
-    }
-    return previous.author != message.author
-}
-
-func irisShowsGroupSenderAvatar(
-    message: ChatMessageSnapshot,
-    next: ChatMessageSnapshot?,
-    chatKind: ChatKind
-) -> Bool {
-    guard irisIsIncomingGroupUserMessage(message, chatKind: chatKind) else {
-        return false
-    }
-    guard let next,
-          irisIsIncomingGroupUserMessage(next, chatKind: chatKind),
-          irisSameTimelineDay(message.createdAtSecs, next.createdAtSecs) else {
-        return true
-    }
-    return message.author != next.author
-}
 
 enum ChatTimelineCoordinateSpace {
     static let name = "chatTimelineCoordinateSpace"
@@ -430,6 +356,7 @@ struct ChatMessageRow: View, Equatable {
             && lhs.hidesInlineDayChip == rhs.hidesInlineDayChip
             && lhs.isFirstInCluster == rhs.isFirstInCluster
             && lhs.isLastInCluster == rhs.isLastInCluster
+            && lhs.showsFooter == rhs.showsFooter
             && lhs.showsGroupSenderName == rhs.showsGroupSenderName
             && lhs.showsGroupSenderAvatar == rhs.showsGroupSenderAvatar
             && lhs.swipeOffset == rhs.swipeOffset
@@ -446,6 +373,7 @@ struct ChatMessageRow: View, Equatable {
     let hidesInlineDayChip: Bool
     let isFirstInCluster: Bool
     let isLastInCluster: Bool
+    let showsFooter: Bool
     let showsGroupSenderName: Bool
     let showsGroupSenderAvatar: Bool
     let reactions: [MessageReactionSnapshot]
@@ -647,7 +575,7 @@ struct ChatMessageRow: View, Equatable {
                                     }
                                 )
                             }
-                            if isLastInCluster {
+                            if showsFooter {
                                 // Footer inherits the bubble VStack's
                                 // alignment (.trailing for outgoing,
                                 // .leading for incoming). No frame /

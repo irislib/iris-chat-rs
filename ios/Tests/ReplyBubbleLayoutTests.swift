@@ -62,6 +62,7 @@ final class ReplyBubbleLayoutTests: XCTestCase {
         message.isOutgoing = outgoing
         return ChatMessageRow(message: message, chatKind: .direct, showDayChip: false,
             hidesInlineDayChip: true, isFirstInCluster: true, isLastInCluster: true,
+            showsFooter: true,
             showsGroupSenderName: false, showsGroupSenderAvatar: false, reactions: [],
             swipeOffset: 0, isActionDockActive: false, onActionDockActiveChange: { _ in },
             onReply: {}, onForward: {}, onForwardAttachment: { _ in }, onReact: { _ in },

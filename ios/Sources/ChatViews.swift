@@ -699,6 +699,7 @@ struct ChatScreen: View {
             hidesInlineDayChip: hidesInlineDayChip,
             isFirstInCluster: isFirstInCluster,
             isLastInCluster: isLastInCluster,
+            showsFooter: irisShowsMessageFooter(message: message, next: next, chatKind: chat.kind),
             showsGroupSenderName: showsGroupSenderName,
             showsGroupSenderAvatar: showsGroupSenderAvatar,
             reactions: message.reactions,
