@@ -103,7 +103,10 @@ fn search_messages_preserve_sender_identity_from_persisted_history() {
     // Apple and Android. No core worker or network is needed for local search.
     let app = ffi_app_failure("isolated search fixture".into());
     *app.shared_state.write().unwrap() = state;
-    *app.shared_db.write().unwrap() = Some(crate::core::open_database(directory.path()).unwrap());
+    crate::set_shared_db(
+        &app.shared_db,
+        Some(crate::core::open_database(directory.path()).unwrap()),
+    );
     let direct = app.search("searchneedle".into(), Some(peer.clone()), 50);
     let group_hits = app.search("searchneedle".into(), Some(group), 50);
     let global = app.search("searchneedle".into(), None, 50);

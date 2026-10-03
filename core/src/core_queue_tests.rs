@@ -164,7 +164,7 @@ fn ffi_chat_pages_keep_participants_and_load_requested_database_range() {
             ).unwrap();
         }
     }
-    *app.shared_db.write().unwrap() = Some(database);
+    set_shared_db(&app.shared_db, Some(database));
     *app.shared_state.write().unwrap() = state;
 
     let before = app
@@ -196,6 +196,185 @@ fn ffi_chat_pages_keep_participants_and_load_requested_database_range() {
             .iter()
             .all(|message| message.author == "Page author"));
     }
+}
+
+fn chat_page_database_fixture(
+    count: usize,
+) -> (
+    Arc<FfiApp>,
+    crate::core::SharedConnection,
+    tempfile::TempDir,
+    String,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    let app = ffi_app_failure("isolated chat-page fixture".into());
+    let core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        directory.path().to_string_lossy().to_string(),
+        app.shared_state.clone(),
+    );
+    let database = core.shared_db();
+    let mut state = build_large_test_app_state(1, 0, 0);
+    let chat_id = nostr::Keys::generate().public_key().to_hex();
+    state.chat_list[0].chat_id = chat_id.clone();
+    state.current_chat = None;
+    {
+        let conn = database.lock().unwrap();
+        conn.execute(
+            "INSERT INTO threads(chat_id, unread_count, updated_at_secs, draft) VALUES (?1, 0, 100, '')",
+            [&chat_id],
+        ).unwrap();
+        for index in 0..count {
+            conn.execute(
+                "INSERT INTO messages(chat_id, id, kind, author, body, is_outgoing, created_at_secs, delivery)
+                 VALUES (?1, ?2, 'user', 'Author', 'Saved message', 0, ?3, 'received')",
+                rusqlite::params![chat_id, format!("page-{index}"), index as i64 + 1],
+            ).unwrap();
+        }
+    }
+    *app.shared_state.write().unwrap() = state;
+    set_shared_db(&app.shared_db, Some(database.clone()));
+    (app, database, directory, chat_id)
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[test]
+fn ffi_chat_page_reads_history_and_file_status_while_writer_is_busy() {
+    use nostr::JsonUtil;
+    let (app, database, _directory, chat_id) = chat_page_database_fixture(120);
+    let account = app.shared_state.read().unwrap().account.clone().unwrap();
+    let device = nostr::Keys::generate();
+    let offer = serde_json::json!({
+        "id": "ab".repeat(16), "token": "cd".repeat(32), "owner": chat_id,
+        "recipient": account.public_key_hex, "device": device.public_key().to_hex(),
+        "caption": "Saved file", "expires_at_secs": nostr::Timestamp::now().as_secs() + 3600,
+        "files": [{"filename": "notes.txt", "size_bytes": 4, "sha256": "ef".repeat(32)}]
+    });
+    let event = nostr::EventBuilder::new(nostr::Kind::Custom(21111), offer.to_string())
+        .sign_with_keys(&device)
+        .unwrap();
+    let wire = format!("iris-direct-file-v1:{}", event.as_json());
+    {
+        let conn = database.lock().unwrap();
+        conn.execute("UPDATE messages SET body=?1 WHERE id='page-119'", [&wire])
+            .unwrap();
+        let record = serde_json::json!({
+            "chat_id": chat_id, "wire": wire, "offer": offer,
+            "is_sender": false, "status": DirectFileTransferStatus::Completed,
+            "paths": [], "peer": null, "transferred": 4, "error": null
+        });
+        conn.execute(
+            "INSERT INTO direct_file_transfers(id, record_json) VALUES (?1, ?2)",
+            rusqlite::params!["ab".repeat(16), record.to_string()],
+        )
+        .unwrap();
+    }
+    let writer = database.lock().unwrap();
+    writer
+        .execute_batch(
+            "BEGIN IMMEDIATE; UPDATE messages SET body='Uncommitted edit' WHERE id='page-118';",
+        )
+        .unwrap();
+    writer.execute(
+        "INSERT INTO ndr_kv(owner_pubkey_hex, device_pubkey_hex, key, value) VALUES ('reader-test', 'reader-test', 'large-checkpoint', ?1)",
+        ["x".repeat(69 * 1024 * 1024)],
+    ).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let reader_app = app.clone();
+    let reader_chat = chat_id.clone();
+    let reader = std::thread::spawn(move || {
+        let mut samples_ms = Vec::new();
+        let mut page = None;
+        for _ in 0..10 {
+            let started = std::time::Instant::now();
+            page = reader_app.chat_snapshot(reader_chat.clone(), 80);
+            samples_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+        tx.send((page, samples_ms)).unwrap();
+    });
+    let result = rx.recv_timeout(Duration::from_secs(2));
+    writer.execute_batch("ROLLBACK").unwrap();
+    drop(writer);
+    reader.join().unwrap();
+    let (page, mut samples_ms) = result.expect("history must not wait for the writer mutex");
+    let page = page.unwrap();
+    samples_ms.sort_by(f64::total_cmp);
+    eprintln!(
+        "chat_page_reader: synthetic_checkpoint_bytes={} samples={} median_ms={:.3} max_ms={:.3}",
+        69 * 1024 * 1024,
+        samples_ms.len(),
+        samples_ms[samples_ms.len() / 2],
+        samples_ms.last().unwrap()
+    );
+    assert_eq!(
+        page.messages.len(),
+        80,
+        "a busy writer must not look like exhausted history"
+    );
+    assert_eq!(page.messages[0].id, "page-40");
+    assert_eq!(page.messages[78].body, "Saved message");
+    let file = page.messages.last().unwrap();
+    assert_eq!(file.body, "Saved file");
+    assert_eq!(
+        file.direct_transfer.as_ref().unwrap().status,
+        DirectFileTransferStatus::Completed
+    );
+    let older = app
+        .chat_snapshot_before(chat_id, page.messages[0].id.clone(), 80)
+        .unwrap();
+    assert_eq!(older.messages.len(), 40);
+}
+
+#[test]
+fn chat_page_busy_shared_connection_is_unavailable_not_empty() {
+    let (app, database, _directory, chat_id) = chat_page_database_fixture(1);
+    let state = app.shared_state.read().unwrap().clone();
+    let _writer = database.lock().unwrap();
+    assert!(
+        crate::core::chat_snapshot_from_state_and_db(&state, Some(&database), &chat_id, 80,)
+            .is_none(),
+        "temporary contention cannot prove that a chat has no history"
+    );
+}
+
+#[test]
+fn ffi_chat_page_distinguishes_empty_history_from_query_failure() {
+    let (app, database, _directory, chat_id) = chat_page_database_fixture(0);
+    let empty = app.chat_snapshot(chat_id.clone(), 80).unwrap();
+    assert!(empty.messages.is_empty());
+    database
+        .lock()
+        .unwrap()
+        .execute_batch("DROP TABLE messages")
+        .unwrap();
+    assert!(
+        app.chat_snapshot(chat_id, 80).is_none(),
+        "query failure cannot mark pagination exhausted"
+    );
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[test]
+fn ffi_chat_page_reader_is_query_only_and_does_not_change_journaling() {
+    let (app, database, _directory, _chat_id) = chat_page_database_fixture(0);
+    let slot = app.shared_db_read();
+    let reader = slot.as_ref().unwrap().chat_reader().unwrap();
+    assert!(!Arc::ptr_eq(&reader, &database));
+    let connection = reader.lock().unwrap();
+    assert!(connection
+        .pragma_query_value(None, "query_only", |row| row.get::<_, bool>(0))
+        .unwrap());
+    assert_eq!(
+        connection
+            .pragma_query_value(None, "journal_mode", |row| row.get::<_, String>(0))
+            .unwrap(),
+        "wal"
+    );
+    assert!(connection.execute("DELETE FROM messages", []).is_err());
+    assert!(connection
+        .execute_batch("CREATE TABLE unexpected_write(id)")
+        .is_err());
 }
 
 #[test]

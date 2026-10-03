@@ -4,7 +4,7 @@ use super::*;
 fn shutdown_drains_a_direct_search_waiting_for_the_database() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let app = new_ffi_app_inner(temp_dir.path().to_string_lossy().to_string());
-    let db = app.shared_db_read().as_ref().unwrap().clone();
+    let db = app.shared_db_read().as_ref().unwrap().writer.clone();
     let database_work = db.lock().unwrap();
     let reader_app = app.clone();
     let reader =
@@ -46,7 +46,7 @@ fn shutdown_and_wait_releases_core_before_terminal_cleanup() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let data_dir = temp_dir.path().to_string_lossy().to_string();
     let app = new_ffi_app_inner(data_dir.clone());
-    let db = app.shared_db_read().as_ref().unwrap().clone();
+    let db = app.shared_db_read().as_ref().unwrap().writer.clone();
     let database_work = db.lock().unwrap();
     let (suspend_tx, _suspend_rx) = flume::bounded(1);
     app.foreground_tx
@@ -92,7 +92,7 @@ fn shutdown_returns_when_startup_failed_without_a_core_worker() {
 fn suspend_waits_for_database_work_before_releasing_ios_background_time() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let app = new_ffi_app_inner(temp_dir.path().to_string_lossy().to_string());
-    let db = app.shared_db_read().as_ref().unwrap().clone();
+    let db = app.shared_db_read().as_ref().unwrap().writer.clone();
     let database_work = db.lock().unwrap();
     let (finished_tx, finished_rx) = flume::bounded(1);
     let worker_app = app.clone();

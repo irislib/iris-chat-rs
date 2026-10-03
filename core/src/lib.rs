@@ -210,11 +210,51 @@ pub struct FfiApp {
     shared_state: Arc<RwLock<AppState>>,
     /// Shared SQLite handle used by direct read FFI calls. The core
     /// supervisor swaps this when it recreates `AppCore` after a panic.
-    shared_db: Arc<RwLock<Option<crate::core::SharedConnection>>>,
+    shared_db: Arc<RwLock<Option<FfiDatabase>>>,
     core_worker: Mutex<Option<thread::JoinHandle<()>>>,
     perf: FfiPerfCounters,
     queue_metrics: Arc<CoreQueueMetrics>,
     recovery: Arc<CoreRecoveryState>,
+}
+
+struct FfiDatabase {
+    writer: crate::core::SharedConnection,
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    path: Option<std::path::PathBuf>,
+}
+
+impl FfiDatabase {
+    fn new(writer: crate::core::SharedConnection) -> Self {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        let path = writer.lock().ok().and_then(|conn| {
+            conn.path()
+                .filter(|path| !path.is_empty())
+                .map(std::path::PathBuf::from)
+        });
+        Self {
+            writer,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            path,
+        }
+    }
+
+    fn chat_reader(&self) -> Option<crate::core::SharedConnection> {
+        // Desktop WAL permits short readers during checkpoint writes. Retain
+        // mobile's shared connection so suspend still drains all SQLite work.
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        if let Some(path) = &self.path {
+            let conn = rusqlite::Connection::open_with_flags(
+                path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .ok()?;
+            conn.busy_timeout(Duration::ZERO).ok()?;
+            conn.pragma_update(None, "query_only", true).ok()?;
+            return Some(Arc::new(Mutex::new(conn)));
+        }
+        Some(self.writer.clone())
+    }
 }
 
 #[derive(Default, Debug)]
@@ -509,7 +549,7 @@ impl FfiApp {
                     (messages, people)
                 };
                 let (messages, people) = match shared_db.as_ref() {
-                    Some(shared) => match shared.lock() {
+                    Some(shared) => match shared.writer.lock() {
                         Ok(conn) => query_db(&conn),
                         Err(poison) => query_db(&poison.into_inner()),
                     },
@@ -546,10 +586,26 @@ impl FfiApp {
     pub fn chat_snapshot(&self, chat_id: String, limit: u32) -> Option<CurrentChatSnapshot> {
         ffi_or("ffiapp.chat_snapshot", None, || {
             let state_snapshot = self.chat_read_state(&chat_id, Some(limit.max(1) as usize));
+            if state_snapshot
+                .current_chat
+                .as_ref()
+                .is_some_and(|chat| chat.chat_id == chat_id.trim())
+            {
+                return crate::core::chat_snapshot_from_state_and_db(
+                    &state_snapshot,
+                    None,
+                    &chat_id,
+                    limit.max(1) as usize,
+                );
+            }
             let shared_db = self.shared_db_read();
+            let reader = match shared_db.as_ref() {
+                Some(database) => Some(database.chat_reader()?),
+                None => None,
+            };
             crate::core::chat_snapshot_from_state_and_db(
                 &state_snapshot,
-                shared_db.as_ref(),
+                reader.as_ref(),
                 &chat_id,
                 limit.max(1) as usize,
             )
@@ -565,9 +621,10 @@ impl FfiApp {
         ffi_or("ffiapp.chat_snapshot_before", None, || {
             let state_snapshot = self.chat_read_state(&chat_id, None);
             let shared_db = self.shared_db_read();
+            let reader = shared_db.as_ref()?.chat_reader()?;
             crate::core::chat_snapshot_before_from_state_and_db(
                 &state_snapshot,
-                shared_db.as_ref(),
+                Some(&reader),
                 &chat_id,
                 &before_message_id,
                 limit.max(1) as usize,
@@ -585,9 +642,10 @@ impl FfiApp {
         ffi_or("ffiapp.chat_snapshot_around_message", None, || {
             let state_snapshot = self.chat_read_state(&chat_id, None);
             let shared_db = self.shared_db_read();
+            let reader = shared_db.as_ref()?.chat_reader()?;
             crate::core::chat_snapshot_around_message_from_state_and_db(
                 &state_snapshot,
-                shared_db.as_ref(),
+                Some(&reader),
                 &chat_id,
                 &message_id,
                 before_limit as usize,
@@ -888,9 +946,7 @@ impl FfiApp {
 
     // Keep the slot guard through each direct query so teardown also drains
     // readers before the Apple shell removes/recreates the data directory.
-    fn shared_db_read(
-        &self,
-    ) -> std::sync::RwLockReadGuard<'_, Option<crate::core::SharedConnection>> {
+    fn shared_db_read(&self) -> std::sync::RwLockReadGuard<'_, Option<FfiDatabase>> {
         self.shared_db
             .read()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -997,7 +1053,7 @@ struct CoreSupervisor {
     foreground_rx: Receiver<CoreMsg>,
     background_rx: Receiver<CoreMsg>,
     shared_state: Arc<RwLock<AppState>>,
-    shared_db: Arc<RwLock<Option<crate::core::SharedConnection>>>,
+    shared_db: Arc<RwLock<Option<FfiDatabase>>>,
     queue_metrics: Arc<CoreQueueMetrics>,
     recovery: Arc<CoreRecoveryState>,
 }
@@ -1122,9 +1178,10 @@ fn recover_core_after_panic(supervisor: &CoreSupervisor, detail: String) -> Opti
 }
 
 fn set_shared_db(
-    shared_db: &Arc<RwLock<Option<crate::core::SharedConnection>>>,
+    shared_db: &Arc<RwLock<Option<FfiDatabase>>>,
     value: Option<crate::core::SharedConnection>,
 ) {
+    let value = value.map(FfiDatabase::new);
     match shared_db.write() {
         Ok(mut slot) => *slot = value,
         Err(poison) => *poison.into_inner() = value,

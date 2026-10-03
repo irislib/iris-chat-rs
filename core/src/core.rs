@@ -433,12 +433,9 @@ fn load_chat_messages(
             ChatPageRequest::Before { .. } | ChatPageRequest::Around { .. } => None,
         };
     };
-    let Ok(conn) = shared.try_lock() else {
-        return match request {
-            ChatPageRequest::Latest { .. } => Some(Vec::new()),
-            ChatPageRequest::Before { .. } | ChatPageRequest::Around { .. } => None,
-        };
-    };
+    // Contention is not evidence of an empty history. Shells must not mark
+    // older pages exhausted when a concurrent checkpoint temporarily owns it.
+    let conn = shared.try_lock().ok()?;
     let result = match request {
         ChatPageRequest::Latest { limit } => storage::load_recent_messages(&conn, chat_id, limit),
         ChatPageRequest::Before {
@@ -451,12 +448,7 @@ fn load_chat_messages(
             after_limit,
         } => storage::load_messages_around(&conn, chat_id, message_id, before_limit, after_limit),
     };
-    let Ok(messages) = result else {
-        return match request {
-            ChatPageRequest::Latest { .. } => Some(Vec::new()),
-            ChatPageRequest::Before { .. } | ChatPageRequest::Around { .. } => None,
-        };
-    };
+    let messages = result.ok()?;
     Some(
         messages
             .iter()
