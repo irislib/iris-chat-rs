@@ -115,6 +115,7 @@ include!("tests/protocol_runtime.rs");
 include!("tests/forwarding.rs");
 include!("tests/protocol_runtime_direct_queue.rs");
 include!("tests/send_display.rs");
+include!("tests/receipt_batch_latency.rs");
 include!("tests/registration_recovery.rs");
 include!("tests/device_roster_fetch.rs");
 include!("tests/device_connections.rs");

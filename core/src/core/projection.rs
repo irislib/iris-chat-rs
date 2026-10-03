@@ -972,6 +972,28 @@ impl AppCore {
         if self.batch_depth == 0 {
             return;
         }
+        if self.batch_depth == 1 {
+            // Receipt fanout mutates ratchets too. Keep it inside the protocol
+            // batch so a group page writes one checkpoint, not one per author.
+            let pending = std::mem::take(&mut self.pending_outgoing_receipts);
+            for ((chat_id, receipt_type), mut ids) in pending {
+                ids.sort();
+                ids.dedup();
+                if !ids.is_empty() {
+                    self.send_receipt_inner(&chat_id, &receipt_type, ids);
+                }
+            }
+            // Commit local messages/read state and expose the UI update before
+            // serializing the potentially large protocol backlog. Delivery
+            // acknowledgements produced by the app commit join this checkpoint.
+            if std::mem::take(&mut self.batch_dirty_persist) {
+                self.persist_best_effort_inner();
+            }
+            if std::mem::take(&mut self.batch_dirty_state) {
+                self.rebuild_state_inner();
+                self.emit_state_inner();
+            }
+        }
         self.batch_depth -= 1;
         if let Some(engine) = self.protocol_engine.as_ref() {
             if let Err(error) = engine.exit_batch() {
@@ -981,29 +1003,8 @@ impl AppCore {
         if self.batch_depth > 0 {
             return;
         }
-        let need_persist = std::mem::take(&mut self.batch_dirty_persist);
-        let need_state = std::mem::take(&mut self.batch_dirty_state);
-        if need_persist {
-            self.persist_best_effort_inner();
-        }
-        if need_state {
-            self.rebuild_state_inner();
-            self.emit_state_inner();
-        }
         self.flush_mesh_protocol_subscriptions();
         self.flush_device_sync_snapshot();
-        // Flush any receipts queued during the batch as one event per
-        // (chat_id, receipt_type) so a 10-message catch-up sends one
-        // `delivered` event with 10 e-tags instead of 10 separate events.
-        let pending = std::mem::take(&mut self.pending_outgoing_receipts);
-        for ((chat_id, receipt_type), mut ids) in pending {
-            ids.sort();
-            ids.dedup();
-            if ids.is_empty() {
-                continue;
-            }
-            self.send_receipt_inner(&chat_id, &receipt_type, ids);
-        }
     }
 }
 
