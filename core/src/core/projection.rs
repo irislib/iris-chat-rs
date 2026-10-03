@@ -208,6 +208,7 @@ fn state_content_eq(a: &AppState, b: &AppState) -> bool {
         && a.router == b.router
         && a.account == b.account
         && a.device_roster == b.device_roster
+        && a.device_history_sync == b.device_history_sync
         && a.busy == b.busy
         && a.chat_list == b.chat_list
         && a.current_chat == b.current_chat

@@ -365,6 +365,9 @@ impl AppCore {
                 v: DEVICE_SYNC_VERSION,
                 roster_at: config.roster_at,
                 page: None,
+                history_reconcile: Some(1),
+                history_since: None,
+                link_id: None,
             });
             let resync_required = serde_json::to_vec(&DeviceSyncPacket::ResyncRequired {
                 v: DEVICE_SYNC_VERSION,
@@ -606,6 +609,7 @@ impl AppCore {
             )));
         }
 
+        self.restore_device_history_progress();
         let sibling_count = config.siblings.len();
         self.device_sync = Some(DeviceSyncRuntime {
             key: runtime_key,
@@ -616,6 +620,7 @@ impl AppCore {
             tcp,
             siblings: config.siblings,
             snapshot_pending: false,
+            history: history::HistoryState::default(),
             nearby_enabled,
             nearby_bootstrap_payloads,
             nearby_outbox,
@@ -652,6 +657,7 @@ impl AppCore {
     fn take_device_sync_shutdown(
         &mut self,
     ) -> Option<impl std::future::Future<Output = ()> + Send + 'static> {
+        self.restore_device_history_progress();
         self.interrupt_direct_files();
         self.host_ble_attached = false;
         self.fips_connection_generation = self.fips_connection_generation.wrapping_add(1);

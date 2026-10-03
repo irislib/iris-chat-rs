@@ -6,6 +6,7 @@ impl AppCore {
         source_pubkey_hex: &str,
         requested_roster_at: u64,
         page: Option<DeviceSyncPage>,
+        link_id: Option<&str>,
     ) {
         let Some(local_roster_at) = self.device_sync_roster_at() else {
             return;
@@ -13,18 +14,47 @@ impl AppCore {
         let Some(peer_since) = self.device_sync_peer_since(source_pubkey_hex) else {
             return;
         };
-        let cutoff = local_roster_at.max(requested_roster_at).max(peer_since);
+        let agreed = self
+            .device_sync
+            .as_ref()
+            .and_then(|runtime| runtime.history.agreed.get(source_pubkey_hex).copied());
+        let initial = self
+            .device_history_transfer(source_pubkey_hex)
+            .filter(|record| {
+                record.outbound
+                    && !record.complete
+                    && record.since == 0
+                    && Some(record.link_id.as_str()) == link_id
+            });
+        let initial_page =
+            initial.is_some() && matches!(page, Some(DeviceSyncPage::Messages { .. }));
+        let floor = self
+            .device_history_send_since(source_pubkey_hex)
+            .unwrap_or(local_roster_at.max(peer_since));
+        let mut cutoff = agreed.unwrap_or(floor.max(requested_roster_at)).max(floor);
+        if matches!(page, Some(DeviceSyncPage::Messages { .. })) && !initial_page {
+            cutoff = cutoff.max(local_roster_at).max(peer_since);
+        }
         let (mut packets, next) = match page.unwrap_or(DeviceSyncPage::Metadata { offset: 0 }) {
             DeviceSyncPage::Metadata { offset } => {
                 (metadata_page_packets(self, cutoff, offset), None)
             }
             DeviceSyncPage::Messages { after } => {
-                let (messages, next) = collect_device_sync_messages(
+                let (mut messages, mut next) = collect_device_sync_messages(
                     self,
                     cutoff,
                     after.as_ref(),
                     DEVICE_SYNC_PAGE_MESSAGES,
                 );
+                if let Some(initial) = &initial {
+                    if messages
+                        .iter()
+                        .any(|message| message.created_at >= initial.link_at)
+                    {
+                        next = None;
+                    }
+                    messages.retain(|message| message.created_at < initial.link_at);
+                }
                 let snapshot = DeviceSyncSnapshot {
                     roster_at: cutoff,
                     messages,
@@ -36,11 +66,40 @@ impl AppCore {
                 )
             }
         };
+        if let Some(policy) = self.device_history_policy_packet(source_pubkey_hex) {
+            if let Ok(packet) = serde_json::to_vec(&policy) {
+                packets.insert(0, packet);
+            }
+        }
+        if agreed.is_some() {
+            for packet in &mut packets {
+                if let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(packet) {
+                    if value["type"] == "pageEnd" {
+                        value["historyReconcile"] = serde_json::json!(1);
+                        value["historySince"] = serde_json::json!(agreed);
+                        *packet = serde_json::to_vec(&value).unwrap();
+                    }
+                }
+            }
+        }
+        if initial_page && next.is_none() {
+            if let Some(initial) = &initial {
+                if let Ok(packet) = serde_json::to_vec(&DeviceSyncPacket::HistoryPageEnd {
+                    v: 1,
+                    link_at: initial.link_at,
+                    link_id: initial.link_id.clone(),
+                }) {
+                    packets.push(packet);
+                }
+            }
+        }
         if let Some(next) = next {
             let Ok(page_end) = serde_json::to_vec(&DeviceSyncPacket::PageEnd {
                 v: DEVICE_SYNC_VERSION,
                 roster_at: cutoff,
                 next,
+                history_reconcile: Some(1),
+                history_since: agreed,
             }) else {
                 return;
             };
@@ -72,6 +131,12 @@ impl AppCore {
             v: DEVICE_SYNC_VERSION,
             roster_at,
             page,
+            history_reconcile: Some(1),
+            history_since: self.device_history_receive_since(source_pubkey_hex),
+            link_id: self
+                .device_history_transfer(source_pubkey_hex)
+                .filter(|record| !record.outbound && !record.complete)
+                .map(|record| record.link_id),
         }) else {
             return;
         };
@@ -122,6 +187,8 @@ pub(super) fn metadata_page_packets(core: &AppCore, roster_at: u64, offset: usiz
         v: DEVICE_SYNC_VERSION,
         roster_at,
         next,
+        history_reconcile: Some(1),
+        history_since: None,
     }) {
         packets.push(page_end);
     }

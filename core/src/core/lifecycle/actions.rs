@@ -269,6 +269,11 @@ impl AppCore {
             AppAction::AddAuthorizedDevice { device_input } => {
                 self.add_authorized_device(&device_input)
             }
+            AppAction::AddAuthorizedDeviceWithHistory {
+                device_input,
+                include_message_history,
+            } => self
+                .add_authorized_device_with_history(&device_input, Some(include_message_history)),
             AppAction::RemoveAuthorizedDevice { device_pubkey_hex } => {
                 self.remove_authorized_device(&device_pubkey_hex)
             }

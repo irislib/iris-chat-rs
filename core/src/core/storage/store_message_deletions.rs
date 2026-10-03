@@ -22,6 +22,43 @@ pub(super) fn contains(
 }
 
 impl AppStore {
+    pub(crate) fn deleted_message_ids(
+        &self,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        let mut query =
+            conn.prepare("SELECT key FROM app_meta WHERE key LIKE 'message_deleted:%' LIMIT ?1")?;
+        let keys = query.query_map([limit as i64], |row| row.get::<_, String>(0))?;
+        let mut result = Vec::new();
+        for key in keys {
+            let key = key?;
+            let Some((len, suffix)) = key
+                .strip_prefix("message_deleted:")
+                .and_then(|value| value.split_once(':'))
+            else {
+                continue;
+            };
+            let Ok(len) = len.parse::<usize>() else {
+                continue;
+            };
+            let Some(chat) = suffix.get(..len) else {
+                continue;
+            };
+            let Some(id) = suffix
+                .get(len..)
+                .and_then(|value| value.strip_prefix(":id:"))
+            else {
+                continue;
+            };
+            result.push((chat.to_string(), id.to_string()));
+        }
+        Ok(result)
+    }
+
     pub(crate) fn delete_message_locally(
         &mut self,
         chat_id: &str,

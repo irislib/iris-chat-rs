@@ -64,9 +64,7 @@ fn chunks_are_bounded_additive_camel_case_snapshots() {
         .map(|packet| serde_json::from_slice::<DeviceSyncPacket>(packet).unwrap())
         .map(|packet| match packet {
             DeviceSyncPacket::Snapshot { app_keys, .. } => app_keys.len(),
-            DeviceSyncPacket::Request { .. }
-            | DeviceSyncPacket::ResyncRequired { .. }
-            | DeviceSyncPacket::PageEnd { .. } => 0,
+            _ => 0,
         })
         .sum::<usize>();
     assert_eq!(app_keys_count, 1);
@@ -75,9 +73,7 @@ fn chunks_are_bounded_additive_camel_case_snapshots() {
         .map(|packet| serde_json::from_slice::<DeviceSyncPacket>(packet).unwrap())
         .map(|packet| match packet {
             DeviceSyncPacket::Snapshot { messages, .. } => messages.len(),
-            DeviceSyncPacket::Request { .. }
-            | DeviceSyncPacket::ResyncRequired { .. }
-            | DeviceSyncPacket::PageEnd { .. } => 0,
+            _ => 0,
         })
         .sum::<usize>();
     assert_eq!(message_count, 200);

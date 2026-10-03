@@ -24,6 +24,7 @@ impl AppCore {
             tcp: Some(tcp),
             siblings,
             snapshot_pending: false,
+            history: history::HistoryState::default(),
             nearby_enabled: false,
             nearby_bootstrap_payloads: Arc::new(RwLock::new(Vec::new())),
             nearby_outbox: Arc::new(RwLock::new(
@@ -46,5 +47,13 @@ impl AppCore {
             .as_ref()
             .and_then(|runtime| runtime.tcp.as_ref())
             .and_then(|tcp| tcp.take_control_for_test(peer))
+    }
+}
+
+impl AppCore {
+    pub(in crate::core) fn device_history_session_count_for_test(&self) -> usize {
+        self.device_sync
+            .as_ref()
+            .map_or(0, |runtime| runtime.history.session_count())
     }
 }

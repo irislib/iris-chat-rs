@@ -335,6 +335,10 @@ pub enum AppAction {
     AddAuthorizedDevice {
         device_input: String,
     },
+    AddAuthorizedDeviceWithHistory {
+        device_input: String,
+        include_message_history: bool,
+    },
     RemoveAuthorizedDevice {
         device_pubkey_hex: String,
     },

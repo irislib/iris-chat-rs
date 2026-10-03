@@ -697,6 +697,21 @@ pub struct CallSnapshot {
     pub end_reason: Option<String>,
 }
 
+#[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
+pub enum DeviceHistorySyncPhase {
+    Discovering,
+    Transferring,
+    Waiting,
+    Complete,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct DeviceHistorySyncSnapshot {
+    pub phase: DeviceHistorySyncPhase,
+    pub imported_messages: u64,
+    pub total_messages: Option<u64>,
+}
+
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct AppState {
     pub rev: u64,
@@ -704,6 +719,7 @@ pub struct AppState {
     pub router: Router,
     pub account: Option<AccountSnapshot>,
     pub device_roster: Option<DeviceRosterSnapshot>,
+    pub device_history_sync: Option<DeviceHistorySyncSnapshot>,
     pub busy: BusyState,
     pub chat_list: Vec<ChatThreadSnapshot>,
     pub current_chat: Option<CurrentChatSnapshot>,
@@ -732,6 +748,7 @@ impl AppState {
             },
             account: None,
             device_roster: None,
+            device_history_sync: None,
             busy: BusyState::default(),
             chat_list: Vec::new(),
             current_chat: None,

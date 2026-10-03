@@ -83,6 +83,7 @@ pub fn build_large_test_app_state(
         },
         account: Some(fixture_account()),
         device_roster: None,
+        device_history_sync: None,
         busy: Default::default(),
         chat_list,
         current_chat: Some(current_chat),

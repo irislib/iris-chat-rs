@@ -362,6 +362,17 @@ impl AppCore {
         app_keys_event: Event,
     ) -> anyhow::Result<()> {
         validate_link_authorization(&app_keys_event, owner_pubkey, &device_keys, &peer_device_id)?;
+        let peer_device_id_for_history = peer_device_id.clone();
+        let link_id_for_history = self
+            .pending_linked_device
+            .as_ref()
+            .and_then(|pending| {
+                parse_nostr_identity_device_approval_bootstrap(&pending.pairing_url, &[])
+                    .ok()
+                    .flatten()
+            })
+            .and_then(|bootstrap| PublicKey::parse(&bootstrap.request_npub).ok())
+            .map(|key| key.to_hex());
         self.enter_batch();
         let result = (|| {
             // Keep the secure restore record until the complete account bundle is emitted. If
@@ -378,6 +389,13 @@ impl AppCore {
                     session_state,
                     unix_now(),
                 )?;
+            let link_at = AppKeys::from_event(&app_keys_event)?
+                .get_device(&device_keys.public_key())
+                .map(|device| device.created_at)
+                .ok_or_else(|| anyhow::anyhow!("Missing device authorization"))?;
+            if let Some(link_id) = link_id_for_history {
+                self.record_device_history_approver(&peer_device_id_for_history, link_at, link_id)?;
+            }
             self.apply_app_keys_event(&app_keys_event)?;
             if self.logged_in.as_ref().is_none_or(|logged_in| {
                 logged_in.authorization_state != LocalAuthorizationState::Authorized
@@ -507,6 +525,7 @@ impl AppCore {
         );
         self.stop_pending_linked_device();
         self.stop_device_sync();
+        self.state.device_history_sync = None;
         self.private_contacts.reset();
         self.reset_pending_invite_acceptance();
         self.pending_private_invite_responses.clear();

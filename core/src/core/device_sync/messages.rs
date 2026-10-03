@@ -155,3 +155,51 @@ fn message_key(message: &DeviceSyncMessage) -> MessageKey {
         message.id.clone(),
     )
 }
+
+pub(super) fn history_message_allowed(core: &AppCore, message: &DeviceSyncMessage) -> bool {
+    valid_device_sync_chat_id(&message.chat_id)
+        && !message.id.is_empty()
+        && message.id.len() <= 128
+        && message.body.len() <= 32 * 1024
+        && PublicKey::from_hex(&message.author).is_ok()
+        && !core.chat_activity_is_deleted(&message.chat_id, message.created_at)
+        && !core
+            .app_store
+            .message_was_locally_deleted(&message.chat_id, Some(&message.id), None)
+            .unwrap_or(true)
+        && message
+            .expires_at
+            .is_none_or(|until| until > unix_now().get())
+}
+
+pub(super) fn load_history_message(
+    core: &AppCore,
+    cursor: &DeviceSyncCursor,
+) -> Option<DeviceSyncMessage> {
+    let message = if let Some(message) = in_memory_message(core, &cursor.chat_id, &cursor.id) {
+        if !eligible(message, 0, unix_now().get()) {
+            return None;
+        }
+        from_snapshot(message)?
+    } else {
+        let message = core
+            .app_store
+            .load_messages_around(&cursor.chat_id, &cursor.id, 0, 0)
+            .ok()?
+            .into_iter()
+            .next()?;
+        if !matches!(message.kind, ChatMessageKind::User)
+            || matches!(
+                message.delivery,
+                PersistedDeliveryState::Failed
+                    | PersistedDeliveryState::Queued
+                    | PersistedDeliveryState::Pending
+            )
+        {
+            return None;
+        }
+        from_persisted(message)
+    };
+    (message.created_at == cursor.created_at && history_message_allowed(core, &message))
+        .then_some(message)
+}

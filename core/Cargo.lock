@@ -2374,6 +2374,7 @@ dependencies = [
  "nostr-identity 0.4.0",
  "nostr-pubsub",
  "nostr-pubsub-fips",
+ "nostr-pubsub-reconcile",
  "nostr-pubsub-relay",
  "nostr-sdk",
  "nostr-social-graph",
@@ -2815,9 +2816,9 @@ dependencies = [
 
 [[package]]
 name = "negentropy"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0efe882e02d206d8d279c20eb40e03baf7cb5136a1476dc084a324fbc3ec42d"
+checksum = "81c353b400a5503efdcf398f11a83fb7aa84f59f5d76fc4bf5bbc1e4f5366caa"
 
 [[package]]
 name = "netlink-packet-core"
@@ -3137,6 +3138,15 @@ dependencies = [
  "nvpn-fips-tcp",
  "nvpn-fips-tcp-endpoint",
  "tokio",
+]
+
+[[package]]
+name = "nostr-pubsub-reconcile"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30b137f7af6258433eea867908869f92f11f11fb27ccc68412acacee3eb22606"
+dependencies = [
+ "negentropy",
 ]
 
 [[package]]

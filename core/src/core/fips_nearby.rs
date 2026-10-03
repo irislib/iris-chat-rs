@@ -496,6 +496,19 @@ impl AppCore {
         if self.fips_nearby_links == links {
             return;
         }
+        let disconnected = self
+            .fips_nearby_links
+            .iter()
+            .filter(|old| {
+                !links
+                    .iter()
+                    .any(|new| new.device_pubkey_hex == old.device_pubkey_hex)
+            })
+            .map(|link| link.device_pubkey_hex.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        for peer in disconnected {
+            self.clear_device_history(&peer);
+        }
         self.fips_nearby_links = links;
         self.emit_fips_nearby_peers();
         let roster = self.build_device_roster_snapshot();

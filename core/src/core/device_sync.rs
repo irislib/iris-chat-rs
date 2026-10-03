@@ -13,6 +13,8 @@ use settings::valid_device_sync_chat_id;
 
 mod anti_entropy;
 mod body;
+mod history;
+mod history_policy;
 mod messages;
 mod recent_peers;
 mod runtime;
@@ -47,6 +49,7 @@ pub(super) struct DeviceSyncRuntime {
     tcp: Option<DeviceSyncTcpSender>,
     siblings: Vec<FipsPeerIdentity>,
     snapshot_pending: bool,
+    history: history::HistoryState,
     pub(super) nearby_enabled: bool,
     pub(super) nearby_bootstrap_payloads: Arc<RwLock<Vec<Vec<u8>>>>,
     pub(super) nearby_outbox: Arc<RwLock<super::fips_nearby::FipsNearbyOutbox>>,
@@ -69,6 +72,12 @@ enum DeviceSyncPacket {
         roster_at: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         page: Option<DeviceSyncPage>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        history_reconcile: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        history_since: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        link_id: Option<String>,
     },
     ResyncRequired {
         v: u8,
@@ -77,6 +86,55 @@ enum DeviceSyncPacket {
         v: u8,
         roster_at: u64,
         next: DeviceSyncPage,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        history_reconcile: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        history_since: Option<u64>,
+    },
+    HistoryPageEnd {
+        v: u8,
+        link_at: u64,
+        link_id: String,
+    },
+    HistoryPolicy {
+        v: u8,
+        link_at: u64,
+        since: u64,
+        link_id: String,
+    },
+    HistoryComplete {
+        v: u8,
+        link_at: u64,
+        link_id: String,
+    },
+    HistoryOpen {
+        v: u8,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        link_id: Option<String>,
+        session: String,
+        since: u64,
+        until: u64,
+        frame: String,
+    },
+    HistoryFrame {
+        v: u8,
+        session: String,
+        frame: String,
+    },
+    HistoryNeed {
+        v: u8,
+        session: String,
+        ids: Vec<String>,
+    },
+    HistoryMessages {
+        v: u8,
+        session: String,
+        messages: Vec<DeviceSyncMessage>,
+        requested: Vec<String>,
+    },
+    HistoryDone {
+        v: u8,
+        session: String,
     },
     Snapshot {
         v: u8,
@@ -298,27 +356,60 @@ impl AppCore {
         _source_port: u16,
         data: &[u8],
     ) {
-        if data.len() > DEVICE_SYNC_MAX_PACKET_BYTES
-            || !self.device_sync_peer_is_authorized(source_pubkey_hex)
-        {
+        if data.len() > DEVICE_SYNC_MAX_PACKET_BYTES {
+            return;
+        }
+        if !self.device_sync_peer_is_authorized(source_pubkey_hex) {
+            self.clear_device_history(source_pubkey_hex);
             return;
         }
         let Ok(packet) = serde_json::from_slice::<DeviceSyncPacket>(data) else {
             return;
         };
         match packet {
-            DeviceSyncPacket::Request { v, roster_at, page } if v == DEVICE_SYNC_VERSION => {
-                self.reply_device_sync_snapshot(source_pubkey_hex, roster_at, page);
+            DeviceSyncPacket::Request {
+                v,
+                roster_at,
+                page,
+                history_reconcile,
+                history_since,
+                link_id,
+            } if v == DEVICE_SYNC_VERSION => {
+                self.negotiate_device_history(
+                    source_pubkey_hex,
+                    roster_at,
+                    page.as_ref(),
+                    history_reconcile,
+                    history_since,
+                );
+                self.reply_device_sync_snapshot(
+                    source_pubkey_hex,
+                    roster_at,
+                    page,
+                    link_id.as_deref(),
+                );
             }
             DeviceSyncPacket::ResyncRequired { v } if v == DEVICE_SYNC_VERSION => {
+                self.clear_device_history(source_pubkey_hex);
                 self.request_device_sync_snapshot(source_pubkey_hex, None);
             }
             DeviceSyncPacket::PageEnd {
                 v,
-                roster_at: _,
+                roster_at,
                 next,
+                history_reconcile,
+                history_since,
             } if v == DEVICE_SYNC_VERSION => {
-                self.request_device_sync_snapshot(source_pubkey_hex, Some(next));
+                if history_reconcile == Some(1)
+                    && matches!(next, DeviceSyncPage::Messages { after: None })
+                {
+                    self.start_device_history(
+                        source_pubkey_hex,
+                        history_since.unwrap_or(roster_at),
+                    );
+                } else {
+                    self.request_device_sync_snapshot(source_pubkey_hex, Some(next));
+                }
             }
             DeviceSyncPacket::Snapshot {
                 v,
@@ -333,20 +424,23 @@ impl AppCore {
                 groups,
                 messages,
             } if v == DEVICE_SYNC_VERSION => {
-                self.apply_device_sync_snapshot(DeviceSyncSnapshot {
-                    roster_at,
-                    chats,
-                    deleted_chats,
-                    chat_mutes,
-                    chat_pins,
-                    private_contacts_v2,
-                    private_device_labels_v2,
-                    app_keys,
-                    groups,
-                    messages,
-                });
+                self.apply_device_history_snapshot(
+                    source_pubkey_hex,
+                    DeviceSyncSnapshot {
+                        roster_at,
+                        chats,
+                        deleted_chats,
+                        chat_mutes,
+                        chat_pins,
+                        private_contacts_v2,
+                        private_device_labels_v2,
+                        app_keys,
+                        groups,
+                        messages,
+                    },
+                );
             }
-            _ => {}
+            packet => self.handle_device_history(source_pubkey_hex, packet),
         }
     }
 
@@ -434,7 +528,8 @@ impl AppCore {
         let recipients = siblings
             .into_iter()
             .filter(|peer| {
-                self.device_sync_peer_since(&peer.pubkey().to_string())
+                self.device_history_send_since(&peer.pubkey().to_string())
+                    .or_else(|| self.device_sync_peer_since(&peer.pubkey().to_string()))
                     .is_some_and(|since| message.created_at_secs >= since)
             })
             .collect::<Vec<_>>();
@@ -577,11 +672,15 @@ impl AppCore {
         }
     }
 
-    fn apply_device_sync_snapshot(&mut self, snapshot: DeviceSyncSnapshot) {
+    fn apply_device_sync_snapshot(
+        &mut self,
+        snapshot: DeviceSyncSnapshot,
+        history_since: Option<u64>,
+    ) {
         let Some(local_roster_at) = self.device_sync_roster_at() else {
             return;
         };
-        let cutoff = local_roster_at.max(snapshot.roster_at);
+
         let Some(local_owner_hex) = self
             .logged_in
             .as_ref()
@@ -661,6 +760,8 @@ impl AppCore {
             changed = true;
         }
 
+        let cutoff = history_since.unwrap_or(local_roster_at.max(snapshot.roster_at));
+
         for chat in &snapshot.chats {
             if PublicKey::from_hex(&chat.id).is_ok()
                 && !self.threads.contains_key(&chat.id)
@@ -713,6 +814,7 @@ impl AppCore {
                 || !valid_device_sync_chat_id(&message.chat_id)
                 || message.id.is_empty()
                 || message.id.len() > 128
+                || message.body.len() > 32 * 1024
                 || PublicKey::from_hex(&message.author).is_err()
                 || self.threads.get(&message.chat_id).is_some_and(|thread| {
                     thread.messages.iter().any(|known| known.id == message.id)
@@ -787,8 +889,12 @@ impl AppCore {
         let logged_in = self.logged_in.as_ref()?;
         let roster = self.app_keys.get(&logged_in.owner_pubkey.to_hex())?;
         // Membership updates must not move an existing device's history window.
-        roster.devices.iter()
-            .find(|device| device.identity_pubkey_hex == logged_in.device_keys.public_key().to_hex())
+        roster
+            .devices
+            .iter()
+            .find(|device| {
+                device.identity_pubkey_hex == logged_in.device_keys.public_key().to_hex()
+            })
             .map(|device| device.created_at_secs)
             .filter(|created_at| *created_at > 0)
     }
@@ -799,7 +905,11 @@ impl AppCore {
             .get(&logged_in.owner_pubkey.to_hex())?
             .devices
             .iter()
-            .find(|device| device.identity_pubkey_hex.eq_ignore_ascii_case(source_pubkey_hex))
+            .find(|device| {
+                device
+                    .identity_pubkey_hex
+                    .eq_ignore_ascii_case(source_pubkey_hex)
+            })
             .map(|device| device.created_at_secs)
             .filter(|created_at| *created_at > 0)
     }

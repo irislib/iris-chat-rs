@@ -3,6 +3,14 @@ use super::*;
 
 impl AppCore {
     pub(super) fn add_authorized_device(&mut self, device_input: &str) {
+        self.add_authorized_device_with_history(device_input, None);
+    }
+
+    pub(super) fn add_authorized_device_with_history(
+        &mut self,
+        device_input: &str,
+        include_history: Option<bool>,
+    ) {
         let Some(logged_in) = self.logged_in.as_ref() else {
             self.state.toast = Some("Create or restore a profile first.".to_string());
             self.emit_state();
@@ -32,7 +40,7 @@ impl AppCore {
         self.state.toast = None;
         self.emit_state();
 
-        let result = self.accept_link_device_approval_bootstrap(bootstrap);
+        let result = self.accept_link_device_approval_bootstrap(bootstrap, include_history);
         self.state.busy.updating_roster = false;
         if let Err(error) = result {
             self.state.toast = Some(error.to_string());
@@ -45,6 +53,7 @@ impl AppCore {
     fn accept_link_device_approval_bootstrap(
         &mut self,
         bootstrap: NostrIdentityDeviceApprovalBootstrap,
+        include_history: Option<bool>,
     ) -> anyhow::Result<()> {
         let approval_relay_urls = self.device_approval_relay_urls.clone();
         if approval_relay_urls.len() != 1 {
@@ -98,7 +107,16 @@ impl AppCore {
             request_labels.as_ref(),
             true,
         );
+        let previous_history_transfer =
+            self.device_history_transfer(&device_app_key_pubkey.to_hex());
         let result = (|| {
+            if let Some(include_history) = include_history {
+                self.create_device_history_transfer(
+                    device_app_key_pubkey,
+                    include_history,
+                    PublicKey::parse(&bootstrap.request_npub)?.to_hex(),
+                )?;
+            }
             let signed_roster_event = build_nostr_identity_roster_op_event_with_client_nonce(
                 &approver_keys,
                 approval_content.profile_id,
@@ -128,11 +146,16 @@ impl AppCore {
             self.accept_link_device_invite_session(invite, approval_relay_urls, receipt_event)
         })();
         if result.is_err() {
+            let history_rollback = self.store_device_history_transfer(
+                &device_app_key_pubkey.to_hex(),
+                previous_history_transfer.as_ref(),
+            );
             if let Some(previous_app_keys) = previous_app_keys {
                 self.app_keys.insert(owner_hex, previous_app_keys);
             } else {
                 self.app_keys.remove(&owner_hex);
             }
+            history_rollback?;
         }
         result
     }
