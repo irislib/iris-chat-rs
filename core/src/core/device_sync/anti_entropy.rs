@@ -73,11 +73,18 @@ impl AppCore {
         }
         if agreed.is_some() {
             for packet in &mut packets {
-                if let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(packet) {
-                    if value["type"] == "pageEnd" {
-                        value["historyReconcile"] = serde_json::json!(1);
-                        value["historySince"] = serde_json::json!(agreed);
-                        *packet = serde_json::to_vec(&value).unwrap();
+                if let Ok(DeviceSyncPacket::PageEnd {
+                    v, roster_at, next, ..
+                }) = serde_json::from_slice(packet)
+                {
+                    if let Ok(updated) = serde_json::to_vec(&DeviceSyncPacket::PageEnd {
+                        v,
+                        roster_at,
+                        next,
+                        history_reconcile: Some(1),
+                        history_since: agreed,
+                    }) {
+                        *packet = updated;
                     }
                 }
             }

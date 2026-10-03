@@ -452,6 +452,7 @@ impl AppStore {
         Ok(newly_seen_unread)
     }
 
+    #[cfg(test)]
     pub(crate) fn message_exists(
         &self,
         chat_id: &str,

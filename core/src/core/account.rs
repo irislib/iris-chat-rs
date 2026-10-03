@@ -1075,6 +1075,18 @@ impl AppCore {
     }
 
     pub(super) fn remove_local_app_key_device(&mut self, owner: PublicKey, device: PublicKey) {
+        let previous = self.app_keys.get(&owner.to_hex()).cloned();
+        if let Some(mut next) = previous.clone() {
+            next.devices
+                .retain(|candidate| candidate.identity_pubkey_hex != device.to_hex());
+            if let Err(error) =
+                self.invalidate_removed_device_history(owner, previous.as_ref(), &next)
+            {
+                self.state.toast = Some("Could not remove device. Try again.".into());
+                self.push_debug_log("device_sync.history_revoke.error", error.to_string());
+                return;
+            }
+        }
         if let Some(entry) = self.app_keys.get_mut(&owner.to_hex()) {
             let latest_device_created_at = entry
                 .devices

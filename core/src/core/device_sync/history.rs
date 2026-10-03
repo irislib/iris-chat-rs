@@ -35,7 +35,7 @@ struct HistorySession {
 }
 
 pub(super) fn record_id(chat_id: &str, id: &str) -> [u8; 32] {
-    Sha256::digest(serde_json::to_vec(&(chat_id, id)).expect("string tuple serializes")).into()
+    Sha256::digest(serde_json::json!([chat_id, id]).to_string().as_bytes()).into()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -44,7 +44,7 @@ fn hex(bytes: &[u8]) -> String {
 
 fn unhex(value: &str, max: usize) -> Option<Vec<u8>> {
     if value.len() > max * 2
-        || value.len() % 2 != 0
+        || !value.len().is_multiple_of(2)
         || !value
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
@@ -53,7 +53,9 @@ fn unhex(value: &str, max: usize) -> Option<Vec<u8>> {
     }
     value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
         .collect()
 }
@@ -497,7 +499,9 @@ impl AppCore {
                 } else {
                     state.seen_missing.extend(ids.iter().cloned());
                     for id in &ids {
-                        let cursor = &state.records[id];
+                        let Some(cursor) = state.records.get(id) else {
+                            continue;
+                        };
                         if let Some(message) =
                             messages::load_history_message(self, cursor).filter(|message| {
                                 state.filter.contains(message.created_at)
@@ -664,17 +668,19 @@ impl AppCore {
         if finished {
             outgoing.push(DeviceSyncPacket::HistoryDone { v: 1, session });
         }
-        if outgoing.is_empty() || self.send_history_packets(peer, outgoing) {
-            if !finished && self.device_sync_peer_is_authorized(peer) {
-                if let Some(runtime) = &mut self.device_sync {
-                    runtime.history.sessions.insert(key, state);
-                }
+        if (outgoing.is_empty() || self.send_history_packets(peer, outgoing))
+            && !finished
+            && self.device_sync_peer_is_authorized(peer)
+        {
+            if let Some(runtime) = &mut self.device_sync {
+                runtime.history.sessions.insert(key, state);
             }
         }
-        if resume_future {
-            if let Some(record) = self.device_history_transfer(peer) {
-                self.start_device_history(peer, record.link_at);
-            }
+        if let Some(record) = resume_future
+            .then(|| self.device_history_transfer(peer))
+            .flatten()
+        {
+            self.start_device_history(peer, record.link_at);
         }
     }
 }

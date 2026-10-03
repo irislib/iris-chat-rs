@@ -341,7 +341,7 @@ pub(super) fn prepare_signer_authorization(
         app_keys.get_all_devices().len() <= 64,
         "Too many linked devices."
     );
-    let mut unsigned = app_keys.get_event_at(owner, created_at);
+    let mut unsigned = canonical_signer_roster(&app_keys, owner, created_at);
     // Device authorization is public. Private labels travel only over the
     // authenticated device-sync channels, including when adding a device.
     unsigned.id = None;
@@ -371,4 +371,21 @@ pub(super) fn validate_signer_authorization(
         .map_err(|_| anyhow::anyhow!("Invalid signer signature."))?;
     AppKeys::from_event(event).map_err(|_| anyhow::anyhow!("Invalid device authorization."))?;
     Ok(())
+}
+
+// Nostr EventBuilder drops self p-tags by default. Fact snapshots index the owner
+// too, so retain that tag explicitly to match the browser's canonical snapshot.
+pub(super) fn canonical_signer_roster(
+    app_keys: &AppKeys,
+    owner: PublicKey,
+    created_at: u64,
+) -> UnsignedEvent {
+    let mut draft = app_keys.get_event_at(owner, created_at);
+    let mut tags = draft.tags.iter().cloned().collect::<Vec<_>>();
+    tags.push(nostr::Tag::public_key(owner));
+    tags.sort_by(|left, right| left.as_slice().cmp(right.as_slice()));
+    tags.dedup();
+    draft.tags = nostr::Tags::from_list(tags);
+    draft.id = None;
+    draft
 }

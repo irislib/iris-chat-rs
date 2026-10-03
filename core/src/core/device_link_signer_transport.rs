@@ -121,17 +121,19 @@ async fn serve(
         let Ok(request) = serde_json::from_str::<Value>(&plaintext) else {
             continue;
         };
-        let Some(id) = request["id"]
-            .as_str()
+        let Some(id) = request
+            .get("id")
+            .and_then(Value::as_str)
             .filter(|id| !id.is_empty() && id.len() <= 128)
         else {
             continue;
         };
-        let Some(method) = request["method"].as_str() else {
+        let Some(method) = request.get("method").and_then(Value::as_str) else {
             continue;
         };
-        let Some(params) = request["params"]
-            .as_array()
+        let Some(params) = request
+            .get("params")
+            .and_then(Value::as_array)
             .filter(|params| params.len() <= 4 && params.iter().all(Value::is_string))
         else {
             continue;
@@ -159,7 +161,10 @@ async fn serve(
                 "switch_relays" if params.is_empty() => Ok(Value::Null),
                 "ping" if params.is_empty() => Ok(json!("pong")),
                 "sign_event" if params.len() == 1 => {
-                    let draft = params[0].as_str().unwrap();
+                    let draft = params
+                        .first()
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow::anyhow!("Invalid device authorization."))?;
                     if let Some((prior, signed, _)) = &approved {
                         anyhow::ensure!(prior == draft, "This link already approved a device.");
                         return Ok(json!(serde_json::to_string(signed)?));

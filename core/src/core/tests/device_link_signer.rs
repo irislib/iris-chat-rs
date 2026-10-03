@@ -124,6 +124,13 @@ fn nostrconnect_device_approval_is_one_addition_with_immutable_devices_and_bound
     let draft =
         prepare_signer_authorization(owner.public_key(), target.public_key(), Some(&old), now)
             .unwrap();
+    assert!(
+        draft
+            .tags
+            .iter()
+            .any(|tag| tag.as_slice() == ["p", &owner.public_key().to_hex()]),
+        "browser canonical snapshots retain the owner index"
+    );
     assert_eq!(
         validate_device_link_draft(owner.public_key(), &draft, Some(&old), now).unwrap(),
         (target.public_key(), now)

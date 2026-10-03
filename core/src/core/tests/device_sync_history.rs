@@ -629,3 +629,68 @@ fn device_sync_history_bounded_page_fallback_completes_only_after_durable_import
     );
     left.runtime.block_on(endpoint.shutdown()).unwrap();
 }
+
+#[test]
+fn device_sync_history_revocation_cannot_reopen_same_key_same_second_pair() {
+    for route in ["signed", "metadata", "local", "self"] {
+        let owner = Keys::generate();
+        let local = Keys::generate();
+        let peer = Keys::generate();
+        let (mut core, _, dir) = logged_in_test_core_with_updates("history-revoke", &owner, &local);
+        configure_test_device_sync_profile(&mut core, &owner, &local, &peer, None);
+        let original = core.app_keys[&owner.public_key().to_hex()].clone();
+        core.create_device_history_transfer(peer.public_key(), true, "ab".repeat(32))
+            .unwrap();
+        assert_eq!(
+            core.device_history_send_since(&peer.public_key().to_hex()),
+            Some(0)
+        );
+        let retained = if route == "self" { &peer } else { &local };
+        let retained_at = if route == "self" { 100 } else { 1 };
+        let removed = AppKeys::new(vec![DeviceEntry::new(retained.public_key(), retained_at)])
+            .get_event_at(owner.public_key(), 101)
+            .sign_with_keys(&owner)
+            .unwrap();
+        match route {
+            "local" => core.remove_local_app_key_device(owner.public_key(), peer.public_key()),
+            "metadata" => {
+                let packet = serde_json::json!({"v":1,"type":"snapshot","rosterAt":1,"appKeys":[{
+                    "ownerPubkey":owner.public_key().to_hex(),"createdAt":101,"devices":[{"identityPubkey":local.public_key().to_hex(),"createdAt":1}]
+                }]});
+                core.handle_device_sync_packet(
+                    &peer.public_key().to_hex(),
+                    DEVICE_SYNC_PORT,
+                    &serde_json::to_vec(&packet).unwrap(),
+                );
+            }
+            _ => {
+                core.apply_app_keys_event(&removed).unwrap();
+            }
+        }
+        let mut relinked = original;
+        relinked.created_at_secs = core.app_keys[&owner.public_key().to_hex()].created_at_secs + 1;
+        // Simulate the next authenticated authorization retaining the exact old key/join second.
+        core.app_keys
+            .insert(owner.public_key().to_hex(), relinked.clone());
+        assert!(
+            core.device_history_transfer(&peer.public_key().to_hex())
+                .is_none(),
+            "old pair survived {route} revocation"
+        );
+        drop(core);
+        let mut reopened = logged_in_test_core_at_data_dir(
+            &owner,
+            &local,
+            dir.path().to_string_lossy().into_owned(),
+        );
+        reopened
+            .app_keys
+            .insert(owner.public_key().to_hex(), relinked);
+        assert!(
+            reopened
+                .device_history_transfer(&peer.public_key().to_hex())
+                .is_none(),
+            "old pair revived after {route} restart"
+        );
+    }
+}

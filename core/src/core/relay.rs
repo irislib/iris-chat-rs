@@ -658,6 +658,11 @@ impl AppCore {
             (applied.app_keys, applied.created_at)
         };
 
+        self.invalidate_removed_device_history(
+            event.pubkey,
+            current.as_ref(),
+            &known_app_keys_from_ndr(event.pubkey, &effective_app_keys, effective_created_at),
+        )?;
         let protocol_retry_batch = if let Some(protocol_engine) = self.protocol_engine.as_mut() {
             protocol_engine.ingest_app_keys_event(event)?
         } else {

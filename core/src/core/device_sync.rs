@@ -734,6 +734,12 @@ impl AppCore {
             if current.as_ref() == Some(&known) {
                 continue;
             }
+            if let Err(error) =
+                self.invalidate_removed_device_history(owner, current.as_ref(), &known)
+            {
+                self.push_debug_log("device_sync.history_revoke.error", error.to_string());
+                continue;
+            }
             let retry_batch = match self.protocol_engine.as_mut() {
                 Some(engine) => match engine.ingest_app_keys_snapshot(
                     owner,

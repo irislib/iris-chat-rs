@@ -453,3 +453,70 @@ impl AppCore {
         self.start_device_history(peer, link_at);
     }
 }
+
+impl AppCore {
+    pub(in crate::core) fn invalidate_removed_device_history(
+        &mut self,
+        owner: PublicKey,
+        previous: Option<&KnownAppKeys>,
+        next: &KnownAppKeys,
+    ) -> anyhow::Result<()> {
+        let Some(logged) = self
+            .logged_in
+            .as_ref()
+            .filter(|logged| logged.owner_pubkey == owner)
+        else {
+            return Ok(());
+        };
+        let removed = previous
+            .into_iter()
+            .flat_map(|known| &known.devices)
+            .filter(|device| {
+                !next
+                    .devices
+                    .iter()
+                    .any(|current| current.identity_pubkey_hex == device.identity_pubkey_hex)
+            })
+            .map(|device| device.identity_pubkey_hex.clone())
+            .collect::<Vec<_>>();
+        if removed.is_empty() {
+            return Ok(());
+        }
+        let local = logged.device_keys.public_key().to_hex();
+        let all = removed.contains(&local);
+        let prefix = format!("{PREFIX}{}:{local}:", owner.to_hex());
+        {
+            let shared = self.app_store.shared();
+            let mut conn = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+            let tx = conn.transaction()?;
+            if all {
+                tx.execute(
+                    "DELETE FROM app_meta WHERE key LIKE ?1",
+                    [format!("{prefix}%")],
+                )?;
+            } else {
+                for peer in &removed {
+                    tx.execute(
+                        "DELETE FROM app_meta WHERE key=?1",
+                        [format!("{prefix}{peer}")],
+                    )?;
+                }
+            }
+            tx.commit()?;
+        }
+        // A later authorization of the same key, even at the same second, must
+        // never revive the previous link operation's old-history permission.
+        for peer in &removed {
+            self.clear_device_history(peer);
+        }
+        if all {
+            if let Some(runtime) = &mut self.device_sync {
+                runtime.history = Default::default();
+            }
+        }
+        self.restore_device_history_progress();
+        Ok(())
+    }
+}

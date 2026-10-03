@@ -94,7 +94,9 @@ impl AppCore {
         {
             return;
         }
-        let pending = self.pending_device_link_signer.as_mut().unwrap();
+        let Some(pending) = self.pending_device_link_signer.as_mut() else {
+            return;
+        };
         if pending.completed && !success {
             return;
         }
@@ -219,8 +221,9 @@ impl AppCore {
             self.app_keys.remove(&owner_hex);
         }
         stored?;
-        self.pending_device_link_signer.as_mut().unwrap().signed =
-            Some((signed.clone(), info.clone(), previous.map(|event| event.id)));
+        if let Some(pending) = self.pending_device_link_signer.as_mut() {
+            pending.signed = Some((signed.clone(), info.clone(), previous.map(|event| event.id)));
+        }
         Ok((signed, info))
     }
 }
@@ -253,9 +256,11 @@ pub(super) fn validate_device_link_draft(
         .filter(|tag| tag.as_slice().first().is_some_and(|name| name == "device"))
     {
         let values = tag.as_slice();
-        anyhow::ensure!(values.len() == 3, "Invalid device authorization.");
-        let key = PublicKey::from_hex(&values[1])?;
-        let joined: u64 = values[2].parse()?;
+        let [_, key, joined] = values else {
+            anyhow::bail!("Invalid device authorization.");
+        };
+        let key = PublicKey::from_hex(key)?;
+        let joined: u64 = joined.parse()?;
         if baseline.get_device(&key).is_none() {
             anyhow::ensure!(
                 added.is_none()
@@ -279,22 +284,32 @@ pub(super) fn validate_device_link_draft(
         .iter()
         .filter(|tag| tag.as_slice().first().is_some_and(|name| name == "d"))
         .collect::<Vec<_>>();
-    anyhow::ensure!(
-        profile_tags.len() == 1 && profile_tags[0].as_slice().len() == 2,
-        "Invalid device profile."
-    );
-    let profile = &profile_tags[0].as_slice()[1];
+    let [profile_tag] = profile_tags.as_slice() else {
+        anyhow::bail!("Invalid device profile.");
+    };
+    let [_, profile] = profile_tag.as_slice() else {
+        anyhow::bail!("Invalid device profile.");
+    };
     uuid::Uuid::parse_str(profile)?;
     // AppKeys generates a fresh subject UUID for every snapshot. Preserve only the
     // validated draft UUID when recomputing; all other tags must match exactly.
-    let expected = baseline.get_event_at(owner, draft.created_at.as_secs());
+    let expected = super::account_signer::canonical_signer_roster(
+        &baseline,
+        owner,
+        draft.created_at.as_secs(),
+    );
     let expected_tags = expected
         .tags
         .iter()
         .map(|tag| {
             let mut values = tag.as_slice().to_vec();
-            if values[0] == "d" || values[0] == "i" {
-                values[1] = profile.clone();
+            if values
+                .first()
+                .is_some_and(|name| name == "d" || name == "i")
+            {
+                if let Some(value) = values.get_mut(1) {
+                    *value = profile.clone();
+                }
             }
             values
         })
