@@ -303,6 +303,7 @@ pub(super) struct RelayTransportRuntime {
     pub(super) publish_drain_dirty: bool,
     pub(super) publish_drain_token: u64,
     pub(super) publish_drain_started_at: Option<Instant>,
+    pub(super) publish_drain_failed_count: usize,
     pub(super) nearby_replay_started_at: Option<Instant>,
     pub(super) retry_backoff_attempt: u32,
     pub(super) next_retry_due_at: Option<Instant>,

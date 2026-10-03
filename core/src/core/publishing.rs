@@ -273,6 +273,7 @@ impl AppCore {
             self.relay_transport_runtime.publish_drain_in_flight = false;
             self.relay_transport_runtime.publish_drain_dirty = false;
             self.relay_transport_runtime.publish_drain_started_at = None;
+            self.relay_transport_runtime.publish_drain_failed_count = 0;
             self.push_debug_log(
                 "relay.transport.drain",
                 format!("reason={reason} reset_stale_in_flight={inflight}"),
@@ -347,6 +348,7 @@ impl AppCore {
         self.relay_transport_runtime.publish_drain_in_flight = true;
         self.relay_transport_runtime.publish_drain_dirty = truncated_to_batch;
         self.relay_transport_runtime.publish_drain_started_at = Some(Instant::now());
+        self.relay_transport_runtime.publish_drain_failed_count = 0;
         self.relay_transport_runtime.publish_drain_token = self
             .relay_transport_runtime
             .publish_drain_token
@@ -602,7 +604,7 @@ impl AppCore {
             result.detail,
         );
         if should_retry {
-            self.schedule_relay_transport_retry("publish_failed");
+            self.relay_transport_runtime.publish_drain_failed_count += 1;
         }
     }
 
@@ -633,7 +635,10 @@ impl AppCore {
             self.relay_transport_runtime.next_retry_due_at = None;
             self.relay_transport_runtime.next_retry_reason = None;
         }
-        let mut failed_pending_count = 0usize;
+        // Production workers stream results before their empty completion packet.
+        // Preserve those failures so coalesced backlog work cannot bypass backoff.
+        let mut failed_pending_count =
+            std::mem::take(&mut self.relay_transport_runtime.publish_drain_failed_count);
         self.enter_batch();
         for result in results {
             if self.handle_relay_publish_finished(
