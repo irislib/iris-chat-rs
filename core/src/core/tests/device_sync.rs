@@ -608,7 +608,7 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
         .expect("overflow notice should elicit a lossless snapshot request");
     let request = serde_json::from_slice::<serde_json::Value>(&request_record).unwrap();
     assert_eq!(request["type"], "request");
-    assert_eq!(request["rosterAt"], 100);
+    assert_eq!(request["rosterAt"], 1, "requests retain the local device join time");
 
     core.device_sync = None;
     core.apply_runtime_text_message(
