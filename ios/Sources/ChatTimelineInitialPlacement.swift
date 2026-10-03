@@ -13,15 +13,12 @@ struct ChatTimelineInitialPlacement {
     mutating func cancel() { isPending = false; awaitingTarget = nil }
 
     mutating func update(
-        targetID: String, frame: CGRect?, measuredEndY: CGFloat? = nil,
+        targetID: String, frame: CGRect?,
         viewportMinY: CGFloat, viewportMaxY: CGFloat
     ) -> Step {
         guard isPending || awaitingTarget != nil else { return .wait }
         guard viewportMinY.isFinite, viewportMaxY.isFinite,
               viewportMaxY > viewportMinY else { return .wait }
-        // Calls and system notices use the existing timeline-end marker;
-        // ordinary messages use their own measured bubble frame.
-        let frame = frame ?? measuredEndY.map { CGRect(x: 0, y: $0 - 1, width: 1, height: 1) }
         if let frame {
             guard !frame.isEmpty, !frame.isInfinite, !frame.isNull,
                   frame.minY.isFinite, frame.maxY.isFinite else { return .wait }

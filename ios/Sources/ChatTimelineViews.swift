@@ -243,7 +243,7 @@ final class ChatTimelineInteractionCoordinator: ObservableObject {
     var keyboardViewportAnchor: ChatKeyboardViewportAnchor?
     var appliedViewportLayout: ChatTimelineViewportLayout?
 #endif
-    var messageBubbleFrames: [String: CGRect] = [:]
+    var messageContentFrames: [String: CGRect] = [:]
     var audioControlFrames: [CGRect] = []
     var bubblePanRejected = false
 
@@ -255,8 +255,8 @@ final class ChatTimelineInteractionCoordinator: ObservableObject {
 #endif
     }
 
-    func messageBubbleId(at location: CGPoint) -> String? {
-        messageBubbleFrames
+    func messageContentId(at location: CGPoint) -> String? {
+        messageContentFrames
             .filter { _, frame in frame.insetBy(dx: -10, dy: -8).contains(location) }
             .min { lhs, rhs in lhs.value.midY < rhs.value.midY }
             .map(\.key)
@@ -295,12 +295,8 @@ struct ChatTimelineBottomMaxYPreferenceKey: PreferenceKey {
     }
 }
 
-// Reports the timeline's intrinsic content height (sum of all bubbles +
-// padding), independent of scroll position. Used as a stable "did the
-// content grow?" signal for the auto-stick-to-bottom logic — bottomMaxY
-// alone changes when the user scrolls, which made the old check
-// repeatedly drag the user back to the bottom every time they scrolled
-// up.
+// Reports intrinsic content height, including estimates for unrealized rows.
+// Growth follows the latest message only while user scrolling permits it.
 struct ChatTimelineContentHeightPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
@@ -317,7 +313,7 @@ struct ChatAudioControlFramePreferenceKey: PreferenceKey {
     }
 }
 
-struct ChatMessageBubbleFramePreferenceKey: PreferenceKey {
+struct ChatMessageContentFramePreferenceKey: PreferenceKey {
     static var defaultValue: [String: CGRect] = [:]
 
     static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
@@ -502,6 +498,15 @@ struct ChatMessageRow: View, Equatable {
         )
     }
 
+    private var contentFrame: some View {
+        GeometryReader { geometry in
+            Color.clear.preference(
+                key: ChatMessageContentFramePreferenceKey.self,
+                value: [message.id: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))]
+            )
+        }
+    }
+
     var body: some View {
         // Hoist a couple of computed values that are read 3-4 times in this
         // body so we don't pay for parsing/struct construction on every
@@ -544,6 +549,7 @@ struct ChatMessageRow: View, Equatable {
 
             if let call = message.call {
                 ChatCallHistoryRow(call: call)
+                    .background(contentFrame)
                     .padding(.top, showDayChip ? 0 : SignalConversationLayout.systemMessageSpacing)
             } else if message.kind == .system {
                 HStack {
@@ -561,6 +567,7 @@ struct ChatMessageRow: View, Equatable {
                     }
                     Spacer(minLength: 24)
                 }
+                .background(contentFrame)
                 .padding(.vertical, 8)
                 .padding(.top, showDayChip ? 0 : SignalConversationLayout.systemMessageSpacing)
                 .accessibilityIdentifier("chatSystemMessage-\(message.id)")
@@ -753,16 +760,7 @@ struct ChatMessageRow: View, Equatable {
                         }
                         .accessibilityIdentifier("chatMessage-\(message.id)")
                         .accessibilityValue(message.isOutgoing ? irisDeliveryLabel(message.delivery) : "")
-                        .background(
-                            GeometryReader { geometry in
-                                Color.clear.preference(
-                                    key: ChatMessageBubbleFramePreferenceKey.self,
-                                    value: [
-                                        message.id: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))
-                                    ]
-                                )
-                            }
-                        )
+                        .background(contentFrame)
                         .padding(.bottom, reactions.isEmpty ? 0 : SignalConversationLayout.reactionPillProtrusion)
                         .overlay(alignment: message.isOutgoing ? .bottomLeading : .bottomTrailing) {
                             if !reactions.isEmpty {

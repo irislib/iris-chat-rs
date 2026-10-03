@@ -202,7 +202,7 @@ struct ChatScreen: View {
                                     timelineScrollSettleGeneration += 1
                                     pendingScrollSettle?.cancel()
                                     pendingScrollSettle = nil
-                                    timelineCoordinator.messageBubbleFrames = [:]
+                                    timelineCoordinator.messageContentFrames = [:]
                                     initialPlacement.reset()
                                     timelineReadyForDisplay = false
                                     isNearBottom = true
@@ -270,11 +270,9 @@ struct ChatScreen: View {
                                     // intrinsic content grew (reaction landed,
                                     // attachment finished loading, quote
                                     // preview rendered, etc.) and we were
-                                    // already following. Crucially, this
-                                    // preference does NOT change while the
-                                    // user is scrolling — only when bubbles
-                                    // actually resize — so scrolling up is
-                                    // never misread as growth.
+                                    // already following. Lazy row realization can also change
+                                    // estimated height. User scrolling disables
+                                    // following before those updates arrive.
                                     let previous = timelineContentHeight
                                     if !chatTimelineGeometryMatches(timelineContentHeight, value) {
                                         timelineContentHeight = value
@@ -287,8 +285,8 @@ struct ChatScreen: View {
                                     }
                                     advanceInitialPlacement(proxy: proxy, chat: chat)
                                 }
-                                .onPreferenceChange(ChatMessageBubbleFramePreferenceKey.self) { value in
-                                    timelineCoordinator.messageBubbleFrames = value
+                                .onPreferenceChange(ChatMessageContentFramePreferenceKey.self) { value in
+                                    timelineCoordinator.messageContentFrames = value
                                     advanceInitialPlacement(proxy: proxy, chat: chat)
                                     recordInteractionLayout()
                                 }
@@ -867,8 +865,10 @@ struct ChatScreen: View {
                 timelineCoordinator.bubblePanRejected = true
                 return
             }
-            guard let messageId = timelineCoordinator.messageBubbleId(at: value.startLocation)
-                    ?? timelineCoordinator.messageBubbleId(at: value.location) else {
+            guard let messageId = timelineCoordinator.messageContentId(at: value.startLocation)
+                    ?? timelineCoordinator.messageContentId(at: value.location),
+                  let message = chat?.messages.first(where: { $0.id == messageId }),
+                  message.kind != .system, message.call == nil else {
                 timelineCoordinator.bubblePanRejected = true
                 return
             }
@@ -941,7 +941,7 @@ struct ChatScreen: View {
 
     private func recordInteractionLayout() {
         guard let timing = manager.interactionTiming, let chat else { return }
-        timing.layout(chatID: chat.chatId, frames: timelineCoordinator.messageBubbleFrames,
+        timing.layout(chatID: chat.chatId, frames: timelineCoordinator.messageContentFrames,
                       viewportMinY: timelineViewportMinY, viewportMaxY: timelineViewportMaxY,
                       ready: timelineIsVisible, messageCount: chat.messages.count)
     }
@@ -953,12 +953,8 @@ struct ChatScreen: View {
               let last = chat.messages.last,
               manager.state.currentChat?.messages.last?.id == last.id else { return }
         let targetID = last.id
-        let endY = (last.call != nil || last.kind == .system) && timelineContentHeight > 0
-            && timelineBottomMaxY < .greatestFiniteMagnitude
-            ? timelineBottomMaxY - SignalConversationLayout.contentBottomMargin - 1 : nil
         let step = initialPlacement.update(
-            targetID: targetID, frame: timelineCoordinator.messageBubbleFrames[targetID],
-            measuredEndY: endY,
+            targetID: targetID, frame: timelineCoordinator.messageContentFrames[targetID],
             viewportMinY: timelineViewportMinY, viewportMaxY: timelineViewportMaxY
         )
         if step == .scroll || step == .scrollAndReveal {

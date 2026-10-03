@@ -54,11 +54,14 @@ final class ChatTimelineInitialPlacementTests: XCTestCase {
         XCTAssertEqual(placement.update(targetID: "new", frame: below, viewportMinY: 0, viewportMaxY: 600), .scroll)
     }
 
-    func testCallOrSystemMessageUsesTheMeasuredTimelineEndInsteadOfAnAbsentBubbleFrame() {
+    func testCallOrSystemMessageWaitsForItsOwnMeasuredContent() {
         var placement = ChatTimelineInitialPlacement()
         XCTAssertEqual(placement.update(targetID: "notice", frame: nil, viewportMinY: 0, viewportMaxY: 600), .scroll)
-        XCTAssertEqual(placement.update(targetID: "notice", frame: nil, measuredEndY: 1_040, viewportMinY: 0, viewportMaxY: 600), .scroll)
-        XCTAssertEqual(placement.update(targetID: "notice", frame: nil, measuredEndY: 600, viewportMinY: 0, viewportMaxY: 600), .reveal)
+        XCTAssertEqual(placement.update(targetID: "notice", frame: nil, viewportMinY: 0, viewportMaxY: 600), .wait)
+        let below = CGRect(x: 0, y: 1_000, width: 100, height: 40)
+        XCTAssertEqual(placement.update(targetID: "notice", frame: below, viewportMinY: 0, viewportMaxY: 600), .scroll)
+        let visible = CGRect(x: 0, y: 560, width: 100, height: 40)
+        XCTAssertEqual(placement.update(targetID: "notice", frame: visible, viewportMinY: 0, viewportMaxY: 600), .reveal)
     }
 
     func testChangingEstimatedRowsCorrectsPlacementWithoutRepeatingAnUnchangedScroll() {
