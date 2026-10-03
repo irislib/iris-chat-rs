@@ -13,13 +13,18 @@ public sealed partial class AppManager
     private string? _historyLoadingBefore;
     private string? _historyExhaustedBefore;
     private HashSet<string>? _historyRecentIds;
+    private HashSet<string>? _historyRawIds;
+    private readonly HashSet<string> _historyExcludedIds = new();
+    private readonly HashSet<string> _historyRemovedIds = new();
     private HashSet<string> _historyReadIds = new();
 
     private void ResetHistoryPaging()
     {
         _historyGeneration++;
         _historyScope = _historyLoadingBefore = _historyExhaustedBefore = null;
-        _historyRecentIds = null;
+        _historyRecentIds = _historyRawIds = null;
+        _historyExcludedIds.Clear();
+        _historyRemovedIds.Clear();
         _historyReadIds.Clear();
     }
 
@@ -45,8 +50,15 @@ public sealed partial class AppManager
         var recentIds = scope != null && scope == _historyScope ? _historyRecentIds : null;
         if (scope != _historyScope) ResetHistoryPaging();
         _historyScope = scope;
-        _historyRecentIds = incoming.currentChat?.messages.Select(message => message.id).ToHashSet();
-        return ChatHistory.PreservePage(previous, incoming, recentIds);
+        var rawIds = incoming.currentChat?.messages.Select(message => message.id).ToHashSet();
+        if (_historyRawIds != null && rawIds != null)
+            _historyRemovedIds.UnionWith(_historyRawIds.Except(rawIds));
+        if (rawIds != null) _historyRemovedIds.ExceptWith(rawIds);
+        var next = ChatHistory.PreservePage(previous, incoming, recentIds,
+            _historyRawIds, _historyExcludedIds, out var nextRecentIds);
+        _historyRecentIds = nextRecentIds;
+        _historyRawIds = rawIds;
+        return next;
     }
 
     public async Task<bool> LoadOlderMessagesAsync(string chatId)
@@ -73,7 +85,8 @@ public sealed partial class AppManager
         if (page?.chatId != chatId || current?.chatId != chatId) return false;
         if (page.messages.Length < RouteChatSnapshotLimit) _historyExhaustedBefore = page.messages.FirstOrDefault()?.id ?? before;
         var currentIds = current.messages.Select(message => message.id).ToHashSet();
-        var validPage = page.messages.Where(message => !_historyReadIds.Contains(message.id) || currentIds.Contains(message.id)).ToArray();
+        var validPage = page.messages.Where(message => !_historyRemovedIds.Contains(message.id)
+            && (!_historyReadIds.Contains(message.id) || currentIds.Contains(message.id))).ToArray();
         _historyReadIds.Clear();
         var messages = ChatHistory.Merge(validPage, current.messages);
         if (messages.Length == current.messages.Length) return false;
@@ -98,13 +111,33 @@ internal static class ChatHistory
         return retained.Concat(current).OrderBy(message => message.createdAtSecs).ToArray();
     }
 
-    public static AppState PreservePage(AppState previous, AppState incoming, HashSet<string>? oldRecentIds)
+    public static AppState PreservePage(AppState previous, AppState incoming, HashSet<string>? oldRecentIds) =>
+        PreservePage(previous, incoming, oldRecentIds, null, new HashSet<string>(), out _);
+
+    public static AppState PreservePage(AppState previous, AppState incoming, HashSet<string>? oldRecentIds,
+        HashSet<string>? oldRawIds, HashSet<string> excludedIds, out HashSet<string>? recentIds)
     {
-        if (previous.account?.publicKeyHex != incoming.account?.publicKeyHex
-            || previous.currentChat is not {} oldChat || incoming.currentChat is not {} nextChat
-            || oldChat.chatId != nextChat.chatId) return incoming;
-        if (oldRecentIds == null) return incoming;
-        return incoming with { currentChat = nextChat with {
-            messages = Merge(oldChat.messages.Where(message => !oldRecentIds.Contains(message.id)).ToArray(), nextChat.messages) } };
+        recentIds = null;
+        if (incoming.currentChat is not { } nextChat) return incoming;
+        var raw = nextChat.messages;
+        // A resident core may still hold thousands of rows. Opening a chat only
+        // exposes its newest page; live arrivals may extend that window.
+        var start = oldRecentIds == null ? -1 : Array.FindIndex(raw, m => oldRecentIds.Contains(m.id));
+        if (start < 0 && oldRawIds == null) start = Math.Max(0, raw.Length - 80);
+        if (start > 0) excludedIds.UnionWith(raw.Take(start).Select(m => m.id));
+        var recent = raw.Where(m => !excludedIds.Contains(m.id)).ToArray();
+        recentIds = recent.Select(m => m.id).ToHashSet();
+        var messages = recent;
+        if (previous.account?.publicKeyHex == incoming.account?.publicKeyHex
+            && previous.currentChat is { } oldChat && oldChat.chatId == nextChat.chatId
+            && oldRecentIds != null)
+        {
+            var fresh = raw.ToDictionary(m => m.id);
+            var older = oldChat.messages.Where(m => !oldRecentIds.Contains(m.id))
+                .Where(m => fresh.ContainsKey(m.id) || oldRawIds == null || !oldRawIds.Contains(m.id))
+                .Select(m => fresh.GetValueOrDefault(m.id, m)).ToArray();
+            messages = Merge(older, recent);
+        }
+        return incoming with { currentChat = nextChat with { messages = messages } };
     }
 }
