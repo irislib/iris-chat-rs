@@ -1876,9 +1876,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.4.21"
+version = "0.4.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36ba872a7e17aca9ace5247051c276de5b976c0e1fade2786fed2c85bbdb8579"
+checksum = "87ae9b9b37c380d9afdc25b460a7851628d35e8b7ed5bbd24b7719f9e427a580"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -3126,9 +3126,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.5.12"
+version = "0.5.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21f9d7634da0eafe91a4b0ec79721ccc943fd60c8fa1e1eab296bc0ac1e07c9d"
+checksum = "2a2b91964410e3f01b921bb6edc98d61c24a928579da86fdcdf3ef52338c2f60"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3308,9 +3308,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.89"
+version = "0.4.91"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e66122da4be57695b001566103e395fb4ea1a4ec8dfad1af1172eb820914d891"
+checksum = "322c2b9eb949daf2a6c102ebb3b8a1fb015f321ec7cd35018c5c2b2193779239"
 dependencies = [
  "base64",
  "bluer",
@@ -3357,9 +3357,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.89"
+version = "0.4.91"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed30c9abbf9067422f9db55d80e6629670b178aba8674bb90f8d9a83eeef515f"
+checksum = "5328b89f6fadf7666a01910f996e98d34262a1e2d3834ebf04a522298d674541"
 dependencies = [
  "nvpn-fips-core",
 ]
@@ -3387,9 +3387,9 @@ checksum = "7d5078996e38a6e568e2783b93601dc55eb96bb3df0fa1c4307cdab80b85ab97"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.22"
+version = "0.2.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84a8f4faaed494d05c454cb5d51bb578457a33ea213f3096f7e1cd791a7a97ae"
+checksum = "9b6711d407aa19d96b021daf5bd1211aae8c9351002de683024e6a1417ce8f2c"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
@@ -5037,7 +5037,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
