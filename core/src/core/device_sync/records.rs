@@ -14,6 +14,12 @@ pub(super) enum RecordScope {
     State,
 }
 
+#[derive(Clone)]
+pub(super) enum RecordLocator {
+    Group(String),
+    Head(String),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(super) enum DeviceSyncRecord {
@@ -77,6 +83,15 @@ impl DeviceSyncRecord {
         };
         Sha256::digest(value.to_string().as_bytes()).into()
     }
+    pub(super) fn fits_packet(&self) -> bool {
+        serde_json::to_vec(&DeviceSyncPacket::HistoryRecords {
+            v: 1,
+            session: "0".repeat(32),
+            records: vec![self.clone()],
+            requested: Vec::new(),
+        })
+        .is_ok_and(|bytes| bytes.len() <= DEVICE_SYNC_MAX_PACKET_BYTES)
+    }
     pub(super) fn timestamp(&self) -> u64 {
         match self {
             Self::Message { message } => message.created_at,
@@ -89,6 +104,12 @@ impl DeviceSyncRecord {
             Self::Message { .. } | Self::Reaction { .. } => RecordScope::History,
             _ => RecordScope::State,
         }
+    }
+    pub(super) fn locator(&self) -> Option<RecordLocator> {
+        if let Self::Group { group } = self {
+            return Some(RecordLocator::Group(group.id.clone()));
+        }
+        self.storage_key().map(RecordLocator::Head)
     }
     fn storage_key(&self) -> Option<String> {
         Some(match self {
@@ -151,6 +172,9 @@ impl AppCore {
         }
     }
     pub(super) fn sync_record_allowed(&self, record: &DeviceSyncRecord) -> bool {
+        if !record.fits_packet() {
+            return false;
+        }
         match record {
             DeviceSyncRecord::Message { message } => {
                 messages::history_message_allowed(self, message)
@@ -162,6 +186,7 @@ impl AppCore {
                     && r.message_id.len() <= 128
                     && r.emoji.len() <= 256
                     && valid_time(r.created_at, r.created_at_ms)
+                    && !self.sync_reaction_target_expired(&r.chat_id, &r.message_id)
                     && self.sync_record_author_allowed(&r.chat_id, &r.author, false)
                     && !self.chat_activity_is_deleted(&r.chat_id, r.created_at)
                     && !self
@@ -185,6 +210,7 @@ impl AppCore {
                 event.kind == Kind::Metadata
                     && event.verify().is_ok()
                     && event.content.len() <= 32 * 1024
+                    && event.tags.len() <= 256
                     && event.created_at.as_secs() <= unix_now().get().saturating_add(300)
                     && self.profile_sync_owner_allowed(event.pubkey)
             }
@@ -196,6 +222,22 @@ impl AppCore {
                         .is_some_and(|login| group.members.contains(&login.owner_pubkey.to_hex()))
             }
         }
+    }
+    fn sync_reaction_target_expired(&self, chat: &str, id: &str) -> bool {
+        let expiry = self
+            .threads
+            .get(chat)
+            .and_then(|thread| thread.messages.iter().find(|m| m.id == id))
+            .and_then(|m| m.expires_at_secs)
+            .or_else(|| {
+                self.app_store
+                    .load_messages_around(chat, id, 0, 0)
+                    .ok()?
+                    .into_iter()
+                    .next()?
+                    .expires_at_secs
+            });
+        expiry.is_some_and(|until| until <= unix_now().get())
     }
     fn profile_sync_owner_allowed(&self, owner: PublicKey) -> bool {
         let Some(local) = self
@@ -213,21 +255,6 @@ impl AppCore {
                     && group.members.iter().any(|key| key.to_hex() == owner)
             })
     }
-    pub(super) fn sync_state_records(&self) -> Vec<DeviceSyncRecord> {
-        let mut records = self
-            .build_device_sync_snapshot(0, false)
-            .groups
-            .into_iter()
-            .map(|group| DeviceSyncRecord::Group { group })
-            .collect::<Vec<_>>();
-        records.extend(
-            self.stored_sync_records()
-                .into_iter()
-                .filter(|record| record.scope() == RecordScope::State),
-        );
-        records.retain(|record| self.sync_record_allowed(record));
-        records
-    }
     pub(super) fn apply_sync_record(&mut self, record: DeviceSyncRecord) -> bool {
         if let DeviceSyncRecord::Reaction { reaction } = &record {
             if self
@@ -235,6 +262,7 @@ impl AppCore {
                 .message_was_locally_deleted(&reaction.chat_id, Some(&reaction.message_id), None)
                 .unwrap_or(false)
                 || self.chat_activity_is_deleted(&reaction.chat_id, reaction.created_at)
+                || self.sync_reaction_target_expired(&reaction.chat_id, &reaction.message_id)
             {
                 return true;
             }

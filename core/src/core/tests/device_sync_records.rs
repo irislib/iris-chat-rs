@@ -1,5 +1,14 @@
 #[test]
 fn device_sync_typed_records_repair_reactions_and_current_state_with_both_history_choices() {
+    run_device_sync_typed_records(None);
+}
+
+#[test]
+fn device_sync_typed_records_above_inventory_cap_complete_all_scopes() {
+    run_device_sync_typed_records(Some(1));
+}
+
+fn run_device_sync_typed_records(record_limit: Option<usize>) {
     for include_history in [true, false] {
         let owner = Keys::generate();
         let a = Keys::generate();
@@ -33,6 +42,20 @@ fn device_sync_typed_records_repair_reactions_and_current_state_with_both_histor
                 Some(chat.clone()),
                 None,
             );
+        }
+        if record_limit.is_some() {
+            for n in 0..8 {
+                left.push_incoming_message_from(
+                    &chat,
+                    Some(format!("same-second-{n}")),
+                    "same time".into(),
+                    50,
+                    None,
+                    None,
+                    Some(chat.clone()),
+                    None,
+                );
+            }
         }
         left.apply_incoming_reaction_to_chat(&chat, "old", &owner_hex, "❤");
         left.apply_incoming_reaction_to_chat(&chat, "new", &chat, "😀");
@@ -143,11 +166,18 @@ fn device_sync_typed_records_repair_reactions_and_current_state_with_both_histor
             right_tx,
             vec![test_fips_peer(&a)],
         );
-        let request = serde_json::to_vec(&serde_json::json!({"type":"request","v":1,"rosterAt":100,"historyReconcile":1,"recordReconcile":1})).unwrap();
+        if let Some(limit) = record_limit {
+            left.set_device_history_record_limit_for_test(limit);
+            right.set_device_history_record_limit_for_test(limit);
+        }
+        let request = serde_json::to_vec(
+            &serde_json::json!({"type":"request","v":1,"rosterAt":100,"recordReconcile":1}),
+        )
+        .unwrap();
         left.handle_device_sync_packet(&b.public_key().to_hex(), DEVICE_SYNC_PORT, &request);
         right.handle_device_sync_packet(&a.public_key().to_hex(), DEVICE_SYNC_PORT, &request);
         let mut trace = Vec::new();
-        for _ in 0..128 {
+        for _ in 0..2048 {
             let x = drain_history_wire(&mut left, &a, &mut right, &b, &left_rx, &mut trace);
             let y = drain_history_wire(&mut right, &b, &mut left, &a, &right_rx, &mut trace);
             if !x && !y {
@@ -260,6 +290,44 @@ fn device_sync_typed_records_repair_reactions_and_current_state_with_both_histor
             right.owner_display_name(&chat).as_deref(),
             Some("Contact offline")
         );
+        if record_limit.is_some() {
+            assert!(trace.iter().any(|packet| packet["type"] == "historyOpen"
+                && packet["prefix"]
+                    .as_str()
+                    .is_some_and(|prefix| !prefix.is_empty())));
+            assert!(trace
+                .iter()
+                .any(|packet| packet["type"] == "historyOverflow"));
+            assert!(trace
+                .iter()
+                .filter(|packet| packet["type"] == "historyOpen"
+                    && packet["scope"] == "history"
+                    && packet["since"] == 0)
+                .all(|packet| packet["until"] == 99 && packet["linkId"] == "ac".repeat(32)));
+            for n in 0..8 {
+                assert_eq!(
+                    has_device_sync_message(&right, &chat, &format!("same-second-{n}")),
+                    include_history
+                );
+            }
+            assert!(
+                right
+                    .device_history_transfer(&a.public_key().to_hex())
+                    .unwrap()
+                    .complete
+            );
+            if include_history {
+                assert_eq!(
+                    right
+                        .state
+                        .device_history_sync
+                        .as_ref()
+                        .unwrap()
+                        .imported_messages,
+                    9
+                );
+            }
+        }
         right.persist_best_effort_inner();
         let keys = right.app_keys.clone();
         drop(right);
@@ -358,7 +426,10 @@ fn device_sync_typed_completion_rejects_duplicate_ids_before_applying_records() 
     let (right_tx, right_rx) = DeviceSyncTcpSender::test_channel(256, 64 * 1024);
     left.install_device_sync_sender_for_test(endpoint.clone(), left_tx, vec![test_fips_peer(&b)]);
     right.install_device_sync_sender_for_test(endpoint.clone(), right_tx, vec![test_fips_peer(&a)]);
-    let request = serde_json::to_vec(&serde_json::json!({"v":1,"type":"request","rosterAt":100,"historyReconcile":1,"recordReconcile":1})).unwrap();
+    let request = serde_json::to_vec(
+        &serde_json::json!({"v":1,"type":"request","rosterAt":100,"recordReconcile":1}),
+    )
+    .unwrap();
     left.handle_device_sync_packet(&b.public_key().to_hex(), DEVICE_SYNC_PORT, &request);
     right.handle_device_sync_packet(&a.public_key().to_hex(), DEVICE_SYNC_PORT, &request);
     let mut trace = Vec::new();
@@ -414,5 +485,215 @@ fn device_sync_typed_completion_rejects_duplicate_ids_before_applying_records() 
         right.owner_display_name(&chat).as_deref(),
         Some("Private profile")
     );
+    left.runtime.block_on(endpoint.shutdown()).unwrap();
+}
+
+#[test]
+fn device_sync_reactions_expire_with_target_and_keep_durable_suppression() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let contact = Keys::generate().public_key().to_hex();
+    let (mut core, _, _dir) = logged_in_test_core_with_updates("typed-expiry", &owner, &device);
+    let now = unix_now().get();
+    core.push_incoming_message_from(
+        &contact,
+        Some("expires".into()),
+        "short lived".into(),
+        now,
+        Some(now + 5),
+        None,
+        Some(contact.clone()),
+        None,
+    );
+    assert!(core.capture_device_sync_control(
+        &contact,
+        "reaction",
+        &contact,
+        now,
+        REACTION_KIND,
+        "x",
+        &[nostr::Tag::parse(["e", "expires"]).unwrap()]
+    ));
+    core.threads
+        .get_mut(&contact)
+        .unwrap()
+        .messages
+        .iter_mut()
+        .find(|m| m.id == "expires")
+        .unwrap()
+        .expires_at_secs = Some(now - 1);
+    core.persist_best_effort_inner();
+    assert!(!core.capture_device_sync_control(
+        &contact,
+        "before-prune",
+        &contact,
+        now,
+        REACTION_KIND,
+        "x",
+        &[nostr::Tag::parse(["e", "expires"]).unwrap()]
+    ));
+    core.prune_expired_messages(now);
+    assert!(core
+        .app_store
+        .message_was_locally_deleted(&contact, Some("expires"), None)
+        .unwrap());
+    assert!(!core.capture_device_sync_control(
+        &contact,
+        "after-prune",
+        &contact,
+        now,
+        REACTION_KIND,
+        "x",
+        &[nostr::Tag::parse(["e", "expires"]).unwrap()]
+    ));
+    assert!(core.capture_device_sync_control(
+        &contact,
+        "not-yet-arrived",
+        &contact,
+        now,
+        REACTION_KIND,
+        "x",
+        &[nostr::Tag::parse(["e", "future-target"]).unwrap()]
+    ));
+}
+
+#[test]
+fn device_sync_typed_need_withholds_replaced_reactions_and_profiles() {
+    let owner = Keys::generate();
+    let a = Keys::generate();
+    let b = Keys::generate();
+    let contact = Keys::generate();
+    let chat = contact.public_key().to_hex();
+    let (mut left, _, _left_dir) =
+        logged_in_test_core_with_updates("typed-current-left", &owner, &a);
+    let (mut right, _, _right_dir) =
+        logged_in_test_core_with_updates("typed-current-right", &owner, &b);
+    configure_test_device_sync_profile(&mut left, &owner, &a, &b, None);
+    for known in left.app_keys.values_mut() {
+        known
+            .devices
+            .sort_by(|a, b| a.identity_pubkey_hex.cmp(&b.identity_pubkey_hex));
+    }
+    right.app_keys = left.app_keys.clone();
+    left.create_device_history_transfer(b.public_key(), true, "de".repeat(32))
+        .unwrap();
+    right
+        .record_device_history_approver(&a.public_key().to_hex(), 100, "de".repeat(32))
+        .unwrap();
+    left.push_incoming_message_from(
+        &chat,
+        Some("old-target".into()),
+        "old".into(),
+        50,
+        None,
+        None,
+        Some(chat.clone()),
+        None,
+    );
+    assert!(left.capture_device_sync_control(
+        &chat,
+        "superseded-reaction",
+        &chat,
+        51,
+        REACTION_KIND,
+        "x",
+        &[nostr::Tag::parse(["e", "old-target"]).unwrap()]
+    ));
+    let profile = |name: &str, time| {
+        EventBuilder::new(Kind::Metadata, serde_json::json!({"name":name}).to_string())
+            .custom_created_at(Timestamp::from_secs(time))
+            .sign_with_keys(&contact)
+            .unwrap()
+    };
+    let old_profile = profile("Old", 60);
+    assert!(left.apply_profile_metadata_event(&old_profile));
+    left.persist_best_effort_inner();
+    let endpoint = Arc::new(
+        left.runtime
+            .block_on(
+                fips_core::FipsEndpoint::builder()
+                    .without_system_tun()
+                    .bind(),
+            )
+            .unwrap(),
+    );
+    let (left_tx, left_rx) = DeviceSyncTcpSender::test_channel(256, 64 * 1024);
+    let (right_tx, right_rx) = DeviceSyncTcpSender::test_channel(256, 64 * 1024);
+    left.install_device_sync_sender_for_test(endpoint.clone(), left_tx, vec![test_fips_peer(&b)]);
+    right.install_device_sync_sender_for_test(endpoint.clone(), right_tx, vec![test_fips_peer(&a)]);
+    let request = serde_json::to_vec(
+        &serde_json::json!({"v":1,"type":"request","rosterAt":100,"recordReconcile":1}),
+    )
+    .unwrap();
+    left.handle_device_sync_packet(&b.public_key().to_hex(), DEVICE_SYNC_PORT, &request);
+    let mut trace = Vec::new();
+    drain_history_wire(&mut left, &a, &mut right, &b, &left_rx, &mut trace);
+    drain_history_wire(&mut right, &b, &mut left, &a, &right_rx, &mut trace);
+    // Both immutable inventories are captured; no demand has reached the source yet.
+    assert!(left.capture_device_sync_control(
+        &chat,
+        "winning-remove",
+        &chat,
+        52,
+        REACTION_KIND,
+        "",
+        &[nostr::Tag::parse(["e", "old-target"]).unwrap()]
+    ));
+    assert!(left.apply_profile_metadata_event(&profile("Current", 70)));
+    for _ in 0..64 {
+        let x = drain_history_wire(&mut left, &a, &mut right, &b, &left_rx, &mut trace);
+        let y = drain_history_wire(&mut right, &b, &mut left, &a, &right_rx, &mut trace);
+        if !x && !y {
+            break;
+        }
+    }
+    let records = trace
+        .iter()
+        .filter(|p| p["type"] == "historyRecords")
+        .flat_map(|p| p["records"].as_array().unwrap())
+        .collect::<Vec<_>>();
+    assert!(records
+        .iter()
+        .all(|r| r["reaction"]["id"] != "superseded-reaction"
+            && r["event"]["id"] != old_profile.id.to_hex()));
+    let old_hash = <sha2::Sha256 as sha2::Digest>::digest(
+        serde_json::json!(["reaction", chat, "superseded-reaction"])
+            .to_string()
+            .as_bytes(),
+    )
+    .iter()
+    .map(|b| format!("{b:02x}"))
+    .collect::<String>();
+    assert!(
+        trace.iter().any(|p| p["type"] == "historyNeed"
+            && p["ids"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|id| id == &old_hash)),
+        "stale head was actually demanded"
+    );
+    left.handle_device_sync_packet(&b.public_key().to_hex(), DEVICE_SYNC_PORT, &request);
+    for _ in 0..64 {
+        let x = drain_history_wire(&mut left, &a, &mut right, &b, &left_rx, &mut trace);
+        let y = drain_history_wire(&mut right, &b, &mut left, &a, &right_rx, &mut trace);
+        if !x && !y {
+            break;
+        }
+    }
+    assert_eq!(right.owner_display_name(&chat).as_deref(), Some("Current"));
+    assert!(
+        right
+            .device_history_transfer(&a.public_key().to_hex())
+            .unwrap()
+            .complete
+    );
+    assert!(right.threads[&chat]
+        .messages
+        .iter()
+        .find(|m| m.id == "old-target")
+        .unwrap()
+        .reactors
+        .is_empty());
     left.runtime.block_on(endpoint.shutdown()).unwrap();
 }

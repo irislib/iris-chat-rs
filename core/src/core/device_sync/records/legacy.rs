@@ -31,6 +31,19 @@ impl AppCore {
             })
             .collect::<Vec<_>>();
         message.legacy_reactions = (!reactions.is_empty()).then_some(reactions);
+        while !(DeviceSyncRecord::Message {
+            message: message.clone(),
+        })
+        .fits_packet()
+        {
+            let Some(reactions) = &mut message.legacy_reactions else {
+                break;
+            };
+            reactions.pop();
+            if reactions.is_empty() {
+                message.legacy_reactions = None;
+            }
+        }
     }
     pub(in crate::core::device_sync) fn apply_legacy_sync_reactions(
         &mut self,
@@ -51,7 +64,7 @@ impl AppCore {
             }
         }
     }
-    fn has_reaction_head(&self, chat: &str, message: &str, author: &str) -> bool {
+    pub(super) fn has_reaction_head(&self, chat: &str, message: &str, author: &str) -> bool {
         self.sync_head_exists(&serde_json::json!(["reaction", chat, message, author]).to_string())
     }
     pub(in crate::core::device_sync) fn has_group_settings_head(&self, group: &str) -> bool {

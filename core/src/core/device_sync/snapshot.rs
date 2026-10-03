@@ -77,33 +77,10 @@ impl AppCore {
         let groups = self
             .groups
             .values()
-            .map(|group| DeviceSyncGroup {
-                legacy_message_ttl_seconds: self
-                    .chat_message_ttl_seconds
-                    .get(&group_chat_id(&group.group_id))
-                    .copied(),
-                id: group.group_id.clone(),
-                name: group.name.clone(),
-                description: group.about.clone(),
-                picture: group.picture.clone(),
-                created_by: group.created_by.to_hex(),
-                members: group.members.iter().map(|member| member.to_hex()).collect(),
-                admins: group.admins.iter().map(|admin| admin.to_hex()).collect(),
-                protocol: Some(
-                    match group.protocol.strategy {
-                        GroupStrategy::PairwiseFanout => "pairwise_fanout_v1",
-                        GroupStrategy::SenderKey => "sender_key_v1",
-                    }
-                    .to_string(),
-                ),
-                revision: group.revision,
-                created_at: group.created_at.get(),
-                updated_at: group.updated_at.get(),
-                accepted: Some(true),
-            })
+            .map(|group| DeviceSyncGroup::from_current(self, group))
             .collect();
         let messages = if include_messages {
-            collect_device_sync_messages(self, roster_at, None, DEVICE_SYNC_PAGE_MESSAGES).0
+            collect_device_sync_messages(self, roster_at, None, DEVICE_SYNC_RECORD_BATCH).0
         } else {
             Vec::new()
         };
@@ -364,6 +341,35 @@ impl AppCore {
         }
         if !app_keys_retry_batch.is_empty() {
             self.process_protocol_engine_retry_batch("device_sync_app_keys", app_keys_retry_batch);
+        }
+    }
+}
+
+impl DeviceSyncGroup {
+    pub(super) fn from_current(core: &AppCore, group: &GroupSnapshot) -> Self {
+        DeviceSyncGroup {
+            legacy_message_ttl_seconds: core
+                .chat_message_ttl_seconds
+                .get(&group_chat_id(&group.group_id))
+                .copied(),
+            id: group.group_id.clone(),
+            name: group.name.clone(),
+            description: group.about.clone(),
+            picture: group.picture.clone(),
+            created_by: group.created_by.to_hex(),
+            members: group.members.iter().map(|member| member.to_hex()).collect(),
+            admins: group.admins.iter().map(|admin| admin.to_hex()).collect(),
+            protocol: Some(
+                match group.protocol.strategy {
+                    GroupStrategy::PairwiseFanout => "pairwise_fanout_v1",
+                    GroupStrategy::SenderKey => "sender_key_v1",
+                }
+                .to_string(),
+            ),
+            revision: group.revision,
+            created_at: group.created_at.get(),
+            updated_at: group.updated_at.get(),
+            accepted: Some(true),
         }
     }
 }

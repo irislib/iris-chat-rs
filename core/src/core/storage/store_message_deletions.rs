@@ -21,6 +21,16 @@ pub(super) fn contains(
         .is_some())
 }
 
+pub(super) fn mark_expired(conn: &rusqlite::Connection, now_secs: u64) -> anyhow::Result<()> {
+    // Match deletion_key's UTF-8 byte length, including non-ASCII group IDs.
+    for (column, kind) in [("id", "id"), ("source_event_id", "source")] {
+        conn.execute(&format!("INSERT OR IGNORE INTO app_meta(key,value)
+            SELECT 'message_deleted:' || length(CAST(chat_id AS BLOB)) || ':' || chat_id || ':{kind}:' || {column}, '1'
+            FROM messages WHERE expires_at_secs IS NOT NULL AND expires_at_secs <= ?1 AND {column} IS NOT NULL"), [now_secs as i64])?;
+    }
+    Ok(())
+}
+
 impl AppStore {
     pub(crate) fn deleted_message_ids(
         &self,

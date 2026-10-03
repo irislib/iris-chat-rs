@@ -35,13 +35,6 @@ impl AppCore {
             if !record.wins(&previous) {
                 return Ok(false);
             }
-        } else {
-            let count: u64 = conn.query_row(
-                "SELECT count(*) FROM app_meta WHERE key LIKE ?1",
-                [format!("{prefix}%")],
-                |row| row.get(0),
-            )?;
-            anyhow::ensure!(count < 100_000, "Record cache full");
         }
         conn.execute("INSERT INTO app_meta(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", rusqlite::params![key,serde_json::to_string(record)?])?;
         Ok(true)
@@ -73,26 +66,67 @@ impl AppCore {
             .filter_map(|json| serde_json::from_str(&json).ok())
             .collect()
     }
-    pub(in crate::core::device_sync) fn stored_sync_records(&self) -> Vec<DeviceSyncRecord> {
-        let Some(prefix) = self.sync_record_prefix() else {
-            return Vec::new();
-        };
+    pub(in crate::core::device_sync) fn sync_record_page(
+        &self,
+        after: &str,
+    ) -> anyhow::Result<Vec<(String, DeviceSyncRecord)>> {
+        let prefix = self
+            .sync_record_prefix()
+            .ok_or_else(|| anyhow::anyhow!("No account"))?;
         let shared = self.app_store.shared();
-        let Ok(conn) = shared.lock() else {
-            return Vec::new();
-        };
-        let Ok(mut query) =
-            conn.prepare("SELECT value FROM app_meta WHERE key LIKE ?1 ORDER BY key LIMIT 100001")
-        else {
-            return Vec::new();
-        };
-        let Ok(rows) = query.query_map([format!("{prefix}%")], |row| row.get::<_, String>(0))
-        else {
-            return Vec::new();
-        };
-        rows.filter_map(Result::ok)
-            .filter_map(|json| serde_json::from_str(&json).ok())
-            .collect()
+        let conn = shared.lock().map_err(|_| anyhow::anyhow!("Storage lock"))?;
+        let mut query = conn.prepare(
+            "SELECT key,value FROM app_meta WHERE key LIKE ?1 AND key>?2 ORDER BY key LIMIT 256",
+        )?;
+        let rows = query.query_map(rusqlite::params![format!("{prefix}%"), after], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.map(|row| {
+            let (key, json) = row?;
+            Ok((key, serde_json::from_str(&json)?))
+        })
+        .collect()
+    }
+    pub(in crate::core::device_sync) fn visit_sync_records(
+        &self,
+        mut visit: impl FnMut(DeviceSyncRecord) -> bool,
+    ) -> anyhow::Result<()> {
+        let mut after = String::new();
+        loop {
+            let page = self.sync_record_page(&after)?;
+            if page.is_empty() {
+                return Ok(());
+            }
+            for (key, record) in page {
+                after = key;
+                if !visit(record) {
+                    return Ok(());
+                }
+            }
+        }
+    }
+    pub(in crate::core::device_sync) fn load_sync_record(
+        &self,
+        locator: &RecordLocator,
+    ) -> Option<DeviceSyncRecord> {
+        match locator {
+            RecordLocator::Group(id) => Some(DeviceSyncRecord::Group {
+                group: DeviceSyncGroup::from_current(self, self.groups.get(id)?),
+            }),
+            RecordLocator::Head(key) => {
+                let prefix = self.sync_record_prefix()?;
+                let shared = self.app_store.shared();
+                let conn = shared.lock().ok()?;
+                let json: String = conn
+                    .query_row(
+                        "SELECT value FROM app_meta WHERE key=?1",
+                        [format!("{prefix}{key}")],
+                        |row| row.get(0),
+                    )
+                    .ok()?;
+                serde_json::from_str(&json).ok()
+            }
+        }
     }
     pub(in crate::core::device_sync) fn sync_record_is_stored(
         &self,

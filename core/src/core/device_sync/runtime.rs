@@ -365,10 +365,8 @@ impl AppCore {
                 v: DEVICE_SYNC_VERSION,
                 roster_at: config.roster_at,
                 page: None,
-                history_reconcile: Some(1),
                 record_reconcile: Some(1),
                 history_since: None,
-                link_id: None,
             });
             let resync_required = serde_json::to_vec(&DeviceSyncPacket::ResyncRequired {
                 v: DEVICE_SYNC_VERSION,

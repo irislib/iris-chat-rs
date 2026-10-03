@@ -275,6 +275,7 @@ impl AppStore {
                 }
                 chat_ids
             };
+            store_message_deletions::mark_expired(&tx, now_secs)?;
             let deleted = tx.execute(
                 "DELETE FROM messages
                  WHERE expires_at_secs IS NOT NULL AND expires_at_secs <= ?1",

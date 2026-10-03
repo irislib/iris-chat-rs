@@ -17,10 +17,6 @@ pub(in crate::core) struct HistoryTransfer {
     pub(in crate::core) imported: u64,
     #[serde(default)]
     pub(in crate::core) total: Option<u64>,
-    #[serde(default)]
-    pub(in crate::core) fallback: bool,
-    #[serde(default)]
-    pub(in crate::core) fallback_failed: bool,
 }
 
 impl AppCore {
@@ -45,8 +41,6 @@ impl AppCore {
                 policy_known: true,
                 imported: 0,
                 total: None,
-                fallback: false,
-                fallback_failed: false,
             }),
         )
     }
@@ -74,8 +68,6 @@ impl AppCore {
                 policy_known: false,
                 imported: 0,
                 total: None,
-                fallback: false,
-                fallback_failed: false,
             }),
         )
     }
@@ -354,111 +346,21 @@ impl AppCore {
 }
 
 impl AppCore {
-    pub(super) fn begin_device_history_fallback(&mut self, peer: &str) {
-        let Some(mut record) = self
-            .device_history_transfer(peer)
-            .filter(|record| !record.outbound && !record.complete && record.since == 0)
-        else {
-            return;
-        };
-        record.fallback = true;
-        record.fallback_failed = false;
-        if self
-            .store_device_history_transfer(peer, Some(&record))
-            .is_ok()
-        {
-            self.update_device_history_progress(
-                peer,
-                crate::DeviceHistorySyncPhase::Transferring,
-                None,
-            );
-        }
-    }
-
     pub(super) fn apply_device_history_snapshot(
         &mut self,
         peer: &str,
         mut snapshot: DeviceSyncSnapshot,
     ) {
-        let fallback = self
-            .device_history_transfer(peer)
-            .filter(|record| !record.outbound && !record.complete && record.fallback);
         for message in &mut snapshot.messages {
-            if fallback
-                .as_ref()
-                .is_none_or(|record| record.since != 0 || message.created_at >= record.link_at)
-            {
-                message.legacy_reactions = None;
-            }
+            message.legacy_reactions = None;
         }
-        let incoming = snapshot
-            .messages
-            .iter()
-            .filter(|message| {
-                fallback
-                    .as_ref()
-                    .is_some_and(|record| message.created_at < record.link_at)
-            })
-            .map(|message| {
-                (
-                    message.chat_id.clone(),
-                    message.id.clone(),
-                    self.app_store
-                        .message_exists_or_deleted(&message.chat_id, Some(&message.id), None)
-                        .unwrap_or(true),
-                )
-            })
-            .collect::<Vec<_>>();
-        self.apply_device_sync_snapshot(snapshot, self.device_history_receive_since(peer));
-        if let Some(mut record) = fallback.filter(|_| !incoming.is_empty()) {
-            self.persist_best_effort_inner();
-            let durable = incoming.iter().all(|(chat, id, _)| {
-                self.app_store
-                    .message_exists_or_deleted(chat, Some(id), None)
-                    .unwrap_or(false)
-            });
-            record.fallback_failed |= !durable;
-            if durable {
-                record.imported = record.imported.saturating_add(
-                    incoming.iter().filter(|(_, _, existed)| !existed).count() as u64,
-                );
-            }
-            if self
-                .store_device_history_transfer(peer, Some(&record))
-                .is_ok()
-            {
-                self.update_device_history_progress(
-                    peer,
-                    crate::DeviceHistorySyncPhase::Transferring,
-                    None,
-                );
-            }
-        }
-    }
-
-    pub(super) fn finish_device_history_fallback(
-        &mut self,
-        peer: &str,
-        link_at: u64,
-        link_id: &str,
-    ) {
-        let Some(record) = self.device_history_transfer(peer).filter(|record| {
-            !record.outbound
-                && !record.complete
-                && record.fallback
-                && record.link_at == link_at
-                && record.link_id == link_id
-        }) else {
-            return;
-        };
-        if !record.fallback_failed {
-            if let Some(packet) = self.complete_device_history_import(peer) {
-                self.send_history_packets(peer, vec![packet]);
-            }
-        } else {
-            self.update_device_history_progress(peer, crate::DeviceHistorySyncPhase::Waiting, None);
-        }
-        self.start_device_history(peer, link_at);
+        // Live snapshots never backfill history, even while a chosen initial copy is pending.
+        let floor = self
+            .device_sync_peer_since(peer)
+            .unwrap_or(u64::MAX)
+            .max(self.device_sync_roster_at().unwrap_or(u64::MAX));
+        let floor = floor.max(snapshot.roster_at);
+        self.apply_device_sync_snapshot(snapshot, Some(floor));
     }
 }
 

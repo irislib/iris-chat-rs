@@ -6,7 +6,6 @@ impl AppCore {
         source_pubkey_hex: &str,
         requested_roster_at: u64,
         page: Option<DeviceSyncPage>,
-        link_id: Option<&str>,
     ) {
         let Some(local_roster_at) = self.device_sync_roster_at() else {
             return;
@@ -22,63 +21,19 @@ impl AppCore {
             .device_sync
             .as_ref()
             .is_some_and(|runtime| runtime.history.typed.contains(source_pubkey_hex));
-        let initial = self
-            .device_history_transfer(source_pubkey_hex)
-            .filter(|record| {
-                record.outbound
-                    && !record.complete
-                    && record.since == 0
-                    && Some(record.link_id.as_str()) == link_id
-            });
-        let initial_page =
-            initial.is_some() && matches!(page, Some(DeviceSyncPage::Messages { .. }));
         let floor = self
             .device_history_send_since(source_pubkey_hex)
             .unwrap_or(local_roster_at.max(peer_since));
-        let mut cutoff = agreed.unwrap_or(floor.max(requested_roster_at)).max(floor);
-        if matches!(page, Some(DeviceSyncPage::Messages { .. })) && !initial_page {
-            cutoff = cutoff.max(local_roster_at).max(peer_since);
-        }
-        let (mut packets, next) = match page.unwrap_or(DeviceSyncPage::Metadata { offset: 0 }) {
-            DeviceSyncPage::Metadata { offset } => {
-                (metadata_page_packets(self, cutoff, offset), None)
-            }
-            DeviceSyncPage::Messages { after } => {
-                let (mut messages, mut next) = collect_device_sync_messages(
-                    self,
-                    cutoff,
-                    after.as_ref(),
-                    DEVICE_SYNC_PAGE_MESSAGES,
-                );
-                if let Some(initial) = &initial {
-                    if messages
-                        .iter()
-                        .any(|message| message.created_at >= initial.link_at)
-                    {
-                        next = None;
-                    }
-                    messages.retain(|message| message.created_at < initial.link_at);
-                    for message in &mut messages {
-                        self.attach_legacy_sync_reactions(message);
-                    }
-                }
-                let snapshot = DeviceSyncSnapshot {
-                    roster_at: cutoff,
-                    messages,
-                    ..DeviceSyncSnapshot::default()
-                };
-                (
-                    encode_device_sync_chunks(snapshot),
-                    next.map(|after| DeviceSyncPage::Messages { after: Some(after) }),
-                )
-            }
-        };
+        let cutoff = agreed.unwrap_or(floor.max(requested_roster_at)).max(floor);
+        let DeviceSyncPage::Metadata { offset } =
+            page.unwrap_or(DeviceSyncPage::Metadata { offset: 0 });
+        let mut packets = metadata_page_packets(self, cutoff, offset);
         if let Some(policy) = self.device_history_policy_packet(source_pubkey_hex) {
             if let Ok(packet) = serde_json::to_vec(&policy) {
                 packets.insert(0, packet);
             }
         }
-        if agreed.is_some() {
+        {
             for packet in &mut packets {
                 if let Ok(DeviceSyncPacket::PageEnd {
                     v, roster_at, next, ..
@@ -88,7 +43,6 @@ impl AppCore {
                         v,
                         roster_at,
                         next,
-                        history_reconcile: Some(1),
                         record_reconcile: typed.then_some(1),
                         history_since: agreed,
                     }) {
@@ -96,30 +50,6 @@ impl AppCore {
                     }
                 }
             }
-        }
-        if initial_page && next.is_none() {
-            if let Some(initial) = &initial {
-                if let Ok(packet) = serde_json::to_vec(&DeviceSyncPacket::HistoryPageEnd {
-                    v: 1,
-                    link_at: initial.link_at,
-                    link_id: initial.link_id.clone(),
-                }) {
-                    packets.push(packet);
-                }
-            }
-        }
-        if let Some(next) = next {
-            let Ok(page_end) = serde_json::to_vec(&DeviceSyncPacket::PageEnd {
-                v: DEVICE_SYNC_VERSION,
-                roster_at: cutoff,
-                next,
-                history_reconcile: Some(1),
-                record_reconcile: typed.then_some(1),
-                history_since: agreed,
-            }) else {
-                return;
-            };
-            packets.push(page_end);
         }
         let Some(tcp) = self
             .device_sync
@@ -147,13 +77,8 @@ impl AppCore {
             v: DEVICE_SYNC_VERSION,
             roster_at,
             page,
-            history_reconcile: Some(1),
             record_reconcile: Some(1),
             history_since: self.device_history_receive_since(source_pubkey_hex),
-            link_id: self
-                .device_history_transfer(source_pubkey_hex)
-                .filter(|record| !record.outbound && !record.complete)
-                .map(|record| record.link_id),
         }) else {
             return;
         };
@@ -196,15 +121,14 @@ pub(super) fn metadata_page_packets(core: &AppCore, roster_at: u64, offset: usiz
         .min(metadata.len());
     let mut packets = metadata.get(offset..end).unwrap_or_default().to_vec();
     let next = if end < metadata.len() {
-        DeviceSyncPage::Metadata { offset: end }
+        Some(DeviceSyncPage::Metadata { offset: end })
     } else {
-        DeviceSyncPage::Messages { after: None }
+        None
     };
     if let Ok(page_end) = serde_json::to_vec(&DeviceSyncPacket::PageEnd {
         v: DEVICE_SYNC_VERSION,
         roster_at,
         next,
-        history_reconcile: Some(1),
         record_reconcile: Some(1),
         history_since: None,
     }) {
@@ -214,21 +138,7 @@ pub(super) fn metadata_page_packets(core: &AppCore, roster_at: u64, offset: usiz
 }
 
 fn page_rank(page: Option<&DeviceSyncPage>) -> Option<(u8, u64, String, String)> {
-    match page {
-        None => None,
-        Some(DeviceSyncPage::Metadata { offset }) => {
-            Some((0, *offset as u64, String::new(), String::new()))
-        }
-        Some(DeviceSyncPage::Messages { after: None }) => {
-            Some((1, 0, String::new(), String::new()))
-        }
-        Some(DeviceSyncPage::Messages {
-            after: Some(cursor),
-        }) => Some((
-            1,
-            cursor.created_at,
-            cursor.chat_id.clone(),
-            cursor.id.clone(),
-        )),
-    }
+    page.map(|DeviceSyncPage::Metadata { offset }| {
+        (0, *offset as u64, String::new(), String::new())
+    })
 }

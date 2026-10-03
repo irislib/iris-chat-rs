@@ -17,7 +17,7 @@ mod history_policy;
 mod messages;
 mod recent_peers;
 mod records;
-use records::{DeviceSyncRecord, RecordScope};
+use records::{DeviceSyncRecord, RecordLocator, RecordScope};
 mod runtime;
 mod settings;
 mod snapshot;
@@ -27,7 +27,7 @@ mod test_support;
 pub(super) const DEVICE_SYNC_PORT: u16 = 7369;
 const DEVICE_SYNC_VERSION: u8 = 1;
 const DEVICE_SYNC_MAX_PACKET_BYTES: usize = 64 * 1024;
-const DEVICE_SYNC_PAGE_MESSAGES: usize = 32;
+const DEVICE_SYNC_RECORD_BATCH: usize = 32;
 const DEVICE_SYNC_PAGE_PACKETS: usize = 32;
 const DEVICE_SYNC_SCOPE_PREFIX: &str = "iris-chat-device-sync-v1:";
 struct DeviceSyncConfig {
@@ -75,13 +75,9 @@ enum DeviceSyncPacket {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         page: Option<DeviceSyncPage>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        history_reconcile: Option<u8>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         record_reconcile: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         history_since: Option<u64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        link_id: Option<String>,
     },
     ResyncRequired {
         v: u8,
@@ -89,18 +85,11 @@ enum DeviceSyncPacket {
     PageEnd {
         v: u8,
         roster_at: u64,
-        next: DeviceSyncPage,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        history_reconcile: Option<u8>,
+        next: Option<DeviceSyncPage>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         record_reconcile: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         history_since: Option<u64>,
-    },
-    HistoryPageEnd {
-        v: u8,
-        link_at: u64,
-        link_id: String,
     },
     HistoryPolicy {
         v: u8,
@@ -115,8 +104,9 @@ enum DeviceSyncPacket {
     },
     HistoryOpen {
         v: u8,
+        scope: RecordScope,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        scope: Option<RecordScope>,
+        prefix: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         link_id: Option<String>,
         session: String,
@@ -134,17 +124,15 @@ enum DeviceSyncPacket {
         session: String,
         ids: Vec<String>,
     },
-    HistoryMessages {
-        v: u8,
-        session: String,
-        messages: Vec<DeviceSyncMessage>,
-        requested: Vec<String>,
-    },
     HistoryRecords {
         v: u8,
         session: String,
         records: Vec<DeviceSyncRecord>,
         requested: Vec<String>,
+    },
+    HistoryOverflow {
+        v: u8,
+        session: String,
     },
     HistoryDone {
         v: u8,
@@ -256,7 +244,6 @@ struct DeviceSyncCursor {
 )]
 enum DeviceSyncPage {
     Metadata { offset: usize },
-    Messages { after: Option<DeviceSyncCursor> },
 }
 impl From<&DeviceSyncMessage> for DeviceSyncCursor {
     fn from(message: &DeviceSyncMessage) -> Self {
@@ -394,25 +381,17 @@ impl AppCore {
                 v,
                 roster_at,
                 page,
-                history_reconcile,
                 record_reconcile,
                 history_since,
-                link_id,
             } if v == DEVICE_SYNC_VERSION => {
                 self.negotiate_device_history(
                     source_pubkey_hex,
                     roster_at,
                     page.as_ref(),
-                    history_reconcile,
                     history_since,
                     record_reconcile,
                 );
-                self.reply_device_sync_snapshot(
-                    source_pubkey_hex,
-                    roster_at,
-                    page,
-                    link_id.as_deref(),
-                );
+                self.reply_device_sync_snapshot(source_pubkey_hex, roster_at, page);
             }
             DeviceSyncPacket::ResyncRequired { v } if v == DEVICE_SYNC_VERSION => {
                 self.clear_device_history(source_pubkey_hex);
@@ -422,23 +401,18 @@ impl AppCore {
                 v,
                 roster_at,
                 next,
-                history_reconcile,
                 record_reconcile,
                 history_since,
             } if v == DEVICE_SYNC_VERSION => {
                 self.negotiate_device_records(source_pubkey_hex, record_reconcile);
-                if record_reconcile == Some(1) {
+                if let Some(next) = next {
+                    self.request_device_sync_snapshot(source_pubkey_hex, Some(next));
+                } else if record_reconcile == Some(1) {
                     self.start_device_state(source_pubkey_hex);
-                }
-                if history_reconcile == Some(1)
-                    && matches!(next, DeviceSyncPage::Messages { after: None })
-                {
                     self.start_device_history(
                         source_pubkey_hex,
                         history_since.unwrap_or(roster_at),
                     );
-                } else {
-                    self.request_device_sync_snapshot(source_pubkey_hex, Some(next));
                 }
             }
             DeviceSyncPacket::Snapshot {

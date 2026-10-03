@@ -99,7 +99,7 @@ fn device_sync_negentropy_repairs_persisted_offline_gaps_and_preserves_deletions
     left.install_device_sync_sender_for_test(endpoint.clone(), left_tx, vec![test_fips_peer(&b)]);
     right.install_device_sync_sender_for_test(endpoint.clone(), right_tx, vec![test_fips_peer(&a)]);
     let request = serde_json::to_vec(
-        &serde_json::json!({"type":"request", "v":1, "rosterAt":100, "historyReconcile":1}),
+        &serde_json::json!({"type":"request", "v":1, "rosterAt":100, "recordReconcile":1}),
     )
     .unwrap();
     left.handle_device_sync_packet(&b.public_key().to_hex(), DEVICE_SYNC_PORT, &request);
@@ -119,9 +119,9 @@ fn device_sync_negentropy_repairs_persisted_offline_gaps_and_preserves_deletions
         }
     }
     assert!(
-        trace
-            .iter()
-            .any(|packet| packet["type"] == "historyOpen" && packet["since"] == 0),
+        trace.iter().any(|packet| packet["type"] == "historyOpen"
+            && packet["scope"] == "history"
+            && packet["since"] == 0),
         "history did not start; local policy {:?}",
         right
             .device_history_transfer(&a.public_key().to_hex())
@@ -129,8 +129,10 @@ fn device_sync_negentropy_repairs_persisted_offline_gaps_and_preserves_deletions
     );
     let transferred = trace
         .iter()
-        .filter(|packet| packet["type"] == "historyMessages")
-        .flat_map(|packet| packet["messages"].as_array().unwrap())
+        .filter(|packet| packet["type"] == "historyRecords")
+        .flat_map(|packet| packet["records"].as_array().unwrap())
+        .filter(|record| record["type"] == "message")
+        .map(|record| &record["message"])
         .collect::<Vec<_>>();
     assert_eq!(
         transferred.len(),
@@ -234,7 +236,9 @@ fn device_sync_negentropy_repairs_persisted_offline_gaps_and_preserves_deletions
     );
     assert!(trace
         .iter()
-        .filter(|packet| packet["type"] == "historyOpen" && packet["since"] == 0)
+        .filter(|packet| packet["type"] == "historyOpen"
+            && packet["scope"] == "history"
+            && packet["since"] == 0)
         .all(|packet| packet["until"] == 99 && packet["linkId"] == "ab".repeat(32)));
     left.runtime.block_on(endpoint.shutdown()).unwrap();
 }
@@ -394,7 +398,7 @@ fn device_sync_history_choice_is_private_pair_only_and_cancels_revoked_sessions(
     let (sender, records) = DeviceSyncTcpSender::test_channel(64, 64 * 1024);
     core.install_device_sync_sender_for_test(endpoint.clone(), sender, vec![test_fips_peer(&b)]);
     let source = b.public_key().to_hex();
-    let request = serde_json::json!({"type":"request","v":1,"rosterAt":100,"historyReconcile":1,"historySince":0});
+    let request = serde_json::json!({"type":"request","v":1,"rosterAt":100,"recordReconcile":1,"historySince":0});
     core.handle_device_sync_packet(
         &source,
         DEVICE_SYNC_PORT,
@@ -426,7 +430,7 @@ fn device_sync_history_choice_is_private_pair_only_and_cancels_revoked_sessions(
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
     let session = "aa".repeat(16);
-    let mut open = serde_json::json!({"type":"historyOpen","v":1,"session":session,"since":0,"until":99,"frame":frame,"linkId":"cd".repeat(32)});
+    let mut open = serde_json::json!({"type":"historyOpen","v":1,"scope":"history","session":session,"since":0,"until":99,"frame":frame,"linkId":"cd".repeat(32)});
     core.handle_device_sync_packet(
         &source,
         DEVICE_SYNC_PORT,
@@ -477,7 +481,7 @@ fn device_sync_history_choice_is_private_pair_only_and_cancels_revoked_sessions(
 }
 
 #[test]
-fn device_sync_history_bounded_page_fallback_completes_only_after_durable_import() {
+fn device_sync_history_interruption_has_no_legacy_downgrade_and_reconnects() {
     let owner = Keys::generate();
     let a = Keys::generate();
     let b = Keys::generate();
@@ -534,7 +538,26 @@ fn device_sync_history_bounded_page_fallback_completes_only_after_durable_import
     let (right_tx, right_rx) = DeviceSyncTcpSender::test_channel(128, 64 * 1024);
     left.install_device_sync_sender_for_test(endpoint.clone(), left_tx, vec![test_fips_peer(&b)]);
     right.install_device_sync_sender_for_test(endpoint.clone(), right_tx, vec![test_fips_peer(&a)]);
-    let request = serde_json::json!({"type":"request","v":1,"rosterAt":100,"historyReconcile":1});
+    let obsolete = serde_json::to_vec(
+        &serde_json::json!({"type":"request","v":1,"rosterAt":100,"historyReconcile":1}),
+    )
+    .unwrap();
+    left.handle_device_sync_packet(&b.public_key().to_hex(), DEVICE_SYNC_PORT, &obsolete);
+    let mut bootstrap_only = Vec::new();
+    while let Ok(batch) = left_rx.try_recv() {
+        bootstrap_only.extend(
+            batch
+                .records
+                .iter()
+                .map(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).unwrap()),
+        );
+    }
+    assert!(!bootstrap_only.is_empty());
+    assert!(bootstrap_only.iter().all(|packet| packet["messages"]
+        .as_array()
+        .is_none_or(|messages| messages.is_empty())
+        && packet["recordReconcile"].is_null()));
+    let request = serde_json::json!({"type":"request","v":1,"rosterAt":100,"recordReconcile":1});
     left.handle_device_sync_packet(
         &b.public_key().to_hex(),
         DEVICE_SYNC_PORT,
@@ -543,11 +566,12 @@ fn device_sync_history_bounded_page_fallback_completes_only_after_durable_import
     let mut trace = Vec::new();
     drain_history_wire(&mut left, &a, &mut right, &b, &left_rx, &mut trace);
     drain_history_wire(&mut right, &b, &mut left, &a, &right_rx, &mut trace);
-    // A responder whose bounded inventory cannot be built ends the transcript.
-    // The recipient must switch to authenticated cursor pages and await its terminal marker.
-    let response = left_rx.try_recv().unwrap();
-    let session = serde_json::from_slice::<serde_json::Value>(&response.records[0]).unwrap()
-        ["session"]
+    let session = trace
+        .iter()
+        .find(|packet| {
+            packet["type"] == "historyOpen" && packet["scope"] == "history" && packet["since"] == 0
+        })
+        .unwrap()["session"]
         .clone();
     let done = serde_json::json!({"type":"historyDone","v":1,"session":session});
     left.handle_device_sync_packet(
@@ -566,7 +590,7 @@ fn device_sync_history_bounded_page_fallback_completes_only_after_durable_import
             .unwrap()
             .complete
     );
-    // Live traffic must remain usable while the old cursor copy is still pending.
+    // Live traffic remains usable while history is pending.
     let live = serde_json::json!({"type":"snapshot","v":1,
         "rosterAt":100,"messages":[{"chatId":chat,"id":"future","body":"ZnV0dXJl","createdAt":102,"author":chat}]
     });
@@ -585,6 +609,12 @@ fn device_sync_history_bounded_page_fallback_completes_only_after_durable_import
             .imported_messages,
         0
     );
+    // A fresh typed negotiation repairs the interrupted copy; there is no legacy route.
+    left.handle_device_sync_packet(
+        &b.public_key().to_hex(),
+        DEVICE_SYNC_PORT,
+        &serde_json::to_vec(&request).unwrap(),
+    );
     for _ in 0..1024 {
         let x = drain_history_wire(&mut left, &a, &mut right, &b, &left_rx, &mut trace);
         let y = drain_history_wire(&mut right, &b, &mut left, &a, &right_rx, &mut trace);
@@ -592,12 +622,11 @@ fn device_sync_history_bounded_page_fallback_completes_only_after_durable_import
             break;
         }
     }
-    assert!(trace
-        .iter()
-        .any(|packet| packet["type"] == "historyPageEnd"));
-    assert!(trace.iter().any(|packet| packet["type"] == "request"
-        && packet["page"]["kind"] == "messages"
-        && packet["linkId"] == "ab".repeat(32)));
+    assert!(
+        !trace.iter().any(|packet| packet["type"] == "historyPageEnd"
+            || packet["type"] == "historyMessages"
+            || packet["page"]["kind"] == "messages")
+    );
     assert_eq!(
         right
             .app_store

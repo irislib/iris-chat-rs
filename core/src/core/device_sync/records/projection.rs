@@ -4,29 +4,40 @@ impl AppCore {
     // Heads are committed before projections. Replay them after an interrupted
     // app-state save, without reauthoring or republishing the original controls.
     pub(in crate::core) fn restore_device_sync_record_projection(&mut self) {
-        for record in self.stored_sync_records() {
-            if !self.sync_record_allowed(&record) {
-                continue;
+        let mut after = String::new();
+        loop {
+            let Ok(page) = self.sync_record_page(&after) else {
+                break;
+            };
+            if page.is_empty() {
+                break;
             }
-            match record {
-                DeviceSyncRecord::Reaction { reaction: r } => self.apply_incoming_reaction_to_chat(
-                    &r.chat_id,
-                    &r.message_id,
-                    &r.author,
-                    &r.emoji,
-                ),
-                DeviceSyncRecord::GroupSettings { settings: s } => {
-                    let chat = group_chat_id(&s.group_id);
-                    if let Some(ttl) = s.message_ttl_seconds {
-                        self.chat_message_ttl_seconds.insert(chat, ttl);
-                    } else {
-                        self.chat_message_ttl_seconds.remove(&chat);
+            for (key, record) in page {
+                after = key;
+                if !self.sync_record_allowed(&record) {
+                    continue;
+                }
+                match record {
+                    DeviceSyncRecord::Reaction { reaction: r } => self
+                        .apply_incoming_reaction_to_chat(
+                            &r.chat_id,
+                            &r.message_id,
+                            &r.author,
+                            &r.emoji,
+                        ),
+                    DeviceSyncRecord::GroupSettings { settings: s } => {
+                        let chat = group_chat_id(&s.group_id);
+                        if let Some(ttl) = s.message_ttl_seconds {
+                            self.chat_message_ttl_seconds.insert(chat, ttl);
+                        } else {
+                            self.chat_message_ttl_seconds.remove(&chat);
+                        }
                     }
+                    DeviceSyncRecord::Profile { event } => {
+                        self.apply_profile_metadata_event(&event);
+                    }
+                    _ => {}
                 }
-                DeviceSyncRecord::Profile { event } => {
-                    self.apply_profile_metadata_event(&event);
-                }
-                _ => {}
             }
         }
     }

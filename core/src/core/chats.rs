@@ -1320,7 +1320,12 @@ impl AppCore {
             }
             REACTION_KIND => {
                 for message_id in message_ids_from_tags(runtime_rumor.tags.iter()) {
-                    self.restore_device_sync_reactions(&chat_id, &message_id);
+                    self.project_device_sync_reaction_target(
+                        &chat_id,
+                        &message_id,
+                        &effective_sender_owner.to_hex(),
+                        &runtime_rumor.content,
+                    );
                 }
             }
             RECEIPT_KIND => {

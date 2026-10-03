@@ -4,7 +4,6 @@ impl AppCore {
     pub(in crate::core) fn cache_device_sync_profile(&mut self, event: &Event) -> bool {
         if event.kind != Kind::Metadata
             || event.verify().is_err()
-            || event.content.len() > 32 * 1024
             || event.created_at.as_secs() > unix_now().get().saturating_add(300)
         {
             return false;
@@ -67,7 +66,7 @@ impl AppCore {
             // A typed reaction ID names one original event and one target.
             // Ambiguous legacy batches cannot invent independent provenance.
             if targets.len() != 1 {
-                return false;
+                return true;
             }
             let legacy = serde_json::from_str::<serde_json::Value>(content).ok();
             let emoji = legacy
@@ -123,6 +122,29 @@ impl AppCore {
             }
         }
         accepted
+    }
+    pub(in crate::core) fn project_device_sync_reaction_target(
+        &mut self,
+        chat: &str,
+        target: &str,
+        author: &str,
+        content: &str,
+    ) {
+        if self.has_reaction_head(chat, target, author) {
+            self.restore_device_sync_reactions(chat, target);
+        } else if self.sync_record_author_allowed(chat, author, false)
+            && !self.sync_reaction_target_expired(chat, target)
+        {
+            let legacy = serde_json::from_str::<serde_json::Value>(content).ok();
+            let emoji = legacy
+                .as_ref()
+                .filter(|value| value["type"] == "reaction" && value["messageId"] == target)
+                .and_then(|value| value["emoji"].as_str())
+                .unwrap_or(content);
+            if emoji.len() <= 256 {
+                self.apply_incoming_reaction_to_chat(chat, target, author, emoji);
+            }
+        }
     }
     pub(in crate::core) fn restore_device_sync_reactions(&mut self, chat: &str, message: &str) {
         for record in self.reaction_records_for_message(chat, message) {
