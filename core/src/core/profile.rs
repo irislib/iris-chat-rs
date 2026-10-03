@@ -310,8 +310,6 @@ impl AppCore {
     }
 
     pub(super) fn apply_profile_metadata_event(&mut self, event: &Event) -> bool {
-        self.remember_contact_name(&event.pubkey.to_hex());
-        self.cache_local_fips_identity(event);
         let owner_hex = event.pubkey.to_hex();
         let extra_tags: Vec<Vec<String>> = event
             .tags
@@ -334,6 +332,11 @@ impl AppCore {
             record.contact_updated_at_ms = existing.contact_updated_at_ms;
         }
 
+        if !self.cache_device_sync_profile(event) {
+            return false;
+        }
+        self.remember_contact_name(&owner_hex);
+        self.cache_local_fips_identity(event);
         self.owner_profiles.insert(owner_hex.clone(), record);
         self.remember_contact_name(&owner_hex);
         self.push_debug_log("relay.metadata", format!("owner={owner_hex}"));

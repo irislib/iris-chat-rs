@@ -18,6 +18,10 @@ impl AppCore {
             .device_sync
             .as_ref()
             .and_then(|runtime| runtime.history.agreed.get(source_pubkey_hex).copied());
+        let typed = self
+            .device_sync
+            .as_ref()
+            .is_some_and(|runtime| runtime.history.typed.contains(source_pubkey_hex));
         let initial = self
             .device_history_transfer(source_pubkey_hex)
             .filter(|record| {
@@ -54,6 +58,9 @@ impl AppCore {
                         next = None;
                     }
                     messages.retain(|message| message.created_at < initial.link_at);
+                    for message in &mut messages {
+                        self.attach_legacy_sync_reactions(message);
+                    }
                 }
                 let snapshot = DeviceSyncSnapshot {
                     roster_at: cutoff,
@@ -82,6 +89,7 @@ impl AppCore {
                         roster_at,
                         next,
                         history_reconcile: Some(1),
+                        record_reconcile: typed.then_some(1),
                         history_since: agreed,
                     }) {
                         *packet = updated;
@@ -106,6 +114,7 @@ impl AppCore {
                 roster_at: cutoff,
                 next,
                 history_reconcile: Some(1),
+                record_reconcile: typed.then_some(1),
                 history_since: agreed,
             }) else {
                 return;
@@ -139,6 +148,7 @@ impl AppCore {
             roster_at,
             page,
             history_reconcile: Some(1),
+            record_reconcile: Some(1),
             history_since: self.device_history_receive_since(source_pubkey_hex),
             link_id: self
                 .device_history_transfer(source_pubkey_hex)
@@ -195,6 +205,7 @@ pub(super) fn metadata_page_packets(core: &AppCore, roster_at: u64, offset: usiz
         roster_at,
         next,
         history_reconcile: Some(1),
+        record_reconcile: Some(1),
         history_since: None,
     }) {
         packets.push(page_end);

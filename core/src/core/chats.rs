@@ -396,6 +396,7 @@ impl AppCore {
         }
         page.sort_by_key(message_order);
         thread.messages = page;
+        self.restore_device_sync_chat_reactions(chat_id);
     }
 
     fn hydrate_thread_from_storage(&mut self, chat_id: &str) -> bool {
@@ -475,6 +476,7 @@ impl AppCore {
                 .and_modify(|floor| *floor = (*floor).max(latest.created_at_secs))
                 .or_insert(latest.created_at_secs);
         }
+        self.restore_device_sync_chat_reactions(&chat_id);
         self.apply_read_state_to_thread(&chat_id);
         changed
     }
@@ -899,6 +901,7 @@ impl AppCore {
         if expires_at_secs.is_some() {
             self.schedule_next_message_expiry();
         }
+        self.restore_device_sync_reactions(chat_id, &message.id);
         self.broadcast_device_sync_message(&message);
         message
     }
@@ -1050,6 +1053,7 @@ impl AppCore {
         if expires_at_secs.is_some() {
             self.schedule_next_message_expiry();
         }
+        self.restore_device_sync_reactions(chat_id, &message.id);
         self.broadcast_device_sync_message(&message);
     }
 
@@ -1282,6 +1286,17 @@ impl AppCore {
             created_at_secs,
         );
 
+        if !self.capture_device_sync_control(
+            &chat_id,
+            &inner_event_id,
+            &effective_sender_owner.to_hex(),
+            created_at_secs,
+            kind,
+            &runtime_rumor.content,
+            &runtime_rumor.tags,
+        ) {
+            return true;
+        }
         match kind {
             CHAT_MESSAGE_KIND => {
                 self.apply_runtime_text_message(
@@ -1304,14 +1319,8 @@ impl AppCore {
                 }
             }
             REACTION_KIND => {
-                let sender_hex = effective_sender_owner.to_hex();
                 for message_id in message_ids_from_tags(runtime_rumor.tags.iter()) {
-                    self.apply_incoming_reaction_to_chat(
-                        &chat_id,
-                        &message_id,
-                        &sender_hex,
-                        &runtime_rumor.content,
-                    );
+                    self.restore_device_sync_reactions(&chat_id, &message_id);
                 }
             }
             RECEIPT_KIND => {

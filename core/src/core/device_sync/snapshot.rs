@@ -78,6 +78,10 @@ impl AppCore {
             .groups
             .values()
             .map(|group| DeviceSyncGroup {
+                legacy_message_ttl_seconds: self
+                    .chat_message_ttl_seconds
+                    .get(&group_chat_id(&group.group_id))
+                    .copied(),
                 id: group.group_id.clone(),
                 name: group.name.clone(),
                 description: group.about.clone(),
@@ -230,6 +234,13 @@ impl AppCore {
             }
         }
         for group in snapshot.groups {
+            let legacy_ttl = (!self.groups.contains_key(&group.id)
+                && !self
+                    .chat_message_ttl_seconds
+                    .contains_key(&group_chat_id(&group.id)))
+            .then_some(group.legacy_message_ttl_seconds)
+            .flatten();
+            let group_id = group.id.clone();
             if self.chat_activity_is_deleted(&group_chat_id(&group.id), group.updated_at) {
                 continue;
             }
@@ -242,6 +253,15 @@ impl AppCore {
                 .and_then(|engine| engine.install_device_sync_group(group.clone()).ok())
                 .unwrap_or(false);
             if installed {
+                if let Some(ttl) = legacy_ttl.filter(|ttl| {
+                    *ttl > 0
+                        && *ttl <= 9_007_199_254_740_991
+                        && !self.has_group_settings_head(&group_id)
+                }) {
+                    self.chat_message_ttl_seconds
+                        .insert(group_chat_id(&group_id), ttl);
+                    changed = true;
+                }
                 let previous = self.groups.get(&group.group_id).cloned();
                 if self.apply_group_roster_snapshot(group.clone(), group.updated_at.get()) {
                     self.apply_group_metadata_notice(previous.as_ref(), &group);
@@ -284,6 +304,8 @@ impl AppCore {
             {
                 continue;
             }
+            let legacy_reactions = message.legacy_reactions.clone().unwrap_or_default();
+            let message_id = message.id.clone();
             let is_outgoing = message.author == local_owner_hex;
             let chat_id = message.chat_id.clone();
             let (body, attachments) = extract_message_attachments(&message.body);
@@ -326,6 +348,8 @@ impl AppCore {
                 delivery_trace: MessageDeliveryTraceSnapshot::default(),
                 source_event_id: None,
             });
+            self.apply_legacy_sync_reactions(&chat_id, &message_id, legacy_reactions);
+            self.restore_device_sync_reactions(&chat_id, &message_id);
             self.bump_typing_floor(&chat_id, message.created_at);
             if message.expires_at.is_some() {
                 self.schedule_next_message_expiry();

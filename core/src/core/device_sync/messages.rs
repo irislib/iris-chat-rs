@@ -127,6 +127,7 @@ fn after_cursor(message: &ChatMessageSnapshot, cursor: &DeviceSyncCursor) -> boo
 
 fn from_snapshot(message: &ChatMessageSnapshot) -> Option<DeviceSyncMessage> {
     Some(DeviceSyncMessage {
+        legacy_reactions: None,
         chat_id: message.chat_id.clone(),
         id: message.id.clone(),
         body: message_wire_text(&message.body, &message.attachments),
@@ -139,6 +140,7 @@ fn from_snapshot(message: &ChatMessageSnapshot) -> Option<DeviceSyncMessage> {
 fn from_persisted(message: PersistedMessage) -> DeviceSyncMessage {
     let body = message_wire_text(&message.body, &message.attachments);
     DeviceSyncMessage {
+        legacy_reactions: None,
         chat_id: message.chat_id,
         id: message.id,
         body,

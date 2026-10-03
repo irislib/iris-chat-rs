@@ -142,6 +142,7 @@ impl AppCore {
                 return;
             }
         };
+        self.capture_device_sync_unsigned(chat_id, &unsigned);
         let payload = match serde_json::to_vec(&unsigned) {
             Ok(payload) => payload,
             Err(error) => {

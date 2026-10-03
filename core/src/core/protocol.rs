@@ -33,6 +33,7 @@ impl AppCore {
         unsigned: UnsignedEvent,
         reason: &'static str,
     ) -> bool {
+        self.capture_device_sync_unsigned(chat_id, &unsigned);
         let Some(protocol_engine) = self.protocol_engine.as_mut() else {
             return false;
         };

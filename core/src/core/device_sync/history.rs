@@ -13,13 +13,17 @@ const TTL: Duration = Duration::from_secs(120);
 #[derive(Default)]
 pub(super) struct HistoryState {
     pub(super) agreed: BTreeMap<String, u64>,
+    pub(super) typed: BTreeSet<String>,
+    restart: BTreeMap<(String, Option<RecordScope>), u64>,
     sessions: BTreeMap<(String, String), HistorySession>,
 }
 
 struct HistorySession {
     engine: Session,
     filter: Filter,
-    records: BTreeMap<String, DeviceSyncCursor>,
+    records: BTreeMap<String, HistoryRecordRef>,
+    scope: Option<RecordScope>,
+    pending_records: BTreeMap<String, DeviceSyncRecord>,
     initiator: bool,
     complete: bool,
     missing: VecDeque<String>,
@@ -32,6 +36,33 @@ struct HistorySession {
     withheld: bool,
     batch_imported: u64,
     pending_messages: BTreeMap<String, DeviceSyncMessage>,
+}
+
+#[derive(Clone)]
+enum HistoryRecordRef {
+    Message(DeviceSyncCursor),
+    Typed(DeviceSyncRecord),
+}
+impl HistoryRecordRef {
+    fn timestamp(&self) -> u64 {
+        match self {
+            Self::Message(cursor) => cursor.created_at,
+            Self::Typed(record) => record.timestamp(),
+        }
+    }
+    fn id(&self) -> [u8; 32] {
+        match self {
+            Self::Message(cursor) => record_id(&cursor.chat_id, &cursor.id),
+            Self::Typed(record) => record.id(),
+        }
+    }
+    fn load(&self, core: &AppCore) -> Option<DeviceSyncRecord> {
+        match self {
+            Self::Message(cursor) => messages::load_history_message(core, cursor)
+                .map(|message| DeviceSyncRecord::Message { message }),
+            Self::Typed(record) => core.sync_record_allowed(record).then(|| record.clone()),
+        }
+    }
 }
 
 pub(super) fn record_id(chat_id: &str, id: &str) -> [u8; 32] {
@@ -65,10 +96,16 @@ fn valid_id(id: &str) -> bool {
 }
 
 impl HistorySession {
-    fn snapshot(core: &AppCore, filter: Filter, initiator: bool, capacity: usize) -> Option<Self> {
+    fn snapshot(
+        core: &AppCore,
+        filter: Filter,
+        initiator: bool,
+        capacity: usize,
+        scope: Option<RecordScope>,
+    ) -> Option<Self> {
         let mut records = BTreeMap::new();
         let mut cursor = None;
-        loop {
+        while scope != Some(RecordScope::State) {
             let (messages, next) =
                 collect_device_sync_messages(core, filter.since, cursor.as_ref(), 256);
             let mut ended = false;
@@ -81,7 +118,10 @@ impl HistorySession {
                     continue;
                 }
                 let id = hex(&record_id(&message.chat_id, &message.id));
-                records.insert(id, DeviceSyncCursor::from(&message));
+                records.insert(
+                    id,
+                    HistoryRecordRef::Message(DeviceSyncCursor::from(&message)),
+                );
                 if records.len() > MAX_RECORDS.min(capacity) {
                     return None;
                 }
@@ -91,10 +131,28 @@ impl HistorySession {
             }
             cursor = next;
         }
+        if let Some(scope) = scope {
+            let extra = if scope == RecordScope::State {
+                core.sync_state_records()
+            } else {
+                core.stored_sync_records()
+            };
+            for record in extra {
+                if record.scope() == scope
+                    && filter.contains(record.timestamp())
+                    && core.sync_record_allowed(&record)
+                {
+                    records.insert(hex(&record.id()), HistoryRecordRef::Typed(record));
+                    if records.len() > MAX_RECORDS.min(capacity) {
+                        return None;
+                    }
+                }
+            }
+        }
         let engine = Session::new(
             records.values().map(|cursor| Record {
-                id: record_id(&cursor.chat_id, &cursor.id),
-                timestamp: cursor.created_at,
+                id: cursor.id(),
+                timestamp: cursor.timestamp(),
             }),
             filter,
             Limits {
@@ -108,6 +166,8 @@ impl HistorySession {
             engine,
             filter,
             records,
+            scope,
+            pending_records: BTreeMap::new(),
             initiator,
             complete: false,
             missing: VecDeque::new(),
@@ -161,6 +221,11 @@ impl AppCore {
                 .sessions
                 .retain(|(source, _), _| source != peer);
             runtime.history.agreed.remove(peer);
+            runtime.history.typed.remove(peer);
+            runtime
+                .history
+                .restart
+                .retain(|(source, _), _| source != peer);
         }
         if self
             .device_history_transfer(peer)
@@ -177,10 +242,12 @@ impl AppCore {
         page: Option<&DeviceSyncPage>,
         capability: Option<u8>,
         since: Option<u64>,
+        record_capability: Option<u8>,
     ) {
         if page.is_none() {
             self.clear_device_history(peer);
         }
+        self.negotiate_device_records(peer, record_capability);
         if capability != Some(1) {
             return;
         }
@@ -205,7 +272,38 @@ impl AppCore {
         }
     }
 
+    pub(super) fn negotiate_device_records(&mut self, peer: &str, capability: Option<u8>) {
+        if capability == Some(1) && self.device_sync_peer_is_authorized(peer) {
+            if let Some(runtime) = &mut self.device_sync {
+                if runtime.history.typed.len() < MAX_SESSIONS {
+                    runtime.history.typed.insert(peer.to_string());
+                }
+            }
+        }
+    }
+    pub(super) fn start_device_state(&mut self, peer: &str) {
+        if self
+            .device_sync
+            .as_ref()
+            .is_some_and(|runtime| runtime.history.typed.contains(peer))
+        {
+            self.start_device_reconcile(peer, 0, Some(RecordScope::State));
+        }
+    }
     pub(super) fn start_device_history(&mut self, peer: &str, agreed_since: u64) {
+        let scope = self
+            .device_sync
+            .as_ref()
+            .is_some_and(|runtime| runtime.history.typed.contains(peer))
+            .then_some(RecordScope::History);
+        self.start_device_reconcile(peer, agreed_since, scope);
+    }
+    fn start_device_reconcile(
+        &mut self,
+        peer: &str,
+        agreed_since: u64,
+        scope: Option<RecordScope>,
+    ) {
         let Some(local) = self.device_sync_roster_at() else {
             return;
         };
@@ -217,7 +315,8 @@ impl AppCore {
             until: unix_now().get(),
         };
         let initial = self.device_history_transfer(peer).filter(|record| {
-            !record.outbound
+            scope != Some(RecordScope::State)
+                && !record.outbound
                 && record.policy_known
                 && !record.complete
                 && record.since == 0
@@ -225,6 +324,9 @@ impl AppCore {
         });
         if let Some(record) = &initial {
             filter.until = record.link_at.saturating_sub(1);
+        }
+        if scope == Some(RecordScope::State) {
+            filter = Filter { since: 0, until: 0 };
         }
         if filter.since > filter.until {
             return;
@@ -240,9 +342,15 @@ impl AppCore {
             .history
             .sessions
             .iter()
-            .any(|((source, _), state)| source == peer && state.initiator)
-            || runtime.history.sessions.len() >= MAX_SESSIONS
+            .any(|((source, _), state)| source == peer && state.initiator && state.scope == scope)
         {
+            runtime
+                .history
+                .restart
+                .insert((peer.to_string(), scope), agreed_since);
+            return;
+        }
+        if runtime.history.sessions.len() >= MAX_SESSIONS {
             return;
         }
         let capacity = MAX_TOTAL_RECORDS.saturating_sub(
@@ -253,7 +361,18 @@ impl AppCore {
                 .map(|state| state.records.len())
                 .sum::<usize>(),
         );
-        let Some(mut state) = HistorySession::snapshot(self, filter, true, capacity) else {
+        let Some(mut state) = HistorySession::snapshot(self, filter, true, capacity, scope) else {
+            if scope.is_some() {
+                if initial.is_some() {
+                    self.update_device_history_progress(
+                        peer,
+                        crate::DeviceHistorySyncPhase::Waiting,
+                        None,
+                    );
+                }
+                // Message-only pagination cannot acknowledge missing typed controls.
+                return;
+            }
             if initial.is_some() {
                 self.begin_device_history_fallback(peer);
             }
@@ -276,6 +395,7 @@ impl AppCore {
         let packet = DeviceSyncPacket::HistoryOpen {
             v: 1,
             session: session.clone(),
+            scope,
             since: filter.since,
             link_id: initial.map(|record| record.link_id),
             until: filter.until,
@@ -346,6 +466,7 @@ impl AppCore {
             | DeviceSyncPacket::HistoryFrame { v: 1, session, .. }
             | DeviceSyncPacket::HistoryNeed { v: 1, session, .. }
             | DeviceSyncPacket::HistoryMessages { v: 1, session, .. }
+            | DeviceSyncPacket::HistoryRecords { v: 1, session, .. }
             | DeviceSyncPacket::HistoryDone { v: 1, session } => session.clone(),
             _ => return,
         };
@@ -374,10 +495,19 @@ impl AppCore {
             until,
             frame,
             link_id,
+            scope,
             ..
         } = packet
         {
-            if since < peer_join
+            if scope.is_some() && !runtime.history.typed.contains(peer) {
+                return;
+            }
+            let state_scope = scope == Some(RecordScope::State);
+            if state_scope && (since != 0 || until != 0 || link_id.is_some()) {
+                return;
+            }
+            if !state_scope
+                && since < peer_join
                 && initial_permission.as_ref().is_none_or(|record| {
                     link_id.as_ref() != Some(&record.link_id) || until >= record.link_at
                 })
@@ -387,20 +517,17 @@ impl AppCore {
             let Some(agreed) = runtime.history.agreed.get(peer).copied() else {
                 return;
             };
-            if current_peer_floor.is_none_or(|floor| since < floor)
-                || since < agreed
+            if (!state_scope
+                && (current_peer_floor.is_none_or(|floor| since < floor) || since < agreed))
                 || since > until
                 || until > unix_now().get().saturating_add(300)
                 || runtime.history.sessions.contains_key(&key)
             {
                 return;
             }
-            if runtime
-                .history
-                .sessions
-                .iter()
-                .any(|((source, _), state)| source == peer && !state.initiator)
-                || runtime.history.sessions.len() >= MAX_SESSIONS
+            if runtime.history.sessions.iter().any(|((source, _), state)| {
+                source == peer && !state.initiator && state.scope == scope
+            }) || runtime.history.sessions.len() >= MAX_SESSIONS
             {
                 return;
             }
@@ -416,7 +543,7 @@ impl AppCore {
                     .sum::<usize>(),
             );
             let Some(mut state) =
-                HistorySession::snapshot(self, Filter { since, until }, false, capacity)
+                HistorySession::snapshot(self, Filter { since, until }, false, capacity, scope)
             else {
                 self.send_history_packets(
                     peer,
@@ -424,6 +551,7 @@ impl AppCore {
                 );
                 return;
             };
+            state.initial = !state_scope && since < peer_join;
             let Ok(response) = state.engine.respond(&frame) else {
                 return;
             };
@@ -445,6 +573,57 @@ impl AppCore {
             return;
         };
         let mut outgoing = Vec::new();
+        let packet = match packet {
+            DeviceSyncPacket::HistoryRecords {
+                records, requested, ..
+            } if state.initiator => {
+                if state.scope.is_none()
+                    || records.len() > 32
+                    || records.iter().any(|record| {
+                        Some(record.scope()) != state.scope
+                            || !state.filter.contains(record.timestamp())
+                            || !state.requested.contains(&hex(&record.id()))
+                    })
+                {
+                    return;
+                }
+                for record in records {
+                    state.pending_records.insert(hex(&record.id()), record);
+                }
+                let mut messages = Vec::new();
+                if !requested.is_empty() {
+                    if requested.len() != state.requested.len()
+                        || requested.iter().collect::<BTreeSet<_>>().len() != requested.len()
+                        || requested.iter().any(|id| !state.requested.contains(id))
+                    {
+                        return;
+                    }
+                    let records = std::mem::take(&mut state.pending_records);
+                    self.enter_batch();
+                    for (hash, record) in records {
+                        if let DeviceSyncRecord::Message { message } = record {
+                            messages.push(message);
+                        } else {
+                            if self.apply_sync_record(record) {
+                                state.received.insert(hash);
+                            } else {
+                                state.withheld = true;
+                            }
+                        }
+                    }
+                    self.rebuild_state();
+                    self.emit_state();
+                    self.exit_batch();
+                }
+                DeviceSyncPacket::HistoryMessages {
+                    v: 1,
+                    session: session.clone(),
+                    messages,
+                    requested,
+                }
+            }
+            packet => packet,
+        };
         let accepted = match packet {
             DeviceSyncPacket::HistoryFrame { frame, .. } => match unhex(&frame, FRAME_BYTES) {
                 Some(frame) if state.initiator => match state.engine.reconcile(&frame) {
@@ -502,26 +681,48 @@ impl AppCore {
                         let Some(cursor) = state.records.get(id) else {
                             continue;
                         };
-                        if let Some(message) =
-                            messages::load_history_message(self, cursor).filter(|message| {
-                                state.filter.contains(message.created_at)
-                                    && current_peer_floor
-                                        .is_some_and(|floor| message.created_at >= floor)
-                            })
-                        {
-                            outgoing.push(DeviceSyncPacket::HistoryMessages {
-                                v: 1,
-                                session: session.clone(),
-                                messages: vec![message],
-                                requested: Vec::new(),
-                            });
+                        if let Some(mut record) = cursor.load(self).filter(|record| {
+                            state.filter.contains(record.timestamp())
+                                && (state.scope == Some(RecordScope::State)
+                                    || current_peer_floor
+                                        .is_some_and(|floor| record.timestamp() >= floor))
+                        }) {
+                            if state.initial {
+                                if let DeviceSyncRecord::Message { message } = &mut record {
+                                    self.attach_legacy_sync_reactions(message);
+                                }
+                            }
+                            if state.scope.is_some() {
+                                outgoing.push(DeviceSyncPacket::HistoryRecords {
+                                    v: 1,
+                                    session: session.clone(),
+                                    records: vec![record],
+                                    requested: Vec::new(),
+                                });
+                            } else if let DeviceSyncRecord::Message { message } = record {
+                                outgoing.push(DeviceSyncPacket::HistoryMessages {
+                                    v: 1,
+                                    session: session.clone(),
+                                    messages: vec![message],
+                                    requested: Vec::new(),
+                                });
+                            }
                         }
                     }
-                    outgoing.push(DeviceSyncPacket::HistoryMessages {
-                        v: 1,
-                        session: session.clone(),
-                        messages: Vec::new(),
-                        requested: ids,
+                    outgoing.push(if state.scope.is_some() {
+                        DeviceSyncPacket::HistoryRecords {
+                            v: 1,
+                            session: session.clone(),
+                            records: Vec::new(),
+                            requested: ids,
+                        }
+                    } else {
+                        DeviceSyncPacket::HistoryMessages {
+                            v: 1,
+                            session: session.clone(),
+                            messages: Vec::new(),
+                            requested: ids,
+                        }
                     });
                     true
                 }
@@ -546,7 +747,10 @@ impl AppCore {
                 {
                     false
                 } else {
-                    for message in messages {
+                    for mut message in messages {
+                        if !state.initial {
+                            message.legacy_reactions = None;
+                        }
                         state
                             .pending_messages
                             .insert(hex(&record_id(&message.chat_id, &message.id)), message);
@@ -621,7 +825,8 @@ impl AppCore {
                                 crate::DeviceHistorySyncPhase::Transferring,
                                 state
                                     .complete
-                                    .then_some(imported + state.missing.len() as u64),
+                                    .then_some(imported + state.missing.len() as u64)
+                                    .filter(|_| state.scope.is_none()),
                             );
                         }
                         state.batch_imported = 0;
@@ -651,6 +856,7 @@ impl AppCore {
             outgoing.push(need);
         }
         let finished = state.finished();
+        let scope = state.scope;
         let resume_future = finished && state.initial;
         if resume_future {
             if !state.withheld {
@@ -674,6 +880,15 @@ impl AppCore {
         {
             if let Some(runtime) = &mut self.device_sync {
                 runtime.history.sessions.insert(key, state);
+            }
+        }
+        if finished {
+            if let Some(since) = self
+                .device_sync
+                .as_mut()
+                .and_then(|runtime| runtime.history.restart.remove(&(peer.to_string(), scope)))
+            {
+                self.start_device_reconcile(peer, since, scope);
             }
         }
         if let Some(record) = resume_future

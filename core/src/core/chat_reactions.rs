@@ -56,21 +56,25 @@ impl AppCore {
         }
 
         if let Ok((_, peer)) = parse_peer_input(chat_id) {
-            let now = unix_now();
+            let millis = unix_now_ms();
             if let Ok(unsigned) = pairwise_codec::reaction_event(
                 owner_pubkey,
                 message_id.to_string(),
                 emoji.to_string(),
-                pairwise_codec::EncodeOptions::new(now.get(), now.get().saturating_mul(1000)),
+                pairwise_codec::EncodeOptions::new(millis / 1000, millis),
             ) {
                 self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "reaction");
             } else if emoji.is_empty() {
                 if let Ok(e_tag) = nostr::Tag::parse(["e", message_id]) {
                     let unsigned = UnsignedEvent::new(
                         owner_pubkey,
-                        Timestamp::from_secs(unix_now().get()),
+                        Timestamp::from_secs(millis / 1000),
                         Kind::Custom(REACTION_KIND as u16),
-                        vec![e_tag],
+                        vec![
+                            e_tag,
+                            nostr::Tag::parse(["ms", &millis.to_string()])
+                                .expect("valid millisecond tag"),
+                        ],
                         String::new(),
                     );
                     self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "reaction");

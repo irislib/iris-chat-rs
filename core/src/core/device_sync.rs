@@ -16,6 +16,8 @@ mod history;
 mod history_policy;
 mod messages;
 mod recent_peers;
+mod records;
+use records::{DeviceSyncRecord, RecordScope};
 mod runtime;
 mod settings;
 mod snapshot;
@@ -75,6 +77,8 @@ enum DeviceSyncPacket {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         history_reconcile: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        record_reconcile: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         history_since: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         link_id: Option<String>,
@@ -88,6 +92,8 @@ enum DeviceSyncPacket {
         next: DeviceSyncPage,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         history_reconcile: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        record_reconcile: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         history_since: Option<u64>,
     },
@@ -110,6 +116,8 @@ enum DeviceSyncPacket {
     HistoryOpen {
         v: u8,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<RecordScope>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         link_id: Option<String>,
         session: String,
         since: u64,
@@ -130,6 +138,12 @@ enum DeviceSyncPacket {
         v: u8,
         session: String,
         messages: Vec<DeviceSyncMessage>,
+        requested: Vec<String>,
+    },
+    HistoryRecords {
+        v: u8,
+        session: String,
+        records: Vec<DeviceSyncRecord>,
         requested: Vec<String>,
     },
     HistoryDone {
@@ -189,6 +203,8 @@ struct DeviceSyncAppKeyDevice {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceSyncGroup {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    legacy_message_ttl_seconds: Option<u64>,
     id: String,
     name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -209,6 +225,8 @@ struct DeviceSyncGroup {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceSyncMessage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    legacy_reactions: Option<Vec<LegacyReaction>>,
     chat_id: String,
     id: String,
     #[serde(with = "body")]
@@ -217,6 +235,11 @@ struct DeviceSyncMessage {
     created_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expires_at: Option<u64>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct LegacyReaction {
+    author: String,
+    emoji: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -372,6 +395,7 @@ impl AppCore {
                 roster_at,
                 page,
                 history_reconcile,
+                record_reconcile,
                 history_since,
                 link_id,
             } if v == DEVICE_SYNC_VERSION => {
@@ -381,6 +405,7 @@ impl AppCore {
                     page.as_ref(),
                     history_reconcile,
                     history_since,
+                    record_reconcile,
                 );
                 self.reply_device_sync_snapshot(
                     source_pubkey_hex,
@@ -398,8 +423,13 @@ impl AppCore {
                 roster_at,
                 next,
                 history_reconcile,
+                record_reconcile,
                 history_since,
             } if v == DEVICE_SYNC_VERSION => {
+                self.negotiate_device_records(source_pubkey_hex, record_reconcile);
+                if record_reconcile == Some(1) {
+                    self.start_device_state(source_pubkey_hex);
+                }
                 if history_reconcile == Some(1)
                     && matches!(next, DeviceSyncPage::Messages { after: None })
                 {
@@ -497,6 +527,7 @@ impl AppCore {
         let packet = DeviceSyncSnapshot {
             roster_at,
             messages: vec![DeviceSyncMessage {
+                legacy_reactions: None,
                 chat_id: message.chat_id.clone(),
                 id: message.id.clone(),
                 body: message_wire_text(&message.body, &message.attachments),

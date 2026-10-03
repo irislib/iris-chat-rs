@@ -162,6 +162,9 @@ impl AppCore {
         let (background_events, durable_events) = self.build_local_identity_artifacts();
 
         for (_, event) in &background_events {
+            if event.kind == Kind::Metadata {
+                self.cache_device_sync_profile(event);
+            }
             self.remember_event(event.id.to_string());
             self.emit_nearby_published_event(event);
         }

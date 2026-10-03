@@ -366,6 +366,7 @@ impl AppCore {
                 roster_at: config.roster_at,
                 page: None,
                 history_reconcile: Some(1),
+                record_reconcile: Some(1),
                 history_since: None,
                 link_id: None,
             });

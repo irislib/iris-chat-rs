@@ -550,6 +550,17 @@ impl AppCore {
         let created_at_secs = runtime_rumor.created_at_secs;
         let expires_at_secs = message_expiration_from_tags(runtime_rumor.tags.iter());
         let inner_event_id = runtime_rumor.id.clone();
+        if !self.capture_device_sync_control(
+            chat_id,
+            &inner_event_id,
+            &sender_owner.to_hex(),
+            created_at_secs,
+            runtime_rumor.kind,
+            &runtime_rumor.content,
+            &runtime_rumor.tags,
+        ) {
+            return;
+        }
         match runtime_rumor.kind {
             CHAT_MESSAGE_KIND => {
                 let receipt_message_id = inner_event_id.clone();
@@ -570,14 +581,8 @@ impl AppCore {
                 }
             }
             REACTION_KIND => {
-                let sender_hex = sender_owner.to_hex();
                 for message_id in message_ids_from_tags(runtime_rumor.tags.iter()) {
-                    self.apply_incoming_reaction_to_chat(
-                        chat_id,
-                        &message_id,
-                        &sender_hex,
-                        &runtime_rumor.content,
-                    );
+                    self.restore_device_sync_reactions(chat_id, &message_id);
                 }
             }
             RECEIPT_KIND => {

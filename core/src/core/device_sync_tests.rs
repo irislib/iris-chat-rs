@@ -23,6 +23,7 @@ fn chunks_are_bounded_additive_camel_case_snapshots() {
             }],
         }],
         groups: vec![DeviceSyncGroup {
+            legacy_message_ttl_seconds: None,
             id: "group".to_string(),
             name: "Group".to_string(),
             description: None,
@@ -38,6 +39,7 @@ fn chunks_are_bounded_additive_camel_case_snapshots() {
         }],
         messages: (0..200)
             .map(|index| DeviceSyncMessage {
+                legacy_reactions: None,
                 chat_id: "a".repeat(64),
                 id: format!("message-{index}"),
                 body: "x".repeat(1024),

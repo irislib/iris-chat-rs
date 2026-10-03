@@ -378,11 +378,19 @@ impl AppCore {
     pub(super) fn apply_device_history_snapshot(
         &mut self,
         peer: &str,
-        snapshot: DeviceSyncSnapshot,
+        mut snapshot: DeviceSyncSnapshot,
     ) {
         let fallback = self
             .device_history_transfer(peer)
             .filter(|record| !record.outbound && !record.complete && record.fallback);
+        for message in &mut snapshot.messages {
+            if fallback
+                .as_ref()
+                .is_none_or(|record| record.since != 0 || message.created_at >= record.link_at)
+            {
+                message.legacy_reactions = None;
+            }
+        }
         let incoming = snapshot
             .messages
             .iter()
