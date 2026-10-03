@@ -9,7 +9,8 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Unify device linking around NostrConnect, retaining existing Iris link input compatibility and existing account sessions.
 - Reuse unchanged signed device lists and repair equivalent duplicate snapshots during approved linking, so existing accounts can link without weakening conflict checks.
 - Choose between chats and groups only or message history on the approving device. Keep the initial history transfer private to that device pair, resume interrupted transfers, and show progress on the receiving device.
-- Reconcile message inventories over encrypted FIPS using the shared Negentropy codec. Preserve link-time boundaries, local deletions, expiry, and device revocation during replay and recovery.
+- Reconcile messages and reaction changes over encrypted FIPS using the shared Negentropy codec. Sync current group details, settings, and verified contact profiles separately from old message history. Preserve link-time boundaries, local deletions, expiry, and device revocation during replay and recovery.
+- Notify linked devices when queued messages become sent, and retry unanswered WebRTC offers after authenticated session restarts without waiting for the old dial timeout.
 - Focus the composer when replying, follow the iOS keyboard animation, and emit pending messages before protocol checkpoint work.
 - Paste photos and multiple files into drafts without sending automatically, and improve long-draft editing across native platforms.
 - Keep private contacts and device labels in ratcheted messages and direct pairing snapshots. Authenticate background call notifications and retain them for retry.
@@ -20,6 +21,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 - Choose whether to copy message history when linking a device, and see transfer progress.
 - Resume interrupted history transfers and keep deleted messages removed.
+- Keep reactions, group details, and contact profiles in sync across devices.
 - Open the keyboard when replying and keep your place as it appears.
 - Show outgoing messages sooner and improve typing after long pastes.
 - Paste photos and files into a chat before sending.
@@ -30,6 +32,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 - Choose whether to copy message history when linking a device, and see transfer progress.
 - Resume interrupted history transfers and keep deleted messages removed.
+- Keep reactions, group details, and contact profiles in sync across devices.
 - Show outgoing messages sooner and improve typing after long pastes.
 - Paste photos and files into a chat before sending.
 - Improve private contact sync and Nearby connection recovery.
