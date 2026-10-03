@@ -121,12 +121,14 @@ impl AppCore {
             InternalEvent::RemoteSignerSigned {
                 request_id,
                 signed_event_json,
+                link_info,
                 ..
             } => {
                 if let Some(snapshot) = &mut self.state.remote_signer_login {
                     snapshot.phase = RemoteSignerPhase::Finishing;
                     snapshot.auth_url = None;
                 }
+                self.set_signer_link_info(&request_id, link_info);
                 self.complete_signer_login(&request_id, &signed_event_json);
                 self.emit_state();
             }

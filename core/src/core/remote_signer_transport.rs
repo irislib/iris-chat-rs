@@ -101,11 +101,29 @@ async fn authorize(
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("Invalid signer response."))?
         .to_string();
+    // This optional extension is encrypted to the approved signer transport. Ordinary
+    // external signers can reject or ignore it; the device then keeps its join boundary.
+    let link_info = match tokio::time::timeout(
+        Duration::from_secs(3),
+        rpc.request("iris_get_link_info", Vec::new()),
+    )
+    .await
+    {
+        Ok(Ok(value)) => value
+            .as_str()
+            .filter(|value| value.len() <= 4096)
+            .and_then(|value| {
+                serde_json::from_str::<super::device_link_signer::DeviceLinkInfo>(value).ok()
+            })
+            .filter(|info| info.v == 1 && info.link_id == rpc.keys.public_key().to_hex()),
+        _ => None,
+    };
     let _ = rpc.tx.send(CoreMsg::Internal(Box::new(
         InternalEvent::RemoteSignerSigned {
             token: rpc.token.clone(),
             request_id: request.request_id,
             signed_event_json,
+            link_info,
         },
     )));
     Ok(())

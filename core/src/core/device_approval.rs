@@ -22,6 +22,10 @@ impl AppCore {
             return;
         }
 
+        if device_input.trim().starts_with("nostrconnect://") {
+            self.start_device_link_signer(device_input, include_history.unwrap_or(false));
+            return;
+        }
         let bootstrap =
             match parse_nostr_identity_device_approval_bootstrap(device_input.trim(), &[]) {
                 Ok(Some(bootstrap)) => bootstrap,

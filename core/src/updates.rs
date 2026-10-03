@@ -107,6 +107,18 @@ pub(crate) struct CorePerfCountersSnapshot {
 
 #[derive(Debug)]
 pub(crate) enum InternalEvent {
+    DeviceLinkSignerRequest {
+        token: String,
+        unsigned_event_json: String,
+        previous: Option<Event>,
+        reply: tokio::sync::oneshot::Sender<
+            Result<(Event, crate::core::device_link_signer::DeviceLinkInfo), String>,
+        >,
+    },
+    DeviceLinkSignerFinished {
+        token: String,
+        success: bool,
+    },
     PrivateContactSyncTick {
         generation: u64,
     },
@@ -127,6 +139,7 @@ pub(crate) enum InternalEvent {
         token: String,
         request_id: String,
         signed_event_json: String,
+        link_info: Option<crate::core::device_link_signer::DeviceLinkInfo>,
     },
     RemoteSignerFailed {
         token: String,

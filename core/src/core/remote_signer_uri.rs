@@ -92,3 +92,42 @@ pub(super) fn safe_auth_url(input: &str) -> Option<String> {
         && url.password().is_none())
     .then(|| url.to_string())
 }
+
+// Inbound client requests share relay validation with the existing signer client.
+pub(super) fn parse_device_link_connection(input: &str) -> anyhow::Result<SignerConnection> {
+    anyhow::ensure!(
+        input.trim().starts_with("nostrconnect://"),
+        "Invalid device link."
+    );
+    anyhow::ensure!(input.len() <= 8192, "Invalid device link.");
+    let url = url::Url::parse(input.trim())?;
+    let secret_count = url
+        .query_pairs()
+        .filter(|(name, _)| name == "secret")
+        .count();
+    anyhow::ensure!(secret_count == 1, "Device link requires a secret.");
+    anyhow::ensure!(
+        url.query_pairs()
+            .filter(|(name, _)| name == "perms")
+            .count()
+            <= 1,
+        "Invalid device link."
+    );
+    let permissions = url
+        .query_pairs()
+        .find(|(name, _)| name == "perms")
+        .map(|(_, value)| value.into_owned());
+    anyhow::ensure!(
+        permissions
+            .as_deref()
+            .is_none_or(|value| value == PERMISSIONS),
+        "Unsupported device permissions."
+    );
+    let converted = input.trim().replacen("nostrconnect://", "bunker://", 1);
+    let connection = parse_signer_connection(&converted)?;
+    anyhow::ensure!(
+        !connection.secret.is_empty(),
+        "Device link requires a secret."
+    );
+    Ok(connection)
+}

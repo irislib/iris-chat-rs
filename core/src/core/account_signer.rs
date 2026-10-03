@@ -12,6 +12,7 @@ pub(super) struct PendingSignerLogin {
     relay_urls: Vec<RelayUrl>,
     previous_event: Option<Event>,
     unsigned_event: Option<UnsignedEvent>,
+    link_info: Option<super::device_link_signer::DeviceLinkInfo>,
     pub(super) publishing: bool,
     deadline: Instant,
 }
@@ -45,6 +46,7 @@ impl AppCore {
             relay_urls: relay_urls.clone(),
             previous_event: None,
             unsigned_event: None,
+            link_info: None,
             publishing: false,
             deadline: Instant::now() + SIGNER_LOGIN_TIMEOUT,
         });
@@ -112,6 +114,20 @@ impl AppCore {
                 });
             }
             Err(error) => self.fail_signer_login(&error),
+        }
+    }
+
+    pub(super) fn set_signer_link_info(
+        &mut self,
+        request_id: &str,
+        info: Option<super::device_link_signer::DeviceLinkInfo>,
+    ) {
+        if let Some(pending) = self
+            .pending_signer_login
+            .as_mut()
+            .filter(|pending| pending.request_id == request_id)
+        {
+            pending.link_info = info;
         }
     }
 
@@ -190,6 +206,33 @@ impl AppCore {
                 false,
                 false,
             )?;
+            if let Some(info) = &pending.link_info {
+                let roster = AppKeys::from_event(&event)?;
+                let approver_roster = pending
+                    .previous_event
+                    .as_ref()
+                    .and_then(|event| AppKeys::from_event(event).ok());
+                if info.v == 1
+                    && info.device == pending.device_keys.public_key().to_hex()
+                    && PublicKey::from_hex(&info.approver)
+                        .ok()
+                        .is_some_and(|approver| {
+                            approver_roster
+                                .as_ref()
+                                .is_some_and(|roster| roster.get_device(&approver).is_some())
+                        })
+                    && roster
+                        .get_device(&pending.device_keys.public_key())
+                        .is_some_and(|device| device.created_at == info.link_at)
+                    && PublicKey::from_hex(&info.link_id).is_ok()
+                {
+                    self.record_device_history_approver(
+                        &info.approver,
+                        info.link_at,
+                        info.link_id.clone(),
+                    )?;
+                }
+            }
             self.apply_app_keys_event(&event)?;
             anyhow::ensure!(
                 self.logged_in

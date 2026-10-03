@@ -84,6 +84,11 @@ fn remote_signer_client_and_bunker_login_preserve_roster_and_restart_without_sig
             LocalAuthorizationState::Authorized
         );
         let device_key = logged_in.device_keys.public_key();
+        assert!(
+            core.device_history_transfer(&old_device.public_key().to_hex())
+                .is_none(),
+            "ordinary signers must not enable historical transfer"
+        );
         let published = relay
             .events()
             .iter()

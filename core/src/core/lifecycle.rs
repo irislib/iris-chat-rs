@@ -78,6 +78,7 @@ impl AppCore {
             pending_linked_device: None,
             pending_signer_login: None,
             pending_remote_signer: None,
+            pending_device_link_signer: None,
             device_approval_relay_urls: relay_urls_from_strings(&[
                 COMPILED_DEVICE_APPROVAL_RELAY_URL.to_string(),
             ]),
@@ -188,6 +189,8 @@ impl AppCore {
                 _ => "Action.other",
             },
             CoreMsg::Internal(event) => match event.as_ref() {
+                InternalEvent::DeviceLinkSignerRequest { .. }
+                | InternalEvent::DeviceLinkSignerFinished { .. } => "DeviceLinkSigner",
                 InternalEvent::RemoteSignerProgress { .. }
                 | InternalEvent::RemoteSignerConnected { .. }
                 | InternalEvent::RemoteSignerSigned { .. }
@@ -467,6 +470,20 @@ impl AppCore {
             return;
         }
         match event {
+            InternalEvent::DeviceLinkSignerRequest {
+                token,
+                unsigned_event_json,
+                previous,
+                reply,
+            } => {
+                let result = self
+                    .sign_device_link_request(&token, &unsigned_event_json, previous.as_ref())
+                    .map_err(|_| "Device approval rejected.".to_string());
+                let _ = reply.send(result);
+            }
+            InternalEvent::DeviceLinkSignerFinished { token, success } => {
+                self.finish_device_link_signer(&token, success)
+            }
             InternalEvent::PrivateContactSyncTick { generation } => {
                 self.private_contact_sync_tick(generation);
             }

@@ -74,6 +74,8 @@ mod account_pending_link;
 mod account_signer;
 mod account_signer_relay;
 mod attachment_upload;
+pub(crate) mod device_link_signer;
+mod device_link_signer_transport;
 mod registration_recovery;
 mod remote_signer;
 mod remote_signer_rpc;
@@ -614,6 +616,7 @@ pub struct AppCore {
     pending_linked_device: Option<PendingLinkedDeviceState>,
     pending_signer_login: Option<account_signer::PendingSignerLogin>,
     pending_remote_signer: Option<remote_signer::PendingRemoteSigner>,
+    pending_device_link_signer: Option<device_link_signer::PendingDeviceLinkSigner>,
     device_approval_relay_urls: Vec<RelayUrl>,
     private_chat_invites: BTreeMap<String, Invite>,
     pending_private_invite_responses: BTreeMap<String, invites::PendingPrivateInviteResponseV1>,
