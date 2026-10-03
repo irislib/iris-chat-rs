@@ -147,6 +147,9 @@ struct IrisComposerBar: View {
         .irisOnChange(of: draft) { _ in onDraftChange() }
         .frame(maxWidth: .infinity)
         .onAppear { onFileDropAvailabilityChange(canPrepareAttachments) }
+        #if os(macOS)
+        .modifier(DesktopComposerKeyboardFocus(isFocused: $isFocused))
+        #endif
         .irisOnChange(of: canPrepareAttachments) { onFileDropAvailabilityChange($0) }
         .fileImporter(
             isPresented: $showingAttachmentPicker,
@@ -889,7 +892,7 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
 #endif
 
 
-struct IrisPrimaryCircleButtonStyle: ButtonStyle {
+struct IrisPrimaryCircleButtonVisualStyle: ButtonStyle {
     @Environment(\.irisPalette) private var palette
 
     func makeBody(configuration: Configuration) -> some View {

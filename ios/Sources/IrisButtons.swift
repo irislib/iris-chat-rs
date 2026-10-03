@@ -12,7 +12,7 @@ import UIKit
 import PhotosUI
 #endif
 
-struct IrisPrimaryButtonStyle: ButtonStyle {
+struct IrisPrimaryButtonVisualStyle: ButtonStyle {
     @Environment(\.irisPalette) private var palette
     let compact: Bool
 
@@ -47,7 +47,7 @@ struct IrisPrimaryButtonStyle: ButtonStyle {
     }
 }
 
-struct IrisSecondaryButtonStyle: ButtonStyle {
+struct IrisSecondaryButtonVisualStyle: ButtonStyle {
     @Environment(\.irisPalette) private var palette
     let compact: Bool
 
@@ -471,7 +471,7 @@ struct IrisInfoPill: View {
 }
 
 /// Quiet, equally sized toolbar controls with hover and pressed feedback.
-struct IrisHeaderButtonStyle: ButtonStyle {
+struct IrisHeaderButtonVisualStyle: ButtonStyle {
     @Environment(\.irisPalette) private var palette
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovered = false

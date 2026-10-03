@@ -38,7 +38,7 @@ extension View {
 
 /// `.plain` look-alike that adds a pointing-hand cursor on macOS hover.
 /// Use everywhere instead of the system `.plain` style.
-struct IrisPlainButtonStyle: ButtonStyle {
+struct IrisPlainButtonVisualStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .opacity(configuration.isPressed ? 0.7 : 1)
@@ -46,19 +46,11 @@ struct IrisPlainButtonStyle: ButtonStyle {
     }
 }
 
-extension ButtonStyle where Self == IrisPlainButtonStyle {
-    static var irisPlain: IrisPlainButtonStyle { IrisPlainButtonStyle() }
-}
-
-struct IrisUnpressedButtonStyle: ButtonStyle {
+struct IrisUnpressedButtonVisualStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .irisHoverPointer()
     }
-}
-
-extension ButtonStyle where Self == IrisUnpressedButtonStyle {
-    static var irisUnpressed: IrisUnpressedButtonStyle { IrisUnpressedButtonStyle() }
 }
 
 struct IrisControlTintModifier: ViewModifier {

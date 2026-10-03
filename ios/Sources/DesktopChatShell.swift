@@ -17,15 +17,23 @@ struct DesktopChatShell: View {
     @ObservedObject var manager: AppManager
     let onOpenNearby: () -> Void
     let onOpenNearbyPeerProfile: (String) -> Void
+    @State private var keyboardOpenChatID: String?
+    @State private var keyboardOpenRequest: UUID?
 
     var body: some View {
         HStack(spacing: 0) {
             DesktopChatSidebar(
                 manager: manager,
                 onOpenNearby: onOpenNearby,
-                onOpenNearbyPeerProfile: onOpenNearbyPeerProfile
+                onOpenNearbyPeerProfile: onOpenNearbyPeerProfile,
+                onKeyboardOpenChat: { chatID in
+                    keyboardOpenChatID = chatID
+                    keyboardOpenRequest = UUID()
+                    manager.dispatch(.openChat(chatId: chatID))
+                }
             )
                 .frame(width: 352)
+                .irisDesktopFocusSection()
 
             Rectangle()
                 .fill(palette.border)
@@ -36,9 +44,15 @@ struct DesktopChatShell: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(palette.background)
+            .irisDesktopFocusSection()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(palette.background)
+        .irisOnChange(of: manager.activeScreen) { screen in
+            if case .chat(let chatID) = screen, chatID == keyboardOpenChatID { return }
+            keyboardOpenChatID = nil
+            keyboardOpenRequest = nil
+        }
     }
 
     @ViewBuilder
@@ -95,6 +109,12 @@ struct DesktopChatShell: View {
             )
             ChatScreen(manager: manager, chatId: chatId)
                 .id(chatId)
+                #if os(macOS)
+                .environment(\.desktopComposerFocusRequest, Binding(
+                    get: { keyboardOpenChatID == chatId ? keyboardOpenRequest : nil },
+                    set: { if keyboardOpenChatID == chatId { keyboardOpenRequest = $0 } }
+                ))
+                #endif
         case .directChatInfo(let chatId):
             DesktopPaneTopBar(title: manager.state.currentChat?.displayName ?? "Details", personIdentity: chatId, explicitName: explicitPersonName(nickname: manager.state.currentChat?.nickname, profileName: manager.state.currentChat?.profileName), canGoBack: true, onBack: manager.navigateBack)
             DirectChatInfoScreen(
@@ -242,6 +262,7 @@ struct DesktopChatSidebar: View {
     @ObservedObject var manager: AppManager
     let onOpenNearby: () -> Void
     let onOpenNearbyPeerProfile: (String) -> Void
+    let onKeyboardOpenChat: (String) -> Void
     @State private var searchText = ""
     @State private var search = GroupedSearchSession()
 
@@ -276,58 +297,72 @@ struct DesktopChatSidebar: View {
 
             ChatListSearchField(text: $searchText)
 
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    if let request = searchRequest {
-                        if let results = search.snapshot(for: request) {
-                            SearchResultsList(
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        if let request = searchRequest {
+                            if let results = search.snapshot(for: request) {
+                                SearchResultsList(
+                                    manager: manager,
+                                    results: results,
+                                    relativeNow: relativeNow,
+                                    expandedSections: search.expandedSections,
+                                    messageLimit: search.messageLimit,
+                                    onShortcutNavigate: { searchText = "" },
+                                    onViewMore: { search.viewMore($0) }
+                                )
+                            }
+                        } else {
+                            let preferences = manager.state.preferences
+
+                            DesktopSidebarActionRow(
+                                title: "New chat",
+                                subtitle: nil,
+                                systemImage: "message.fill",
+                                selected: newChatSelected
+                            ) {
+                                manager.dispatch(.pushScreen(screen: .newChat))
+                            }
+                            .accessibilityIdentifier("desktopNewChatRow")
+
+                            #if os(macOS)
+                            DesktopNearbyIrisRow(
                                 manager: manager,
-                                results: results,
+                                service: manager.nearbyIris,
+                                onOpen: onOpenNearby,
+                                onOpenPeerProfile: onOpenNearbyPeerProfile
+                            )
+                            .accessibilityIdentifier("desktopNearbyRow")
+                            #endif
+
+                            #if os(macOS)
+                            DesktopKeyboardChatList(
+                                manager: manager,
+                                chats: manager.state.chatList,
+                                selectedChatID: selectedChatId,
+                                preferences: preferences,
                                 relativeNow: relativeNow,
-                                expandedSections: search.expandedSections,
-                                messageLimit: search.messageLimit,
-                                onShortcutNavigate: { searchText = "" },
-                                onViewMore: { search.viewMore($0) }
+                                proxy: proxy,
+                                onOpen: onKeyboardOpenChat
                             )
-                        }
-                    } else {
-                        let preferences = manager.state.preferences
-
-                        DesktopSidebarActionRow(
-                            title: "New chat",
-                            subtitle: nil,
-                            systemImage: "message.fill",
-                            selected: newChatSelected
-                        ) {
-                            manager.dispatch(.pushScreen(screen: .newChat))
-                        }
-                        .accessibilityIdentifier("desktopNewChatRow")
-
-                        #if os(macOS)
-                        DesktopNearbyIrisRow(
-                            manager: manager,
-                            service: manager.nearbyIris,
-                            onOpen: onOpenNearby,
-                            onOpenPeerProfile: onOpenNearbyPeerProfile
-                        )
-                        .accessibilityIdentifier("desktopNearbyRow")
-                        #endif
-
-                        ForEach(manager.state.chatList, id: \.chatId) { chat in
-                            DesktopSidebarChatRow(
-                                manager: manager,
-                                chat: chat,
-                                timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow),
-                                selected: selectedChatId == chat.chatId,
-                                preferences: preferences
-                            )
-                            .equatable()
-                            .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
+                            #else
+                            ForEach(manager.state.chatList, id: \.chatId) { chat in
+                                DesktopSidebarChatRow(
+                                    manager: manager,
+                                    chat: chat,
+                                    timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow),
+                                    selected: selectedChatId == chat.chatId,
+                                    preferences: preferences
+                                )
+                                .equatable()
+                                .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
+                            }
+                            #endif
                         }
                     }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 16)
                 }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 16)
             }
         }
         .background(palette.panel)
@@ -397,6 +432,7 @@ struct DesktopChatSidebar: View {
         .padding(.horizontal, 18)
         .padding(.top, 18)
         .padding(.bottom, 14)
+        .irisDesktopFocusSection()
     }
 }
 
@@ -412,10 +448,12 @@ struct DesktopSidebarActionRow: View {
 
     var body: some View {
         if let longPressAction {
-            rowContent
-                .onTapGesture(perform: action)
-                .onLongPressGesture(minimumDuration: 0.5, perform: longPressAction)
-                .accessibilityAddTraits(.isButton)
+            Button(action: action) { rowContent }
+                .buttonStyle(.irisPlain)
+                .highPriorityGesture(
+                    LongPressGesture(minimumDuration: 0.5)
+                        .onEnded { _ in longPressAction() }
+                )
         } else {
             Button(action: action) {
                 rowContent
