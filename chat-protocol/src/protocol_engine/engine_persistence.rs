@@ -49,10 +49,12 @@ impl ProtocolEngine {
             subscription_generation: self.subscription_generation,
         };
         self.batch_persist_dirty.set(false);
-        self.storage.put(
-            PROTOCOL_ENGINE_STATE_KEY,
-            layout_protocol_checkpoint(serde_json::to_string(&state)?),
-        )?;
+        let (json, layout) = layout_protocol_checkpoint(
+            serde_json::to_string(&state)?,
+            &self.checkpoint_layout.borrow(),
+        );
+        self.storage.put(PROTOCOL_ENGINE_STATE_KEY, json)?;
+        *self.checkpoint_layout.borrow_mut() = layout;
         Ok(())
     }
 

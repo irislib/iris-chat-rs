@@ -431,6 +431,7 @@ pub struct ProtocolEngine {
     /// foreground freeze.
     pub batch_depth: std::cell::Cell<u32>,
     pub batch_persist_dirty: std::cell::Cell<bool>,
+    checkpoint_layout: std::cell::RefCell<ProtocolCheckpointLayout>,
 }
 
 #[derive(Clone)]
