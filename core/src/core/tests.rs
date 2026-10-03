@@ -190,3 +190,4 @@ include!("tests/contact_identity.rs");
 include!("tests/public_follow.rs");
 
 include!("tests/synthetic_history_scale.rs");
+include!("tests/synthetic_protocol_checkpoint.rs");

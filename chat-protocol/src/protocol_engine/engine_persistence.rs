@@ -49,9 +49,11 @@ impl ProtocolEngine {
             subscription_generation: self.subscription_generation,
         };
         self.batch_persist_dirty.set(false);
-        let (json, layout) = layout_protocol_checkpoint(
+        let pending = self.pending_group_sender_key_messages.serialized()?;
+        let (json, layout) = layout_protocol_checkpoint_with_pending(
             serde_json::to_string(&state)?,
             &self.checkpoint_layout.borrow(),
+            Some(&pending),
         );
         self.storage.put(PROTOCOL_ENGINE_STATE_KEY, json)?;
         *self.checkpoint_layout.borrow_mut() = layout;

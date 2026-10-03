@@ -46,8 +46,7 @@ struct ProtocolEnginePersistedState {
     #[serde(default)]
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     #[serde(default)]
-    pending_group_sender_key_messages:
-        Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
+    pending_group_sender_key_messages: PendingGroupMessages,
     #[serde(default)]
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     #[serde(default)]
@@ -398,8 +397,7 @@ pub struct ProtocolEngine {
     pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
     pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
-    pending_group_sender_key_messages:
-        Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
+    pending_group_sender_key_messages: PendingGroupMessages,
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     processed_group_sender_key_messages: ProtocolGroupReplayCache,
     group_sender_key_retry: std::cell::RefCell<ProtocolGroupSenderKeyRetry>,
@@ -438,8 +436,7 @@ struct ProtocolEngineCheckpoint {
     pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
     pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
-    pending_group_sender_key_messages:
-        Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
+    pending_group_sender_key_messages: PendingGroupMessages,
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     processed_group_sender_key_messages: ProtocolGroupReplayCache,
     group_sender_key_retry: ProtocolGroupSenderKeyRetry,

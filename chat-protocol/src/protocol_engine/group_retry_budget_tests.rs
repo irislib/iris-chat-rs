@@ -283,7 +283,7 @@ fn group_retry_error_retains_the_candidate_and_unprocessed_tail() {
     let malformed = engine.pending_group_sender_key_messages[0].clone();
     let recovered = engine.retry_pending_protocol(NdrUnixSeconds(30)).unwrap();
     assert_eq!(recovered.group_result.events.len(), 2);
-    assert_eq!(engine.pending_group_sender_key_messages, vec![malformed]);
+    assert_eq!(&*engine.pending_group_sender_key_messages, &[malformed]);
     // Another success changes the ratchet once; after that input is attempted,
     // malformed ciphertext cannot spin indefinitely.
     engine.retry_pending_protocol(NdrUnixSeconds(30)).unwrap();
@@ -301,9 +301,9 @@ fn group_retry_hot_stream_does_not_starve_another_stream_at_the_tail() {
         .push(other_state.sender_keys[0].sender_owner);
     state.sender_keys.extend(other_state.sender_keys);
     engine.group_manager = GroupEventManager::from_snapshot(state).unwrap();
-    engine
-        .pending_group_sender_key_messages
-        .extend(other.pending_group_sender_key_messages);
+    for pending in other.pending_group_sender_key_messages.iter().cloned() {
+        engine.pending_group_sender_key_messages.push(pending);
+    }
     let mut found_tail = false;
     for _ in 0..21 {
         let batch = engine.retry_pending_protocol(NdrUnixSeconds(30)).unwrap();
@@ -379,7 +379,7 @@ fn group_retry_ratchet_progress_unlocks_an_earlier_out_of_window_candidate() {
             ciphertext: bridge.unwrap(),
             ..template
         },
-    ];
+    ].into();
     let mut delivered = 0;
     for _ in 0..6 {
         delivered += engine

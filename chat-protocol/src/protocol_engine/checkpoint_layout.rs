@@ -11,6 +11,7 @@ struct ProtocolCheckpointLayout {
 const CHECKPOINT_PAGE: usize = 4096;
 const CHECKPOINT_RESERVE: usize = 64 * 1024;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CheckpointRecord {
     end: usize,
     padded_end: usize,
@@ -18,11 +19,38 @@ struct CheckpointRecord {
 }
 
 fn checkpoint_records(json: &str) -> Vec<CheckpointRecord> {
+    checkpoint_records_with_cached_pending(json, 0, None)
+}
+
+fn checkpoint_records_with_cached_pending(
+    json: &str,
+    initial_depth: usize,
+    pending: Option<&SerializedPendingGroupMessages>,
+) -> Vec<CheckpointRecord> {
     let mut records = Vec::new();
-    let mut stack = Vec::new();
+    let mut stack: Vec<(u8, usize)> = Vec::new();
     let mut quoted = false;
     let mut escaped = false;
-    for (index, character) in json.bytes().enumerate() {
+    let mut string_start = 0;
+    let mut pending_start = None;
+    let bytes = json.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if pending_start == Some(index) {
+            if let Some(pending) = pending {
+                let end = index + pending.json.get().len();
+                if json.get(index..end) == Some(pending.json.get()) {
+                    records.extend(pending.records.iter().map(|record| CheckpointRecord {
+                        end: index + record.end,
+                        padded_end: index + record.padded_end,
+                        large: record.large,
+                    }));
+                    index = end;
+                    continue;
+                }
+            }
+        }
+        let character = bytes[index];
         if quoted {
             if escaped {
                 escaped = false;
@@ -30,20 +58,46 @@ fn checkpoint_records(json: &str) -> Vec<CheckpointRecord> {
                 escaped = true;
             } else if character == b'"' {
                 quoted = false;
+                // Recognize only a real top-level key, never matching field
+                // names, brackets or escape sequences inside string values.
+                if pending.is_some()
+                    && initial_depth == 0
+                    && stack.len() == 1
+                    && stack[0].0 == b'{'
+                    && &bytes[string_start..=index] == b"\"pending_group_sender_key_messages\""
+                {
+                    let mut value = index + 1;
+                    while bytes.get(value).is_some_and(u8::is_ascii_whitespace) {
+                        value += 1;
+                    }
+                    if bytes.get(value) == Some(&b':') {
+                        value += 1;
+                        while bytes.get(value).is_some_and(u8::is_ascii_whitespace) {
+                            value += 1;
+                        }
+                        if bytes.get(value) == Some(&b'[') {
+                            pending_start = Some(value);
+                        }
+                    }
+                }
             }
+            index += 1;
             continue;
         }
         match character {
-            b'"' => quoted = true,
+            b'"' => {
+                quoted = true;
+                string_start = index;
+            }
             b'{' | b'[' => stack.push((character, index)),
             b'}' | b']' => {
                 if let Some((kind, start)) = stack.pop() {
                     if kind == b'{'
-                        && stack.len() <= 3
+                        && stack.len() + initial_depth <= 3
                         && stack.last().is_some_and(|(kind, _)| *kind == b'[')
                     {
                         let end = index + 1;
-                        let padding = json.as_bytes()[end..]
+                        let padding = bytes[end..]
                             .iter()
                             .take_while(|byte| byte.is_ascii_whitespace())
                             .count();
@@ -57,6 +111,7 @@ fn checkpoint_records(json: &str) -> Vec<CheckpointRecord> {
             }
             _ => {}
         }
+        index += 1;
     }
     records
 }
@@ -76,14 +131,23 @@ impl ProtocolCheckpointLayout {
     }
 }
 
+#[cfg(test)]
 fn layout_protocol_checkpoint(
     json: String,
     previous: &ProtocolCheckpointLayout,
 ) -> (String, ProtocolCheckpointLayout) {
+    layout_protocol_checkpoint_with_pending(json, previous, None)
+}
+
+fn layout_protocol_checkpoint_with_pending(
+    json: String,
+    previous: &ProtocolCheckpointLayout,
+    pending: Option<&SerializedPendingGroupMessages>,
+) -> (String, ProtocolCheckpointLayout) {
     if json.len() < CHECKPOINT_RESERVE {
         return (json, ProtocolCheckpointLayout::default());
     }
-    let records = checkpoint_records(&json);
+    let records = checkpoint_records_with_cached_pending(&json, 0, pending);
     // Parsed legacy/pretty/padded JSON remains readable without growing again.
     // Production serialization is compact and has no whitespace after objects.
     if records.iter().any(|record| record.end != record.padded_end)
@@ -255,5 +319,35 @@ mod checkpoint_layout_tests {
             "control must exercise shifted subsequent sessions"
         );
         assert_eq!(changed_pages(&aligned_before, &aligned_after), 1);
+    }
+}
+
+#[cfg(test)]
+mod cached_checkpoint_layout_tests {
+    use super::*;
+
+    #[test]
+    fn cached_pending_layout_matches_scanning_with_escaped_text_and_whitespace() {
+        let value = serde_json::json!([{ "ciphertext": "a".repeat(40000),
+            "nested": [{"text": "[] {\\\"pending_group_sender_key_messages\\\": [ ]}"}],
+            "text": "🦊 \\\"pending_group_sender_key_messages\\\": [{]" }]);
+        let cached =
+            SerializedPendingGroupMessages::new(serde_json::value::to_raw_value(&value).unwrap());
+        for json in [
+            serde_json::json!({"before": [{"state":"x".repeat(40000)}],
+                "pending_group_sender_key_messages":value, "after":[{"id":1}]}).to_string(),
+            format!("{{ \"fake\": \"pending_group_sender_key_messages\\\": [\\\"\",\n \"pending_group_sender_key_messages\" : {} , \"end\": [{{\"id\":1}}] }}",cached.json.get()),
+            serde_json::json!({"nested":{"pending_group_sender_key_messages":value},
+                "other":"pending_group_sender_key_messages"}).to_string(),
+        ] {
+            assert_eq!(checkpoint_records_with_cached_pending(&json, 0, Some(&cached)), checkpoint_records(&json));
+            let normal = layout_protocol_checkpoint(json.clone(), &ProtocolCheckpointLayout::default()).0;
+            let reused = layout_protocol_checkpoint_with_pending(json.clone(), &ProtocolCheckpointLayout::default(), Some(&cached)).0;
+            assert_eq!(normal, reused);
+            assert_eq!(serde_json::from_str::<serde_json::Value>(&normal).unwrap(), serde_json::from_str::<serde_json::Value>(&json).unwrap());
+            let previous = ProtocolCheckpointLayout::from_json(&normal);
+            assert_eq!(layout_protocol_checkpoint_with_pending(json.clone(), &previous, Some(&cached)).0,
+                layout_protocol_checkpoint(json, &previous).0);
+        }
     }
 }

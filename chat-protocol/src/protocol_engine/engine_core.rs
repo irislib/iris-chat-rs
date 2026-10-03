@@ -27,7 +27,7 @@ impl ProtocolEngine {
             pending_local_sibling_sends: Vec::new(),
             pending_remote_sends: Vec::new(),
             pending_group_pairwise_payloads: Vec::new(),
-            pending_group_sender_key_messages: Vec::new(),
+            pending_group_sender_key_messages: PendingGroupMessages::default(),
             pending_group_sender_key_repairs: Vec::new(),
             processed_group_sender_key_messages: ProtocolGroupReplayCache::default(),
             group_sender_key_retry: std::cell::RefCell::new(ProtocolGroupSenderKeyRetry::default()),

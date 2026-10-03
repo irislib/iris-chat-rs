@@ -18,6 +18,7 @@ include!("protocol_engine/engine_incoming_retry.rs");
 include!("protocol_engine/engine_resolution.rs");
 include!("protocol_engine/engine_sender_key_repair.rs");
 include!("protocol_engine/checkpoint_layout.rs");
+include!("protocol_engine/checkpoint_pending.rs");
 include!("protocol_engine/engine_persistence.rs");
 include!("protocol_engine/free_functions.rs");
 
@@ -34,6 +35,7 @@ mod tests {
     include!("protocol_engine/receive_session_fallback_tests.rs");
     include!("protocol_engine/incident_first_contact_tests.rs");
     include!("protocol_engine/group_retry_budget_tests.rs");
+    include!("protocol_engine/checkpoint_pending_tests.rs");
 
     #[test]
     fn sender_owner_resolution_keeps_claimed_device_pending_until_owner_verified() {
