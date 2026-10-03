@@ -231,6 +231,7 @@ impl AppCore {
                 InternalEvent::ProtocolSubscriptionLivenessCheck { .. } => {
                     "ProtocolSubscriptionLivenessCheck"
                 }
+                InternalEvent::RetryReadyProtocolWork { .. } => "RetryReadyProtocolWork",
                 InternalEvent::PollPendingDeviceInvites { .. } => "PollPendingDeviceInvites",
                 InternalEvent::PollPendingDeviceLink { .. } => "PollPendingDeviceLink",
                 InternalEvent::PendingDeviceLinkRefreshFinished { .. } => {
@@ -587,6 +588,9 @@ impl AppCore {
             }
             InternalEvent::ProtocolSubscriptionLivenessCheck { token } => {
                 self.handle_protocol_subscription_liveness_check(token);
+            }
+            InternalEvent::RetryReadyProtocolWork { due_at } => {
+                self.handle_ready_protocol_retry(due_at);
             }
             InternalEvent::PollPendingDeviceInvites { token } => {
                 if token != self.device_invite_poll_token || !self.can_poll_pending_device_invites()

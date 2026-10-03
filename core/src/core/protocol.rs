@@ -199,7 +199,10 @@ impl AppCore {
             Ok(results) => results,
             Err(error) => {
                 self.push_debug_log("appcore.protocol.retry.error", error.to_string());
-                self.schedule_fast_protocol_retry_if_pending();
+                self.protocol_subscription_runtime.ready_retry_due_at = None;
+                self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
+                    PROTOCOL_RECONNECT_CHECK_SECS,
+                ));
                 return;
             }
         };
@@ -1143,6 +1146,7 @@ impl AppCore {
             // Mesh retries share this timer even when there are no relay subscriptions.
             self.protocol_subscription_runtime = ProtocolSubscriptionRuntime {
                 liveness_due_at: self.protocol_subscription_runtime.liveness_due_at,
+                ready_retry_due_at: self.protocol_subscription_runtime.ready_retry_due_at,
                 ..ProtocolSubscriptionRuntime::default()
             };
             self.relay_transport_runtime = RelayTransportRuntime::default();

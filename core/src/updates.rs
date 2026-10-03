@@ -204,6 +204,9 @@ pub(crate) enum InternalEvent {
     ProtocolSubscriptionLivenessCheck {
         token: u64,
     },
+    RetryReadyProtocolWork {
+        due_at: tokio::time::Instant,
+    },
     PollPendingDeviceInvites {
         token: u64,
     },

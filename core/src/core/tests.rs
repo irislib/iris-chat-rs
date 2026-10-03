@@ -152,6 +152,7 @@ include!("tests/groups_sender_key.rs");
 include!("tests/group_reactions.rs");
 include!("tests/group_message_ids.rs");
 include!("tests/groups_sender_key_retry.rs");
+include!("tests/protocol_ready_retry.rs");
 include!("tests/groups_scale.rs");
 include!("tests/groups_message_expiration.rs");
 include!("tests/groups_persistence_helpers.rs");
