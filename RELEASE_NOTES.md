@@ -14,10 +14,12 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Reconcile messages and reaction changes over encrypted FIPS using the shared Negentropy codec. Sync current group details, settings, and verified contact profiles separately from old message history. Preserve link-time boundaries, local deletions, expiry, and device revocation during replay and recovery.
 - Notify linked devices when queued messages become sent, and retry unanswered WebRTC offers after authenticated session restarts without waiting for the old dial timeout.
 - Remove legacy paginated history and message-only reconciliation fallbacks. Keep large histories bounded by splitting Negentropy inventories, without changing the private history choice.
-- Keep unchanged protocol checkpoints in place to reduce message-receive writes. Update iris-chat-protocol to 0.2.1 with durable exact group-ciphertext tracking and remove unsafe timestamp-only acknowledgements, preserving distinct same-second messages and repair backoff.
+- Keep unchanged protocol checkpoints in place to reduce message-receive writes. Update iris-chat-protocol to 0.2.2 with durable exact group-ciphertext tracking and remove unsafe timestamp-only acknowledgements, preserving distinct same-second messages and repair backoff.
 - Preserve group encryption settings when copying groups between web and native, rejecting copies that conflict with authenticated group history.
 - Respect message-server retry backoff when a batch reports failures before its completion event, avoiding repeated failed drains of a large queue.
 - Batch private read receipts into one protocol save and show durable local chat state before saving the protocol backlog on every native platform.
+- Retry queued group ciphertext only when its decryption inputs change, with bounded background batches that yield to user actions. Reuse a session snapshot when waking queued direct messages.
+- Open saved desktop history independently of checkpoint writes, and avoid mistaking a busy database for an empty chat. Reuse authenticated sessions without showing a messaging-availability check.
 - Reuse bounded event-signature validation proofs across transports and suppress unchanged Nearby updates, preserving content validation, delivery receipts, and device-list recovery.
 - Preserve an already recovered encrypted session when a direct connection catches up after a peer restarts, using the verified FIPS 0.4.93 dependency set.
 - Focus the composer when replying, follow the iOS keyboard animation, and emit pending messages before protocol checkpoint work.
@@ -31,6 +33,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 - Choose photos and videos or any file from the Mac attachment menu, with icons for each choice.
 - Reduce background work while catching up on group messages.
+- Open saved chats while messages sync, and avoid unnecessary messaging checks in existing conversations.
 - Give unnamed people a friendly animal name in italics instead of showing their user ID.
 - Choose whether to copy message history when linking a device, and see transfer progress.
 - Resume interrupted history transfers and keep deleted messages removed.
@@ -45,6 +48,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### Zapstore
 
 - Reduce background work while catching up on group messages.
+- Avoid unnecessary messaging checks in existing conversations.
 - Give unnamed people a friendly animal name in italics instead of showing their user ID.
 - Choose whether to copy message history when linking a device, and see transfer progress.
 - Resume interrupted history transfers and keep deleted messages removed.
