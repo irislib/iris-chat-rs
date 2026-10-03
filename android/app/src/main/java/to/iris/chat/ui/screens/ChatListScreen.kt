@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -42,7 +41,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -50,7 +48,6 @@ import androidx.compose.material3.ripple
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -87,7 +84,6 @@ import to.iris.chat.rust.ChatInputShortcut
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.DeviceHistorySyncPhase
-import to.iris.chat.rust.DeviceHistorySyncSnapshot
 import to.iris.chat.rust.MessageSearchHit
 import to.iris.chat.rust.Screen
 import to.iris.chat.rust.SearchResultSnapshot
@@ -102,41 +98,6 @@ import to.iris.chat.ui.components.formatRelativeTime
 import to.iris.chat.ui.components.irisTextFieldColors
 import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
-
-@Composable
-private fun DeviceHistorySyncProgress(progress: DeviceHistorySyncSnapshot) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background)
-            .navigationBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 12.dp)
-            .testTag("deviceHistorySyncStatus"),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        if (progress.phase == DeviceHistorySyncPhase.WAITING) {
-            Icon(Icons.Default.PauseCircle, contentDescription = null, tint = IrisTheme.palette.muted)
-        } else {
-            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(
-                text = if (progress.phase == DeviceHistorySyncPhase.WAITING) "Waiting for your other device…" else "Syncing messages…",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            progress.totalMessages?.let { total ->
-                val numbers = java.text.NumberFormat.getIntegerInstance()
-                Text(
-                    text = "${numbers.format(progress.importedMessages.toLong())} of ${numbers.format(total.toLong())}",
-                    modifier = Modifier.testTag("deviceHistorySyncCount"),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = IrisTheme.palette.muted,
-                )
-            }
-        }
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable

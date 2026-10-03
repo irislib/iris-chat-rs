@@ -1383,7 +1383,7 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
             "filename" to finalized.attachments[0].filename,
             "nhash" to finalized.attachments[0].nhash,
             "attachment_size" to fixtureBytes.size.toString(),
-            "attachment_sha256" to sha256Hex(fixtureBytes),
+            "attachment_sha256" to harnessAttachmentSha256(fixtureBytes),
             "delivery" to finalized.delivery.name,
         )
     }
@@ -2282,7 +2282,7 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
             "filename" to attachment.filename,
             "nhash" to attachment.nhash,
             "attachment_size" to downloaded.size.toString(),
-            "attachment_sha256" to sha256Hex(downloaded),
+            "attachment_sha256" to harnessAttachmentSha256(downloaded),
             "download_verified" to "true",
         )
     }
@@ -2692,9 +2692,5 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
         )
     }
 
-    private fun sha256Hex(bytes: ByteArray): String =
-        java.security.MessageDigest
-            .getInstance("SHA-256")
-            .digest(bytes)
-            .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+
 }
