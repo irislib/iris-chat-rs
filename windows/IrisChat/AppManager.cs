@@ -1359,6 +1359,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
         new Router(new Screen.Welcome(), Array.Empty<Screen>()),
         null,
         null,
+        null,
         new BusyState(
             false,
             false,
