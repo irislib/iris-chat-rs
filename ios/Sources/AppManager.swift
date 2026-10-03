@@ -8,8 +8,6 @@ import SwiftUI
 import UserNotifications
 #endif
 
-extension ChatMessageSnapshot: IrisInteractionMessage {}
-
 #if os(iOS)
 private let appManagerPendingShareNotificationName = "fi.siriusbusiness.irischat.pending-share"
 #endif
@@ -1376,28 +1374,13 @@ final class AppManager: ObservableObject {
     }
 #endif
 
-    private func recordInteractionState(historyLoaded: Bool = false) {
-        guard let timing = interactionTiming, let chat = state.currentChat else { return }
-        timing.stateAvailable(chatID: chat.chatId, messages: chat.messages, historyLoaded: historyLoaded)
-    }
-
     func dispatch(_ action: AppAction) {
         if shouldBlockOutgoingAction(action) {
             if case .startCall = action { calls.startFailed() }
             showToast("User is blocked")
             return
         }
-        if let timing = interactionTiming {
-            switch action {
-            case .openChat(let chatID):
-                timing.beginOpen(chatID: chatID.trimmingCharacters(in: .whitespacesAndNewlines),
-                                 targetID: pendingScrollMessageId)
-            case .sendMessage(let chatID, let text), .sendDisappearingMessage(let chatID, let text, _):
-                timing.beginSend(chatID: chatID, body: text.trimmingCharacters(in: .whitespacesAndNewlines),
-                                 messages: state.currentChat?.chatId == chatID ? state.currentChat!.messages : [])
-            default: break
-            }
-        }
+        recordInteractionAction(action)
 #if os(iOS) || os(macOS)
         if interceptScreenshotFixtureAction(action) {
             return
