@@ -23,6 +23,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Reuse unchanged encrypted backlog checkpoints and avoid global identity refreshes when opening existing chats. Verify offline sends and recovery with synthetic gigabyte histories and large encrypted queues.
 - Build desktop message controls when needed and position initial chat history from measured layout, avoiding hidden control work and premature scrolling.
 - Render Apple message rows as they approach the viewport, and measure messages, call entries, and group notices before revealing a newly opened chat.
+- Load older chat history in bounded pages and preserve the visible message position as pages arrive. Keep current edits, reactions, expiry, and deletions authoritative across paging and navigation.
 - Navigate desktop controls with Tab and Shift-Tab, browse chats with arrow keys, and open them with Enter or Space while preserving keyboard focus during updates.
 - Reuse bounded event-signature validation proofs across transports and suppress unchanged Nearby updates, preserving content validation, delivery receipts, and device-list recovery.
 - Preserve an already recovered encrypted session when a direct connection catches up after a peer restarts, using the verified FIPS 0.4.93 dependency set.
@@ -44,6 +45,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Keep reactions, group details, and contact profiles in sync across devices.
 - Open the keyboard when replying and keep your place as it appears.
 - Open chats and show outgoing messages faster, and improve typing after long pastes.
+- Keep your place while loading older messages and preserve recent edits and deletions.
 - Navigate the Mac app with the keyboard and keep focus while chats update.
 - Paste photos and files into a chat before sending.
 - Reliably replay finished voice messages and keep playback controls responsive while seeking.
