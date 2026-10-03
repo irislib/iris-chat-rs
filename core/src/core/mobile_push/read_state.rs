@@ -73,7 +73,10 @@ pub(crate) fn read_mobile_push_notification_indexes(
             );
             let resolved: serde_json::Value =
                 serde_json::from_str(&resolution.payload_json).ok()?;
-            let is_read = resolved.get("iris_dismiss").and_then(|value| value.as_bool()) == Some(true);
+            let is_read = resolved
+                .get("iris_dismiss")
+                .and_then(|value| value.as_bool())
+                == Some(true);
             dismissed.insert(event_id, is_read);
             is_read.then_some(index as u64)
         })

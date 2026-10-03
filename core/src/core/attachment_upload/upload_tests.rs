@@ -37,7 +37,9 @@ async fn oversized_attachment_is_rejected_before_uploading_any_chunks() {
         .unwrap();
     let store = Arc::new(RecordedAttachmentStore::default());
 
-    let error = upload_file_to_store(&path, store.clone()).await.unwrap_err();
+    let error = upload_file_to_store(&path, store.clone())
+        .await
+        .unwrap_err();
 
     assert!(error.to_string().contains("too large"), "{error}");
     assert!(store.0.lock().unwrap().is_empty());

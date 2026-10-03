@@ -150,6 +150,7 @@ include!("tests/group_reactions.rs");
 include!("tests/group_message_ids.rs");
 include!("tests/groups_sender_key_retry.rs");
 include!("tests/groups_scale.rs");
+include!("tests/groups_message_expiration.rs");
 include!("tests/groups_persistence_helpers.rs");
 include!("tests/groups_persistence_more.rs");
 include!("tests/message_expiry.rs");

@@ -161,20 +161,6 @@ pub fn create_private_contact_sync(owner: &str, writer: &str) -> Result<PrivateC
         received_event_ids: vec![],
     })
 }
-pub fn remember_private_contact_event(
-    state: &PrivateContactSyncState,
-    event_id: &str,
-) -> Result<PrivateContactSyncState> {
-    require_hex(event_id, 64)?;
-    let mut next = state.clone();
-    if !next.received_event_ids.iter().any(|id| id == event_id) {
-        next.received_event_ids.push(event_id.into());
-        if next.received_event_ids.len() > 512 {
-            next.received_event_ids.remove(0);
-        }
-    }
-    Ok(next)
-}
 pub fn private_contact_values(
     state: &PrivateContactSyncState,
     contact: &str,
@@ -191,24 +177,6 @@ pub fn private_contact_values(
         nickname: value("nickname").and_then(Value::as_str).map(str::to_owned),
         note: value("note").and_then(Value::as_str).map(str::to_owned),
     }
-}
-/// Authenticated sibling snapshot only: stage at the receiver's random publication address.
-pub fn private_contact_documents(state: &PrivateContactSyncState) -> Vec<PrivateContactDocument> {
-    state
-        .contacts
-        .iter()
-        .map(|(contact, fields)| PrivateContactDocument {
-            version: 1,
-            owner: state.owner.clone(),
-            contact: contact.clone(),
-            writer: state.writer.clone(),
-            record_id: state
-                .records
-                .get(contact)
-                .map_or_else(|| state.writer.clone(), |r| r.document.record_id.clone()),
-            fields: fields.clone(),
-        })
-        .collect()
 }
 /// The caller must authenticate sibling documents; relay input must use open_private_contact_event first.
 pub fn merge_private_contact_document(
@@ -356,12 +324,6 @@ pub fn pending_private_contacts(
     state: &PrivateContactSyncState,
 ) -> Vec<&PrivateContactLocalRecord> {
     state.records.values().filter(|r| r.pending).collect()
-}
-pub fn private_contact_sync_filter(owner: &str) -> Result<Value> {
-    require_hex(owner, 64)?;
-    Ok(
-        serde_json::json!({ "kinds": [PRIVATE_CONTACT_SYNC_KIND], "authors": [owner], "#t": [PRIVATE_CONTACT_SYNC_NAMESPACE] }),
-    )
 }
 fn document_tags(document: &PrivateContactDocument) -> Result<Vec<Tag>> {
     Ok(vec![

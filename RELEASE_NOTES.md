@@ -2,6 +2,38 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.3
+
+### GitHub
+
+- Unify device linking around NostrConnect, retaining existing Iris link input compatibility and existing account sessions.
+- Choose between chats and groups only or message history on the approving device. Keep the initial history transfer private to that device pair, resume interrupted transfers, and show progress on the receiving device.
+- Reconcile message inventories over encrypted FIPS using the shared Negentropy codec. Preserve link-time boundaries, local deletions, expiry, and device revocation during replay and recovery.
+- Focus the composer when replying, follow the iOS keyboard animation, and emit pending messages before protocol checkpoint work.
+- Paste photos and multiple files into drafts without sending automatically, and improve long-draft editing across native platforms.
+- Keep private contacts and device labels in ratcheted messages and direct pairing snapshots. Authenticate background call notifications and retain them for retry.
+- Serialize Nearby transport replacement and completion-confirmed shutdown, and keep group-member profile navigation consistent.
+- Update other devices and calling contacts too. Calls to older apps may not ring while closed; existing accounts, chats, and linked devices are preserved.
+
+### Apple
+
+- Choose whether to copy message history when linking a device, and see transfer progress.
+- Resume interrupted history transfers and keep deleted messages removed.
+- Open the keyboard when replying and keep your place as it appears.
+- Show outgoing messages sooner and improve typing after long pastes.
+- Paste photos and files into a chat before sending.
+- Improve private contact sync and Nearby connection recovery.
+- Update your other devices and calling contacts too. Calls to an older app may not ring while it is closed. Existing chats and linked devices stay connected.
+
+### Zapstore
+
+- Choose whether to copy message history when linking a device, and see transfer progress.
+- Resume interrupted history transfers and keep deleted messages removed.
+- Show outgoing messages sooner and improve typing after long pastes.
+- Paste photos and files into a chat before sending.
+- Improve private contact sync and Nearby connection recovery.
+- Update your other devices and calling contacts too. Calls to an older app may not ring while it is closed. Existing chats and linked devices stay connected.
+
 ## v2026.10.2
 
 ### GitHub
