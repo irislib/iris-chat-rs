@@ -47,6 +47,7 @@ internal static class Program
             var search = new TextBox { Text = "Search" };
             var list = new ItemsControl();
             Navigation.GetMethod("Install")!.Invoke(null, new object[] { list });
+            Check(!list.Focusable && !KeyboardNavigation.GetIsTabStop(list), "The list container is not a keyboard stop");
             list.Items.Add(new TextBlock { Text = "Pinned", Focusable = false }); list.Items.Add(first);
             list.Items.Add(new TextBlock { Text = "Chats", Focusable = false }); list.Items.Add(second);
             var after = new Button { Content = "Settings", Style = (Style)app.FindResource("GhostButton") };
@@ -54,7 +55,7 @@ internal static class Program
             root.Children.Add(search); root.Children.Add(list); root.Children.Add(after); root.Children.Add(composer);
             window.Content = root; window.Show(); window.Activate(); Pump();
             search.Focus(); search.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
-            Check(first.IsKeyboardFocused, "Tab enters the list at its first chat");
+            Check(first.IsKeyboardFocused, $"Tab enters the list at its first chat (actual: {Keyboard.FocusedElement?.GetType().Name})");
             int opened = 0; second.Activated += _ => opened++;
             Key(first, System.Windows.Input.Key.Down, Keyboard.PreviewKeyDownEvent);
             Check(second.IsKeyboardFocused && opened == 0, "Down focuses without opening");

@@ -13,6 +13,10 @@ internal static class KeyboardList
 {
     public static void Install(ItemsControl list)
     {
+        // ItemsControl inherits Control's focusable Tab stop. The container
+        // groups navigation, but only its chat rows should receive focus.
+        list.Focusable = false;
+        KeyboardNavigation.SetIsTabStop(list, false);
         KeyboardNavigation.SetTabNavigation(list, KeyboardNavigationMode.Once);
         list.PreviewKeyDown += (_, e) =>
         {
