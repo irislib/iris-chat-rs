@@ -970,7 +970,7 @@ final class AppManager: ObservableObject {
     private static let maxClientDebugLogEntries = 50
     private static let dispatchFailureToast = "Action failed. Copy support bundle in Settings."
     private static let navigationOverrideTTL: TimeInterval = 10
-    private static let chatPageSize: UInt32 = 80
+    private static let chatPageSize = UInt32(ChatHistoryWindow.pageSize)
     private static let chatAroundBeforeLimit: UInt32 = 40
     private static let chatAroundAfterLimit: UInt32 = 40
     private static let chatSnapshotCacheLimit = 12
@@ -1007,7 +1007,6 @@ final class AppManager: ObservableObject {
     private var chatPageRoute: Screen?
     private var chatPageAccountID: String?
     private var chatHistory = ChatHistoryWindow()
-    private var authoritativeChatRev: UInt64?
     private var chatSnapshotCache: [String: CurrentChatSnapshot] = [:]
     private var chatSnapshotCacheOrder: [String] = []
     private var lastSyncedDeviceLabelsKey: String?
@@ -1195,7 +1194,7 @@ final class AppManager: ObservableObject {
             }
         }
         let resolvedRust = rust ?? resolvedRustFactory()
-        let initialState = resolvedRust.state()
+        var initialState = resolvedRust.state()
 
         self.rust = resolvedRust
         self.makeRustClient = resolvedRustFactory
@@ -1221,8 +1220,14 @@ final class AppManager: ObservableObject {
         self.state = initialState
         irisSetDebugLoggingEnabled(initialState.preferences.debugLoggingEnabled)
         self.lastRevApplied = initialState.rev
-        syncChatPageScope(to: initialState)
-        authoritativeChatRev = initialState.rev
+        let initialChat = initialState.currentChat
+        syncChatPageScope(to: &initialState)
+        if let initialChat, activeChatSnapshotID(in: initialState) == initialChat.chatId {
+            initialState.currentChat?.messages = chatHistory.replaceRecent(
+                initialChat.messages, in: initialState.currentChat?.messages ?? []
+            )
+        }
+        self.state = initialState
         resolvedRust.listenForUpdates(reconciler: reconciler)
         let initialDeviceRevoked = initialState.account?.authorizationState == .revoked
         if !initialDeviceRevoked {
@@ -1681,7 +1686,6 @@ final class AppManager: ObservableObject {
         initialChatPageLoads.insert(trimmedChat)
         let generation = chatPageGeneration
         let coreGeneration = reconciliationGeneration
-        let authorityRev = authoritativeChatRev
         let runner = ChatPageLoadRunner(rust: rust)
         let pageSize = Self.chatPageSize
         Self.chatPageQueue.async { [weak self] in
@@ -1691,18 +1695,13 @@ final class AppManager: ObservableObject {
                       self.reconciliationGeneration == coreGeneration,
                       self.activeChatSnapshotID(in: self.state) == trimmedChat else { return }
                 self.initialChatPageLoads.remove(trimmedChat)
-                guard let page, self.authoritativeChatRev == authorityRev else { return }
-                if page.messages.count < Int(pageSize) {
-                    self.exhaustedOlderChatPages.insert(trimmedChat)
-                } else {
-                    self.exhaustedOlderChatPages.remove(trimmedChat)
-                }
+                guard let page else { return }
                 guard self.activeChatSnapshotID(in: self.state) == page.chatId else {
                     return
                 }
                 var nextState = self.state
                 var current = self.state.currentChat ?? page
-                current.messages = self.chatHistory.replaceRecent(page.messages, in: current.messages)
+                current.messages = self.chatHistory.replaceLatestPage(page.messages, in: current.messages)
                 nextState.currentChat = current
                 self.state = nextState
                 self.recordInteractionState(historyLoaded: true)
@@ -2911,7 +2910,6 @@ final class AppManager: ObservableObject {
         aroundChatPageLoads.removeAll()
         initialChatPageLoads.removeAll()
         chatHistory = ChatHistoryWindow()
-        authoritativeChatRev = nil
         chatSnapshotCache.removeAll()
         chatSnapshotCacheOrder.removeAll()
         persistedRestoreInFlight = false
@@ -3058,7 +3056,7 @@ final class AppManager: ObservableObject {
             chatSnapshotCacheOrder.removeAll()
         }
         var reconciledState = stateByReconcilingPendingNavigation(nextState)
-        syncChatPageScope(to: reconciledState)
+        syncChatPageScope(to: &reconciledState)
         if let rawChat = nextState.currentChat,
            activeChatSnapshotID(in: reconciledState) == rawChat.chatId,
            reconciledState.currentChat?.chatId == rawChat.chatId {
@@ -3068,7 +3066,6 @@ final class AppManager: ObservableObject {
                     ? oldState.currentChat!.messages : []
             )
             reconciledState.currentChat = chat
-            authoritativeChatRev = nextState.rev
         }
 #if os(iOS)
         reconciledState = stateByApplyingUiTestSeedDaySplit(reconciledState)
@@ -3343,7 +3340,7 @@ final class AppManager: ObservableObject {
         rememberChatSnapshot(current)
     }
 
-    private func syncChatPageScope(to nextState: AppState) {
+    private func syncChatPageScope(to nextState: inout AppState) {
         let route = nextState.router.screenStack.last ?? nextState.router.defaultScreen
         let accountID = nextState.account?.publicKeyHex
         guard route != chatPageRoute || accountID != chatPageAccountID else { return }
@@ -3354,8 +3351,11 @@ final class AppManager: ObservableObject {
         olderChatPageLoads.removeAll()
         aroundChatPageLoads.removeAll()
         exhaustedOlderChatPages.removeAll()
+        if var chat = nextState.currentChat {
+            chat.messages = Array(chat.messages.suffix(ChatHistoryWindow.pageSize))
+            nextState.currentChat = chat
+        }
         chatHistory = ChatHistoryWindow(recent: nextState.currentChat?.messages ?? [])
-        authoritativeChatRev = nil
     }
 
     private func chatMessagePrecedes(_ lhs: ChatMessageSnapshot, _ rhs: ChatMessageSnapshot) -> Bool {
@@ -3377,8 +3377,8 @@ final class AppManager: ObservableObject {
     }
 
     private func applyLocalScreenStack(_ stack: [Screen]) {
-        let nextState = stateByApplyingLocalScreenStack(stack, to: state)
-        syncChatPageScope(to: nextState)
+        var nextState = stateByApplyingLocalScreenStack(stack, to: state)
+        syncChatPageScope(to: &nextState)
         state = nextState
     }
 

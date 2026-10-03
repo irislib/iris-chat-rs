@@ -20,6 +20,9 @@ final class ChatReadResponsivenessTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(), desktopNotifications: NoopDesktopNotificationPoster(), dataDir: directory, environment: [:])
 
+        XCTAssertEqual(manager.state.currentChat?.messages.count, 80)
+        try await loadOlderHistory(history, via: rust, into: manager)
+
         // Applying a snapshot refreshes the navigation cache, but must leave
         // the currently browsed history and its scroll anchors available.
         state.rev = 2
@@ -36,6 +39,12 @@ final class ChatReadResponsivenessTests: XCTestCase {
         // can return; reopening must not eagerly lay out all browsed pages.
         XCTAssertEqual(manager.state.currentChat?.messages.map(\.id), latest.messages.map(\.id))
         XCTAssertEqual(manager.state.currentChat?.messages.count, 80)
+        state.rev = 3
+        rust.emit(.fullState(state))
+        let reopened = await waitUntil { manager.state.rev == 3 }
+        XCTAssertTrue(reopened)
+        XCTAssertEqual(manager.state.currentChat?.messages.map(\.id), latest.messages.map(\.id),
+                       "The warm core's retained history must not expand the reopened view")
     }
 
     @MainActor
@@ -48,8 +57,9 @@ final class ChatReadResponsivenessTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(), desktopNotifications: NoopDesktopNotificationPoster(), dataDir: directory, environment: [:])
+        try await loadOlderHistory(history, via: rust, into: manager)
+        let displayed = try XCTUnwrap(manager.state.currentChat?.messages)
         var latest = history
-        latest.messages = Array(history.messages.suffix(80))
         latest.draft = "still typing"
         latest.displayName = "Updated name"
         state.currentChat = latest
@@ -65,7 +75,7 @@ final class ChatReadResponsivenessTests: XCTestCase {
         // Keeping the original array alive makes this a deterministic
         // allocation regression: a metadata update must not rebuild and sort
         // every retained message just to produce the same history again.
-        let reusedHistory = history.messages.withUnsafeBufferPointer { original in
+        let reusedHistory = displayed.withUnsafeBufferPointer { original in
             afterTyping.messages.withUnsafeBufferPointer { updated in
                 original.baseAddress == updated.baseAddress
             }
@@ -83,6 +93,21 @@ final class ChatReadResponsivenessTests: XCTestCase {
         XCTAssertEqual(manager.state.currentChat?.messages.map(\.id), history.messages.map(\.id))
         XCTAssertEqual(manager.state.currentChat?.messages.last?.body, "Edited message")
         XCTAssertEqual(manager.state.currentChat?.draft, "")
+    }
+
+    @MainActor
+    private func loadOlderHistory(_ history: CurrentChatSnapshot, via rust: MockRustApp, into manager: AppManager) async throws {
+        while let first = manager.state.currentChat?.messages.first,
+              let index = history.messages.firstIndex(where: { $0.id == first.id }), index > 0 {
+            var page = history
+            page.messages = Array(history.messages[max(0, index - 80)..<index])
+            rust.pagesBefore["\(history.chatId)|\(first.id)"] = page
+            let expectedFirst = page.messages.first?.id
+            XCTAssertTrue(manager.loadOlderMessages(chatId: history.chatId))
+            let loaded = await waitUntil { manager.state.currentChat?.messages.first?.id == expectedFirst }
+            XCTAssertTrue(loaded)
+            if !loaded { return }
+        }
     }
 
     @MainActor

@@ -42,6 +42,23 @@ final class AppManagerHistoryTests: XCTestCase {
         XCTAssertTrue(applied)
     }
 
+    func testWarmInitialRawHistoryStaysBoundedAndAccountSwitchStartsAnotherWindow() async {
+        let rust = MockRustApp(state: snapshot((1...240).map(String.init)))
+        rust.pagesBefore["\(chatID)|161"] = page((81...160).map(String.init))
+        let app = manager(rust)
+        XCTAssertEqual(app.state.currentChat?.messages.map(\.id), (161...240).map(String.init))
+        XCTAssertTrue(app.loadOlderMessages(chatId: chatID))
+        let loaded = await waitUntil { app.state.currentChat?.messages.first?.id == "81" }
+        XCTAssertTrue(loaded)
+        await apply(snapshot((1...240).filter { $0 != 100 }.map(String.init), rev: 2), via: rust, to: app)
+        XCTAssertEqual(app.state.currentChat?.messages.count, 159)
+        XCTAssertFalse(app.state.currentChat?.messages.contains { $0.id == "100" } ?? true)
+        var next = snapshot((1001...1240).map(String.init), rev: 3)
+        next.account?.publicKeyHex = "another-synthetic-account"
+        await apply(next, via: rust, to: app)
+        XCTAssertEqual(app.state.currentChat?.messages.map(\.id), (1161...1240).map(String.init))
+    }
+
     func testFullStateKeepsLoadedSearchHitContextForVisibleChat() async {
         let rust = MockRustApp(state: snapshot((121...200).map(String.init)))
         rust.pagesAround["\(chatID)|25"] = page((15...35).map(String.init))
