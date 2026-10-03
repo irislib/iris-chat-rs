@@ -43,6 +43,7 @@ impl ProtocolEngine {
             subscription_generation: 0,
             batch_depth: std::cell::Cell::new(0),
             batch_persist_dirty: std::cell::Cell::new(false),
+            checkpoint_layout: std::cell::RefCell::new(ProtocolCheckpointLayout::default()),
         });
 
         let local_invite = if let Some(invite) = engine.session_manager.snapshot().local_invite {
@@ -133,6 +134,7 @@ impl ProtocolEngine {
             subscription_generation: state.subscription_generation,
             batch_depth: std::cell::Cell::new(0),
             batch_persist_dirty: std::cell::Cell::new(false),
+            checkpoint_layout: std::cell::RefCell::new(ProtocolCheckpointLayout::from_json(&raw)),
         }))
     }
 

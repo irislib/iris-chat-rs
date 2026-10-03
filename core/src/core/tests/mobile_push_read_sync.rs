@@ -219,9 +219,18 @@ fn mobile_push_large_group_notification_cleanup_has_one_protocol_load_and_bounde
         .unwrap()
         .expect("real foreground decryption");
     let written = (sqlite_written_pages(&shared) - written_before) * page_size;
+    let after = read_state();
+    let before_json: serde_json::Value = serde_json::from_str(&before).unwrap();
+    let after_json: serde_json::Value = serde_json::from_str(&after).unwrap();
+    let changed_fields: Vec<_> = before_json.as_object().unwrap().iter()
+        .filter(|(key, value)| after_json.get(*key) != Some(*value))
+        .map(|(key, _)| key.as_str()).collect();
+    let changed_chunks = before.as_bytes().chunks(4096)
+        .zip(after.as_bytes().chunks(4096)).enumerate()
+        .filter(|(_, (a, b))| a != b).map(|(index, _)| index).collect::<Vec<_>>();
     eprintln!(
-        "large-group foreground receive: sqlite_page_bytes_written={written}, state_bytes={}",
-        before.len()
+        "large-group foreground receive: sqlite_page_bytes_written={written}, state_bytes={}, after_bytes={}, changed_fields={changed_fields:?}, changed_chunk_count={}, first_changed_chunks={:?}",
+        before.len(), after.len(), changed_chunks.len(), &changed_chunks[..changed_chunks.len().min(8)]
     );
     assert!(
         written < before.len() as u64 / 4,
