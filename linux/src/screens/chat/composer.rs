@@ -148,7 +148,8 @@ impl Composer {
         let buffer = gtk::TextBuffer::new(None);
         let input = gtk::TextView::with_buffer(&buffer);
         input.add_css_class("composer-input");
-        input.set_accepts_tab(false);
+        input.set_accepts_tab(true);
+        input.set_widget_name("iris-chat-composer");
         input.set_hexpand(true);
         input.set_wrap_mode(gtk::WrapMode::WordChar);
         input.set_top_margin(9);

@@ -2,7 +2,7 @@ use gtk::prelude::*;
 use std::rc::Rc;
 
 // Native rows retain their activation/accessibility behavior. A roving focus
-// target makes all sidebar sections one Tab stop without trapping the composer.
+// target makes all sidebar sections one Tab stop. Arrows only scroll the viewport.
 pub fn install(container: &impl IsA<gtk::Widget>) {
     let rows = rows(container.as_ref());
     let weak_rows = Rc::new(rows.iter().map(|row| row.downgrade()).collect::<Vec<_>>());
@@ -19,6 +19,7 @@ pub fn install(container: &impl IsA<gtk::Widget>) {
         });
         row.add_controller(focus);
     }
+    let weak_container = container.as_ref().downgrade();
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     keys.connect_key_pressed(move |_, key, _, modifiers| {
@@ -35,21 +36,60 @@ pub fn install(container: &impl IsA<gtk::Widget>) {
         ) {
             return gtk::glib::Propagation::Proceed;
         }
-        let Some(index) = rows.iter().position(|row| row.has_focus()) else {
+        if !rows.iter().any(|row| row.has_focus()) {
+            return gtk::glib::Propagation::Proceed;
+        }
+        let Some(scroll) = weak_container.upgrade().and_then(|widget| scroll(&widget)) else {
             return gtk::glib::Propagation::Proceed;
         };
-        let next = match key {
-            gtk::gdk::Key::Up => index.saturating_sub(1),
-            gtk::gdk::Key::Down => (index + 1).min(rows.len() - 1),
-            gtk::gdk::Key::Home => 0,
-            gtk::gdk::Key::End => rows.len() - 1,
+        let adjustment = scroll.vadjustment();
+        let bottom = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
+        let value = match key {
+            gtk::gdk::Key::Up => adjustment.value() - 40.0,
+            gtk::gdk::Key::Down => adjustment.value() + 40.0,
+            gtk::gdk::Key::Home => adjustment.lower(),
+            gtk::gdk::Key::End => bottom,
             _ => return gtk::glib::Propagation::Proceed,
         };
-        rows[next].set_focusable(true);
-        rows[next].grab_focus();
+        adjustment.set_value(value.clamp(adjustment.lower(), bottom));
         gtk::glib::Propagation::Stop
     });
     container.add_controller(keys);
+}
+
+fn scroll(widget: &gtk::Widget) -> Option<gtk::ScrolledWindow> {
+    let mut parent = widget.parent();
+    while let Some(widget) = parent {
+        if let Ok(scroll) = widget.clone().downcast::<gtk::ScrolledWindow>() {
+            return Some(scroll);
+        }
+        parent = widget.parent();
+    }
+    None
+}
+
+pub fn focus_list(root: &gtk::Widget) -> bool {
+    find(root, "iris-keyboard-chat-list")
+        .and_then(|list| rows(&list).into_iter().find(|row| row.is_focusable()))
+        .is_some_and(|row| row.grab_focus())
+}
+
+pub fn focus_composer(root: &gtk::Widget) -> bool {
+    find(root, "iris-chat-composer").is_some_and(|input| input.grab_focus())
+}
+
+fn find(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
+    if root.widget_name() == name {
+        return Some(root.clone());
+    }
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        if let Some(found) = find(&widget, name) {
+            return Some(found);
+        }
+        child = widget.next_sibling();
+    }
+    None
 }
 
 fn rows(widget: &gtk::Widget) -> Vec<gtk::Widget> {
@@ -85,6 +125,7 @@ fn rows(widget: &gtk::Widget) -> Vec<gtk::Widget> {
 pub struct FocusBookmark {
     name: String,
     position: Option<i32>,
+    offset: Option<f64>,
 }
 impl FocusBookmark {
     pub fn capture(root: &gtk::Widget) -> Option<Self> {
@@ -97,6 +138,7 @@ impl FocusBookmark {
             if name.starts_with("iris-keyboard-") {
                 return Some(Self {
                     name: name.into(),
+                    offset: scroll(&focused).map(|scroll| scroll.vadjustment().value()),
                     position: focused
                         .downcast_ref::<gtk::SearchEntry>()
                         .map(|entry| entry.position()),
@@ -109,22 +151,17 @@ impl FocusBookmark {
         }
     }
     pub fn restore(self, root: &gtk::Widget) {
-        fn find(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
-            if root.widget_name() == name {
-                return Some(root.clone());
-            }
-            let mut child = root.first_child();
-            while let Some(widget) = child {
-                if let Some(found) = find(&widget, name) {
-                    return Some(found);
-                }
-                child = widget.next_sibling();
-            }
-            None
-        }
         if let Some(widget) = find(root, &self.name) {
             widget.set_focusable(true);
             widget.grab_focus();
+            if let (Some(offset), Some(scroll)) = (self.offset, scroll(&widget)) {
+                // Restore after allocation; focusing an offscreen row must not
+                // undo the user's viewport-only arrow scrolling.
+                scroll.add_tick_callback(move |scroll, _| {
+                    scroll.vadjustment().set_value(offset);
+                    gtk::glib::ControlFlow::Break
+                });
+            }
             if let (Some(entry), Some(position)) =
                 (widget.downcast_ref::<gtk::SearchEntry>(), self.position)
             {

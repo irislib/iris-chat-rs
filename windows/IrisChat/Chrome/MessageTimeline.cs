@@ -20,7 +20,8 @@ internal sealed class MessageTimeline
     private int _generation;
     private (string Id, double Y)? _anchor;
     private double _heldOffset;
-    private sealed record Row(MessageBubble View, ChatMessageSnapshot Message, bool Author, string Label);
+    private sealed record Row(MessageBubble View, ChatMessageSnapshot Message, bool Author, string Label,
+        MessageGrouping.Layout Grouping);
 
     public MessageTimeline(ScrollViewer scroll, ItemsControl list, Action loadOlder)
     {
@@ -75,20 +76,23 @@ internal sealed class MessageTimeline
         var ids = new HashSet<string>();
         ChatMessageSnapshot? previous = null;
         var changed = false;
-        foreach (var message in chat.messages)
+        for (var index = 0; index < chat.messages.Length; index++)
         {
+            var message = chat.messages[index];
             if (!ids.Add(message.id)) continue;
-            var author = chat.kind == ChatKind.Group && !message.isOutgoing && previous?.author != message.author;
+            var grouping = MessageGrouping.For(previous, message, chat.messages.ElementAtOrDefault(index + 1), chat.kind);
+            var author = chat.kind == ChatKind.Group && !message.isOutgoing && grouping.Start;
             var label = authorLabel(message.author);
             if (!_rows.TryGetValue(message.id, out var row))
             {
-                row = new Row(new MessageBubble { Uid = message.id }, message, author, label);
-                row.View.Bind(message, author, label); _rows.Add(message.id, row); changed = true;
+                row = new Row(new MessageBubble { Uid = message.id }, message, author, label, grouping);
+                row.View.Bind(message, author, label, grouping.Start, grouping.End, grouping.Footer);
+                _rows.Add(message.id, row); changed = true;
             }
-            else if (!SameMessage(row.Message, message) || row.Author != author || row.Label != label)
+            else if (!SameMessage(row.Message, message) || row.Author != author || row.Label != label || row.Grouping != grouping)
             {
-                row.View.Bind(message, author, label);
-                _rows[message.id] = row with { Message = message, Author = author, Label = label };
+                row.View.Bind(message, author, label, grouping.Start, grouping.End, grouping.Footer);
+                _rows[message.id] = row with { Message = message, Author = author, Label = label, Grouping = grouping };
                 changed = true;
             }
             desired.Add(row.View); previous = message;

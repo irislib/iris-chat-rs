@@ -43,9 +43,15 @@ public partial class MessageBubble : UserControl
         InitializeComponent();
     }
 
-    public void Bind(ChatMessageSnapshot message, bool showAuthor = false, string? authorLabel = null)
+    public void Bind(ChatMessageSnapshot message, bool showAuthor = false, string? authorLabel = null,
+        bool clusterStart = true, bool clusterEnd = true, bool showFooter = true)
     {
         _message = message;
+        Bubble.Margin = new Thickness(0, clusterStart ? 6 : 1, 0, clusterEnd ? 6 : 1);
+        Bubble.CornerRadius = message.isOutgoing
+            ? new CornerRadius(18, clusterStart ? 18 : 4, clusterEnd ? 18 : 4, 18)
+            : new CornerRadius(clusterStart ? 18 : 4, 18, 18, clusterEnd ? 18 : 4);
+        MetaRow.Visibility = showFooter ? Visibility.Visible : Visibility.Collapsed;
         SystemNoticeProfile.Visibility = Visibility.Collapsed;
         BuildContextMenu(message);
 

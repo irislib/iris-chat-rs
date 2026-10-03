@@ -177,6 +177,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) -> Option<Rc<Ap
     toolbar.add_top_bar(&header);
 
     let content_slot = Content::new();
+    content_slot.install_section_shortcuts(&window, &manager);
 
     let toast_overlay = adw::ToastOverlay::new();
     toast_overlay.set_child(Some(&content_slot.root));

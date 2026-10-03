@@ -565,6 +565,7 @@ fun ChatScreen(
                                 chatKind = chat.kind,
                                 isFirstInCluster = isFirstInCluster,
                                 isLastInCluster = isLastInCluster,
+                                showFooter = showsMessageFooter(message, next, chat.kind),
                                 reactions = message.reactions,
                                 onReply = {
                                     replyTarget = message

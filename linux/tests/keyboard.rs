@@ -38,15 +38,35 @@ fn list() -> (gtk::Box, adw::ActionRow, adw::ActionRow) {
         .activatable(true)
         .build();
     second.set_widget_name("iris-keyboard-chat-second");
-    // Grouping must not introduce extra Tab stops or block arrow movement.
+    body.set_widget_name("iris-keyboard-chat-list");
+    // Grouping must not introduce extra Tab stops.
     for row in [&first, &second] {
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::None);
         list.append(row);
         body.append(&list);
     }
+    let remaining = gtk::ListBox::new();
+    remaining.set_selection_mode(gtk::SelectionMode::None);
+    for i in 2..140 {
+        let row = adw::ActionRow::builder()
+            .title(format!("Synthetic chat {i}"))
+            .activatable(true)
+            .build();
+        row.set_widget_name(&format!("iris-keyboard-chat-{i}"));
+        remaining.append(&row);
+    }
+    body.append(&remaining);
     keyboard_list::install(&body);
     (body, first, second)
+}
+
+fn settle() {
+    let until = std::time::Instant::now() + std::time::Duration::from_millis(150);
+    while std::time::Instant::now() < until {
+        pump();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
 }
 
 fn main() {
@@ -72,11 +92,15 @@ fn main() {
     let after = gtk::Button::with_label("Settings");
     let (body, first, second) = list();
     root.append(&search);
-    root.append(&body);
+    let scroll = gtk::ScrolledWindow::builder()
+        .vexpand(true)
+        .child(&body)
+        .build();
+    root.append(&scroll);
     root.append(&after);
     window.set_content(Some(&root));
     window.present();
-    pump();
+    settle();
     search.grab_focus();
     assert!(root.child_focus(gtk::DirectionType::TabForward));
     assert!(first.has_focus(), "Tab reaches the first chat");
@@ -86,40 +110,73 @@ fn main() {
     assert!(first.has_focus(), "Shift-Tab returns to the list");
     let activated = Rc::new(Cell::new(0));
     let observed = activated.clone();
-    second.connect_activated(move |_| observed.set(observed.get() + 1));
-    assert!(key(&body, gtk::gdk::Key::Down));
-    assert!(second.has_focus());
-    assert_eq!(activated.get(), 0, "Arrows must not open a chat");
+    first.connect_activated(move |_| observed.set(observed.get() + 1));
+    let adj = scroll.vadjustment();
+    for _ in 0..80 {
+        assert!(key(&body, gtk::gdk::Key::Down));
+        pump();
+    }
+    assert!(
+        adj.value() > 2000.0 && first.has_focus(),
+        "Long Down keeps offscreen row focus"
+    );
+    assert_eq!(
+        activated.get(),
+        0,
+        "Scrolling must not change the open chat"
+    );
+    for _ in 0..80 {
+        assert!(key(&body, gtk::gdk::Key::Up));
+        pump();
+    }
+    assert!(adj.value() < 1.0 && first.has_focus());
+    for _ in 0..80 {
+        assert!(key(&body, gtk::gdk::Key::Down));
+        pump();
+    }
+    assert!(
+        adj.value() > 2000.0 && first.has_focus(),
+        "Offscreen focus continues receiving arrows"
+    );
     assert!(
         !key(&body, gtk::gdk::Key::Return),
-        "Enter remains GTK's native row activation"
+        "Native activation retained"
     );
-    adw::prelude::ActionRowExt::activate(&second);
+    adw::prelude::ActionRowExt::activate(&first);
     assert_eq!(activated.get(), 1);
-    assert!(root.child_focus(gtk::DirectionType::TabForward));
-    assert!(after.has_focus(), "One Tab exits all chat sections");
-    assert!(root.child_focus(gtk::DirectionType::TabBackward));
-    assert!(second.has_focus(), "Shift-Tab returns to the same row");
-    assert!(key(&body, gtk::gdk::Key::Home));
-    assert!(first.has_focus());
-    key(&body, gtk::gdk::Key::End);
-    assert!(second.has_focus());
+    let offset = adj.value();
     let saved = keyboard_list::FocusBookmark::capture(root.upcast_ref()).unwrap();
     let weak = body.downgrade();
-    root.remove(&body);
+    scroll.set_child(gtk::Widget::NONE);
     drop(first);
     drop(second);
     drop(body);
-    let (body, first, second) = list();
-    root.insert_child_after(&body, Some(&search));
+    let (body, first, _second) = list();
+    scroll.set_child(Some(&body));
     saved.restore(root.upcast_ref());
-    assert!(second.has_focus(), "Refresh preserves the focused chat");
-    assert!(!first.is_focusable(), "Restore keeps one Tab entry");
-    pump();
+    settle();
+    assert!(
+        first.has_focus(),
+        "Refresh preserves offscreen focused chat"
+    );
+    assert!(
+        (adj.value() - offset).abs() < 2.0,
+        "Refresh preserves viewport after focus restoration"
+    );
     assert!(
         weak.upgrade().is_none(),
-        "Keyboard controllers must not retain destroyed lists"
+        "Controllers release destroyed lists"
     );
+    assert!(key(&body, gtk::gdk::Key::Home));
+    pump();
+    assert!(adj.value() < 1.0 && first.has_focus());
+    assert!(key(&body, gtk::gdk::Key::End));
+    pump();
+    assert!((adj.value() - (adj.upper() - adj.page_size())).abs() < 2.0 && first.has_focus());
+    assert!(root.child_focus(gtk::DirectionType::TabForward));
+    assert!(after.has_focus(), "One Tab exits all chat sections");
+    assert!(root.child_focus(gtk::DirectionType::TabBackward));
+    assert!(first.has_focus(), "Shift-Tab returns to focused identity");
 
     search.set_text("some text");
     search.grab_focus();
@@ -128,7 +185,8 @@ fn main() {
     saved.restore(root.upcast_ref());
     assert_eq!(search.position(), 4, "Search cursor survives refresh");
     let input = gtk::TextView::new();
-    input.set_accepts_tab(false);
+    input.set_accepts_tab(true);
+    input.set_widget_name("iris-chat-composer");
     root.append(&input);
     input.grab_focus();
     assert!(
@@ -139,7 +197,21 @@ fn main() {
         keyboard_list::FocusBookmark::capture(body.upcast_ref()).is_none(),
         "Background list updates do not steal composer focus"
     );
-    second.grab_focus();
+    input.buffer().set_text("draft");
+    assert!(keyboard_list::focus_list(root.upcast_ref()));
+    assert!(first.has_focus());
+    assert!(keyboard_list::focus_composer(root.upcast_ref()));
+    assert!(input.has_focus() && input.accepts_tab());
+    assert_eq!(
+        input.buffer().text(
+            &input.buffer().start_iter(),
+            &input.buffer().end_iter(),
+            false
+        ),
+        "draft"
+    );
+    first.grab_focus();
+    adj.set_value(0.0);
     window.set_focus_visible(true);
     pump();
     if let Some(path) = std::env::var_os("IRIS_KEYBOARD_SCREENSHOT") {
@@ -163,5 +235,5 @@ fn main() {
     }
     window.close();
     pump();
-    println!("PASS: GTK Tab/Shift-Tab, grouped arrows, native activation, refresh, cursor and composer focus");
+    println!("PASS: GTK 140 chats, 80 Down/Up/Down viewport scrolling, offscreen focus/refresh, native activation, composer section focus");
 }

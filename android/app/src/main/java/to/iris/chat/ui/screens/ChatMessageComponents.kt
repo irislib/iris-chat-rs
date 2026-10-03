@@ -133,6 +133,7 @@ internal fun MessageBubble(
     onOpenImage: (ByteArray, MessageAttachmentSnapshot) -> Unit,
     chat: CurrentChatSnapshot? = null,
     appManager: AppManager? = null,
+    showFooter: Boolean = isLastInCluster,
 ) {
     message.call?.let { call ->
         CallHistoryRow(call)
@@ -456,7 +457,7 @@ internal fun MessageBubble(
                                 onForward = { onForwardAttachment(attachment, appManager) },
                             )
                         }
-                        if (isLastInCluster) {
+                        if (showFooter) {
                             Row(
                                 modifier = Modifier.align(Alignment.End),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
@@ -1915,7 +1916,7 @@ private fun deliveryLabel(delivery: DeliveryState): String =
         DeliveryState.FAILED -> "Failed"
     }
 
-private const val MessageClusterGapSecs = 60L
+private const val MessageClusterGapSecs = 180L
 internal fun startsMessageCluster(
     previous: ChatMessageSnapshot?,
     message: ChatMessageSnapshot,
@@ -1924,7 +1925,9 @@ internal fun startsMessageCluster(
     if (previous == null) {
         return true
     }
-    if (previous.kind == ChatMessageKind.SYSTEM || message.kind == ChatMessageKind.SYSTEM) {
+    if (previous.kind == ChatMessageKind.SYSTEM || message.kind == ChatMessageKind.SYSTEM ||
+        previous.call != null || message.call != null || previous.reactions.isNotEmpty()
+    ) {
         return true
     }
     val previousSecs = previous.createdAtSecs.toLong()
@@ -1935,22 +1938,25 @@ internal fun startsMessageCluster(
     if (previous.isOutgoing != message.isOutgoing) {
         return true
     }
-    if (chatKind == ChatKind.GROUP && !message.isOutgoing && previous.author != message.author) {
+    val previousAuthor = previous.authorOwnerPubkeyHex?.takeIf { it.isNotEmpty() } ?: previous.author
+    val author = message.authorOwnerPubkeyHex?.takeIf { it.isNotEmpty() } ?: message.author
+    if (chatKind == ChatKind.GROUP && !message.isOutgoing && previousAuthor != author) {
         return true
     }
-    val gap = if (messageSecs >= previousSecs) messageSecs - previousSecs else 0
-    if (gap <= MessageClusterGapSecs) {
-        return false
-    }
-    if (chatKind == ChatKind.DIRECT) {
-        val previousMinute = previousSecs / 60L
-        val messageMinute = messageSecs / 60L
-        if (messageMinute - previousMinute in 0L..1L) {
-            return false
-        }
-    }
-    return true
+    return messageSecs < previousSecs || messageSecs - previousSecs >= MessageClusterGapSecs
 }
+
+internal fun showsMessageFooter(
+    message: ChatMessageSnapshot,
+    next: ChatMessageSnapshot?,
+    chatKind: ChatKind,
+): Boolean =
+    next == null || startsMessageCluster(message, next, chatKind) ||
+        message.expiresAtSecs != null ||
+        (message.delivery == DeliveryState.QUEUED || message.delivery == DeliveryState.PENDING ||
+            message.delivery == DeliveryState.FAILED) ||
+        message.createdAtSecs / 60UL != next.createdAtSecs / 60UL ||
+        message.delivery != next.delivery
 
 internal val ChatEmojiChoices =
     listOf(

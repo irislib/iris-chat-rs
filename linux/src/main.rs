@@ -70,6 +70,10 @@ const CUSTOM_CSS: &str = r#"
     border-radius: 18px;
     min-height: 0;
 }
+.bubble-in.cluster-continued { border-top-left-radius: 4px; }
+.bubble-in.cluster-continuing { border-bottom-left-radius: 4px; }
+.bubble-out.cluster-continued { border-top-right-radius: 4px; }
+.bubble-out.cluster-continuing { border-bottom-right-radius: 4px; }
 .bubble-in {
     background-color: @iris_bubble_theirs;
     color: @iris_on_bubble_theirs;

@@ -28,6 +28,7 @@ pub use composer_clipboard::tests::verify_ui as verify_composer_clipboard_ui;
 mod direct_files;
 #[cfg(feature = "ui-tests")]
 pub use direct_files::verify_ui as verify_direct_files_ui;
+mod grouping;
 mod safety;
 mod timeline;
 mod view;
@@ -935,6 +936,7 @@ fn render_message(
     chat: &CurrentChatSnapshot,
     cluster_start: bool,
     cluster_end: bool,
+    show_footer: bool,
     now: u64,
     prefs: &PreferencesSnapshot,
     manager: &Rc<AppManager>,
@@ -976,8 +978,8 @@ fn render_message(
 
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     row.set_hexpand(true);
-    row.set_margin_top(if cluster_start { 8 } else { 2 });
-    row.set_margin_bottom(if cluster_end { 4 } else { 0 });
+    row.set_margin_top(if cluster_start { 6 } else { 1 });
+    row.set_margin_bottom(if cluster_end { 6 } else { 1 });
 
     let column = gtk::Box::new(gtk::Orientation::Vertical, 2);
     column.set_hexpand(false);
@@ -1001,6 +1003,12 @@ fn render_message(
     } else {
         "bubble-in"
     });
+    if !cluster_start {
+        bubble.add_css_class("cluster-continued");
+    }
+    if !cluster_end {
+        bubble.add_css_class("cluster-continuing");
+    }
     bubble.set_halign(if message.is_outgoing {
         gtk::Align::End
     } else {
@@ -1043,7 +1051,7 @@ fn render_message(
         bubble.append(&attachment_summary_widget(&other_attachments, manager));
     }
 
-    if cluster_end {
+    if show_footer {
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         footer.add_css_class("bubble-meta");
         let time = gtk::Label::new(Some(&relative_time(message.created_at_secs, now)));
@@ -1639,19 +1647,26 @@ fn day_chip(label: &str) -> gtk::Widget {
 }
 
 fn day_label_secs(secs: u64) -> String {
-    let now = unix_now();
-    if secs == 0 || secs > now {
-        return "—".to_string();
+    let Ok(now) = glib::DateTime::now_local() else {
+        return "—".into();
+    };
+    let Some(day) = grouping::local_day(secs) else {
+        return "—".into();
+    };
+    if now
+        .format("%Y-%m-%d")
+        .is_ok_and(|date| date.as_str() == day)
+    {
+        return "Today".into();
     }
-    let now_day = now / 86_400;
-    let secs_day = secs / 86_400;
-    let diff = now_day.saturating_sub(secs_day);
-    match diff {
-        0 => "Today".to_string(),
-        1 => "Yesterday".to_string(),
-        2..=6 => format!("{} days ago", diff),
-        _ => format!("{}d ago", diff),
+    if now
+        .add_days(-1)
+        .and_then(|date| date.format("%Y-%m-%d"))
+        .is_ok_and(|date| date.as_str() == day)
+    {
+        return "Yesterday".into();
     }
+    day
 }
 
 fn delivery_glyph(state: &DeliveryState) -> &'static str {

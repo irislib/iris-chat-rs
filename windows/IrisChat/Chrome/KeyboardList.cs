@@ -5,10 +5,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
+using System.Windows.Media;
 
 namespace IrisChat.Chrome;
 
-// Keep the sidebar a single Tab stop; arrows browse without opening a chat.
+// Keep the sidebar a single Tab stop; arrows scroll without changing focus or chat.
 internal static class KeyboardList
 {
     public static void Install(ItemsControl list)
@@ -24,19 +25,28 @@ internal static class KeyboardList
             var rows = Rows(list);
             var index = Array.FindIndex(rows, row => row.IsKeyboardFocusWithin);
             if (index < 0) return;
-            var next = e.Key switch
+            var scroll = Scroll(list);
+            if (scroll == null) return;
+            switch (e.Key)
             {
-                Key.Up => Math.Max(0, index - 1),
-                Key.Down => Math.Min(rows.Length - 1, index + 1),
-                Key.Home => 0,
-                Key.End => rows.Length - 1,
-                _ => -1,
-            };
-            if (next < 0) return;
-            rows[next].Focus();
-            rows[next].BringIntoView();
+                case Key.Up: scroll.ScrollToVerticalOffset(scroll.VerticalOffset - 40); break;
+                case Key.Down: scroll.ScrollToVerticalOffset(scroll.VerticalOffset + 40); break;
+                case Key.Home: scroll.ScrollToTop(); break;
+                case Key.End: scroll.ScrollToBottom(); break;
+                default: return;
+            }
             e.Handled = true;
         };
+    }
+
+    public static bool Focus(ItemsControl list) =>
+        (Rows(list).FirstOrDefault(row => row is ChatRow { IsActive: true }) ?? Rows(list).FirstOrDefault())?.Focus() ?? false;
+
+    private static ScrollViewer? Scroll(DependencyObject widget)
+    {
+        for (var parent = VisualTreeHelper.GetParent(widget); parent != null; parent = VisualTreeHelper.GetParent(parent))
+            if (parent is ScrollViewer scroll) return scroll;
+        return null;
     }
 
     public static IDisposable PreserveFocus(ItemsControl list) => new FocusRestore(list);
@@ -57,9 +67,11 @@ internal static class KeyboardList
         private readonly ItemsControl _list;
         private readonly FrameworkElement? _previous;
         private readonly int _index;
+        private readonly double? _offset;
         public FocusRestore(ItemsControl list)
         {
             _list = list;
+            _offset = Scroll(list)?.VerticalOffset;
             var rows = Rows(list);
             _index = Array.FindIndex(rows, row => row.IsKeyboardFocusWithin);
             _previous = _index < 0 ? null : rows[_index];
@@ -76,6 +88,7 @@ internal static class KeyboardList
                 var row = rows.FirstOrDefault(row => _previous.Uid.Length > 0 && row.Uid == _previous.Uid)
                     ?? rows.ElementAtOrDefault(Math.Min(_index, rows.Length - 1));
                 row?.Focus();
+                if (_offset is { } offset) Scroll(_list)?.ScrollToVerticalOffset(offset);
             }));
         }
     }
