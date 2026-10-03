@@ -1,0 +1,101 @@
+import Foundation
+import CoreGraphics
+
+protocol IrisInteractionMessage {
+    var id: String { get }
+    var body: String { get }
+    var isOutgoing: Bool { get }
+}
+
+/// Opt-in measurements of state and visible layout, not display/paint completion.
+@MainActor
+final class IrisInteractionTiming {
+    enum Action: String { case open, send }
+    enum Stage: String { case state, visibleLayout = "visible_layout" }
+    struct Record {
+        let action: Action
+        let stage: Stage
+        let durationMilliseconds: Double
+        let messageCount: Int
+    }
+    private struct Pending {
+        let action: Action
+        let started: TimeInterval
+        let chatID: String
+        var targetID: String?
+        var body: String? = nil
+        var previousIDs: Set<String> = []
+        var hasState = false
+    }
+    private var pending: [Pending] = []
+    private let clock: () -> TimeInterval
+    private let emit: (Record) -> Void
+
+    static func configured(environment: [String: String], enabledInBundle: Bool) -> IrisInteractionTiming? {
+        guard environment["IRIS_PERF_LOG"] == "1" || enabledInBundle else { return nil }
+        return IrisInteractionTiming()
+    }
+
+    init(clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         emit: @escaping (Record) -> Void = {
+             NSLog("iris.interaction action=%@ stage=%@ duration_ms=%.3f message_count=%d",
+                   $0.action.rawValue, $0.stage.rawValue, $0.durationMilliseconds, $0.messageCount)
+         }) {
+        self.clock = clock
+        self.emit = emit
+    }
+
+    func beginOpen(chatID: String, targetID: String?) {
+        pending.removeAll()
+        pending.append(Pending(action: .open, started: clock(), chatID: chatID, targetID: targetID))
+    }
+
+    func beginSend<M: IrisInteractionMessage>(chatID: String, body: String, messages: [M]) {
+        if pending.count >= 8 { pending.removeFirst() }
+        pending.append(Pending(action: .send, started: clock(), chatID: chatID, body: body,
+                               previousIDs: Set(messages.map(\.id))))
+    }
+
+    func stateAvailable<M: IrisInteractionMessage>(chatID: String, messages: [M], historyLoaded: Bool) {
+        for index in pending.indices where pending[index].chatID == chatID && !pending[index].hasState {
+            if pending[index].action == .send {
+                guard let message = messages.first(where: {
+                    $0.isOutgoing && $0.body == pending[index].body
+                        && !pending[index].previousIDs.contains($0.id)
+                }) else { continue }
+                for other in pending.indices where other != index && pending[other].action == .send {
+                    pending[other].previousIDs.insert(message.id)
+                }
+                pending[index].targetID = message.id
+                pending[index].body = nil
+                pending[index].previousIDs.removeAll()
+            } else if let target = pending[index].targetID {
+                guard messages.contains(where: { $0.id == target }) else { continue }
+            } else {
+                guard !messages.isEmpty || historyLoaded else { continue }
+                pending[index].targetID = messages.last?.id
+            }
+            pending[index].hasState = true
+            record(pending[index], stage: .state, count: messages.count)
+        }
+    }
+
+    func layout(chatID: String, frames: [String: CGRect], viewportMinY: CGFloat,
+                viewportMaxY: CGFloat, ready: Bool, messageCount: Int) {
+        guard ready, viewportMaxY > viewportMinY else { return }
+        pending.removeAll { trace in
+            guard trace.chatID == chatID, trace.hasState else { return false }
+            if let id = trace.targetID {
+                guard let frame = frames[id], frame.width > 0, frame.height > 0,
+                      frame.maxY > viewportMinY, frame.minY < viewportMaxY else { return false }
+            } else if messageCount != 0 { return false }
+            record(trace, stage: .visibleLayout, count: messageCount)
+            return true
+        }
+    }
+
+    private func record(_ trace: Pending, stage: Stage, count: Int) {
+        emit(Record(action: trace.action, stage: stage,
+                    durationMilliseconds: max(0, clock() - trace.started) * 1_000, messageCount: count))
+    }
+}

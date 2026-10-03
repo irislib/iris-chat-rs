@@ -227,6 +227,7 @@ struct ChatScreen: View {
                                         timelineViewportMinY = value
                                     }
                                     maybeLoadOlderMessages(chat: chat)
+                                    recordInteractionLayout()
                                 }
                                 .onPreferenceChange(ChatTimelineTopMinYPreferenceKey.self) { value in
                                     if !chatTimelineGeometryMatches(timelineTopMinY, value) {
@@ -247,6 +248,7 @@ struct ChatScreen: View {
                                         nearBottom: nearBottom,
                                         messageCount: chat.messages.count
                                     )
+                                    recordInteractionLayout()
                                 }
                                 .onPreferenceChange(ChatTimelineBottomMaxYPreferenceKey.self) { value in
                                     let nearBottom = chatTimelineIsNearBottom(
@@ -284,6 +286,7 @@ struct ChatScreen: View {
                                 }
                                 .onPreferenceChange(ChatMessageBubbleFramePreferenceKey.self) { value in
                                     timelineCoordinator.messageBubbleFrames = value
+                                    recordInteractionLayout()
                                 }
                                 .onPreferenceChange(ChatAudioControlFramePreferenceKey.self) { value in
                                     timelineCoordinator.audioControlFrames = value
@@ -933,6 +936,13 @@ struct ChatScreen: View {
         ].joined(separator: "|")
     }
 
+    private func recordInteractionLayout() {
+        guard let timing = manager.interactionTiming, let chat else { return }
+        timing.layout(chatID: chat.chatId, frames: timelineCoordinator.messageBubbleFrames,
+                      viewportMinY: timelineViewportMinY, viewportMaxY: timelineViewportMaxY,
+                      ready: timelineReadyForDisplay, messageCount: chat.messages.count)
+    }
+
     private func revealTimelineAfterLayout() {
         guard !timelineReadyForDisplay else { return }
         DispatchQueue.main.async {
@@ -942,6 +952,7 @@ struct ChatScreen: View {
             withTransaction(transaction) {
                 timelineReadyForDisplay = true
             }
+            recordInteractionLayout()
         }
     }
 

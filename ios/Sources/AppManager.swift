@@ -8,6 +8,8 @@ import SwiftUI
 import UserNotifications
 #endif
 
+extension ChatMessageSnapshot: IrisInteractionMessage {}
+
 #if os(iOS)
 private let appManagerPendingShareNotificationName = "fi.siriusbusiness.irischat.pending-share"
 #endif
@@ -982,7 +984,10 @@ final class AppManager: ObservableObject {
     )
     private static let supportBundleQueue = DispatchQueue(label: "fi.siriusbusiness.irischat.support-bundle", qos: .utility)
 
-    @Published private(set) var state: AppState
+    @Published private(set) var state: AppState {
+        didSet { recordInteractionState() }
+    }
+    let interactionTiming: IrisInteractionTiming?
     @Published private(set) var bootstrapInFlight = true
     @Published private(set) var pendingShare: PendingShare?
     @Published private(set) var lastForegroundedAt = Date()
@@ -1129,6 +1134,10 @@ final class AppManager: ObservableObject {
         rustFactory: (() -> RustAppClient)? = nil,
         pushNotificationResolver: MobilePushNotificationResolver = MobilePushNotificationResolver()
     ) {
+        self.interactionTiming = IrisInteractionTiming.configured(
+            environment: environment,
+            enabledInBundle: Bundle.main.object(forInfoDictionaryKey: "IrisPerformanceTracing") as? Bool == true
+        )
         self.fileManager = fileManager
         self.pushNotificationResolver = pushNotificationResolver
         self.sharedContainerOverride = environment["IRIS_SHARE_CONTAINER_DIR"]
@@ -1367,11 +1376,27 @@ final class AppManager: ObservableObject {
     }
 #endif
 
+    private func recordInteractionState(historyLoaded: Bool = false) {
+        guard let timing = interactionTiming, let chat = state.currentChat else { return }
+        timing.stateAvailable(chatID: chat.chatId, messages: chat.messages, historyLoaded: historyLoaded)
+    }
+
     func dispatch(_ action: AppAction) {
         if shouldBlockOutgoingAction(action) {
             if case .startCall = action { calls.startFailed() }
             showToast("User is blocked")
             return
+        }
+        if let timing = interactionTiming {
+            switch action {
+            case .openChat(let chatID):
+                timing.beginOpen(chatID: chatID.trimmingCharacters(in: .whitespacesAndNewlines),
+                                 targetID: pendingScrollMessageId)
+            case .sendMessage(let chatID, let text), .sendDisappearingMessage(let chatID, let text, _):
+                timing.beginSend(chatID: chatID, body: text.trimmingCharacters(in: .whitespacesAndNewlines),
+                                 messages: state.currentChat?.chatId == chatID ? state.currentChat!.messages : [])
+            default: break
+            }
         }
 #if os(iOS) || os(macOS)
         if interceptScreenshotFixtureAction(action) {
@@ -1686,6 +1711,7 @@ final class AppManager: ObservableObject {
                     page: page
                 )
                 self.state = nextState
+                self.recordInteractionState(historyLoaded: true)
                 self.rememberChatSnapshot(nextState.currentChat)
             }
         }
@@ -3027,6 +3053,9 @@ final class AppManager: ObservableObject {
         reconciledState = stateByApplyingScreenshotFixture(reconciledState)
         lastRevApplied = nextState.rev
         state = reconciledState
+        if nextState.currentChat?.chatId == reconciledState.currentChat?.chatId {
+            recordInteractionState(historyLoaded: true)
+        }
         calls.update(reconciledState.call,
                      preferences: reconciledState.account == nil ? nil : reconciledState.preferences,
                      error: reconciledState.toast, accountID: reconciledState.account?.publicKeyHex)
