@@ -36,6 +36,17 @@
                 <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
             </Style>
 
+            <Style x:Key="{x:Static SystemParameters.FocusVisualStyleKey}" TargetType="Control">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate>
+                            <Border BorderBrush="{DynamicResource Accent}" BorderThickness="2"
+                                    CornerRadius="6" Margin="2" IsHitTestVisible="False" />
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <Style x:Key="MutedText" TargetType="{x:Type TextBlock}">
                 <Setter Property="Foreground" Value="{StaticResource TextMuted}" />
                 <Setter Property="FontSize" Value="12" />

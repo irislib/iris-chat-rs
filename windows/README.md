@@ -76,3 +76,13 @@ In an interactive Windows desktop, run:
 The test creates an isolated profile, types into the focused message field one
 character at a time, checks Shift+Enter, and sends with Enter. It never uses the
 clipboard or resets an existing profile.
+
+Run the native focus and chat-list navigation checks on Windows with:
+
+```powershell
+dotnet run --project windows/KeyboardTests/KeyboardTests.csproj -c Release -- work/keyboard
+```
+
+This uses a separate test profile and checks Tab/Shift-Tab, arrow navigation,
+Enter/Space activation, focus during updates, and composer isolation. It saves
+`work/keyboard/windows-keyboard.png` for visual review.

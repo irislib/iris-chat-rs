@@ -32,6 +32,7 @@
                     </Grid.ColumnDefinitions>
 
                     <Button x:Name="ProfileButton"
+                            AutomationProperties.Name="Your profile"
                             Grid.Column="0"
                             Style="{StaticResource IconButton}"
                             Padding="0"
@@ -64,6 +65,7 @@
                     Padding="10,8,10,6">
                 <Grid>
                     <TextBox x:Name="SearchInput"
+                             AutomationProperties.Name="Search"
                              Padding="34,8,34,8"
                              TextChanged="OnSearchTextChanged"
                              KeyDown="OnSearchKeyDown" />
@@ -103,7 +105,7 @@
                 </Grid>
             </Border>
 
-            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Focusable="False">
                 <ItemsControl x:Name="ChatRows" Padding="6,8" />
             </ScrollViewer>
 

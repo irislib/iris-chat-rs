@@ -215,9 +215,10 @@ fn install_css() {
 fn load_iris_css(provider: &gtk::CssProvider, dark: bool) {
     let palette = if dark { IRIS_DARK } else { IRIS_LIGHT };
     let css = format!(
-        "{}\n{}\n{}",
+        "{}\n{}\n{}\n{}",
         palette_css(palette),
         CUSTOM_CSS,
+        widgets::keyboard_list::CSS,
         format!(
             "{}\n{}",
             widgets::audio_message::CSS,

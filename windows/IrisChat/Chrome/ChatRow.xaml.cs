@@ -34,12 +34,19 @@ public partial class ChatRow : UserControl
     {
         InitializeComponent();
         MouseLeftButtonUp += OnClick;
+        KeyDown += (_, e) =>
+        {
+            if (Keyboard.Modifiers != ModifierKeys.None || e.Key is not (Key.Enter or Key.Space)) return;
+            if (Chat is { } chat) Activated?.Invoke(chat);
+            e.Handled = true;
+        };
         MouseEnter += (_, _) => RefreshActive();
         MouseLeave += (_, _) => RefreshActive();
     }
 
     private void OnClick(object sender, MouseButtonEventArgs e)
     {
+        Focus();
         if (Chat is { } c) Activated?.Invoke(c);
     }
 
@@ -47,6 +54,8 @@ public partial class ChatRow : UserControl
     {
         var chat = Chat;
         if (chat == null) return;
+        Uid = "chat:" + chat.chatId;
+        System.Windows.Automation.AutomationProperties.SetName(this, chat.displayName);
 
         AvatarView.SocialConnection = chat.socialConnection;
         AvatarView.OwnerPubkeyHex = chat.kind == ChatKind.Direct ? chat.chatId : null;

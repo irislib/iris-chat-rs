@@ -26,6 +26,7 @@ public partial class DesktopShell : UserControl
     public DesktopShell(AppManager manager, Screen activeScreen)
     {
         InitializeComponent();
+        KeyboardList.Install(ChatRows);
         _manager = manager;
         _activeScreen = activeScreen;
 
@@ -97,6 +98,7 @@ public partial class DesktopShell : UserControl
 
     private void RefreshChatRows(ChatThreadSnapshot[] chats, string? activeChatId)
     {
+        using var focus = KeyboardList.PreserveFocus(ChatRows);
         ChatRows.Items.Clear();
         var query = _searchQuery.Trim();
 
@@ -190,6 +192,7 @@ public partial class DesktopShell : UserControl
             var more = new Button
             {
                 Content = "View more",
+                Uid = "more:" + key,
                 Style = (Style)FindResource("GhostButton"),
                 HorizontalContentAlignment = HorizontalAlignment.Left,
                 Margin = new Thickness(8, 2, 8, 4),
@@ -221,7 +224,8 @@ public partial class DesktopShell : UserControl
 
     private ChatRow BuildChatRow(ChatThreadSnapshot chat, string? activeChatId)
     {
-        var row = new ChatRow { Chat = chat, IsActive = chat.chatId == activeChatId };
+        var row = new ChatRow { Chat = chat, IsActive = chat.chatId == activeChatId,
+            TabIndex = chat.chatId == activeChatId ? 0 : 1 };
         row.Activated += chosen =>
         {
             _showingNearby = false;
@@ -300,6 +304,7 @@ public partial class DesktopShell : UserControl
         var button = new Button
         {
             Content = content,
+            Uid = "person:" + person.ownerPubkeyHex,
             Style = (Style)FindResource("GhostButton"),
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Padding = new Thickness(8),

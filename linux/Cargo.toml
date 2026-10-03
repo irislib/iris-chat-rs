@@ -80,3 +80,9 @@ name = "nearby_avatar"
 path = "tests/nearby_avatar.rs"
 harness = false
 required-features = ["ui-tests"]
+
+[[test]]
+name = "keyboard"
+path = "tests/keyboard.rs"
+harness = false
+required-features = ["ui-tests"]

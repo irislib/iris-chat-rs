@@ -18,11 +18,15 @@ impl Content {
     }
 
     pub fn replace(&self, widget: &impl IsA<gtk::Widget>) {
+        let focus = crate::widgets::keyboard_list::FocusBookmark::capture(self.root.upcast_ref());
         self.chat.borrow_mut().take();
         while let Some(child) = self.root.first_child() {
             self.root.remove(&child);
         }
         self.root.append(widget);
+        if let Some(focus) = focus {
+            focus.restore(self.root.upcast_ref());
+        }
     }
 
     pub fn update(&self, screen: &Screen, state: &AppState, manager: &Rc<AppManager>) {

@@ -87,6 +87,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         }
     }
 
+    crate::widgets::keyboard_list::install(&body);
     scrolled.set_child(Some(&body));
     outer.append(&scrolled);
     outer.upcast()
@@ -119,6 +120,7 @@ fn build_search_box(
     }
 
     let entry = gtk::SearchEntry::new();
+    entry.set_widget_name("iris-keyboard-search");
     entry.set_hexpand(true);
     entry.set_text(&ui_state.query);
     if let Some(name) = ui_state.scope_display_name.as_ref() {
@@ -157,22 +159,6 @@ fn build_search_box(
 
     row.append(&entry);
     wrapper.append(&row);
-
-    if ui_state.is_active() {
-        // Re-render replaces the previous SearchEntry widget. Defer
-        // focus restoration to the next idle tick so the new widget
-        // is attached before we call grab_focus, otherwise GTK drops
-        // the request. Cursor goes to the end of the existing text so
-        // the user can keep typing.
-        let len = entry.text().len() as i32;
-        glib::idle_add_local_once({
-            let entry = entry.clone();
-            move || {
-                entry.grab_focus();
-                entry.set_position(len);
-            }
-        });
-    }
 
     wrapper
 }
@@ -732,6 +718,7 @@ fn row_for(
         .activatable(true)
         .build();
     row.show_pointer_cursor();
+    row.set_widget_name(&format!("iris-keyboard-chat-{}", chat.chat_id));
 
     let avatar = adw::Avatar::new(40, Some(&chat.display_name), true);
     if let Some(url) = chat.picture_url.as_ref() {
