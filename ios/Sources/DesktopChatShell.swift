@@ -19,6 +19,7 @@ struct DesktopChatShell: View {
     let onOpenNearbyPeerProfile: (String) -> Void
     @State private var keyboardOpenChatID: String?
     @State private var keyboardOpenRequest: UUID?
+    @State private var chatListFocusRequest: UUID?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -32,6 +33,9 @@ struct DesktopChatShell: View {
                     manager.dispatch(.openChat(chatId: chatID))
                 }
             )
+                #if os(macOS)
+                .environment(\.desktopChatListFocusRequest, $chatListFocusRequest)
+                #endif
                 .frame(width: 352)
                 .irisDesktopFocusSection()
 
@@ -48,6 +52,18 @@ struct DesktopChatShell: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(palette.background)
+        #if os(macOS)
+        .background {
+            DesktopChatSectionShortcuts(
+                onChatList: { chatListFocusRequest = UUID() },
+                onComposer: {
+                    guard case .chat(let chatID) = manager.activeScreen else { return }
+                    keyboardOpenChatID = chatID
+                    keyboardOpenRequest = UUID()
+                }
+            ).frame(width: 0, height: 0).accessibilityHidden(true)
+        }
+        #endif
         .irisOnChange(of: manager.activeScreen) { screen in
             if case .chat(let chatID) = screen, chatID == keyboardOpenChatID { return }
             keyboardOpenChatID = nil
@@ -337,14 +353,22 @@ struct DesktopChatSidebar: View {
 
                             #if os(macOS)
                             DesktopKeyboardChatList(
-                                manager: manager,
-                                chats: manager.state.chatList,
+                                items: manager.state.chatList,
+                                id: \.chatId,
                                 selectedChatID: selectedChatId,
-                                preferences: preferences,
-                                relativeNow: relativeNow,
                                 proxy: proxy,
                                 onOpen: onKeyboardOpenChat
-                            )
+                            ) { chat in
+                                DesktopSidebarChatRow(
+                                    manager: manager,
+                                    chat: chat,
+                                    timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow),
+                                    selected: selectedChatId == chat.chatId,
+                                    preferences: preferences
+                                )
+                                .equatable()
+                                .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
+                            }
                             #else
                             ForEach(manager.state.chatList, id: \.chatId) { chat in
                                 DesktopSidebarChatRow(

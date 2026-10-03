@@ -101,14 +101,6 @@ final class IrisComposerNSTextView: NSTextView {
     }
 
     override func doCommand(by selector: Selector) {
-        if !hasMarkedText(), selector == #selector(NSResponder.insertTab(_:)) {
-            window?.selectKeyView(following: self)
-            return
-        }
-        if !hasMarkedText(), selector == #selector(NSResponder.insertBacktab(_:)) {
-            window?.selectKeyView(preceding: self)
-            return
-        }
         if selector == #selector(NSResponder.insertNewline(_:)),
            !hasMarkedText(), !shouldInsertLineBreakForCurrentEvent {
             composerCommandDelegate?.composerTextViewDidSubmit(self)
