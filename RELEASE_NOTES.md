@@ -18,6 +18,8 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Preserve group encryption settings when copying groups between web and native, rejecting copies that conflict with authenticated group history.
 - Respect message-server retry backoff when a batch reports failures before its completion event, avoiding repeated failed drains of a large queue.
 - Batch private read receipts into one protocol save and show durable local chat state before saving the protocol backlog on every native platform.
+- Reuse bounded event-signature validation proofs across transports and suppress unchanged Nearby updates, preserving content validation, delivery receipts, and device-list recovery.
+- Preserve an already recovered encrypted session when a direct connection catches up after a peer restarts, using the verified FIPS 0.4.93 dependency set.
 - Focus the composer when replying, follow the iOS keyboard animation, and emit pending messages before protocol checkpoint work.
 - Paste photos and multiple files into drafts without sending automatically, and improve long-draft editing across native platforms.
 - Keep private contacts and device labels in ratcheted messages and direct pairing snapshots. Authenticate background call notifications and retain them for retry.
