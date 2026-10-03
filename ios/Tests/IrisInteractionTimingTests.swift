@@ -11,6 +11,7 @@ final class IrisInteractionTimingTests: XCTestCase {
         let id: String
         var body = "hello"
         var isOutgoing = true
+        var createdAtSecs: UInt64 = 100
     }
 
     @MainActor
@@ -43,11 +44,12 @@ final class IrisInteractionTimingTests: XCTestCase {
     @MainActor
     func testSendOnlyMatchesNewOutgoingMessageAndDistinctQueuedCopies() {
         var records: [IrisInteractionTiming.Record] = []
-        let timing = IrisInteractionTiming(emit: { records.append($0) })
+        let timing = IrisInteractionTiming(wallClock: { 100.5 }, emit: { records.append($0) })
         let old = Message(id: "old")
         timing.beginSend(chatID: "chat", body: "hello", messages: [old])
         timing.beginSend(chatID: "chat", body: "hello", messages: [old])
-        var messages = [old, Message(id: "incoming", isOutgoing: false), Message(id: "different", body: "other")]
+        var messages = [old, Message(id: "incoming", isOutgoing: false), Message(id: "different", body: "other"),
+                        Message(id: "late-history", createdAtSecs: 99)]
         timing.stateAvailable(chatID: "chat", messages: messages, historyLoaded: true)
         XCTAssertTrue(records.isEmpty)
         messages.append(Message(id: "first"))

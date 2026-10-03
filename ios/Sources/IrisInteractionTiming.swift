@@ -5,6 +5,7 @@ protocol IrisInteractionMessage {
     var id: String { get }
     var body: String { get }
     var isOutgoing: Bool { get }
+    var createdAtSecs: UInt64 { get }
 }
 
 /// Opt-in measurements of state and visible layout, not display/paint completion.
@@ -26,9 +27,11 @@ final class IrisInteractionTiming {
         var body: String? = nil
         var previousIDs: Set<String> = []
         var hasState = false
+        var earliestCreatedAtSecs: UInt64 = 0
     }
     private var pending: [Pending] = []
     private let clock: () -> TimeInterval
+    private let wallClock: () -> TimeInterval
     private let emit: (Record) -> Void
 
     static func configured(environment: [String: String], enabledInBundle: Bool) -> IrisInteractionTiming? {
@@ -37,11 +40,13 @@ final class IrisInteractionTiming {
     }
 
     init(clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         wallClock: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 },
          emit: @escaping (Record) -> Void = {
              NSLog("iris.interaction action=%@ stage=%@ duration_ms=%.3f message_count=%d",
                    $0.action.rawValue, $0.stage.rawValue, $0.durationMilliseconds, $0.messageCount)
          }) {
         self.clock = clock
+        self.wallClock = wallClock
         self.emit = emit
     }
 
@@ -53,7 +58,8 @@ final class IrisInteractionTiming {
     func beginSend<M: IrisInteractionMessage>(chatID: String, body: String, messages: [M]) {
         if pending.count >= 8 { pending.removeFirst() }
         pending.append(Pending(action: .send, started: clock(), chatID: chatID, body: body,
-                               previousIDs: Set(messages.map(\.id))))
+                               previousIDs: Set(messages.map(\.id)),
+                               earliestCreatedAtSecs: UInt64(max(0, wallClock()))))
     }
 
     func stateAvailable<M: IrisInteractionMessage>(chatID: String, messages: [M], historyLoaded: Bool) {
@@ -61,6 +67,7 @@ final class IrisInteractionTiming {
             if pending[index].action == .send {
                 guard let message = messages.first(where: {
                     $0.isOutgoing && $0.body == pending[index].body
+                        && $0.createdAtSecs >= pending[index].earliestCreatedAtSecs
                         && !pending[index].previousIDs.contains($0.id)
                 }) else { continue }
                 for other in pending.indices where other != index && pending[other].action == .send {
