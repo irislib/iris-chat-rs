@@ -582,7 +582,6 @@ extension ScreenshotFixture {
     /// peer's tap target to a fixture chat id without disturbing the
     /// screenshot-test output (where peers stay disabled).
     func nearbyPeerSnapshots(firstPeerOwnerHex: String? = nil) -> [IrisNearbyPeer] {
-        let now = Date()
         return nearbyPeers.enumerated().map { index, peer in
             IrisNearbyPeer(
                 id: peer.id,
@@ -590,8 +589,7 @@ extension ScreenshotFixture {
                 ownerPubkeyHex: index == 0 ? firstPeerOwnerHex : nil,
                 pictureURL: Self.avatarURL(for: peer.name),
                 profileEventID: nil,
-                bluetoothRSSI: peer.transport == .bluetooth ? -45 - index : nil,
-                lastSeen: now
+                bluetoothRSSI: peer.transport == .bluetooth ? -45 - index : nil
             )
         }
     }

@@ -8,19 +8,19 @@ struct IrisNearbyPeer: Identifiable, Equatable {
     var pictureURL: String?
     var profileEventID: String?
     var bluetoothRSSI: Int?
-    var lastSeen: Date
 }
 
 /// Published UI state for FIPS-owned Nearby transports. This class performs no communication.
 final class IrisNearbyService: ObservableObject {
     @Published private(set) var isVisible = false
     @Published private(set) var isLanVisible = false
-    @Published private(set) var status = "Off"
-    @Published private(set) var lanStatus = "Off"
     @Published private(set) var peers: [IrisNearbyPeer] = []
 
-    private var screenshotFixtureBluetoothPeerIDs: Set<String>?
-    private var screenshotFixtureLanPeerIDs: Set<String>?
+    private var bluetoothPeerIDs: Set<String> = []
+    private var lanPeerIDs: Set<String> = []
+
+    var status: String { isVisible ? "Visible" : "Off" }
+    var lanStatus: String { isLanVisible ? "Visible" : "Off" }
 
     var sidebarSubtitle: String {
         guard isNearbyActive else { return "Tap to enable" }
@@ -42,23 +42,21 @@ final class IrisNearbyService: ObservableObject {
     var shouldRestartLanAfterFailure: Bool { false }
     var isNearbyActive: Bool { isVisible || isLanVisible }
     var bluetoothPeers: [IrisNearbyPeer] {
-        guard let ids = screenshotFixtureBluetoothPeerIDs else { return [] }
-        return peers.filter { ids.contains($0.id) }
+        peers.filter { bluetoothPeerIDs.contains($0.id) }
     }
     var lanPeers: [IrisNearbyPeer] {
-        guard let ids = screenshotFixtureLanPeerIDs else { return [] }
-        return peers.filter { ids.contains($0.id) }
+        peers.filter { lanPeerIDs.contains($0.id) }
     }
     var mailbagSummary: String? { nil }
 
     func setFipsBluetoothVisible(_ visible: Bool) {
+        guard isVisible != visible else { return }
         isVisible = visible
-        status = visible ? "Visible" : "Off"
     }
 
     func setFipsLanVisible(_ visible: Bool) {
+        guard isLanVisible != visible else { return }
         isLanVisible = visible
-        lanStatus = visible ? "Visible" : "Off"
     }
 
     func applyFipsPeerSnapshot(
@@ -66,19 +64,17 @@ final class IrisNearbyService: ObservableObject {
         bluetoothPeerIds: [String],
         lanPeerIds: [String]
     ) {
-        peers = snapshot.peers.map { peer in
+        let peers = snapshot.peers.map { peer in
             IrisNearbyPeer(
                 id: peer.id,
                 name: peer.name,
                 ownerPubkeyHex: peer.ownerPubkeyHex,
                 pictureURL: peer.pictureUrl,
                 profileEventID: peer.profileEventId,
-                bluetoothRSSI: nil,
-                lastSeen: Date(timeIntervalSince1970: TimeInterval(peer.lastSeenSecs))
+                bluetoothRSSI: nil
             )
         }
-        screenshotFixtureBluetoothPeerIDs = Set(bluetoothPeerIds)
-        screenshotFixtureLanPeerIDs = Set(lanPeerIds)
+        applyPeers(peers, bluetoothPeerIDs: bluetoothPeerIds, lanPeerIDs: lanPeerIds)
     }
 
     func applyScreenshotFixturePeers(
@@ -86,10 +82,22 @@ final class IrisNearbyService: ObservableObject {
         bluetoothPeerIDs: [String],
         lanPeerIDs: [String]
     ) {
-        self.peers = peers
-        screenshotFixtureBluetoothPeerIDs = Set(bluetoothPeerIDs)
-        screenshotFixtureLanPeerIDs = Set(lanPeerIDs)
+        applyPeers(peers, bluetoothPeerIDs: bluetoothPeerIDs, lanPeerIDs: lanPeerIDs)
         if !bluetoothPeerIDs.isEmpty { setFipsBluetoothVisible(true) }
         if !lanPeerIDs.isEmpty { setFipsLanVisible(true) }
+    }
+
+    private func applyPeers(
+        _ peers: [IrisNearbyPeer],
+        bluetoothPeerIDs: [String],
+        lanPeerIDs: [String]
+    ) {
+        let bluetooth = Set(bluetoothPeerIDs)
+        let lan = Set(lanPeerIDs)
+        guard self.peers != peers || self.bluetoothPeerIDs != bluetooth || self.lanPeerIDs != lan else { return }
+        // Transport changes also affect the peer UI; make them available to subscribers first.
+        self.bluetoothPeerIDs = bluetooth
+        self.lanPeerIDs = lan
+        self.peers = peers
     }
 }

@@ -107,7 +107,7 @@ final class NearbyAvatarTests: XCTestCase {
     }
 
     private func peer(_ owner: String?) -> IrisNearbyPeer {
-        IrisNearbyPeer(id: "device", name: "Alice", ownerPubkeyHex: owner, pictureURL: nil, profileEventID: nil, bluetoothRSSI: nil, lastSeen: Date())
+        IrisNearbyPeer(id: "device", name: "Alice", ownerPubkeyHex: owner, pictureURL: nil, profileEventID: nil, bluetoothRSSI: nil)
     }
 
     private func findTable(_ view: UIView) -> UITableView? {
