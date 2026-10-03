@@ -57,6 +57,8 @@ public static class PlatformDocumentOpener
 
 public static class PlatformFilePicker
 {
+    public const string MediaFilter = "Photos and videos|*.jpg;*.jpeg;*.png;*.gif;*.webp;*.bmp;*.heic;*.heif;*.avif;*.tif;*.tiff;*.mp4;*.m4v;*.mov;*.webm;*.mkv;*.avi;*.mpeg;*.mpg;*.3gp";
+
     public static string[]? PickFiles(string title, bool multiselect = false, string? filter = null)
     {
         var dialog = new OpenFileDialog

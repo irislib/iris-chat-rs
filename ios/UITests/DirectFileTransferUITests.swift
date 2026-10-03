@@ -28,6 +28,10 @@ final class DirectFileTransferUITests: IrisChatUITestCase {
             }
         }
 #endif
+#if os(macOS)
+        XCTAssertTrue(element(app, "chatAttachmentPhotosButton").exists)
+        XCTAssertTrue(element(app, "chatAttachmentFilesButton").exists)
+#endif
         let direct = element(app, "chatDirectFileButton")
         XCTAssertTrue(direct.waitForExistence(timeout: 10))
 #if os(iOS)

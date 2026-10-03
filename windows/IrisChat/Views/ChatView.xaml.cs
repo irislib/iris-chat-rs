@@ -260,11 +260,13 @@ public partial class ChatView : UserControl
             (chat.directChatCapability == null || chat.directChatCapability == DirectChatCapabilityState.Available);
     }
 
-    private void OnAttach()
+    private void OnAttach(bool mediaOnly)
     {
         var chatId = App.CurrentManager.CurrentChat?.chatId;
         if (!CanAttachFiles()) return;
-        var files = PlatformFilePicker.PickFiles("Attach files", multiselect: true);
+        var files = PlatformFilePicker.PickFiles(
+            mediaOnly ? "Photos and videos" : "Attach files", multiselect: true,
+            filter: mediaOnly ? PlatformFilePicker.MediaFilter : null);
         if (files == null || files.Length == 0 || !CanAttachFiles() ||
             App.CurrentManager.CurrentChat?.chatId != chatId) return;
         Composer.AddAttachments(files);

@@ -19,6 +19,7 @@ struct IrisComposerBar: View {
     @Binding var sendFilesDirectly: Bool
     let directFilesAllowed: Bool
     @State private var showingAttachmentPicker = false
+    @State private var attachmentContentTypes: [UTType] = [.item]
     @State private var showingEmojiPicker = false
     @State private var isPreparingAttachments = false
     @State private var attachmentTask: Task<Void, Never>?
@@ -149,7 +150,7 @@ struct IrisComposerBar: View {
         .irisOnChange(of: canPrepareAttachments) { onFileDropAvailabilityChange($0) }
         .fileImporter(
             isPresented: $showingAttachmentPicker,
-            allowedContentTypes: [.item],
+            allowedContentTypes: attachmentContentTypes,
             allowsMultipleSelection: true
         ) { result in
             guard case .success(let urls) = result, !urls.isEmpty else {
@@ -404,11 +405,21 @@ struct IrisComposerBar: View {
         Menu {
             Button {
                 if attachments.isEmpty { sendFilesDirectly = false }
+                attachmentContentTypes = [.image, .movie]
                 showingAttachmentPicker = true
-            } label: { Label("Files", systemImage: "doc.fill") }
+            } label: { Label("Photos and videos", systemImage: "photo.on.rectangle") }
+            .accessibilityIdentifier("chatAttachmentPhotosButton")
+            Button {
+                if attachments.isEmpty { sendFilesDirectly = false }
+                attachmentContentTypes = [.item]
+                showingAttachmentPicker = true
+            } label: { Label("File", systemImage: "doc.fill") }
+            .accessibilityIdentifier("chatAttachmentFilesButton")
             if directFilesAllowed {
+                Divider()
                 Button {
                     sendFilesDirectly = true
+                    attachmentContentTypes = [.item]
                     showingAttachmentPicker = true
                 } label: { Label("Send directly", systemImage: "arrow.up.arrow.down") }
                 .accessibilityIdentifier("chatDirectFileButton")

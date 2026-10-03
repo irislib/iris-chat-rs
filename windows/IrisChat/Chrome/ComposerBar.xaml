@@ -70,9 +70,10 @@
                         Grid.Column="0"
                         Style="{StaticResource IconButton}"
                         Margin="0,0,4,0"
-                        ToolTip="Send file"
+                        ToolTip="Add attachment"
+                        AutomationProperties.Name="Add attachment"
                         Click="OnAttach">
-                    <TextBlock Text="📎" FontSize="20" Foreground="{StaticResource TextMuted}" />
+                    <TextBlock Text="+" FontSize="24" Foreground="{StaticResource TextMuted}" />
                 </Button>
 
                 <Button x:Name="EmojiButton"

@@ -11,7 +11,7 @@ use crate::screens::chat_list::unix_now;
 pub(super) struct Composer {
     pub root: gtk::Box,
     send: gtk::Button,
-    attach: gtk::Button,
+    attach: gtk::MenuButton,
     direct: gtk::CheckButton,
     progress: gtk::ProgressBar,
     ttl: Rc<Cell<Option<u64>>>,
@@ -57,56 +57,82 @@ impl Composer {
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
 
-        let attach = gtk::Button::from_icon_name("mail-attachment-symbolic");
+        let attach = gtk::MenuButton::builder()
+            .icon_name("list-add-symbolic")
+            .build();
         attach.add_css_class("flat");
         attach.add_css_class("circular");
-        attach.set_tooltip_text(Some("Attach file"));
+        attach.set_tooltip_text(Some("Add attachment"));
         attach.set_sensitive(!state.busy.uploading_attachment);
-        let manager_for_attach = manager.clone();
-        let chat_id_for_attach = chat.chat_id.clone();
-        let preview_row_for_attach = preview_row.clone();
-        let preview_scroll_for_attach = preview_scroll.clone();
-        attach.connect_clicked(move |btn| {
-            if !can_attach(&manager_for_attach, &chat_id_for_attach) {
-                return;
-            }
-            let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
-            let dialog = gtk::FileDialog::builder().title("Attach files").build();
-            let manager = manager_for_attach.clone();
-            let chat_id = chat_id_for_attach.clone();
-            let preview_row = preview_row_for_attach.clone();
-            let preview_scroll = preview_scroll_for_attach.clone();
-            dialog.open_multiple(
-                parent.as_ref(),
-                gtk::gio::Cancellable::NONE,
-                move |result| {
-                    let Ok(files) = result else { return };
-                    if !can_attach(&manager, &chat_id) {
-                        return;
-                    }
-                    for index in 0..files.n_items() {
-                        let Some(file) = files.item(index).and_downcast::<gtk::gio::File>() else {
-                            continue;
-                        };
-                        let Some(path) = file.path().filter(|path| path.is_file()) else {
-                            continue;
-                        };
-                        manager.stage_attachment(
-                            &chat_id,
-                            OutgoingAttachment {
-                                filename: file
-                                    .basename()
-                                    .map(|p| p.to_string_lossy().into_owned())
-                                    .unwrap_or_else(|| "File".into()),
-                                file_path: path.to_string_lossy().into_owned(),
-                            },
-                        );
-                    }
-                    rebuild_attachment_previews(&preview_row, &manager, &chat_id);
-                    preview_scroll.set_visible(preview_row.first_child().is_some());
-                },
-            );
-        });
+        let popover = gtk::Popover::new();
+        let sources = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        for (label, media_only) in [("Photos and videos", true), ("File", false)] {
+            let source = gtk::Button::with_label(label);
+            source.add_css_class("flat");
+            let popover = popover.downgrade();
+            let manager_for_attach = manager.clone();
+            let chat_id_for_attach = chat.chat_id.clone();
+            let preview_row_for_attach = preview_row.clone();
+            let preview_scroll_for_attach = preview_scroll.clone();
+            source.connect_clicked(move |btn| {
+                let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+                if let Some(popover) = popover.upgrade() {
+                    popover.popdown();
+                }
+                if !can_attach(&manager_for_attach, &chat_id_for_attach) {
+                    return;
+                }
+                let dialog = gtk::FileDialog::builder().title(label).build();
+                if media_only {
+                    let media = gtk::FileFilter::new();
+                    media.set_name(Some("Photos and videos"));
+                    media.add_mime_type("image/*");
+                    media.add_mime_type("video/*");
+                    let filters = gtk::gio::ListStore::new::<gtk::FileFilter>();
+                    filters.append(&media);
+                    dialog.set_filters(Some(&filters));
+                    dialog.set_default_filter(Some(&media));
+                }
+                let manager = manager_for_attach.clone();
+                let chat_id = chat_id_for_attach.clone();
+                let preview_row = preview_row_for_attach.clone();
+                let preview_scroll = preview_scroll_for_attach.clone();
+                dialog.open_multiple(
+                    parent.as_ref(),
+                    gtk::gio::Cancellable::NONE,
+                    move |result| {
+                        let Ok(files) = result else { return };
+                        if !can_attach(&manager, &chat_id) {
+                            return;
+                        }
+                        for index in 0..files.n_items() {
+                            let Some(file) = files.item(index).and_downcast::<gtk::gio::File>()
+                            else {
+                                continue;
+                            };
+                            let Some(path) = file.path().filter(|path| path.is_file()) else {
+                                continue;
+                            };
+                            manager.stage_attachment(
+                                &chat_id,
+                                OutgoingAttachment {
+                                    filename: file
+                                        .basename()
+                                        .map(|p| p.to_string_lossy().into_owned())
+                                        .unwrap_or_else(|| "File".into()),
+                                    file_path: path.to_string_lossy().into_owned(),
+                                },
+                            );
+                        }
+                        rebuild_attachment_previews(&preview_row, &manager, &chat_id);
+                        preview_scroll.set_visible(preview_row.first_child().is_some());
+                    },
+                );
+            });
+            sources.append(&source);
+        }
+        popover.set_child(Some(&sources));
+        attach.set_popover(Some(&popover));
         row.append(&attach);
 
         let buffer = gtk::TextBuffer::new(None);

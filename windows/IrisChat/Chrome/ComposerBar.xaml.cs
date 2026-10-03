@@ -13,7 +13,7 @@ namespace IrisChat.Chrome;
 public partial class ComposerBar : UserControl
 {
     public event Action<string, IList<string>>? Submitted;
-    public event Action? AttachRequested;
+    public event Action<bool>? AttachRequested;
     public event Action? Typing;
     public event Action? StoppedTyping;
     public Func<AttachmentPasteDestination?>? AttachmentPasteScope { get; set; }
@@ -102,7 +102,17 @@ public partial class ComposerBar : UserControl
 
     private void OnSend(object sender, RoutedEventArgs e) => Submit();
 
-    private void OnAttach(object sender, RoutedEventArgs e) => AttachRequested?.Invoke();
+    private void OnAttach(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu { PlacementTarget = AttachButton, Placement = PlacementMode.Top };
+        var media = new MenuItem { Header = "Photos and videos" };
+        media.Click += (_, _) => AttachRequested?.Invoke(true);
+        var file = new MenuItem { Header = "File" };
+        file.Click += (_, _) => AttachRequested?.Invoke(false);
+        menu.Items.Add(media);
+        menu.Items.Add(file);
+        menu.IsOpen = true;
+    }
 
     private Popup? _emojiPopup;
 

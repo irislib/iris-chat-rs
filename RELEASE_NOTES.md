@@ -6,6 +6,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 ### GitHub
 
+- Align desktop attachment menus with Photos and videos and File choices, while retaining direct file sending.
 - Show stable italic animal names for unnamed people instead of full or shortened user IDs, while preserving profile names and nicknames.
 - Unify device linking around NostrConnect, retaining existing Iris link input compatibility and existing account sessions.
 - Reuse unchanged signed device lists and repair equivalent duplicate snapshots during approved linking, so existing accounts can link without weakening conflict checks.
@@ -22,6 +23,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 ### Apple
 
+- Choose photos and videos or any file from the Mac attachment menu.
 - Give unnamed people a friendly animal name in italics instead of showing their user ID.
 - Choose whether to copy message history when linking a device, and see transfer progress.
 - Resume interrupted history transfers and keep deleted messages removed.
