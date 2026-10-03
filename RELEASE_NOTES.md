@@ -7,6 +7,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### GitHub
 
 - Unify device linking around NostrConnect, retaining existing Iris link input compatibility and existing account sessions.
+- Reuse unchanged signed device lists and repair equivalent duplicate snapshots during approved linking, so existing accounts can link without weakening conflict checks.
 - Choose between chats and groups only or message history on the approving device. Keep the initial history transfer private to that device pair, resume interrupted transfers, and show progress on the receiving device.
 - Reconcile message inventories over encrypted FIPS using the shared Negentropy codec. Preserve link-time boundaries, local deletions, expiry, and device revocation during replay and recovery.
 - Focus the composer when replying, follow the iOS keyboard animation, and emit pending messages before protocol checkpoint work.
