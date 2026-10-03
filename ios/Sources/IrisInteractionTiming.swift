@@ -1,5 +1,8 @@
 import Foundation
 import CoreGraphics
+import OSLog
+
+private let irisInteractionLogger = Logger(subsystem: "fi.siriusbusiness.irischat", category: "interaction")
 
 protocol IrisInteractionMessage {
     var id: String { get }
@@ -42,8 +45,7 @@ final class IrisInteractionTiming {
     init(clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          wallClock: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 },
          emit: @escaping (Record) -> Void = {
-             NSLog("iris.interaction action=%@ stage=%@ duration_ms=%.3f message_count=%d",
-                   $0.action.rawValue, $0.stage.rawValue, $0.durationMilliseconds, $0.messageCount)
+             irisInteractionLogger.notice("iris.interaction action=\($0.action.rawValue, privacy: .public) stage=\($0.stage.rawValue, privacy: .public) duration_ms=\($0.durationMilliseconds, privacy: .public) message_count=\($0.messageCount, privacy: .public)")
          }) {
         self.clock = clock
         self.wallClock = wallClock
