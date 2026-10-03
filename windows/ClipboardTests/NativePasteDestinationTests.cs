@@ -62,13 +62,13 @@ internal static class NativePasteDestinationTests
                     live_caret_after_typing = caretAfterTyping,
                     final_text_length = input.Text.Length,
                     typed_caption_and_native_payload_preserved = action == "typing"
-                        ? input.Text == "Caption typed " + text.Replace('\t', ' ') : (bool?)null,
+                        ? input.Text == "Caption typed " + text : (bool?)null,
                 });
                 File.WriteAllText(Path.Combine(output, "windows-reentrant-text-timings.json"),
                     JsonSerializer.Serialize(new { cases = results }, new JsonSerializerOptions { WriteIndented = true }));
                 Check(delayed.Reads == 1, "native Paste reads delayed replacement exactly once");
                 if (action == "typing")
-                    Check(input.Text == "Caption typed " + text.Replace('\t', ' '),
+                    Check(input.Text == "Caption typed " + text,
                         "typing during native clipboard rendering keeps the same draft and native insertion");
                 else
                     Check(input.Text == (action == "clear" ? "" : "Caption "),

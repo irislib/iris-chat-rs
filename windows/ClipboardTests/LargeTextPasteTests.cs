@@ -19,7 +19,7 @@ internal static class LargeTextPasteTests
         const string original = "Before [replace me] after";
         const int selectionStart = 7, selectionLength = 12;
         var text = string.Concat(Enumerable.Repeat("Unicode 世界🙂\r\nnext\n\ttab\r", 2048));
-        var expected = original[..selectionStart] + text.Replace('\t', ' ') + original[(selectionStart + selectionLength)..];
+        var expected = original[..selectionStart] + text + original[(selectionStart + selectionLength)..];
         var caret = selectionStart + text.Length;
         composer.Clear();
         input.Text = original;
@@ -78,7 +78,7 @@ internal static class LargeTextPasteTests
             "Undo restores the normal small-draft appearance");
         input.Redo();
         Check(input.Text == expected && input.SelectionStart == caret && input.SelectionLength == 0,
-            "one Redo restores Unicode, line endings, native tab filtering and final caret");
+            "one Redo restores Unicode, line endings, literal tabs and final caret");
         Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Visible,
             "Redo restores bulk layout without changing the selection");
         pump();
@@ -126,7 +126,7 @@ internal static class LargeTextPasteTests
         composer.Clear();
         Clipboard.SetText("small\t世界🙂\r\ntext");
         ApplicationCommands.Paste.Execute(null, input);
-        Check(input.Text == "small 世界🙂\r\ntext", "ordinary native plaintext paste keeps its semantics");
+        Check(input.Text == "small\t世界🙂\r\ntext", "ordinary native plaintext paste keeps its semantics");
         Check(input.VerticalScrollBarVisibility == ScrollBarVisibility.Auto,
             "ordinary small drafts keep automatic scrollbars");
         NativePasteDestinationTests.Verify(composer, input, text, output);
