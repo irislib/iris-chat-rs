@@ -14,7 +14,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Reconcile messages and reaction changes over encrypted FIPS using the shared Negentropy codec. Sync current group details, settings, and verified contact profiles separately from old message history. Preserve link-time boundaries, local deletions, expiry, and device revocation during replay and recovery.
 - Notify linked devices when queued messages become sent, and retry unanswered WebRTC offers after authenticated session restarts without waiting for the old dial timeout.
 - Remove legacy paginated history and message-only reconciliation fallbacks. Keep large histories bounded by splitting Negentropy inventories, without changing the private history choice.
-- Keep unchanged protocol checkpoints in place to reduce message-receive writes. Update iris-chat-protocol to 0.2.2 with durable exact group-ciphertext tracking and remove unsafe timestamp-only acknowledgements, preserving distinct same-second messages and repair backoff.
+- Keep unchanged protocol checkpoints in place to reduce message-receive writes. Update iris-chat-protocol to 0.2.3 with durable exact group-ciphertext tracking and remove unsafe timestamp-only acknowledgements, preserving distinct same-second messages and repair backoff.
 - Preserve group encryption settings when copying groups between web and native, rejecting copies that conflict with authenticated group history.
 - Respect message-server retry backoff when a batch reports failures before its completion event, avoiding repeated failed drains of a large queue.
 - Batch private read receipts into one protocol save and show durable local chat state before saving the protocol backlog on every native platform.
