@@ -717,7 +717,18 @@ fn row_for(
     manager: &Rc<AppManager>,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
-        .title(escape(&chat.display_name))
+        .title(crate::widgets::person_name::markup(
+            &chat.display_name,
+            if chat.kind == ChatKind::Direct {
+                &chat.chat_id
+            } else {
+                ""
+            },
+            crate::widgets::person_name::explicit(
+                chat.nickname.as_deref(),
+                chat.profile_name.as_deref(),
+            ),
+        ))
         .activatable(true)
         .build();
     row.show_pointer_cursor();

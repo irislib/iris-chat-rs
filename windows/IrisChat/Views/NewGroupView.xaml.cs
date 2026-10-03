@@ -106,7 +106,7 @@ public partial class NewGroupView : UserControl
         {
             var chat = KnownUsers.FirstOrDefault(c =>
                 string.Equals(c.chatId, owner, StringComparison.OrdinalIgnoreCase));
-            var label = !string.IsNullOrWhiteSpace(chat?.displayName) ? chat!.displayName : "Iris user";
+            var label = chat?.displayName ?? "";
             SelectedMembersList.Items.Add(BuildSelectedRow(owner, label));
             DetailsSelectedMembersList.Items.Add(BuildSelectedRow(owner, label));
         }
@@ -151,9 +151,12 @@ public partial class NewGroupView : UserControl
             Margin = new Thickness(10, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
+        var name = IrisChat.Chrome.PersonNames.Present(chat.displayName, chat.chatId,
+            IrisChat.Chrome.PersonNames.Explicit(chat.nickname, chat.profileName));
         info.Children.Add(new TextBlock
         {
-            Text = string.IsNullOrWhiteSpace(chat.displayName) ? "Iris user" : chat.displayName,
+            Text = name.name,
+            FontStyle = IrisChat.Chrome.PersonNames.Style(name),
             FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["TextPrimary"],
         });
@@ -199,9 +202,11 @@ public partial class NewGroupView : UserControl
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
+        var name = IrisChat.Chrome.PersonNames.Present(label, owner, IrisChat.Chrome.PersonNames.Explicit(owner));
         var text = new TextBlock
         {
-            Text = label,
+            Text = name.name,
+            FontStyle = IrisChat.Chrome.PersonNames.Style(name),
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = (Brush)Application.Current.Resources["TextPrimary"],
         };

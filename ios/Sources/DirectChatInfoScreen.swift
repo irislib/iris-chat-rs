@@ -66,7 +66,7 @@ struct DirectChatInfoScreen: View {
                 if let chat {
                     VStack(spacing: 10) {
                         directChatAvatar(chat)
-                        Text(chat.displayName)
+                        personNameText(chat.displayName, identity: chat.chatId, explicitName: explicitPersonName(nickname: chat.nickname, profileName: chat.profileName))
                             .font(.system(.title2, design: .rounded, weight: .bold))
                             .foregroundStyle(palette.textPrimary)
                             .multilineTextAlignment(.center)
@@ -644,7 +644,7 @@ func highlightedProfileAboutText(_ text: String, linkColor: Color) -> Text {
 let profileAboutURLTrailingPunctuation = CharacterSet(charactersIn: ".,;:!?)]")
 
 func primaryDisplayName(displayName: String, fallback: String) -> String {
-    trimmedText(displayName) ?? fallbackProfileNameForIdentity(fallback)
+    PersonNamePresentation(displayName, identity: fallback).name
 }
 
 func secondaryDisplayName(_ secondary: String?, primary: String) -> String? {
@@ -675,24 +675,4 @@ extension Array where Element == ChatThreadSnapshot {
                 || (chat.subtitle?.lowercased().contains(lower) ?? false)
         }
     }
-}
-
-func fallbackProfileNameForIdentity(_ identity: String) -> String {
-    let adjectives = [
-        "Amber", "Bright", "Calm", "Clear", "Golden", "Lunar",
-        "Nova", "Quiet", "Silver", "Solar", "Velvet", "Wild"
-    ]
-    let nouns = [
-        "Aurora", "Comet", "Echo", "Falcon", "Harbor", "Listener",
-        "Otter", "Raven", "Signal", "Sparrow", "Tide", "Voyager"
-    ]
-    let trimmed = identity.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return "Quiet Listener" }
-
-    let hash = trimmed.utf8.reduce(UInt32(0)) { partial, byte in
-        partial &* 31 &+ UInt32(byte)
-    }
-    let adjective = adjectives[Int(hash) % adjectives.count]
-    let noun = nouns[(Int(hash) / adjectives.count) % nouns.count]
-    return "\(adjective) \(noun)"
 }

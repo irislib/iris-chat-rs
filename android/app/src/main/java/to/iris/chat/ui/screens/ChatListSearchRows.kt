@@ -45,6 +45,7 @@ internal fun SearchChatRow(
     val avatarData by rememberNhashImageData(appManager, chat.pictureUrl)
     IrisChatListRow(
         socialConnection = chat.socialConnection, ownerPubkeyHex = chat.chatId.takeIf { chat.kind == to.iris.chat.rust.ChatKind.DIRECT }, title = chat.displayName,
+        explicitName = to.iris.chat.ui.components.explicitPersonName(chat.nickname, chat.profileName),
         isMuted = chat.isMuted,
         isPinned = chat.isPinned,
         preview = chat.chatListPreview(),

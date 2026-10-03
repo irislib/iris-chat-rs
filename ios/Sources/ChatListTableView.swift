@@ -734,7 +734,7 @@ struct ChatListTableRowContent: View {
             VStack(alignment: .leading, spacing: IrisChatListRowMetrics.textStackSpacing) {
                 HStack(alignment: .firstTextBaseline, spacing: IrisChatListRowMetrics.textRowSpacing) {
                     HStack(alignment: .firstTextBaseline, spacing: IrisChatListRowMetrics.titleAccessorySpacing) {
-                        Text(title)
+                        personNameText(title, identity: ownerPubkeyHex, explicitName: explicitPersonName(for: ownerPubkeyHex, state: manager?.state))
                             .font(.headline)
                             .foregroundStyle(palette.textPrimary)
                             .lineLimit(1)

@@ -264,11 +264,14 @@ fn known_user_row<F>(
 where
     F: Fn(String) + Clone + 'static,
 {
-    let title = if chat.display_name.trim().is_empty() {
-        "Iris user".to_string()
-    } else {
-        chat.display_name.clone()
-    };
+    let title = crate::widgets::person_name::markup(
+        &chat.display_name,
+        &chat.chat_id,
+        crate::widgets::person_name::explicit(
+            chat.nickname.as_deref(),
+            chat.profile_name.as_deref(),
+        ),
+    );
     let row = adw::ActionRow::builder()
         .title(title)
         .activatable(true)

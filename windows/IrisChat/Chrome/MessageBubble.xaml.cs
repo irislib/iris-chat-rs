@@ -51,7 +51,9 @@ public partial class MessageBubble : UserControl
 
         if (showAuthor && !string.IsNullOrEmpty(authorLabel))
         {
-            AuthorText.Text = authorLabel;
+            var name = PersonNames.Present(authorLabel, message.authorOwnerPubkeyHex, PersonNames.Explicit(message.authorOwnerPubkeyHex));
+            AuthorText.Text = name.name;
+            AuthorText.FontStyle = PersonNames.Style(name);
             AuthorText.Visibility = Visibility.Visible;
         }
         else

@@ -221,9 +221,9 @@ func messageInfoKind(_ message: ChatMessageSnapshot) -> String {
 
 func messageInfoRecipientName(_ ownerPubkeyHex: String, chat: CurrentChatSnapshot?) -> String {
     if let chat, chat.kind == .direct && chat.chatId == ownerPubkeyHex {
-        return chat.displayName
+        return PersonNamePresentation(chat.displayName, identity: ownerPubkeyHex, explicitName: explicitPersonName(nickname: chat.nickname, profileName: chat.profileName)).name
     }
-    return shortNpub(ownerPubkeyHex)
+    return fallbackProfileNameForIdentity(ownerPubkeyHex)
 }
 
 func shortNpub(_ pubkeyInput: String) -> String {

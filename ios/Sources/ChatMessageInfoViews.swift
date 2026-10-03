@@ -325,9 +325,10 @@ func participantInfo(
     let participant = owner.flatMap { owner in
         chat?.participants.first { $0.ownerPubkeyHex == owner }
     }
-    let name = participant?.displayName
+    let rawName = participant?.displayName
         ?? nonEmptyTrimmed(displayName)
-        ?? "Iris user"
+        ?? ""
+    let name = PersonNamePresentation(rawName, identity: owner).name
     return ParticipantInfo(
         ownerPubkeyHex: owner?.isEmpty == false ? owner : nil,
         name: name,
@@ -554,7 +555,7 @@ struct MessageInfoUserRow<Trailing: View>: View {
                 manager: manager
             )
             VStack(alignment: .leading, spacing: 3) {
-                Text(info.name)
+                personNameText(info.name, identity: info.ownerPubkeyHex, explicitName: explicitPersonName(for: info.ownerPubkeyHex, state: manager.state))
                     .font(.system(.subheadline, design: .rounded, weight: .semibold))
                     .foregroundStyle(palette.textPrimary)
                     .lineLimit(1)

@@ -55,9 +55,10 @@ public partial class ChatRow : UserControl
             : chat.displayName;
         AvatarView.PictureUrl = chat.pictureUrl;
 
-        NameText.Text = string.IsNullOrEmpty(chat.displayName)
-            ? "Iris user"
-            : chat.displayName;
+        var name = PersonNames.Present(chat.displayName, chat.kind == ChatKind.Direct ? chat.chatId : null,
+            PersonNames.Explicit(chat.nickname, chat.profileName));
+        NameText.Text = name.name;
+        NameText.FontStyle = PersonNames.Style(name);
         MutedBellText.Visibility = chat.isMuted ? Visibility.Visible : Visibility.Collapsed;
         PinnedText.Visibility = chat.isPinned ? Visibility.Visible : Visibility.Collapsed;
 

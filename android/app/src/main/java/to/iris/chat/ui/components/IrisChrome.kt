@@ -129,6 +129,8 @@ val LocalIrisOfflineBannerState =
 @Composable
 fun IrisTopBar(
     title: String,
+    personIdentity: String? = null,
+    explicitName: String? = null,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     subtitleIcon: ImageVector? = null,
@@ -139,6 +141,7 @@ fun IrisTopBar(
     titleAccessoryLeading: (@Composable () -> Unit)? = null,
     onTitleClick: (() -> Unit)? = null,
 ) {
+    val presentedTitle = personName(title, personIdentity, explicitName)
     val palette = IrisTheme.palette
     val offlineBanner = LocalIrisOfflineBannerState.current
     val haptics = rememberIrisHapticFeedback()
@@ -244,7 +247,8 @@ fun IrisTopBar(
                         verticalArrangement = Arrangement.spacedBy(1.dp),
                     ) {
                         Text(
-                            text = title,
+                            text = presentedTitle.name,
+                            fontStyle = presentedTitle.fontStyle,
                             style =
                                 if (titleAccessoryLeading != null) {
                                     MaterialTheme.typography.titleMedium
@@ -780,6 +784,7 @@ fun IrisChatListRow(
     socialConnection: to.iris.chat.rust.SocialConnectionSnapshot? = null,
     ownerPubkeyHex: String? = null,
     title: String,
+    explicitName: String? = null,
     modifier: Modifier = Modifier,
     isMuted: Boolean = false,
     isPinned: Boolean = false,
@@ -796,6 +801,7 @@ fun IrisChatListRow(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
 ) {
+    val presentedTitle = personName(title, ownerPubkeyHex, explicitName)
     val palette = IrisTheme.palette
     val haptics = rememberIrisHapticFeedback()
     val interactionSource = remember { MutableInteractionSource() }
@@ -847,7 +853,8 @@ fun IrisChatListRow(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = title,
+                        text = presentedTitle.name,
+                        fontStyle = presentedTitle.fontStyle,
                         modifier = Modifier.weight(1f, fill = false),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurface,

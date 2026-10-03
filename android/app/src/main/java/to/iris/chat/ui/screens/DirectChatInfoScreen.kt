@@ -1,6 +1,7 @@
 package to.iris.chat.ui.screens
 
 import androidx.activity.compose.BackHandler
+import to.iris.chat.ui.components.fontStyle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -135,6 +136,8 @@ fun DirectChatInfoScreen(
             topBar = {
                 IrisTopBar(
                     title = chat.displayName,
+                    personIdentity = chat.chatId,
+                    explicitName = to.iris.chat.ui.components.explicitPersonName(chat.nickname, chat.profileName),
                     onBack = onBack,
                 )
             },
@@ -176,8 +179,10 @@ fun DirectChatInfoScreen(
                             modifier = Modifier.weight(1f),
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
+                            val presentedName = to.iris.chat.ui.components.personName(chat.displayName, chat.chatId, to.iris.chat.ui.components.explicitPersonName(chat.nickname, chat.profileName))
                             Text(
-                                text = chat.displayName,
+                                text = presentedName.name,
+                                fontStyle = presentedName.fontStyle,
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                             )

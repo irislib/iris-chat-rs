@@ -406,6 +406,8 @@ fun ChatScreen(
         topBar = {
             val chatHeaderAvatarBytes by rememberNhashImageData(appManager, chat?.pictureUrl)
             IrisTopBar(
+                personIdentity = chat?.chatId?.takeIf { chat?.kind == ChatKind.DIRECT },
+                explicitName = to.iris.chat.ui.components.explicitPersonName(chat?.nickname, chat?.profileName),
                 title =
                     when {
                         chat?.kind == ChatKind.GROUP && chat.subtitle != null ->

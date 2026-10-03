@@ -193,7 +193,7 @@ struct GroupDetailsScreen: View {
                                 )
 
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text(primary)
+                                    personNameText(member.displayName, identity: member.ownerPubkeyHex, explicitName: explicitPersonName(for: member.ownerPubkeyHex, state: manager.state))
                                         .font(.system(.headline, design: .rounded, weight: .semibold))
                                         .foregroundStyle(palette.textPrimary)
                                     HStack(spacing: 6) {
@@ -307,7 +307,7 @@ struct GroupDetailsScreen: View {
                                     HStack(spacing: 12) {
                                         IrisAvatar(socialConnection: chat.socialConnection, ownerPubkeyHex: chat.chatId, label: chat.displayName, size: 38, emphasize: selected, manager: manager)
                                         VStack(alignment: .leading, spacing: 4) {
-                                            Text(chat.displayName)
+                                            personNameText(chat.displayName, identity: chat.chatId, explicitName: explicitPersonName(nickname: chat.nickname, profileName: chat.profileName))
                                                 .font(.system(.headline, design: .rounded, weight: .semibold))
                                                 .foregroundStyle(palette.textPrimary)
                                             if let subtitle = secondaryDisplayName(chat.subtitle, primary: chat.displayName) {
@@ -526,6 +526,8 @@ struct GroupDetailsScreen: View {
                     SelectedMemberChip(
                         title: presentation.primary,
                         subtitle: presentation.secondary,
+                        personIdentity: owner,
+                        explicitName: explicitPersonName(for: owner, state: manager.state),
                         onRemove: { selectedAddMemberOwners.remove(owner) }
                     )
                 }
@@ -543,7 +545,7 @@ struct GroupDetailsScreen: View {
 
     private func addMemberPresentation(for owner: String) -> OwnerPresentation {
         if let chat = manager.state.chatList.first(where: { sameOwner(owner, hex: $0.chatId, npub: $0.subtitle) }) {
-            let primary = primaryDisplayName(displayName: chat.displayName, fallback: normalizePeerInput(input: owner))
+            let primary = PersonNamePresentation(chat.displayName, identity: owner, explicitName: explicitPersonName(nickname: chat.nickname, profileName: chat.profileName)).name
             return OwnerPresentation(
                 primary: primary,
                 secondary: secondaryDisplayName(chat.subtitle, primary: primary)

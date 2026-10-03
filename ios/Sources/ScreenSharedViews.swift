@@ -274,12 +274,14 @@ struct SelectedMemberChip: View {
     @Environment(\.irisPalette) private var palette
     let title: String
     let subtitle: String?
+    var personIdentity: String? = nil
+    var explicitName: String? = nil
     let onRemove: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                personNameText(title, identity: personIdentity, explicitName: explicitName)
                     .font(.system(.caption, design: .rounded, weight: .semibold))
                     .lineLimit(1)
                 if let subtitle {

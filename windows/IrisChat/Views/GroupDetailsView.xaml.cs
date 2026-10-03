@@ -149,9 +149,12 @@ public partial class GroupDetailsView : UserControl
             Margin = new Thickness(10, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
+        var name = IrisChat.Chrome.PersonNames.Present(chat.displayName, chat.chatId,
+            IrisChat.Chrome.PersonNames.Explicit(chat.nickname, chat.profileName));
         info.Children.Add(new TextBlock
         {
-            Text = string.IsNullOrWhiteSpace(chat.displayName) ? "Iris user" : chat.displayName,
+            Text = name.name,
+            FontStyle = IrisChat.Chrome.PersonNames.Style(name),
             FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["TextPrimary"],
         });
@@ -262,10 +265,12 @@ public partial class GroupDetailsView : UserControl
         };
         Grid.SetColumn(avatar, 0);
 
+        var name = IrisChat.Chrome.PersonNames.Present(m.displayName, m.ownerPubkeyHex, IrisChat.Chrome.PersonNames.Explicit(m.ownerPubkeyHex));
         var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         info.Children.Add(new TextBlock
         {
-            Text = m.displayName + (m.isLocalOwner ? " (you)" : string.Empty),
+            Text = name.name + (m.isLocalOwner ? " (you)" : string.Empty),
+            FontStyle = IrisChat.Chrome.PersonNames.Style(name),
             Foreground = (Brush)Application.Current.Resources["TextPrimary"],
             FontWeight = FontWeights.SemiBold,
         });

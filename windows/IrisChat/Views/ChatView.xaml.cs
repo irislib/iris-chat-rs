@@ -98,7 +98,10 @@ public partial class ChatView : UserControl
         VoiceCall.Visibility = callable && App.CurrentManager.Preferences.voiceCallsEnabled ? Visibility.Visible : Visibility.Collapsed;
         VideoCall.Visibility = callable && App.CurrentManager.Preferences.videoCallsEnabled ? Visibility.Visible : Visibility.Collapsed;
         VoiceCall.IsEnabled = VideoCall.IsEnabled = !App.CurrentManager.Calls.Visible;
-        HeaderTitle.Text = chat.displayName;
+        var name = PersonNames.Present(chat.displayName, chat.kind == ChatKind.Direct ? chat.chatId : null,
+            PersonNames.Explicit(chat.nickname, chat.profileName));
+        HeaderTitle.Text = name.name;
+        HeaderTitle.FontStyle = PersonNames.Style(name);
         // Header subtitle priority: disappearing-message timeout (clock + ttl)
         // > muted (bell-slash + muted) > group subtitle text. Hide the others
         // when one wins so we don't stack indicators.
@@ -503,9 +506,11 @@ public partial class ChatView : UserControl
             Orientation = Orientation.Vertical,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        var presentedName = PersonNames.Present(chat.displayName, chat.chatId, PersonNames.Explicit(chat.nickname, chat.profileName));
         text.Children.Add(new TextBlock
         {
-            Text = chat.displayName,
+            Text = presentedName.name,
+            FontStyle = PersonNames.Style(presentedName),
             FontSize = 20,
             FontWeight = FontWeights.SemiBold,
             Foreground = ResourceBrush("TextPrimary"),

@@ -63,6 +63,8 @@ struct DesktopChatShell: View {
             let chat = manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
             DesktopPaneTopBar(
                 title: chat?.displayName ?? "Chat",
+                personIdentity: chat?.kind == .direct ? chat?.chatId : nil,
+                explicitName: explicitPersonName(nickname: chat?.nickname, profileName: chat?.profileName),
                 subtitle: chat?.isMuted == true ? "Muted" : chat?.subtitle,
                 subtitleSystemImage: chat?.isMuted == true ? "bell.slash.fill" : nil,
                 onTitleTap: chat.map { current in
@@ -94,7 +96,7 @@ struct DesktopChatShell: View {
             ChatScreen(manager: manager, chatId: chatId)
                 .id(chatId)
         case .directChatInfo(let chatId):
-            DesktopPaneTopBar(title: manager.state.currentChat?.displayName ?? "Details", canGoBack: true, onBack: manager.navigateBack)
+            DesktopPaneTopBar(title: manager.state.currentChat?.displayName ?? "Details", personIdentity: chatId, explicitName: explicitPersonName(nickname: manager.state.currentChat?.nickname, profileName: manager.state.currentChat?.profileName), canGoBack: true, onBack: manager.navigateBack)
             DirectChatInfoScreen(
                 manager: manager,
                 chatId: chatId,
@@ -130,6 +132,8 @@ struct DesktopPaneTopBar: View {
     @Environment(\.irisPalette) private var palette
 
     let title: String
+    let personIdentity: String?
+    let explicitName: String?
     let subtitle: String?
     let subtitleSystemImage: String?
     let canGoBack: Bool
@@ -140,6 +144,8 @@ struct DesktopPaneTopBar: View {
 
     init(
         title: String,
+        personIdentity: String? = nil,
+        explicitName: String? = nil,
         subtitle: String? = nil,
         subtitleSystemImage: String? = nil,
         canGoBack: Bool = false,
@@ -149,6 +155,8 @@ struct DesktopPaneTopBar: View {
         trailing: AnyView = AnyView(EmptyView())
     ) {
         self.title = title
+        self.personIdentity = personIdentity
+        self.explicitName = explicitName
         self.subtitle = subtitle
         self.subtitleSystemImage = subtitleSystemImage
         self.canGoBack = canGoBack
@@ -164,7 +172,7 @@ struct DesktopPaneTopBar: View {
             leading
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                personNameText(title, identity: personIdentity, explicitName: explicitName)
                     .font(.system(.headline, design: .rounded, weight: .semibold))
                     .foregroundStyle(palette.textPrimary)
                     .lineLimit(1)
@@ -539,7 +547,7 @@ struct DesktopSidebarChatRow: View, Equatable {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         HStack(alignment: .firstTextBaseline, spacing: 5) {
-                            Text(chat.displayName)
+                            personNameText(chat.displayName, identity: chat.kind == .direct ? chat.chatId : nil, explicitName: explicitPersonName(nickname: chat.nickname, profileName: chat.profileName))
                                 .font(.system(.headline, design: .rounded, weight: chat.unreadCount > 0 ? .bold : .semibold))
                                 .foregroundStyle(palette.textPrimary)
                                 .lineLimit(1)

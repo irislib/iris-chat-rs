@@ -3,6 +3,7 @@ package to.iris.chat.ui.screens
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import to.iris.chat.ui.components.fontStyle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -191,7 +192,7 @@ fun GroupDetailsScreen(
             Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                val creatorPrimary = primaryDisplayName(details.createdByDisplayName, details.createdByNpub)
+                val creator = to.iris.chat.ui.components.personName(details.createdByDisplayName, details.createdByNpub)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -217,7 +218,8 @@ fun GroupDetailsScreen(
                     }
                 }
                 Text(
-                    text = "Created by $creatorPrimary",
+                    text = "Created by ${creator.name}",
+                    fontStyle = creator.fontStyle,
                     style = MaterialTheme.typography.bodySmall,
                     color = IrisTheme.palette.muted,
                 )
@@ -281,7 +283,8 @@ fun GroupDetailsScreen(
                 )
                 IrisListSection {
                     details.members.forEach { member ->
-                        val primary = primaryDisplayName(member.displayName, member.npub)
+                        val presented = to.iris.chat.ui.components.personName(member.displayName, member.ownerPubkeyHex, to.iris.chat.ui.components.explicitPersonName(member.ownerPubkeyHex, appState))
+                        val primary = presented.name
                         val roles = member.roleLabels()
                         val openProfileInteractionSource =
                             remember(member.ownerPubkeyHex) { MutableInteractionSource() }
@@ -322,6 +325,7 @@ fun GroupDetailsScreen(
                             ) {
                                 Text(
                                     text = primary,
+                                    fontStyle = presented.fontStyle,
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold,
                                 )
@@ -547,10 +551,8 @@ fun GroupDetailsScreen(
                         IrisListSection {
                             visibleKnownUsers.forEach { chat ->
                                 val selected = chat.chatId in selectedAddMemberOwners
-                                val title =
-                                    chat.displayName.trim().ifEmpty {
-                                        chat.subtitle.orEmpty().ifEmpty { chat.chatId }
-                                    }
+                                val presented = to.iris.chat.ui.components.personName(chat.displayName, chat.chatId, to.iris.chat.ui.components.explicitPersonName(chat.nickname, chat.profileName))
+                                val title = presented.name
                                 val subtitle =
                                     chat.subtitle?.takeIf { it.isNotBlank() && it != title }
                                 val interactionSource = remember(chat.chatId) { MutableInteractionSource() }
@@ -582,6 +584,7 @@ fun GroupDetailsScreen(
                                     ) {
                                         Text(
                                             text = title,
+                                            fontStyle = presented.fontStyle,
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontWeight = FontWeight.SemiBold,
                                         )
@@ -693,12 +696,6 @@ fun GroupDetailsScreen(
         )
     }
 }
-
-private fun primaryDisplayName(
-    displayName: String,
-    fallback: String,
-): String =
-    displayName.trim().ifEmpty { fallback.trim() }
 
 private fun GroupMemberSnapshot.roleLabels(): List<String> =
     buildList {

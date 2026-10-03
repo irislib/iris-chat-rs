@@ -582,7 +582,7 @@ struct ChatMessageRow: View, Equatable {
 
                         messageContentLayout(hasReply: parsed.reply != nil).callAsFunction {
                             if showsGroupSenderName {
-                                Text(message.author)
+                                personNameText(message.author, identity: message.authorOwnerPubkeyHex, explicitName: explicitPersonName(for: message.authorOwnerPubkeyHex, state: manager?.state))
                                     .font(.system(.footnote, design: .rounded, weight: .semibold))
                                     .foregroundStyle(irisGroupSenderNameColor(
                                         for: message.author,
@@ -703,6 +703,7 @@ struct ChatMessageRow: View, Equatable {
                             ChatMessageActionsSheet(
                                 message: message,
                                 bodyText: parsed.body,
+                                explicitAuthorName: explicitPersonName(for: message.authorOwnerPubkeyHex, state: manager?.state),
                                 canReplyAndReact: canReplyAndReact,
                                 onReact: { emoji in
                                     showActionsSheet = false

@@ -327,6 +327,7 @@ struct EscDismissesReply: ViewModifier {
 struct IrisReplyComposerStrip: View {
     @Environment(\.irisPalette) private var palette
     let message: ChatMessageSnapshot
+    var explicitAuthorName: String? = nil
     let onCancel: () -> Void
 
     private var authorName: String {
@@ -342,7 +343,7 @@ struct IrisReplyComposerStrip: View {
                     .padding(.vertical, 8)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(authorName)
+                    personNameText(authorName, identity: message.authorOwnerPubkeyHex, explicitName: explicitAuthorName)
                         .font(.system(.caption, design: .rounded, weight: .semibold))
                         .foregroundStyle(palette.textPrimary)
                         .lineLimit(1)

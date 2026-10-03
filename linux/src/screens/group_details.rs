@@ -269,11 +269,11 @@ fn member_row(
     state: &AppState,
     manager: &Rc<AppManager>,
 ) -> adw::ActionRow {
-    let title = if member.display_name.is_empty() {
-        "Member".to_string()
-    } else {
-        member.display_name.clone()
-    };
+    let title = crate::widgets::person_name::markup(
+        &member.display_name,
+        &member.owner_pubkey_hex,
+        crate::widgets::person_name::explicit_for(&member.owner_pubkey_hex, state),
+    );
     let row = adw::ActionRow::builder().title(title).build();
     if !member.is_local_owner {
         row.set_activatable(true);
@@ -463,11 +463,14 @@ fn add_members_card(
         let mut row_widgets: Vec<(ChatThreadSnapshot, adw::ActionRow)> =
             Vec::with_capacity(candidates.len());
         for chat in &candidates {
-            let title = if chat.display_name.trim().is_empty() {
-                "Iris user".to_string()
-            } else {
-                chat.display_name.clone()
-            };
+            let title = crate::widgets::person_name::markup(
+                &chat.display_name,
+                &chat.chat_id,
+                crate::widgets::person_name::explicit(
+                    chat.nickname.as_deref(),
+                    chat.profile_name.as_deref(),
+                ),
+            );
             let row = adw::ActionRow::builder()
                 .title(title)
                 .activatable(!busy)

@@ -1,5 +1,6 @@
 package to.iris.chat.ui.screens
 
+import to.iris.chat.ui.components.fontStyle
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
@@ -395,8 +396,10 @@ internal fun MessageBubble(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         if (!message.isOutgoing && chatKind == ChatKind.GROUP && isFirstInCluster) {
+                            val authorName = to.iris.chat.ui.components.personName(message.author, message.authorOwnerPubkeyHex, to.iris.chat.ui.components.explicitPersonName(message.authorOwnerPubkeyHex, appManager?.state?.value))
                             Text(
-                                text = message.author,
+                                text = authorName.name,
+                                fontStyle = authorName.fontStyle,
                                 style = MaterialTheme.typography.labelMedium,
                                 color = IrisTheme.palette.muted,
                             )
@@ -777,6 +780,7 @@ private fun MessagePreviewCard(
             else -> ""
         }
     if (previewText.isBlank() && message.attachments.isEmpty() && reactions.isEmpty()) return
+    val authorName = to.iris.chat.ui.components.personName(message.author, message.authorOwnerPubkeyHex)
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = IrisTheme.palette.panel,
@@ -787,7 +791,8 @@ private fun MessagePreviewCard(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
-                text = message.author,
+                text = authorName.name,
+                fontStyle = authorName.fontStyle,
                 style = MaterialTheme.typography.labelMedium,
                 color = IrisTheme.palette.muted,
                 fontWeight = FontWeight.SemiBold,
@@ -1854,6 +1859,7 @@ private fun MessageInfoUserRow(
 ) {
     val palette = IrisTheme.palette
     val clickable = info.ownerPubkeyHex != null && !info.isMe
+    val person = to.iris.chat.ui.components.personName(info.name, info.ownerPubkeyHex)
     Row(
         modifier =
             Modifier
@@ -1866,7 +1872,8 @@ private fun MessageInfoUserRow(
         IrisAvatar(ownerPubkeyHex = info.ownerPubkeyHex, label = info.name, size = 32.dp, imageUrl = info.pictureUrl, socialConnection = info.socialConnection)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                text = info.name,
+                text = person.name,
+                fontStyle = person.fontStyle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold,

@@ -29,6 +29,7 @@ struct IrisChatRow: View {
     let socialConnection: SocialConnectionSnapshot?
     let ownerPubkeyHex: String?
     let title: String
+    let explicitName: String?
     let isMuted: Bool
     let isPinned: Bool
     let preview: String
@@ -47,6 +48,7 @@ struct IrisChatRow: View {
         socialConnection: SocialConnectionSnapshot? = nil,
         ownerPubkeyHex: String? = nil,
         title: String,
+        explicitName: String? = nil,
         isMuted: Bool = false,
         isPinned: Bool = false,
         preview: String,
@@ -64,6 +66,7 @@ struct IrisChatRow: View {
         self.socialConnection = socialConnection
         self.ownerPubkeyHex = ownerPubkeyHex
         self.title = title
+        self.explicitName = explicitName
         self.isMuted = isMuted
         self.isPinned = isPinned
         self.preview = preview
@@ -100,7 +103,7 @@ struct IrisChatRow: View {
                 VStack(alignment: .leading, spacing: IrisChatListRowMetrics.textStackSpacing) {
                     HStack(alignment: .firstTextBaseline, spacing: IrisChatListRowMetrics.textRowSpacing) {
                         HStack(alignment: .firstTextBaseline, spacing: IrisChatListRowMetrics.titleAccessorySpacing) {
-                            Text(title)
+                            personNameText(title, identity: ownerPubkeyHex, explicitName: explicitName ?? explicitPersonName(for: ownerPubkeyHex, state: manager?.state))
                                 .font(.headline)
                                 .foregroundStyle(palette.textPrimary)
                                 .lineLimit(1)

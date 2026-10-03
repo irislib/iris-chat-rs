@@ -422,7 +422,7 @@ struct ChatScreen: View {
                                 VStack(spacing: 0) {
                                     IrisNameChangeNotice(manager: manager, chat: chat)
                                     if let replyTarget, !composerBlocked, !isRequest, !chat.isRemovedFromGroup {
-                                        IrisReplyComposerStrip(message: replyTarget) {
+                                        IrisReplyComposerStrip(message: replyTarget, explicitAuthorName: explicitPersonName(for: replyTarget.authorOwnerPubkeyHex, state: manager.state)) {
                                             self.replyTarget = nil
                                         }
                                     }

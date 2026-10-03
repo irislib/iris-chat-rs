@@ -85,6 +85,7 @@ struct ChatMessageActionsSheet: View {
     @Environment(\.irisPalette) private var palette
     let message: ChatMessageSnapshot
     let bodyText: String
+    var explicitAuthorName: String? = nil
     var canReplyAndReact = true
     let onReact: (String) -> Void
     let onShowFullReactionPicker: () -> Void
@@ -164,7 +165,7 @@ struct ChatMessageActionsSheet: View {
     private var previewCard: some View {
         if !previewText.isEmpty || !message.attachments.isEmpty || !message.reactions.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Text(message.author)
+                personNameText(message.author, identity: message.authorOwnerPubkeyHex, explicitName: explicitAuthorName)
                     .font(.system(.caption, design: .rounded, weight: .semibold))
                     .foregroundStyle(palette.muted)
                 if !previewText.isEmpty {

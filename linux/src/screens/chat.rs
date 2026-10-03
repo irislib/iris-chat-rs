@@ -140,7 +140,15 @@ pub fn present_chat_info(
     let text_column = gtk::Box::new(gtk::Orientation::Vertical, 4);
     text_column.set_valign(gtk::Align::Center);
 
-    let header = gtk::Label::new(Some(&info.display_name));
+    let header = gtk::Label::new(None);
+    header.set_markup(&crate::widgets::person_name::markup(
+        &info.display_name,
+        &info.chat_id,
+        crate::widgets::person_name::explicit(
+            info.nickname.as_deref(),
+            info.profile_name.as_deref(),
+        ),
+    ));
     header.add_css_class("title-2");
     header.set_halign(gtk::Align::Start);
     header.set_xalign(0.0);
@@ -810,7 +818,15 @@ fn info_recipient_row(
 
     let column = gtk::Box::new(gtk::Orientation::Vertical, 1);
     column.set_hexpand(true);
-    let title_widget = gtk::Label::new(Some(&info.name));
+    let title_widget = gtk::Label::new(None);
+    title_widget.set_markup(&crate::widgets::person_name::markup(
+        &info.name,
+        info.owner_pubkey_hex.as_deref().unwrap_or(""),
+        crate::widgets::person_name::explicit_for(
+            info.owner_pubkey_hex.as_deref().unwrap_or(""),
+            &manager.current_state(),
+        ),
+    ));
     title_widget.set_xalign(0.0);
     title_widget.add_css_class("body");
     title_widget.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -1053,7 +1069,13 @@ fn render_message(
     column.set_hexpand(false);
 
     if matches!(chat.kind, ChatKind::Group) && !message.is_outgoing && cluster_start {
-        let author = gtk::Label::new(Some(&message.author));
+        let author = gtk::Label::new(None);
+        let owner = message.author_owner_pubkey_hex.as_deref().unwrap_or("");
+        author.set_markup(&crate::widgets::person_name::markup(
+            &message.author,
+            owner,
+            crate::widgets::person_name::explicit_for(owner, &manager.current_state()),
+        ));
         author.add_css_class("chat-author");
         author.set_halign(gtk::Align::Start);
         column.append(&author);

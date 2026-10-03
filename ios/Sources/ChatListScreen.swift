@@ -597,6 +597,7 @@ struct FollowedPersonSearchRow: View {
             socialConnection: person.socialConnection,
             ownerPubkeyHex: person.ownerPubkeyHex,
             title: person.displayLabel,
+            explicitName: person.profileLabel,
             preview: preview,
             subtitle: nil,
             timeLabel: nil,
@@ -739,6 +740,7 @@ struct MessageSearchHitRow: View {
         IrisChatRow(
             ownerPubkeyHex: hit.chatKind == .direct ? hit.chatId : nil,
             title: hit.chatDisplayName,
+            explicitName: explicitPersonName(for: hit.chatId, state: manager.state),
             isMuted: false,
             isPinned: false,
             preview: hit.body,

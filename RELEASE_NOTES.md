@@ -6,6 +6,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 ### GitHub
 
+- Show stable italic animal names for unnamed people instead of full or shortened user IDs, while preserving profile names and nicknames.
 - Unify device linking around NostrConnect, retaining existing Iris link input compatibility and existing account sessions.
 - Reuse unchanged signed device lists and repair equivalent duplicate snapshots during approved linking, so existing accounts can link without weakening conflict checks.
 - Choose between chats and groups only or message history on the approving device. Keep the initial history transfer private to that device pair, resume interrupted transfers, and show progress on the receiving device.
@@ -21,6 +22,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 ### Apple
 
+- Give unnamed people a friendly animal name in italics instead of showing their user ID.
 - Choose whether to copy message history when linking a device, and see transfer progress.
 - Resume interrupted history transfers and keep deleted messages removed.
 - Keep reactions, group details, and contact profiles in sync across devices.
@@ -32,6 +34,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 ### Zapstore
 
+- Give unnamed people a friendly animal name in italics instead of showing their user ID.
 - Choose whether to copy message history when linking a device, and see transfer progress.
 - Resume interrupted history transfers and keep deleted messages removed.
 - Keep reactions, group details, and contact profiles in sync across devices.

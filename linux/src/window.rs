@@ -492,6 +492,18 @@ fn apply_state(slot: &Content, header: &HeaderWidgets, manager: &Rc<AppManager>,
     let chat_in_view = matches!(screen, Screen::Chat { .. })
         .then(|| state.current_chat.as_ref())
         .flatten();
+    if let Some(chat) = chat_in_view.filter(|chat| chat.kind == iris_chat_core::ChatKind::Direct) {
+        header
+            .title
+            .set_markup(&crate::widgets::person_name::markup(
+                &title_text,
+                &chat.chat_id,
+                crate::widgets::person_name::explicit(
+                    chat.nickname.as_deref(),
+                    chat.profile_name.as_deref(),
+                ),
+            ));
+    }
     let header_status: Option<(&str, String)> = chat_in_view.and_then(|chat| {
         if let Some(ttl) = chat.message_ttl_seconds {
             if ttl > 0 {

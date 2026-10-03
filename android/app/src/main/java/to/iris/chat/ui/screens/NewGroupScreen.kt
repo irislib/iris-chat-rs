@@ -1,5 +1,8 @@
 package to.iris.chat.ui.screens
 
+import androidx.compose.ui.text.font.FontStyle
+import to.iris.chat.ui.components.fontStyle
+
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -224,8 +227,9 @@ fun NewGroupScreen(
                                 )
                                 ExistingMemberRow(
                                     ownerPubkeyHex = chat.chatId,
-                                    title = presentation.primary,
-                                    subtitle = presentation.secondary,
+                                    title = presentation.name,
+                                    fontStyle = presentation.fontStyle,
+                                    subtitle = null,
                                     socialConnection = chat.socialConnection,
                                     selected = selected,
                                     onClick = {
@@ -412,8 +416,9 @@ private fun SelectedMemberChips(
                         localOwnerNpub = appState.account?.npub,
                     )
                 MemberChip(
-                    title = presentation.primary,
-                    subtitle = presentation.secondary,
+                    title = presentation.name,
+                    fontStyle = presentation.fontStyle,
+                    subtitle = null,
                     onRemove = { onRemove(owner) },
                 )
             }
@@ -422,29 +427,21 @@ private fun SelectedMemberChips(
 
 }
 
-private data class OwnerPresentation(
-    val primary: String,
-    val secondary: String?,
-)
-
 private fun ownerPresentation(
     owner: String,
     existingDirectChats: List<ChatThreadSnapshot>,
     localOwnerHex: String?,
     localOwnerDisplayName: String,
     localOwnerNpub: String?,
-): OwnerPresentation {
+): to.iris.chat.rust.PersonNamePresentation {
     existingDirectChats.firstOrNull { sameOwner(owner, hex = it.chatId, npub = it.subtitle) }?.let { chat ->
-        val primary = primaryDisplayName(chat.displayName, normalizePeerInput(owner))
-        return OwnerPresentation(primary, null)
+        return to.iris.chat.ui.components.personName(chat.displayName, owner,
+            to.iris.chat.ui.components.explicitPersonName(chat.nickname, chat.profileName))
     }
-
     if (localOwnerHex != null && sameOwner(owner, hex = localOwnerHex, npub = localOwnerNpub)) {
-        val primary = primaryDisplayName(localOwnerDisplayName, localOwnerNpub ?: localOwnerHex)
-        return OwnerPresentation(primary, null)
+        return to.iris.chat.ui.components.personName(localOwnerDisplayName, localOwnerHex, localOwnerDisplayName)
     }
-
-    return OwnerPresentation(fallbackProfileNameForIdentity(normalizePeerInput(owner)), null)
+    return to.iris.chat.ui.components.personName("", owner)
 }
 
 private fun sameOwner(
@@ -457,52 +454,6 @@ private fun sameOwner(
     return listOfNotNull(hex, npub)
         .map { it.trim().lowercase() }
         .any { it == rawOwner || it == normalizedOwner }
-}
-
-private fun primaryDisplayName(
-    displayName: String,
-    fallback: String,
-): String =
-    displayName.trim().ifEmpty { fallbackProfileNameForIdentity(fallback) }
-
-private fun fallbackProfileNameForIdentity(identity: String): String {
-    val adjectives =
-        listOf(
-            "Amber",
-            "Bright",
-            "Calm",
-            "Clear",
-            "Golden",
-            "Lunar",
-            "Nova",
-            "Quiet",
-            "Silver",
-            "Solar",
-            "Velvet",
-            "Wild",
-        )
-    val nouns =
-        listOf(
-            "Aurora",
-            "Comet",
-            "Echo",
-            "Falcon",
-            "Harbor",
-            "Listener",
-            "Otter",
-            "Raven",
-            "Signal",
-            "Sparrow",
-            "Tide",
-            "Voyager",
-        )
-    val trimmed = identity.trim()
-    if (trimmed.isEmpty()) {
-        return "Quiet Listener"
-    }
-    val hash = trimmed.fold(0) { acc, char -> acc * 31 + char.code }
-    val positiveHash = hash and Int.MAX_VALUE
-    return "${adjectives[positiveHash % adjectives.size]} ${nouns[(positiveHash / adjectives.size) % nouns.size]}"
 }
 
 @Composable
@@ -536,6 +487,7 @@ private fun ScaffoldScreen(
 @Composable
 private fun MemberChip(
     title: String,
+    fontStyle: FontStyle,
     subtitle: String?,
     onRemove: () -> Unit,
 ) {
@@ -553,6 +505,7 @@ private fun MemberChip(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
+                fontStyle = fontStyle,
                     style = MaterialTheme.typography.labelMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -591,6 +544,7 @@ private fun ExistingMemberRow(
     ownerPubkeyHex: String,
     socialConnection: SocialConnectionSnapshot?,
     title: String,
+    fontStyle: FontStyle,
     subtitle: String?,
     selected: Boolean,
     onClick: () -> Unit,
@@ -616,6 +570,7 @@ private fun ExistingMemberRow(
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = title,
+                fontStyle = fontStyle,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,

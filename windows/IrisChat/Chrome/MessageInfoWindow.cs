@@ -377,9 +377,11 @@ public class MessageInfoWindow : Window
         row.Children.Add(avatar);
 
         var stack = new StackPanel { Orientation = Orientation.Vertical };
+        var presentedName = PersonNames.Present(info.Name, info.OwnerPubkeyHex, PersonNames.Explicit(info.OwnerPubkeyHex));
         var name = new TextBlock
         {
-            Text = info.Name,
+            Text = presentedName.name,
+            FontStyle = PersonNames.Style(presentedName),
             FontSize = 13,
             FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["TextPrimary"],
