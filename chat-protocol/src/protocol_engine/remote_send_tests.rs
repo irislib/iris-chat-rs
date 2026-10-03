@@ -743,3 +743,110 @@ fn sibling_group_removal_requires_new_revision_to_restore_membership() {
         Some(conflicting)
     );
 }
+
+#[test]
+fn sibling_group_protocol_cannot_contradict_signed_roster_after_restart() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let admin = Keys::generate();
+    let store = Arc::new(InMemoryStorage::new());
+    let mut engine =
+        ProtocolEngine::load_or_create_for_local_device(store.clone(), owner.public_key(), &device)
+            .unwrap();
+    let original = group_snapshot_for_test(
+        "signed-group-protocol",
+        "Friends",
+        1,
+        &admin,
+        &[admin.public_key(), owner.public_key()],
+    );
+    engine
+        .ingest_group_roster_fact_event(&group_roster_fact_event_for_test(&admin, &original))
+        .unwrap();
+    engine =
+        ProtocolEngine::load_or_create_for_local_device(store.clone(), owner.public_key(), &device)
+            .unwrap();
+
+    for revision in [original.revision, original.revision + 1] {
+        let mut downgrade = original.clone();
+        downgrade.protocol = GroupProtocol::pairwise_fanout_v1();
+        downgrade.revision = revision;
+        downgrade.updated_at = NdrUnixSeconds(100 + revision);
+        assert!(
+            !engine.install_device_sync_group(downgrade).unwrap(),
+            "a sibling clock cannot override the signed group protocol"
+        );
+        assert_eq!(
+            engine.group_manager.group(&original.group_id),
+            Some(original.clone())
+        );
+    }
+
+    let mut newer = original.clone();
+    newer.name = "Renamed friends".into();
+    newer.revision += 1;
+    newer.updated_at = NdrUnixSeconds(200);
+    assert!(engine.install_device_sync_group(newer.clone()).unwrap());
+    newer
+        .members
+        .retain(|member| *member != ndr_owner(owner.public_key()));
+    newer.revision += 1;
+    assert!(engine.install_device_sync_group(newer.clone()).unwrap());
+    engine = ProtocolEngine::load_or_create_for_local_device(store, owner.public_key(), &device)
+        .unwrap();
+    assert_eq!(engine.group_manager.group(&original.group_id), Some(newer));
+}
+
+#[test]
+fn sibling_group_protocol_can_recover_to_signed_protocol_and_follow_signed_advancement() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let store = Arc::new(InMemoryStorage::new());
+    let mut engine =
+        ProtocolEngine::load_or_create_for_local_device(store.clone(), owner.public_key(), &device)
+            .unwrap();
+    let original = group_snapshot_for_test(
+        "recover-group-protocol",
+        "Friends",
+        1,
+        &owner,
+        &[owner.public_key()],
+    );
+    engine
+        .ingest_group_roster_fact_event(&group_roster_fact_event_for_test(&owner, &original))
+        .unwrap();
+
+    // Reproduce state left behind by a previously accepted malformed sibling echo.
+    let mut poisoned = original.clone();
+    poisoned.protocol = GroupProtocol::pairwise_fanout_v1();
+    assert!(engine.install_group_roster_snapshot(poisoned).unwrap());
+    engine.persist().unwrap();
+    engine =
+        ProtocolEngine::load_or_create_for_local_device(store.clone(), owner.public_key(), &device)
+            .unwrap();
+    assert!(engine.install_device_sync_group(original.clone()).unwrap());
+    assert_eq!(
+        engine.group_manager.group(&original.group_id),
+        Some(original.clone())
+    );
+
+    let mut advanced = original.clone();
+    advanced.protocol = GroupProtocol::pairwise_fanout_v1();
+    advanced.revision += 1;
+    advanced.updated_at = NdrUnixSeconds(200);
+    let installed = engine
+        .ingest_group_roster_fact_event(&group_roster_fact_event_for_test(&owner, &advanced))
+        .unwrap()
+        .unwrap();
+    assert_eq!(installed.snapshot, Some(advanced.clone()));
+    engine = ProtocolEngine::load_or_create_for_local_device(store, owner.public_key(), &device)
+        .unwrap();
+    let mut unsigned_change = advanced.clone();
+    unsigned_change.protocol = GroupProtocol::sender_key_v1();
+    unsigned_change.revision += 1;
+    assert!(!engine.install_device_sync_group(unsigned_change).unwrap());
+    assert_eq!(
+        engine.group_manager.group(&original.group_id),
+        Some(advanced)
+    );
+}

@@ -3,6 +3,24 @@ impl ProtocolEngine {
     /// roster facts can advance this copy, but restoring removed membership
     /// requires a newer revision.
     pub fn install_device_sync_group(&mut self, snapshot: GroupSnapshot) -> anyhow::Result<bool> {
+        if self
+            .group_manager
+            .group(&snapshot.group_id)
+            .is_some_and(|current| current.protocol != snapshot.protocol)
+            && self
+                .group_roster_fact_histories
+                .get(&snapshot.group_id)
+                .is_some_and(|history| {
+                    project_group_roster_fact_events(history.events.iter())
+                        .iter()
+                        .any(|signed| signed.protocol != snapshot.protocol)
+                })
+        {
+            // A sibling copy cannot change the protocol established by signed
+            // roster facts. Consult history only for conflicting protocols;
+            // ordinary metadata sync needs no additional event verification.
+            return Ok(false);
+        }
         let checkpoint = self.state_checkpoint();
         let applied = self.install_group_roster_snapshot(snapshot)?;
         if applied {
