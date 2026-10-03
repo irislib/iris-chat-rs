@@ -408,12 +408,14 @@ struct IrisComposerBar: View {
                 attachmentContentTypes = [.image, .movie]
                 showingAttachmentPicker = true
             } label: { Label("Photos and videos", systemImage: "photo.on.rectangle") }
+            .labelStyle(.titleAndIcon)
             .accessibilityIdentifier("chatAttachmentPhotosButton")
             Button {
                 if attachments.isEmpty { sendFilesDirectly = false }
                 attachmentContentTypes = [.item]
                 showingAttachmentPicker = true
             } label: { Label("File", systemImage: "doc.fill") }
+            .labelStyle(.titleAndIcon)
             .accessibilityIdentifier("chatAttachmentFilesButton")
             if directFilesAllowed {
                 Divider()
@@ -422,6 +424,7 @@ struct IrisComposerBar: View {
                     attachmentContentTypes = [.item]
                     showingAttachmentPicker = true
                 } label: { Label("Send directly", systemImage: "arrow.up.arrow.down") }
+                .labelStyle(.titleAndIcon)
                 .accessibilityIdentifier("chatDirectFileButton")
             }
         } label: {
