@@ -4,6 +4,7 @@ mod direct_queue;
 mod group_send;
 mod helpers;
 mod local_delete;
+mod page_merge;
 
 use self::direct_queue::is_queued_direct_text_message;
 use self::helpers::{
@@ -380,21 +381,8 @@ impl AppCore {
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;
         };
-        let mut page = messages
-            .iter()
-            .map(chat_message_from_persisted)
-            .collect::<Vec<_>>();
-        let mut seen = page
-            .iter()
-            .map(|message| message.id.clone())
-            .collect::<HashSet<_>>();
-        for message in std::mem::take(&mut thread.messages) {
-            if seen.insert(message.id.clone()) {
-                page.push(message);
-            }
-        }
-        page.sort_by_key(message_order);
-        thread.messages = page;
+        let page = messages.iter().map(chat_message_from_persisted).collect();
+        thread.messages = page_merge::merge_stored_page(std::mem::take(&mut thread.messages), page);
         self.restore_device_sync_chat_reactions(chat_id);
     }
 
