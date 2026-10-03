@@ -53,14 +53,14 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 flume = "0.11"
-nvpn-fips-core = { version = "=0.4.92", features = ["webrtc-transport", "host-ble-transport"] }
-nvpn-fips-endpoint = { version = "=0.4.92" }
+nvpn-fips-core = { version = "=0.4.93", features = ["webrtc-transport", "host-ble-transport"] }
+nvpn-fips-endpoint = { version = "=0.4.93" }
 nvpn-fips-tcp = { version = "=0.2.2" }
-nvpn-fips-tcp-endpoint = { version = "=0.2.25" }
+nvpn-fips-tcp-endpoint = { version = "=0.2.26" }
 hashtree-blossom = { version = "=0.2.83", default-features = false, features = ["store"] }
 hashtree-config = "=0.2.83"
 hashtree-core = "=0.2.89"
-hashtree-fips-transport = "=0.4.23"
+hashtree-fips-transport = "=0.4.24"
 hashtree-index = "=0.2.84"
 hashtree-network = "=0.2.88"
 hashtree-resolver = { version = "=0.2.86", features = ["nostr"] }
@@ -71,7 +71,7 @@ nostr = { version = "0.44.7", default-features = false, features = ["std", "nip4
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
 nostr-pubsub = "=0.1.15"
 nostr-pubsub-reconcile = "=0.1.0"
-nostr-pubsub-fips = "=0.5.15"
+nostr-pubsub-fips = "=0.5.16"
 nostr-pubsub-relay = "=0.1.11"
 nostr-social-graph = "=0.1.4"
 nostr-identity = "=0.4.0"
