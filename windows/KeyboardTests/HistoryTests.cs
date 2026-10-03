@@ -94,11 +94,21 @@ internal static class HistoryTests
         for (int i = 0; i < 240; i++) manager.SendMessage(own, $"History fixture {i:D3}");
         Until(() => manager.CurrentChat!.messages.Count(m => m.body.StartsWith("History fixture ")) == 240, 60);
         manager.NavigateBack(); manager.OpenChat(own);
-        Until(() => manager.CurrentChat?.chatId == own && manager.CurrentChat.messages.Length == 80);
+        var ffi = (FfiApp)typeof(AppManager).GetField("_ffi", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager)!;
+        // Windows projects the navigation immediately from the loaded 240-row
+        // snapshot. Wait for Rust to process the reopen and for that revision
+        // to reach the shell before asserting exact page sizes without arrivals.
+        Until(() => {
+            var core = ffi.State();
+            return core.currentChat?.chatId == own && core.currentChat.messages.Length == 80
+                && manager.State.rev >= core.rev && manager.CurrentChat?.messages.Length == 80;
+        });
+        var before = manager.CurrentChat!.messages[0].id;
         var page = manager.LoadOlderMessagesAsync(own); Until(() => page.IsCompleted);
-        Check(page.GetAwaiter().GetResult() && manager.CurrentChat!.messages.Length == 160, "First real older-page query");
+        CheckPage(page.GetAwaiter().GetResult(), 160, before, "First real older-page query");
+        before = manager.CurrentChat!.messages[0].id;
         page = manager.LoadOlderMessagesAsync(own); Until(() => page.IsCompleted);
-        Check(page.GetAwaiter().GetResult() && manager.CurrentChat!.messages.Length == 240, "Second real older-page query");
+        CheckPage(page.GetAwaiter().GetResult(), 240, before, "Second real older-page query");
         page = manager.LoadOlderMessagesAsync(own); Until(() => page.IsCompleted);
         Check(!page.GetAwaiter().GetResult(), "History stops at its real beginning");
 
@@ -107,6 +117,16 @@ internal static class HistoryTests
         manager.NavigateBack(); manager.OpenChat(own);
         var completion = typeof(AppManager).GetMethod("CompleteHistoryPage", BindingFlags.Instance | BindingFlags.NonPublic)!;
         Check(!(bool)completion.Invoke(manager, new object[] { generation, own, old.messages[0].id, old })!, "Route round-trip rejects a stale completion");
+
+        void CheckPage(bool added, int expected, string cursor, string context)
+        {
+            var count = manager.CurrentChat?.messages.Length;
+            if (added && count == expected) return;
+            var persisted = ffi.ChatSnapshotBefore(own, cursor, 80);
+            throw new Exception($"{context}: added={added}, displayed={count}, expected={expected}, "
+                + $"persistedPage={persisted?.messages.Length}, cursor={cursor}, "
+                + $"coreRows={ffi.State().currentChat?.messages.Length}, appliedRev={manager.State.rev}");
+        }
     }
     private static void Check(bool value, string message) { if (!value) throw new Exception(message); }
     private static void Near(double actual, double expected, string context) => Check(Math.Abs(actual - expected) <= 2, $"{context}: {actual} vs {expected}");
