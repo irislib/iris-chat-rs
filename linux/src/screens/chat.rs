@@ -29,6 +29,7 @@ mod direct_files;
 #[cfg(feature = "ui-tests")]
 pub use direct_files::verify_ui as verify_direct_files_ui;
 mod safety;
+mod timeline;
 mod view;
 pub use view::ChatView;
 
@@ -904,93 +905,6 @@ fn ttl_strip(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) -> gtk::Widge
 
     row.append(&menu_button);
     row.upcast()
-}
-
-fn messages_view(
-    chat: &CurrentChatSnapshot,
-    prefs: &PreferencesSnapshot,
-    manager: &Rc<AppManager>,
-) -> gtk::Widget {
-    let scrolled = gtk::ScrolledWindow::new();
-    scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
-    scrolled.set_vexpand(true);
-
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    list.set_vexpand(true);
-    list.set_valign(gtk::Align::End);
-    list.set_margin_top(8);
-    list.set_margin_bottom(8);
-    list.set_margin_start(10);
-    list.set_margin_end(10);
-
-    if chat.messages.is_empty() {
-        let empty = gtk::Label::new(Some("No messages yet"));
-        empty.add_css_class("dim-label");
-        empty.set_vexpand(true);
-        empty.set_valign(gtk::Align::Center);
-        list.append(&empty);
-    } else {
-        let mut last_day: Option<String> = None;
-        let mut last_author: Option<String> = None;
-        let mut last_outgoing = false;
-        let mut last_secs: u64 = 0;
-
-        let now = unix_now();
-
-        for (idx, message) in chat.messages.iter().enumerate() {
-            let day = day_label_secs(message.created_at_secs);
-            let same_day = matches!(last_day.as_deref(), Some(d) if d == day);
-            if !same_day {
-                list.append(&day_chip(&day));
-                last_author = None;
-            }
-            last_day = Some(day);
-
-            let cluster_break = !matches!(&last_author, Some(a) if a == &message.author)
-                || last_outgoing != message.is_outgoing
-                || message.created_at_secs.saturating_sub(last_secs) > 300;
-
-            let next_message = chat.messages.get(idx + 1);
-            let cluster_ends = match next_message {
-                Some(next) => {
-                    next.author != message.author
-                        || next.is_outgoing != message.is_outgoing
-                        || next.created_at_secs.saturating_sub(message.created_at_secs) > 300
-                        || day_label_secs(next.created_at_secs)
-                            != day_label_secs(message.created_at_secs)
-                }
-                None => true,
-            };
-
-            list.append(&render_message(
-                message,
-                chat,
-                cluster_break,
-                cluster_ends,
-                now,
-                prefs,
-                manager,
-            ));
-
-            last_author = Some(message.author.clone());
-            last_outgoing = message.is_outgoing;
-            last_secs = message.created_at_secs;
-        }
-    }
-
-    scrolled.set_child(Some(&list));
-
-    let adj = scrolled.vadjustment();
-    adj.connect_changed(|adj| {
-        let bottom = (adj.upper() - adj.page_size()).max(adj.lower());
-        adj.set_value(bottom);
-    });
-    glib::idle_add_local_once(move || {
-        let bottom = (adj.upper() - adj.page_size()).max(adj.lower());
-        adj.set_value(bottom);
-    });
-
-    scrolled.upcast()
 }
 
 pub(crate) fn mark_visible_seen(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) {

@@ -4,6 +4,10 @@ use helpers::*;
 #[path = "attachment_drafts.rs"]
 mod attachment_drafts;
 use attachment_drafts::AttachmentDrafts;
+#[path = "app_manager/history.rs"]
+mod history;
+#[cfg(feature = "ui-tests")]
+pub use history::verify_ui as verify_history_ui;
 
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -64,6 +68,7 @@ pub struct SearchUiState {
 
 pub struct AppManager {
     ffi: Arc<FfiApp>,
+    history_paging: RefCell<history::Paging>,
     update_rx: async_channel::Receiver<AppUpdate>,
     update_tx_ui: async_channel::Sender<AppUpdate>,
     secret_store: Arc<dyn SecretStore>,
@@ -218,6 +223,7 @@ impl AppManager {
 
         let manager = Self {
             ffi,
+            history_paging: RefCell::new(history::Paging::default()),
             update_rx: rx,
             update_tx_ui,
             secret_store,
@@ -492,6 +498,9 @@ impl AppManager {
                 }
                 let rev = state.rev;
                 let mut reconciled = self.state_by_reconciling_pending_navigation(state);
+                self.history_paging
+                    .borrow_mut()
+                    .reconcile(&self.local_state.borrow(), &mut reconciled);
                 if reconciled.account.is_none() && self.device_removal_notice_pending.replace(false)
                 {
                     reconciled.toast =
@@ -680,6 +689,7 @@ impl AppManager {
     fn apply_local_screen_stack(&self, stack: Vec<Screen>) {
         let next_state =
             self.state_by_applying_local_screen_stack(stack, self.local_state.borrow().clone());
+        self.history_paging.borrow_mut().update_scope(&next_state);
         *self.local_state.borrow_mut() = next_state.clone();
         let _ = self
             .update_tx_ui
@@ -844,6 +854,7 @@ impl AppManager {
 
     #[allow(dead_code)]
     pub fn logout(&self) {
+        self.history_paging.borrow_mut().clear();
         self.notification_routing.borrow_mut().clear_pending();
         self.automatic_revocation_logout_in_flight.set(true);
         if !self.secret_store.clear() {

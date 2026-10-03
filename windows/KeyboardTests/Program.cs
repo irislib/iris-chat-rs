@@ -88,6 +88,7 @@ internal static class Program
             var image = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
             image.Render(window); var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(image));
             using (var file = File.Create(Path.Combine(output, "windows-keyboard.png"))) encoder.Save(file);
+            HistoryTests.Run(window, manager);
             Console.WriteLine("PASS: WPF Tab/Shift-Tab, arrows, Enter/Space, update focus and composer isolation");
             return 0;
         }

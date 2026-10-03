@@ -86,3 +86,9 @@ name = "keyboard"
 path = "tests/keyboard.rs"
 harness = false
 required-features = ["ui-tests"]
+
+[[test]]
+name = "history"
+path = "tests/history.rs"
+harness = false
+required-features = ["ui-tests"]

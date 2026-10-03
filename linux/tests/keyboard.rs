@@ -1,3 +1,5 @@
+mod message_timeline;
+
 #[path = "../src/widgets/keyboard_list.rs"]
 mod keyboard_list;
 
@@ -49,6 +51,7 @@ fn list() -> (gtk::Box, adw::ActionRow, adw::ActionRow) {
 
 fn main() {
     adw::init().expect("GTK display required");
+    message_timeline::run();
     let css = gtk::CssProvider::new();
     css.load_from_string(&format!(
         "@define-color iris_accent #702ACE; {}",

@@ -22,11 +22,15 @@ public partial class ChatView : UserControl
     private DateTime? _checkingSince;
     private readonly System.Windows.Threading.DispatcherTimer _capabilityTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private string? _focusedChatId;
-    private string? _renderedMessageSignature;
+    private MessageTimeline? _timeline;
 
     public ChatView()
     {
         InitializeComponent();
+        _timeline = new MessageTimeline(ScrollHost, MessagesList, () =>
+        {
+            if (_focusedChatId is { } id) _ = App.CurrentManager.LoadOlderMessagesAsync(id);
+        });
         Composer.AttachmentPasteScope = () => CanAttachFiles() &&
             App.CurrentManager.Account is {} account && _focusedChatId is {} chatId
                 ? new AttachmentPasteDestination(account.publicKeyHex, chatId) : null;
@@ -87,7 +91,7 @@ public partial class ChatView : UserControl
             _checkingSince = null;
             _capabilityTimer.Stop();
             _focusedChatId = chat.chatId;
-            _renderedMessageSignature = null;
+            _timeline!.Reset();
             if (!userBlocked && !messageRequest && !removedFromGroup)
             {
                 Dispatcher.BeginInvoke(new Action(() => Composer.FocusInput()));
@@ -182,32 +186,7 @@ public partial class ChatView : UserControl
             TypingText.Visibility = Visibility.Collapsed;
         }
 
-        var messages = chat.messages ?? Array.Empty<ChatMessageSnapshot>();
-        var messageSignature = removedFromGroup + ":" + string.Join("|", messages.Select(m =>
-            $"{m.id}:{m.delivery}:{m.body}:{m.reactions?.Length ?? 0}:{m.reactors?.Length ?? 0}:{m.directTransfer?.status}:{m.directTransfer?.transferredBytes}:{m.directTransfer?.error}"));
-        var shouldPinToBottom = chatChanged
-            || ScrollHost.ScrollableHeight <= 0
-            || ScrollHost.VerticalOffset >= ScrollHost.ScrollableHeight - 24;
-        if (_renderedMessageSignature != messageSignature)
-        {
-            _renderedMessageSignature = messageSignature;
-            MessagesList.Items.Clear();
-            var isGroup = chat.kind == ChatKind.Group;
-            ChatMessageSnapshot? prev = null;
-            foreach (var m in messages)
-            {
-                var bubble = new MessageBubble();
-                var showAuthor = isGroup && !m.isOutgoing && (prev == null || prev.author != m.author);
-                bubble.Bind(m, showAuthor, AuthorLabel(m.author));
-                MessagesList.Items.Add(bubble);
-                prev = m;
-            }
-
-            if (shouldPinToBottom)
-            {
-                Dispatcher.BeginInvoke(new Action(() => ScrollHost.ScrollToBottom()));
-            }
-        }
+        _timeline!.Update(chat, AuthorLabel);
 
         MarkVisibleMessagesSeen(chat);
     }
@@ -237,6 +216,7 @@ public partial class ChatView : UserControl
         if (!CanAttachFiles()) return;
         var chatId = App.CurrentManager.CurrentChat?.chatId;
         if (string.IsNullOrEmpty(chatId)) return;
+        _timeline!.FollowLatest();
         if (stagedAttachments != null && stagedAttachments.Count > 0)
         {
             if (Composer.SendDirectly) App.CurrentManager.SendDirectFiles(chatId, stagedAttachments, text);

@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -8,6 +8,8 @@ use iris_chat_core::{AppAction, AppState, CurrentChatSnapshot, OutgoingAttachmen
 use crate::app_manager::AppManager;
 use crate::screens::chat_list::unix_now;
 
+type SendCallback = Rc<RefCell<Option<Box<dyn Fn()>>>>;
+
 pub(super) struct Composer {
     pub root: gtk::Box,
     send: gtk::Button,
@@ -15,6 +17,7 @@ pub(super) struct Composer {
     direct: gtk::CheckButton,
     progress: gtk::ProgressBar,
     ttl: Rc<Cell<Option<u64>>>,
+    on_send: SendCallback,
     preview_row: gtk::Box,
     preview_scroll: gtk::ScrolledWindow,
 }
@@ -252,6 +255,8 @@ impl Composer {
         let buffer_for_click = buffer.clone();
         let preview_row_for_send = preview_row.clone();
         let preview_scroll_for_send = preview_scroll.clone();
+        let on_send: SendCallback = Rc::new(RefCell::new(None));
+        let sent = on_send.clone();
         let direct_for_click = direct.clone();
         send.connect_clicked(move |btn| {
             if submit_composer(
@@ -263,6 +268,9 @@ impl Composer {
                 &preview_row_for_send,
                 &preview_scroll_for_send,
             ) {
+                if let Some(callback) = sent.borrow().as_ref() {
+                    callback();
+                }
                 btn.set_sensitive(false);
             }
         });
@@ -276,6 +284,7 @@ impl Composer {
         let key_controller = gtk::EventControllerKey::new();
         key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
         let direct_for_enter = direct.clone();
+        let sent = on_send.clone();
         key_controller.connect_key_pressed(move |_, keyval, _, state| {
             if !matches!(keyval, gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter)
                 || state.contains(gtk::gdk::ModifierType::SHIFT_MASK)
@@ -283,7 +292,7 @@ impl Composer {
                 return glib::Propagation::Proceed;
             }
 
-            submit_composer(
+            if submit_composer(
                 &manager_for_enter,
                 &chat_id,
                 &buffer_for_enter,
@@ -291,7 +300,11 @@ impl Composer {
                 direct_for_enter.is_active(),
                 &preview_row_for_enter,
                 &preview_scroll_for_enter,
-            );
+            ) {
+                if let Some(callback) = sent.borrow().as_ref() {
+                    callback();
+                }
+            }
             glib::Propagation::Stop
         });
         input.add_controller(key_controller);
@@ -304,11 +317,16 @@ impl Composer {
             direct,
             progress,
             ttl,
+            on_send,
             preview_row,
             preview_scroll,
         };
         composer.update(chat, state);
         composer
+    }
+
+    pub fn on_send(&self, callback: impl Fn() + 'static) {
+        *self.on_send.borrow_mut() = Some(Box::new(callback));
     }
 
     pub fn file_drop_target(&self, manager: &Rc<AppManager>, chat_id: &str) -> gtk::DropTarget {

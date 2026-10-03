@@ -12,6 +12,9 @@ pub struct ChatView {
     composer: Option<composer::Composer>,
     file_drop_target: Option<gtk::DropTarget>,
     rendered: Option<(CurrentChatSnapshot, PreferencesSnapshot)>,
+    timeline: Option<timeline::Timeline>,
+    ttl: gtk::Box,
+    notice: gtk::Box,
 }
 
 impl ChatView {
@@ -44,6 +47,9 @@ impl ChatView {
             composer: None,
             file_drop_target: None,
             rendered: None,
+            timeline: None,
+            ttl: gtk::Box::new(gtk::Orientation::Vertical, 0),
+            notice: gtk::Box::new(gtk::Orientation::Vertical, 0),
         }
     }
 
@@ -62,6 +68,7 @@ impl ChatView {
                 self.root.remove_css_class("file-drop-target");
             }
             self.rendered = None;
+            self.timeline = None;
             let loading = gtk::Label::new(Some("Loading chat…"));
             loading.add_css_class("dim-label");
             loading.set_vexpand(true);
@@ -70,17 +77,30 @@ impl ChatView {
         };
         mark_visible_seen(chat, manager);
 
-        // Draft-only updates must not reset message scrolling either.
+        if self.timeline.is_none() {
+            clear(&self.body);
+            let timeline = timeline::Timeline::new(&self.chat_id, manager);
+            self.body.append(&self.ttl);
+            self.body.append(&timeline.viewport.scroll);
+            self.body.append(&self.notice);
+            self.timeline = Some(timeline);
+        }
+        self.timeline
+            .as_mut()
+            .unwrap()
+            .update(chat, &state.preferences, manager);
+        // Metadata and drafts do not recreate the viewport or unchanged rows.
         let mut content = chat.clone();
         content.draft.clear();
+        content.messages.clear();
+        content.typing_indicators.clear();
         content.direct_chat_capability = None;
         let key = (content, state.preferences.clone());
         if self.rendered.as_ref() != Some(&key) {
-            clear(&self.body);
-            self.body.append(&ttl_strip(chat, manager));
-            self.body
-                .append(&messages_view(chat, &state.preferences, manager));
-            self.body
+            clear(&self.ttl);
+            clear(&self.notice);
+            self.ttl.append(&ttl_strip(chat, manager));
+            self.notice
                 .append(&crate::widgets::contact_actions::name_notice(chat, manager));
             self.rendered = Some(key);
         }
@@ -129,6 +149,8 @@ impl ChatView {
         } else {
             clear(&self.footer);
             let composer = composer::Composer::new(chat, state, manager);
+            let viewport = self.timeline.as_ref().unwrap().viewport.clone();
+            composer.on_send(move || viewport.follow_latest());
             let target = composer.file_drop_target(manager, &self.chat_id);
             self.root.add_controller(target.clone());
             self.file_drop_target = Some(target);

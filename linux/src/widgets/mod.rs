@@ -3,6 +3,7 @@ pub mod clickable;
 pub mod contact_actions;
 pub mod image_cache;
 pub mod keyboard_list;
+pub mod message_timeline;
 pub mod person_name;
 pub mod qr;
 pub mod social_badge;

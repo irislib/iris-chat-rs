@@ -295,6 +295,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
     public void Logout()
     {
+        ResetHistoryPaging();
         Calls.Update(null);
         _automaticRevocationLogoutInFlight = true;
         if (!_secretStore.Clear() || !_pendingDeviceLinkSecretStore.Clear())
@@ -317,6 +318,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
     public void Shutdown()
     {
+        ResetHistoryPaging();
         Calls.Dispose();
         StopDesktopUpdateChecks();
         try { _ffi.Shutdown(); } catch { }
@@ -833,7 +835,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
                 if (_automaticRevocationLogoutInFlight && f.v1.account != null) return;
                 if (f.v1.rev <= _lastRevApplied) return;
                 var prev = _state;
-                var next = StateByReconcilingPendingNavigation(f.v1);
+                var next = ReconcileHistory(prev, StateByReconcilingPendingNavigation(f.v1));
                 _state = next;
                 Calls.Update(next.account != null ? next.call : null);
                 if (next.account != null && next.call?.phase == "incoming" && (prev.call?.callId != next.call.callId || prev.call.phase != "incoming"))
@@ -1039,6 +1041,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
     private void ApplyLocalScreenStack(Screen[] stack)
     {
         _state = StateByApplyingLocalScreenStack(stack, _state);
+        UpdateHistoryScope();
         NotifyAll();
     }
 
