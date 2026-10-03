@@ -750,7 +750,7 @@ struct ChatMessageRow: View, Equatable {
     private func desktopActionDockSlot() -> some View {
         ChatMessageActionDockSlot(
             isVisible: showActionDock,
-            size: CGSize(width: ChatMessageActionDock.dockWidth, height: ChatMessageActionDock.dockHeight)
+            width: ChatMessageActionDock.dockWidth
         ) {
             actionDock()
         }

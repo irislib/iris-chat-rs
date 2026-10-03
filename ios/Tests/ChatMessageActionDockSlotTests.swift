@@ -10,7 +10,7 @@ final class ChatMessageActionDockSlotTests: XCTestCase {
 
     func testHiddenDockDoesNotConstructControlsOrMoveTheBubble() {
         var constructions = 0
-        let slot = ChatMessageActionDockSlot(isVisible: false, size: size) {
+        let slot = ChatMessageActionDockSlot(isVisible: false, width: size.width) {
             constructions += 1
             return Text("Actions").frame(width: 136, height: 38)
         }
@@ -23,7 +23,7 @@ final class ChatMessageActionDockSlotTests: XCTestCase {
     func testHoverBuildsControlsWithoutChangingTheSlotSizeAndStopsWhenHidden() {
         var constructions = 0
         func slot(_ visible: Bool) -> some View {
-            ChatMessageActionDockSlot(isVisible: visible, size: size) {
+            ChatMessageActionDockSlot(isVisible: visible, width: size.width) {
                 constructions += 1
                 return Button("Reply") {}.frame(width: 136, height: 38)
             }
@@ -49,7 +49,7 @@ final class ChatMessageActionDockSlotTests: XCTestCase {
                 let timeline = VStack(spacing: 2) {
                     ForEach(0..<3) { _ in
                         HStack(alignment: .bottom, spacing: 8) {
-                            ChatMessageActionDockSlot(isVisible: visible, size: size) {
+                            ChatMessageActionDockSlot(isVisible: visible, width: size.width) {
                                 Button("Reply") {}.frame(width: size.width, height: size.height)
                             }
                             Color.purple.frame(width: 48, height: bubbleHeight)
