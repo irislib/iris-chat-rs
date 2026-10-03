@@ -236,21 +236,11 @@ struct RestoreAccountScreen: View {
                 Button {
                     manager.dispatch(.startRemoteSignerLogin)
                 } label: {
-                    Label("Signer app/device", systemImage: "checkmark.shield.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(IrisSecondaryButtonStyle())
-                .disabled(manager.state.busy.restoringSession || (requiresTermsAcceptance && !termsAccepted))
-                .accessibilityIdentifier("restoreSignerAction")
-
-                Button {
-                    manager.dispatch(.pushScreen(screen: .addDevice))
-                } label: {
                     Label("Link this device", systemImage: "iphone")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(IrisSecondaryButtonStyle())
-                .disabled(requiresTermsAcceptance && !termsAccepted)
+                .disabled(manager.state.busy.restoringSession || (requiresTermsAcceptance && !termsAccepted))
                 .accessibilityIdentifier("restoreLinkDeviceAction")
             }
         }

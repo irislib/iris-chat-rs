@@ -26,7 +26,7 @@ func resolveDeviceAuthorizationInput(rawInput: String) -> ResolvedDeviceAuthoriz
         )
     }
 
-    if DeviceApprovalQr.isValid(trimmed) {
+    if DeviceApprovalQr.isValid(trimmed) || trimmed.lowercased().hasPrefix("nostrconnect://") {
         return ResolvedDeviceAuthorizationInput(
             deviceInput: trimmed,
             errorMessage: nil,

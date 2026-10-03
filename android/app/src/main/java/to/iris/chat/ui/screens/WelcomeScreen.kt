@@ -27,7 +27,6 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Key
-import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
@@ -294,24 +293,10 @@ fun RestoreAccountScreen(
         },
         bottomContent = {
             IrisSecondaryButton(
-                text = "Signer app/device",
-                onClick = { appManager.dispatch(AppAction.StartRemoteSignerLogin) },
-                enabled = !restoring,
-                icon = {
-                    if (signerBusy) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Rounded.VerifiedUser, contentDescription = null, modifier = Modifier.size(20.dp))
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().testTag("restoreSignerAction"),
-            )
-            IrisSecondaryButton(
                 text = "Link this device",
                 enabled = !restoring,
                 onClick = {
-                    appManager.startLinkedDevice("")
-                    appManager.pushScreen(Screen.AddDevice)
+                    appManager.dispatch(AppAction.StartRemoteSignerLogin)
                 },
                 icon = {
                     Icon(

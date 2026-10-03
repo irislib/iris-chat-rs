@@ -1225,6 +1225,16 @@ final class IrisChatTests: XCTestCase {
         XCTAssertEqual(resolved.errorMessage, "Not a valid link code.")
     }
 
+    func testResolveDeviceAuthorizationInputRequiresConfirmationForNostrConnect() {
+        let code = "nostrconnect://" + String(repeating: "ab", count: 32)
+            + "?relay=wss%3A%2F%2Fexample.invalid&secret=test-link"
+        let resolved = resolveDeviceAuthorizationInput(rawInput: "  \(code)\n")
+        XCTAssertEqual(resolved.deviceInput, code)
+        XCTAssertNil(resolved.errorMessage)
+        XCTAssertTrue(resolved.requiresConfirmation)
+        XCTAssertNotNil(resolveDeviceAuthorizationInput(rawInput: "prefix:\(code)").errorMessage)
+    }
+
     @MainActor
     func testLoggedOutAppPublishesDeviceLabelsForLinkCode() {
         let rust = MockRustApp()

@@ -42,7 +42,7 @@ fun RemoteSignerScreen(appManager: AppManager, appState: AppState) {
     val bitmap = remember(code) { code?.let { createQrBitmap(it, 720) } }
 
     OnboardingScaffold(
-        title = "Signer app/device",
+        title = "Link this device",
         onBack = {
             appManager.signer.cancel()
             appManager.navigateBack()
@@ -54,33 +54,24 @@ fun RemoteSignerScreen(appManager: AppManager, appState: AppState) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            IrisSecondaryButton(
-                text = "Open signer app",
-                enabled = !localBusy && !awaitingApproval,
-                onClick = {
-                    appManager.dispatch(AppAction.CancelRemoteSignerLogin)
-                    appManager.signer.startLogin()
-                },
-                modifier = Modifier.fillMaxWidth().testTag("remoteSignerOpenAppAction"),
-            )
             if (localBusy) {
                 CircularProgressIndicator()
                 Text("Approve in your signer app.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else if (bitmap != null && !awaitingApproval) {
-                Text("Scan with your signer app.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                IrisQrCodeImage(bitmap, "Signer connection code", size = 260.dp, tag = "remoteSignerCode")
+                Text("Scan with your signed-in device.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                IrisQrCodeImage(bitmap, "Link code", size = 260.dp, tag = "remoteSignerCode")
                 IrisSecondaryButton(
-                    text = "Copy code",
-                    onClick = { code?.let { clipboard.setText("Signer code", it) } },
-                    modifier = Modifier.fillMaxWidth(),
+                    text = "Copy link",
+                    onClick = { code?.let { clipboard.setText("Link code", it) } },
+                    modifier = Modifier.fillMaxWidth().testTag("remoteSignerCopyLink"),
                 )
             } else if (login != null) {
                 CircularProgressIndicator()
                 Text(
                     when (login.phase) {
                         RemoteSignerPhase.CONNECTING -> "Connecting…"
-                        RemoteSignerPhase.WAITING_FOR_SIGNER -> "Waiting for your signer…"
-                        RemoteSignerPhase.WAITING_FOR_APPROVAL -> "Approve in your signer app."
+                        RemoteSignerPhase.WAITING_FOR_SIGNER -> "Waiting for your other device…"
+                        RemoteSignerPhase.WAITING_FOR_APPROVAL -> "Approve on your other device."
                         RemoteSignerPhase.FINISHING -> "Signing in…"
                     },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -106,7 +97,7 @@ fun RemoteSignerScreen(appManager: AppManager, appState: AppState) {
                 TextField(
                     value = signerLink,
                     onValueChange = { signerLink = it },
-                    placeholder = { Text("Signer link") },
+                    placeholder = { Text("Link") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("remoteSignerLinkInput"),
                 )
@@ -122,7 +113,7 @@ fun RemoteSignerScreen(appManager: AppManager, appState: AppState) {
                 )
             } else if (!localBusy && !awaitingApproval) {
                 IrisSecondaryButton(
-                    text = "Paste signer link",
+                    text = "Paste link",
                     onClick = {
                         clipboard.getText { signerLink = it }
                         showingLinkInput = true
@@ -130,6 +121,15 @@ fun RemoteSignerScreen(appManager: AppManager, appState: AppState) {
                     modifier = Modifier.fillMaxWidth().testTag("remoteSignerPasteLink"),
                 )
             }
+            IrisSecondaryButton(
+                text = "Open signer app",
+                enabled = !localBusy && !awaitingApproval,
+                onClick = {
+                    appManager.dispatch(AppAction.CancelRemoteSignerLogin)
+                    appManager.signer.startLogin()
+                },
+                modifier = Modifier.fillMaxWidth().testTag("remoteSignerOpenAppAction"),
+            )
             OnboardingMessageCard(message = appState.toast)
         }
     }

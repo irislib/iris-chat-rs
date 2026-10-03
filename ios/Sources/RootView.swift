@@ -416,7 +416,7 @@ struct RootView: View {
         case .welcome: return "Welcome"
         case .createAccount: return "Create Profile"
         case .restoreAccount: return "Restore Profile"
-        case .remoteSigner: return "Signer app/device"
+        case .remoteSigner: return "Link this device"
         case .addDevice: return "Link Device"
         case .chatList: return "Chats"
         case .newChat: return "New Chat"

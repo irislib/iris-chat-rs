@@ -1,4 +1,7 @@
 import XCTest
+#if os(iOS)
+import UIKit
+#endif
 
 class IrisChatUITestCase: XCTestCase {
     let validPeerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
@@ -850,7 +853,7 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
 #endif
         XCTAssertTrue(element(app, "restoreLinkDeviceAction").waitForExistence(timeout: 10))
         element(app, "restoreLinkDeviceAction").tap()
-        XCTAssertTrue(element(app, "addDeviceScreen").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "remoteSignerScreen").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "navigationBackButton").waitForExistence(timeout: 5))
         XCTAssertFalse(element(app, "onboardingBackButton").exists)
     }
@@ -914,6 +917,7 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
         tapWelcomeAction(app, "welcomeRestoreAction")
         let linkAction = element(app, "restoreLinkDeviceAction")
         XCTAssertTrue(linkAction.waitForExistence(timeout: 10))
+        XCTAssertFalse(element(app, "restoreSignerAction").exists)
 #if os(iOS)
         XCTAssertFalse(linkAction.isEnabled)
         acceptOnboardingTermsIfNeeded(app)
@@ -921,9 +925,39 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
 #endif
         linkAction.tap()
 
-        XCTAssertTrue(element(app, "addDeviceScreen").waitForExistence(timeout: 10))
-        XCTAssertTrue(element(app, "linkDeviceQrCode").waitForExistence(timeout: 20))
-        XCTAssertTrue(element(app, "linkDeviceCopyButton").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "remoteSignerScreen").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "remoteSignerCode").waitForExistence(timeout: 20))
+        XCTAssertTrue(element(app, "remoteSignerCopyLink").waitForExistence(timeout: 10))
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "unified-link-this-device"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    func testPastedDeviceLinkRequiresHistoryConfirmation() {
+        let app = launchCleanApp()
+        createAccount(app)
+        element(app, "chatListProfileButton").tap()
+        openSettingsPage(app, "settingsDevicesRow")
+        let code = "nostrconnect://" + String(repeating: "ab", count: 32)
+            + "?relay=wss%3A%2F%2Fexample.invalid&secret=test-link"
+#if os(iOS)
+        UIPasteboard.general.string = code
+        let input = editableElement(app, "deviceRosterAddInput")
+        input.tap()
+        input.press(forDuration: 1)
+        let paste = app.menuItems["Paste"]
+        XCTAssertTrue(paste.waitForExistence(timeout: 5))
+        paste.tap()
+#else
+        typeText(code, into: editableElement(app, "deviceRosterAddInput"), app: app)
+#endif
+        let history = app.buttons["Include message history"]
+        XCTAssertTrue(history.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Chats and groups only"].exists)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(waitUntil(timeout: 5) { !history.exists })
+        XCTAssertTrue(element(app, "deviceRosterAddInput").exists)
     }
 
     func testLinkDeviceShowsScannableCodeAfterLogOut() throws {
@@ -949,9 +983,9 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
 #endif
         linkAction.tap()
 
-        XCTAssertTrue(element(app, "addDeviceScreen").waitForExistence(timeout: 10))
-        XCTAssertTrue(element(app, "linkDeviceQrCode").waitForExistence(timeout: 20))
-        XCTAssertTrue(element(app, "linkDeviceCopyButton").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "remoteSignerScreen").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "remoteSignerCode").waitForExistence(timeout: 20))
+        XCTAssertTrue(element(app, "remoteSignerCopyLink").waitForExistence(timeout: 10))
     }
 
     func testUploadProfilePictureUpdatesAvatarsInSettingsAndChatList() throws {

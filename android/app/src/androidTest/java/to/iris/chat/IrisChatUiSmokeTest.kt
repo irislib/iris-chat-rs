@@ -32,6 +32,7 @@ import androidx.test.espresso.Espresso.pressBack
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -305,6 +306,25 @@ class IrisChatUiSmokeTest {
         assertFalse(roster?.devices?.any { it.deviceNpub == SECONDARY_DEVICE_NPUB && it.isAuthorized } == true)
     }
 
+    @Test
+    fun pasted_device_link_requires_history_confirmation() {
+        composeRule.ensureChatList()
+        composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
+        composeRule.openSettingsPage("settingsDevicesRow")
+        composeRule.waitForTag("deviceRosterAddInput")
+        val manager = (composeRule.activity.application as IrisChatApp).container.appManager
+        val devicesBefore = manager.state.value.deviceRoster?.devices
+        val code = "nostrconnect://" + "ab".repeat(32) +
+            "?relay=wss%3A%2F%2Fexample.invalid&secret=test-link"
+        composeRule.onNodeWithTag("deviceRosterAddInput", useUnmergedTree = true).performTextInput(code)
+        composeRule.waitForTag("deviceRosterConfirmAdd")
+        composeRule.onNodeWithTag("deviceRosterConfirmWithoutHistory", useUnmergedTree = true).assertIsDisplayed()
+        assertEquals(devicesBefore, manager.state.value.deviceRoster?.devices)
+        composeRule.onNodeWithText("Cancel", useUnmergedTree = true).performClick()
+        composeRule.onAllNodesWithTag("deviceRosterConfirmAdd", useUnmergedTree = true).assertCountEquals(0)
+        assertEquals(devicesBefore, manager.state.value.deviceRoster?.devices)
+    }
+
     private fun linkScannedDeviceWithChoice(choiceTag: String) {
         openScannedDeviceConfirmation()
         composeRule.onNodeWithTag(choiceTag, useUnmergedTree = true).performClick()
@@ -507,13 +527,21 @@ class IrisChatUiSmokeTest {
         composeRule.onNodeWithTag("welcomeRestoreAction", useUnmergedTree = true)
             .performClick()
         composeRule.waitForTag("restoreAccountScreen")
+        composeRule.onAllNodesWithTag("restoreSignerAction", useUnmergedTree = true).assertCountEquals(0)
         composeRule.onNodeWithTag("restoreLinkDeviceAction", useUnmergedTree = true)
             .performClick()
-        composeRule.waitForTag("addDeviceScreen")
-        composeRule.waitForTag("linkDeviceQrCode")
-        composeRule.onNodeWithTag("linkDeviceQrCode", useUnmergedTree = true)
+        composeRule.waitForTag("remoteSignerScreen")
+        composeRule.waitForTag("remoteSignerCode")
+        composeRule.onNodeWithTag("remoteSignerCode", useUnmergedTree = true)
             .assertIsDisplayed()
-        composeRule.waitForDisplayedTagAfterScroll("linkDeviceCopyButton")
+        composeRule.waitForDisplayedTagAfterScroll("remoteSignerCopyLink")
+        val manager = (composeRule.activity.application as IrisChatApp).container.appManager
+        assertTrue(manager.state.value.remoteSignerLogin?.connectionUri?.startsWith("nostrconnect://") == true)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+        File(instrumentation.targetContext.getExternalFilesDir("screenshots"), "unified-link-this-device.png")
+            .outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        screenshot.recycle()
     }
 
     @Test

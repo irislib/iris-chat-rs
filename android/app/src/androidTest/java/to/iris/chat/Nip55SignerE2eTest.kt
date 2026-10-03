@@ -184,9 +184,9 @@ class Nip55SignerE2eTest {
     private fun startThroughRestoreScreen() {
         stage("opening_restore")
         compose.onNodeWithTag("welcomeRestoreAction", useUnmergedTree = true).performClick()
-        waitFor("signer login button") { hasTag("restoreSignerAction") }
+        waitFor("signer login button") { hasTag("restoreLinkDeviceAction") }
         stage("opening_signer")
-        compose.onNodeWithTag("restoreSignerAction", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("restoreLinkDeviceAction", useUnmergedTree = true).performClick()
         waitFor("local signer button") { hasTag("remoteSignerOpenAppAction") }
         compose.onNodeWithTag("remoteSignerOpenAppAction", useUnmergedTree = true).performClick()
         stage("signer_opened")

@@ -520,7 +520,7 @@ private fun resolveDeviceAuthorizationInput(rawInput: String): ResolvedDeviceAut
         return ResolvedDeviceAuthorizationInput(deviceInput = "", errorMessage = null)
     }
 
-    if (DeviceApprovalQr.isValid(trimmed)) {
+    if (DeviceApprovalQr.isValid(trimmed) || trimmed.startsWith("nostrconnect://", ignoreCase = true)) {
         return ResolvedDeviceAuthorizationInput(
             deviceInput = trimmed,
             errorMessage = null,

@@ -49,8 +49,8 @@ class RemoteSignerE2eTest {
         manager.dispatch(AppAction.SetNostrRelays(listOf(relay)))
         waitFor("local message server") { manager.state.value.preferences.nostrRelayUrls == listOf(relay) }
         compose.onNodeWithTag("welcomeRestoreAction", useUnmergedTree = true).performClick()
-        waitFor("signer action") { hasTag("restoreSignerAction") }
-        compose.onNodeWithTag("restoreSignerAction", useUnmergedTree = true).performClick()
+        waitFor("signer action") { hasTag("restoreLinkDeviceAction") }
+        compose.onNodeWithTag("restoreLinkDeviceAction", useUnmergedTree = true).performClick()
         waitFor("signer screen") { hasTag("remoteSignerScreen") }
         val bunker = arguments.getString("nip46_bunker").orEmpty()
         if (bunker.isNotEmpty()) {

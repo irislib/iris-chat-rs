@@ -15,18 +15,19 @@ struct RemoteSignerScreen: View {
         IrisScrollScreen {
             IrisSectionCard {
                 VStack(spacing: 20) {
-                    CardHeader(title: "Signer app/device")
+                    CardHeader(title: "Link this device")
                         .accessibilityIdentifier("remoteSignerScreen")
                     if let uri = login?.connectionUri, !awaitingApproval {
-                        Text("Scan with your signer app.")
+                        Text("Scan with your signed-in device.")
                             .foregroundStyle(.secondary)
                         QrCodeImage(text: uri, size: 240)
                             .padding(16)
                             .background(Color.white)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .accessibilityIdentifier("remoteSignerCode")
-                        Button("Copy code") { manager.copyToClipboard(uri) }
+                        Button("Copy link") { manager.copyToClipboard(uri) }
                             .buttonStyle(IrisSecondaryButtonStyle())
+                            .accessibilityIdentifier("remoteSignerCopyLink")
                     } else if let login {
                         ProgressView()
                         Text(statusText(login.phase)).foregroundStyle(.secondary)
@@ -40,7 +41,7 @@ struct RemoteSignerScreen: View {
                             .accessibilityIdentifier("remoteSignerApprovalAction")
                     }
                     if showingLinkInput {
-                        TextField("Signer link", text: $signerLink)
+                        TextField("Link", text: $signerLink)
                             .irisInputField()
                             .accessibilityIdentifier("remoteSignerLinkInput")
                         Button("Connect") {
@@ -52,7 +53,7 @@ struct RemoteSignerScreen: View {
                         .disabled(signerLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .accessibilityIdentifier("remoteSignerConnectAction")
                     } else if !awaitingApproval {
-                        Button("Paste signer link") {
+                        Button("Paste link") {
                             signerLink = PlatformClipboard.string() ?? ""
                             showingLinkInput = true
                         }
@@ -71,8 +72,8 @@ struct RemoteSignerScreen: View {
     private func statusText(_ phase: RemoteSignerPhase) -> String {
         switch phase {
         case .connecting: return "Connecting…"
-        case .waitingForSigner: return "Waiting for your signer…"
-        case .waitingForApproval: return "Approve in your signer app."
+        case .waitingForSigner: return "Waiting for your other device…"
+        case .waitingForApproval: return "Approve on your other device."
         case .finishing: return "Signing in…"
         }
     }
