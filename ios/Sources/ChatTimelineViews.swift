@@ -822,12 +822,12 @@ struct ChatMessageRow: View, Equatable {
 
 #if canImport(AppKit)
     private func desktopActionDockSlot() -> some View {
-        actionDock()
-            .fixedSize()
-            .opacity(showActionDock ? 1 : 0)
-            .allowsHitTesting(showActionDock)
-            .accessibilityHidden(!showActionDock)
-            .frame(width: ChatMessageActionDock.dockWidth)
+        ChatMessageActionDockSlot(
+            isVisible: showActionDock,
+            size: CGSize(width: ChatMessageActionDock.dockWidth, height: ChatMessageActionDock.dockHeight)
+        ) {
+            actionDock()
+        }
     }
 #else
     private func desktopActionDockSlot() -> EmptyView { EmptyView() }

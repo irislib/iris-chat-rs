@@ -749,6 +749,7 @@ struct ChatMessageActionDock: View {
     fileprivate static let buttonWidth: CGFloat = 30
     fileprivate static let buttonHeight: CGFloat = 28
     static let dockWidth: CGFloat = buttonWidth * 4 + 2 * 3 + 5 * 2
+    static let dockHeight: CGFloat = buttonHeight + 5 * 2
 }
 
 private struct ChatMessageOverflowActionsPopover: View {
