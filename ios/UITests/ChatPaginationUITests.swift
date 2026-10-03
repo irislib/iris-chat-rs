@@ -20,7 +20,6 @@ final class ChatPaginationUITests: IrisChatUITestCase {
         openSeededChat(app)
         let timeline = element(app, "chatTimeline")
         XCTAssertTrue(timeline.waitForExistence(timeout: 10))
-        let messages = timeline.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'seed-msg-'"))
         var observedOlderPage = false
         var observedHeights: [CGFloat] = []
 
@@ -28,8 +27,12 @@ final class ChatPaginationUITests: IrisChatUITestCase {
         // a real SQLite-backed older page was merged, rather than merely
         // scrolling inside the original loaded window.
         for _ in 0..<70 {
-            let viewport = timeline.frame
-            let visible = messages.allElementsBoundByIndex.filter {
+            // Lazy rows can enter or leave the accessibility tree while a
+            // page merges. One immutable snapshot keeps indices and frames
+            // from different layout passes out of the same measurement.
+            let before = try timeline.snapshot()
+            let viewport = before.frame
+            let visible = messageSnapshots(in: before).filter {
                 !$0.frame.isEmpty && viewport.contains($0.frame)
             }
             observedHeights += visible.map { $0.frame.height }
@@ -52,10 +55,10 @@ final class ChatPaginationUITests: IrisChatUITestCase {
             let end = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.7))
             // Holding after a slow drag ends momentum before measuring.
             start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.25)
-            let sameMessage = timeline.staticTexts.matching(NSPredicate(format: "label == %@", label)).firstMatch
-            let afterY = sameMessage.exists ? sameMessage.frame.minY : CGFloat.nan
+            let sameMessage = messageSnapshots(in: try timeline.snapshot()).first { $0.label == label }
+            let afterY = sameMessage?.frame.minY ?? CGFloat.nan
             let tolerance = max(20, viewport.height * 0.06)
-            let stayedVisible = sameMessage.exists && viewport.intersects(sameMessage.frame)
+            let stayedVisible = sameMessage.map { viewport.intersects($0.frame) } ?? false
             if !stayedVisible || abs(afterY - beforeY - distance) > tolerance {
                 capture(app, name: "older-page-anchor-discontinuity")
                 let detail = XCTAttachment(string: "ordinal=\(ordinal(label) ?? -1) beforeY=\(beforeY) afterY=\(afterY) expectedDelta=\(distance) tolerance=\(tolerance)")
@@ -118,6 +121,12 @@ final class ChatPaginationUITests: IrisChatUITestCase {
 
     private func ordinal(_ label: String) -> Int? {
         Int(label.dropFirst("seed-msg-".count).prefix { $0.isNumber })
+    }
+
+    private func messageSnapshots(in snapshot: XCUIElementSnapshot) -> [XCUIElementSnapshot] {
+        let own = snapshot.elementType == .staticText && snapshot.label.hasPrefix("seed-msg-")
+            ? [snapshot] : []
+        return own + snapshot.children.flatMap { messageSnapshots(in: $0) }
     }
 
     private func capture(_ app: XCUIApplication, name: String) {
