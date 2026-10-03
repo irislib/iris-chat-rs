@@ -17,6 +17,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Keep unchanged protocol checkpoints in place to reduce message-receive writes. Update iris-chat-protocol to 0.2.1 with durable exact group-ciphertext tracking and remove unsafe timestamp-only acknowledgements, preserving distinct same-second messages and repair backoff.
 - Preserve group encryption settings when copying groups between web and native, rejecting copies that conflict with authenticated group history.
 - Respect message-server retry backoff when a batch reports failures before its completion event, avoiding repeated failed drains of a large queue.
+- Batch private read receipts into one protocol save and show durable local chat state before saving the protocol backlog on every native platform.
 - Focus the composer when replying, follow the iOS keyboard animation, and emit pending messages before protocol checkpoint work.
 - Paste photos and multiple files into drafts without sending automatically, and improve long-draft editing across native platforms.
 - Keep private contacts and device labels in ratcheted messages and direct pairing snapshots. Authenticate background call notifications and retain them for retry.
@@ -32,7 +33,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Resume interrupted history transfers and keep deleted messages removed.
 - Keep reactions, group details, and contact profiles in sync across devices.
 - Open the keyboard when replying and keep your place as it appears.
-- Show outgoing messages sooner and improve typing after long pastes.
+- Open chats and show outgoing messages faster, and improve typing after long pastes.
 - Paste photos and files into a chat before sending.
 - Improve private contact sync and Nearby connection recovery.
 - Update your other devices and calling contacts too. Calls to an older app may not ring while it is closed. Existing chats and linked devices stay connected.
@@ -44,7 +45,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Choose whether to copy message history when linking a device, and see transfer progress.
 - Resume interrupted history transfers and keep deleted messages removed.
 - Keep reactions, group details, and contact profiles in sync across devices.
-- Show outgoing messages sooner and improve typing after long pastes.
+- Open chats and show outgoing messages faster, and improve typing after long pastes.
 - Paste photos and files into a chat before sending.
 - Improve private contact sync and Nearby connection recovery.
 - Update your other devices and calling contacts too. Calls to an older app may not ring while it is closed. Existing chats and linked devices stay connected.
