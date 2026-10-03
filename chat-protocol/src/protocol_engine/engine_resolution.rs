@@ -202,9 +202,9 @@ impl ProtocolEngine {
         }
 
         if !self.pending_inbound.is_empty() {
-            // Resolve the whole queue against one consistent session snapshot.
-            // Copying every ratchet again for each event stalls foreground work.
-            let snapshot = self.session_manager.snapshot();
+            // Copy ratchets at most once, only if cached owner metadata cannot
+            // resolve an event. Repeating that copy stalls foreground work.
+            let snapshot = std::cell::OnceCell::new();
             let pending_inbound_ids = self
                 .pending_inbound
                 .iter()
@@ -567,7 +567,7 @@ impl ProtocolEngine {
         &self,
         pending: &ProtocolPendingInbound,
         owner: NdrOwnerPubkey,
-        snapshot: &SessionManagerSnapshot,
+        snapshot: &std::cell::OnceCell<SessionManagerSnapshot>,
     ) -> bool {
         let owner_hex = owner.to_hex();
         if pending
@@ -584,7 +584,10 @@ impl ProtocolEngine {
         pending_inbound_sender_pubkey(pending)
             .map(|sender| {
                 sender_resolution_owner_matches(
-                    self.resolve_message_sender_owner_with_snapshot(sender, snapshot),
+                    self.resolve_message_sender_owner_with_snapshot(
+                        sender,
+                        snapshot.get_or_init(|| self.session_manager.snapshot()),
+                    ),
                     owner,
                 )
             })
