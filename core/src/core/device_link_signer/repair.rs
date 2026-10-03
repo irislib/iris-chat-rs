@@ -42,6 +42,7 @@ impl AppCore {
             anyhow::ensure!(
                 head.pubkey == pending.owner
                     && is_app_keys_event(head)
+                    && !has_obsolete_private_labels(head)
                     && head.created_at == template.created_at
                     && head.content.is_empty()
                     && head.created_at.as_secs() <= now.saturating_add(300)
@@ -94,6 +95,17 @@ impl AppCore {
         }
         Ok(event)
     }
+}
+
+fn has_obsolete_private_labels(event: &Event) -> bool {
+    private_device_labels::obsolete_private_app_keys_event(event)
+        || event.tags.iter().any(|tag| {
+            let values = tag.as_slice();
+            values.first().is_some_and(|name| name == "f")
+                && values.get(1).is_some_and(|name| {
+                    name == nostr_double_ratchet::APP_KEYS_ENCRYPTED_DEVICE_LABELS_FACT
+                })
+        })
 }
 
 fn normalized_roster_subject(event: &Event) -> anyhow::Result<Vec<Vec<String>>> {

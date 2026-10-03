@@ -110,3 +110,32 @@ fn nostrconnect_roster_repair_refuses_real_conflicts_and_replays_one_exact_head(
     core.stop_device_link_signer();
     assert!(core.prepare_device_link_roster_repair(&token, &heads).is_err());
 }
+
+#[test]
+fn nostrconnect_roster_repair_never_republishes_obsolete_private_labels() {
+    for wrapped in [false, true] {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let client = Keys::generate();
+        let now = unix_now().get();
+        let roster = AppKeys::new(vec![DeviceEntry::new(device.public_key(), now - 20)]);
+        let mut private_tag = vec![nostr_double_ratchet::APP_KEYS_ENCRYPTED_DEVICE_LABELS_FACT, "old-private-ciphertext"];
+        if wrapped {
+            private_tag.insert(0, "f");
+        }
+        let heads = (0..2).map(|_| {
+            let mut unsigned = roster.get_event_at(owner.public_key(), now - 1);
+            unsigned.tags.push(nostr::Tag::parse(private_tag.clone()).unwrap());
+            UnsignedEvent::new(owner.public_key(), unsigned.created_at, unsigned.kind,
+                unsigned.tags.to_vec(), unsigned.content).sign_with_keys(&owner).unwrap()
+        }).collect::<Vec<_>>();
+        let mut core = logged_in_test_core("roster-repair-private-labels", &owner, &device);
+        core.app_keys.insert(owner.public_key().to_hex(), known_app_keys_from_ndr(owner.public_key(), &roster, now - 1));
+        let relay = crate::local_relay::TestRelay::start();
+        let uri = super::remote_signer_uri::client_connection_uri(&client,
+            &[RelayUrl::parse(relay.url()).unwrap()], "repair-challenge");
+        core.start_device_link_signer(&uri, false);
+        let token = core.pending_device_link_signer.as_ref().unwrap().token.clone();
+        assert!(core.prepare_device_link_roster_repair(&token, &heads).is_err(), "accepted obsolete private label tag (wrapped={wrapped})");
+    }
+}
