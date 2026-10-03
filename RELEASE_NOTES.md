@@ -11,11 +11,13 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Choose between chats and groups only or message history on the approving device. Keep the initial history transfer private to that device pair, resume interrupted transfers, and show progress on the receiving device.
 - Reconcile messages and reaction changes over encrypted FIPS using the shared Negentropy codec. Sync current group details, settings, and verified contact profiles separately from old message history. Preserve link-time boundaries, local deletions, expiry, and device revocation during replay and recovery.
 - Notify linked devices when queued messages become sent, and retry unanswered WebRTC offers after authenticated session restarts without waiting for the old dial timeout.
+- Remove legacy paginated history and message-only reconciliation fallbacks. Keep large histories bounded by splitting Negentropy inventories, without changing the private history choice.
+- Keep unchanged protocol checkpoints in place to reduce message-receive writes; publish the storage fix in iris-chat-protocol 0.1.13.
 - Focus the composer when replying, follow the iOS keyboard animation, and emit pending messages before protocol checkpoint work.
 - Paste photos and multiple files into drafts without sending automatically, and improve long-draft editing across native platforms.
 - Keep private contacts and device labels in ratcheted messages and direct pairing snapshots. Authenticate background call notifications and retain them for retry.
 - Serialize Nearby transport replacement and completion-confirmed shutdown, and keep group-member profile navigation consistent.
-- Update other devices and calling contacts too. Calls to older apps may not ring while closed; existing accounts, chats, and linked devices are preserved.
+- Update other devices and calling contacts too. History sync requires updated apps. Calls to older apps may not ring while closed; existing accounts, chats, and linked devices are preserved.
 
 ### Apple
 
