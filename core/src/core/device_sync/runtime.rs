@@ -52,6 +52,20 @@ impl AppCore {
     }
 
     #[cfg(test)]
+    pub(crate) fn reconcile_device_sync_at_rendezvous_for_test(
+        &mut self,
+        rendezvous_addr: SocketAddrV4,
+    ) {
+        // Preserve the production runtime key while keeping fixture discovery
+        // separate from other tests and any applications running on this host.
+        self.reconcile_shared_fips(SharedFipsOptions {
+            same_host_hashtree: same_host_hashtree_enabled(),
+            rendezvous_addr: Some(rendezvous_addr),
+            ..SharedFipsOptions::default()
+        });
+    }
+
+    #[cfg(test)]
     pub(crate) fn reconcile_calls_udp_for_test(
         &mut self,
         local: std::net::SocketAddr,

@@ -124,10 +124,15 @@ fn exercise_direct_files_actions(same_owner: bool, outcome: crate::DirectFileTra
     b.core_sender = bt.clone();
     b.priority_sender = bt;
     // Signed roster events run normal reconciliation while an offer is active.
-    // Use production discovery on both peers: a test-only UDP configuration has
-    // a different runtime key and would be replaced by that reconciliation.
-    a.reconcile_device_sync();
-    b.reconcile_device_sync();
+    // Keep its production runtime key, with a private local rendezvous for this
+    // pair so parallel fixtures and the user's running apps cannot interfere.
+    let reservation = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let std::net::SocketAddr::V4(rendezvous) = reservation.local_addr().unwrap() else {
+        unreachable!("IPv4 fixture")
+    };
+    drop(reservation);
+    a.reconcile_device_sync_at_rendezvous_for_test(rendezvous);
+    b.reconcile_device_sync_at_rendezvous_for_test(rendezvous);
     let ae = a.device_sync_endpoint_for_test().unwrap();
     let be = b.device_sync_endpoint_for_test().unwrap();
     direct_files_wait(&mut a, &ar, &mut b, &br, |a, _| {
