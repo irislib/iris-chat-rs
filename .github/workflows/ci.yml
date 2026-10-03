@@ -364,13 +364,14 @@ jobs:
             ${{ github.workspace }}/cargo-target
           key: ${{ steps.ios_cargo_cache.outputs.cache-primary-key }}
 
-      - name: iOS native composer and clipboard tests
+      - name: iOS native composer, clipboard, and timeline tests
         run: |
           mkdir -p work/clipboard
           xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
             -destination "$(./scripts/ios-simulator-destination)" \
             -parallel-testing-enabled NO \
             -only-testing:IrisChatTests \
+            -only-testing:IrisChatUITests/ChatTimelineUITests/testReopeningLongChatLandsAtBottom \
             -resultBundlePath work/clipboard/ios.xcresult test
 
       - name: Upload iOS test results

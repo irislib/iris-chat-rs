@@ -20,6 +20,8 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Batch private read receipts into one protocol save and show durable local chat state before saving the protocol backlog on every native platform.
 - Retry queued group ciphertext only when its decryption inputs change, with bounded background batches that yield to user actions. Reuse a session snapshot when waking queued direct messages.
 - Open saved desktop history independently of checkpoint writes, and avoid mistaking a busy database for an empty chat. Reuse authenticated sessions without showing a messaging-availability check.
+- Reuse unchanged encrypted backlog checkpoints and avoid global identity refreshes when opening existing chats. Verify offline sends and recovery with synthetic gigabyte histories and large encrypted queues.
+- Build desktop message controls when needed and position initial chat history from measured layout, avoiding hidden control work and premature scrolling.
 - Reuse bounded event-signature validation proofs across transports and suppress unchanged Nearby updates, preserving content validation, delivery receipts, and device-list recovery.
 - Preserve an already recovered encrypted session when a direct connection catches up after a peer restarts, using the verified FIPS 0.4.93 dependency set.
 - Focus the composer when replying, follow the iOS keyboard animation, and emit pending messages before protocol checkpoint work.

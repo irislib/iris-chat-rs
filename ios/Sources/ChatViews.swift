@@ -948,7 +948,8 @@ struct ChatScreen: View {
     }
 
     private func advanceInitialPlacement(proxy: ScrollViewProxy, chat: CurrentChatSnapshot) {
-        guard manager.pendingScrollMessageId == nil, pendingPrependAnchorMessageId == nil,
+        guard initialPlacement.isPending || initialPlacement.isAwaitingVisibility,
+              manager.pendingScrollMessageId == nil, pendingPrependAnchorMessageId == nil,
               manager.state.currentChat?.chatId == chat.chatId,
               let last = chat.messages.last,
               manager.state.currentChat?.messages.last?.id == last.id else { return }
