@@ -29,7 +29,7 @@ impl ProtocolEngine {
             pending_group_pairwise_payloads: Vec::new(),
             pending_group_sender_key_messages: Vec::new(),
             pending_group_sender_key_repairs: Vec::new(),
-            delivered_group_sender_key_acks: Vec::new(),
+            processed_group_sender_key_messages: ProtocolGroupReplayCache::default(),
             answered_group_sender_key_repairs: Vec::new(),
             pending_decrypted_deliveries: Vec::new(),
             group_roster_fact_histories: BTreeMap::new(),
@@ -89,13 +89,6 @@ impl ProtocolEngine {
         );
         let session_manager = SessionManager::from_snapshot(state.session_manager, device_secret)?;
         let group_manager = GroupEventManager::from_snapshot(state.group_manager)?;
-        let mut delivered_group_sender_key_acks = state.delivered_group_sender_key_acks;
-        let excess = delivered_group_sender_key_acks
-            .len()
-            .saturating_sub(DELIVERED_GROUP_SENDER_KEY_ACK_LIMIT);
-        if excess > 0 {
-            delivered_group_sender_key_acks.drain(0..excess);
-        }
         let mut answered_group_sender_key_repairs = state.answered_group_sender_key_repairs;
         let excess = answered_group_sender_key_repairs
             .len()
@@ -119,7 +112,7 @@ impl ProtocolEngine {
             pending_group_pairwise_payloads: state.pending_group_pairwise_payloads,
             pending_group_sender_key_messages: state.pending_group_sender_key_messages,
             pending_group_sender_key_repairs: state.pending_group_sender_key_repairs,
-            delivered_group_sender_key_acks,
+            processed_group_sender_key_messages: state.processed_group_sender_key_messages,
             answered_group_sender_key_repairs,
             pending_decrypted_deliveries: state.pending_decrypted_deliveries,
             group_roster_fact_histories: state.group_roster_fact_histories,
@@ -917,7 +910,7 @@ impl ProtocolEngine {
             pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),
             pending_group_sender_key_messages: self.pending_group_sender_key_messages.clone(),
             pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),
-            delivered_group_sender_key_acks: self.delivered_group_sender_key_acks.clone(),
+            processed_group_sender_key_messages: self.processed_group_sender_key_messages.clone(),
             answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
             pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
             group_roster_fact_histories: self.group_roster_fact_histories.clone(),
@@ -941,7 +934,7 @@ impl ProtocolEngine {
         self.pending_group_pairwise_payloads = checkpoint.pending_group_pairwise_payloads;
         self.pending_group_sender_key_messages = checkpoint.pending_group_sender_key_messages;
         self.pending_group_sender_key_repairs = checkpoint.pending_group_sender_key_repairs;
-        self.delivered_group_sender_key_acks = checkpoint.delivered_group_sender_key_acks;
+        self.processed_group_sender_key_messages = checkpoint.processed_group_sender_key_messages;
         self.answered_group_sender_key_repairs = checkpoint.answered_group_sender_key_repairs;
         self.pending_decrypted_deliveries = checkpoint.pending_decrypted_deliveries;
         self.group_roster_fact_histories = checkpoint.group_roster_fact_histories;

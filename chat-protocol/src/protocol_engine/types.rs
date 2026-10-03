@@ -4,7 +4,7 @@ const PROTOCOL_APP_KEYS_PROVENANCE_VERSION: u8 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
 const PENDING_GROUP_FANOUT_RETRY_BATCH_SIZE: usize = 64;
-const DELIVERED_GROUP_SENDER_KEY_ACK_LIMIT: usize = 512;
+const PROCESSED_GROUP_SENDER_KEY_LIMIT: usize = 16_384;
 const ANSWERED_GROUP_SENDER_KEY_REPAIR_LIMIT: usize = 512;
 const PROCESSED_PRIVATE_INVITE_RESPONSE_LIMIT: usize = 128;
 
@@ -51,7 +51,7 @@ struct ProtocolEnginePersistedState {
     #[serde(default)]
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     #[serde(default)]
-    delivered_group_sender_key_acks: Vec<ProtocolDeliveredGroupSenderKeyAck>,
+    processed_group_sender_key_messages: ProtocolGroupReplayCache,
     #[serde(default)]
     answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     #[serde(default)]
@@ -143,13 +143,6 @@ struct ProtocolPendingGroupSenderKeyRepair {
     last_requested_at_secs: u64,
     request_count: u32,
     next_retry_at_secs: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct ProtocolDeliveredGroupSenderKeyAck {
-    group_id: String,
-    sender_event_pubkey_hex: String,
-    created_at_secs: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -407,7 +400,7 @@ pub struct ProtocolEngine {
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
-    delivered_group_sender_key_acks: Vec<ProtocolDeliveredGroupSenderKeyAck>,
+    processed_group_sender_key_messages: ProtocolGroupReplayCache,
     answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
@@ -446,7 +439,7 @@ struct ProtocolEngineCheckpoint {
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
-    delivered_group_sender_key_acks: Vec<ProtocolDeliveredGroupSenderKeyAck>,
+    processed_group_sender_key_messages: ProtocolGroupReplayCache,
     answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,

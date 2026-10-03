@@ -151,6 +151,26 @@ impl ProtocolEngine {
                 ..Default::default()
             });
         };
+        if self
+            .processed_group_sender_key_messages
+            .contains(&group_sender_key_fingerprint(&message))
+        {
+            return Ok(ProtocolGroupIncomingResult {
+                consumed: true,
+                ..Default::default()
+            });
+        }
+        // Direct-message probing can queue a candidate before its first group
+        // attempt. Suppress only candidates already waiting for a repair.
+        if self.pending_group_sender_key_messages.contains(&parsed)
+            && self.group_sender_key_message_has_pending_repair(&message)
+        {
+            return Ok(ProtocolGroupIncomingResult {
+                consumed: true,
+                pending: true,
+                ..Default::default()
+            });
+        }
         let mut result = self.handle_group_sender_key_message(message)?;
         if result.pending {
             self.queue_pending_group_sender_key_message(parsed)?;
@@ -158,7 +178,7 @@ impl ProtocolEngine {
             self.persist()?;
         }
         if !result.pending {
-            let retry = self.retry_pending_group_inputs(NdrUnixSeconds(unix_now().get()))?;
+            let retry = self.retry_pending_group_inputs(NdrUnixSeconds(unix_now().get()), false)?;
             result.events.extend(retry.events);
             result.effects.extend(retry.effects);
         }
@@ -317,8 +337,9 @@ impl ProtocolEngine {
                         );
                     }
                 }
+                let group_state_changed = matches!(event, GroupIncomingEvent::MetadataUpdated(_));
                 let mut events = vec![event];
-                let retry = self.retry_pending_group_inputs(now)?;
+                let retry = self.retry_pending_group_inputs(now, group_state_changed)?;
                 events.extend(retry.events);
                 effects.extend(retry.effects);
                 let fanout_retry = self.retry_pending_group_fanouts(now)?;
@@ -332,7 +353,7 @@ impl ProtocolEngine {
                 })
             }
             Ok(None) => {
-                let retry = self.retry_pending_group_inputs(now)?;
+                let retry = self.retry_pending_group_inputs(now, false)?;
                 Ok(ProtocolGroupIncomingResult {
                     events: retry.events,
                     effects: retry.effects,
@@ -363,7 +384,7 @@ impl ProtocolEngine {
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<ProtocolRetryBatch> {
-        let group_result = self.retry_pending_group_inputs(now)?;
+        let group_result = self.retry_pending_group_inputs(now, false)?;
         let group_fanout_result = self.retry_pending_group_fanouts(now)?;
         let mut group_result = group_result;
         group_result.effects.extend(group_fanout_result.effects);
@@ -578,6 +599,7 @@ impl ProtocolEngine {
     fn retry_pending_group_inputs(
         &mut self,
         now: NdrUnixSeconds,
+        mut group_state_changed: bool,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
         let mut result = ProtocolGroupIncomingResult {
             consumed: false,
@@ -628,6 +650,7 @@ impl ProtocolEngine {
             };
             match outcome {
                 Ok(Some(event)) => {
+                    group_state_changed |= matches!(event, GroupIncomingEvent::MetadataUpdated(_));
                     if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
                         let effects = self.sender_key_repair_response_effects(
                             repair.requester_owner,
@@ -672,6 +695,12 @@ impl ProtocolEngine {
             };
             if self.pending_group_sender_key_candidate_predates_known_distribution(&parsed) {
                 persist_needed = true;
+                continue;
+            }
+            // Re-decrypt only when new state can unlock the ciphertext. The
+            // durable repair queue below still retries requests on its backoff.
+            if !group_state_changed && self.group_sender_key_message_has_pending_repair(&message) {
+                still_sender_keys.push(parsed);
                 continue;
             }
             let outcome = self.handle_group_sender_key_message(message)?;

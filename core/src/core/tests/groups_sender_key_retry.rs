@@ -1,7 +1,6 @@
 #[test]
 fn appcore_sender_key_repair_request_survives_restart_and_throttles() {
-    let bob_storage =
-        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    let bob_storage = Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     let mut devices = (0..3)
         .map(|_| SenderKeyMatrixDevice::new())
         .collect::<Vec<_>>();
@@ -45,11 +44,12 @@ fn appcore_sender_key_repair_request_survives_restart_and_throttles() {
             Some("sender-key-repair-restart-inner".to_string()),
         )
         .expect("send with rotated sender key");
-    let outer = sender_key_outer_events_for_engine(&devices[alice].engine, &sent.effects, &sent.event_ids)
-        .into_iter()
-        .next()
-        .expect("sender-key outer event")
-        .clone();
+    let outer =
+        sender_key_outer_events_for_engine(&devices[alice].engine, &sent.effects, &sent.event_ids)
+            .into_iter()
+            .next()
+            .expect("sender-key outer event")
+            .clone();
     let pending = devices[bob]
         .engine
         .process_group_outer_event(&outer)
@@ -179,8 +179,11 @@ fn appcore_sender_key_missing_metadata_revision_repairs_and_applies_pending_oute
         .expect("remove carol and rotate sender key");
     deliver_protocol_effects_to_engine(&mut devices[carol].engine, &removed.effects);
 
-    let distribution =
-        latest_sender_key_distribution_for_test(&devices[alice].engine, &group_id, NdrUnixSeconds(321));
+    let distribution = latest_sender_key_distribution_for_test(
+        &devices[alice].engine,
+        &group_id,
+        NdrUnixSeconds(321),
+    );
     let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
     let distribution_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
@@ -204,11 +207,12 @@ fn appcore_sender_key_missing_metadata_revision_repairs_and_applies_pending_oute
             Some("sender-key-metadata-repair-inner".to_string()),
         )
         .expect("send after metadata gap");
-    let outer = sender_key_outer_events_for_engine(&devices[alice].engine, &sent.effects, &sent.event_ids)
-        .into_iter()
-        .next()
-        .expect("sender-key outer event")
-        .clone();
+    let outer =
+        sender_key_outer_events_for_engine(&devices[alice].engine, &sent.effects, &sent.event_ids)
+            .into_iter()
+            .next()
+            .expect("sender-key outer event")
+            .clone();
 
     let pending = devices[bob]
         .engine
@@ -283,7 +287,10 @@ fn appcore_sender_key_distribution_before_metadata_wakes_and_applies_pending_out
         .process_group_outer_event(&outer)
         .expect("process outer before metadata");
     assert!(pending_outer.consumed);
-    assert_eq!(bob.debug_snapshot().pending_group_sender_key_message_count, 1);
+    assert_eq!(
+        bob.debug_snapshot().pending_group_sender_key_message_count,
+        1
+    );
 
     let codec = nostr_double_ratchet::JsonGroupPayloadCodecV1;
     let distribution_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
@@ -327,7 +334,10 @@ fn appcore_sender_key_distribution_before_metadata_wakes_and_applies_pending_out
         "metadata must wake queued sender-key distribution immediately"
     );
     assert_eq!(bob.debug_snapshot().pending_group_pairwise_payload_count, 0);
-    assert_eq!(bob.debug_snapshot().pending_group_sender_key_message_count, 0);
+    assert_eq!(
+        bob.debug_snapshot().pending_group_sender_key_message_count,
+        0
+    );
     assert!(
         group_events_contain_body(
             &metadata_result.events,
@@ -337,5 +347,224 @@ fn appcore_sender_key_distribution_before_metadata_wakes_and_applies_pending_out
             b"distribution before metadata"
         ),
         "pending sender-key outer should apply once metadata wakes the queued distribution"
+    );
+}
+
+fn add_legacy_sender_second_ack(storage: &dyn StorageAdapter, group_id: &str, outer: &Event) {
+    let mut state: serde_json::Value = serde_json::from_str(
+        &storage
+            .get(TEST_PROTOCOL_ENGINE_STATE_KEY)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    state["delivered_group_sender_key_acks"] = serde_json::json!([{
+        "group_id": group_id,
+        "sender_event_pubkey_hex": outer.pubkey.to_hex(),
+        "created_at_secs": outer.created_at.as_secs(),
+    }]);
+    storage
+        .put(TEST_PROTOCOL_ENGINE_STATE_KEY, state.to_string())
+        .unwrap();
+}
+
+#[test]
+fn delivered_group_outer_replay_is_quiet_after_restart_and_event_cache_eviction() {
+    let storage = Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    let mut devices = (0..2)
+        .map(|_| SenderKeyMatrixDevice::new())
+        .collect::<Vec<_>>();
+    devices[1].engine =
+        test_protocol_engine_with_storage(&devices[1].owner, &devices[1].device, storage.clone());
+    observe_sender_key_matrix_protocol_state(&mut devices);
+    let recipient = devices[1].owner.public_key();
+    let created = devices[0]
+        .engine
+        .create_group(
+            "Exact replay acknowledgement".into(),
+            vec![recipient],
+            UnixSeconds(700),
+        )
+        .unwrap();
+    let group_id = created.snapshot.unwrap().group_id;
+    deliver_protocol_effects_to_engine(&mut devices[1].engine, &created.effects);
+    let sent = devices[0]
+        .engine
+        .send_group_payload(
+            &group_id,
+            b"already delivered".to_vec(),
+            Some("exact-replay-inner".into()),
+        )
+        .unwrap();
+    let outer =
+        sender_key_outer_events_for_engine(&devices[0].engine, &sent.effects, &sent.event_ids)
+            .into_iter()
+            .next()
+            .unwrap()
+            .clone();
+    let received = devices[1].engine.process_group_outer_event(&outer).unwrap();
+    assert_eq!(received.events.len(), 1);
+    add_legacy_sender_second_ack(storage.as_ref(), &group_id, &outer);
+    devices[1].engine =
+        test_protocol_engine_with_storage(&devices[1].owner, &devices[1].device, storage.clone());
+    // The protocol boundary must remain safe after the app's unrelated-event
+    // LRU has evicted this outer event, including a restart with older acks.
+    let mut core = logged_in_test_core(
+        "group-outer-replay-lru",
+        &devices[1].owner,
+        &devices[1].device,
+    );
+    core.remember_event(outer.id.to_hex());
+    for index in 0..=MAX_SEEN_EVENT_IDS {
+        core.remember_event(format!("unrelated-{index}"));
+    }
+    assert!(!core.has_seen_event(&outer.id.to_hex()));
+    for _ in 0..3 {
+        let replay = devices[1].engine.process_group_outer_event(&outer).unwrap();
+        assert!(replay.consumed && !replay.pending);
+        assert!(replay.events.is_empty());
+        assert!(
+            replay.effects.is_empty(),
+            "delivered replay must not publish a repair"
+        );
+        assert_eq!(
+            devices[1]
+                .engine
+                .debug_snapshot()
+                .pending_group_sender_key_repair_count,
+            0
+        );
+    }
+
+    // A pre-upgrade checkpoint cannot identify already-delivered ciphertext.
+    // It must retain one repair and its cooldown, rather than creating a fresh
+    // encrypted request on each replay or timer tick.
+    let mut old_state: serde_json::Value = serde_json::from_str(
+        &storage
+            .get(TEST_PROTOCOL_ENGINE_STATE_KEY)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    old_state
+        .as_object_mut()
+        .unwrap()
+        .remove("processed_group_sender_key_messages");
+    storage
+        .put(TEST_PROTOCOL_ENGINE_STATE_KEY, old_state.to_string())
+        .unwrap();
+    add_legacy_sender_second_ack(storage.as_ref(), &group_id, &outer);
+    devices[1].engine =
+        test_protocol_engine_with_storage(&devices[1].owner, &devices[1].device, storage.clone());
+    let first_old_replay = devices[1].engine.process_group_outer_event(&outer).unwrap();
+    assert!(first_old_replay.pending && !first_old_replay.effects.is_empty());
+    let pending = devices[1].engine.debug_snapshot();
+    assert_eq!(pending.pending_group_sender_key_repair_count, 1);
+    let checkpoint = storage.get(TEST_PROTOCOL_ENGINE_STATE_KEY).unwrap();
+    for _ in 0..20 {
+        let replay = devices[1].engine.process_group_outer_event(&outer).unwrap();
+        assert!(replay.pending && replay.effects.is_empty());
+        let retry = devices[1]
+            .engine
+            .retry_pending_protocol(NdrUnixSeconds(
+                pending.pending_group_sender_key_repair_last_requested_at_secs + 1,
+            ))
+            .unwrap();
+        assert!(retry.group_result.effects.is_empty());
+    }
+    assert_eq!(
+        storage.get(TEST_PROTOCOL_ENGINE_STATE_KEY).unwrap(),
+        checkpoint,
+        "duplicate admission and early retry must not churn the checkpoint or repair cooldown"
+    );
+}
+
+#[test]
+fn legacy_sender_second_ack_preserves_unknown_ciphertext_and_repair_backoff() {
+    let storage = Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    let mut devices = (0..3)
+        .map(|_| SenderKeyMatrixDevice::new())
+        .collect::<Vec<_>>();
+    devices[1].engine =
+        test_protocol_engine_with_storage(&devices[1].owner, &devices[1].device, storage.clone());
+    observe_sender_key_matrix_protocol_state(&mut devices);
+    let recipient = devices[1].owner.public_key();
+    let removed_member = devices[2].owner.public_key();
+    let created = devices[0]
+        .engine
+        .create_group(
+            "Same second is not identity".into(),
+            vec![recipient, removed_member],
+            UnixSeconds(710),
+        )
+        .unwrap();
+    let group_id = created.snapshot.unwrap().group_id;
+    deliver_protocol_effects_to_engine(&mut devices[1].engine, &created.effects);
+    devices[0]
+        .engine
+        .remove_group_member(&group_id, removed_member)
+        .unwrap();
+    let sent = devices[0]
+        .engine
+        .send_group_payload(
+            &group_id,
+            b"a different message in the same second".to_vec(),
+            Some("same-second-unseen".into()),
+        )
+        .unwrap();
+    let outer =
+        sender_key_outer_events_for_engine(&devices[0].engine, &sent.effects, &sent.event_ids)
+            .into_iter()
+            .next()
+            .unwrap()
+            .clone();
+    add_legacy_sender_second_ack(storage.as_ref(), &group_id, &outer);
+    devices[1].engine =
+        test_protocol_engine_with_storage(&devices[1].owner, &devices[1].device, storage.clone());
+    let first = devices[1].engine.process_group_outer_event(&outer).unwrap();
+    assert!(first.pending && !first.effects.is_empty());
+    let pending = devices[1].engine.debug_snapshot();
+    assert_eq!(
+        pending.pending_group_sender_key_message_count, 1,
+        "a time-only acknowledgement cannot discard an unknown same-second ciphertext"
+    );
+    assert_eq!(pending.pending_group_sender_key_repair_count, 1);
+    for _ in 0..10 {
+        let replay = devices[1].engine.process_group_outer_event(&outer).unwrap();
+        assert!(replay.consumed && replay.pending);
+        assert!(replay.events.is_empty() && replay.effects.is_empty());
+    }
+    devices[1].engine =
+        test_protocol_engine_with_storage(&devices[1].owner, &devices[1].device, storage);
+    let early = devices[1]
+        .engine
+        .retry_pending_protocol(NdrUnixSeconds(
+            pending.pending_group_sender_key_repair_last_requested_at_secs + 1,
+        ))
+        .unwrap();
+    assert!(early.group_result.effects.is_empty());
+    let due = devices[1]
+        .engine
+        .retry_pending_protocol(NdrUnixSeconds(
+            pending.pending_group_sender_key_repair_last_requested_at_secs + 11,
+        ))
+        .unwrap();
+    assert!(
+        !due.group_result.effects.is_empty(),
+        "missing-key repair must still resume"
+    );
+    let (_, response) =
+        deliver_protocol_effects_to_engine_once(&mut devices[0].engine, &due.group_result.effects);
+    let (received, _) = deliver_protocol_effects_to_engine_once(&mut devices[1].engine, &response);
+    assert!(group_events_contain_body(
+        &received,
+        &group_id,
+        devices[0].owner.public_key(),
+        devices[0].device.public_key(),
+        b"a different message in the same second"
+    ));
+    let replay = devices[1].engine.process_group_outer_event(&outer).unwrap();
+    assert!(
+        replay.consumed && !replay.pending && replay.events.is_empty() && replay.effects.is_empty()
     );
 }

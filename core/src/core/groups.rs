@@ -488,12 +488,6 @@ impl AppCore {
                     let sender_device = message
                         .sender_device
                         .and_then(|device| PublicKey::from_slice(&device.to_bytes()).ok());
-                    self.acknowledge_delivered_group_runtime_rumor(
-                        &chat_id,
-                        sender_owner,
-                        sender_device,
-                        runtime_rumor.created_at_secs,
-                    );
                     self.apply_group_runtime_rumor(
                         &chat_id,
                         sender_owner,

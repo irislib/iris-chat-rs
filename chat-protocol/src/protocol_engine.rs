@@ -1,6 +1,7 @@
 use super::*;
 
 include!("protocol_engine/types.rs");
+include!("protocol_engine/group_replay.rs");
 include!("protocol_engine/engine_core.rs");
 include!("protocol_engine/engine_test_support.rs");
 include!("protocol_engine/engine_state_helpers.rs");

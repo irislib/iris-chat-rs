@@ -1279,12 +1279,6 @@ impl AppCore {
             &runtime_rumor,
         );
         let inner_event_id = runtime_rumor.id.clone();
-        self.acknowledge_delivered_group_runtime_rumor(
-            &chat_id,
-            effective_sender_owner,
-            sender_device,
-            created_at_secs,
-        );
 
         if !self.capture_device_sync_control(
             &chat_id,
@@ -1398,38 +1392,6 @@ impl AppCore {
         self.request_protocol_subscription_refresh();
         self.schedule_fast_protocol_retry_if_pending();
         Ok(true)
-    }
-
-    pub(super) fn acknowledge_delivered_group_runtime_rumor(
-        &mut self,
-        chat_id: &str,
-        sender_owner: PublicKey,
-        sender_device: Option<PublicKey>,
-        created_at_secs: u64,
-    ) {
-        let Some(group_id) = parse_group_id_from_chat_id(chat_id) else {
-            return;
-        };
-        let acknowledged = self
-            .protocol_engine
-            .as_mut()
-            .is_some_and(|protocol_engine| {
-                protocol_engine.acknowledge_delivered_group_sender_key_message(
-                    &group_id,
-                    sender_owner,
-                    sender_device,
-                    created_at_secs,
-                )
-            });
-        if acknowledged {
-            self.push_debug_log(
-                "appcore.protocol.sender_key.ack",
-                format!(
-                    "group_id={group_id} sender_owner={} created_at={created_at_secs}",
-                    sender_owner.to_hex()
-                ),
-            );
-        }
     }
 
     fn is_local_sibling_group_runtime_payload(

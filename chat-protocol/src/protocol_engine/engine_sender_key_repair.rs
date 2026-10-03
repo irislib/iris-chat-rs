@@ -7,17 +7,13 @@ impl ProtocolEngine {
             return Ok(());
         }
 
-        if let Some(group_id) = self.delivered_group_sender_key_ack_match(&parsed) {
-            if !self.has_pending_group_sender_key_candidate(&group_id, parsed.sender_event_pubkey)
-                && self.clear_group_sender_key_repairs(
-                    &group_id,
-                    parsed.sender_event_pubkey,
-                    None,
-                    None,
-                )
-            {
-                self.persist()?;
-            }
+        if self
+            .group_sender_key_message_from_parsed(&parsed)
+            .is_some_and(|message| {
+                self.processed_group_sender_key_messages
+                    .contains(&group_sender_key_fingerprint(&message))
+            })
+        {
             return Ok(());
         }
 
@@ -84,55 +80,6 @@ impl ProtocolEngine {
         true
     }
 
-    fn delivered_group_sender_key_ack_match(
-        &self,
-        parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
-    ) -> Option<String> {
-        let group_id = self
-            .group_manager
-            .group_id_for_sender_event_pubkey(parsed.sender_event_pubkey)?;
-        let sender_event_pubkey_hex = parsed.sender_event_pubkey.to_hex();
-        self.delivered_group_sender_key_acks
-            .iter()
-            .any(|ack| {
-                ack.group_id == group_id
-                    && ack.sender_event_pubkey_hex == sender_event_pubkey_hex
-                    && ack.created_at_secs == parsed.created_at.get()
-            })
-            .then_some(group_id)
-    }
-
-    fn remember_delivered_group_sender_key_ack(
-        &mut self,
-        group_id: &str,
-        sender_event_pubkey: NdrDevicePubkey,
-        created_at_secs: u64,
-    ) -> bool {
-        let sender_event_pubkey_hex = sender_event_pubkey.to_hex();
-        if self.delivered_group_sender_key_acks.iter().any(|ack| {
-            ack.group_id == group_id
-                && ack.sender_event_pubkey_hex == sender_event_pubkey_hex
-                && ack.created_at_secs == created_at_secs
-        }) {
-            return false;
-        }
-
-        self.delivered_group_sender_key_acks
-            .push(ProtocolDeliveredGroupSenderKeyAck {
-                group_id: group_id.to_string(),
-                sender_event_pubkey_hex,
-                created_at_secs,
-            });
-        let excess = self
-            .delivered_group_sender_key_acks
-            .len()
-            .saturating_sub(DELIVERED_GROUP_SENDER_KEY_ACK_LIMIT);
-        if excess > 0 {
-            self.delivered_group_sender_key_acks.drain(0..excess);
-        }
-        true
-    }
-
     fn has_pending_group_sender_key_candidate(
         &self,
         group_id: &str,
@@ -147,7 +94,7 @@ impl ProtocolEngine {
                         .group_id_for_sender_event_pubkey(pending.sender_event_pubkey)
                         .as_deref()
                         == Some(group_id)
-                })
+            })
     }
 
     fn unmapped_group_sender_key_candidate_is_known_message_author(
@@ -223,8 +170,9 @@ impl ProtocolEngine {
             .collect::<HashSet<_>>();
 
         let original_message_len = self.pending_group_sender_key_messages.len();
-        self.pending_group_sender_key_messages
-            .retain(|pending| !inactive_sender_event_pubkeys.contains(&pending.sender_event_pubkey));
+        self.pending_group_sender_key_messages.retain(|pending| {
+            !inactive_sender_event_pubkeys.contains(&pending.sender_event_pubkey)
+        });
 
         let original_repair_len = self.pending_group_sender_key_repairs.len();
         self.pending_group_sender_key_repairs
@@ -232,67 +180,6 @@ impl ProtocolEngine {
 
         self.pending_group_sender_key_messages.len() != original_message_len
             || self.pending_group_sender_key_repairs.len() != original_repair_len
-    }
-
-    pub fn acknowledge_delivered_group_sender_key_message(
-        &mut self,
-        group_id: &str,
-        sender_owner: PublicKey,
-        sender_device: Option<PublicKey>,
-        created_at_secs: u64,
-    ) -> bool {
-        let Some(sender_device) = sender_device else {
-            return false;
-        };
-        let sender_owner = ndr_owner(sender_owner);
-        let sender_device = ndr_device(sender_device);
-        let sender_event_pubkeys = self
-            .group_manager
-            .snapshot()
-            .sender_keys
-            .into_iter()
-            .filter(|record| {
-                record.group_id == group_id
-                    && record.sender_owner == sender_owner
-                    && record.sender_device == sender_device
-            })
-            .map(|record| record.sender_event_pubkey)
-            .collect::<HashSet<_>>();
-        if sender_event_pubkeys.is_empty() {
-            return false;
-        }
-
-        let mut changed = false;
-        for sender_event_pubkey in sender_event_pubkeys.iter().copied() {
-            changed |= self.remember_delivered_group_sender_key_ack(
-                group_id,
-                sender_event_pubkey,
-                created_at_secs,
-            );
-        }
-
-        let mut removed_senders = HashSet::new();
-        let original_len = self.pending_group_sender_key_messages.len();
-        self.pending_group_sender_key_messages.retain(|pending| {
-            let should_remove = sender_event_pubkeys.contains(&pending.sender_event_pubkey)
-                && pending.created_at.get() == created_at_secs;
-            if should_remove {
-                removed_senders.insert(pending.sender_event_pubkey);
-            }
-            !should_remove
-        });
-        changed |= self.pending_group_sender_key_messages.len() != original_len;
-
-        for sender_event_pubkey in removed_senders {
-            if !self.has_pending_group_sender_key_candidate(group_id, sender_event_pubkey) {
-                changed |=
-                    self.clear_group_sender_key_repairs(group_id, sender_event_pubkey, None, None);
-            }
-        }
-        if changed {
-            let _ = self.persist();
-        }
-        changed
     }
 
     fn group_sender_key_message_from_parsed(
@@ -313,10 +200,35 @@ impl ProtocolEngine {
         })
     }
 
+    fn group_sender_key_message_has_pending_repair(&self, message: &GroupSenderKeyMessage) -> bool {
+        let sender = message.sender_event_pubkey.to_hex();
+        let key_id = message.encrypted_header.is_none().then_some(message.key_id);
+        let number = message
+            .encrypted_header
+            .is_none()
+            .then_some(message.message_number);
+        self.pending_group_sender_key_repairs.iter().any(|pending| {
+            pending.group_id == message.group_id
+                && pending.sender_event_pubkey_hex == sender
+                && (message.encrypted_header.is_some()
+                    || (pending.key_id == key_id && pending.message_number == number))
+        })
+    }
+
     fn handle_group_sender_key_message(
         &mut self,
         message: GroupSenderKeyMessage,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
+        let fingerprint = group_sender_key_fingerprint(&message);
+        if self
+            .processed_group_sender_key_messages
+            .contains(&fingerprint)
+        {
+            return Ok(ProtocolGroupIncomingResult {
+                consumed: true,
+                ..Default::default()
+            });
+        }
         // Our publishing chain has already advanced, so decrypting its relay echo
         // searches every skipped key and starts a pointless repair. This durable
         // secret identifies this device's own stream, including after restart.
@@ -367,6 +279,7 @@ impl ProtocolEngine {
                     message_repair_key_id,
                     message_repair_number,
                 );
+                self.processed_group_sender_key_messages.insert(fingerprint);
                 self.persist()?;
                 return Ok(ProtocolGroupIncomingResult {
                     consumed: true,
@@ -386,6 +299,7 @@ impl ProtocolEngine {
                     message_repair_key_id,
                     message_repair_number,
                 );
+                self.processed_group_sender_key_messages.insert(fingerprint);
                 self.persist()?;
                 Ok(ProtocolGroupIncomingResult {
                     events: vec![event],
@@ -407,12 +321,14 @@ impl ProtocolEngine {
                 })
             }
             GroupSenderKeyHandleResult::Ignored => {
+                self.processed_group_sender_key_messages.insert(fingerprint);
                 self.clear_group_sender_key_repairs(
                     &message_repair_group_id,
                     message_repair_sender,
                     message_repair_key_id,
                     message_repair_number,
                 );
+                self.persist()?;
                 Ok(ProtocolGroupIncomingResult {
                     consumed: true,
                     ..Default::default()
@@ -527,11 +443,9 @@ impl ProtocolEngine {
         if pending.request_count == 0 || pending.last_requested_at_secs == 0 {
             return pending.next_retry_at_secs;
         }
-        let capped_due_at = pending
-            .last_requested_at_secs
-            .saturating_add(protocol_sender_key_repair_retry_delay_secs(
-                pending.request_count,
-            ));
+        let capped_due_at = pending.last_requested_at_secs.saturating_add(
+            protocol_sender_key_repair_retry_delay_secs(pending.request_count),
+        );
         if pending.next_retry_at_secs == 0 {
             capped_due_at
         } else {

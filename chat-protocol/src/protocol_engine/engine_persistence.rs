@@ -42,7 +42,7 @@ impl ProtocolEngine {
             pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),
             pending_group_sender_key_messages: self.pending_group_sender_key_messages.clone(),
             pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),
-            delivered_group_sender_key_acks: self.delivered_group_sender_key_acks.clone(),
+            processed_group_sender_key_messages: self.processed_group_sender_key_messages.clone(),
             answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
             pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
             group_roster_fact_histories: self.group_roster_fact_histories.clone(),
