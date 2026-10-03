@@ -107,6 +107,22 @@ class AppManagerContractTest {
     }
 
     @Test
+    fun link_device_preserves_the_history_choice_and_trims_input() {
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        for (includeMessageHistory in listOf(true, false)) {
+            appManager.addAuthorizedDevice("  device-link-code  ", includeMessageHistory)
+            assertEquals(
+                AppAction.AddAuthorizedDeviceWithHistory("device-link-code", includeMessageHistory),
+                rust.dispatchedActions.filterIsInstance<AppAction.AddAuthorizedDeviceWithHistory>().last(),
+            )
+        }
+        appManager.addAuthorizedDevice("  ", includeMessageHistory = true)
+        assertEquals(2, rust.dispatchedActions.filterIsInstance<AppAction.AddAuthorizedDeviceWithHistory>().size)
+        assertTrue(rust.dispatchedActions.none { it is AppAction.AddAuthorizedDevice })
+    }
+
+    @Test
     fun forward_marks_the_sent_body_for_each_recipient_and_leaves_normal_messages_alone() {
         val appManager = createManager()
         val rust = rustFactory.instances.single()

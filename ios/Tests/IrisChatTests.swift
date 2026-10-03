@@ -2288,7 +2288,7 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
-    func testAddAuthorizedDeviceTrimsInputBeforeDispatch() async {
+    func testAddAuthorizedDevicePreservesHistoryChoiceAndTrimsInput() async {
         let rust = MockRustApp()
         let store = InMemorySecretStore()
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -2301,9 +2301,16 @@ final class IrisChatTests: XCTestCase {
         )
 
         await Task.yield()
-        manager.addAuthorizedDevice(deviceInput: "  device-hex  ")
-
-        XCTAssertEqual(rust.dispatchedActions.last, .addAuthorizedDevice(deviceInput: "device-hex"))
+        for includeMessageHistory in [true, false] {
+            manager.addAuthorizedDevice(deviceInput: "  device-link-code  ", includeMessageHistory: includeMessageHistory)
+            XCTAssertEqual(rust.dispatchedActions.last, .addAuthorizedDeviceWithHistory(
+                deviceInput: "device-link-code",
+                includeMessageHistory: includeMessageHistory
+            ))
+        }
+        let actionCount = rust.dispatchedActions.count
+        manager.addAuthorizedDevice(deviceInput: "  ", includeMessageHistory: true)
+        XCTAssertEqual(rust.dispatchedActions.count, actionCount)
     }
 
     @MainActor
@@ -2340,6 +2347,7 @@ final class IrisChatTests: XCTestCase {
         XCTAssertTrue(resolved.requiresConfirmation)
         XCTAssertFalse(rust.dispatchedActions.contains(where: {
             if case .addAuthorizedDevice = $0 { return true }
+            if case .addAuthorizedDeviceWithHistory = $0 { return true }
             return false
         }))
     }

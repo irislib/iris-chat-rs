@@ -123,11 +123,7 @@ fun DeviceRosterContent(
             resolved.errorMessage == null &&
             !appState.busy.updatingRoster
         ) {
-            if (resolved.requiresConfirmation) {
-                pendingDeviceConfirmation = resolved
-            } else {
-                appManager.addAuthorizedDevice(normalizedInput)
-            }
+            pendingDeviceConfirmation = resolved
             deviceInput = ""
         }
     }
@@ -269,13 +265,8 @@ fun DeviceRosterContent(
                     resolveDeviceAuthorizationInput(scanned)
                 if (resolved.errorMessage != null) {
                     resolved.errorMessage
-                } else if (resolved.requiresConfirmation) {
-                    pendingDeviceConfirmation = resolved
-                    deviceInput = ""
-                    showScanner = false
-                    null
                 } else {
-                    appManager.addAuthorizedDevice(resolved.deviceInput)
+                    pendingDeviceConfirmation = resolved
                     deviceInput = ""
                     showScanner = false
                     null
@@ -288,21 +279,30 @@ fun DeviceRosterContent(
         AlertDialog(
             onDismissRequest = { pendingDeviceConfirmation = null },
             title = { Text("Link this device?") },
-            text = { Text("This device will be able to use your profile.") },
+            text = { Text("Both options include your chats, groups, and new messages.") },
             dismissButton = {
                 IrisTextButton(onClick = { pendingDeviceConfirmation = null }) {
                     Text("Cancel")
                 }
             },
             confirmButton = {
-                IrisTextButton(
-                    onClick = {
-                        pendingDeviceConfirmation = null
-                        appManager.addAuthorizedDevice(pending.deviceInput)
-                    },
-                    modifier = Modifier.testTag("deviceRosterConfirmAdd"),
-                ) {
-                    Text("Link device")
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    IrisPrimaryButton(
+                        text = "Include message history",
+                        onClick = {
+                            pendingDeviceConfirmation = null
+                            appManager.addAuthorizedDevice(pending.deviceInput, includeMessageHistory = true)
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("deviceRosterConfirmAdd"),
+                    )
+                    IrisSecondaryButton(
+                        text = "Chats and groups only",
+                        onClick = {
+                            pendingDeviceConfirmation = null
+                            appManager.addAuthorizedDevice(pending.deviceInput, includeMessageHistory = false)
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("deviceRosterConfirmWithoutHistory"),
+                    )
                 }
             },
         )
@@ -511,7 +511,6 @@ private fun DeviceStateChip(
 private data class ResolvedDeviceAuthorizationInput(
     val deviceInput: String,
     val errorMessage: String?,
-    val requiresConfirmation: Boolean = false,
 )
 
 private fun resolveDeviceAuthorizationInput(rawInput: String): ResolvedDeviceAuthorizationInput {
@@ -524,7 +523,6 @@ private fun resolveDeviceAuthorizationInput(rawInput: String): ResolvedDeviceAut
         return ResolvedDeviceAuthorizationInput(
             deviceInput = trimmed,
             errorMessage = null,
-            requiresConfirmation = true,
         )
     }
 

@@ -206,7 +206,10 @@ final class InteropHarnessTests: XCTestCase {
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let deviceInput = try requiredEnv("IRIS_IOS_HARNESS_DEVICE_INPUT", env: env)
             let initialDeviceCount = manager.state.deviceRoster?.devices.count ?? 0
-            manager.addAuthorizedDevice(deviceInput: deviceInput)
+            manager.addAuthorizedDevice(
+                deviceInput: deviceInput,
+                includeMessageHistory: env["IRIS_IOS_HARNESS_INCLUDE_MESSAGE_HISTORY"] != "false"
+            )
             _ = try await waitFor(label: "device roster update", timeout: 90) {
                 let currentDeviceCount = manager.state.deviceRoster?.devices.count ?? 0
                 if currentDeviceCount > initialDeviceCount {

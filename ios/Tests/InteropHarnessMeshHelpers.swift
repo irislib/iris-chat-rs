@@ -191,7 +191,7 @@ extension InteropHarnessTests {
         statusMeshPeerSnapshot(linked, prefix: "link_invite")
 
         let deviceHex = peerInputToHex(input: link.deviceInput)
-        owner.manager.addAuthorizedDevice(deviceInput: link.url)
+        owner.manager.addAuthorizedDevice(deviceInput: link.url, includeMessageHistory: true)
         _ = try await waitFor(label: "\(owner.id) roster contains \(linked.id)", timeout: min(timeout, 90)) {
             self.meshRosterContainsDevice(owner, deviceHex: deviceHex) ? true : nil
         }

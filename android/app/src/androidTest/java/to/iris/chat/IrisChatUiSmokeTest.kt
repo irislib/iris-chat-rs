@@ -261,6 +261,15 @@ class IrisChatUiSmokeTest {
 
     @Test
     fun scan_device_approval_qr_authorizes_device() {
+        linkScannedDeviceWithChoice("deviceRosterConfirmAdd")
+    }
+
+    @Test
+    fun scan_device_approval_can_link_chats_and_groups_without_history() {
+        linkScannedDeviceWithChoice("deviceRosterConfirmWithoutHistory")
+    }
+
+    private fun openScannedDeviceConfirmation() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
         composeRule.openSettingsPage("settingsDevicesRow")
@@ -272,7 +281,33 @@ class IrisChatUiSmokeTest {
         }
         composeRule.onNodeWithTag("deviceRosterScanButton", useUnmergedTree = true).performClick()
         composeRule.waitForTag("deviceRosterConfirmAdd")
-        composeRule.onNodeWithTag("deviceRosterConfirmAdd", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithTag("deviceRosterConfirmAdd", useUnmergedTree = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag("deviceRosterConfirmWithoutHistory", useUnmergedTree = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("Include message history", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Chats and groups only", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun cancel_device_history_choice_does_not_link_device() {
+        openScannedDeviceConfirmation()
+        composeRule.waitForIdle()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+        File(instrumentation.targetContext.getExternalFilesDir("screenshots"), "link-device-history-choice.png")
+            .outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        screenshot.recycle()
+        composeRule.onNodeWithText("Cancel", useUnmergedTree = true).performClick()
+        composeRule.onAllNodesWithTag("deviceRosterConfirmAdd", useUnmergedTree = true)
+            .assertCountEquals(0)
+        val roster = (composeRule.activity.application as IrisChatApp).container.appManager.state.value.deviceRoster
+        assertFalse(roster?.devices?.any { it.deviceNpub == SECONDARY_DEVICE_NPUB && it.isAuthorized } == true)
+    }
+
+    private fun linkScannedDeviceWithChoice(choiceTag: String) {
+        openScannedDeviceConfirmation()
+        composeRule.onNodeWithTag(choiceTag, useUnmergedTree = true).performClick()
         composeRule.waitUntil(20_000) {
             val roster =
                 (composeRule.activity.application as IrisChatApp)

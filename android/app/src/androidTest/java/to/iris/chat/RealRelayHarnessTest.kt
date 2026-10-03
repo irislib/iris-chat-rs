@@ -499,7 +499,10 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
                 ?.count { device -> device.isAuthorized && !device.isStale }
                 ?: 0
 
-        appManager().addAuthorizedDevice(deviceInput)
+        appManager().addAuthorizedDevice(
+            deviceInput,
+            includeMessageHistory = optionalArg("include_message_history") != "false",
+        )
 
         val deviceCount =
             waitForState("authorized device in roster", timeoutMs = 90_000) {
@@ -540,7 +543,10 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
         val inviteUrl = requiredArg("invite_url")
         val initialDeviceCount = appManager().state.value.deviceRoster?.devices?.size ?: 0
 
-        appManager().addAuthorizedDevice(inviteUrl)
+        appManager().addAuthorizedDevice(
+            inviteUrl,
+            includeMessageHistory = optionalArg("include_message_history") != "false",
+        )
 
         val roster =
             waitForState("accepted link invite", timeoutMs = 90_000) {

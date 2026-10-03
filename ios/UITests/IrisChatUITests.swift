@@ -882,6 +882,32 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
         XCTAssertFalse(element(app, "chatListHeroCard").exists)
     }
 
+    func testLinkDeviceHistoryChoiceCanBeCancelled() throws {
+#if os(macOS)
+        throw XCTSkip("The device scanner is available on iOS")
+#else
+        let code = "nostr-identity://device-approval/eyJkZXZpY2VBcHBLZXlOcHViIjoibnB1YjFwMzRlZnpta2V3d2Rza3NtcHAycjB0azdxdWtlOWpjZmR6MnpsN2V6azh3bnNqNDN1ejJzOHg1c3A0IiwicmVxdWVzdE5wdWIiOiJucHViMTh3MzVnNmduNDdxd21yeXVseHp2ZnVjbXVqdnJxcWxqanBhcHlsOHgwcnFhbGpoNmYydXNtbDc3ZGoiLCJyZXF1ZXN0U2VjcmV0IjoiQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRSJ9"
+        let app = launchCleanApp(qrValue: code)
+        createAccount(app)
+        element(app, "chatListProfileButton").tap()
+        openSettingsPage(app, "settingsDevicesRow")
+        let scan = element(app, "deviceRosterScanButton")
+        XCTAssertTrue(scan.waitForExistence(timeout: 10))
+        scan.tap()
+        let history = app.buttons["Include message history"]
+        XCTAssertTrue(history.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Chats and groups only"].exists)
+        XCTAssertTrue(app.staticTexts["Both options include your chats, groups, and new messages."].exists)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "link-device-history-choice"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(waitUntil(timeout: 5) { !history.exists })
+        XCTAssertTrue(scan.exists)
+#endif
+    }
+
     func testLinkDeviceShowsScannableCode() throws {
         let app = launchCleanApp()
 

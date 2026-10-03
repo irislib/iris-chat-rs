@@ -383,12 +383,12 @@ class AppManager(
         dispatchToRust(AppAction.StartLinkedDevice(ownerInput.trim()))
     }
 
-    fun addAuthorizedDevice(deviceInput: String) {
+    fun addAuthorizedDevice(deviceInput: String, includeMessageHistory: Boolean) {
         val trimmed = deviceInput.trim()
         if (trimmed.isEmpty()) {
             return
         }
-        dispatchToRust(AppAction.AddAuthorizedDevice(trimmed))
+        dispatchToRust(AppAction.AddAuthorizedDeviceWithHistory(trimmed, includeMessageHistory))
     }
 
     fun removeAuthorizedDevice(devicePubkeyHex: String) {

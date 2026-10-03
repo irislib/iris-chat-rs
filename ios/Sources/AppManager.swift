@@ -2535,12 +2535,15 @@ final class AppManager: ObservableObject {
         dispatchToRust(.startLinkedDevice(ownerInput: ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)))
     }
 
-    func addAuthorizedDevice(deviceInput: String) {
+    func addAuthorizedDevice(deviceInput: String, includeMessageHistory: Bool) {
         let trimmed = deviceInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return
         }
-        dispatchToRust(.addAuthorizedDevice(deviceInput: trimmed))
+        dispatchToRust(.addAuthorizedDeviceWithHistory(
+            deviceInput: trimmed,
+            includeMessageHistory: includeMessageHistory
+        ))
     }
 
     func removeAuthorizedDevice(devicePubkeyHex: String) {

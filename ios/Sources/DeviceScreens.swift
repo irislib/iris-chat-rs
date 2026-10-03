@@ -187,13 +187,14 @@ struct DeviceRosterContent: View {
             Button("Cancel", role: .cancel) {
                 pendingDeviceConfirmation = nil
             }
-            Button("Link device") {
-                if let pending = pendingDeviceConfirmation {
-                    manager.addAuthorizedDevice(deviceInput: pending.deviceInput)
-                }
-                pendingDeviceConfirmation = nil
+            Button("Include message history") {
+                authorizePendingDevice(includeMessageHistory: true)
             }
             .accessibilityIdentifier("deviceRosterConfirmAdd")
+            Button("Chats and groups only") {
+                authorizePendingDevice(includeMessageHistory: false)
+            }
+            .accessibilityIdentifier("deviceRosterConfirmWithoutHistory")
         } message: {
             Text(linkDeviceConfirmationMessage(pendingDeviceConfirmation))
         }
@@ -208,12 +209,17 @@ struct DeviceRosterContent: View {
               !resolved.deviceInput.isEmpty else {
             return
         }
-        if resolved.requiresConfirmation {
-            pendingDeviceConfirmation = resolved
-        } else {
-            manager.addAuthorizedDevice(deviceInput: resolved.deviceInput)
-        }
+        pendingDeviceConfirmation = resolved
         deviceInput = ""
+    }
+
+    private func authorizePendingDevice(includeMessageHistory: Bool) {
+        guard let pending = pendingDeviceConfirmation else { return }
+        pendingDeviceConfirmation = nil
+        manager.addAuthorizedDevice(
+            deviceInput: pending.deviceInput,
+            includeMessageHistory: includeMessageHistory
+        )
     }
 }
 
@@ -222,7 +228,7 @@ private func linkDeviceConfirmationTitle(_: ResolvedDeviceAuthorizationInput?) -
 }
 
 private func linkDeviceConfirmationMessage(_: ResolvedDeviceAuthorizationInput?) -> String {
-    "This device will be able to use your profile."
+    "Both options include your chats, groups, and new messages."
 }
 
 struct DeviceRosterRow: View {
