@@ -260,6 +260,23 @@ impl AppCore {
         self.device_sync.as_mut().unwrap().history.record_limit = Some(limit.max(1));
     }
     pub(in crate::core) fn clear_device_history(&mut self, peer: &str) {
+        let cancelled = self.device_sync.as_ref().map_or_else(Vec::new, |runtime| {
+            runtime
+                .history
+                .sessions
+                .keys()
+                .filter(|(source, _)| source == peer)
+                .map(|(_, session)| DeviceSyncPacket::HistoryDone {
+                    v: 1,
+                    session: session.clone(),
+                })
+                .collect::<Vec<_>>()
+        });
+        // A metadata refresh can interrupt an advertised inventory. Close its
+        // remote half before the new PageEnd starts replacement reconciliation.
+        if !cancelled.is_empty() {
+            self.send_history_packets(peer, cancelled);
+        }
         if let Some(runtime) = &mut self.device_sync {
             runtime
                 .history
