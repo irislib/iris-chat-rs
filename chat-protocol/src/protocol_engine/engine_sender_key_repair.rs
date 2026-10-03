@@ -33,6 +33,16 @@ impl ProtocolEngine {
         }
 
         if !self.pending_group_sender_key_messages.contains(&parsed) {
+            // Direct-message probing can discover a new candidate after this
+            // stream's old backlog was already attempted. Admit that candidate
+            // once even if its key/revision inputs have not changed.
+            if let Some(message) = self.group_sender_key_message_from_parsed(&parsed) {
+                let fingerprint = group_sender_key_fingerprint(&message);
+                let mut retry = self.group_sender_key_retry.borrow_mut();
+                if retry.queued.insert(fingerprint.clone()) {
+                    retry.ready.push_back((parsed.sender_event_pubkey, fingerprint));
+                }
+            }
             self.pending_group_sender_key_messages.push(parsed);
             self.persist()?;
         }
@@ -111,21 +121,6 @@ impl ProtocolEngine {
 
         public_device(parsed.sender_event_pubkey)
             .is_ok_and(|author| self.is_known_message_author(author))
-    }
-
-    fn pending_group_sender_key_candidate_predates_known_distribution(
-        &self,
-        parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
-    ) -> bool {
-        self.group_manager
-            .snapshot()
-            .sender_keys
-            .iter()
-            .filter(|record| record.sender_event_pubkey == parsed.sender_event_pubkey)
-            .flat_map(|record| record.distribution_history.iter())
-            .map(|distribution| distribution.created_at.get())
-            .min()
-            .is_some_and(|first_distribution_at| parsed.created_at.get() < first_distribution_at)
     }
 
     fn inactive_local_group_id_for_sender_key_candidate(

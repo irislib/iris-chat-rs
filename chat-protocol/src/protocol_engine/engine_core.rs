@@ -30,6 +30,7 @@ impl ProtocolEngine {
             pending_group_sender_key_messages: Vec::new(),
             pending_group_sender_key_repairs: Vec::new(),
             processed_group_sender_key_messages: ProtocolGroupReplayCache::default(),
+            group_sender_key_retry: std::cell::RefCell::new(ProtocolGroupSenderKeyRetry::default()),
             answered_group_sender_key_repairs: Vec::new(),
             pending_decrypted_deliveries: Vec::new(),
             group_roster_fact_histories: BTreeMap::new(),
@@ -113,6 +114,7 @@ impl ProtocolEngine {
             pending_group_sender_key_messages: state.pending_group_sender_key_messages,
             pending_group_sender_key_repairs: state.pending_group_sender_key_repairs,
             processed_group_sender_key_messages: state.processed_group_sender_key_messages,
+            group_sender_key_retry: std::cell::RefCell::new(ProtocolGroupSenderKeyRetry::default()),
             answered_group_sender_key_repairs,
             pending_decrypted_deliveries: state.pending_decrypted_deliveries,
             group_roster_fact_histories: state.group_roster_fact_histories,
@@ -362,12 +364,15 @@ impl ProtocolEngine {
             || !self.pending_local_sibling_sends.is_empty()
             || !self.pending_remote_sends.is_empty()
             || !self.pending_group_pairwise_payloads.is_empty()
-            || self.has_pending_group_sender_key_retry_work()
+            || self.has_ready_group_sender_key_retry_work()
             || !self.pending_group_sender_key_repairs.is_empty()
     }
 
-    fn has_pending_group_sender_key_retry_work(&self) -> bool {
-        self.pending_group_sender_key_retry_count() > 0
+    /// Whether another bounded history-recovery pass can make progress now.
+    /// This excludes unchanged failed ciphertexts and ignores this batch's spent budget.
+    pub fn has_ready_group_sender_key_retry_work(&self) -> bool {
+        self.refresh_group_sender_key_retry_inputs();
+        !self.group_sender_key_retry.borrow().ready.is_empty()
     }
 
     fn pending_group_sender_key_retry_count(&self) -> usize {
@@ -929,6 +934,7 @@ impl ProtocolEngine {
             pending_group_sender_key_messages: self.pending_group_sender_key_messages.clone(),
             pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),
             processed_group_sender_key_messages: self.processed_group_sender_key_messages.clone(),
+            group_sender_key_retry: self.group_sender_key_retry.borrow().clone(),
             answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
             pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
             group_roster_fact_histories: self.group_roster_fact_histories.clone(),
@@ -953,6 +959,7 @@ impl ProtocolEngine {
         self.pending_group_sender_key_messages = checkpoint.pending_group_sender_key_messages;
         self.pending_group_sender_key_repairs = checkpoint.pending_group_sender_key_repairs;
         self.processed_group_sender_key_messages = checkpoint.processed_group_sender_key_messages;
+        self.group_sender_key_retry.replace(checkpoint.group_sender_key_retry);
         self.answered_group_sender_key_repairs = checkpoint.answered_group_sender_key_repairs;
         self.pending_decrypted_deliveries = checkpoint.pending_decrypted_deliveries;
         self.group_roster_fact_histories = checkpoint.group_roster_fact_histories;

@@ -59,6 +59,9 @@ impl ProtocolEngine {
     }
 
     pub fn enter_batch(&self) {
+        if self.batch_depth.get() == 0 {
+            self.group_sender_key_retry.borrow_mut().reset_budget();
+        }
         self.batch_depth
             .set(self.batch_depth.get().saturating_add(1));
     }

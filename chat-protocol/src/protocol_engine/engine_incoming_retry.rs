@@ -41,6 +41,7 @@ impl ProtocolEngine {
             || self.pending_group_sender_key_repairs.iter().any(|pending| {
                 Self::pending_group_sender_key_repair_due_at_secs(pending) <= now_secs
             })
+            || self.has_ready_group_sender_key_retry_work()
             || !self.pending_decrypted_deliveries.is_empty()
     }
 
@@ -178,7 +179,7 @@ impl ProtocolEngine {
             self.persist()?;
         }
         if !result.pending {
-            let retry = self.retry_pending_group_inputs(NdrUnixSeconds(unix_now().get()), false)?;
+            let retry = self.retry_pending_group_inputs(NdrUnixSeconds(unix_now().get()))?;
             result.events.extend(retry.events);
             result.effects.extend(retry.effects);
         }
@@ -291,6 +292,7 @@ impl ProtocolEngine {
             } else {
                 None
             };
+        let previous_groups = is_supported_group_payload.then(|| self.group_manager.snapshot());
         let result = match sender_device {
             Some(device_pubkey) => {
                 self.group_manager
@@ -302,6 +304,9 @@ impl ProtocolEngine {
         let now = NdrUnixSeconds(unix_now().get());
         match result {
             Ok(Some(event)) => {
+                let group_changed = previous_groups
+                    .as_ref()
+                    .is_some_and(|previous| *previous != self.group_manager.snapshot());
                 if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
                     let effects = self.sender_key_repair_response_effects(
                         repair.requester_owner,
@@ -316,7 +321,7 @@ impl ProtocolEngine {
                     });
                 }
                 let mut effects = Vec::new();
-                if forward_to_local_siblings && sender_owner != self.local_owner {
+                if group_changed && forward_to_local_siblings && sender_owner != self.local_owner {
                     if let GroupIncomingEvent::MetadataUpdated(group) = &event {
                         for pending in &mut self.pending_group_pairwise_payloads {
                             pending.next_retry_at_secs = 0;
@@ -337,14 +342,15 @@ impl ProtocolEngine {
                         );
                     }
                 }
-                let group_state_changed = matches!(event, GroupIncomingEvent::MetadataUpdated(_));
                 let mut events = vec![event];
-                let retry = self.retry_pending_group_inputs(now, group_state_changed)?;
+                let retry = self.retry_pending_group_inputs(now)?;
                 events.extend(retry.events);
                 effects.extend(retry.effects);
                 let fanout_retry = self.retry_pending_group_fanouts(now)?;
                 effects.extend(fanout_retry.effects);
-                self.persist()?;
+                if group_changed || !effects.is_empty() {
+                    self.persist()?;
+                }
                 Ok(ProtocolGroupIncomingResult {
                     events,
                     effects,
@@ -352,15 +358,10 @@ impl ProtocolEngine {
                     ..Default::default()
                 })
             }
-            Ok(None) => {
-                let retry = self.retry_pending_group_inputs(now, false)?;
-                Ok(ProtocolGroupIncomingResult {
-                    events: retry.events,
-                    effects: retry.effects,
-                    consumed: is_group_payload || retry.consumed,
-                    ..Default::default()
-                })
-            }
+            Ok(None) => Ok(ProtocolGroupIncomingResult {
+                consumed: is_group_payload,
+                ..Default::default()
+            }),
             Err(error) => {
                 if is_supported_group_payload {
                     self.queue_pending_group_pairwise_payload(
@@ -384,7 +385,7 @@ impl ProtocolEngine {
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<ProtocolRetryBatch> {
-        let group_result = self.retry_pending_group_inputs(now, false)?;
+        let group_result = self.retry_pending_group_inputs(now)?;
         let group_fanout_result = self.retry_pending_group_fanouts(now)?;
         let mut group_result = group_result;
         group_result.effects.extend(group_fanout_result.effects);
@@ -599,7 +600,6 @@ impl ProtocolEngine {
     fn retry_pending_group_inputs(
         &mut self,
         now: NdrUnixSeconds,
-        mut group_state_changed: bool,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
         let mut result = ProtocolGroupIncomingResult {
             consumed: false,
@@ -650,7 +650,6 @@ impl ProtocolEngine {
             };
             match outcome {
                 Ok(Some(event)) => {
-                    group_state_changed |= matches!(event, GroupIncomingEvent::MetadataUpdated(_));
                     if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
                         let effects = self.sender_key_repair_response_effects(
                             repair.requester_owner,
@@ -675,50 +674,15 @@ impl ProtocolEngine {
         }
         self.pending_group_pairwise_payloads = still_pairwise;
 
-        let sender_keys = std::mem::take(&mut self.pending_group_sender_key_messages);
-        let mut still_sender_keys = Vec::new();
-        for parsed in sender_keys {
-            if self
-                .inactive_local_group_id_for_sender_key_candidate(&parsed)
-                .is_some()
-            {
-                persist_needed = true;
-                continue;
-            }
-            let Some(message) = self.group_sender_key_message_from_parsed(&parsed) else {
-                if self.unmapped_group_sender_key_candidate_is_known_message_author(&parsed) {
-                    persist_needed = true;
-                    continue;
-                }
-                still_sender_keys.push(parsed);
-                continue;
-            };
-            if self.pending_group_sender_key_candidate_predates_known_distribution(&parsed) {
-                persist_needed = true;
-                continue;
-            }
-            // Re-decrypt only when new state can unlock the ciphertext. The
-            // durable repair queue below still retries requests on its backoff.
-            if !group_state_changed && self.group_sender_key_message_has_pending_repair(&message) {
-                still_sender_keys.push(parsed);
-                continue;
-            }
-            let outcome = self.handle_group_sender_key_message(message)?;
-            if outcome.pending {
-                still_sender_keys.push(parsed);
-            } else {
-                persist_needed = true;
-            }
-            result.events.extend(outcome.events);
-            result.effects.extend(outcome.effects);
-        }
-        self.pending_group_sender_key_messages = still_sender_keys;
+        let sender_keys = self.retry_eligible_group_sender_key_messages()?;
+        result.events.extend(sender_keys.events);
+        result.effects.extend(sender_keys.effects);
         let repair_effects = self.retry_pending_group_sender_key_repairs(now)?;
         if !repair_effects.is_empty() {
             result.effects.extend(repair_effects);
             persist_needed = true;
         }
-        if persist_needed || !result.events.is_empty() || !result.effects.is_empty() {
+        if persist_needed {
             self.persist()?;
         }
         Ok(result)
