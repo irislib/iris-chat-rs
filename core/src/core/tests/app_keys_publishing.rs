@@ -58,3 +58,55 @@ fn changed_local_roster_requires_new_revision_and_reuses_imported_signed_head() 
     core.cache_local_fips_identity(&imported);
     assert_eq!(core.signed_local_app_keys_snapshot(&roster, now + 2, &owner).unwrap(), imported);
 }
+
+#[test]
+fn nostrconnect_roster_repair_refuses_real_conflicts_and_replays_one_exact_head() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let client = Keys::generate();
+    let now = unix_now().get();
+    let roster = AppKeys::new(vec![DeviceEntry::new(device.public_key(), now - 20)]);
+    let first = roster.get_event_at(owner.public_key(), now - 1).sign_with_keys(&owner).unwrap();
+    let duplicate = roster.get_event_at(owner.public_key(), now - 1).sign_with_keys(&owner).unwrap();
+    let mut core = logged_in_test_core("roster-repair", &owner, &device);
+    core.app_keys.insert(owner.public_key().to_hex(), known_app_keys_from_ndr(owner.public_key(), &roster, now - 1));
+    let relay = crate::local_relay::TestRelay::start();
+    let uri = super::remote_signer_uri::client_connection_uri(&client,
+        &[RelayUrl::parse(relay.url()).unwrap()], "repair-challenge");
+    core.start_device_link_signer(&uri, false);
+    let token = core.pending_device_link_signer.as_ref().unwrap().token.clone();
+    let heads = vec![first.clone(), duplicate.clone()];
+    let repaired = core.prepare_device_link_roster_repair(&token, &heads).unwrap();
+    assert!(repaired.created_at > first.created_at);
+    let template = heads.iter().min_by_key(|event| event.id).unwrap();
+    assert_eq!(repaired.tags, template.tags);
+    assert_eq!(repaired.content, template.content);
+    assert_eq!(core.prepare_device_link_roster_repair(&token, &heads).unwrap(), repaired);
+    for change in ["membership", "join", "extra", "index", "subject", "duplicate_subject", "content"] {
+        let mut tags = duplicate.tags.clone().to_vec();
+        let mut content = String::new();
+        match change {
+            "membership" => tags.push(nostr::Tag::parse(["device".into(), Keys::generate().public_key().to_hex(), now.to_string()]).unwrap()),
+            "join" => {
+                tags.retain(|tag| tag.as_slice().first().is_none_or(|key| key != "device"));
+                tags.push(nostr::Tag::parse(["device".into(), device.public_key().to_hex(), now.to_string()]).unwrap());
+            }
+            "extra" => tags.push(nostr::Tag::parse(["extra", "value"]).unwrap()),
+            "index" => tags.push(nostr::Tag::public_key(Keys::generate().public_key())),
+            "subject" => {
+                tags.retain(|tag| tag.as_slice().first().is_none_or(|key| key != "i"));
+                tags.push(nostr::Tag::parse(["i", "not-the-profile", "subject"]).unwrap());
+            }
+            "duplicate_subject" => tags.push(nostr::Tag::parse(["d", &uuid::Uuid::new_v4().to_string()]).unwrap()),
+            "content" => content = "unexpected".into(),
+            _ => unreachable!(),
+        }
+        let changed = UnsignedEvent::new(owner.public_key(), duplicate.created_at, duplicate.kind, tags, content)
+            .sign_with_keys(&owner).unwrap();
+        assert!(core.prepare_device_link_roster_repair(&token, &[first.clone(), changed]).is_err(), "accepted {change}");
+    }
+    core.app_keys.get_mut(&owner.public_key().to_hex()).unwrap().created_at_secs = now + 1;
+    assert!(core.prepare_device_link_roster_repair(&token, &heads).is_err(), "local edits made during network preparation invalidate cached repair");
+    core.stop_device_link_signer();
+    assert!(core.prepare_device_link_roster_repair(&token, &heads).is_err());
+}

@@ -27,6 +27,16 @@ fn nostrconnect_device_link_preserves_private_history_choice_and_external_signer
             ),
         );
         publish_signer_test_event(&source, &relay, &old);
+        if include_history {
+            let duplicate = AppKeys::from_event(&old).unwrap()
+                .get_event_at(owner.public_key(), old.created_at.as_secs())
+                .sign_with_keys(&owner).unwrap();
+            assert_ne!(duplicate.id, old.id);
+            publish_signer_test_event(&source, &relay, &duplicate);
+            assert_eq!(source.runtime.block_on(super::account_signer_relay::fetch_signer_roster_heads(
+                owner.public_key(), &[RelayUrl::parse(relay.url()).unwrap()],
+            )).unwrap().len(), 2, "approval preparation sees every distinct authenticated head");
+        }
         let target_dir = tempfile::TempDir::new().unwrap();
         let (mut target, target_messages, _) =
             signer_test_core(target_dir.path(), vec![relay.url().into()]);

@@ -3,6 +3,8 @@ use nostr::EventId;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
+mod repair;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DeviceLinkInfo {
@@ -21,6 +23,7 @@ pub(super) struct PendingDeviceLinkSigner {
     completed: bool,
     deadline: Instant,
     signed: Option<(Event, DeviceLinkInfo, Option<EventId>)>,
+    repair: Option<(std::collections::BTreeSet<EventId>, Event)>,
     cancel: oneshot::Sender<()>,
 }
 
@@ -64,6 +67,7 @@ impl AppCore {
             completed: false,
             deadline: Instant::now() + Duration::from_secs(180),
             signed: None,
+            repair: None,
             cancel,
         });
         self.state.busy.updating_roster = true;

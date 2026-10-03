@@ -87,6 +87,7 @@ async fn serve(
             .is_empty(),
         "Device link unavailable."
     );
+    prepare_owner_roster(owner, roster_relays, token, tx).await?;
     response(
         client,
         keys,
@@ -227,4 +228,53 @@ async fn serve(
             return Ok(());
         }
     }
+}
+
+async fn prepare_owner_roster(
+    owner: PublicKey,
+    relays: &[RelayUrl],
+    token: &str,
+    tx: &Sender<CoreMsg>,
+) -> anyhow::Result<()> {
+    use super::account_signer_relay::{fetch_signer_roster_heads, publish_signer_roster_repair};
+    let heads = fetch_signer_roster_heads(owner, relays)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    if heads.len() <= 1 {
+        return Ok(());
+    }
+    let prepare = |heads: Vec<Event>| async {
+        let (reply, receiver) = oneshot::channel();
+        tx.send(CoreMsg::Internal(Box::new(
+            InternalEvent::DeviceLinkSignerRepair {
+                token: token.to_string(),
+                heads,
+                reply,
+            },
+        )))?;
+        receiver.await?.map_err(anyhow::Error::msg)
+    };
+    prepare(heads.clone()).await?;
+    let fresh = fetch_signer_roster_heads(owner, relays)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let ids = |heads: &[Event]| {
+        heads
+            .iter()
+            .map(|event| event.id)
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    anyhow::ensure!(
+        ids(&heads) == ids(&fresh),
+        "Device list changed. Try again."
+    );
+    // Recheck the currently authorized local membership immediately before publishing.
+    let event = prepare(fresh).await?;
+    publish_signer_roster_repair(owner, relays, &event)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    tx.send(CoreMsg::Internal(Box::new(InternalEvent::RelayEvent(
+        event,
+    ))))?;
+    Ok(())
 }

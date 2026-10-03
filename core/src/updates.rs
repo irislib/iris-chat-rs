@@ -107,6 +107,11 @@ pub(crate) struct CorePerfCountersSnapshot {
 
 #[derive(Debug)]
 pub(crate) enum InternalEvent {
+    DeviceLinkSignerRepair {
+        token: String,
+        heads: Vec<Event>,
+        reply: tokio::sync::oneshot::Sender<Result<Event, String>>,
+    },
     DeviceLinkSignerRequest {
         token: String,
         unsigned_event_json: String,

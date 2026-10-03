@@ -10,6 +10,23 @@ pub(super) async fn fetch_signer_roster(
     owner: PublicKey,
     relay_urls: &[RelayUrl],
 ) -> Result<Option<Event>, String> {
+    let mut index = VerifiedAppKeysIndex::default();
+    for event in fetch_signer_roster_heads(owner, relay_urls).await? {
+        index
+            .ingest(event, unix_now().get())
+            .map_err(|_| "Invalid device list from message server. Try again.".to_string())?;
+    }
+    let events = index.events_for_owner(owner);
+    if events.len() > 1 {
+        return Err("Conflicting device lists. Try again later.".into());
+    }
+    Ok(events.into_iter().next())
+}
+
+pub(super) async fn fetch_signer_roster_heads(
+    owner: PublicKey,
+    relay_urls: &[RelayUrl],
+) -> Result<Vec<Event>, String> {
     if relay_urls.is_empty() {
         return Err("No message servers available.".into());
     }
@@ -22,21 +39,27 @@ pub(super) async fn fetch_signer_roster(
     .await;
     client.shutdown().await;
     let mut index = VerifiedAppKeysIndex::default();
+    let mut heads = BTreeMap::new();
+    let mut newest = 0;
     for result in results {
         for event in result? {
             if event.pubkey != owner || !is_app_keys_event(&event) {
                 continue;
             }
             index
-                .ingest(event, unix_now().get())
+                .ingest(event.clone(), unix_now().get())
                 .map_err(|_| "Invalid device list from message server. Try again.".to_string())?;
+            let created_at = event.created_at.as_secs();
+            if created_at > newest {
+                heads.clear();
+                newest = created_at;
+            }
+            if created_at == newest {
+                heads.insert(event.id, event);
+            }
         }
     }
-    let events = index.events_for_owner(owner);
-    if events.len() > 1 {
-        return Err("Conflicting device lists. Try again later.".into());
-    }
-    Ok(events.into_iter().next())
+    Ok(heads.into_values().collect())
 }
 
 async fn fetch_signer_roster_from_relay(
@@ -134,4 +157,32 @@ pub(super) async fn publish_signer_authorization(
         return Err("Could not save device authorization. Try again.".into());
     }
     Ok(event)
+}
+
+pub(super) async fn publish_signer_roster_repair(
+    owner: PublicKey,
+    relay_urls: &[RelayUrl],
+    event: &Event,
+) -> Result<(), String> {
+    let client = Client::default();
+    let results = join_all(relay_urls.iter().map(|url| async {
+        tokio::time::timeout(SIGNER_RELAY_TIMEOUT, async {
+            client.add_relay(url.clone()).await?;
+            let relay = client.relay(url.clone()).await?;
+            relay.connect();
+            relay.send_event(event).await?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+    }))
+    .await;
+    client.shutdown().await;
+    if !results.iter().any(|result| matches!(result, Ok(Ok(())))) {
+        return Err("Could not save device list. Try again.".into());
+    }
+    let current = fetch_signer_roster_heads(owner, relay_urls).await?;
+    if !matches!(current.as_slice(), [current] if current.id == event.id) {
+        return Err("Device list changed. Try again.".into());
+    }
+    Ok(())
 }

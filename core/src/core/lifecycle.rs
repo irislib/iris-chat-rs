@@ -189,7 +189,8 @@ impl AppCore {
                 _ => "Action.other",
             },
             CoreMsg::Internal(event) => match event.as_ref() {
-                InternalEvent::DeviceLinkSignerRequest { .. }
+                InternalEvent::DeviceLinkSignerRepair { .. }
+                | InternalEvent::DeviceLinkSignerRequest { .. }
                 | InternalEvent::DeviceLinkSignerFinished { .. } => "DeviceLinkSigner",
                 InternalEvent::RemoteSignerProgress { .. }
                 | InternalEvent::RemoteSignerConnected { .. }
@@ -470,6 +471,16 @@ impl AppCore {
             return;
         }
         match event {
+            InternalEvent::DeviceLinkSignerRepair {
+                token,
+                heads,
+                reply,
+            } => {
+                let result = self
+                    .prepare_device_link_roster_repair(&token, &heads)
+                    .map_err(|_| "Device list repair rejected.".to_string());
+                let _ = reply.send(result);
+            }
             InternalEvent::DeviceLinkSignerRequest {
                 token,
                 unsigned_event_json,
