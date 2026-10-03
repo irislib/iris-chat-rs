@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- Reject linked-device group copies whose protocol conflicts with authenticated
+  group history. Preserve valid metadata changes, removals, signed protocol
+  changes, and recovery of a previously corrupted local copy.
+
 ## 0.2.0
 
 - Replace ambiguous sender-and-second acknowledgements with bounded, durable
