@@ -182,6 +182,7 @@ struct KnownMessageAuthorCache {
     pubkeys: Vec<PublicKey>,
     pubkey_set: HashSet<PublicKey>,
     hexes: HashSet<String>,
+    usable_session_owners: HashSet<PublicKey>,
 }
 
 #[derive(Clone, Debug, Default)]

@@ -31,38 +31,50 @@ impl AppCore {
         chat_id: &str,
         kind: &ChatKind,
     ) -> Option<DirectChatCapabilityState> {
-        matches!(kind, ChatKind::Direct).then(|| self.direct_chat_capability_state(chat_id))
+        matches!(kind, ChatKind::Direct)
+            .then(|| self.direct_chat_capability_state(chat_id))
+            .flatten()
+    }
+
+    fn direct_chat_is_available(&self, owner_pubkey_hex: &str) -> bool {
+        match self.app_keys.get(owner_pubkey_hex) {
+            // An authoritative empty device list must not revive revoked sessions.
+            Some(known) => !known.devices.is_empty(),
+            None => PublicKey::parse(owner_pubkey_hex).is_ok_and(|owner| {
+                self.protocol_engine
+                    .as_ref()
+                    .is_some_and(|engine| engine.has_usable_direct_session_for_owner(owner))
+            }),
+        }
     }
 
     pub(super) fn direct_chat_capability_state(
         &self,
         owner_pubkey_hex: &str,
-    ) -> DirectChatCapabilityState {
+    ) -> Option<DirectChatCapabilityState> {
         let runtime_state = self
             .direct_chat_capability_runtime
             .current
             .as_ref()
             .filter(|check| check.owner_pubkey_hex == owner_pubkey_hex)
             .map(|check| check.state);
-        if self
-            .app_keys
-            .get(owner_pubkey_hex)
-            .is_some_and(|known| !known.devices.is_empty())
-        {
-            return DirectChatCapabilityState::Available;
+        if self.direct_chat_is_available(owner_pubkey_hex) {
+            return Some(DirectChatCapabilityState::Available);
         }
         match runtime_state {
             Some(DirectChatCapabilityCheckState::CheckFailed) => {
-                DirectChatCapabilityState::CheckFailed
+                Some(DirectChatCapabilityState::CheckFailed)
             }
             Some(DirectChatCapabilityCheckState::Unavailable) => {
-                DirectChatCapabilityState::Unavailable
+                Some(DirectChatCapabilityState::Unavailable)
             }
-            Some(DirectChatCapabilityCheckState::Checking) => DirectChatCapabilityState::Checking,
+            Some(DirectChatCapabilityCheckState::Checking) => {
+                Some(DirectChatCapabilityState::Checking)
+            }
             None if self.app_keys.contains_key(owner_pubkey_hex) => {
-                DirectChatCapabilityState::Unavailable
+                Some(DirectChatCapabilityState::Unavailable)
             }
-            None => DirectChatCapabilityState::Checking,
+            None => None,
         }
     }
 
@@ -74,11 +86,7 @@ impl AppCore {
         let Ok(owner) = PublicKey::parse(owner_pubkey_hex) else {
             return false;
         };
-        if self
-            .app_keys
-            .get(owner_pubkey_hex)
-            .is_some_and(|known| !known.devices.is_empty())
-        {
+        if self.direct_chat_is_available(owner_pubkey_hex) {
             self.direct_chat_capability_runtime.current = None;
             return false;
         }

@@ -29,6 +29,7 @@ mod tests {
     include!("protocol_engine/local_sibling_send_tests.rs");
     include!("protocol_engine/pending_retirement_tests.rs");
     include!("protocol_engine/remote_send_tests.rs");
+    include!("protocol_engine/session_readiness_tests.rs");
     include!("protocol_engine/receive_session_fallback_tests.rs");
     include!("protocol_engine/incident_first_contact_tests.rs");
 

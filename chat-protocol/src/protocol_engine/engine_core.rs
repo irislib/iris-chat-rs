@@ -481,7 +481,15 @@ impl ProtocolEngine {
     where
         F: Fn(PublicKey) -> bool,
     {
+        self.message_session_projection(accept_owner).0
+    }
+
+    fn message_session_projection<F>(&self, accept_owner: F) -> (Vec<PublicKey>, HashSet<PublicKey>)
+    where
+        F: Fn(PublicKey) -> bool,
+    {
         let mut authors = HashSet::new();
+        let mut usable_session_owners = HashSet::new();
         for user in self.session_manager.snapshot().users {
             let Ok(owner) = PublicKey::parse(&user.owner_pubkey.to_string()) else {
                 continue;
@@ -501,17 +509,26 @@ impl ProtocolEngine {
                 {
                     continue;
                 }
-                if let Some(session) = device.active_session.as_ref() {
+                for session in device.active_session.iter().chain(&device.inactive_sessions) {
                     collect_expected_sender_pubkeys(session, &mut authors);
-                }
-                for session in &device.inactive_sessions {
-                    collect_expected_sender_pubkeys(session, &mut authors);
+                    // Match NDR Session::can_send without cloning a ratchet to query it.
+                    if session.their_next_nostr_public_key.is_some()
+                        && session.our_current_nostr_key.is_some()
+                    {
+                        usable_session_owners.insert(owner);
+                    }
                 }
             }
         }
         let mut authors = authors.into_iter().collect::<Vec<_>>();
         authors.sort_unstable();
-        authors
+        (authors, usable_session_owners)
+    }
+
+    /// Whether an authorized, verified peer device has a send-capable session.
+    /// Shares the message-author projection and its session/roster invalidation.
+    pub fn has_usable_direct_session_for_owner(&self, owner: PublicKey) -> bool {
+        self.with_known_message_author_cache(|cache| cache.usable_session_owners.contains(&owner))
     }
 
     pub fn is_known_message_author(&self, author: PublicKey) -> bool {
@@ -535,11 +552,12 @@ impl ProtocolEngine {
         self.known_message_author_cache_build_count
             .set(self.known_message_author_cache_build_count.get() + 1);
 
-        let pubkeys = self.message_author_pubkeys_filtered(|_| true);
+        let (pubkeys, usable_session_owners) = self.message_session_projection(|_| true);
         KnownMessageAuthorCache {
             pubkey_set: pubkeys.iter().copied().collect(),
             hexes: pubkeys.iter().map(|pubkey| pubkey.to_hex()).collect(),
             pubkeys,
+            usable_session_owners,
         }
     }
 

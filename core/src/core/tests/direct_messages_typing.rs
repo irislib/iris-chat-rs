@@ -23,7 +23,7 @@ fn opening_uncached_direct_chat_starts_targeted_profile_fetch() {
     );
     assert_eq!(
         core.direct_chat_capability_state(&peer_hex),
-        DirectChatCapabilityState::Checking,
+        Some(DirectChatCapabilityState::Checking),
         "the composer stays gated while exact owner-signed AppKeys are fetched"
     );
     assert!(

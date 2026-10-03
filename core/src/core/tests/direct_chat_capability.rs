@@ -27,6 +27,119 @@ fn prime_capability_check(core: &mut AppCore, owner: PublicKey) -> (u64, u64) {
     (core.direct_chat_capability_runtime.generation, token)
 }
 
+fn direct_capability_session_core(receive_only: bool) -> (AppCore, Keys, Keys) {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("direct-capability-session", &owner, &device);
+    let engine = core.protocol_engine.as_mut().unwrap();
+    observe_peer_appkeys_for_test(engine, &peer, &[peer_device.public_key()], 1);
+    let mut session = established_peer_session_state_for_test(&peer_device, &device);
+    if receive_only {
+        session.our_current_nostr_key = None;
+    }
+    engine
+        .import_session_state(
+            peer.public_key(),
+            Some(peer_device.public_key().to_hex()),
+            session,
+            UnixSeconds(2),
+        )
+        .unwrap();
+    assert!(!core.app_keys.contains_key(&peer.public_key().to_hex()));
+    assert!(core.logged_in.as_ref().unwrap().relay_urls.is_empty());
+    (core, peer, peer_device)
+}
+
+#[test]
+fn direct_capability_existing_authenticated_session_opens_offline_without_lookup() {
+    let (mut core, peer, _) = direct_capability_session_core(false);
+    let chat_id = peer.public_key().to_hex();
+    prime_capability_check(&mut core, peer.public_key());
+    core.open_chat(&chat_id);
+
+    assert_eq!(
+        core.state.current_chat.as_ref().unwrap().direct_chat_capability,
+        Some(DirectChatCapabilityState::Available),
+        "the protocol's authenticated session is sufficient even without the app-key UI cache"
+    );
+    assert!(core.direct_chat_capability_runtime.current.is_none());
+    assert!(!core.request_direct_chat_capability_check(&chat_id, true));
+}
+
+#[test]
+fn direct_capability_unknown_peer_only_checks_when_lookup_starts() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let chat_id = peer.public_key().to_hex();
+    let mut core = logged_in_test_core("direct-capability-unknown", &owner, &device);
+    core.ensure_thread_record(&chat_id, 1).messages.push(test_chat_message(
+        &chat_id, "old-message", "old history is not a session", 1, false,
+    ));
+    assert_eq!(core.chat_capability(&chat_id, &ChatKind::Direct), None);
+
+    core.logged_in.as_mut().unwrap().relay_urls = vec!["ws://127.0.0.1:9".parse().unwrap()];
+    assert!(core.request_direct_chat_capability_check(&chat_id, false));
+    assert_eq!(
+        core.chat_capability(&chat_id, &ChatKind::Direct),
+        Some(DirectChatCapabilityState::Checking)
+    );
+}
+
+#[test]
+fn direct_capability_receive_only_session_does_not_skip_lookup() {
+    let (mut core, peer, _) = direct_capability_session_core(true);
+    let chat_id = peer.public_key().to_hex();
+    assert!(core.request_direct_chat_capability_check(&chat_id, false));
+    assert_eq!(
+        core.chat_capability(&chat_id, &ChatKind::Direct),
+        Some(DirectChatCapabilityState::CheckFailed),
+        "a receive-only session still needs discovery; no message servers means retry"
+    );
+}
+
+#[test]
+fn direct_capability_existing_session_cannot_override_authoritative_revocation() {
+    let (mut core, peer, _) = direct_capability_session_core(false);
+    let chat_id = peer.public_key().to_hex();
+    assert_eq!(
+        core.chat_capability(&chat_id, &ChatKind::Direct),
+        Some(DirectChatCapabilityState::Available)
+    );
+    core.handle_relay_event(app_keys_event(&peer, &[], 3));
+    assert_eq!(
+        core.chat_capability(&chat_id, &ChatKind::Direct),
+        Some(DirectChatCapabilityState::Unavailable)
+    );
+    core.app_keys.remove(&chat_id);
+    core.reset_direct_chat_capability_runtime();
+    assert_ne!(
+        core.chat_capability(&chat_id, &ChatKind::Direct),
+        Some(DirectChatCapabilityState::Available),
+        "removing the UI cache cannot revive protocol-revoked sessions"
+    );
+}
+
+#[test]
+fn direct_capability_optimistic_page_does_not_invent_a_lookup() {
+    let (mut core, peer, _) = direct_capability_session_core(false);
+    let chat_id = peer.public_key().to_hex();
+    core.ensure_thread_record(&chat_id, 1);
+    core.rebuild_state();
+    assert!(core.state.current_chat.is_none());
+    let shared = core.app_store.shared();
+    let provisional = chat_snapshot_from_state_and_db(&core.state, Some(&shared), &chat_id, 80)
+        .expect("local chat page");
+    assert_eq!(provisional.direct_chat_capability, None);
+
+    core.open_chat(&chat_id);
+    let resolved = chat_snapshot_from_state_and_db(&core.state, Some(&shared), &chat_id, 80)
+        .expect("resolved chat page");
+    assert_eq!(resolved.direct_chat_capability, Some(DirectChatCapabilityState::Available));
+}
+
 #[test]
 fn direct_capability_requires_a_verified_unique_current_nonempty_head() {
     let owner = Keys::generate();
@@ -115,7 +228,7 @@ fn direct_capability_completion_unlocks_only_nonempty_app_keys() {
     );
     assert_eq!(
         core.direct_chat_capability_state(&peer_hex),
-        DirectChatCapabilityState::Available
+        Some(DirectChatCapabilityState::Available)
     );
     assert_eq!(
         core.state
@@ -138,7 +251,7 @@ fn direct_capability_completion_unlocks_only_nonempty_app_keys() {
     );
     assert_eq!(
         core.direct_chat_capability_state(&peer_hex),
-        DirectChatCapabilityState::Unavailable
+        Some(DirectChatCapabilityState::Unavailable)
     );
 
     let (generation, token) = prime_capability_check(&mut core, peer_owner.public_key());
@@ -150,7 +263,7 @@ fn direct_capability_completion_unlocks_only_nonempty_app_keys() {
     );
     assert_eq!(
         core.direct_chat_capability_state(&peer_hex),
-        DirectChatCapabilityState::CheckFailed
+        Some(DirectChatCapabilityState::CheckFailed)
     );
 }
 
@@ -179,7 +292,7 @@ fn direct_capability_completion_is_invalidated_on_account_reset() {
     assert!(!core.app_keys.contains_key(&peer_hex));
     assert_eq!(
         core.direct_chat_capability_state(&peer_hex),
-        DirectChatCapabilityState::Checking
+        None
     );
 }
 
@@ -208,7 +321,7 @@ fn direct_capability_completion_is_latest_chat_wins() {
     assert!(!core.app_keys.contains_key(&old_peer.public_key().to_hex()));
     assert_eq!(
         core.direct_chat_capability_state(&current_peer.public_key().to_hex()),
-        DirectChatCapabilityState::Checking
+        Some(DirectChatCapabilityState::Checking)
     );
 }
 
@@ -225,7 +338,7 @@ fn direct_capability_unlocks_when_subscription_finds_devices_during_check() {
 
     assert_eq!(
         core.direct_chat_capability_state(&peer.public_key().to_hex()),
-        DirectChatCapabilityState::Available,
+        Some(DirectChatCapabilityState::Available),
         "verified devices arriving through a subscription must unlock the composer"
     );
 }
@@ -250,7 +363,7 @@ fn direct_capability_completion_with_stale_devices_finishes_unavailable() {
 
     assert_eq!(
         core.direct_chat_capability_state(&peer.public_key().to_hex()),
-        DirectChatCapabilityState::Unavailable,
+        Some(DirectChatCapabilityState::Unavailable),
         "a completed lookup must not keep checking or revive revoked devices"
     );
 }
@@ -276,7 +389,7 @@ fn direct_capability_completion_restores_seen_devices_missing_from_app_cache() {
 
     assert_eq!(
         core.direct_chat_capability_state(&peer.public_key().to_hex()),
-        DirectChatCapabilityState::Available,
+        Some(DirectChatCapabilityState::Available),
         "event deduplication must not prevent rebuilding the device cache"
     );
 }
@@ -306,7 +419,7 @@ fn direct_capability_resumes_after_completion_was_dropped_while_suspended() {
 
     assert_eq!(
         core.direct_chat_capability_state(&peer_hex),
-        DirectChatCapabilityState::CheckFailed,
+        Some(DirectChatCapabilityState::CheckFailed),
         "resuming without message servers must expose retry, not wait on a dropped completion"
     );
     core.handle_direct_chat_capability_fetch_finished(

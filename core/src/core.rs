@@ -378,10 +378,7 @@ fn build_chat_snapshot_with_messages(
         .current_chat
         .as_ref()
         .filter(|chat| chat.chat_id == chat_id)
-        .and_then(|chat| chat.direct_chat_capability.clone())
-        .or_else(|| {
-            matches!(kind, ChatKind::Direct).then_some(DirectChatCapabilityState::Checking)
-        });
+        .and_then(|chat| chat.direct_chat_capability.clone());
     Some(CurrentChatSnapshot {
         contact_identity: state
             .current_chat
