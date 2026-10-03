@@ -201,15 +201,20 @@ impl ProtocolEngine {
             }
         }
 
-        let pending_inbound_ids = self
-            .pending_inbound
-            .iter()
-            .filter(|pending| self.pending_inbound_matches_owner(pending, owner))
-            .map(|pending| pending.event.id)
-            .collect::<HashSet<_>>();
-        for pending in &mut self.pending_inbound {
-            if pending_inbound_ids.contains(&pending.event.id) {
-                pending.next_retry_at_secs = 0;
+        if !self.pending_inbound.is_empty() {
+            // Resolve the whole queue against one consistent session snapshot.
+            // Copying every ratchet again for each event stalls foreground work.
+            let snapshot = self.session_manager.snapshot();
+            let pending_inbound_ids = self
+                .pending_inbound
+                .iter()
+                .filter(|pending| self.pending_inbound_matches_owner(pending, owner, &snapshot))
+                .map(|pending| pending.event.id)
+                .collect::<HashSet<_>>();
+            for pending in &mut self.pending_inbound {
+                if pending_inbound_ids.contains(&pending.event.id) {
+                    pending.next_retry_at_secs = 0;
+                }
             }
         }
 
@@ -562,6 +567,7 @@ impl ProtocolEngine {
         &self,
         pending: &ProtocolPendingInbound,
         owner: NdrOwnerPubkey,
+        snapshot: &SessionManagerSnapshot,
     ) -> bool {
         let owner_hex = owner.to_hex();
         if pending
@@ -578,7 +584,7 @@ impl ProtocolEngine {
         pending_inbound_sender_pubkey(pending)
             .map(|sender| {
                 sender_resolution_owner_matches(
-                    self.resolve_message_sender_owner_for_sender(sender),
+                    self.resolve_message_sender_owner_with_snapshot(sender, snapshot),
                     owner,
                 )
             })
