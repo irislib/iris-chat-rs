@@ -61,7 +61,7 @@ struct TruncatableMessageBody: View {
     }
 }
 
-private extension View {
+extension View {
     @ViewBuilder
     func irisDesktopTextSelection() -> some View {
 #if canImport(AppKit)
