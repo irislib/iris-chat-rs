@@ -275,6 +275,8 @@ fn first_call_wake_fetches_acked_bootstrap_and_reordered_ciphertext_recovers_wit
             Err(error) => panic!("wake connection failed: {error}"),
         }
     };
+    // Accepted sockets inherit the listener's nonblocking mode on macOS.
+    stream.set_nonblocking(false).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
