@@ -67,9 +67,8 @@ impl AppCore {
             .get(&logged_in.owner_pubkey.to_hex())
             .map(|known| known.created_at_secs)
             .unwrap_or_else(|| unix_now().get());
-        let app_keys_event = local_app_keys
-            .get_event_at(owner_keys.public_key(), created_at)
-            .sign_with_keys(owner_keys)?;
+        let app_keys_event =
+            self.signed_local_app_keys_snapshot(&local_app_keys, created_at, owner_keys)?;
         self.runtime.block_on(async {
             let (app_keys_result, response_result) = tokio::join!(
                 publish_event_to_any_relay_raw(

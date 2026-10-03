@@ -49,10 +49,11 @@ impl AppCore {
         let Some(local_app_keys) = self.app_keys.get(&owner_pubkey.to_hex()).cloned() else {
             return false;
         };
-        let event = match known_app_keys_to_ndr(&local_app_keys)
-            .get_event_at(owner_keys.public_key(), local_app_keys.created_at_secs)
-            .sign_with_keys(&owner_keys)
-        {
+        let event = match self.signed_local_app_keys_snapshot(
+            &known_app_keys_to_ndr(&local_app_keys),
+            local_app_keys.created_at_secs,
+            &owner_keys,
+        ) {
             Ok(event) => event,
             Err(error) => {
                 self.push_debug_log("publish.app_keys", error.to_string());

@@ -127,6 +127,7 @@ include!("tests/protocol_filters_push.rs");
 include!("tests/device_approval.rs");
 include!("tests/app_keys_roster.rs");
 include!("tests/app_keys_device_labels.rs");
+include!("tests/app_keys_publishing.rs");
 include!("tests/app_keys_invites_requests.rs");
 include!("tests/direct_message_request_acceptance.rs");
 include!("tests/pending_device_link.rs");

@@ -4,6 +4,50 @@ type LabeledIdentityEvents = Vec<(&'static str, Event)>;
 type LocalIdentityArtifacts = (LabeledIdentityEvents, LabeledIdentityEvents);
 
 impl AppCore {
+    pub(super) fn signed_local_app_keys_snapshot(
+        &self,
+        app_keys: &AppKeys,
+        created_at: u64,
+        keys: &Keys,
+    ) -> anyhow::Result<Event> {
+        let owner = keys.public_key();
+        anyhow::ensure!(
+            self.logged_in
+                .as_ref()
+                .is_some_and(|login| login.owner_pubkey == owner),
+            "Local authorization account changed."
+        );
+        if let Some(cached) =
+            self.cached_local_fips_identity(Kind::Custom(APP_KEYS_EVENT_KIND as u16))
+        {
+            if cached.created_at.as_secs() == created_at
+                && !private_device_labels::obsolete_private_app_keys_event(&cached)
+                && AppKeys::from_event(&cached)
+                    .is_ok_and(|known| roster_membership(&known) == roster_membership(app_keys))
+            {
+                return Ok(cached);
+            }
+            anyhow::ensure!(
+                cached.created_at.as_secs() < created_at,
+                "Local authorization revision did not advance."
+            );
+        }
+        // The shared fact builder gives every new snapshot a random subject UUID.
+        // Save its exact signed event before exposing it to any publication path;
+        // repeating an unchanged snapshot must not create competing signed heads.
+        let event = app_keys
+            .get_event_at(owner, created_at)
+            .sign_with_keys(keys)?;
+        let storage = self
+            .local_fips_identity_storage()
+            .ok_or_else(|| anyhow::anyhow!("Local authorization storage is unavailable."))?;
+        storage.put(
+            &format!("appcore/nearby-identity-v1/{}", APP_KEYS_EVENT_KIND),
+            serde_json::to_string(&event)?,
+        )?;
+        Ok(event)
+    }
+
     pub(super) fn sync_local_app_keys_to_protocol_engine(&mut self, label: &'static str) {
         let Some((owner, app_keys, created_at, owner_keys)) =
             self.logged_in.as_ref().and_then(|logged_in| {
@@ -19,17 +63,15 @@ impl AppCore {
             return;
         };
 
+        // Keep the same durable proof used by every publication path. Linked
+        // devices retain the owner signature received during approval.
+        let signed = owner_keys
+            .filter(|_| !self.defer_owner_app_keys_publish)
+            .and_then(|keys| {
+                self.signed_local_app_keys_snapshot(&app_keys, created_at, &keys)
+                    .ok()
+            });
         if let Some(protocol_engine) = self.protocol_engine.as_mut() {
-            // Keep a locally signed proof before publishing. Linked devices reuse
-            // the exact proof received during approval and never need owner keys.
-            let signed = owner_keys
-                .filter(|_| !self.defer_owner_app_keys_publish)
-                .and_then(|keys| {
-                    app_keys
-                        .get_event_at(keys.public_key(), created_at)
-                        .sign_with_keys(&keys)
-                        .ok()
-                });
             let result = if let Some(event) = signed {
                 protocol_engine.ingest_app_keys_event(&event)
             } else {
@@ -90,9 +132,11 @@ impl AppCore {
         }
 
         if let (true, Some(keys), Some(app_keys)) = (publish_app_keys, owner_keys, local_app_keys) {
-            let unsigned = known_app_keys_to_ndr(&app_keys)
-                .get_event_at(keys.public_key(), app_keys.created_at_secs);
-            if let Ok(event) = unsigned.sign_with_keys(&keys) {
+            if let Ok(event) = self.signed_local_app_keys_snapshot(
+                &known_app_keys_to_ndr(&app_keys),
+                app_keys.created_at_secs,
+                &keys,
+            ) {
                 durable_events.push(("app-keys", event));
             }
         }
@@ -177,4 +221,12 @@ impl AppCore {
         self.sync_local_app_keys_if_needed();
         self.publish_local_identity_artifacts();
     }
+}
+
+fn roster_membership(app_keys: &AppKeys) -> BTreeMap<PublicKey, u64> {
+    app_keys
+        .get_all_devices()
+        .into_iter()
+        .map(|device| (device.identity_pubkey, device.created_at))
+        .collect()
 }

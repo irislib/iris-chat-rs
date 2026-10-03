@@ -323,7 +323,7 @@ impl AppCore {
         });
     }
 
-    fn local_fips_identity_storage(&self) -> Option<SqliteStorageAdapter> {
+    pub(super) fn local_fips_identity_storage(&self) -> Option<SqliteStorageAdapter> {
         let login = self.logged_in.as_ref()?;
         Some(SqliteStorageAdapter::new(
             self.app_store.shared(),
@@ -332,7 +332,7 @@ impl AppCore {
         ))
     }
 
-    fn cached_local_fips_identity(&self, kind: Kind) -> Option<Event> {
+    pub(super) fn cached_local_fips_identity(&self, kind: Kind) -> Option<Event> {
         let login = self.logged_in.as_ref()?;
         let key = format!("appcore/nearby-identity-v1/{}", kind.as_u16());
         let json = self.local_fips_identity_storage()?.get(&key).ok()??;
@@ -408,9 +408,7 @@ impl AppCore {
                 Some(created_at),
             );
         }
-        app_keys
-            .get_event_at(owner_keys.public_key(), created_at)
-            .sign_with_keys(owner_keys)
+        self.signed_local_app_keys_snapshot(&app_keys, created_at, owner_keys)
             .ok()
     }
 
