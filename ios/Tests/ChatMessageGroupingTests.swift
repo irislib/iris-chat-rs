@@ -97,7 +97,7 @@ final class ChatMessageGroupingTests: XCTestCase {
             var frames: [String: CGRect] = [:]
             let content = VStack(spacing: 0) {
                 ForEach(Array(messages.enumerated()), id: \.element.id) { index, item in
-                    clusterRow(item, previous: index > 0 ? messages[index - 1] : nil,
+                    self.clusterRow(item, previous: index > 0 ? messages[index - 1] : nil,
                                next: index + 1 < messages.count ? messages[index + 1] : nil)
                 }
             }
