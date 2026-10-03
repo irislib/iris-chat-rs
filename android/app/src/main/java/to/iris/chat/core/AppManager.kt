@@ -53,6 +53,7 @@ import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.CurrentChatSnapshot
 import to.iris.chat.rust.DeviceAuthorizationState
 import to.iris.chat.rust.DeviceRosterSnapshot
+import to.iris.chat.rust.DeviceHistorySyncSnapshot
 import to.iris.chat.rust.DesktopNearbySnapshot
 import to.iris.chat.rust.GroupDetailsSnapshot
 import to.iris.chat.rust.NetworkStatusSnapshot
@@ -289,6 +290,8 @@ class AppManager(
     val account: StateFlow<AccountSnapshot?> = slice { it.account }
     val deviceRoster: StateFlow<DeviceRosterSnapshot?> =
         slice { it.deviceRoster }
+    val deviceHistorySync: StateFlow<DeviceHistorySyncSnapshot?> =
+        slice { it.deviceHistorySync }
     val busy: StateFlow<BusyState> = slice { it.busy }
     val chatList: StateFlow<List<ChatThreadSnapshot>> =
         slice { it.chatList }

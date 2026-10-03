@@ -280,11 +280,6 @@ fun DeviceRosterContent(
             onDismissRequest = { pendingDeviceConfirmation = null },
             title = { Text("Link this device?") },
             text = { Text("Both options include your chats, groups, and new messages.") },
-            dismissButton = {
-                IrisTextButton(onClick = { pendingDeviceConfirmation = null }) {
-                    Text("Cancel")
-                }
-            },
             confirmButton = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     IrisPrimaryButton(
@@ -303,6 +298,12 @@ fun DeviceRosterContent(
                         },
                         modifier = Modifier.fillMaxWidth().testTag("deviceRosterConfirmWithoutHistory"),
                     )
+                    IrisTextButton(
+                        onClick = { pendingDeviceConfirmation = null },
+                        modifier = Modifier.align(Alignment.End),
+                    ) {
+                        Text("Cancel")
+                    }
                 }
             },
         )

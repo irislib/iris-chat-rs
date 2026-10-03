@@ -66,6 +66,7 @@ final class MockRustApp: RustAppClient {
         router: Router(defaultScreen: .welcome, screenStack: []),
         account: nil,
         deviceRoster: nil,
+        deviceHistorySync: nil,
         busy: BusyState(
             creatingAccount: false,
             restoringSession: false,

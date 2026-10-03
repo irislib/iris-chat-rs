@@ -32,6 +32,7 @@ struct SettingsScreen: View {
     @State private var supportBundleShareItem: SupportBundleShareItem?
     @State private var deviceRosterInput = ""
     @State private var showingDeviceRosterScanner = false
+    @State private var scannedDeviceInput: String?
     @State private var showingCallQuality = false
 
     init(
@@ -76,10 +77,15 @@ struct SettingsScreen: View {
         .sheet(isPresented: $showingCallQuality) {
             IrisCallQualitySheet(controller: manager.calls)
         }
-        .sheet(isPresented: $showingDeviceRosterScanner) {
+        .sheet(isPresented: $showingDeviceRosterScanner, onDismiss: {
+            if let scannedDeviceInput {
+                deviceRosterInput = scannedDeviceInput
+                self.scannedDeviceInput = nil
+            }
+        }) {
             QrScannerSheet { code in
                 _ = submitDeviceAuthorizationScan(code, manager: manager)
-                deviceRosterInput = code
+                scannedDeviceInput = code
                 showingDeviceRosterScanner = false
             }
             .irisModalSurface()

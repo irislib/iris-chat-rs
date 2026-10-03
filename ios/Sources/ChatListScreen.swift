@@ -45,6 +45,11 @@ struct ChatListScreen: View {
 
     var body: some View {
         content
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let progress = manager.state.deviceHistorySync, progress.phase != .complete {
+                    DeviceHistorySyncProgressView(progress: progress)
+                }
+            }
             .irisOnChange(of: searchText) { _ in
                 search.queryChanged(searchText)
                 autoProceedIfShortcut()
@@ -145,6 +150,41 @@ struct ChatListScreen: View {
               let shortcut = classifyChatInput(input: query) else { return }
         searchText = ""
         manager.dispatch(chatInputShortcutAction(shortcut))
+    }
+}
+
+private struct DeviceHistorySyncProgressView: View {
+    @Environment(\.irisPalette) private var palette
+    let progress: DeviceHistorySyncSnapshot
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if progress.phase == .waiting {
+                Image(systemName: "pause.circle")
+                    .foregroundStyle(palette.muted)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(progress.phase == .waiting ? "Waiting for your other device…" : "Syncing messages…")
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(palette.textPrimary)
+                if let total = progress.totalMessages {
+                    Text("\(progress.importedMessages.formatted()) of \(total.formatted())")
+                        .font(.system(.caption, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(palette.muted)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(palette.background)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("deviceHistorySyncStatus")
     }
 }
 

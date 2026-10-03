@@ -860,6 +860,7 @@ class AppManagerContractTest {
             router = router,
             account = account,
             deviceRoster = null,
+            deviceHistorySync = null,
             busy =
                 BusyState(
                     creatingAccount = false,

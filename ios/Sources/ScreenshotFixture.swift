@@ -370,6 +370,20 @@ extension ScreenshotFixture {
         }
         var next = state
 
+        if let phase = ProcessInfo.processInfo.environment["IRIS_UI_TEST_HISTORY_SYNC"] {
+            let phases: [String: DeviceHistorySyncPhase] = [
+                "discovering": .discovering, "transferring": .transferring,
+                "waiting": .waiting, "complete": .complete,
+            ]
+            if let value = phases[phase] {
+                next.deviceHistorySync = DeviceHistorySyncSnapshot(
+                    phase: value,
+                    importedMessages: value == .complete ? 1_284 : 342,
+                    totalMessages: value == .discovering ? nil : 1_284
+                )
+            }
+        }
+
         // Override account display name / picture for the chrome avatar.
         var overriddenAccount = account
         overriddenAccount.displayName = ownerDisplayName

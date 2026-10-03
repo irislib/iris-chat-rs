@@ -16,6 +16,7 @@ struct DeviceRosterScreen: View {
     @ObservedObject var manager: AppManager
     @State private var deviceInput = ""
     @State private var showingScanner = false
+    @State private var scannedDeviceInput: String?
 
     var body: some View {
         IrisScrollScreen {
@@ -25,10 +26,15 @@ struct DeviceRosterScreen: View {
                 showingScanner: $showingScanner
             )
         }
-        .sheet(isPresented: $showingScanner) {
+        .sheet(isPresented: $showingScanner, onDismiss: {
+            if let scannedDeviceInput {
+                deviceInput = scannedDeviceInput
+                self.scannedDeviceInput = nil
+            }
+        }) {
             QrScannerSheet { code in
                 _ = submitDeviceAuthorizationScan(code, manager: manager)
-                deviceInput = code
+                scannedDeviceInput = code
                 showingScanner = false
             }
             .irisModalSurface()

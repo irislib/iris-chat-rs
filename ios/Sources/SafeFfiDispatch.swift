@@ -342,6 +342,7 @@ private func fallbackAppState(toast: String?) -> AppState {
         router: Router(defaultScreen: .welcome, screenStack: []),
         account: nil,
         deviceRoster: nil,
+        deviceHistorySync: nil,
         busy: BusyState(
             creatingAccount: false,
             restoringSession: false,

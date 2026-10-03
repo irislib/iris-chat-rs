@@ -191,9 +191,34 @@ final class ScreenshotTests: XCTestCase {
         capture(app, named: "device-names")
     }
 
+    func testInitialHistorySyncProgressStates() {
+        for phase in ["discovering", "transferring", "waiting", "complete"] {
+            let app = launchFixtureApp(createAccount: true, historySync: phase)
+            XCTAssertTrue(waitForChatList(app, timeout: 30))
+            let status = app.descendants(matching: .any)["deviceHistorySyncStatus"]
+            if phase == "complete" {
+                XCTAssertFalse(status.exists)
+            } else {
+                XCTAssertTrue(status.waitForExistence(timeout: 10))
+                let expected = phase == "waiting" ? "Waiting for your other device…" : "Syncing messages…"
+                XCTAssertTrue(status.label.contains(expected))
+                if phase != "discovering" {
+                    let normalized = status.label.filter { $0.isLetter || $0.isNumber }
+                    XCTAssertTrue(normalized.contains("342of1284"), status.label)
+                } else {
+                    XCTAssertFalse(status.label.contains(" of "))
+                }
+            }
+            capture(app, named: "history-sync-\(phase)")
+            app.buttons["chatListNewChatButton"].tap()
+            XCTAssertTrue(app.descendants(matching: .any)["newChatPeerInput"].waitForExistence(timeout: 10))
+            app.terminate()
+        }
+    }
+
     // MARK: - Helpers
 
-    private func launchFixtureApp(createAccount: Bool, marketing: Bool = false, deviceNames: Bool = false) -> XCUIApplication {
+    private func launchFixtureApp(createAccount: Bool, marketing: Bool = false, deviceNames: Bool = false, historySync: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
         app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = "screenshot-\(UUID().uuidString)"
@@ -201,6 +226,7 @@ final class ScreenshotTests: XCTestCase {
         app.launchEnvironment["IRIS_DISABLE_NOTIFICATIONS"] = "1"
         app.launchEnvironment["IRIS_UI_TEST_SCREENSHOT_FIXTURE"] = "1"
         if deviceNames { app.launchEnvironment["IRIS_UI_TEST_DEVICE_NAMES"] = "1" }
+        if let historySync { app.launchEnvironment["IRIS_UI_TEST_HISTORY_SYNC"] = historySync }
         if marketing {
             app.launchEnvironment["IRIS_UI_TEST_SCREENSHOT_STYLE"] = "marketing"
             let bundle = Bundle(for: Self.self)

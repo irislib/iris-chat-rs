@@ -14,6 +14,7 @@ internal object AppManagerContractDefaults {
             router = Router(Screen.Welcome, emptyList()),
             account = null,
             deviceRoster = null,
+            deviceHistorySync = null,
             busy =
                 BusyState(
                     creatingAccount = false,

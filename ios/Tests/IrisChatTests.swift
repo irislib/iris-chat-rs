@@ -177,6 +177,7 @@ func makeAppState(
         router: router,
         account: account,
         deviceRoster: nil,
+        deviceHistorySync: nil,
         busy: makeBusyState(),
         chatList: chatList,
         currentChat: currentChat,
