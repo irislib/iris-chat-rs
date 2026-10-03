@@ -24,7 +24,8 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Build desktop message controls when needed and position initial chat history from measured layout, avoiding hidden control work and premature scrolling.
 - Render Apple message rows as they approach the viewport, and measure messages, call entries, and group notices before revealing a newly opened chat.
 - Load older chat history in bounded pages and preserve the visible message position as pages arrive. Keep current edits, reactions, expiry, and deletions authoritative across paging and navigation.
-- Navigate desktop controls with Tab and Shift-Tab, browse chats with arrow keys, and open them with Enter or Space while preserving keyboard focus during updates.
+- Navigate desktop controls and chat rows with Tab and Shift-Tab, scroll the chat list with arrow keys without changing the active chat, and open the focused chat with Enter or Space. Keep focus when rows scroll out of view, and preserve Tab insertion in message drafts.
+- Group consecutive messages from the same person for gaps under three minutes, with compact spacing and reaction, day, and sender boundaries. Keep delivery errors, pending sends, disappearing-message timers, and changed timestamps visible.
 - Reuse bounded event-signature validation proofs across transports and suppress unchanged Nearby updates, preserving content validation, delivery receipts, and device-list recovery.
 - Preserve an already recovered encrypted session when a direct connection catches up after a peer restarts, using the verified FIPS 0.4.93 dependency set.
 - Focus the composer when replying, follow the iOS keyboard animation, and emit pending messages before protocol checkpoint work.
@@ -47,6 +48,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Open chats and show outgoing messages faster, and improve typing after long pastes.
 - Keep your place while loading older messages and preserve recent edits and deletions.
 - Navigate the Mac app with the keyboard and keep focus while chats update.
+- Keep consecutive short messages together, and scroll the Mac chat list with arrow keys without switching chats.
 - Paste photos and files into a chat before sending.
 - Reliably replay finished voice messages and keep playback controls responsive while seeking.
 - Improve private contact sync and Nearby connection recovery.
@@ -61,6 +63,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Resume interrupted history transfers and keep deleted messages removed.
 - Keep reactions, group details, and contact profiles in sync across devices.
 - Open chats and show outgoing messages faster, and improve typing after long pastes.
+- Keep consecutive messages together with clearer spacing and delivery status.
 - Paste photos and files into a chat before sending.
 - Improve private contact sync and Nearby connection recovery.
 - Update your other devices and calling contacts too. Calls to an older app may not ring while it is closed. Existing chats and linked devices stay connected.
