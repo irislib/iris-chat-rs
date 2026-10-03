@@ -259,6 +259,7 @@ jobs:
         run: |
           mkdir -p work/clipboard
           IRIS_CLIPBOARD_UI_SCREENSHOT="$PWD/work/clipboard/linux.png" \
+          IRIS_KEYBOARD_SCREENSHOT="$PWD/work/clipboard/linux-keyboard.png" \
             dbus-run-session -- xvfb-run -a cargo test --manifest-path linux/Cargo.toml --locked --features ui-tests
 
       - name: Upload Linux clipboard results
@@ -418,6 +419,11 @@ jobs:
         run: |
           dotnet run --project windows/ClipboardTests/ClipboardTests.csproj -c Release -- work/clipboard
           if ($LASTEXITCODE -ne 0) { throw 'Native clipboard tests failed' }
+      - name: Exercise WPF keyboard navigation
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
+        run: |
+          dotnet run --project windows/KeyboardTests/KeyboardTests.csproj -c Release -- work/keyboard
+          if ($LASTEXITCODE -ne 0) { throw 'Native keyboard tests failed' }
       - name: Exercise native direct files and WPF transfer controls
         if: ${{ !cancelled() && steps.native-build.outcome == 'success' && (inputs.scope == '' || inputs.scope == 'all') }}
         run: ./scripts/windows-build-local.ps1 direct-file-tests
@@ -432,6 +438,7 @@ jobs:
           path: |
             iris-chat-rs/work/clipboard/*.png
             iris-chat-rs/work/clipboard/*timings.json
+            iris-chat-rs/work/keyboard/windows-keyboard.png
           retention-days: 14
       - name: Upload Windows transfer and nearby results
         if: ${{ always() && (inputs.scope == '' || inputs.scope == 'all') }}
