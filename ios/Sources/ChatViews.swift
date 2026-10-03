@@ -75,10 +75,9 @@ struct ChatScreen: View {
                                 GeometryReader { viewport in
                                     ScrollView {
                                         let visibleMessages = chat.messages
-                                        // Measure the loaded page eagerly so the initial bottom
-                                        // placement has real row heights. Lazy rows can resolve
-                                        // a premature anchor mid-chat. Older pages load on demand.
-                                        VStack(spacing: 0) {
+                                        // Realize only nearby rows. Initial placement targets the
+                                        // last message and waits for its actual visible geometry.
+                                        LazyVStack(spacing: 0) {
                                             Color.clear
                                                 .frame(height: 1)
                                                 .id(ChatTimelineAnchor.top)
