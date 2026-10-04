@@ -237,23 +237,53 @@ extension IrisChatUITestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        if element(app, "chatMessageInput").exists { return }
-        // Seeding posts messages asynchronously. Wait for the last one before
-        // tapping a row that is still being replaced by table updates.
-        if app.launchEnvironment["IRIS_UI_TEST_SEED_COUNT"] != nil {
-            XCTAssertTrue(waitUntil(timeout: rowTimeout) {
+        let seedCount = app.launchEnvironment["IRIS_UI_TEST_SEED_COUNT"].flatMap(Int.init)
+        if let seedCount, seedCount > 0 {
+            // All sends precede the queued return to the list. LAST in the
+            // timeline is not enough: that final navigation is still pending.
+            // The 400-message CI fixture takes about 52s, beyond the row budget.
+            let seedTimeout = max(rowTimeout, min(180, Double(seedCount) * 0.25))
+            let started = Date()
+            var highestOrdinal = 0
+            var lastLocation = "unknown"
+            let ready = waitUntil(timeout: seedTimeout) {
                 // Queued chat creation can temporarily replace the list while
                 // seeding. Read presence and label from one immutable tree.
                 guard let snapshot = try? app.snapshot() else { return false }
                 var pending = [snapshot]
+                var location = "neither list nor composer"
                 while let item = pending.popLast() {
+                    if item.identifier == "chatMessageInput" { location = "chat" }
+                    if item.identifier.hasPrefix("chatRow-") { location = "chat list" }
+                    if item.label.contains("LAST_SCROLL_SENTINEL") {
+                        highestOrdinal = seedCount
+                    } else if let range = item.label.range(of: "seed-msg-"),
+                              let ordinal = Int(item.label[range.upperBound...].prefix { $0.isNumber }) {
+                        highestOrdinal = max(highestOrdinal, ordinal)
+                    }
                     if item.identifier.hasPrefix("chatRow-"),
                        item.label.contains("LAST_SCROLL_SENTINEL"),
-                       !item.frame.isEmpty, item.isEnabled { return true }
+                       !item.frame.isEmpty, item.isEnabled {
+                        lastLocation = "chat list"
+                        return true
+                    }
                     pending.append(contentsOf: item.children)
                 }
+                lastLocation = location
                 return false
-            }, "seeded messages did not finish loading", file: file, line: line)
+            }
+            let detail = "expected=\(seedCount) highest_seen=\(highestOrdinal) location=\(lastLocation) elapsed=\(Date().timeIntervalSince(started))s budget=\(seedTimeout)s"
+            let timing = XCTAttachment(string: detail)
+            timing.name = "seeded-chat-readiness"
+            timing.lifetime = .keepAlways
+            add(timing)
+            guard ready else {
+                capture(app, name: "seeded-chat-not-ready")
+                XCTFail("Seeded messages did not return to the chat list: \(detail)", file: file, line: line)
+                return
+            }
+        } else if element(app, "chatMessageInput").exists {
+            return
         }
         let deadline = Date().addingTimeInterval(rowTimeout)
         var sawRow = false
