@@ -313,9 +313,6 @@ struct ChatScreen: View {
                                     guard page.chatID == chatId else { return }
                                     timelineCoordinator.messageContentFrames = page.frames
 #if os(iOS)
-                                    timelineCoordinator.anchorTrace = manager.timelineAnchorTrace
-                                    timelineCoordinator.anchorTrace?.preferenceDelivered(
-                                        offsetY: timelineCoordinator.scrollView?.contentOffset.y ?? .nan)
                                     for (id, height) in page.heights where rowHeightCache[id] != height {
                                         rowHeightCache[id] = height
                                     }
@@ -721,9 +718,6 @@ struct ChatScreen: View {
             flushDraftImmediately()
         }
         .task(id: chatId) {
-#if os(iOS)
-            timelineCoordinator.anchorTrace = manager.timelineAnchorTrace
-#endif
             seedDraftFromPersistedState(replaceExisting: true)
         }
         .task(id: persistedDraftToken) {

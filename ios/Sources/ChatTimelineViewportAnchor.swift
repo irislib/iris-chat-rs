@@ -131,7 +131,6 @@ extension ChatTimelineInteractionCoordinator {
     }
 
     func recordNativeScrollPosition() {
-        anchorTrace?.record(.nativeOffset) { historyTraceSample() }
         guard let scrollView, let layout = appliedViewportLayout,
               abs(scrollView.bounds.height - layout.nativeHeight) < 0.5,
               abs((visibleViewportMaxY ?? 0) - layout.viewportHeight) < 0.5 else { return }
@@ -252,7 +251,6 @@ extension ChatTimelineInteractionCoordinator {
         historyViewportAnchor = ChatTimelineHistoryAnchor(
             chatID: chatID, firstMessageID: firstMessageID, layoutGeneration: layoutGeneration,
             messageID: id, originalContentY: contentFrame.minY)
-        anchorTrace?.begin { historyTraceSample(anchor: historyViewportAnchor) }
     }
 
     @discardableResult
@@ -264,54 +262,28 @@ extension ChatTimelineInteractionCoordinator {
         anchor.contentY = frame.minY
         anchor.contentHeight = page.contentHeight
         historyViewportAnchor = anchor
-        anchorTrace?.record(.restore, origin: .preference) {
-            var sample = historyTraceSample(anchor: anchor)
-            sample.firstChanged = first != anchor.firstMessageID
-            sample.generationChanged = page.layoutGeneration != anchor.layoutGeneration
-            return sample
-        }
-        if applyPendingHistoryViewportAnchor(origin: .preference) { return true }
+        if applyPendingHistoryViewportAnchor() { return true }
         // Preference geometry can precede UIKit's new content extent. Stage
         // one correction for the completed native layout, never an old extent.
         if !historyLayoutScheduled {
             historyLayoutScheduled = true
             DispatchQueue.main.async { [weak self] in
                 self?.historyLayoutScheduled = false
-                self?.applyPendingHistoryViewportAnchor(origin: .mainTurn)
+                self?.applyPendingHistoryViewportAnchor()
             }
         }
         return false
     }
 
     @discardableResult
-    func applyPendingHistoryViewportAnchor(origin: IrisTimelineAnchorTrace.Origin = .direct) -> Bool {
+    func applyPendingHistoryViewportAnchor() -> Bool {
         guard let anchor = historyViewportAnchor, let scrollView,
-              let contentY = anchor.contentY else { return false }
-        guard hasCommittedTimelineExtent(anchor.contentHeight) else {
-            anchorTrace?.record(.awaitExtent, origin: origin) { historyTraceSample(anchor: anchor) }
-            return false
-        }
+              let contentY = anchor.contentY,
+              hasCommittedTimelineExtent(anchor.contentHeight) else { return false }
         let offset = scrollView.contentOffset.y + contentY - anchor.originalContentY + anchor.clampCorrectionY
-        let traced = anchorTrace?.record(.apply, origin: origin) {
-            var sample = historyTraceSample(anchor: anchor)
-            sample.candidateOffsetY = offset
-            return sample
-        } == true
         historyViewportAnchor = nil
         if offset.isFinite, abs(offset - scrollView.contentOffset.y) > 1 {
             UIView.performWithoutAnimation { scrollView.contentOffset.y = offset }
-        }
-        if traced, let trace = anchorTrace {
-            let generation = trace.captureGeneration
-            DispatchQueue.main.async { [weak self, weak trace] in
-                guard let self, let trace, self.anchorTrace === trace,
-                      trace.captureGeneration == generation else { return }
-                trace.record(.postApply, origin: .mainTurn) {
-                    var sample = self.historyTraceSample(anchor: anchor)
-                    sample.candidateOffsetY = offset
-                    return sample
-                }
-            }
         }
         return true
     }
@@ -319,7 +291,6 @@ extension ChatTimelineInteractionCoordinator {
     func historyExtentWillChange() {
         guard let scrollView, historyViewportAnchor != nil else { return }
         historyViewportAnchor?.offsetBeforeExtentChange = scrollView.contentOffset.y
-        anchorTrace?.record(.extentWill) { historyTraceSample(anchor: historyViewportAnchor) }
     }
 
     func historyExtentDidChange() {
@@ -334,38 +305,6 @@ extension ChatTimelineInteractionCoordinator {
         if abs(clamped - before) > 0.5, abs(scrollView.contentOffset.y - clamped) <= 0.5 {
             historyViewportAnchor?.clampCorrectionY += before - clamped
         }
-        anchorTrace?.record(.extentDid) {
-            var sample = historyTraceSample(anchor: historyViewportAnchor)
-            sample.offsetBeforeExtent = before
-            sample.candidateOffsetY = clamped
-            return sample
-        }
-    }
-
-    func recordHistoryPanEnded() {
-        anchorTrace?.record(.panEnded) { historyTraceSample(anchor: historyViewportAnchor) }
-    }
-
-    private func historyTraceSample(anchor: ChatTimelineHistoryAnchor? = nil) -> IrisTimelineAnchorTrace.Sample {
-        guard let scrollView else { return IrisTimelineAnchorTrace.Sample() }
-        let pan = scrollView.panGestureRecognizer
-        var sample = IrisTimelineAnchorTrace.Sample(
-            offsetY: scrollView.contentOffset.y, nativeContentHeight: scrollView.contentSize.height,
-            viewportHeight: scrollView.bounds.height, insetTop: scrollView.adjustedContentInset.top,
-            insetBottom: scrollView.adjustedContentInset.bottom,
-            panY: pan.translation(in: scrollView).y, velocityY: pan.velocity(in: scrollView).y,
-            panState: pan.state.rawValue, dragging: scrollView.isDragging, decelerating: scrollView.isDecelerating)
-        sample.preferenceContentHeight = latestPage.contentHeight
-        if let anchor {
-            if anchor.contentY != nil { sample.preferenceContentHeight = anchor.contentHeight }
-            sample.anchorViewportY = messageContentFrames[anchor.messageID]?.minY ?? .nan
-            sample.originalContentY = anchor.originalContentY
-            sample.contentY = anchor.contentY ?? .nan
-            sample.clampCorrectionY = anchor.clampCorrectionY
-            sample.offsetBeforeExtent = anchor.offsetBeforeExtentChange ?? .nan
-            sample.extentCommitted = hasCommittedTimelineExtent(sample.preferenceContentHeight)
-        }
-        return sample
     }
 
     @discardableResult

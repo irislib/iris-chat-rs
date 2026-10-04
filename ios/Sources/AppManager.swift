@@ -992,9 +992,6 @@ final class AppManager: ObservableObject {
     }
     let interactionTimingController: IrisInteractionTimingController
     var interactionTiming: IrisInteractionTiming? { interactionTimingController.timing }
-#if os(iOS)
-    let timelineAnchorTrace: IrisTimelineAnchorTrace?
-#endif
     @Published private(set) var bootstrapInFlight = true
     @Published private(set) var pendingShare: PendingShare?
     @Published private(set) var lastForegroundedAt = Date()
@@ -1146,9 +1143,6 @@ final class AppManager: ObservableObject {
         pushNotificationResolver: MobilePushNotificationResolver = MobilePushNotificationResolver()
     ) {
         self.interactionTimingController = IrisInteractionTimingController(environment: environment)
-#if os(iOS)
-        self.timelineAnchorTrace = IrisTimelineAnchorTrace.configured(environment: environment)
-#endif
         self.fileManager = fileManager
         self.pushNotificationResolver = pushNotificationResolver
         self.sharedContainerOverride = environment["IRIS_SHARE_CONTAINER_DIR"]
