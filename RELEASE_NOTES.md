@@ -2,6 +2,33 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.4.5
+
+### GitHub
+
+- Restore explicit startup announcements for an existing device identity without resetting queued message retries or repeating database writes.
+- Reuse authenticated handshake responses during retries and preserve existing outbox attempts and errors, avoiding repeated database writes for unchanged queued events.
+- Send direct files as the first message to a new contact, preserving an unregistered offer while the authenticated peer connection starts.
+- Choose a destination before accepting direct files and stream bounded chunks into new files there. Verify every file before completing the transfer, remove incomplete outputs, and preserve existing destination files.
+- Add the default-checked “Open chat when someone joins” invitation option. Open only the current invitation's authenticated chat, without interrupting another screen.
+- Verify saved physical-device CPU and storage-write evidence with strict delivery, network-isolation, and restoration checks.
+
+### Apple
+
+- Keep nearby device discovery working after restarting the app.
+- Reduce repeated background work and storage writes when retrying messages.
+- Send files directly when starting a new chat.
+- Choose where to save received files before the transfer starts.
+- Choose whether to open the chat when someone accepts your invitation.
+
+### Zapstore
+
+- Keep nearby device discovery working after restarting the app.
+- Reduce repeated background work and storage writes when retrying messages.
+- Send files directly when starting a new chat.
+- Choose where to save received files before the transfer starts.
+- Choose whether to open the chat when someone accepts your invitation.
+
 ## v2026.10.4.4
 
 ### GitHub
