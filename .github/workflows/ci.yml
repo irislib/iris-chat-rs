@@ -70,6 +70,7 @@ jobs:
           ./scripts/check-palettes
           ./scripts/check-no-accent-text
           ./scripts/check-source-file-sizes
+          python3 scripts/test_dependency_lock_consistency.py
           ./scripts/check-rust-panics
           ./scripts/test_release_publish_guard
           ./scripts/test_homebrew_tap
