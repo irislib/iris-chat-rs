@@ -1766,7 +1766,8 @@ class RealRelayHarnessTest : RealRelayHarnessBase() {
 
         // Keep the host process alive long enough for the signed receipt event
         // to leave over the physical FIPS BLE link before instrumentation exits.
-        SystemClock.sleep(3_000)
+        // The idle gate also retains the real peer during Xcode's measurements.
+        SystemClock.sleep(optionalArg("idle_hold_ms")?.toLongOrNull()?.coerceIn(3_000, 420_000) ?: 3_000)
         reportStatus(
             "chat_id" to chatId,
             "message" to expectedMessage,

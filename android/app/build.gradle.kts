@@ -184,7 +184,7 @@ android {
         targetSdk = 36
         versionCode = appVersionCode
         versionName = appVersionName
-        testApplicationId = "$androidAppId.test"
+        testApplicationId = configValue("test.applicationId", "IRIS_TEST_APPLICATION_ID") ?: "$androidAppId.test"
         testInstrumentationRunner = providers.gradleProperty("iris.testRunner").orNull
             ?: "androidx.test.runner.AndroidJUnitRunner"
 

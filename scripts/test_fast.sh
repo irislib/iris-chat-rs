@@ -44,6 +44,7 @@ parallel_step_start "parallel step harness" "${ROOT_DIR}/scripts/test-parallel-s
 parallel_step_start "reliability build reuse harness" \
   "${ROOT_DIR}/scripts/test-reliability-build-reuse-harness.sh"
 parallel_step_start "idle CPU gate harness" "${ROOT_DIR}/scripts/test-idle-cpu-gate-harness.sh"
+parallel_step_start "physical Bluetooth idle gate contract" python3 "${ROOT_DIR}/scripts/test_physical_ble_idle.py"
 parallel_step_start "iOS simulator recovery harness" "${ROOT_DIR}/scripts/test-ios-simulator-recovery.sh"
 parallel_step_start "iOS cloneable simulator selection harness" \
   "${ROOT_DIR}/scripts/test-ios-cloneable-simulator-selection.sh"

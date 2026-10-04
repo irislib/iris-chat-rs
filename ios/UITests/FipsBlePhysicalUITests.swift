@@ -45,6 +45,45 @@ final class FipsBlePhysicalUITests: XCTestCase {
             receiptTimeout: receiptTimeout,
             verifyTransportTrace: true
         )
+        if environment["IRIS_FIPS_IDLE_METRICS"] == "1" {
+            try measureIdleAfterBluetoothReceipt(app, environment: environment)
+        }
+#endif
+    }
+
+    /// Xcode measures the app process, while this separate UI-test runner sleeps.
+    /// The first interval is XCTest's discarded warmup; two intervals are retained.
+    private func measureIdleAfterBluetoothReceipt(
+        _ app: XCUIApplication,
+        environment: [String: String]
+    ) throws {
+#if targetEnvironment(simulator)
+        throw XCTSkip("Bluetooth idle metrics require a physical iPhone")
+#else
+        let seconds = try XCTUnwrap(Double(environment["IRIS_FIPS_IDLE_SECONDS"] ?? "60"))
+        guard (10...120).contains(seconds) else {
+            XCTFail("Idle interval must be between 10 and 120 seconds")
+            return
+        }
+        let close = element(app, "messageInfoCloseButton")
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        close.tap()
+        let options = XCTMeasureOptions()
+        options.iterationCount = 2
+        options.invocationOptions = [.manuallyStart, .manuallyStop]
+        measure(metrics: [XCTClockMetric(), XCTCPUMetric(application: app),
+                          XCTStorageMetric(application: app)], options: options) {
+            XCTAssertEqual(app.state, .runningForeground)
+            XCTAssertTrue(ProcessInfo.processInfo.thermalState == .nominal ||
+                          ProcessInfo.processInfo.thermalState == .fair,
+                          "Phone is too hot for a comparable idle measurement")
+            startMeasuring()
+            Thread.sleep(forTimeInterval: seconds)
+            stopMeasuring()
+            XCTAssertEqual(app.state, .runningForeground)
+            XCTAssertTrue(ProcessInfo.processInfo.thermalState == .nominal ||
+                          ProcessInfo.processInfo.thermalState == .fair)
+        }
 #endif
     }
 
@@ -300,7 +339,9 @@ final class FipsBlePhysicalUITests: XCTestCase {
             return
         }
         let received = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value IN %@", ["Received", "Seen"]),
+            predicate: NSPredicate(format: "value IN %@",
+                ProcessInfo.processInfo.environment["IRIS_FIPS_IDLE_METRICS"] == "1"
+                    ? ["Seen"] : ["Received", "Seen"]),
             object: body
         )
         guard XCTWaiter.wait(for: [received], timeout: receiptTimeout) == .completed else {

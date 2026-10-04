@@ -20,6 +20,7 @@ RUN_RELIABILITY_LAB="${IRIS_TEST_GATE_RELIABILITY_LAB:-0}"
 RUN_MACOS_VM_E2E="${IRIS_TEST_GATE_MACOS_VM_E2E:-0}"
 RUN_FAST="${IRIS_TEST_GATE_RUN_FAST:-1}"
 RUN_IDLE_CPU="${IRIS_TEST_GATE_IDLE_CPU:-0}"
+RUN_PHYSICAL_BLE_IDLE="${IRIS_TEST_GATE_PHYSICAL_BLE_IDLE:-0}"
 FORCE_RERUN="${IRIS_RELEASE_GATE_FORCE_RERUN:-0}"
 
 usage() {
@@ -43,6 +44,7 @@ Options:
   --skip-fast          Reuse a fast tier that already passed in this invocation.
   --idle-cpu           Run available platform idle CPU gates.
   --no-idle-cpu        Skip platform idle CPU gates (sampler tests still run).
+  --physical-ble-idle  Require real iPhone/Android BLE delivery and idle budgets.
   --force-rerun        Ignore a matching recent receipt and run every gate again.
   -h, --help           Show this help
 
@@ -56,6 +58,8 @@ Environment:
   IRIS_TEST_GATE_NOTIFICATIONS=1
   IRIS_TEST_GATE_LAN_AVAILABLE=1
   IRIS_TEST_GATE_IDLE_CPU=1
+  IRIS_TEST_GATE_PHYSICAL_BLE_IDLE=1
+  IRIS_CHAT_LAB_IOS_DEVICE, IRIS_CHAT_LAB_ANDROID_SERIAL, IRIS_PHYSICAL_BLE_XCTESTRUN
   IRIS_RELEASE_GATE_FORCE_RERUN=1
   IRIS_RELEASE_GATE_RECEIPT_TTL_SECONDS=43200
 EOF
@@ -84,6 +88,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-idle-cpu)
       RUN_IDLE_CPU=0
+      shift
+      ;;
+    --physical-ble-idle)
+      RUN_PHYSICAL_BLE_IDLE=1
       shift
       ;;
     --interop)
@@ -142,6 +150,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$RUN_PHYSICAL_BLE_IDLE" == "1" ]]; then
+  [[ "$(uname -s)" == Darwin ]] || { echo "Physical Bluetooth idle gate requires macOS." >&2; exit 1; }
+  [[ -n "${IRIS_CHAT_LAB_IOS_DEVICE:-}" ]] || { echo "Select the physical iPhone explicitly" >&2; exit 1; }
+  [[ -n "${IRIS_CHAT_LAB_ANDROID_SERIAL:-}" ]] || { echo "Select the physical Android peer explicitly" >&2; exit 1; }
+  [[ -n "${IRIS_PHYSICAL_BLE_XCTESTRUN:-}" ]] || { echo "Provide current-source physical test build products" >&2; exit 1; }
+  # Phone state and externally prepared build products are not covered by a
+  # source-only receipt. Always execute this explicitly requested hardware gate.
+  FORCE_RERUN=1
+fi
+
 GATE_CONFIG="$(printf '%s\n' \
   "receipt_version=1" \
   "mode=$MODE" \
@@ -156,6 +174,7 @@ GATE_CONFIG="$(printf '%s\n' \
   "macos_vm_e2e=$RUN_MACOS_VM_E2E" \
   "fast=$RUN_FAST" \
   "idle_cpu=$RUN_IDLE_CPU" \
+  "physical_ble_idle=$RUN_PHYSICAL_BLE_IDLE" \
   "system=$(uname -s)" \
   "architecture=$(uname -m)" \
   "android_device=${IRIS_ANDROID_SERIAL:-${ANDROID_SERIAL:-auto}}" \
@@ -383,6 +402,15 @@ if [[ "$RUN_IDLE_CPU" == "1" ]]; then
 fi
 
 echo
+if [[ "$RUN_PHYSICAL_BLE_IDLE" == "1" ]]; then
+  run_step "physical Bluetooth foreground idle budgets" \
+    python3 "${ROOT_DIR}/scripts/physical_ble_idle.py" \
+      --iphone "$IRIS_CHAT_LAB_IOS_DEVICE" \
+      --android-serial "$IRIS_CHAT_LAB_ANDROID_SERIAL" \
+      --xctestrun "$IRIS_PHYSICAL_BLE_XCTESTRUN" \
+      --artifact-dir "$ROOT_DIR/work/physical-idle/release-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+fi
+
 echo "Release gate passed."
 if receipt_command write; then
   echo "Saved a reusable receipt for this exact clean commit and configuration."

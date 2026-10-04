@@ -91,6 +91,56 @@ checks original timestamps through deferred sends and journal recovery. These
 regressions cover specific failure modes, not a populated-account CPU budget.
 Physical-device profiling remains necessary for account-specific heat reports.
 
+### Physical Bluetooth idle regression
+
+`scripts/physical_ble_idle.py` is an opt-in gate for a paired, unlocked iPhone
+and an explicitly selected Android phone with Bluetooth enabled. It reserves
+both phones through the native lab. Prepare current-source development test
+builds first: use optimized Rust (`IRIS_IOS_RUST_PROFILE=release`,
+`IRIS_IOS_RUST_TARGETS=aarch64-apple-ios scripts/ios-build ios-xcframework`),
+generate the Xcode project, then build-for-testing with Debug signing and
+`SWIFT_OPTIMIZATION_LEVEL=-O GCC_OPTIMIZATION_LEVEL=s`. Build and install both
+Android debug APKs with `IRIS_DEBUG_APPLICATION_ID_SUFFIX=.blegate` and
+`IRIS_TEST_APPLICATION_ID=to.iris.chat.blegate.test`; only that
+separate test package is used. The Google Services build plugin also needs a
+local debug configuration whose Android client package is `to.iris.chat.blegate`
+(for example, an uncommitted `android/app/src/debug/google-services.json`
+derived from the existing debug client). Do not change the production client.
+The iPhone development build replaces its app
+binary but uses a unique test account directory and file-backed secrets. It
+preserves normal account data and relaunches normally after the test.
+
+```sh
+python3 scripts/physical_ble_idle.py \
+  --iphone "$IRIS_CHAT_LAB_IOS_DEVICE" \
+  --android-serial "$IRIS_CHAT_LAB_ANDROID_SERIAL" \
+  --xctestrun "$IOS_DEVICE_XCTESTRUN" \
+  --artifact-dir work/physical-idle/run-001
+```
+
+The Android peer temporarily loses Wi-Fi/mobile data. The gate verifies no
+usable IPv4/IPv6 addresses or routes throughout the iPhone test, requires an
+exact message, Seen receipt, and FIPS nearby trace, then measures foreground
+idle CPU and logical disk writes using XCTest metrics targeting the app.
+One 60-second warmup is discarded; **each** of the following two minutes must
+stay within 5% of one CPU core and 5 MiB of writes/minute. Missing, skipped,
+truncated, or unsupported measurements fail instead of passing as zero.
+Foreground and thermal checks surround each interval. Radio settings restore
+on success, failure, or interruption; a restoration failure fails the gate.
+
+The new output directory contains private logs, build-product hashes, the
+Xcode result bundle, network evidence, budgets, and measurements. Keep it local.
+Use the same phone and optimization settings for comparisons; record the source
+revision/build provenance alongside the run. Shorter `--sample-seconds` values
+are only harness diagnostics. This is fresh-account, foreground, post-Bluetooth
+coverage; it does not replace populated-account, background, or reconnect/soak
+profiling. The sampler's failure-path tests run in the fast tier; hardware
+execution remains explicit and must not silently skip when used as a gate.
+To require it from the release gate, pass `--physical-ble-idle` (or set
+`IRIS_TEST_GATE_PHYSICAL_BLE_IDLE=1`) with the two explicit lab-device variables
+and `IRIS_PHYSICAL_BLE_XCTESTRUN`. This lane always executes, even when a recent
+source-only release receipt exists; missing hardware/build inputs fail.
+
 The native platform matrix runs Android, the Apple lane, Linux, and Windows in
 parallel. iOS and macOS remain ordered within one lane because both regenerate
 the shared Swift bindings. When the fast tier passed in the same full
