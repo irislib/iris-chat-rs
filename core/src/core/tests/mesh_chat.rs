@@ -1,4 +1,84 @@
 #[test]
+fn idle_mesh_liveness_replaces_a_closed_callback_with_unchanged_filters() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let (mut core, _, _dir) =
+        logged_in_test_core_with_updates("closed-mesh-subscription", &owner, &device);
+    core.logged_in.as_mut().unwrap().relay_urls.clear();
+    let mut config = fips_core::Config::new();
+    config.node.control.enabled = false;
+    config.node.discovery.nostr.enabled = false;
+    config.node.discovery.lan.enabled = false;
+    let endpoint = Arc::new(
+        core.runtime
+            .block_on(
+                fips_core::FipsEndpoint::builder()
+                    .config(config.clone())
+                    .without_system_tun()
+                    .bind(),
+            )
+            .unwrap(),
+    );
+    let client = Arc::new(
+        core.runtime
+            .block_on(nostr_pubsub_fips::FipsPubsubClient::start(
+                endpoint.clone(),
+                nostr_pubsub_fips::FipsPubsubClientOptions::default(),
+            ))
+            .unwrap(),
+    );
+    let (tcp, _records) = DeviceSyncTcpSender::test_channel(1, 1024);
+    core.install_device_sync_sender_for_test(endpoint.clone(), tcp, Vec::new());
+    core.device_sync.as_mut().unwrap().pubsub = Some(client.clone());
+    let initial_subscriptions = client.active_subscription_count().unwrap();
+    core.request_protocol_subscription_refresh();
+    let count = client.active_subscription_count().unwrap();
+    assert!(count > initial_subscriptions);
+    assert!(core.protocol_subscription_runtime.liveness_due_at.is_some());
+    assert!(!core.has_mesh_protocol_retry_work());
+    core.schedule_protocol_subscription_liveness_check(Duration::from_secs(2));
+    let earlier_due = core.protocol_subscription_runtime.liveness_due_at;
+    let token = core.protocol_liveness_token;
+    core.reconcile_mesh_protocol_subscriptions();
+    assert_eq!(core.protocol_liveness_token, token);
+    assert_eq!(
+        core.protocol_subscription_runtime.liveness_due_at,
+        earlier_due
+    );
+    assert_eq!(client.active_subscription_count().unwrap(), count);
+
+    core.runtime.block_on(client.shutdown_shared());
+    let replacement_endpoint = Arc::new(
+        core.runtime
+            .block_on(
+                fips_core::FipsEndpoint::builder()
+                    .config(config)
+                    .without_system_tun()
+                    .bind(),
+            )
+            .unwrap(),
+    );
+    let replacement = Arc::new(
+        core.runtime
+            .block_on(nostr_pubsub_fips::FipsPubsubClient::start(
+                replacement_endpoint.clone(),
+                nostr_pubsub_fips::FipsPubsubClientOptions::default(),
+            ))
+            .unwrap(),
+    );
+    core.device_sync.as_mut().unwrap().pubsub = Some(replacement.clone());
+    core.handle_protocol_subscription_liveness_check(core.protocol_liveness_token);
+    assert_eq!(replacement.active_subscription_count().unwrap(), count);
+    assert!(core.protocol_subscription_runtime.liveness_due_at.is_some());
+    core.stop_device_sync_now();
+    core.runtime.block_on(replacement.shutdown_shared());
+    core.runtime.block_on(endpoint.shutdown()).unwrap();
+    core.runtime
+        .block_on(replacement_endpoint.shutdown())
+        .unwrap();
+}
+
+#[test]
 fn mesh_subscriptions_wait_for_the_outermost_catchup_batch() {
     let owner = Keys::generate();
     let device = Keys::generate();

@@ -1,12 +1,16 @@
 use super::protocol::{PROTOCOL_RECONNECT_CHECK_SECS, PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS};
 use super::*;
 use nostr_pubsub::{
-    EventBus, EventSource, NostrEventSubscriber, NostrEventSubscription, VerifiedEvent,
+    EventBus, EventSource, NostrEventSubscriber, NostrEventSubscription,
+    SubscriptionDeliveryStatus, VerifiedEvent,
 };
 use nostr_pubsub_fips::FipsPubsubClient;
 
 pub(super) const MESH_REPLAY_EVENTS: usize = 64;
 const OUTBOX_BATCH: usize = 16;
+
+#[cfg(test)]
+mod tests;
 
 pub(super) struct MeshProtocolSubscriptions {
     filters: Vec<Filter>,
@@ -37,22 +41,56 @@ impl MeshProtocolSubscriptions {
         filters: Vec<Filter>,
         sender: Sender<CoreMsg>,
     ) -> nostr_pubsub::Result<()> {
-        if self.filters == filters {
-            return Ok(());
-        }
         let handler = Arc::new(move |delivery: nostr_pubsub::QueryEvent| {
             let _ = sender.send(CoreMsg::Internal(Box::new(InternalEvent::MeshEvent(
                 delivery.event.into_event(),
             ))));
         });
+        if self.filters == filters && !self.retry_needed {
+            for (index, filters) in filters
+                .chunks(client.options().max_filters_per_subscription)
+                .enumerate()
+            {
+                if !matches!(
+                    self.subscriptions[index].delivery_status(),
+                    Some(SubscriptionDeliveryStatus::Closed | SubscriptionDeliveryStatus::Lagged)
+                ) {
+                    continue;
+                }
+                // Await the terminal forwarder's admitted bodies before
+                // restoring live delivery. Missed history still needs catch-up.
+                self.retry_needed = true;
+                self.subscriptions.remove(index).close().await?;
+                let subscription =
+                    NostrEventSubscriber::subscribe(client, filters.to_vec(), handler.clone())
+                        .await?;
+                self.subscriptions.insert(index, subscription);
+                self.retry_needed = false;
+            }
+            return Ok(());
+        }
         let mut subscriptions = Vec::new();
         for filters in filters.chunks(client.options().max_filters_per_subscription) {
             subscriptions.push(
                 NostrEventSubscriber::subscribe(client, filters.to_vec(), handler.clone()).await?,
             );
         }
-        self.subscriptions = subscriptions;
+        let mut close_error = None;
+        for subscription in std::mem::replace(&mut self.subscriptions, subscriptions) {
+            if matches!(
+                subscription.delivery_status(),
+                Some(SubscriptionDeliveryStatus::Closed | SubscriptionDeliveryStatus::Lagged)
+            ) {
+                if let Err(error) = subscription.close().await {
+                    close_error.get_or_insert(error);
+                }
+            }
+        }
         self.filters = filters;
+        self.retry_needed = close_error.is_some();
+        if let Some(error) = close_error {
+            return Err(error);
+        }
         Ok(())
     }
 }
@@ -93,6 +131,10 @@ impl AppCore {
         if let Err(error) = result {
             self.push_debug_log("mesh.subscription.error", error.to_string());
             self.schedule_fast_protocol_retry_if_pending();
+        } else if self.has_mesh_protocol_liveness_work() {
+            self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
+                PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS,
+            ));
         }
     }
 
@@ -142,6 +184,13 @@ impl AppCore {
         self.device_sync
             .as_ref()
             .is_some_and(|mesh| mesh.protocol_subscriptions.retry_needed)
+    }
+
+    pub(super) fn has_mesh_protocol_liveness_work(&self) -> bool {
+        self.device_sync.as_ref().is_some_and(|mesh| {
+            mesh.protocol_subscriptions.retry_needed
+                || !mesh.protocol_subscriptions.subscriptions.is_empty()
+        })
     }
 
     pub(super) fn has_mesh_outbox_work(&self) -> bool {

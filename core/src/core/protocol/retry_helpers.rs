@@ -73,6 +73,6 @@ impl AppCore {
             || self.protocol_subscription_runtime.refresh_dirty
             || !self.pending_relay_publishes.is_empty()
             || self.has_pending_protocol_engine_retry_work()
-            || self.has_mesh_protocol_retry_work()
+            || self.has_mesh_protocol_liveness_work()
     }
 }

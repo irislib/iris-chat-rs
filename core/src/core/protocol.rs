@@ -1504,6 +1504,11 @@ impl AppCore {
             && !pending_protocol_retry_needed
             && !self.has_mesh_protocol_retry_work()
         {
+            if self.has_mesh_protocol_liveness_work() {
+                self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
+                    PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS,
+                ));
+            }
             return;
         }
         self.refresh_relay_connection_status_from_cached_statuses();
