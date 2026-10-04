@@ -27,6 +27,7 @@ struct GroupDetailsScreen: View {
     @State private var showingGroupPictureSourceMenu = false
     @State private var groupPictureViewerItem: IrisProfilePictureViewerItem?
     @State private var groupPictureTask: Task<Void, Never>?
+    @State private var pendingAdminPromotion: GroupMemberSnapshot?
     #if os(iOS)
     @State private var showingGroupPictureCamera = false
     #endif
@@ -37,6 +38,13 @@ struct GroupDetailsScreen: View {
 
     private var normalizedMemberInput: String {
         normalizePeerInput(input: memberInput)
+    }
+
+    private var adminPromotionTitle: String {
+        guard let member = pendingAdminPromotion else { return "Make admin?" }
+        let name = PersonNamePresentation(member.displayName, identity: member.ownerPubkeyHex,
+            explicitName: explicitPersonName(for: member.ownerPubkeyHex, state: manager.state)).name
+        return "Make \(name) an admin?"
     }
 
     private var addMemberInputBinding: Binding<String> {
@@ -355,6 +363,27 @@ struct GroupDetailsScreen: View {
                 }
             }
         }
+        .alert(
+            adminPromotionTitle,
+            isPresented: Binding(
+                get: { pendingAdminPromotion != nil },
+                set: { if !$0 { pendingAdminPromotion = nil } }
+            ),
+            presenting: pendingAdminPromotion
+        ) { member in
+            Button("Make admin") {
+                manager.setGroupAdmin(
+                    groupId: groupId,
+                    ownerPubkeyHex: member.ownerPubkeyHex,
+                    isAdmin: true
+                )
+                pendingAdminPromotion = nil
+            }
+            .accessibilityIdentifier("groupDetailsConfirmAdminButton")
+            Button("Cancel", role: .cancel) { pendingAdminPromotion = nil }
+        } message: { _ in
+            Text("Admins can change the group and manage members.")
+        }
         .irisProfilePictureViewer(
             item: $groupPictureViewerItem,
             preferences: manager.state.preferences,
@@ -559,11 +588,15 @@ struct GroupDetailsScreen: View {
 
     private func memberAdminButton(_ member: GroupMemberSnapshot) -> some View {
         Button(member.isAdmin ? "Dismiss admin" : "Make admin") {
-            manager.setGroupAdmin(
-                groupId: groupId,
-                ownerPubkeyHex: member.ownerPubkeyHex,
-                isAdmin: !member.isAdmin
-            )
+            if member.isAdmin {
+                manager.setGroupAdmin(
+                    groupId: groupId,
+                    ownerPubkeyHex: member.ownerPubkeyHex,
+                    isAdmin: false
+                )
+            } else {
+                pendingAdminPromotion = member
+            }
         }
         .buttonStyle(IrisSecondaryButtonStyle(compact: true))
         .disabled(manager.state.busy.updatingGroup || member.isCreator)

@@ -554,6 +554,7 @@ final class IrisChatComposerUITests: IrisChatUITestCase {
     }
 
     func testCreateGroupAndOpenGroupDetails() {
+        continueAfterFailure = false
         let app = launchCleanApp()
 
         createAccount(app)
@@ -581,6 +582,30 @@ final class IrisChatComposerUITests: IrisChatUITestCase {
         XCTAssertTrue(element(app, "groupDetailsScreen").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "groupDetailsNameInput").waitForExistence(timeout: 5))
         XCTAssertTrue(element(app, "groupDetailsAddMembersButton").waitForExistence(timeout: 5))
+
+        let adminButton = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'groupDetailsAdminMember-' AND label == 'Make admin'")).firstMatch
+        XCTAssertTrue(adminButton.exists)
+        for _ in 0..<5 where !adminButton.isHittable {
+#if os(macOS)
+            app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: 400)
+#else
+            app.swipeUp()
+#endif
+        }
+        adminButton.tap()
+        let confirmation = app.alerts.firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5), "Granting admin access must require confirmation")
+        confirmation.buttons["Cancel"].tap()
+        XCTAssertEqual(adminButton.label, "Make admin", "Cancel must leave the member's role unchanged")
+
+        adminButton.tap()
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "confirm-group-admin-promotion"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        confirmation.buttons["groupDetailsConfirmAdminButton"].firstMatch.tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'groupDetailsAdminMember-' AND label == 'Dismiss admin'")).firstMatch.waitForExistence(timeout: 10))
     }
 
 }

@@ -230,6 +230,94 @@ fn remote_direct_pending_payload_is_discarded_when_local_device_is_revoked() {
 }
 
 #[test]
+fn group_members_cannot_promote_themselves() {
+    let mut f = remote_send_fixture();
+    let created = f
+        .sender
+        .create_group(
+            "Admin authorization".into(),
+            vec![f.peer_owner.public_key()],
+            unix_now(),
+        )
+        .unwrap();
+    let group_id = created.snapshot.unwrap().group_id;
+    for message in decrypt_own_sync_effects(&mut f.ready, created.effects) {
+        f.ready
+            .process_group_pairwise_payload(
+                message.content.as_bytes(),
+                message.sender,
+                message.sender_device,
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        f.ready.group_manager.group(&group_id).unwrap().admins,
+        vec![ndr_owner(f.owner.public_key())]
+    );
+    assert!(f
+        .ready
+        .set_group_admin(&group_id, f.peer_owner.public_key(), true)
+        .is_err());
+
+    f.sender
+        .add_group_members(&group_id, vec![Keys::generate().public_key()])
+        .unwrap();
+    let original = f.sender.group_manager.group(&group_id).unwrap();
+    assert_eq!(
+        original.admins,
+        vec![ndr_owner(f.owner.public_key())],
+        "Adding members must not make them admins"
+    );
+    let mut forged = original.clone();
+    forged.admins.push(ndr_owner(f.peer_owner.public_key()));
+    forged.revision += 1;
+    forged.updated_at = NdrUnixSeconds(forged.updated_at.get() + 1);
+    let fact = group_roster_fact_event_for_test(&f.peer_owner, &forged);
+    assert!(
+        f.sender
+            .ingest_group_roster_fact_event(&fact)
+            .unwrap()
+            .is_none(),
+        "A member cannot authorize their own promotion by signing a new membership list"
+    );
+
+    let payload = JsonGroupPayloadCodecV1
+        .encode_pairwise_command(
+            nostr_double_ratchet::GroupPayloadEncodeContext {
+                local_device_pubkey: ndr_device(f.ready_device.public_key()),
+                created_at: forged.updated_at,
+            },
+            &GroupPairwiseCommand::MetadataSnapshot { snapshot: forged },
+        )
+        .unwrap();
+    // Check both an honest sender identity and a claim to be the creator,
+    // while retaining the member's authenticated device identity.
+    for claimed_sender in [f.peer_owner.public_key(), f.owner.public_key()] {
+        let result = f
+            .sender
+            .process_group_pairwise_payload(
+                &payload,
+                claimed_sender,
+                Some(f.ready_device.public_key()),
+            )
+            .unwrap();
+        assert!(result.events.is_empty());
+        assert_eq!(f.sender.group_manager.group(&group_id).unwrap(), original);
+    }
+    f.sender =
+        ProtocolEngine::load_or_create_for_local_device(f.store, f.owner.public_key(), &f.device)
+            .unwrap();
+    f.sender
+        .retry_pending_protocol(NdrUnixSeconds(unix_now().get() + 60))
+        .unwrap();
+    assert_eq!(
+        f.sender.group_manager.group(&group_id).unwrap(),
+        original,
+        "Restarting or retrying rejected changes must not grant admin access"
+    );
+}
+
+#[test]
 fn group_fanout_retries_only_missing_devices_after_restart() {
     let mut f = remote_send_fixture();
     let created = f
