@@ -998,7 +998,7 @@ impl AppCore {
             }
         }
         self.batch_depth -= 1;
-        if let Some(engine) = self.protocol_engine.as_ref() {
+        if let Some(engine) = self.protocol_engine.as_mut() {
             if let Err(error) = engine.exit_batch() {
                 self.push_debug_log("protocol.persist.batch_flush_failed", error.to_string());
             }

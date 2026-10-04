@@ -614,6 +614,7 @@ impl ProtocolEngine {
         created_at_secs: u64,
     ) {
         let pending = ProtocolPendingDecryptedDelivery {
+            discarded: false,
             sender: decrypted.sender,
             sender_device: decrypted.sender_device,
             conversation_owner: decrypted.conversation_owner,

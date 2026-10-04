@@ -354,7 +354,11 @@ impl ProtocolEngine {
             SenderKeyRepairRequest::from_pending_sender_key_message(&message, &result, now);
         match result {
             GroupSenderKeyHandleResult::Event(event) => {
+                let discard = matches!(&event, GroupIncomingEvent::Message(received)
+                    if received.sender_owner == self.local_owner
+                        && is_message_mutation_payload(&received.body));
                 if let GroupIncomingEvent::Message(received) = &event {
+                    if !discard {
                     // Replay through the authenticated group envelope, retaining its
                     // scope even if the inner rumor contains a conflicting group tag.
                     let payload = JsonGroupPayloadCodecV1.encode_pairwise_command(
@@ -381,6 +385,7 @@ impl ProtocolEngine {
                         },
                         message.created_at.get(),
                     );
+                    }
                 }
                 self.clear_group_sender_key_repairs(
                     &message_repair_group_id,
@@ -391,7 +396,7 @@ impl ProtocolEngine {
                 self.processed_group_sender_key_messages.insert(fingerprint);
                 self.persist()?;
                 Ok(ProtocolGroupIncomingResult {
-                    events: vec![event],
+                    events: if discard { Vec::new() } else { vec![event] },
                     consumed: true,
                     ..Default::default()
                 })

@@ -1271,6 +1271,13 @@ impl AppCore {
         {
             return true;
         }
+        if (kind == MESSAGE_EDIT_KIND || kind == MESSAGE_DELETE_KIND)
+            && (sender_owner == local_owner
+                || sender_device
+                    .is_some_and(|device| self.is_known_local_owner_device_pubkey(device)))
+        {
+            return true;
+        }
         self.cache_mobile_push_control(
             outer_event_id.as_deref(),
             effective_sender_owner,

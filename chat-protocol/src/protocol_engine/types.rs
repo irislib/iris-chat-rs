@@ -163,6 +163,9 @@ struct ProtocolAnsweredGroupSenderKeyRepair {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ProtocolPendingDecryptedDelivery {
+    // In-memory receive completion only; rejected content is never retained.
+    #[serde(skip)]
+    discarded: bool,
     sender: PublicKey,
     sender_device: Option<PublicKey>,
     conversation_owner: Option<PublicKey>,

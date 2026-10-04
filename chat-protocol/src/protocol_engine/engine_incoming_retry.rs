@@ -69,8 +69,9 @@ impl ProtocolEngine {
             }
         };
         match self.decrypt_direct_message_envelope(event, &envelope, true) {
-            Ok(Some(decrypted)) => return Ok(Some(decrypted)),
-            Ok(None) => {}
+            Ok(DirectReceive::Message(decrypted)) => return Ok(Some(decrypted)),
+            Ok(DirectReceive::Discarded) => return Ok(None),
+            Ok(DirectReceive::Pending) => {}
             Err(error) => {
                 if self.queue_header_group_sender_key_candidate_after_direct_error(event)? {
                     return Ok(None);
@@ -419,6 +420,7 @@ impl ProtocolEngine {
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<ProtocolRetryBatch> {
+        self.flush_discarded_direct_receives()?;
         let group_result = self.retry_pending_group_inputs(now)?;
         let group_fanout_result = self.retry_pending_group_fanouts(now)?;
         let mut group_result = group_result;
@@ -427,6 +429,7 @@ impl ProtocolEngine {
         let direct_messages = self
             .pending_decrypted_deliveries
             .iter()
+            .filter(|delivery| !delivery.discarded)
             .cloned()
             .map(ProtocolDecryptedMessage::from)
             .collect::<Vec<_>>();
@@ -473,6 +476,7 @@ impl ProtocolEngine {
         let ids = self
             .pending_decrypted_deliveries
             .iter()
+            .filter(|delivery| !delivery.discarded)
             .filter_map(|delivery| delivery.event_id.clone())
             .collect();
         self.ack_decrypted_delivery_ids(&ids)
@@ -494,7 +498,7 @@ impl ProtocolEngine {
         }
         let before = self.pending_decrypted_deliveries.clone();
         self.pending_decrypted_deliveries.retain(|delivery| {
-            !delivery
+            delivery.discarded || !delivery
                 .event_id
                 .as_ref()
                 .is_some_and(|id| event_ids.contains(id))
@@ -519,17 +523,20 @@ impl ProtocolEngine {
                 continue;
             }
             match self.decrypt_pending_direct_message_event(&pending) {
-                Ok(Some(message)) => {
+                Ok(DirectReceive::Message(message)) => {
                     self.pending_inbound
                         .retain(|item| item.event.id != pending.event.id);
                     messages.push(message);
+                }
+                Ok(DirectReceive::Discarded) => {
+                    self.pending_inbound.retain(|item| item.event.id != pending.event.id);
                 }
                 Err(error) if error.downcast_ref::<StorageError>().is_some() => {
                     // A failed save may follow a successful ratchet advance.
                     // Keep the delivery journal intact and let the caller retry.
                     return Err(error);
                 }
-                Ok(None) | Err(_) => {
+                Ok(DirectReceive::Pending) | Err(_) => {
                     // One undecryptable event must not block other senders or
                     // outgoing acknowledgements. Retain it with backoff so a
                     // later handshake can still make it decryptable.
@@ -550,7 +557,7 @@ impl ProtocolEngine {
     fn decrypt_pending_direct_message_event(
         &mut self,
         pending: &ProtocolPendingInbound,
-    ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
+    ) -> anyhow::Result<DirectReceive> {
         if let Some(envelope) = pending.envelope.as_ref() {
             return self.decrypt_direct_message_envelope(&pending.event, envelope, true);
         }
@@ -560,7 +567,7 @@ impl ProtocolEngine {
     fn decrypt_direct_message_event(
         &mut self,
         event: &Event,
-    ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
+    ) -> anyhow::Result<DirectReceive> {
         let envelope = parse_message_event(event)?;
         self.decrypt_direct_message_envelope(event, &envelope, true)
     }
@@ -570,7 +577,7 @@ impl ProtocolEngine {
         event: &Event,
         envelope: &MessageEnvelope,
         record_delivery: bool,
-    ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
+    ) -> anyhow::Result<DirectReceive> {
         if let Some(delivery) = self
             .pending_decrypted_deliveries
             .iter()
@@ -578,14 +585,18 @@ impl ProtocolEngine {
             .cloned()
         {
             // The ratchet may already have advanced before a previous save failed.
+            if delivery.discarded {
+                self.flush_discarded_direct_receives()?;
+                return Ok(DirectReceive::Discarded);
+            }
             self.persist()?;
-            return Ok(Some(delivery.into()));
+            return Ok(DirectReceive::Message(delivery.into()));
         }
         let sender_owner = match self.resolve_message_sender_owner(envelope) {
             ProtocolSenderOwnerResolution::Verified { owner }
             | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => owner,
             ProtocolSenderOwnerResolution::PendingOwnerClaim { .. } => {
-                return Ok(None);
+                return Ok(DirectReceive::Pending);
             }
         };
         let mut rng = OsRng;
@@ -594,11 +605,12 @@ impl ProtocolEngine {
             .session_manager
             .receive(&mut ctx, sender_owner, envelope)?
         else {
-            return Ok(None);
+            return Ok(DirectReceive::Pending);
         };
         self.clear_pending_group_sender_key_candidate_for_direct_event(event);
         self.invalidate_known_message_author_cache();
-        let local_sibling = (received.owner_pubkey == self.local_owner)
+        let from_local_sibling = received.owner_pubkey == self.local_owner;
+        let local_sibling = from_local_sibling
             .then(|| decode_local_sibling_payload(&received.payload))
             .flatten();
         let (conversation_owner, sender, sender_device, payload) = match local_sibling {
@@ -615,6 +627,22 @@ impl ProtocolEngine {
                 received.payload,
             ),
         };
+        // Own-device controls use history-aware reconciliation. Never put their
+        // replacement text in the delivery journal before application admission.
+        if from_local_sibling && is_message_mutation_payload(&payload) {
+            self.pending_decrypted_deliveries.push(ProtocolPendingDecryptedDelivery {
+                discarded: true,
+                sender,
+                sender_device,
+                conversation_owner,
+                content: String::new(),
+                event_id: Some(event.id.to_string()),
+                created_at_secs: event.created_at.as_secs(),
+            });
+            self.pending_inbound.retain(|pending| pending.event.id != event.id);
+            self.flush_discarded_direct_receives()?;
+            return Ok(DirectReceive::Discarded);
+        }
         let content = String::from_utf8(payload)?;
         let decrypted = ProtocolDecryptedMessage {
             created_at_secs: event.created_at.as_secs(),
@@ -628,7 +656,7 @@ impl ProtocolEngine {
             self.record_pending_decrypted_delivery(decrypted.clone(), event.created_at.as_secs());
         }
         self.persist()?;
-        Ok(Some(decrypted))
+        Ok(DirectReceive::Message(decrypted))
     }
 
     fn retry_pending_group_inputs(

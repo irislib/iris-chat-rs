@@ -534,3 +534,94 @@ fn group_retry_orphan_prepared_plan_does_not_hide_other_ready_work() {
     assert!(engine.pending_group_sender_key_messages.is_empty());
     assert!(engine.group_sender_key_retry.borrow().prepared.is_none());
 }
+
+#[test]
+fn group_retry_discarded_prepared_plan_preserves_other_input_wakeups() {
+    let (mut engine, sender, device) = queued_group_history(1);
+    long_group_candidate(&mut engine, &device, 700);
+    let original = engine.pending_group_sender_key_messages.remove(0);
+    let (other, _, other_device) = queued_group_history(1);
+    let mut other_state = other.group_manager.snapshot();
+    other_state.groups[0].group_id = "other-group".into();
+    other_state.groups[0].members.push(engine.local_owner);
+    other_state.sender_keys[0].group_id = "other-group".into();
+    let author = other_state.sender_keys[0].sender_event_pubkey;
+    let mut state = engine.group_manager.snapshot();
+    state.groups.extend(other_state.groups);
+    state.sender_keys.extend(other_state.sender_keys);
+    engine.group_manager = GroupEventManager::from_snapshot(state).unwrap();
+    let plaintext = JsonGroupPayloadCodecV1
+        .encode_sender_key_plaintext(
+            nostr_double_ratchet::GroupPayloadEncodeContext {
+                local_device_pubkey: ndr_device(other_device.public_key()),
+                created_at: NdrUnixSeconds(20),
+            },
+            &nostr_double_ratchet::GroupSenderKeyPlaintext {
+                group_id: "other-group".into(),
+                revision: 1,
+                body: b"new input after another group was revoked".to_vec(),
+            },
+        )
+        .unwrap();
+    let new_key = nostr_double_ratchet::SenderKeyState::new(2, [7; 32], 0);
+    let mut dormant = other.pending_group_sender_key_messages[0].clone();
+    dormant.ciphertext = new_key.clone().encrypt_to_bytes(&plaintext).unwrap().1;
+    engine
+        .queue_pending_group_sender_key_message(dormant)
+        .unwrap();
+    assert!(drain_group_retry(&mut engine, NdrUnixSeconds(30)).is_empty());
+    assert_eq!(engine.pending_group_sender_key_messages.len(), 1);
+
+    engine
+        .queue_pending_group_sender_key_message(original)
+        .unwrap();
+    engine.retry_pending_protocol(NdrUnixSeconds(30)).unwrap();
+    for _ in 0..2 {
+        engine.group_sender_key_retry.borrow_mut().reset_budget();
+        engine.advance_group_sender_key_continuation().unwrap();
+    }
+    assert!(engine.group_sender_key_retry.borrow().prepared.is_some());
+    let mut group = engine.group_manager.group("queued-group").unwrap();
+    group.revision += 1;
+    group.members.retain(|owner| *owner != engine.local_owner);
+    let payload = JsonGroupPayloadCodecV1
+        .encode_pairwise_command(
+            nostr_double_ratchet::GroupPayloadEncodeContext {
+                local_device_pubkey: ndr_device(device.public_key()),
+                created_at: NdrUnixSeconds(31),
+            },
+            &GroupPairwiseCommand::MetadataSnapshot { snapshot: group },
+        )
+        .unwrap();
+    engine
+        .group_manager
+        .handle_pairwise_payload(
+            ndr_owner(sender.public_key()),
+            ndr_device(device.public_key()),
+            &payload,
+        )
+        .unwrap();
+    engine.enter_batch();
+    assert!(engine
+        .retry_pending_protocol(NdrUnixSeconds(32))
+        .unwrap()
+        .group_result
+        .events
+        .is_empty());
+    engine.exit_batch().unwrap();
+    assert!(engine.group_sender_key_retry.borrow().prepared.is_none());
+    assert_eq!(engine.pending_group_sender_key_messages.len(), 1);
+
+    let mut state = engine.group_manager.snapshot();
+    let record = state
+        .sender_keys
+        .iter_mut()
+        .find(|record| record.sender_event_pubkey == author)
+        .unwrap();
+    record.states.push(new_key);
+    record.latest_key_id = Some(2);
+    engine.group_manager = GroupEventManager::from_snapshot(state).unwrap();
+    let events = drain_group_retry(&mut engine, NdrUnixSeconds(33));
+    assert_eq!(events.len(), 1);
+    assert!(engine.pending_group_sender_key_messages.is_empty());
+}

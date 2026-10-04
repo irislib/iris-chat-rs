@@ -541,6 +541,9 @@ impl AppCore {
             .as_ref()
             .map(|logged_in| logged_in.owner_pubkey);
         let is_outgoing = local_owner.is_some_and(|local_owner| sender_owner == local_owner);
+        if is_outgoing && matches!(runtime_rumor.kind, MESSAGE_EDIT_KIND | MESSAGE_DELETE_KIND) {
+            return true;
+        }
         let created_at_secs = runtime_rumor.created_at_secs;
         let expires_at_secs = message_expiration_from_tags(runtime_rumor.tags.iter());
         let inner_event_id = runtime_rumor.id.clone();

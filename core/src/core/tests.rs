@@ -199,5 +199,6 @@ include!("tests/synthetic_history_scale.rs");
 include!("tests/synthetic_protocol_checkpoint.rs");
 
 include!("tests/message_mutations.rs");
+include!("tests/message_mutation_live_privacy.rs");
 
 include!("tests/message_mutation_cleanup.rs");

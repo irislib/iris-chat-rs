@@ -177,7 +177,7 @@ fn checkpoint_pending_restores_compact_pretty_and_padded_legacy_json() {
         persisted,
     ] {
         engine.storage.put(PROTOCOL_ENGINE_STATE_KEY, json).unwrap();
-        let restored = ProtocolEngine::load_or_create_for_local_device(
+        let mut restored = ProtocolEngine::load_or_create_for_local_device(
             engine.storage.clone(),
             engine.owner_pubkey,
             &keys,

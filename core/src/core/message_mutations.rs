@@ -163,10 +163,18 @@ impl AppCore {
                 }
                 None => false,
             }
+        } else if chat == owner.to_hex() {
+            // Note-to-self edits reach siblings through guarded record sync.
+            true
         } else {
             let result = PublicKey::from_hex(&chat).ok().and_then(|peer| {
                 self.protocol_engine.as_mut().map(|engine| {
-                    engine.send_direct_unsigned_event(peer, &chat, event.clone(), unix_now())
+                    engine.send_direct_unsigned_event_to_peer_only(
+                        peer,
+                        &chat,
+                        event.clone(),
+                        unix_now(),
+                    )
                 })
             });
             match result {

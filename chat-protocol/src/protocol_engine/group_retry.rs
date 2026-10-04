@@ -297,6 +297,15 @@ impl ProtocolEngine {
                                 .is_some_and(|first| parsed.created_at.get() < first)
                     });
             if discard {
+                let mut retry = self.group_sender_key_retry.borrow_mut();
+                if retry
+                    .prepared
+                    .as_ref()
+                    .is_some_and(|(ready, _)| ready == &fingerprint)
+                {
+                    retry.prepared = None;
+                }
+                drop(retry);
                 removed.push((index, self.pending_group_sender_key_messages.remove(index)));
                 self.persist()?;
                 continue;

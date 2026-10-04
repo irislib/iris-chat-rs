@@ -16,7 +16,7 @@ impl ProtocolEngine {
             })
     }
 
-    fn persist(&self) -> anyhow::Result<()> {
+    fn persist(&mut self) -> anyhow::Result<()> {
         if self.batch_depth.get() > 0 {
             self.batch_persist_dirty.set(true);
             return Ok(());
@@ -24,7 +24,7 @@ impl ProtocolEngine {
         self.persist_now()
     }
 
-    fn persist_now(&self) -> anyhow::Result<()> {
+    fn persist_now(&mut self) -> anyhow::Result<()> {
         let state = ProtocolEnginePersistedState {
             version: PROTOCOL_ENGINE_STATE_VERSION,
             session_manager: self.session_manager.snapshot(),
@@ -44,11 +44,11 @@ impl ProtocolEngine {
             pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),
             processed_group_sender_key_messages: self.processed_group_sender_key_messages.clone(),
             answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
-            pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
+            pending_decrypted_deliveries: self.pending_decrypted_deliveries.iter()
+                .filter(|delivery| !delivery.discarded).cloned().collect(),
             group_roster_fact_histories: self.group_roster_fact_histories.clone(),
             subscription_generation: self.subscription_generation,
         };
-        self.batch_persist_dirty.set(false);
         let pending = self.pending_group_sender_key_messages.serialized()?;
         let (json, layout) = layout_protocol_checkpoint_with_pending(
             serde_json::to_string(&state)?,
@@ -56,6 +56,8 @@ impl ProtocolEngine {
             Some(&pending),
         );
         self.storage.put(PROTOCOL_ENGINE_STATE_KEY, json)?;
+        self.batch_persist_dirty.set(false);
+        self.pending_decrypted_deliveries.retain(|delivery| !delivery.discarded);
         *self.checkpoint_layout.borrow_mut() = layout;
         Ok(())
     }
@@ -68,7 +70,7 @@ impl ProtocolEngine {
             .set(self.batch_depth.get().saturating_add(1));
     }
 
-    pub fn exit_batch(&self) -> anyhow::Result<()> {
+    pub fn exit_batch(&mut self) -> anyhow::Result<()> {
         let depth = self.batch_depth.get();
         if depth == 0 {
             return Ok(());
