@@ -1,0 +1,90 @@
+diff --git a/core/src/update_announcements.rs b/core/src/update_announcements.rs
+index c2dead0f..6b82c295 100644
+--- a/core/src/update_announcements.rs
++++ b/core/src/update_announcements.rs
+@@ -13,6 +13,9 @@ use hashtree_updater::{
+ use nostr::{Keys, ToBech32};
+ use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
+ 
++#[path = "fleet_update_trace.rs"]
++mod fleet_trace;
++
+ pub const HTREE_UPDATE_REF: &str =
+     "htree://npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/releases%2Firis-chat-rs/latest";
+ const DEFAULT_BLOSSOM_READ_SERVERS: &[&str] = &[
+@@ -184,6 +187,7 @@ async fn standalone_fips_update_provider(
+     reference: &UpdateRef,
+     config: fips_core::Config,
+ ) -> Result<Arc<dyn NostrEventSubscriber>, UpdateError> {
++    fleet_trace::emit("release_author", Some(&reference.npub), 1);
+     let pubsub_options = update_pubsub_options(reference)?;
+     let endpoint = fips_core::FipsEndpoint::builder()
+         .config(config)
+@@ -199,11 +203,66 @@ async fn standalone_fips_update_provider(
+         .bind()
+         .await
+         .map_err(|error| UpdateError::Announcement(error.to_string()))?;
++    let endpoint = Arc::new(endpoint);
++    fleet_trace::emit("endpoint_bound", Some(endpoint.npub()), 1);
+     let client = Arc::new(
+-        FipsPubsubClient::start(Arc::new(endpoint), pubsub_options)
++        FipsPubsubClient::start(Arc::clone(&endpoint), pubsub_options)
+             .await
+             .map_err(|error| UpdateError::Announcement(error.to_string()))?,
+     );
++    if fleet_trace::enabled() {
++        let endpoint = Arc::downgrade(&endpoint);
++        let client = Arc::downgrade(&client);
++        tokio::spawn(async move {
++            // Observation only: no readiness barrier or altered query deadline.
++            for _ in 0..12 {
++                let (Some(endpoint), Some(client)) = (endpoint.upgrade(), client.upgrade()) else {
++                    break;
++                };
++                match tokio::time::timeout(Duration::from_millis(250), endpoint.peers()).await {
++                    Ok(Ok(peers)) => {
++                        fleet_trace::emit("endpoint_peer_count", None, peers.len() as u64);
++                        for peer in peers.iter().take(16) {
++                            fleet_trace::emit(
++                                "endpoint_peer_connected",
++                                Some(&peer.npub),
++                                u64::from(peer.connected),
++                            );
++                        }
++                    }
++                    _ => fleet_trace::emit("endpoint_snapshot_unavailable", None, 1),
++                }
++                match client.connected_peer_count() {
++                    Ok(count) => fleet_trace::emit("tcp_connected_count", None, count as u64),
++                    Err(_) => fleet_trace::emit("tcp_connected_count_unavailable", None, 1),
++                }
++                fleet_trace::emit(
++                    "transport_error_count",
++                    None,
++                    client.transport_error_count(),
++                );
++                let delivery = client.delivery_snapshot();
++                fleet_trace::emit(
++                    "tcp_datagrams_received",
++                    None,
++                    delivery.tcp_datagrams_received,
++                );
++                fleet_trace::emit(
++                    "tcp_datagrams_rejected",
++                    None,
++                    delivery.tcp_datagrams_rejected,
++                );
++                fleet_trace::emit(
++                    "subscription_events_received",
++                    None,
++                    delivery.subscription_events_received,
++                );
++                drop(client);
++                drop(endpoint);
++                tokio::time::sleep(Duration::from_secs(1)).await;
++            }
++        });
++    }
+     Ok(Arc::new(client.fresh_subscriber()))
+ }
+ 

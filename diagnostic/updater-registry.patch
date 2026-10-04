@@ -1,0 +1,50 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,6 +10,7 @@
+ //! per-asset hash or signature is required.
+ 
+ mod error;
++mod fleet_trace;
+ mod install;
+ mod manifest;
+ mod product;
+--- a/src/pubsub_resolver.rs
++++ b/src/pubsub_resolver.rs
+@@ -95,11 +95,21 @@
+         let roots = self.roots.clone();
+         let observed_key = key.to_owned();
+         let deadline = tokio::time::Instant::now() + self.window;
++        crate::fleet_trace::emit(
++            "resolver_window_started",
++            None,
++            self.window.as_millis() as u64,
++        );
+         let subscription = tokio::time::timeout_at(
+             deadline,
+             self.provider.subscribe(
+                 vec![filter],
+                 Arc::new(move |incoming| {
++                    crate::fleet_trace::emit(
++                        "resolver_peer_observation",
++                        None,
++                        u64::from(incoming.source.kind != EventSourceKind::LocalIndex),
++                    );
+                     let Ok(mut roots) = roots.lock() else { return };
+                     let cache = roots.get_mut(&observed_key).unwrap();
+                     let id = incoming.event.as_event().id;
+@@ -111,6 +121,7 @@
+                     {
+                         if let Ok(mut observed) = sink.lock() {
+                             *observed = Some(id);
++                            crate::fleet_trace::emit("resolver_fresh_latest_accepted", None, 1);
+                         }
+                     }
+                 }),
+@@ -120,6 +131,7 @@
+         .map_err(network)?
+         .map_err(network)?;
+         let mut subscription = CloseOnDrop(Some(subscription));
++        crate::fleet_trace::emit("resolver_subscription_open", None, 1);
+         // Keep observing for the whole window: the first reply need not be the
+         // newest release, and an early quiet interval says nothing about peers.
+         tokio::time::sleep_until(deadline).await;

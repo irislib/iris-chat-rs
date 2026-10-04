@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "diagnostic_only": true,
+  "rust_toolchain": "1.93.1",
+  "sources": {
+    "client": {
+      "repository": "https://github.com/irislib/iris-chat-rs.git",
+      "commit": "eb692bb7cf675ba286602900d00002aa58a7cf11",
+      "manifest": "core/Cargo.toml",
+      "bin": "iris",
+      "package": "iris-chat",
+      "profile": "release"
+    },
+    "provider": {
+      "repository": "https://github.com/mmalmi/hashtree.git",
+      "commit": "494b5eaac8cd5262d114d77d20a15cffd611066a",
+      "manifest": "rust/Cargo.toml",
+      "bin": "htree",
+      "package": "hashtree-cli",
+      "profile": "dev"
+    }
+  },
+  "packages": [
+    {
+      "role": "client",
+      "name": "nostr-pubsub-fips",
+      "version": "0.5.16",
+      "sha256": "047a7591106fc49c7414911815661db1f1d87778357a19ef28048b0e02d01574"
+    },
+    {
+      "role": "provider",
+      "name": "nostr-pubsub-fips",
+      "version": "0.5.17",
+      "sha256": "e110001ac143627e42ac0d6b8b488735e37bd1526fad913f76fddfe21bb9af7c"
+    },
+    {
+      "role": "updater",
+      "name": "hashtree-updater",
+      "version": "0.2.87",
+      "sha256": "f8c0a192b9135976aa07e3b7be67ef0ab190e4b7decc0c2c9633fd36c49f11bf"
+    }
+  ],
+  "payload_sha256": {
+    "client.patch": "ad25b796cdc6e38631bf46c0a860a739c1c1558a00894412ac4555375775228b",
+    "provider-base.patch": "7f78359c2504ea015aca32c3ca9111fc853f01672987ce651aeadbdb99f10bab",
+    "fleet_trace.rs": "0b0dbd285e8c707980568a35f94ca17fb78d9528e6bad32a135f1e34c4d278e3",
+    "client-registry.patch": "73a7aec09cbcc8fa63a990d486a09fa666a41e2e1d3b687485edcb62533ab51c",
+    "provider-registry.patch": "7e807b51616aa75dd906085cc3e4e61eb1333238a175043c17e498d570faa2f5",
+    "updater-registry.patch": "7817b1d27e822bfcd6e3806966bb8530c1d8821a756716e4152e5de9b65453ae"
+  },
+  "provider_test_fixture": "Original untracked public_provider.rs unavailable; no provider CLI test-suite claim. Production files match original scoped source snapshot.",
+  "runtime": "No network/runtime probe, signer, store or deployment in hosted build."
+}

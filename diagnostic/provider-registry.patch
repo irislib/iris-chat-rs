@@ -1,0 +1,118 @@
+--- a/src/client_inner.rs
++++ b/src/client_inner.rs
+@@ -156,7 +156,10 @@
+         let mut last_error = None;
+         for peer in peers {
+             match self.send_frame(peer.identity, frame.clone()) {
+-                Ok(()) => sent += 1,
++                Ok(()) => {
++                    crate::fleet_trace::emit("req_enqueued", Some(&peer.npub), 1);
++                    sent += 1;
++                }
+                 Err(error) => {
+                     last_error = Some(error);
+                     if let Some(active) = self.lock_subscriptions()?.get_mut(&key) {
+@@ -187,6 +190,7 @@
+ 
+     pub(super) async fn handle_frame(&self, source_peer: PeerIdentity, frame: &[u8]) {
+         let Ok(message) = self.codec.decode_frame(frame) else {
++            crate::fleet_trace::emit("frame_rejected", Some(&source_peer.npub()), 1);
+             self.record_provider_violation(source_peer, ProviderViolation::MalformedFrame);
+             return;
+         };
+@@ -199,6 +203,7 @@
+                 filters,
+             } => {
+                 self.req_frames_received.fetch_add(1, Ordering::Relaxed);
++                crate::fleet_trace::emit("req_received", Some(&source_npub), 1);
+                 self.handle_req(source_peer, source_id, &subscription_id, &filters);
+             }
+             FipsPubsubWireMessage::Close { subscription_id } => {
+@@ -210,8 +215,14 @@
+                 event,
+             } => {
+                 self.event_frames_received.fetch_add(1, Ordering::Relaxed);
++                crate::fleet_trace::emit("signed_event_frame_received", Some(&source_npub), 1);
+                 let is_subscribed =
+                     self.event_matches_subscription(&source_npub, subscription_id.as_ref(), &event);
++                crate::fleet_trace::emit(
++                    "event_matches_subscription",
++                    Some(&source_npub),
++                    u64::from(is_subscribed),
++                );
+                 let fresh_id = if is_subscribed && subscription_id.is_some() {
+                     self.fresh_response_subscription(&source_npub, &event)
+                 } else {
+--- a/src/client_transport.rs
++++ b/src/client_transport.rs
+@@ -197,6 +197,7 @@
+     }
+     let mut cooled_peers = HashSet::new();
+     for peer in report.newly_connected {
++        crate::fleet_trace::emit("tcp_connected", Some(&peer.npub()), 1);
+         if disconnected.contains(&peer.npub()) {
+             continue;
+         }
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -26,6 +26,7 @@
+ mod client_peers;
+ mod client_reputation;
+ mod client_transport;
++mod fleet_trace;
+ mod peerfinding;
+ mod pending_wants;
+ mod provider_behavior;
+--- a/src/replay_source.rs
++++ b/src/replay_source.rs
+@@ -112,12 +112,18 @@
+         ReplayQuery::Subscription { filters, .. } => filters.clone(),
+         ReplayQuery::Event(id) => vec![Filter::new().id(*id).limit(1)],
+     };
++    crate::fleet_trace::emit("retained_query_started", Some(&request.peer.npub()), 1);
+     let report = request
+         .source
+         .query(filters.clone(), QueryOptions { limit: Some(limit) })
+         .await
+         .unwrap_or_default();
+     let mut events = bounded_events(report, &filters, &request.query, limit);
++    crate::fleet_trace::emit(
++        "retained_matches",
++        Some(&request.peer.npub()),
++        events.len() as u64,
++    );
+     let source_id = SourceId::new(request.peer.npub());
+     for (event, source) in events.drain(..) {
+         if !inner.event_is_admitted(&event, &source).await {
+@@ -163,7 +169,12 @@
+             }
+         };
+         if let Ok(frame) = frame {
+-            let _ = inner.send_frame(request.peer, frame);
++            let sent = inner.send_frame(request.peer, frame);
++            crate::fleet_trace::emit(
++                "retained_reply_enqueued",
++                Some(&request.peer.npub()),
++                u64::from(sent.is_ok()),
++            );
+         }
+     }
+ }
+--- a/src/wire_tcp.rs
++++ b/src/wire_tcp.rs
+@@ -152,6 +152,7 @@
+             peer_npub.to_owned(),
+             Some(Instant::now() + SERVICE_RETRY_INTERVAL),
+         );
++        crate::fleet_trace::emit("tcp_connect_requested", Some(peer_npub), 1);
+         let id = self
+             .tcp
+             .connect(peer, now_ms)
+@@ -477,6 +478,7 @@
+                 if accepted == 0 {
+                     break;
+                 }
++                crate::fleet_trace::emit("tcp_bytes_accepted", Some(&peer), accepted as u64);
+                 budget -= accepted;
+                 let queue = self.queues.get_mut(&peer).expect("queue exists");
+                 let record = queue.records.front_mut().expect("record exists");
