@@ -33,7 +33,8 @@ final class ChatTimelineViewportAnchorTests: XCTestCase {
         coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
             chatID: "chat", firstMessageID: "81", messageID: "83", originalContentY: 220)
         let loaded = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "1",
-            frames: ["83": CGRect(x: 0, y: 920, width: 100, height: 80)], contentHeight: 3_000)
+            frames: ["83": CGRect(x: 0, y: 920, width: 100, height: 80)],
+            contentFrames: ["83": CGRect(x: 0, y: 1_020, width: 100, height: 80)], contentHeight: 3_000)
         XCTAssertFalse(coordinator.restoreHistoryViewportAnchor(page: loaded))
         XCTAssertEqual(scroll.contentOffset.y, 100, "Never correct against the previous page's clamp range")
         XCTAssertNotNil(coordinator.historyViewportAnchor)
@@ -53,7 +54,8 @@ final class ChatTimelineViewportAnchorTests: XCTestCase {
         coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
             chatID: "chat", firstMessageID: "1", messageID: "83", originalContentY: 1_120)
         let page = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "21",
-            frames: ["83": CGRect(x: 0, y: -280, width: 100, height: 80)], contentHeight: 2_600)
+            frames: ["83": CGRect(x: 0, y: -280, width: 100, height: 80)],
+            contentFrames: ["83": CGRect(x: 0, y: 720, width: 100, height: 80)], contentHeight: 2_600)
         XCTAssertFalse(coordinator.restoreHistoryViewportAnchor(page: page))
         XCTAssertEqual(scroll.contentOffset.y, 1_000)
         XCTAssertNotNil(coordinator.historyViewportAnchor)
@@ -108,9 +110,52 @@ final class ChatTimelineViewportAnchorTests: XCTestCase {
         coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
             chatID: "chat", firstMessageID: "81", messageID: "83", originalContentY: 220)
         let page = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "1",
-            frames: ["83": CGRect(x: 0, y: 860, width: 100, height: 80)], contentHeight: 3_000)
+            frames: ["83": CGRect(x: 0, y: 860, width: 100, height: 80)],
+            contentFrames: ["83": CGRect(x: 0, y: 1_020, width: 100, height: 80)], contentHeight: 3_000)
         XCTAssertTrue(coordinator.restoreHistoryViewportAnchor(page: page))
         XCTAssertEqual(scroll.contentOffset.y, 960, "Keep UIKit's 60-point deceleration movement")
+    }
+
+    @MainActor
+    func testHistoryCorrectionDoesNotCountMovementAfterGeometryMeasurementTwice() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        scroll.contentSize.height = 3_000
+        scroll.contentOffset.y = 100
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
+            chatID: "chat", firstMessageID: "81", messageID: "83", originalContentY: 220)
+        // SwiftUI measured the new row at offset 100. UIKit can continue the
+        // drag before that preference reaches the history correction.
+        let page = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "1",
+            frames: ["83": CGRect(x: 0, y: 920, width: 100, height: 80)],
+            contentFrames: ["83": CGRect(x: 0, y: 1_020, width: 100, height: 80)], contentHeight: 3_000)
+        scroll.contentOffset.y = 160
+        XCTAssertTrue(coordinator.restoreHistoryViewportAnchor(page: page))
+        XCTAssertEqual(scroll.contentOffset.y, 960,
+                       "Apply only the 800-point layout change to the live 160-point offset")
+    }
+
+    @MainActor
+    func testHistoryCaptureDoesNotMixAnOlderViewportFrameWithTheLiveOffset() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        scroll.contentSize.height = 3_000
+        scroll.contentOffset.y = 160
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        let measured = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "81",
+            frames: ["83": CGRect(x: 0, y: 120, width: 100, height: 80)],
+            contentFrames: ["83": CGRect(x: 0, y: 220, width: 100, height: 80)])
+        coordinator.messageContentFrames = measured.frames
+        coordinator.latestPage = measured
+        coordinator.captureHistoryViewportAnchor(chatID: "chat", firstMessageID: "81",
+                                                  viewportMinY: 0, viewportMaxY: 600)
+        XCTAssertEqual(coordinator.historyViewportAnchor?.originalContentY, 220,
+                       "Capture intrinsic geometry without adding movement since its measurement")
+        let page = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "1",
+            contentFrames: ["83": CGRect(x: 0, y: 1_020, width: 100, height: 80)], contentHeight: 3_000)
+        XCTAssertTrue(coordinator.restoreHistoryViewportAnchor(page: page))
+        XCTAssertEqual(scroll.contentOffset.y, 960)
     }
 
     @MainActor
@@ -134,6 +179,7 @@ final class ChatTimelineViewportAnchorTests: XCTestCase {
         XCTAssertEqual(scroll.contentOffset.y, 2_000, "Exercise a real UIKit extent clamp before the layout delta")
         let page = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "21",
             frames: ["83": CGRect(x: 0, y: 1_900 - scroll.contentOffset.y, width: 100, height: 80)],
+            contentFrames: ["83": CGRect(x: 0, y: 1_900, width: 100, height: 80)],
             contentHeight: 2_600)
         XCTAssertTrue(coordinator.restoreHistoryViewportAnchor(page: page))
         XCTAssertEqual(scroll.contentOffset.y, 1_800, "Apply the -400 layout delta to the pre-clamp position")
@@ -150,11 +196,13 @@ final class ChatTimelineViewportAnchorTests: XCTestCase {
         coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
             chatID: "chat", firstMessageID: "81", messageID: "83", originalContentY: 220)
         let old = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "81",
-                                        frames: ["83": CGRect(x: 0, y: 120, width: 100, height: 80)])
+            frames: ["83": CGRect(x: 0, y: 120, width: 100, height: 80)],
+            contentFrames: ["83": CGRect(x: 0, y: 220, width: 100, height: 80)])
         XCTAssertFalse(coordinator.restoreHistoryViewportAnchor(page: old))
         XCTAssertNotNil(coordinator.historyViewportAnchor)
         let loaded = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "1",
-                                           frames: ["83": CGRect(x: 0, y: 920, width: 100, height: 80)], contentHeight: 3_000)
+            frames: ["83": CGRect(x: 0, y: 920, width: 100, height: 80)],
+            contentFrames: ["83": CGRect(x: 0, y: 1_020, width: 100, height: 80)], contentHeight: 3_000)
         XCTAssertTrue(coordinator.restoreHistoryViewportAnchor(page: loaded))
         XCTAssertEqual(scroll.contentOffset.y, 900)
         XCTAssertNil(coordinator.historyViewportAnchor)

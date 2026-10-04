@@ -100,6 +100,7 @@ let irisGroupSenderNameDarkColorHexes: [UInt32] = [
 
 enum ChatTimelineCoordinateSpace {
     static let name = "chatTimelineCoordinateSpace"
+    static let contentName = "chatTimelineContentCoordinateSpace"
 }
 
 enum ChatTimelineAnchor {
@@ -249,6 +250,9 @@ struct ChatTimelinePageFrames: Equatable {
     var lastMessageID: String?
     var layoutGeneration = 0
     var frames: [String: CGRect] = [:]
+    // Intrinsic content coordinates remain valid if UIKit moves between
+    // SwiftUI measuring a preference and delivering it to the coordinator.
+    var contentFrames: [String: CGRect] = [:]
     var heights: [String: CGFloat] = [:]
     var contentHeight: CGFloat = 0
 }
@@ -258,6 +262,7 @@ struct ChatMessageContentFramePreferenceKey: PreferenceKey {
     static func reduce(value: inout ChatTimelinePageFrames, nextValue: () -> ChatTimelinePageFrames) {
         let next = nextValue()
         value.frames.merge(next.frames, uniquingKeysWith: { _, new in new })
+        value.contentFrames.merge(next.contentFrames, uniquingKeysWith: { _, new in new })
         value.heights.merge(next.heights, uniquingKeysWith: { _, new in new })
         value.contentHeight = max(value.contentHeight, next.contentHeight)
         if !next.chatID.isEmpty {
@@ -457,9 +462,16 @@ struct ChatMessageRow: View, Equatable {
 
     private var contentFrame: some View {
         GeometryReader { geometry in
+#if os(iOS)
+            let contentFrames = [message.id: geometry.frame(in: .named(ChatTimelineCoordinateSpace.contentName))]
+#else
+            let contentFrames: [String: CGRect] = [:]
+#endif
             Color.clear.preference(
                 key: ChatMessageContentFramePreferenceKey.self,
-                value: ChatTimelinePageFrames(frames: [message.id: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))])
+                value: ChatTimelinePageFrames(
+                    frames: [message.id: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))],
+                    contentFrames: contentFrames)
             )
         }
     }
@@ -910,6 +922,7 @@ struct ChatTimelineContentLayout<Content: View>: View {
     var body: some View {
 #if os(iOS)
         VStack(spacing: 8) { content }
+            .coordinateSpace(name: ChatTimelineCoordinateSpace.contentName)
             .background(GeometryReader { geometry in
                 Color.clear.preference(key: ChatMessageContentFramePreferenceKey.self,
                     value: ChatTimelinePageFrames(contentHeight: geometry.size.height))

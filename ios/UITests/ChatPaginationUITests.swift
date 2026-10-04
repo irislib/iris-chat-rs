@@ -200,7 +200,21 @@ final class ChatPaginationUITests: IrisChatUITestCase {
             let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.7))
             let end = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.4))
             start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.25)
-            let after = messageSnapshots(in: try timeline.snapshot()).first { $0.label == anchor.label }
+            let afterMessages = messageSnapshots(in: try timeline.snapshot())
+            let after = afterMessages.first { $0.label == anchor.label }
+            let delta = (after?.frame.minY ?? .nan) - anchor.frame.minY
+            let tolerance = max(20, viewport.height * 0.06)
+            if after == nil || !delta.isFinite || abs(delta + viewport.height * 0.3) > tolerance {
+                capture(app, name: "render-window-drag-discontinuity")
+                let detail = XCTAttachment(string:
+                    "anchor=\(ordinal(anchor.label) ?? -1) beforeFrame=\(anchor.frame) afterFrame=\(String(describing: after?.frame)) "
+                    + "viewport=\(viewport) expectedDelta=\(-viewport.height * 0.3) actualDelta=\(delta) tolerance=\(tolerance) "
+                    + "beforeWindow=\(messages.compactMap { ordinal($0.label) }.min() ?? -1)...\(messages.compactMap { ordinal($0.label) }.max() ?? -1) "
+                    + "afterWindow=\(afterMessages.compactMap { ordinal($0.label) }.min() ?? -1)...\(afterMessages.compactMap { ordinal($0.label) }.max() ?? -1)")
+                detail.name = "render-window-drag-geometry"
+                detail.lifetime = .keepAlways
+                add(detail)
+            }
             XCTAssertNotNil(after, "Evicting offscreen rows must retain the visible message")
             XCTAssertEqual((after?.frame.minY ?? .nan) - anchor.frame.minY, -viewport.height * 0.3,
                            accuracy: max(20, viewport.height * 0.06), "A window swap must preserve the ongoing drag")

@@ -242,23 +242,24 @@ extension ChatTimelineInteractionCoordinator {
     func captureHistoryViewportAnchor(chatID: String, firstMessageID: String, layoutGeneration: Int = 0,
                                       viewportMinY: CGFloat, viewportMaxY: CGFloat) {
         historyViewportAnchor = nil
-        guard let scrollView else { return }
+        guard scrollView != nil, latestPage.chatID == chatID else { return }
         let visible = messageContentFrames.filter { _, frame in
             frame.maxY > viewportMinY && frame.minY < viewportMaxY
         }
-        guard let (id, frame) = visible.min(by: { $0.value.minY < $1.value.minY }) else { return }
+        guard let (id, _) = visible.min(by: { $0.value.minY < $1.value.minY }),
+              let contentFrame = latestPage.contentFrames[id] else { return }
         historyViewportAnchor = ChatTimelineHistoryAnchor(
             chatID: chatID, firstMessageID: firstMessageID, layoutGeneration: layoutGeneration,
-            messageID: id, originalContentY: frame.minY + scrollView.contentOffset.y)
+            messageID: id, originalContentY: contentFrame.minY)
     }
 
     @discardableResult
     func restoreHistoryViewportAnchor(page: ChatTimelinePageFrames) -> Bool {
-        guard var anchor = historyViewportAnchor, let scrollView,
+        guard var anchor = historyViewportAnchor, scrollView != nil,
               page.chatID == anchor.chatID, let first = page.firstMessageID,
               first != anchor.firstMessageID || page.layoutGeneration != anchor.layoutGeneration,
-              let frame = page.frames[anchor.messageID] else { return false }
-        anchor.contentY = frame.minY + scrollView.contentOffset.y
+              let frame = page.contentFrames[anchor.messageID] else { return false }
+        anchor.contentY = frame.minY
         anchor.contentHeight = page.contentHeight
         historyViewportAnchor = anchor
         if applyPendingHistoryViewportAnchor() { return true }
