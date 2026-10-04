@@ -242,15 +242,24 @@ extension IrisChatUITestCase {
         // tapping a row that is still being replaced by table updates.
         if app.launchEnvironment["IRIS_UI_TEST_SEED_COUNT"] != nil {
             XCTAssertTrue(waitUntil(timeout: rowTimeout) {
-                let row = seededChatRowPreview(app)
-                return row.exists && row.label.contains("LAST_SCROLL_SENTINEL") && row.isHittable
+                // Queued chat creation can temporarily replace the list while
+                // seeding. Read presence and label from one immutable tree.
+                guard let snapshot = try? app.snapshot() else { return false }
+                var pending = [snapshot]
+                while let item = pending.popLast() {
+                    if item.identifier.hasPrefix("chatRow-"),
+                       item.label.contains("LAST_SCROLL_SENTINEL"),
+                       !item.frame.isEmpty, item.isEnabled { return true }
+                    pending.append(contentsOf: item.children)
+                }
+                return false
             }, "seeded messages did not finish loading", file: file, line: line)
         }
         let deadline = Date().addingTimeInterval(rowTimeout)
         var sawRow = false
         repeat {
             let row = seededChatRowPreview(app)
-            if row.waitForExistence(timeout: min(5, max(0.1, deadline.timeIntervalSinceNow))) {
+            if row.waitForExistence(timeout: min(5, max(0.1, deadline.timeIntervalSinceNow))), row.isHittable {
                 sawRow = true
                 row.tap()
                 if element(app, "chatMessageInput").waitForExistence(timeout: 2) { return }
