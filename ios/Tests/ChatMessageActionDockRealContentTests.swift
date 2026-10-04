@@ -1,5 +1,6 @@
 #if os(macOS)
 import AppKit
+import Darwin
 import SwiftUI
 import XCTest
 @testable import IrisChatMac
@@ -115,179 +116,325 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
             .padding(24)
             .frame(width: width, height: 1200, alignment: .topLeading)
             .coordinateSpace(name: ChatTimelineCoordinateSpace.name)
-            .onPreferenceChange(ChatMessageContentFramePreferenceKey.self) { onFrames($0.frames) }
+            .overlayPreferenceValue(ChatMessageContentFramePreferenceKey.self) { value in
+                self.readFrames(value.frames, into: onFrames)
+            }
             .environment(\.irisPalette, .dark)
             .environment(\.colorScheme, .dark)
             .background(Color.black)
+    }
+
+    // Read the production preference during this renderer's layout. This sink
+    // is not SwiftUI state and adds no geometry probe to the production row.
+    private func readFrames(_ frames: [String: CGRect], into receive: ([String: CGRect]) -> Void) -> some View {
+        receive(frames)
+        return Color.clear.allowsHitTesting(false).accessibilityHidden(true)
+    }
+
+    private final class FrameSink {
+        var frames: [String: CGRect] = [:]
+    }
+
+    private struct Snapshot {
+        let image: CGImage
+        let bubble: CGRect
+        let raster: Raster
     }
 
     @discardableResult
     private func qualify(_ fixture: Fixture, kind: ChatKind, outgoing: Bool, reacted: Bool,
                          width: CGFloat) throws -> CGRect {
         let item = message(fixture, outgoing: outgoing, reacted: reacted)
-        var frames: [String: CGRect] = [:]
-        func view(_ active: Bool) -> some View {
-            content(item, kind: kind, footer: fixture.showsFooter, active: active, width: width) { frames = $0 }
-        }
-        let host = NSHostingView(rootView: view(false))
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: width, height: 1200),
-                              styleMask: .titled, backing: .buffered, defer: false)
-        window.title = "Message dock test fixture"
-        window.isReleasedWhenClosed = false
-        window.contentView = host
-        host.frame = CGRect(x: 0, y: 0, width: width, height: 1200)
-        // AppKit can omit accessibility children for an unordered window. Keep
-        // the synthetic row's top on screen even when its fixture is taller
-        // than the hosted runner's display.
-        if let screen = NSScreen.main {
-            window.setFrameTopLeftPoint(NSPoint(x: screen.visibleFrame.minX + 16,
-                                                y: screen.visibleFrame.maxY - 16))
-        }
-        window.makeKeyAndOrderFront(nil)
-        window.displayIfNeeded()
-        defer {
-            window.orderOut(nil)
-            window.close()
-        }
         let context = "\(fixture.name), \(kind), outgoing=\(outgoing), reacted=\(reacted), width=\(width)"
-        func diagnostics() -> String {
-            self.captureDiagnostics(host: host, window: window, bubble: frames[item.id])
-        }
-        try waitForLayout(host, stage: "initial-hidden", context: context, diagnostics: diagnostics) {
-            frames[item.id] != nil && self.actionFrames(in: host).isEmpty
-        }
-        let hidden = try XCTUnwrap(frames[item.id], context)
-
-        host.rootView = view(true)
-        try waitForLayout(host, stage: "visible", context: context, diagnostics: diagnostics) {
-            frames[item.id] != nil && self.actionFrames(in: host).count == 4
-        }
-        let visible = try XCTUnwrap(frames[item.id], context)
-        XCTAssertEqual(visible.minX, hidden.minX, accuracy: 0.5, context)
-        XCTAssertEqual(visible.minY, hidden.minY, accuracy: 0.5, context)
-        XCTAssertEqual(visible.width, hidden.width, accuracy: 0.5, context)
-        XCTAssertEqual(visible.height, hidden.height, accuracy: 0.5, context)
-        XCTAssertLessThanOrEqual(visible.width, IrisLayout.chatBubbleMaxWidth + 0.5, context)
-
-        let actions = actionFrames(in: host).values.map { screenFrame -> CGRect in
-            let local = host.convert(window.convertFromScreen(screenFrame), from: nil)
-            return host.isFlipped ? local : CGRect(x: local.minX, y: host.bounds.maxY - local.maxY,
-                                                  width: local.width, height: local.height)
-        }
-        let buttons = try XCTUnwrap(actions.reduce(nil as CGRect?) { $0?.union($1) ?? $1 }, context)
-        // ChatMessageActionDock pads its actual buttons by five points. Measure
-        // their native bounds rather than rendering a replacement dock/rectangle
-        // or depending on the capsule's rasterized color and antialiasing.
-        let dockInset: CGFloat = 5
-        XCTAssertEqual(buttons.width, ChatMessageActionDock.dockWidth - 2 * dockInset,
-                       accuracy: 0.5, "Accessibility must expose full button bounds: \(context)")
-        for action in actions {
-            XCTAssertEqual(action.maxY, buttons.maxY, accuracy: 0.5, context)
-        }
-        let gap = (outgoing ? visible.minX - buttons.maxX : buttons.minX - visible.maxX) - dockInset
-        XCTAssertEqual(gap, SignalConversationLayout.messageStackSpacing, accuracy: 0.5,
-                       "Dock must follow the actual bubble edge: \(context)")
-        XCTAssertEqual(buttons.maxY + dockInset, visible.maxY, accuracy: 0.5,
-                       "Reaction space must not lower the dock: \(context)")
-
-        if ["short", "reply-footer", "image-caption", "file"].contains(fixture.name)
-            && kind == .group && reacted && width == 700 {
-            let renderer = ImageRenderer(content: host.rootView)
-            renderer.scale = 2
-            let image = try XCTUnwrap(renderer.cgImage, context)
-            let attachment = XCTAttachment(image: NSImage(cgImage: image, size: .zero))
-            attachment.name = "real-dock-\(fixture.name)-group-\(outgoing ? "outgoing" : "incoming")-reacted"
-            attachment.lifetime = .keepAlways
-            add(attachment)
-        }
-        host.rootView = view(false)
-        try waitForLayout(host, stage: "hidden-again", context: context, diagnostics: diagnostics) {
-            self.actionFrames(in: host).isEmpty
-        }
-        let hiddenAgain = try XCTUnwrap(frames[item.id], context)
-        XCTAssertEqual(hiddenAgain.minX, visible.minX, accuracy: 0.5, context)
-        XCTAssertEqual(hiddenAgain.minY, visible.minY, accuracy: 0.5, context)
-        XCTAssertEqual(hiddenAgain.width, visible.width, accuracy: 0.5, context)
-        XCTAssertEqual(hiddenAgain.height, visible.height, accuracy: 0.5, context)
-        return visible
-    }
-
-    private func waitForLayout(_ host: NSView, stage: String, context: String,
-                               diagnostics: () -> String, ready: () -> Bool) throws {
-        let deadline = Date().addingTimeInterval(2)
-        var readyPasses = 0
-        repeat {
-            host.layoutSubtreeIfNeeded()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-            readyPasses = ready() ? readyPasses + 1 : 0
-            if readyPasses >= 3 { return }
-        } while Date() < deadline
-        XCTFail("Production row capture failed at \(stage) [\(context)]; readyPasses=\(readyPasses)/3; \(diagnostics())")
-        throw CaptureError.missingGeometry
-    }
-
-    private let actionIdentifiers: Set<String> = ["messageReactButton", "messageReplyButton", "messageInfoButton", "messageMoreButton"]
-
-    private struct ActionCapture {
-        var frames: [String: CGRect] = [:]
-        var seenIdentifiers: Set<String> = []
-        var emptyFrames: [String: CGRect] = [:]
-        var unavailableFrames: Set<String> = []
-        var visitedNodes = 0
-    }
-
-    private func actionFrames(in host: NSView) -> [String: CGRect] {
-        captureActions(in: host).frames
-    }
-
-    private func captureActions(in host: NSView) -> ActionCapture {
-        var capture = ActionCapture()
-        var visited: Set<ObjectIdentifier> = []
-        func walk(_ object: NSObject) {
-            guard visited.insert(ObjectIdentifier(object)).inserted else { return }
-            capture.visitedNodes += 1
-            if object.responds(to: NSSelectorFromString("accessibilityIdentifier")),
-               let identifier = object.value(forKey: "accessibilityIdentifier") as? String,
-               actionIdentifiers.contains(identifier) {
-                capture.seenIdentifiers.insert(identifier)
-                if object.responds(to: NSSelectorFromString("accessibilityFrame")),
-                   let value = object.value(forKey: "accessibilityFrame") as? NSValue {
-                    if value.rectValue.width > 0 && value.rectValue.height > 0 {
-                        capture.frames[identifier] = value.rectValue
-                    } else {
-                        capture.emptyFrames[identifier] = value.rectValue
-                    }
-                } else {
-                    capture.unavailableFrames.insert(identifier)
+        let name = "\(fixture.name)-\(kind)-\(outgoing ? "outgoing" : "incoming")-\(reacted ? "reacted" : "plain")-\(Int(width))"
+        var snapshots: [(String, Snapshot)] = []
+        var captureFailed = false
+        let failuresBefore = testRun?.failureCount ?? 0
+        defer {
+            if captureFailed || (testRun?.failureCount ?? 0) > failuresBefore {
+                for (stage, snapshot) in snapshots {
+                    retain(snapshot.image, named: "real-dock-failure-\(name)-\(stage)")
                 }
             }
-            if object.responds(to: NSSelectorFromString("accessibilityChildren")),
-               let children = object.value(forKey: "accessibilityChildren") as? [NSObject] {
-                children.forEach { walk($0) }
-            }
-            if let view = object as? NSView { view.subviews.forEach { walk($0) } }
         }
-        walk(host)
-        return capture
+        func view(_ active: Bool, sink: FrameSink) -> some View {
+            content(item, kind: kind, footer: fixture.showsFooter, active: active, width: width) { sink.frames = $0 }
+        }
+        do {
+            let hidden = try capture(stage: "initial-hidden", name: name,
+                                     message: item) { view(false, sink: $0) }
+            snapshots.append(("initial-hidden", hidden))
+            let visible = try capture(stage: "visible", name: name,
+                                      message: item) { view(true, sink: $0) }
+            snapshots.append(("visible", visible))
+            let hiddenAgain = try capture(stage: "hidden-again", name: name,
+                                          message: item) { view(false, sink: $0) }
+            snapshots.append(("hidden-again", hiddenAgain))
+            for snapshot in [hidden, hiddenAgain] {
+                XCTAssertEqual(snapshot.bubble.minX, visible.bubble.minX, accuracy: 0.5, context)
+                XCTAssertEqual(snapshot.bubble.minY, visible.bubble.minY, accuracy: 0.5, context)
+                XCTAssertEqual(snapshot.bubble.width, visible.bubble.width, accuracy: 0.5, context)
+                XCTAssertEqual(snapshot.bubble.height, visible.bubble.height, accuracy: 0.5, context)
+            }
+            XCTAssertLessThanOrEqual(visible.bubble.width, IrisLayout.chatBubbleMaxWidth + 0.5, context)
+
+            // Image loads/placeholders can change within the bubble. The real
+            // bubble frame is the only excluded region: avatar, reactions, and
+            // every other pixel must agree in the hidden baselines. Both the
+            // preference and capsule pixels belong to this same renderer.
+            guard hidden.raster.sameOutsideBubble(as: hiddenAgain.raster, bubble: visible.bubble) else {
+                throw CaptureError(reason: "Hidden baselines differ outside the actual bubble")
+            }
+            let components = try visible.raster.changedComponents(from: hidden.raster,
+                excluding: visible.bubble, toolbar: IrisPalette.dark.toolbar)
+            guard components.count == 1 else {
+                throw CaptureError(reason: "Expected one real dock pixel component; found \(components.count), firstBounds=\(components.prefix(8).map { $0.bounds })")
+            }
+            let component = components[0]
+            guard component.toolbarPixels >= 4 else {
+                throw CaptureError(reason: "Changed component has no unambiguous actual toolbar fill")
+            }
+            let dock = component.bounds
+            XCTAssertEqual(dock.width, 136, accuracy: 0.5, "Actual rendered dock width: \(context)")
+            XCTAssertEqual(dock.height, 38, accuracy: 0.5, "Actual rendered dock height: \(context)")
+            let gap = outgoing ? visible.bubble.minX - dock.maxX : dock.minX - visible.bubble.maxX
+            XCTAssertEqual(gap, 8, accuracy: 0.5, "Dock must follow the actual bubble edge: \(context)")
+            XCTAssertEqual(dock.maxY, visible.bubble.maxY, accuracy: 0.5,
+                           "Reaction space must not lower the dock: \(context)")
+
+            if ["short", "reply-footer", "image-caption", "file"].contains(fixture.name)
+                && kind == .group && reacted && width == 700 {
+                retain(visible.image, named: "real-dock-\(fixture.name)-group-\(outgoing ? "outgoing" : "incoming")-reacted")
+            }
+            return visible.bubble
+        } catch {
+            captureFailed = true
+            XCTFail("Rendered production row capture failed [\(context)]: \(error)")
+            throw error
+        }
     }
 
-    private func captureDiagnostics(host: NSView, window: NSWindow, bubble: CGRect?) -> String {
-        let capture = captureActions(in: host)
-        let missing = actionIdentifiers.subtracting(capture.seenIdentifiers).sorted().joined(separator: ",")
-        let valid = capture.frames.keys.sorted().joined(separator: ",")
-        let empty = capture.emptyFrames.keys.sorted().map { "\($0)=\(capture.emptyFrames[$0]!)" }.joined(separator: ",")
-        let unavailable = capture.unavailableFrames.sorted().joined(separator: ",")
-        // Only known fixture IDs, geometry, and counts are recorded; do not dump
-        // the application's unrelated accessibility tree or user-visible text.
-        return "bubble=\(bubble.map { String(describing: $0) } ?? "missing"); " +
-            "actionIDs=\(capture.seenIdentifiers.count)/4, validFrames=\(capture.frames.count)/4 [\(valid)], " +
-            "absentIDs=[\(missing)], emptyFrames=[\(empty)], unavailableFrames=[\(unavailable)]; " +
-            "windowVisible=\(window.isVisible), windowKey=\(window.isKeyWindow), " +
-            "windowOccluded=\(!window.occlusionState.contains(.visible)), " +
-            "hostAttached=\(host.window === window), windowFrame=\(window.frame), " +
-            "hostBounds=\(host.bounds), visitedAXNodes=\(capture.visitedNodes)"
+    private func capture<Content: View>(stage: String, name: String,
+                                       message: ChatMessageSnapshot,
+                                       view: (FrameSink) -> Content) throws -> Snapshot {
+        let deadline = Date().addingTimeInterval(2)
+        var readyPasses = 0
+        var previous: Snapshot?
+        var latestImage: CGImage?
+        var diagnostic = "No rendered image"
+        repeat {
+            let sink = FrameSink()
+            let renderer = ImageRenderer(content: view(sink))
+            renderer.scale = 2
+            if let image = renderer.cgImage {
+                latestImage = image
+                if let bubble = sink.frames[message.id], bubble.width > 0, bubble.height > 0,
+                   bubble.minX.isFinite, bubble.minY.isFinite, bubble.maxX.isFinite, bubble.maxY.isFinite {
+                    do {
+                        let raster = try Raster(image: image, bubble: bubble,
+                            bubbleColor: message.isOutgoing ? IrisPalette.dark.bubbleMine : IrisPalette.dark.bubbleTheirs)
+                        let snapshot = Snapshot(image: image, bubble: bubble, raster: raster)
+                        if let previous, previous.bubble == bubble,
+                           raster.sameOutsideBubble(as: previous.raster, bubble: bubble) {
+                            readyPasses += 1
+                        } else {
+                            readyPasses = 1
+                        }
+                        previous = snapshot
+                        if readyPasses >= 3 { return snapshot }
+                        diagnostic = "bubble=\(bubble), raster=\(image.width)x\(image.height), stablePasses=\(readyPasses)/3"
+                    } catch {
+                        readyPasses = 0
+                        previous = nil
+                        diagnostic = "bubble=\(bubble), raster=\(image.width)x\(image.height), \(error)"
+                    }
+                } else {
+                    readyPasses = 0
+                    previous = nil
+                    diagnostic = "Production bubble preference missing/empty/nonfinite, raster=\(image.width)x\(image.height)"
+                }
+            } else {
+                readyPasses = 0
+                previous = nil
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        } while Date() < deadline
+        if let latestImage { retain(latestImage, named: "real-dock-capture-failure-\(name)-\(stage)") }
+        throw CaptureError(reason: "stage=\(stage), stablePasses=\(readyPasses)/3, \(diagnostic)")
     }
 
-    private enum CaptureError: Error { case missingGeometry }
+    private func retain(_ image: CGImage, named name: String) {
+        let attachment = XCTAttachment(image: NSImage(cgImage: image, size: .zero))
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private struct CaptureError: Error, CustomStringConvertible {
+        let reason: String
+        var description: String { reason }
+    }
+
+    private struct Component {
+        let bounds: CGRect
+        let toolbarPixels: Int
+    }
+
+    private struct Raster {
+        static let scale: CGFloat = 2
+        let width: Int
+        let height: Int
+        let bytes: [UInt8]
+        let flipped: Bool
+
+        init(image: CGImage, bubble: CGRect, bubbleColor: Color) throws {
+            let width = image.width
+            let height = image.height
+            var rgba = [UInt8](repeating: 0, count: width * height * 4)
+            let drew = rgba.withUnsafeMutableBytes { storage -> Bool in
+                guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+                      let context = CGContext(data: storage.baseAddress, width: width, height: height,
+                        bitsPerComponent: 8, bytesPerRow: width * 4, space: space,
+                        bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+                context.draw(image, in: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
+                return true
+            }
+            guard drew else { throw CaptureError(reason: "Cannot normalize actual rendered pixels to sRGB RGBA") }
+            let fill = try Self.rgb(bubbleColor)
+            // Determine bitmap orientation from real bubble padding paint, not
+            // from an assumed dock location. Reject missing/ambiguous evidence.
+            let points = [CGPoint(x: bubble.midX, y: bubble.minY + 2),
+                          CGPoint(x: bubble.minX + 2, y: bubble.midY),
+                          CGPoint(x: bubble.maxX - 2, y: bubble.midY),
+                          CGPoint(x: bubble.midX, y: bubble.maxY - 2)]
+            let orientations = [false, true].filter { flip in
+                points.filter { point in
+                    let x = Int((point.x * Self.scale).rounded(.down))
+                    let topY = Int((point.y * Self.scale).rounded(.down))
+                    let y = flip ? height - 1 - topY : topY
+                    guard x >= 0, x < width, y >= 0, y < height else { return false }
+                    let offset = (y * width + x) * 4
+                    return abs(Int(rgba[offset]) - fill.0) <= 2 &&
+                        abs(Int(rgba[offset + 1]) - fill.1) <= 2 &&
+                        abs(Int(rgba[offset + 2]) - fill.2) <= 2
+                }.count >= 2
+            }
+            guard orientations.count == 1 else {
+                throw CaptureError(reason: "Actual bubble paint cannot establish a unique raster coordinate orientation (\(orientations.count) candidates)")
+            }
+            self.width = width
+            self.height = height
+            self.bytes = rgba
+            self.flipped = orientations[0]
+        }
+
+        private static func rgb(_ color: Color, extraOpacity: CGFloat = 1) throws -> (Int, Int, Int) {
+            guard let resolved = NSColor(color).usingColorSpace(.sRGB) else {
+                throw CaptureError(reason: "Cannot resolve actual production palette fill")
+            }
+            let alpha = resolved.alphaComponent * extraOpacity
+            return (Int((resolved.redComponent * alpha * 255).rounded()),
+                    Int((resolved.greenComponent * alpha * 255).rounded()),
+                    Int((resolved.blueComponent * alpha * 255).rounded()))
+        }
+
+        private func row(_ y: Int) -> Int { (flipped ? height - 1 - y : y) * width * 4 }
+
+        private func excludedPixels(_ bubble: CGRect) -> (x: Range<Int>, y: Range<Int>) {
+            // Exclude only pixel centers inside the actual preference frame.
+            let x0 = max(0, min(width, Int(ceil(bubble.minX * Self.scale - 0.5))))
+            let x1 = max(x0, min(width, Int(ceil(bubble.maxX * Self.scale - 0.5))))
+            let y0 = max(0, min(height, Int(ceil(bubble.minY * Self.scale - 0.5))))
+            let y1 = max(y0, min(height, Int(ceil(bubble.maxY * Self.scale - 0.5))))
+            return (x0..<x1, y0..<y1)
+        }
+
+        func sameOutsideBubble(as other: Raster, bubble: CGRect) -> Bool {
+            guard width == other.width, height == other.height else { return false }
+            let excluded = excludedPixels(bubble)
+            return bytes.withUnsafeBufferPointer { first in
+                other.bytes.withUnsafeBufferPointer { second in
+                    for y in 0..<height {
+                        let ranges = excluded.y.contains(y) ? [0..<excluded.x.lowerBound, excluded.x.upperBound..<width] : [0..<width]
+                        for range in ranges where !range.isEmpty {
+                            if memcmp(first.baseAddress! + row(y) + range.lowerBound * 4,
+                                      second.baseAddress! + other.row(y) + range.lowerBound * 4,
+                                      range.count * 4) != 0 { return false }
+                        }
+                    }
+                    return true
+                }
+            }
+        }
+
+        func changedComponents(from hidden: Raster, excluding bubble: CGRect, toolbar: Color) throws -> [Component] {
+            guard width == hidden.width, height == hidden.height else {
+                throw CaptureError(reason: "Hidden/visible renderer dimensions disagree")
+            }
+            let fill = try Self.rgb(toolbar, extraOpacity: 0.96)
+            // Half the actual capsule/background contrast identifies its
+            // rasterized boundary to one scale-2 pixel (0.5 pt). This is a color
+            // threshold, never a dock size/position used to fabricate bounds.
+            let threshold = max(1, Int(ceil(Double(max(fill.0, max(fill.1, fill.2))) / 2)))
+            let excluded = excludedPixels(bubble)
+            var mask = [UInt8](repeating: 0, count: width * height)
+            var changed: [Int] = []
+            bytes.withUnsafeBufferPointer { visible in
+                hidden.bytes.withUnsafeBufferPointer { before in
+                    for y in 0..<height {
+                        let vr = row(y)
+                        let hr = hidden.row(y)
+                        if memcmp(visible.baseAddress! + vr, before.baseAddress! + hr, width * 4) == 0 { continue }
+                        for x in 0..<width {
+                            if excluded.y.contains(y) && excluded.x.contains(x) { continue }
+                            let v = vr + x * 4
+                            let h = hr + x * 4
+                            let delta = max(abs(Int(visible[v]) - Int(before[h])),
+                                max(abs(Int(visible[v + 1]) - Int(before[h + 1])), abs(Int(visible[v + 2]) - Int(before[h + 2]))))
+                            if delta >= threshold {
+                                let index = y * width + x
+                                mask[index] = 1
+                                changed.append(index)
+                            }
+                        }
+                    }
+                }
+            }
+            var components: [Component] = []
+            for origin in changed where mask[origin] != 0 {
+                var queue = [origin]
+                mask[origin] = 0
+                var cursor = 0
+                var minX = width, minY = height, maxX = 0, maxY = 0, toolbarPixels = 0
+                while cursor < queue.count {
+                    let index = queue[cursor]
+                    cursor += 1
+                    let x = index % width, y = index / width
+                    minX = min(minX, x)
+                    maxX = max(maxX, x)
+                    minY = min(minY, y)
+                    maxY = max(maxY, y)
+                    let pixel = row(y) + x * 4
+                    if abs(Int(bytes[pixel]) - fill.0) <= 1 &&
+                        abs(Int(bytes[pixel + 1]) - fill.1) <= 1 &&
+                        abs(Int(bytes[pixel + 2]) - fill.2) <= 1 { toolbarPixels += 1 }
+                    for dy in -1...1 {
+                        for dx in -1...1 where dx != 0 || dy != 0 {
+                            let nx = x + dx, ny = y + dy
+                            guard nx >= 0, nx < width, ny >= 0, ny < height else { continue }
+                            let neighbor = ny * width + nx
+                            if mask[neighbor] != 0 {
+                                mask[neighbor] = 0
+                                queue.append(neighbor)
+                            }
+                        }
+                    }
+                }
+                components.append(Component(bounds: CGRect(x: CGFloat(minX) / Self.scale, y: CGFloat(minY) / Self.scale,
+                    width: CGFloat(maxX - minX + 1) / Self.scale, height: CGFloat(maxY - minY + 1) / Self.scale), toolbarPixels: toolbarPixels))
+            }
+            return components
+        }
+    }
 }
 #endif
