@@ -5,6 +5,24 @@ import XCTest
 
 @MainActor
 final class NearbyAvatarTests: XCTestCase {
+    func testNearbyIdentityUsesCurrentPrivateContactSnapshot() throws {
+        var state = buildLargeTestAppState(directChatCount: 1, groupChatCount: 0, messagesInCurrentChat: 0)
+        let owner = try XCTUnwrap(state.chatList.first?.chatId)
+        state.chatList[0].socialConnection = SocialConnectionSnapshot(
+            badge: nil, followDistance: nil, followedByFriends: 0,
+            description: "Favorite · Only you", isFavorite: true
+        )
+        XCTAssertEqual(nearbyPeerChat(owner: " \(owner.uppercased()) ", chats: state.chatList)?.socialConnection?.isFavorite, true)
+        state.chatList[0].socialConnection?.isFavorite = false
+        XCTAssertEqual(nearbyPeerChat(owner: owner, chats: state.chatList)?.socialConnection?.isFavorite, false)
+        XCTAssertNil(nearbyPeerChat(owner: nil, chats: state.chatList))
+        XCTAssertNil(nearbyPeerChat(owner: " ", chats: state.chatList))
+        XCTAssertNil(nearbyPeerChat(owner: "unknown", chats: state.chatList))
+        state.chatList[0].kind = .group
+        XCTAssertNil(nearbyPeerChat(owner: owner, chats: state.chatList))
+        XCTAssertNil(nearbyPeerChat(owner: owner, chats: []))
+    }
+
     func testNearbyOwnersRequireEnabledLivePeerAndExcludeSelf() {
         let peers = [peer("alice"), peer("self"), peer(nil)]
         XCTAssertEqual(irisNearbyAvatarOwners(peers: peers, isActive: true, enabled: true, localOwner: "self"), ["alice"])

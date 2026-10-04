@@ -50,6 +50,13 @@ internal static class Program
                 currentChat = manager.CurrentChat! with { displayName = "Alex", socialConnection = connection },
             };
             Apply.Invoke(manager, new object[] { new AppUpdate.FullState(state) });
+            state = state with { rev = state.rev + 1, chatList = state.chatList.Select(c => c.chatId == Peer ? c with { socialConnection = connection } : c).ToArray() };
+            Apply.Invoke(manager, new object[] { new AppUpdate.FullState(state) });
+            Check(NearbyPeerNames.KnownChat(manager, $" {Peer.ToUpperInvariant()} ")?.socialConnection?.isFavorite == true, "Nearby avatars use the current private contact snapshot");
+            Check(NearbyPeerNames.KnownChat(manager, null) == null && NearbyPeerNames.KnownChat(manager, "unknown") == null, "Unknown Nearby identities gain no contact badge");
+            state = state with { rev = state.rev + 1, chatList = state.chatList.Select(c => c.chatId == Peer ? c with { socialConnection = connection with { isFavorite = false } } : c).ToArray() };
+            Apply.Invoke(manager, new object[] { new AppUpdate.FullState(state) });
+            Check(NearbyPeerNames.KnownChat(manager, Peer)?.socialConnection?.isFavorite == false, "Nearby favorite changes use the new snapshot");
             var avatar = new Avatar { Label = "Alex", Size = 64, OwnerPubkeyHex = Peer, SocialConnection = connection };
             var own = new Avatar { Label = "You", Size = 48, OwnerPubkeyHex = manager.Account!.publicKeyHex };
             var unknown = new Avatar { Label = "Unknown", Size = 48, OwnerPubkeyHex = "other-person" };

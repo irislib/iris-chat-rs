@@ -29,6 +29,7 @@ import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.delay
 import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
+import to.iris.chat.nearby.nearbyPeerChat
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.ChatKind
@@ -414,13 +415,7 @@ private fun AppState.knownDirectChatIds(): Set<String> =
         .toSet()
 
 private fun AppState.nearbyPeerResolvedName(peer: IrisNearbyService.Peer): String {
-    val owner = peer.ownerPubkeyHex?.trim()
-    if (!owner.isNullOrEmpty()) {
-        chatList.firstOrNull { chat ->
-            chat.kind == ChatKind.DIRECT &&
-                chat.chatId.equals(owner, ignoreCase = true)
-        }?.displayName?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
-    }
+    chatList.nearbyPeerChat(peer.ownerPubkeyHex)?.displayName?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
     return peer.name.trim().ifEmpty { "Nearby user" }
 }
 
@@ -457,6 +452,7 @@ private fun NearbyPeerRow(
         onLongClick = onOpenProfile,
         leadingContent = {
             IrisAvatar(
+                socialConnection = appState.chatList.nearbyPeerChat(peer.ownerPubkeyHex)?.socialConnection,
                 ownerPubkeyHex = peer.ownerPubkeyHex,
                 label = displayName,
                 size = 42.dp,

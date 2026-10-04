@@ -619,6 +619,7 @@ public partial class DesktopShell : UserControl
             stack.Children.Add(new Avatar
             {
                 Size = AvatarSize,
+                SocialConnection = NearbyPeerNames.KnownChat(_manager, peer.ownerPubkeyHex)?.socialConnection,
                 Label = name,
                 PictureUrl = peer.pictureUrl,
                 OwnerPubkeyHex = peer.ownerPubkeyHex,

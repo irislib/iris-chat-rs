@@ -243,6 +243,7 @@ struct NearbyPeerStripRow: View {
                         } label: {
                             VStack(spacing: 4) {
                                 IrisAvatar(
+                                    socialConnection: nearbyPeerChat(owner: peer.ownerPubkeyHex, chats: manager.state.chatList)?.socialConnection,
                                     ownerPubkeyHex: peer.ownerPubkeyHex,
                                     label: name,
                                     size: avatarSize,
@@ -298,11 +299,7 @@ func nearbyPeerResolvedName(
     manager: AppManager,
     fallback: String = "Nearby"
 ) -> String {
-    if let owner = peer.ownerPubkeyHex,
-       let chat = manager.state.chatList.first(where: { chat in
-           chat.kind == .direct &&
-               chat.chatId.caseInsensitiveCompare(owner) == .orderedSame
-       }) {
+    if let chat = nearbyPeerChat(owner: peer.ownerPubkeyHex, chats: manager.state.chatList) {
         let name = chat.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !name.isEmpty { return name }
     }
@@ -680,6 +677,7 @@ struct NearbyIrisScreen: View {
                         } label: {
                             VStack(spacing: 6) {
                                 IrisAvatar(
+                                    socialConnection: nearbyPeerChat(owner: peer.ownerPubkeyHex, chats: manager.state.chatList)?.socialConnection,
                                     ownerPubkeyHex: peer.ownerPubkeyHex,
                                     label: name,
                                     size: 42,

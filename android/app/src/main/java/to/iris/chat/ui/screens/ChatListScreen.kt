@@ -76,6 +76,7 @@ import kotlin.math.roundToInt
 import java.util.concurrent.ConcurrentHashMap
 import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
+import to.iris.chat.nearby.nearbyPeerChat
 import to.iris.chat.ui.components.NearbyActiveBlue
 import to.iris.chat.ui.components.rememberChatMuteAction
 import to.iris.chat.rust.AppAction
@@ -83,6 +84,7 @@ import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.ChatInputShortcut
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatThreadSnapshot
+import to.iris.chat.rust.SocialConnectionSnapshot
 import to.iris.chat.rust.DeviceHistorySyncPhase
 import to.iris.chat.rust.MessageSearchHit
 import to.iris.chat.rust.Screen
@@ -407,6 +409,7 @@ fun ChatListScreen(
                             nearbyEnabled = preferences.nearbyEnabled,
                             nearbyBluetoothEnabled = preferences.nearbyBluetoothEnabled,
                             knownDirectChatNames = knownDirectChatNames,
+                            chats = chatList,
                             service = nearby,
                             onClick = onNearbyClick,
                             onLongClick = onNearbyLongClick,
@@ -709,6 +712,7 @@ private fun NearbyChatListItem(
     nearbyEnabled: Boolean,
     nearbyBluetoothEnabled: Boolean,
     knownDirectChatNames: Map<String, String>,
+    chats: List<ChatThreadSnapshot>,
     service: IrisNearbyService,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -787,6 +791,7 @@ private fun NearbyChatListItem(
                     val displayName = nearbyPeerResolvedName(peer, knownDirectChatNames)
                     NearbyPeerAvatar(
                         peer = peer,
+                        socialConnection = chats.nearbyPeerChat(peer.ownerPubkeyHex)?.socialConnection,
                         displayName = displayName,
                         onClick = {
                             peer.ownerPubkeyHex
@@ -878,6 +883,7 @@ private fun ChatListConversationRow(
 @OptIn(ExperimentalFoundationApi::class)
 private fun NearbyPeerAvatar(
     peer: IrisNearbyService.Peer,
+    socialConnection: SocialConnectionSnapshot?,
     displayName: String,
     onClick: () -> Unit,
     onLongClick: (String) -> Unit,
@@ -904,6 +910,7 @@ private fun NearbyPeerAvatar(
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         IrisAvatar(
+            socialConnection = socialConnection,
             ownerPubkeyHex = ownerPubkeyHex,
             label = displayName,
             size = 48.dp,

@@ -366,6 +366,7 @@ public class MessageInfoWindow : Window
 
         var avatar = new Avatar
         {
+            SocialConnection = NearbyPeerNames.KnownChat(App.CurrentManager, info.OwnerPubkeyHex)?.socialConnection,
             Label = info.Name,
             OwnerPubkeyHex = info.OwnerPubkeyHex,
             PictureUrl = info.PictureUrl,
