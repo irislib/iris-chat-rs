@@ -14,14 +14,7 @@ pub(super) fn prepare(
         std::fs::create_dir(&directory).map_err(|e| e.to_string())?;
         for (index, input) in attachments.into_iter().enumerate() {
             let filename = input.filename.trim().to_string();
-            if filename.is_empty()
-                || filename.len() > 240
-                || filename == "."
-                || filename == ".."
-                || filename
-                    .chars()
-                    .any(|c| c.is_control() || "/\\<>:\"|?*".contains(c))
-            {
+            if !crate::direct_files::valid_filename(&filename) {
                 return Err("Choose a file with a valid name.".into());
             }
             let mut source = std::fs::File::open(&input.file_path)

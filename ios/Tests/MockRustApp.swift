@@ -137,6 +137,11 @@ final class MockRustApp: RustAppClient {
         currentState
     }
 
+    var acceptedDirectFileIDs: [String] = []
+    func acceptDirectFiles(chatId: String, transferId: String, destination: DirectFileDestination) throws {
+        acceptedDirectFileIDs.append(transferId)
+    }
+
     func dispatch(action: AppAction) throws {
         if let dispatchError {
             throw dispatchError

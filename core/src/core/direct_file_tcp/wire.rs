@@ -12,12 +12,7 @@ pub(super) enum Control {
 }
 
 pub(super) fn validate_claim(id: &str, token: &str) -> Result<(), String> {
-    if id.is_empty()
-        || id.len() > 128
-        || !id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    {
+    if !crate::direct_files::valid_transfer_id(id) {
         return Err("Invalid file offer".into());
     }
     if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {

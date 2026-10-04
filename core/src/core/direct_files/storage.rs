@@ -42,9 +42,14 @@ pub(super) fn all(db: &SharedConnection) -> Result<Vec<Record>, String> {
         .collect()
 }
 
-pub(super) fn interrupt(db: &SharedConnection) -> Result<(), String> {
+pub(super) fn interrupt(db: &SharedConnection, preserve_unregistered: bool) -> Result<(), String> {
     for mut record in all(db)? {
-        if active(&record.status) {
+        // No capability has existed yet for a queued file-first offer. It may survive
+        // a transport reconfiguration, but never a process restart.
+        let unregistered = record.is_sender
+            && record.waiting_for_devices
+            && record.status == DirectFileTransferStatus::Offered;
+        if active(&record.status) && !(preserve_unregistered && unregistered) {
             record.status = DirectFileTransferStatus::Unavailable;
             record.error = Some("Transfer interrupted. Send the files again.".into());
             save(db, &record)?;

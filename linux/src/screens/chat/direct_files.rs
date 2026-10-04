@@ -90,13 +90,40 @@ pub(super) fn card(
         actions.append(&button);
     };
     if transfer.status == Status::Offered && !transfer.is_sender {
-        action(
-            "Accept",
-            AppAction::AcceptDirectFiles {
-                chat_id: chat_id.into(),
-                transfer_id: transfer.id.clone(),
-            },
-        );
+        let accept = gtk::Button::with_label("Accept");
+        accept.set_widget_name(&format!("chatDirectTransferAccept-{}", transfer.id));
+        let accept_manager = manager.clone();
+        let accept_chat = chat_id.to_string();
+        let accept_id = transfer.id.clone();
+        accept.connect_clicked(move |button| {
+            let parent = button
+                .root()
+                .and_then(|root| root.downcast::<gtk::Window>().ok());
+            let manager = accept_manager.clone();
+            let chat_id = accept_chat.clone();
+            let transfer_id = accept_id.clone();
+            gtk::FileDialog::builder()
+                .title("Save files")
+                .build()
+                .select_folder(
+                    parent.as_ref(),
+                    gtk::gio::Cancellable::NONE,
+                    move |result| {
+                        if let Ok(folder) = result {
+                            if let Some(path) = folder.path() {
+                                manager.accept_direct_files(
+                                    chat_id,
+                                    transfer_id,
+                                    iris_chat_core::direct_file_directory_destination(
+                                        path.to_string_lossy().into_owned(),
+                                    ),
+                                );
+                            }
+                        }
+                    },
+                );
+        });
+        actions.append(&accept);
         action(
             "Decline",
             AppAction::DeclineDirectFiles {

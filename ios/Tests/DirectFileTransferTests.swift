@@ -40,6 +40,46 @@ final class DirectFileTransferTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: output), content)
     }
 
+    func testChosenDestinationSurvivesLeaseReleaseAndReopensFromPrivateBookmark() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let existing = folder.appendingPathComponent("same.txt")
+        try Data("untouched".utf8).write(to: existing)
+        var destination: IrisDirectFileDestination? = IrisDirectFileDestination(folder: folder)
+        try destination!.prepare(transferId: "bookmark-test", files: [DirectFileSnapshot(filename: "same.txt", sizeBytes: 7, localPath: nil)])
+        try destination!.write(fileIndex: 0, bytes: Data("newfile".utf8))
+        try destination!.finishFile(fileIndex: 0)
+        let locations = try destination!.commit()
+        destination = nil
+        XCTAssertTrue(try XCTUnwrap(locations.first).hasPrefix(IrisDirectFileLocation.prefix))
+        let exported = try await irisDirectFileExportURL(path: locations[0], filename: "same.txt")
+        defer { try? FileManager.default.removeItem(at: exported.deletingLastPathComponent()) }
+        XCTAssertEqual(try Data(contentsOf: exported), Data("newfile".utf8))
+        XCTAssertEqual(try Data(contentsOf: existing), Data("untouched".utf8))
+        let location = try IrisDirectFileLocation.resolve(locations[0])
+        try FileManager.default.removeItem(at: location.file)
+        do {
+            _ = try await irisDirectFileExportURL(path: locations[0], filename: "same.txt")
+            XCTFail("Deleted destinations must fail without recreating or accepting another file")
+        } catch { }
+    }
+
+    func testCancellingSelectedDestinationAndInvalidBookmarkLeavesExistingFilesUntouched() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let existing = folder.appendingPathComponent("same.txt")
+        try Data("keep".utf8).write(to: existing)
+        let destination = IrisDirectFileDestination(folder: folder)
+        try destination.prepare(transferId: "cancel-test", files: [DirectFileSnapshot(filename: "same.txt", sizeBytes: 3, localPath: nil)])
+        try destination.write(fileIndex: 0, bytes: Data("par".utf8))
+        destination.abort()
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["same.txt"])
+        XCTAssertEqual(try Data(contentsOf: existing), Data("keep".utf8))
+        XCTAssertThrowsError(try IrisDirectFileLocation.resolve(IrisDirectFileLocation.prefix + "invalid-bookmark"))
+    }
+
     func testAddingFilesNeverChangesADirectSelectionIntoAnUpload() {
         XCTAssertTrue(irisDirectFileSendMode(current: true, hasFiles: true, selectedDirectly: false))
         XCTAssertTrue(irisDirectFileSendMode(current: false, hasFiles: true, selectedDirectly: true))

@@ -169,10 +169,6 @@ pub enum AppAction {
         attachments: Vec<OutgoingAttachment>,
         caption: String,
     },
-    AcceptDirectFiles {
-        chat_id: String,
-        transfer_id: String,
-    },
     DeclineDirectFiles {
         chat_id: String,
         transfer_id: String,

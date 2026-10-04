@@ -139,6 +139,8 @@ impl AppCore {
             fips_nearby_links: Vec::new(),
             fips_nearby_bootstrap: Default::default(),
             fips_connection_generation: 0,
+            #[cfg(test)]
+            test_fips_rendezvous_addr: None,
             pending_relay_publishes: BTreeMap::new(),
             pending_relay_publish_inflight: HashSet::new(),
             pending_decrypted_delivery_acks: HashSet::new(),
@@ -277,6 +279,7 @@ impl AppCore {
             CoreMsg::ExportSupportBundle(_) => "ExportSupportBundle",
             CoreMsg::PeerProfileDebug { .. } => "PeerProfileDebug",
             CoreMsg::MutualGroups { .. } => "MutualGroups",
+            CoreMsg::AcceptDirectFiles { .. } => "AcceptDirectFiles",
             CoreMsg::AttachHostBle { .. } => "AttachHostBle",
             CoreMsg::DetachHostBle { .. } => "DetachHostBle",
             CoreMsg::CorePerfCounters(_) => "CorePerfCounters",
@@ -287,6 +290,15 @@ impl AppCore {
         };
         match msg {
             CoreMsg::Action(action) => self.handle_action(action),
+            CoreMsg::AcceptDirectFiles {
+                chat_id,
+                transfer_id,
+                destination,
+            } => self.act_on_direct_files(
+                &chat_id,
+                &transfer_id,
+                super::direct_files::Action::Accept(destination),
+            ),
             CoreMsg::Internal(event) => self.handle_internal(*event),
             CoreMsg::ExportSupportBundle(reply_tx) => {
                 let _ = reply_tx.send(self.export_support_bundle_json());

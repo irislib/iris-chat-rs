@@ -680,6 +680,8 @@ pub struct AppCore {
     fips_nearby_links: Vec<crate::updates::FipsNearbyLinkSnapshot>,
     fips_nearby_bootstrap: std::cell::RefCell<Option<fips_nearby::FipsNearbyBootstrapCache>>,
     fips_connection_generation: u64,
+    #[cfg(test)]
+    test_fips_rendezvous_addr: Option<std::net::SocketAddrV4>,
     pending_relay_publishes: BTreeMap<String, PendingRelayPublish>,
     pending_relay_publish_inflight: HashSet<String>,
     pending_decrypted_delivery_acks: HashSet<String>,

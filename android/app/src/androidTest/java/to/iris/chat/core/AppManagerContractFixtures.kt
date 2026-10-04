@@ -57,6 +57,10 @@ internal class MockRustAppClient(
         dispatchedActions += action
     }
 
+    override fun acceptDirectFiles(chatId: String, transferId: String, destination: to.iris.chat.rust.DirectFileDestination) {
+        dispatchError?.let { throw it }
+    }
+
     override fun search(query: String, scopeChatId: String?, limit: UInt): SearchResultSnapshot {
         val messageCount = if (limit > 120u) limit else 120u
         return buildLargeTestSearchResult(

@@ -217,7 +217,7 @@ async fn transfer(directory: &Path, sender: &Peer, receiver: &Peer) -> Result<Va
     if received.len() != files.len() {
         return Err("Received file count did not match the offer".into());
     }
-    let received_directory = destination.join("native-smoke");
+    let received_directory = destination.join("Iris files native-smoke");
     let mut hashes = Vec::new();
     for (index, ((path, expected), bytes)) in received.iter().zip(&files).zip(&content).enumerate()
     {

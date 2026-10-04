@@ -833,6 +833,7 @@ struct ChatScreen: View {
             },
             directTransferChatId: chatId,
             onDirectTransferAction: manager.dispatch,
+            onDirectTransferAccept: manager.acceptDirectFiles,
             onOpenImage: { data, attachment in
                 let imageAttachments = message.attachments.filter { $0.isImage }
                 let initialIndex = imageAttachments.firstIndex {

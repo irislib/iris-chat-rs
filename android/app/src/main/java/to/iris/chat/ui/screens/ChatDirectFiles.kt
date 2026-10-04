@@ -2,6 +2,9 @@ package to.iris.chat.ui.screens
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.text.format.Formatter
 import android.webkit.MimeTypeMap
 import android.widget.Toast
@@ -75,10 +78,19 @@ internal fun ChatDirectFileTransfer(
     transfer: DirectFileTransferSnapshot,
     chatId: String,
     isOutgoing: Boolean = false,
+    accept: (String, String, to.iris.chat.rust.DirectFileDestination) -> Unit = { _, _, _ -> },
     dispatch: (AppAction) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val chooseDestination = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            runCatching { context.contentResolver.takePersistableUriPermission(uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+                .onSuccess { accept(chatId, transfer.id, DirectFileDocumentDestination(context.contentResolver, uri)) }
+                .onFailure { Toast.makeText(context, "Couldn’t use this folder", Toast.LENGTH_SHORT).show() }
+        }
+    }
     fun open(file: DirectFileSnapshot, share: Boolean) {
         scope.launch {
             if (!openDirectFile(context, file, share)) {
@@ -121,7 +133,7 @@ internal fun ChatDirectFileTransfer(
             }
             if (transfer.canAcceptOnThisDevice) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { dispatch(AppAction.AcceptDirectFiles(chatId, transfer.id)) }, modifier = Modifier.testTag("chatDirectTransferAccept-${transfer.id}")) { Text("Accept") }
+                    Button(onClick = { chooseDestination.launch(null) }, modifier = Modifier.testTag("chatDirectTransferAccept-${transfer.id}")) { Text("Accept") }
                     TextButton(onClick = { dispatch(AppAction.DeclineDirectFiles(chatId, transfer.id)) }, colors = textButtons, modifier = Modifier.testTag("chatDirectTransferDecline-${transfer.id}")) { Text("Decline") }
                 }
             } else if (transfer.canCancelOnThisDevice) {
@@ -131,10 +143,22 @@ internal fun ChatDirectFileTransfer(
     }
 }
 
-// Sharing uses the existing, narrow attachment cache provider. Received files
-// remain private until the user opens or shares an individual completed file.
+// Selected document locations retain their persisted folder permission. Older
+// private-cache transfers use the existing narrow attachment share provider.
 private suspend fun openDirectFile(context: Context, file: DirectFileSnapshot, share: Boolean): Boolean =
     runCatching {
+        val saved = requireNotNull(file.localPath)
+        if (saved.startsWith("content://")) {
+            val uri = Uri.parse(saved)
+            val mime = withContext(Dispatchers.IO) { context.contentResolver.getType(uri) } ?: "application/octet-stream"
+            val intent = Intent(if (share) Intent.ACTION_SEND else Intent.ACTION_VIEW).apply {
+                if (share) { type = mime; putExtra(Intent.EXTRA_STREAM, uri) }
+                else setDataAndType(uri, mime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, file.filename).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return@runCatching true
+        }
         val output = withContext(Dispatchers.IO) {
             val source = File(requireNotNull(file.localPath))
             check(source.isFile)
