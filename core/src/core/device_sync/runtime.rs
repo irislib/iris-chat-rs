@@ -41,6 +41,13 @@ impl AppCore {
                 return;
             }
         };
+        let websocket = configured_websocket_seeds();
+        #[cfg(test)]
+        let websocket = self
+            .test_fips_rendezvous_addr
+            .is_none()
+            .then_some(websocket)
+            .flatten();
         self.reconcile_shared_fips(SharedFipsOptions {
             same_host_hashtree: same_host_hashtree_enabled(),
             #[cfg(test)]
@@ -50,7 +57,7 @@ impl AppCore {
             udp_bind_addr: std::env::var("IRIS_CHAT_FIPS_UDP_BIND_ADDR")
                 .ok()
                 .filter(|value| !value.trim().is_empty()),
-            websocket: configured_websocket_seeds(),
+            websocket,
             ..SharedFipsOptions::default()
         });
     }
@@ -346,6 +353,8 @@ impl AppCore {
                 .ok()
                 .as_deref(),
         );
+        #[cfg(test)]
+        let webrtc_enabled = webrtc_enabled && self.test_fips_rendezvous_addr.is_none();
         if webrtc_enabled {
             // This also enables signed, in-band transport upgrades over an
             // existing FIPS route. An empty relay list stays entirely local.

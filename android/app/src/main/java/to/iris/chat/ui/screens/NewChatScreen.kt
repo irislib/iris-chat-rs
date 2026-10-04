@@ -143,6 +143,9 @@ fun NewChatScreen(
                 )
 
                 if (inviteUrl != null) {
+                    InviteOpenOnJoinCheckbox(appState.publicInvite?.openChatOnJoin ?: true) {
+                        appManager.dispatch(AppAction.SetInviteOpenOnJoin(it))
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         NewChatInviteActionButton(
                             text = "Copy",
@@ -242,6 +245,11 @@ fun NewChatScreen(
             scanTag = "newChatQrScanner",
             copyContentDescription = "Copy invite",
             shareContentDescription = "Share invite",
+            codeFooter = {
+                InviteOpenOnJoinCheckbox(appState.publicInvite?.openChatOnJoin ?: true) {
+                    appManager.dispatch(AppAction.SetInviteOpenOnJoin(it))
+                }
+            },
             onDismiss = { qrDialogTab = null },
             onCopy = { inviteUrl?.let { clipboard.setText("Invite", it) } },
             onShare = { inviteUrl?.let { shareText(context, it, "Share invite") } },

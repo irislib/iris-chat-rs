@@ -615,6 +615,7 @@ pub struct AppCore {
     pending_device_link_signer: Option<device_link_signer::PendingDeviceLinkSigner>,
     device_approval_relay_urls: Vec<RelayUrl>,
     private_chat_invites: BTreeMap<String, Invite>,
+    open_invite_chat_on_join: bool,
     pending_private_invite_responses: BTreeMap<String, invites::PendingPrivateInviteResponseV1>,
     pending_private_invite_cleanup_retry: bool,
     pending_outgoing_invite_acceptance: Option<invites::PendingOutgoingInviteAcceptance>,

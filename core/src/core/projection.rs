@@ -665,7 +665,10 @@ impl AppCore {
                     .and_then(ProtocolEngine::local_invite)
             })?;
         let url = super::invites::chat_invite_url(&invite).ok()?;
-        Some(PublicInviteSnapshot { url })
+        Some(PublicInviteSnapshot {
+            url,
+            open_chat_on_join: self.open_invite_chat_on_join,
+        })
     }
 
     pub(super) fn build_link_device_snapshot(&self) -> Option<LinkDeviceSnapshot> {

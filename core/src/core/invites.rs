@@ -364,6 +364,11 @@ impl AppCore {
             None => return false,
         };
 
+        // Capture the displayed invite before consumption removes it. An older
+        // outstanding invite must not redirect a newer invite screen.
+        let is_displayed_invite = self
+            .build_public_invite_snapshot()
+            .is_some_and(|snapshot| chat_invite_url(&invite).is_ok_and(|url| url == snapshot.url));
         if let Err(error) = self.consume_private_chat_invite_after_response(&pending.invite_key) {
             self.pending_private_invite_cleanup_retry = true;
             self.push_debug_log(
@@ -387,10 +392,22 @@ impl AppCore {
         self.ensure_thread_record(&chat_id, unix_now().get())
             .unread_count = 0;
         self.remember_recent_handshake_peer(
-            chat_id,
+            chat_id.clone(),
             pending.authenticated_device.to_hex(),
             unix_now().get(),
         );
+        // Both the device proof and durable one-use consumption have succeeded.
+        // Respect the current screen so delayed handshakes cannot steal focus.
+        if is_displayed_invite
+            && self.open_invite_chat_on_join
+            && !self.is_owner_blocked(&chat_id)
+            && matches!(
+                self.screen_stack.last(),
+                Some(Screen::NewChat | Screen::CreateInvite)
+            )
+        {
+            self.open_chat(&chat_id);
+        }
         self.push_debug_log(
             "invite.private_response",
             format!(

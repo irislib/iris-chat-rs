@@ -80,6 +80,7 @@ struct ProfileQrModal: View {
     @ObservedObject var manager: AppManager
     let account: AccountSnapshot
     let codeContent: QrModalCodeContent
+    let showsInviteJoinPreference: Bool
     let closeSettings: (() -> Void)?
     @State private var selectedTab: ProfileQrTab
 
@@ -88,11 +89,13 @@ struct ProfileQrModal: View {
         account: AccountSnapshot,
         initialTab: ProfileQrTab = .code,
         codeContent: QrModalCodeContent? = nil,
+        showsInviteJoinPreference: Bool = false,
         closeSettings: (() -> Void)? = nil
     ) {
         self.manager = manager
         self.account = account
         self.codeContent = codeContent ?? .profile(account: account)
+        self.showsInviteJoinPreference = showsInviteJoinPreference
         self.closeSettings = closeSettings
         _selectedTab = State(initialValue: initialTab)
     }
@@ -105,7 +108,7 @@ struct ProfileQrModal: View {
                 header
 
                 if selectedTab == .code {
-                    ProfileQrCodePane(manager: manager, account: account, codeContent: codeContent)
+                    ProfileQrCodePane(manager: manager, account: account, codeContent: codeContent, showsInviteJoinPreference: showsInviteJoinPreference)
                 } else {
                     ProfileQrScanPane { code in
                         handleScannedCode(code)
@@ -182,6 +185,7 @@ struct ProfileQrCodePane: View {
     @ObservedObject var manager: AppManager
     let account: AccountSnapshot
     let codeContent: QrModalCodeContent
+    var showsInviteJoinPreference = false
     @State private var copiedUserID = false
     @State private var copyResetTask: Task<Void, Never>?
 
@@ -194,6 +198,11 @@ struct ProfileQrCodePane: View {
             VStack(spacing: 22) {
                 qrCard
                     .frame(maxWidth: 420)
+
+                if showsInviteJoinPreference {
+                    InviteOpenOnJoinToggle(manager: manager)
+                        .frame(maxWidth: 420)
+                }
 
                 HStack(spacing: 26) {
                     ProfileQrActionButton(

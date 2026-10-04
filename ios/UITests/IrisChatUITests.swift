@@ -49,6 +49,31 @@ class IrisChatUITestCase: XCTestCase {
 
 final class IrisChatUITests: IrisChatUITestCase {
 
+    func testInviteJoinChoiceStaysInSyncWithItsCodeSheet() {
+        let app = launchCleanApp()
+        createAccount(app)
+        tapNewChat(app)
+        let toggle = element(app, "inviteOpenOnJoinToggle")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 15))
+        XCTAssertEqual(toggle.value as? String, "1")
+        toggle.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "0"), object: toggle
+        )], timeout: 5), .completed)
+        element(app, "newChatInviteQrButton").tap()
+        let modal = element(app, "profileQrModal")
+        XCTAssertTrue(modal.waitForExistence(timeout: 10))
+        let sheetToggle = modal.descendants(matching: .any).matching(identifier: "inviteOpenOnJoinToggle").firstMatch
+        XCTAssertTrue(sheetToggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(sheetToggle.value as? String, "0")
+        sheetToggle.tap()
+        element(app, "profileQrDoneButton").tap()
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "1"), object: toggle
+        )], timeout: 5), .completed)
+    }
+
     func testGrantNotificationPermissionForProductionPushE2E() throws {
 #if os(macOS)
         throw XCTSkip("Production APNs permission setup is iOS-only")

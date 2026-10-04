@@ -11,6 +11,7 @@ fn private_invite_delete_failure_blocks_sibling_imports_in_same_retry_pass() {
         &inviter_device,
     );
     let invite_url = create_private_invite_for_test(&mut inviter);
+    inviter.handle_action(AppAction::PushScreen { screen: Screen::NewChat });
     let invite_key = inviter
         .private_chat_invites
         .keys()
@@ -59,6 +60,8 @@ fn private_invite_delete_failure_blocks_sibling_imports_in_same_retry_pass() {
     );
     assert_eq!(inviter.pending_private_invite_responses.len(), 2);
     assert!(inviter.private_chat_invites.contains_key(&invite_key));
+    assert!(matches!(inviter.screen_stack.last(), Some(Screen::NewChat)),
+        "Do not navigate before one-use invite consumption is durable");
 
     {
         let shared = inviter.app_store.shared();
@@ -75,6 +78,8 @@ fn private_invite_delete_failure_blocks_sibling_imports_in_same_retry_pass() {
     assert_eq!(stored_session_count(&inviter, peer_owner.public_key()), 1);
     assert!(inviter.pending_private_invite_responses.is_empty());
     assert!(inviter.private_chat_invites.is_empty());
+    assert!(matches!(inviter.screen_stack.last(), Some(Screen::Chat { chat_id })
+        if chat_id == &peer_owner.public_key().to_hex()));
 }
 
 #[test]

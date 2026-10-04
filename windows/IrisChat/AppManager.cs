@@ -520,6 +520,9 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
     // ─────────────────────────── invites / groups ─────────────────────────────
 
+    public void SetInviteOpenOnJoin(bool enabled) =>
+        DispatchToRust(new AppAction.SetInviteOpenOnJoin(enabled));
+
     public void CreatePublicInvite() =>
         DispatchToRust(new AppAction.CreatePublicInvite());
 

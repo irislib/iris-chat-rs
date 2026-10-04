@@ -1299,6 +1299,7 @@ internal fun ProfileQrDialog(
     scanTag: String = "settingsProfileQrScanner",
     copyContentDescription: String = "Copy profile link",
     shareContentDescription: String = "Share profile",
+    codeFooter: @Composable (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onCopy: () -> Unit,
     onShare: () -> Unit,
@@ -1345,6 +1346,7 @@ internal fun ProfileQrDialog(
                         CircularProgressIndicator(modifier = Modifier.padding(vertical = 96.dp))
                     }
 
+                    codeFooter?.invoke()
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically,

@@ -23,6 +23,16 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
 
     if let Some(invite) = state.public_invite.as_ref() {
         container.append(&qr::build(&invite.url, 240));
+        let open_on_join = gtk::CheckButton::with_label("Open chat when someone joins");
+        open_on_join.set_widget_name("inviteOpenOnJoinToggle");
+        open_on_join.set_active(invite.open_chat_on_join);
+        let manager = manager.clone();
+        open_on_join.connect_toggled(move |button| {
+            manager.dispatch(AppAction::SetInviteOpenOnJoin {
+                enabled: button.is_active(),
+            })
+        });
+        container.append(&open_on_join);
 
         let copy = primary_button("Copy");
         copy.set_halign(gtk::Align::Center);

@@ -26,6 +26,9 @@
                     <chrome:QrCodeView x:Name="InviteQr"
                                        Visibility="Collapsed" />
 
+                    <CheckBox x:Name="OpenOnJoin" Content="Open chat when someone joins"
+                              IsChecked="True" Margin="0,12,0,12" Click="OnOpenOnJoinChanged" />
+
                     <Grid x:Name="ButtonsRow"
                           HorizontalAlignment="Center"
                           Margin="0,16,0,0"
