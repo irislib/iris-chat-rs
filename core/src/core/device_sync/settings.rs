@@ -192,7 +192,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             routed_peer_ids(&[], &[], Some(&publisher), 64),
-            [publisher.clone()]
+            std::slice::from_ref(&publisher)
         );
         for sibling in [peers[0], peers[69]] {
             let selected = routed_peer_ids(&[sibling], &peers, Some(&publisher), 64);

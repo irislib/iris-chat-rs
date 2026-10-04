@@ -337,7 +337,7 @@ mod tests {
 
         assert_eq!(
             update_pubsub_options(&reference).unwrap().routed_peers,
-            [reference.npub.clone()],
+            std::slice::from_ref(&reference.npub),
             "same-machine discovery must retain the trusted publisher route"
         );
         let provider = standalone_fips_update_provider(&reference, config)
