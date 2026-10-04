@@ -271,9 +271,15 @@ fn main() {
     );
     input.buffer().set_text("draft");
     assert!(keyboard_list::focus_list(root.upcast_ref(), Some("second")));
-    assert!(second.has_focus(), "Section shortcut focuses the current chat");
+    assert!(
+        second.has_focus(),
+        "Section shortcut focuses the current chat"
+    );
     assert_eq!(activated.get(), 2, "Section focus does not activate a chat");
-    assert!(keyboard_list::focus_list(root.upcast_ref(), Some("removed")));
+    assert!(keyboard_list::focus_list(
+        root.upcast_ref(),
+        Some("removed")
+    ));
     assert_eq!(
         gtk::prelude::RootExt::focus(&window).unwrap().widget_name(),
         "iris-keyboard-chat-new",
