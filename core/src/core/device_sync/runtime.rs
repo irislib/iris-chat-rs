@@ -1,5 +1,7 @@
 use super::*;
-use crate::update_announcements::{register_update_provider, websocket_seed_urls};
+use crate::update_announcements::{
+    register_update_provider, secure_update_ref, trusted_update_publisher, websocket_seed_urls,
+};
 use fips_core::config::{
     BleConfig, NostrDiscoveryPolicy, PeerConfig, TransportInstances, UdpConfig, WebSocketConfig,
 };
@@ -184,6 +186,29 @@ impl AppCore {
                 config.peers.push(*peer);
             }
         }
+        let update_publisher =
+            match secure_update_ref().and_then(|reference| trusted_update_publisher(&reference)) {
+                Ok(publisher) => Some(publisher),
+                Err(error) => {
+                    self.push_debug_log("update.pubsub.config.error", error.to_string());
+                    None
+                }
+            };
+        let mut pubsub_options = FipsPubsubClientOptions {
+            #[cfg(feature = "stack-fixture")]
+            max_connected_peers: crate::stack_mesh_fixture::max_connected_peers(),
+            #[cfg(feature = "stack-fixture")]
+            fanout: nostr_pubsub::DEFAULT_INV_WANT_FANOUT
+                .min(crate::stack_mesh_fixture::max_connected_peers()),
+            max_replay_events: super::super::mesh_pubsub::MESH_REPLAY_EVENTS,
+            ..FipsPubsubClientOptions::default()
+        };
+        pubsub_options.routed_peers = super::settings::routed_peer_ids(
+            &config.siblings,
+            &config.peers,
+            update_publisher.as_deref(),
+            pubsub_options.max_connected_peers,
+        );
         let nearby_enabled = host_ble_requested || config.nearby_ip_enabled;
         let discovery_scope = if nearby_enabled || !config.peers.is_empty() {
             super::super::fips_nearby::FIPS_NEARBY_SCOPE.to_string()
@@ -191,14 +216,15 @@ impl AppCore {
             format!("{DEVICE_SYNC_SCOPE_PREFIX}{}", config.owner_hex)
         };
         let runtime_key = format!(
-            "{}:same-host={}:nearby={}:ble={}:routed={:?}:static={:?}:udp={:?}",
+            "{}:same-host={}:nearby={}:ble={}:routed={:?}:static={:?}:udp={:?}:update={:?}",
             config.key,
             options.same_host_hashtree,
             nearby_enabled,
             host_ble_requested,
             options.routed_peers,
             options.additional_peers,
-            options.udp_bind_addr
+            options.udp_bind_addr,
+            update_publisher,
         );
         // Learning another contact changes routing, not our transport or Noise
         // identity. Keep established sessions (including an in-progress call).
@@ -232,10 +258,7 @@ impl AppCore {
                 runtime.peer_refresh_key = peer_refresh_key;
                 runtime.siblings = config.siblings.clone();
                 if let Some(pubsub) = &runtime.pubsub {
-                    if let Err(error) = pubsub.set_routed_peers(super::settings::routed_peer_ids(
-                        &config.siblings,
-                        &config.peers,
-                    )) {
+                    if let Err(error) = pubsub.set_routed_peers(pubsub_options.routed_peers) {
                         crate::perflog!("fips.pubsub.peer_refresh error={error}");
                     }
                 }
@@ -491,16 +514,7 @@ impl AppCore {
             .runtime
             .block_on(FipsPubsubClient::start_with_reputation(
                 endpoint.clone(),
-                FipsPubsubClientOptions {
-                    #[cfg(feature = "stack-fixture")]
-                    max_connected_peers: crate::stack_mesh_fixture::max_connected_peers(),
-                    #[cfg(feature = "stack-fixture")]
-                    fanout: nostr_pubsub::DEFAULT_INV_WANT_FANOUT
-                        .min(crate::stack_mesh_fixture::max_connected_peers()),
-                    max_replay_events: super::super::mesh_pubsub::MESH_REPLAY_EVENTS,
-                    routed_peers: super::settings::routed_peer_ids(&config.siblings, &config.peers),
-                    ..FipsPubsubClientOptions::default()
-                },
+                pubsub_options,
                 super::settings::pubsub_policy_options(),
             )) {
             Ok(client) => Some(Arc::new(client)),

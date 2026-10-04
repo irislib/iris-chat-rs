@@ -27,19 +27,31 @@ fn policy_options(raters: &str) -> nostr_pubsub_fips::FipsPubsubPolicyOptions {
     options
 }
 
-pub(super) fn routed_peer_ids(siblings: &[PeerIdentity], peers: &[PeerIdentity]) -> Vec<String> {
-    let limit = nostr_pubsub_fips::FipsPubsubClientOptions::default()
-        .max_connected_peers
-        .saturating_sub(1);
+pub(super) fn routed_peer_ids(
+    siblings: &[PeerIdentity],
+    peers: &[PeerIdentity],
+    update_publisher: Option<&str>,
+    max_connected_peers: usize,
+) -> Vec<String> {
+    let limit = max_connected_peers.saturating_sub(1);
+    if limit == 0 {
+        return Vec::new();
+    }
+    // Keep the trusted release publisher reachable even with a full roster,
+    // while leaving one connection slot for a directly connected seed.
+    let roster_limit = limit.saturating_sub(usize::from(update_publisher.is_some()));
     let mut selected = Vec::new();
     for peer in siblings.iter().chain(peers) {
-        let npub = peer.npub();
-        if !selected.contains(&npub) {
-            selected.push(npub);
-        }
-        if selected.len() == limit {
+        if selected.len() == roster_limit {
             break;
         }
+        let npub = peer.npub();
+        if Some(npub.as_str()) != update_publisher && !selected.contains(&npub) {
+            selected.push(npub);
+        }
+    }
+    if let Some(publisher) = update_publisher {
+        selected.push(publisher.to_owned());
     }
     selected
 }
@@ -150,7 +162,7 @@ mod tests {
                     .unwrap()
             })
             .collect::<Vec<_>>();
-        let selected = routed_peer_ids(&[peers[69], peers[69]], &peers);
+        let selected = routed_peer_ids(&[peers[69], peers[69]], &peers, None, 64);
         assert_eq!(selected.len(), 63);
         assert_eq!(selected[0], peers[69].npub());
         assert_eq!(
@@ -166,5 +178,47 @@ mod tests {
     fn invalid_hints_fail_instead_of_disabling_explicit_connectivity() {
         assert!(parse_peer_hints("broken", "").is_err());
         assert!(parse_peer_hints("", "broken").is_err());
+    }
+
+    #[test]
+    fn roster_refresh_keeps_a_route_to_the_trusted_update_publisher() {
+        use nostr::ToBech32;
+        let publisher = nostr::Keys::generate().public_key().to_bech32().unwrap();
+        let peers = (0..70)
+            .map(|_| {
+                PeerIdentity::from_npub(&nostr::Keys::generate().public_key().to_bech32().unwrap())
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            routed_peer_ids(&[], &[], Some(&publisher), 64),
+            [publisher.clone()]
+        );
+        for sibling in [peers[0], peers[69]] {
+            let selected = routed_peer_ids(&[sibling], &peers, Some(&publisher), 64);
+            assert_eq!(selected.len(), 63);
+            assert_eq!(selected[0], sibling.npub());
+            assert!(selected.contains(&publisher));
+        }
+        let publisher_peer = PeerIdentity::from_npub(&publisher).unwrap();
+        assert_eq!(
+            routed_peer_ids(&[publisher_peer], &[publisher_peer], Some(&publisher), 64),
+            [publisher]
+        );
+    }
+
+    #[test]
+    fn update_publisher_respects_small_capacity_and_preserves_a_direct_seed_slot() {
+        use nostr::ToBech32;
+        let publisher = nostr::Keys::generate().public_key().to_bech32().unwrap();
+        let sibling =
+            PeerIdentity::from_npub(&nostr::Keys::generate().public_key().to_bech32().unwrap())
+                .unwrap();
+        for capacity in [0_usize, 1, 2, 3] {
+            let selected = routed_peer_ids(&[sibling], &[], Some(&publisher), capacity);
+            assert!(selected.len() <= capacity.saturating_sub(1));
+            assert_eq!(selected.contains(&publisher), capacity >= 2);
+            assert_eq!(selected.contains(&sibling.npub()), capacity >= 3);
+        }
     }
 }

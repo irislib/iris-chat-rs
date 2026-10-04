@@ -62,9 +62,12 @@ pub async fn build_secure_update_updater(
         .and_then(Weak::upgrade);
     let provider = match shared {
         Some(provider) => provider,
-        None => tokio::time::timeout(Duration::from_secs(4), standalone_update_provider())
-            .await
-            .map_err(|_| UpdateError::Announcement("timed out starting update pubsub".into()))??,
+        None => tokio::time::timeout(
+            Duration::from_secs(4),
+            standalone_update_provider(&reference),
+        )
+        .await
+        .map_err(|_| UpdateError::Announcement("timed out starting update pubsub".into()))??,
     };
     let updater = build_secure_pubsub_blossom_updater(provider, secure_update_config()).await?;
     let events = UPDATE_EVENTS
@@ -135,7 +138,26 @@ fn remember_update_event(
     Ok(())
 }
 
-async fn standalone_update_provider() -> Result<Arc<dyn NostrEventSubscriber>, UpdateError> {
+pub(crate) fn trusted_update_publisher(reference: &UpdateRef) -> Result<String, UpdateError> {
+    fips_core::PeerIdentity::from_npub(&reference.npub)
+        .map(|peer| peer.npub())
+        .map_err(|error| {
+            UpdateError::InvalidReference(format!("invalid update publisher: {error}"))
+        })
+}
+
+fn update_pubsub_options(reference: &UpdateRef) -> Result<FipsPubsubClientOptions, UpdateError> {
+    Ok(FipsPubsubClientOptions {
+        // Only the configured release authority is a routing target. Event
+        // authors observed through pubsub never expand this trusted list.
+        routed_peers: vec![trusted_update_publisher(reference)?],
+        ..FipsPubsubClientOptions::default()
+    })
+}
+
+async fn standalone_update_provider(
+    reference: &UpdateRef,
+) -> Result<Arc<dyn NostrEventSubscriber>, UpdateError> {
     // Relays are an explicit standalone override; no private updater relay list.
     if let Some(relays) = env_csv("IRIS_UPDATE_RELAYS").filter(|relays| !relays.is_empty()) {
         return nostr_pubsub_relay::RelayEventBus::new(relays, UPDATE_MANIFEST_TIMEOUT)
@@ -143,6 +165,7 @@ async fn standalone_update_provider() -> Result<Arc<dyn NostrEventSubscriber>, U
             .map(|provider| Arc::new(provider) as Arc<dyn NostrEventSubscriber>)
             .map_err(|error| UpdateError::Announcement(error.to_string()));
     }
+    let pubsub_options = update_pubsub_options(reference)?;
     let mut config = fips_core::Config::new();
     config.node.control.enabled = false;
     config.node.discovery.nostr.enabled = false;
@@ -169,7 +192,7 @@ async fn standalone_update_provider() -> Result<Arc<dyn NostrEventSubscriber>, U
         .await
         .map_err(|error| UpdateError::Announcement(error.to_string()))?;
     let client = Arc::new(
-        FipsPubsubClient::start(Arc::new(endpoint), FipsPubsubClientOptions::default())
+        FipsPubsubClient::start(Arc::new(endpoint), pubsub_options)
             .await
             .map_err(|error| UpdateError::Announcement(error.to_string()))?,
     );
@@ -203,6 +226,27 @@ mod tests {
     use hashtree_resolver::{nostr::HASHTREE_KIND, RootResolver};
     use nostr::{EventBuilder, Kind, Tag, TagKind};
     use nostr_pubsub::{EventBus, EventSource, InMemoryEventBus, VerifiedEvent};
+
+    #[test]
+    fn standalone_routes_only_to_the_configured_update_publisher() {
+        let default = UpdateRef::parse(HTREE_UPDATE_REF).unwrap();
+        assert_eq!(
+            update_pubsub_options(&default).unwrap().routed_peers,
+            [default.npub]
+        );
+
+        let reference = UpdateRef {
+            npub: Keys::generate().public_key().to_bech32().unwrap(),
+            tree_name: "releases/test".into(),
+            path: Some("latest".into()),
+        };
+        assert_eq!(
+            update_pubsub_options(&reference).unwrap().routed_peers,
+            [reference.npub]
+        );
+        let malformed = UpdateRef::parse("htree://npub1invalid/releases/test").unwrap();
+        assert!(update_pubsub_options(&malformed).is_err());
+    }
 
     #[tokio::test]
     async fn shared_provider_resolves_live_signed_release_without_relays() {
