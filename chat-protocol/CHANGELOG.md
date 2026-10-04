@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- Compare SQLite checkpoints with one reusable 4 KiB buffer instead of copying
+  the previous value. Preserve TEXT compatibility, changed-page writes, namespace
+  boundaries, atomic rollback, and existing checkpoints and sessions.
+
 ## 0.3.0
 
 - Require mutable access for `ProtocolEngine::exit_batch` so consumed delivery
