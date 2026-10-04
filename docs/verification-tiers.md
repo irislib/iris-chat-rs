@@ -141,6 +141,20 @@ To require it from the release gate, pass `--physical-ble-idle` (or set
 and `IRIS_PHYSICAL_BLE_XCTESTRUN`. This lane always executes, even when a recent
 source-only release receipt exists; missing hardware/build inputs fail.
 
+Saved evidence can be rechecked without accessing the phones:
+
+```sh
+python3 scripts/physical_ble_idle.py \
+  --evaluate work/physical-idle/run-001 \
+  --output work/physical-idle/run-001/evaluation.json
+```
+
+This uses the same receipt, test-summary, network-coverage, and metric checks as
+a live run, and also requires successful device restoration. It preserves the
+original result and reports its status/error alongside hashes of the evidence;
+the output must be a new file. Re-evaluation is evidence from that recorded
+build and time, not another physical run or verification of a newer build.
+
 The native platform matrix runs Android, the Apple lane, Linux, and Windows in
 parallel. iOS and macOS remain ordered within one lane because both regenerate
 the shared Swift bindings. When the fast tier passed in the same full
