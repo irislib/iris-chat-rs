@@ -355,6 +355,21 @@ impl AppManager {
         self.local_state.borrow().clone()
     }
 
+    pub fn contact_social_connection(
+        &self,
+        owner: &str,
+    ) -> Option<iris_chat_core::SocialConnectionSnapshot> {
+        self.local_state
+            .borrow()
+            .chat_list
+            .iter()
+            .find(|chat| {
+                chat.kind == iris_chat_core::ChatKind::Direct
+                    && chat.chat_id.eq_ignore_ascii_case(owner.trim())
+            })
+            .and_then(|chat| chat.social_connection.clone())
+    }
+
     pub fn bootstrap_in_flight(&self) -> bool {
         self.bootstrap_in_flight.get()
     }

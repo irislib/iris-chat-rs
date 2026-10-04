@@ -24,6 +24,9 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import to.iris.chat.nearby.IrisNearbyService
+import to.iris.chat.nearby.nearbyPeerChat
+import to.iris.chat.rust.ChatKind
+import to.iris.chat.rust.buildLargeTestAppState
 import to.iris.chat.rust.SocialBadge
 import to.iris.chat.rust.SocialConnectionSnapshot
 import to.iris.chat.ui.components.IrisAvatar
@@ -36,6 +39,21 @@ import to.iris.chat.ui.theme.IrisChatTheme
 @RunWith(AndroidJUnit4::class)
 class NearbyAvatarComposeTest {
     @get:Rule val composeRule = createComposeRule()
+
+    @Test
+    fun nearbyIdentityUsesCurrentPrivateContactSnapshot() {
+        val original = buildLargeTestAppState(1u, 0u, 0u).chatList.first()
+        val favorite = original.copy(socialConnection = SocialConnectionSnapshot(null, null, 0u, "Favorite · Only you", true))
+        val owner = favorite.chatId
+        assertEquals(true, listOf(favorite).nearbyPeerChat(" ${owner.uppercase()} ")?.socialConnection?.isFavorite)
+        val unfavorited = favorite.copy(socialConnection = favorite.socialConnection!!.copy(isFavorite = false))
+        assertEquals(false, listOf(unfavorited).nearbyPeerChat(owner)?.socialConnection?.isFavorite)
+        assertEquals(null, listOf(favorite).nearbyPeerChat(null))
+        assertEquals(null, listOf(favorite).nearbyPeerChat(" "))
+        assertEquals(null, listOf(favorite).nearbyPeerChat("unknown"))
+        assertEquals(null, listOf(favorite.copy(kind = ChatKind.GROUP)).nearbyPeerChat(owner))
+        assertEquals(null, emptyList<to.iris.chat.rust.ChatThreadSnapshot>().nearbyPeerChat(owner))
+    }
 
     @Test
     fun enabledLiveOwnersExcludeSelfAndClearWhenDisabledOrRemoved() {

@@ -314,6 +314,7 @@ struct ShareTargetSheet: View {
             } label: {
                 HStack(spacing: 12) {
                     IrisAvatar(
+                        socialConnection: nearbyPeerChat(owner: peer.ownerPubkeyHex, chats: manager.state.chatList)?.socialConnection,
                         ownerPubkeyHex: owner,
                         label: name,
                         size: 40,

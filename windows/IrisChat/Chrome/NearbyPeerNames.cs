@@ -6,6 +6,10 @@ namespace IrisChat.Chrome;
 
 public static class NearbyPeerNames
 {
+    public static ChatThreadSnapshot? KnownChat(AppManager manager, string? owner) =>
+        string.IsNullOrWhiteSpace(owner) ? null : manager.ChatList.FirstOrDefault(chat =>
+            chat.kind == ChatKind.Direct && string.Equals(chat.chatId, owner.Trim(), StringComparison.OrdinalIgnoreCase));
+
     public static bool IsNearby(bool enabled, DesktopNearbySnapshot snapshot, string? localOwner, string? owner) =>
         enabled && snapshot.visible && !string.IsNullOrWhiteSpace(localOwner) && !string.IsNullOrWhiteSpace(owner)
         && !string.Equals(localOwner, owner, StringComparison.OrdinalIgnoreCase)
@@ -26,17 +30,9 @@ public static class NearbyPeerNames
         DesktopNearbyPeerSnapshot peer,
         string fallback = "Nearby user")
     {
-        var owner = string.IsNullOrWhiteSpace(peer.ownerPubkeyHex)
-            ? null
-            : peer.ownerPubkeyHex!.Trim();
-        if (owner is not null)
-        {
-            var chat = manager.ChatList.FirstOrDefault(chat =>
-                chat.kind == ChatKind.Direct &&
-                string.Equals(chat.chatId, owner, StringComparison.OrdinalIgnoreCase));
-            if (!string.IsNullOrWhiteSpace(chat?.displayName))
-                return chat!.displayName.Trim();
-        }
+        var chat = KnownChat(manager, peer.ownerPubkeyHex);
+        if (!string.IsNullOrWhiteSpace(chat?.displayName))
+            return chat!.displayName.Trim();
 
         return string.IsNullOrWhiteSpace(peer.name) ? fallback : peer.name.Trim();
     }

@@ -381,7 +381,12 @@ fn message_hit_row(
     }
     row.add_prefix(&crate::widgets::social_badge::user_avatar(
         &avatar,
-        None,
+        if hit.chat_kind == ChatKind::Direct {
+            manager.contact_social_connection(&hit.chat_id)
+        } else {
+            None
+        }
+        .as_ref(),
         if hit.chat_kind == ChatKind::Direct {
             &hit.chat_id
         } else {
@@ -567,7 +572,9 @@ fn nearby_avatar_strip(
         column.set_valign(gtk::Align::Start);
         column.append(&crate::widgets::social_badge::user_avatar(
             &avatar,
-            None,
+            manager
+                .contact_social_connection(peer.owner_pubkey_hex.as_deref().unwrap_or_default())
+                .as_ref(),
             peer.owner_pubkey_hex.as_deref().unwrap_or_default(),
             manager,
         ));

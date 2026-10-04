@@ -54,6 +54,7 @@ public static class PeerProfileWindow
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.Children.Add(new Avatar
         {
+            SocialConnection = chat?.socialConnection ?? person?.socialConnection,
             Label = displayName,
             OwnerPubkeyHex = ownerPubkeyHex,
             PictureUrl = pictureUrl,

@@ -74,9 +74,11 @@ import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.core.AppContainer
 import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
+import to.iris.chat.nearby.nearbyPeerChat
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatThreadSnapshot
+import to.iris.chat.rust.SocialConnectionSnapshot
 import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.Screen
 import to.iris.chat.ui.components.imageLoadRequest
@@ -670,6 +672,7 @@ private fun ShareTargetDialog(
                             val selected = owner in selectedChatIds
                             ShareNearbyTargetRow(
                                 peer = peer,
+                                socialConnection = chats.nearbyPeerChat(peer.ownerPubkeyHex)?.socialConnection,
                                 displayName = nearbyPeerResolvedName(peer, directChatNames),
                                 selected = selected,
                                 onClick = {
@@ -849,6 +852,7 @@ private fun ShareTargetSectionHeader(title: String) {
 @Composable
 private fun ShareNearbyTargetRow(
     peer: IrisNearbyService.Peer,
+    socialConnection: SocialConnectionSnapshot?,
     displayName: String,
     selected: Boolean,
     onClick: () -> Unit,
@@ -868,6 +872,7 @@ private fun ShareNearbyTargetRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IrisAvatar(
+            socialConnection = socialConnection,
             ownerPubkeyHex = peer.ownerPubkeyHex,
             label = displayName,
             size = 40.dp,

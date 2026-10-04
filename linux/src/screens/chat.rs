@@ -813,7 +813,9 @@ fn info_recipient_row(
     }
     row.append(&crate::widgets::social_badge::user_avatar(
         &avatar,
-        None,
+        manager
+            .contact_social_connection(info.owner_pubkey_hex.as_deref().unwrap_or_default())
+            .as_ref(),
         info.owner_pubkey_hex.as_deref().unwrap_or_default(),
         manager,
     ));
