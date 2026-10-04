@@ -370,7 +370,7 @@ struct IrisComposerBar: View {
                 Text(placeholder)
                     .font(.system(.body, design: .rounded))
                     .foregroundStyle(palette.muted)
-                    .padding(.top, 1)
+                    .offset(y: 1)
                     .allowsHitTesting(false)
             }
             IrisAppKitComposerTextView(
@@ -381,7 +381,7 @@ struct IrisComposerBar: View {
             )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .irisInputField()
+        .irisInputField(verticalPadding: IrisAppKitComposerTextView.verticalPadding)
         .contentShape(Rectangle())
         .onTapGesture {
             isFocused = true

@@ -83,6 +83,7 @@ struct IrisSecondaryButtonVisualStyle: ButtonStyle {
 
 struct IrisInputFieldModifier: ViewModifier {
     @Environment(\.irisPalette) private var palette
+    var verticalPadding: CGFloat = 9
 
     private var pillRadius: CGFloat { 22 }
 
@@ -91,11 +92,7 @@ struct IrisInputFieldModifier: ViewModifier {
             .textFieldStyle(.plain)
             .font(.system(.body, design: .rounded))
             .padding(.horizontal, 16)
-            // Vertical padding tuned so the input pill is the same
-            // 40pt height as the attach + send glass buttons —
-            // .bottom alignment in the composer's HStack then reads
-            // as center-aligned in the single-line case.
-            .padding(.vertical, 9)
+            .padding(.vertical, verticalPadding)
             // Signal-style input pill: a glass capsule that floats
             // over the timeline. No solid fill — the OS glass effect
             // handles tint + blur. Hairline border keeps the shape
@@ -109,8 +106,8 @@ struct IrisInputFieldModifier: ViewModifier {
 }
 
 extension View {
-    func irisInputField() -> some View {
-        modifier(IrisInputFieldModifier())
+    func irisInputField(verticalPadding: CGFloat = 9) -> some View {
+        modifier(IrisInputFieldModifier(verticalPadding: verticalPadding))
     }
 }
 

@@ -61,6 +61,12 @@ final class IrisComposerScrollView: NSScrollView {
 }
 
 extension IrisAppKitComposerTextView {
+    // Center the last native text line on the neighboring 40pt controls.
+    // Equal padding also gives an empty or one-line field the same height.
+    static let verticalPadding = max(0, (40 - ceil(NSLayoutManager().defaultLineHeight(
+        for: NSFont.systemFont(ofSize: NSFont.systemFontSize)
+    ))) / 2)
+
     static func fittingSize(
         for textView: NSTextView,
         proposedWidth: CGFloat?,
