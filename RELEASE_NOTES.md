@@ -2,6 +2,28 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.4.3
+
+### GitHub
+
+- Restore the compact circular attachment button on macOS while preserving the attachment menu's icons and keyboard actions.
+- Show private favorite stars on avatars across native platforms, independently of public follow badges, including offline contacts and live favorite changes.
+- Avoid copying every encrypted session when resolving a message sender; keep the existing sender and device authorization checks.
+- Add distinct iPhone feedback when voice recording starts, locks, finishes, or is cancelled.
+- Add an opt-in physical iPhone/Android Bluetooth regression check for foreground CPU and storage writes.
+
+### Apple
+
+- Restore the round attachment button on Mac.
+- Show a star on favorite contacts' avatars.
+- Reduce background work when receiving messages and catching up on chats.
+- Improve vibration feedback when recording voice messages on iPhone.
+
+### Zapstore
+
+- Show a star on favorite contacts' avatars.
+- Reduce background work when receiving messages and catching up on chats.
+
 ## v2026.10.4.2
 
 ### GitHub
