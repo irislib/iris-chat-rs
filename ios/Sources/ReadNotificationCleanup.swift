@@ -70,15 +70,15 @@ final class ReadNotificationCleanup {
     }
 
     private func dismissRead(_ request: Request) async -> Bool {
+        let candidates = await delivered()
+        guard !candidates.isEmpty, latest == request else { return true }
         // State updates and silent pushes can arrive after the core's suspension
-        // flush. Keep a separate allowance until all notification database reads
-        // finish, including the detached Rust work.
+        // flush. Protect the database lookup until its detached Rust work finishes.
+        // Most state updates have no delivered notifications; fetching that list
+        // does not access our storage and needs no background allowance.
         let allowance = beginBackgroundTask()
         defer { allowance.finish() }
         guard allowance.isActive else { return false }
-        let candidates = await delivered()
-        guard allowance.isActive else { return false }
-        guard !candidates.isEmpty, latest == request else { return true }
         let payloads = candidates.map { $0.1 }
         let resolve = self.resolve
         let indexes = await Task.detached(priority: .utility) {

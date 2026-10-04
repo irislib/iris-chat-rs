@@ -35,6 +35,28 @@ final class ReadNotificationCleanupTests: XCTestCase {
     private let bundle = StoredAccountBundle(ownerNsec: nil, ownerPubkeyHex: "owner", deviceNsec: "device")
 
     @MainActor
+    func testEmptyNotificationUpdatesDoNotRequestBackgroundTime() async {
+        var fetches = 0
+        var allowances = 0
+        let cleanup = ReadNotificationCleanup(
+            delivered: { fetches += 1; return [] },
+            resolve: { _, _, _ in XCTFail("no notifications to resolve"); return [] },
+            remove: { _ in XCTFail("no notifications to remove") },
+            beginBackgroundTask: {
+                allowances += 1
+                return IrisSuspendBackgroundTask(begin: { _ in .init(rawValue: 123) }, end: { _ in })
+            }
+        )
+        // Separate full-state updates must stay cheap, not just updates that
+        // happen to arrive while the previous worker is still running.
+        for _ in 0..<20 {
+            await cleanup.dismissRead(dataDir: "test", bundle: bundle)
+        }
+        XCTAssertEqual(fetches, 20)
+        XCTAssertEqual(allowances, 0)
+    }
+
+    @MainActor
     func testPushAndScheduledCleanupShareOneWorkerAndKeepBackgroundTimeUntilItReturns() async {
         let started = expectation(description: "first lookup started")
         let finished = expectation(description: "push callback completed")
@@ -106,20 +128,49 @@ final class ReadNotificationCleanupTests: XCTestCase {
     }
 
     @MainActor
-    func testExpiredBackgroundTimeDoesNotStartDatabaseWorkAfterFetchingNotifications() async {
+    func testAccountChangeWhileFetchingDoesNotRequestBackgroundTimeForStaleNotifications() async {
         let fetching = expectation(description: "fetching notifications")
-        let expired = expectation(description: "allowance expired")
         var resume: CheckedContinuation<[(String, String)], Never>?
-        var expire: (@Sendable () -> Void)?
+        var fetches = 0
         let cleanup = ReadNotificationCleanup(
             delivered: {
-                await withCheckedContinuation {
+                fetches += 1
+                guard fetches == 1 else { return [] }
+                return await withCheckedContinuation {
                     resume = $0
                     fetching.fulfill()
                 }
             },
-            resolve: { _, _, _ in XCTFail("database work after expiration"); return [] },
+            resolve: { _, _, _ in XCTFail("no current notifications to resolve"); return [] },
             remove: { _ in XCTFail("unexpected removal") },
+            beginBackgroundTask: {
+                XCTFail("no database work to protect")
+                return IrisSuspendBackgroundTask(begin: { _ in .init(rawValue: 123) }, end: { _ in })
+            }
+        )
+        let waiting = Task { await cleanup.dismissRead(dataDir: "test", bundle: bundle) }
+        await fulfillment(of: [fetching], timeout: 2)
+        let next = StoredAccountBundle(ownerNsec: nil, ownerPubkeyHex: "next", deviceNsec: "next-device")
+        cleanup.schedule(dataDir: "next", bundle: next)
+        resume?.resume(returning: [("notification", "payload")])
+        await waiting.value
+        XCTAssertEqual(fetches, 2)
+    }
+
+    @MainActor
+    func testExpiredBackgroundTimeDiscardsCompletedDatabaseResult() async {
+        let started = expectation(description: "database lookup started")
+        let expired = expectation(description: "allowance expired")
+        let gate = DispatchSemaphore(value: 0)
+        var expire: (@Sendable () -> Void)?
+        let cleanup = ReadNotificationCleanup(
+            delivered: { [("notification", "payload")] },
+            resolve: { _, _, _ in
+                started.fulfill()
+                XCTAssertEqual(gate.wait(timeout: .now() + 5), .success)
+                return [0]
+            },
+            remove: { _ in XCTFail("unexpected removal after expiration") },
             beginBackgroundTask: {
                 IrisSuspendBackgroundTask(begin: { expiration in
                     expire = expiration
@@ -128,10 +179,10 @@ final class ReadNotificationCleanupTests: XCTestCase {
             }
         )
         let waiting = Task { await cleanup.dismissRead(dataDir: "test", bundle: bundle) }
-        await fulfillment(of: [fetching], timeout: 2)
+        await fulfillment(of: [started], timeout: 2)
         expire?()
         await fulfillment(of: [expired], timeout: 2)
-        resume?.resume(returning: [("notification", "payload")])
+        gate.signal()
         await waiting.value
     }
 
