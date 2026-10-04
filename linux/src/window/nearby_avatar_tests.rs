@@ -77,15 +77,27 @@ pub fn run() {
         followed_by_friends: 0,
         description: "Following".into(),
     };
-    state.chat_list.iter_mut().find(|chat| chat.chat_id == PEER)
-        .unwrap().social_connection = Some(connection.clone());
+    state
+        .chat_list
+        .iter_mut()
+        .find(|chat| chat.chat_id == PEER)
+        .unwrap()
+        .social_connection = Some(connection.clone());
     state.rev += 1;
     manager.apply_update(AppUpdate::FullState(state.clone()));
-    assert!(manager.contact_social_connection(&PEER.to_uppercase())
-        .unwrap().is_favorite);
+    assert!(
+        manager
+            .contact_social_connection(&PEER.to_uppercase())
+            .unwrap()
+            .is_favorite
+    );
     assert!(manager.contact_social_connection("unknown").is_none());
-    state.chat_list.iter_mut().find(|chat| chat.chat_id == PEER)
-        .unwrap().social_connection = None;
+    state
+        .chat_list
+        .iter_mut()
+        .find(|chat| chat.chat_id == PEER)
+        .unwrap()
+        .social_connection = None;
     state.rev += 1;
     manager.apply_update(AppUpdate::FullState(state.clone()));
     assert!(manager.contact_social_connection(PEER).is_none());

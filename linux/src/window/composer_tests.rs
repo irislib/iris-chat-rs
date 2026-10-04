@@ -1,8 +1,8 @@
 use super::*;
 use std::time::{Duration, Instant};
 
-mod group_membership_tests;
 mod group_member_picker_tests;
+mod group_membership_tests;
 
 const PEER: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
