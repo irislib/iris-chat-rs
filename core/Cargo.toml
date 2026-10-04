@@ -66,7 +66,7 @@ hashtree-network = "=0.2.88"
 hashtree-resolver = { version = "=0.2.86", features = ["nostr"] }
 hashtree-updater = { version = "=0.2.87", features = ["secure-nostr-blossom"] }
 hmac = "0.12"
-iris-chat-protocol = { version = "=0.2.3", path = "../chat-protocol" }
+iris-chat-protocol = { version = "=0.2.4", path = "../chat-protocol" }
 nostr = { version = "0.44.7", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
 nostr-pubsub = "=0.1.15"
@@ -75,7 +75,7 @@ nostr-pubsub-fips = "=0.5.16"
 nostr-pubsub-relay = "=0.1.11"
 nostr-social-graph = "=0.1.4"
 nostr-identity = "=0.4.0"
-nostr-double-ratchet = "0.0.168"
+nostr-double-ratchet = "0.0.169"
 nostr-double-ratchet-pairwise-codec = "0.0.168"
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"

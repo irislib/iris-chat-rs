@@ -107,3 +107,33 @@ fn usable_direct_session_revocation_invalidates_cached_and_persisted_readiness()
     .unwrap();
     assert!(!fixture.sender.has_usable_direct_session_for_owner(peer));
 }
+
+#[test]
+fn sender_read_queries_preserve_snapshot_owner_resolution_after_revocation() {
+    let mut fixture = established_readiness_fixture();
+    let snapshot = fixture.sender.session_manager_snapshot();
+    let mut senders = std::collections::BTreeSet::new();
+    for user in &snapshot.users {
+        for device in &user.devices {
+            for session in device.active_session.iter().chain(&device.inactive_sessions) {
+                senders.extend(session.their_current_nostr_public_key);
+                senders.extend(session.their_next_nostr_public_key);
+                senders.extend(session.skipped_keys.keys().copied());
+            }
+        }
+    }
+    assert!(!senders.is_empty());
+    senders.insert(ndr_device(Keys::generate().public_key()));
+    for revoked in [false, true] {
+        if revoked {
+            fixture.sender.ingest_app_keys_event(&signed_app_keys(&fixture.peer_owner, &[], 30)).unwrap();
+        }
+        let snapshot = fixture.sender.session_manager_snapshot();
+        for sender in &senders {
+            assert_eq!(
+                fixture.sender.resolve_message_sender_owner_for_sender(*sender),
+                fixture.sender.resolve_message_sender_owner_with_snapshot(*sender, &snapshot),
+            );
+        }
+    }
+}
