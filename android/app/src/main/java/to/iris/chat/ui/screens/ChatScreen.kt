@@ -35,6 +35,8 @@ import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.ui.draw.clip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -179,6 +181,9 @@ fun ChatScreen(
     var initialScrollPending by remember(chatId) { mutableStateOf(true) }
     var observedMessageCount by remember(chatId) { mutableStateOf(0) }
     var replyTarget by remember(chatId) { mutableStateOf<ChatMessageSnapshot?>(null) }
+    var editTarget by remember(chatId) { mutableStateOf<ChatMessageSnapshot?>(null) }
+    val editDraft = remember(chatId) { TextFieldState() }
+    var deleteForEveryoneTarget by remember(chatId) { mutableStateOf<ChatMessageSnapshot?>(null) }
     var imageViewerItem by remember(chatId) { mutableStateOf<ImageViewerItem?>(null) }
     var lastTypingSentMs by remember(chatId) { mutableStateOf(0L) }
     var hasSentTyping by remember(chatId) { mutableStateOf(false) }
@@ -233,6 +238,12 @@ fun ChatScreen(
         forceScrollToLatest = false
         initialScrollPending = true
         observedMessageCount = 0
+    }
+
+    LaunchedEffect(chat?.messages) {
+        val deletedIds = chat?.messages.orEmpty().filter { it.deletedForEveryone }.map { it.id }.toSet()
+        if (editTarget?.id in deletedIds) editTarget = null
+        if (replyTarget?.id in deletedIds) replyTarget = null
     }
 
     // Keep the composer aligned with the persisted thread draft without
@@ -568,6 +579,7 @@ fun ChatScreen(
                                 showFooter = showsMessageFooter(message, next, chat.kind),
                                 reactions = message.reactions,
                                 onReply = {
+                                    editTarget = null
                                     replyTarget = message
                                     composerFocusRequester.requestFocus()
                                 },
@@ -583,7 +595,14 @@ fun ChatScreen(
                                         ),
                                     )
                                 },
+                                onEdit = {
+                                    editDraft.setTextAndPlaceCursorAtEnd(parseReplyEncodedMessage(message.body).body)
+                                    editTarget = message
+                                    composerFocusRequester.requestFocus()
+                                },
+                                onDeleteForEveryone = { deleteForEveryoneTarget = message },
                                 onDelete = {
+                                    if (editTarget?.id == message.id) editTarget = null
                                     appManager.dispatch(
                                         AppAction.DeleteLocalMessage(
                                             chatId = chatId,
@@ -658,7 +677,16 @@ fun ChatScreen(
                 }
 
                 if (!composerBlocked && !isMessageRequest && !chat.isRemovedFromGroup) {
-                    replyTarget?.let { reply ->
+                    if (editTarget != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("chatEditingBanner"),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Editing message", modifier = Modifier.weight(1f))
+                            TextButton(onClick = { editTarget = null }) { Text("Cancel") }
+                        }
+                    }
+                    if (editTarget == null) replyTarget?.let { reply ->
                         ReplyComposerStrip(
                             message = reply,
                             onCancel = { replyTarget = null },
@@ -703,14 +731,15 @@ fun ChatScreen(
                             appManager.dispatch(AppAction.RetryDirectChatCapability(chat.chatId))
                         }) {
                             ComposerBar(
-                                draft = draft,
+                                draft = if (editTarget == null) draft else editDraft,
                                 inputContentModifier = attachmentPaste.receiverModifier(
-                                    enabled = !capabilityBlocked && !busy.sendingMessage && !busy.uploadingAttachment,
+                                    enabled = editTarget == null && !capabilityBlocked && !busy.sendingMessage && !busy.uploadingAttachment,
                                     sendDirectly = sendFilesDirectly,
                                     onAttachments = { selectedAttachments = selectedAttachments + it },
                                 ),
                                 sendAllowed = !capabilityBlocked,
-                                selectedAttachments = selectedAttachments,
+                                selectedAttachments = if (editTarget == null) selectedAttachments else emptyList(),
+                                isEditing = editTarget != null,
                                 sendFilesDirectly = sendFilesDirectly,
                                 isSending = busy.sendingMessage,
                                 isUploading = busy.uploadingAttachment,
@@ -728,6 +757,7 @@ fun ChatScreen(
                                     composerBounds = coordinates.boundsInParent()
                                 },
                                 onDraftChange = { value ->
+                                    if (editTarget != null) return@ComposerBar
                                     if (value.isBlank()) {
                                         if (hasSentTyping) {
                                             hasSentTyping = false
@@ -754,6 +784,14 @@ fun ChatScreen(
                                 },
                                 onSend = {
                                     if (appManager.state.value.currentChat?.isRemovedFromGroup == true) return@ComposerBar
+                                    editTarget?.let { target ->
+                                        val text = editDraft.text.toString().trim()
+                                        if (text.isNotEmpty()) {
+                                            appManager.dispatch(AppAction.EditMessage(chatId, target.id, editedMessageText(target.body, text)))
+                                            editTarget = null
+                                        }
+                                        return@ComposerBar
+                                    }
                                     attachmentPaste.sent(selectedAttachments)
                                     shouldFollowLatest = true
                                     forceScrollToLatest = true
@@ -833,6 +871,22 @@ fun ChatScreen(
             }
         }
 
+        deleteForEveryoneTarget?.let { target ->
+            AlertDialog(
+                onDismissRequest = { deleteForEveryoneTarget = null },
+                title = { Text("Delete for everyone?") },
+                text = { Text("People who allow message deletion will see “Message deleted”.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        appManager.dispatch(AppAction.DeleteMessageForEveryone(chatId, target.id))
+                        if (replyTarget?.id == target.id) replyTarget = null
+                        if (editTarget?.id == target.id) editTarget = null
+                        deleteForEveryoneTarget = null
+                    }) { Text("Delete for everyone") }
+                },
+                dismissButton = { TextButton(onClick = { deleteForEveryoneTarget = null }) { Text("Cancel") } },
+            )
+        }
         if (showMessageRequestBlockDialog) {
             MessageRequestBlockDialog(
                 displayName = chat.displayName,

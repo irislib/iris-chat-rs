@@ -48,6 +48,7 @@ struct IrisComposerBar: View {
     let onStageVoice: (URL) async throws -> [StagedAttachment]
     let onSendVoice: ([StagedAttachment]) -> Bool
     var sendAllowed = true
+    var isEditing = false
     var isPreparingDroppedAttachments = false
     var onFileDropAvailabilityChange: (Bool) -> Void = { _ in }
     let onSend: (String) -> Void
@@ -251,7 +252,7 @@ struct IrisComposerBar: View {
             HStack(alignment: .bottom, spacing: 8) {
                 if voiceActive { IrisVoiceRecordingStatus(recorder: voiceRecorder) }
                 else { textControls }
-                if voiceActive || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty) {
+                if !isEditing && (voiceActive || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty)) {
                     IrisVoiceRecordButton(
                         recorder: voiceRecorder,
                         enabled: voiceRecordingAllowed && !isSending && !isUploading && !isPreparingAttachments,
@@ -271,7 +272,7 @@ struct IrisComposerBar: View {
 
     @ViewBuilder
     private var textControls: some View {
-        attachmentControl
+        if !isEditing { attachmentControl }
         if IrisLayout.usesDesktopChrome {
             Button { showingEmojiPicker.toggle() } label: {
                 Image(systemName: "face.smiling.fill")
@@ -292,9 +293,15 @@ struct IrisComposerBar: View {
 
     @ViewBuilder
     private var sendControl: some View {
-        if !IrisLayout.usesDesktopChrome && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty || isSending) {
+        if isEditing || (!IrisLayout.usesDesktopChrome && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty || isSending)) {
             Button(action: submitDraft) {
-                IrisSendButtonLabel(isSending: isSending)
+                Group {
+                    if isEditing {
+                        Text("Save").font(.callout.weight(.semibold))
+                    } else {
+                        IrisSendButtonLabel(isSending: isSending)
+                    }
+                }
                     .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
             }
@@ -472,7 +479,7 @@ struct IrisComposerBar: View {
     #endif
 
     private var canPrepareAttachments: Bool {
-        sendAllowed && !isSending && !isUploading && !voiceActive &&
+        !isEditing && sendAllowed && !isSending && !isUploading && !voiceActive &&
             !isPreparingAttachments && !isPreparingDroppedAttachments
     }
 

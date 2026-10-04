@@ -389,6 +389,12 @@ fun MyProfileSheet(
                                     tag = "myProfileTypingIndicatorsSwitch",
                                 )
                                 SettingsToggleRow(
+                                    title = "Allow others to delete their messages",
+                                    checked = preferences.allowMessageDeletionByOthers,
+                                    onCheckedChange = { appManager.dispatch(AppAction.SetAllowMessageDeletionByOthers(it)) },
+                                    tag = "myProfileAllowMessageDeletionSwitch",
+                                )
+                                SettingsToggleRow(
                                     title = "Received / seen",
                                     checked = sendReadReceipts,
                                     onCheckedChange = { enabled ->

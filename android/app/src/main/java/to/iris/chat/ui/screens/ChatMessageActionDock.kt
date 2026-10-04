@@ -46,6 +46,9 @@ internal fun MessageActionDock(
     onCopy: () -> Unit,
     onInfo: () -> Unit,
     onDelete: () -> Unit,
+    canCopyAndForward: Boolean = true,
+    onEdit: (() -> Unit)? = null,
+    onDeleteForEveryone: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var reactionPickerOpen by remember { mutableStateOf(false) }
@@ -76,14 +79,17 @@ internal fun MessageActionDock(
                 )
             }
             if (canReplyAndReact) ActionDockIconButton(Icons.AutoMirrored.Rounded.Reply, "Reply", onClick = onReply)
-            ActionDockIconButton(IrisIcons.Share, "Forward", onClick = onForward)
+            if (canCopyAndForward) ActionDockIconButton(IrisIcons.Share, "Forward", onClick = onForward)
             Box {
                 ActionDockIconButton(Icons.Rounded.MoreHoriz, "More", { menuOpen = true })
                 DropdownMenu(
                     expanded = menuOpen,
                     onDismissRequest = { menuOpen = false },
                 ) {
-                    DropdownMenuItem(
+                    onEdit?.let { action ->
+                        DropdownMenuItem(text = { Text("Edit") }, onClick = { menuOpen = false; action() })
+                    }
+                    if (canCopyAndForward) DropdownMenuItem(
                         text = { Text("Copy text") },
                         onClick = {
                             menuOpen = false
@@ -98,12 +104,15 @@ internal fun MessageActionDock(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("Delete message") },
+                        text = { Text("Delete for me") },
                         onClick = {
                             menuOpen = false
                             onDelete()
                         },
                     )
+                    onDeleteForEveryone?.let { action ->
+                        DropdownMenuItem(text = { Text("Delete for everyone") }, onClick = { menuOpen = false; action() })
+                    }
                 }
             }
         }

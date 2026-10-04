@@ -9,10 +9,22 @@ import AppKit
 
 struct MessageInfoSheet: View {
     @Environment(\.irisPalette) private var palette
-    let message: ChatMessageSnapshot
+    private let initialMessage: ChatMessageSnapshot
     let chat: CurrentChatSnapshot?
     @ObservedObject var manager: AppManager
     let onClose: () -> Void
+
+    init(message: ChatMessageSnapshot, chat: CurrentChatSnapshot?, manager: AppManager, onClose: @escaping () -> Void) {
+        self.initialMessage = message
+        self.chat = chat
+        self.manager = manager
+        self.onClose = onClose
+    }
+
+    private var message: ChatMessageSnapshot {
+        guard let current = manager.state.currentChat, current.chatId == initialMessage.chatId else { return initialMessage }
+        return current.messages.first { $0.id == initialMessage.id } ?? initialMessage
+    }
 
     private func messageAuthorInfo() -> ParticipantInfo {
         let owner = message.authorOwnerPubkeyHex?.isEmpty == false
@@ -680,6 +692,9 @@ struct ChatMessageActionDock: View {
     @Environment(\.irisPalette) private var palette
     @Binding var isOverflowPresented: Bool
     var canReplyAndReact = true
+    var canCopyAndForward = true
+    var onEdit: (() -> Void)? = nil
+    var onDeleteForEveryone: (() -> Void)? = nil
     let onShowReactionPicker: () -> Void
     let onReply: () -> Void
     let onForward: () -> Void
@@ -689,22 +704,22 @@ struct ChatMessageActionDock: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            Button {
-                // The picker is owned by the parent row so it survives the
-                // hover-state collapse that tears this dock down when the
-                // cursor leaves the message row.
-                onShowReactionPicker()
-            } label: {
-                Image(systemName: "face.smiling")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: ChatMessageActionDock.buttonWidth, height: ChatMessageActionDock.buttonHeight)
-                    .contentShape(Rectangle())
+            if canReplyAndReact {
+                Button {
+                    // The picker is owned by the parent row so it survives the
+                    // hover-state collapse that tears this dock down when the
+                    // cursor leaves the message row.
+                    onShowReactionPicker()
+                } label: {
+                    Image(systemName: "face.smiling")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: ChatMessageActionDock.buttonWidth, height: ChatMessageActionDock.buttonHeight)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.irisPlain)
+                .accessibilityIdentifier("messageReactButton")
+                dockButton("arrowshape.turn.up.left", identifier: "messageReplyButton", action: onReply)
             }
-            .buttonStyle(.irisPlain)
-            .accessibilityIdentifier("messageReactButton")
-            .disabled(!canReplyAndReact)
-            dockButton("arrowshape.turn.up.left", identifier: "messageReplyButton", action: onReply)
-                .disabled(!canReplyAndReact)
             dockButton("info.circle", identifier: "messageInfoButton", action: onInfo)
             Button {
                 isOverflowPresented.toggle()
@@ -719,6 +734,9 @@ struct ChatMessageActionDock: View {
             .buttonStyle(.irisPlain)
             .popover(isPresented: $isOverflowPresented, arrowEdge: .bottom) {
                 ChatMessageOverflowActionsPopover(
+                    canCopyAndForward: canCopyAndForward,
+                    onEdit: onEdit,
+                    onDeleteForEveryone: onDeleteForEveryone,
                     onForward: onForward,
                     onCopy: onCopy,
                     onDelete: onDelete,
@@ -753,6 +771,9 @@ struct ChatMessageActionDock: View {
 
 private struct ChatMessageOverflowActionsPopover: View {
     @Environment(\.irisPalette) private var palette
+    let canCopyAndForward: Bool
+    let onEdit: (() -> Void)?
+    let onDeleteForEveryone: (() -> Void)?
     let onForward: () -> Void
     let onCopy: () -> Void
     let onDelete: () -> Void
@@ -760,28 +781,36 @@ private struct ChatMessageOverflowActionsPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let onEdit {
+                actionButton("Edit", systemName: "pencil", identifier: "messageEditMenuItem", action: onEdit)
+            }
+            if canCopyAndForward {
+                actionButton(
+                    "Forward",
+                    systemName: "arrowshape.turn.up.right",
+                    identifier: "messageForwardMenuItem",
+                    action: onForward
+                )
+                actionButton(
+                    "Copy text",
+                    systemName: "doc.on.doc",
+                    identifier: "messageCopyMenuItem",
+                    action: onCopy
+                )
+            }
             actionButton(
-                "Forward",
-                systemName: "arrowshape.turn.up.right",
-                identifier: "messageForwardMenuItem",
-                action: onForward
-            )
-            actionButton(
-                "Copy text",
-                systemName: "doc.on.doc",
-                identifier: "messageCopyMenuItem",
-                action: onCopy
-            )
-            actionButton(
-                "Delete message",
+                "Delete for me",
                 systemName: "trash",
                 identifier: "messageDeleteMenuItem",
                 destructive: true,
                 action: onDelete
             )
+            if let onDeleteForEveryone {
+                actionButton("Delete for everyone", systemName: "trash", identifier: "messageDeleteForEveryoneMenuItem", destructive: true, action: onDeleteForEveryone)
+            }
         }
         .padding(.vertical, 6)
-        .frame(width: 178)
+        .frame(width: 220)
         .background(palette.panel)
     }
 
@@ -818,3 +847,63 @@ private struct ChatMessageOverflowActionsPopover: View {
 }
 
 let quickReactionEmojis: [String] = ["❤️", "👍", "😂", "😮", "😢", "🙏", "🔥"]
+
+struct MessageEditHistorySheet: View {
+    @Environment(\.irisPalette) private var palette
+    let initialMessage: ChatMessageSnapshot
+    @ObservedObject var manager: AppManager
+    let onClose: () -> Void
+
+    private var message: ChatMessageSnapshot {
+        guard let current = manager.state.currentChat, current.chatId == initialMessage.chatId else { return initialMessage }
+        return current.messages.first { $0.id == initialMessage.id } ?? initialMessage
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                MessageEditHistoryVersions(message: message)
+            }
+            .background(palette.background)
+            .navigationTitle("Edit history")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { IrisModalCloseButton(action: onClose) }
+            }
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+        }
+        .accessibilityIdentifier("messageEditHistory")
+    }
+}
+
+struct MessageEditHistoryVersions: View {
+    @Environment(\.irisPalette) private var palette
+    let message: ChatMessageSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            if message.deletedForEveryone {
+                Text("Message deleted").italic()
+            } else {
+                ForEach(Array(message.editHistory.enumerated()), id: \.element.id) { index, version in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(index == 0 ? "Original" : (index == message.editHistory.count - 1 ? "Current" : "Edit"))
+                                .font(.headline)
+                            Spacer()
+                            Text(Date(timeIntervalSince1970: TimeInterval(version.createdAtSecs)), style: .date)
+                            Text(Date(timeIntervalSince1970: TimeInterval(version.createdAtSecs)), style: .time)
+                        }
+                        .foregroundStyle(palette.muted)
+                        .font(.caption)
+                        Text(parseReplyEncodedMessage(version.body).body)
+                            .textSelection(.enabled)
+                            .foregroundStyle(palette.textPrimary)
+                    }
+                }
+            }
+        }
+        .padding(20)
+    }
+}

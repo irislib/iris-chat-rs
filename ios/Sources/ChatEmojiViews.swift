@@ -87,6 +87,8 @@ struct ChatMessageActionsSheet: View {
     let bodyText: String
     var explicitAuthorName: String? = nil
     var canReplyAndReact = true
+    var onEdit: (() -> Void)? = nil
+    var onDeleteForEveryone: (() -> Void)? = nil
     let onReact: (String) -> Void
     let onShowFullReactionPicker: () -> Void
     let onReply: () -> Void
@@ -96,27 +98,35 @@ struct ChatMessageActionsSheet: View {
     let onDelete: () -> Void
 
     var body: some View {
-        VStack(spacing: 12) {
-            if canReplyAndReact { quickReactionRow }
-            previewCard
-            VStack(spacing: 0) {
-                if canReplyAndReact {
-                    actionRow(icon: "arrowshape.turn.up.left", label: "Reply", action: onReply)
+        ScrollView {
+            VStack(spacing: 12) {
+                if canReplyAndReact { quickReactionRow }
+                previewCard
+                VStack(spacing: 0) {
+                    if canReplyAndReact {
+                        actionRow(icon: "arrowshape.turn.up.left", label: "Reply", action: onReply)
+                    }
+                    if let onEdit { actionRow(icon: "pencil", label: "Edit", action: onEdit) }
+                    if !message.deletedForEveryone {
+                        actionRow(icon: "arrowshape.turn.up.right", label: "Forward", action: onForward)
+                        actionRow(icon: "doc.on.doc", label: "Copy", action: onCopy)
+                    }
+                    actionRow(icon: "info.circle", label: "Info", action: onInfo)
+                    actionRow(icon: "trash", label: "Delete for me", destructive: true, action: onDelete)
+                    if let onDeleteForEveryone {
+                        actionRow(icon: "trash", label: "Delete for everyone", destructive: true, action: onDeleteForEveryone)
+                    }
                 }
-                actionRow(icon: "arrowshape.turn.up.right", label: "Forward", action: onForward)
-                actionRow(icon: "doc.on.doc", label: "Copy", action: onCopy)
-                actionRow(icon: "info.circle", label: "Info", action: onInfo)
-                actionRow(icon: "trash", label: "Delete locally", destructive: true, action: onDelete)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(palette.panel)
+                )
+                Spacer(minLength: 0)
             }
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(palette.panel)
-            )
-            Spacer(minLength: 0)
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 14)
-        .padding(.bottom, 6)
         .background(palette.background)
         .accessibilityIdentifier("messageActionsSheet")
     }

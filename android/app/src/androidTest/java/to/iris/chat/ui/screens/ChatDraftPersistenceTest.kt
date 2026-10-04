@@ -76,6 +76,61 @@ class ChatDraftPersistenceTest {
         assertEquals("Disposed debounce must not repeat its flush", listOf("", "Keep this on leaving"), fixture.saves())
     }
 
+    @Test fun editSaveAndCancelPreserveTheUnsentDraft() = withChat { fixture ->
+        val input = compose.onNodeWithTag("chatMessageInput")
+        compose.onNodeWithTag("chatMessage-edit-target").performTouchInput { longClick() }
+        compose.onNodeWithText("Edit", useUnmergedTree = true).performClick()
+        input.assertTextEquals("Original message")
+        input.performTextReplacement("Corrected message")
+        compose.mainClock.advanceTimeBy(600)
+        compose.onNodeWithTag("chatSendButton").performClick()
+        input.assertTextEquals("Saved caption")
+        assertEquals(listOf("Corrected message"), fixture.rust.dispatchedActions
+            .filterIsInstance<AppAction.EditMessage>().map { it.text })
+        assertTrue("Editing must not replace the saved draft", fixture.saves().isEmpty())
+        assertTrue(fixture.rust.dispatchedActions.none { it is AppAction.SendMessage })
+
+        compose.onNodeWithTag("chatMessage-edit-target").performTouchInput { longClick() }
+        compose.onNodeWithText("Edit", useUnmergedTree = true).performClick()
+        input.performTextReplacement("Discard this edit")
+        compose.onNodeWithText("Cancel").performClick()
+        input.assertTextEquals("Saved caption")
+        assertEquals(1, fixture.rust.dispatchedActions.filterIsInstance<AppAction.EditMessage>().size)
+    }
+
+    @Test fun deleteForEveryoneRequiresConfirmationAndKeepsLocalDeleteSeparate() = withChat { fixture ->
+        compose.onNodeWithTag("chatMessage-edit-target").performTouchInput { longClick() }
+        compose.onNodeWithText("Delete for everyone", useUnmergedTree = true).performClick()
+        assertTrue(fixture.rust.dispatchedActions.none { it is AppAction.DeleteMessageForEveryone })
+        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithTag("chatMessage-edit-target").performTouchInput { longClick() }
+        compose.onNodeWithText("Delete for everyone", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Delete for everyone", useUnmergedTree = true).performClick()
+        assertEquals(listOf("edit-target"), fixture.rust.dispatchedActions
+            .filterIsInstance<AppAction.DeleteMessageForEveryone>().map { it.messageId })
+        assertTrue(fixture.rust.dispatchedActions.none { it is AppAction.DeleteLocalMessage })
+    }
+
+    @Test fun editedLabelShowsVersionsAndDeletedMessageHidesActions() = withChat { fixture ->
+        fixture.updateMessage { message -> message.copy(body = "Corrected message", editHistory = listOf(
+            MessageEditSnapshot("original", "Original message", 1uL),
+            MessageEditSnapshot("edited", "Corrected message", 2uL),
+        )) }
+        compose.onNodeWithTag("chatMessageEdited-edit-target").performClick()
+        compose.onNodeWithTag("messageEditHistory").assertExists()
+        compose.onNodeWithText("Original").assertExists()
+        compose.onNodeWithText("Current").assertExists()
+        compose.onNodeWithText("Close").performClick()
+        fixture.updateMessage { it.copy(body = "", editHistory = emptyList(), deletedForEveryone = true) }
+        compose.onNodeWithText("Message deleted").assertExists()
+        compose.onNodeWithTag("chatMessageEdited-edit-target").assertDoesNotExist()
+        compose.onNodeWithTag("chatMessage-edit-target").performTouchInput { longClick() }
+        compose.onNodeWithText("Edit", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithText("Forward", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithText("Delete for everyone", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithText("Delete for me", useUnmergedTree = true).assertExists()
+    }
+
     private fun withChat(block: (Fixture) -> Unit) {
         val base = InstrumentationRegistry.getInstrumentation().targetContext
         val root = File(base.cacheDir, "draft-${UUID.randomUUID()}").apply { mkdirs() }
@@ -87,7 +142,9 @@ class ChatDraftPersistenceTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val state = buildLargeTestAppState(1u, 0u, 1u)
         val chat = state.currentChat!!.copy(directChatCapability = DirectChatCapabilityState.AVAILABLE,
-            isRequest = false, messageTtlSeconds = null, draft = "Saved caption")
+            isRequest = false, messageTtlSeconds = null, draft = "Saved caption",
+            messages = state.currentChat!!.messages.map { it.copy(id = "edit-target", kind = ChatMessageKind.USER, body = "Original message",
+                isOutgoing = true, delivery = DeliveryState.SENT, attachments = emptyList(), call = null) })
         val rust = MockRustAppClient(state.copy(currentChat = chat,
             router = Router(Screen.ChatList, listOf(Screen.Chat(chat.chatId)))))
         val store = PreferenceDataStoreFactory.create(scope = scope) { File(root, "test.preferences_pb") }
@@ -117,6 +174,18 @@ class ChatDraftPersistenceTest {
     private inner class Fixture(val rust: MockRustAppClient, val chatId: String, val leave: () -> Unit) {
         fun saves() = rust.dispatchedActions.filterIsInstance<AppAction.SetChatDraft>()
             .filter { it.chatId == chatId }.map { it.text }
+
+        fun updateMessage(transform: (ChatMessageSnapshot) -> ChatMessageSnapshot) {
+            compose.runOnIdle {
+                val state = rust.currentState
+                val updated = state.copy(rev = state.rev + 1uL,
+                    currentChat = state.currentChat!!.copy(messages = state.currentChat!!.messages.map(transform)))
+                rust.currentState = updated
+                rust.emit(AppUpdate.FullState(updated))
+            }
+            compose.mainClock.advanceTimeBy(64)
+            compose.waitForIdle()
+        }
 
         fun restore(text: String) {
             compose.runOnIdle {

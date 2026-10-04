@@ -56,7 +56,20 @@ func parseReplyEncodedMessage(_ text: String) -> ReplyParsedMessage {
     )
 }
 
+func editedMessageText(original: String, text: String) -> String {
+    guard parseReplyEncodedMessage(original).reply != nil,
+          let separator = original.range(of: "\n\n") else { return text }
+    return String(original[..<separator.upperBound]) + text
+}
+
+func irisCanEditMessage(_ message: ChatMessageSnapshot) -> Bool {
+    message.isOutgoing && !message.deletedForEveryone && message.kind != .system &&
+        message.call == nil && message.attachments.isEmpty && message.directTransfer == nil &&
+        message.delivery != .queued && message.delivery != .pending && message.delivery != .failed
+}
+
 func replySnippet(for message: ChatMessageSnapshot) -> String {
+    if message.deletedForEveryone { return "Message deleted" }
     let parsed = parseReplyEncodedMessage(message.body)
     let source = parsed.body.isEmpty ? copyableMessageText(message) : parsed.body
     let normalized = source

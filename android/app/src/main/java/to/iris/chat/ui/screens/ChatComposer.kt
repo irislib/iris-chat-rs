@@ -207,6 +207,7 @@ internal fun ComposerBar(
     onRemoveAttachment: (PickedAttachment) -> Unit,
     onSend: () -> Unit,
     sendAllowed: Boolean = true,
+    isEditing: Boolean = false,
     sendFilesDirectly: Boolean = false,
     inputContentModifier: Modifier = Modifier,
 ) {
@@ -220,9 +221,9 @@ internal fun ComposerBar(
     val hasAttachment = selectedAttachments.isNotEmpty()
     val hasSendContent = hasText || hasAttachment
     val canSend = hasSendContent && !isBusy && sendAllowed
-    val trailingIsSend = hasSendContent || isSending
+    val trailingIsSend = isEditing || hasSendContent || isSending
     val showTrailingProgress = isSending || (isUploading && hasSendContent)
-    val showInlineAttach = hasText && !hasAttachment && !isUploading
+    val showInlineAttach = !isEditing && hasText && !hasAttachment && !isUploading
     val density = LocalDensity.current
     val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
     val showDesktopComposerTools = windowWidth >= 600.dp
@@ -448,6 +449,8 @@ internal fun ComposerBar(
                             strokeWidth = 2.dp,
                             color = MaterialTheme.colorScheme.onPrimary,
                         )
+                    } else if (isEditing) {
+                        Text("Save", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimary)
                     } else {
                         Icon(
                             imageVector = if (trailingIsSend) IrisIcons.Send else Icons.Rounded.Add,

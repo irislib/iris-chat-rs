@@ -376,6 +376,16 @@ struct SettingsScreen: View {
                 .accessibilityIdentifier("myProfileTypingIndicatorsToggle")
 
                 Toggle(
+                    "Allow others to delete their messages",
+                    isOn: Binding(
+                        get: { manager.state.preferences.allowMessageDeletionByOthers },
+                        set: { manager.dispatch(.setAllowMessageDeletionByOthers(enabled: $0)) }
+                    )
+                )
+                .irisControlTint()
+                .accessibilityIdentifier("myProfileAllowMessageDeletionToggle")
+
+                Toggle(
                     "Received / seen",
                     isOn: Binding(
                         get: { manager.state.preferences.sendReadReceipts },

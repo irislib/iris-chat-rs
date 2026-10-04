@@ -46,6 +46,10 @@ struct ChatScreen: View {
     @State private var activeBubbleSwipe: ActiveMessageBubbleSwipe?
     @State private var activeMessageActionDockId: String?
     @State private var replyTarget: ChatMessageSnapshot?
+    @State private var editTarget: ChatMessageSnapshot?
+    @State private var editComposerState = IrisComposerState()
+    @State private var deleteForEveryoneTarget: MessageInfoSelection?
+    @State private var editHistorySelection: MessageInfoSelection?
     @State private var imageViewerItem: ImageViewerItem?
     @State private var messageInfoSelection: MessageInfoSelection?
     @State private var reactorsSelection: MessageReactorsSelection?
@@ -248,6 +252,9 @@ struct ChatScreen: View {
                                     timelineDaySeparatorFrames = [:]
                                     composerState.lastTypingSentAt = nil
                                     composerState.sentTypingIndicator = false
+                                    editTarget = nil
+                                    editHistorySelection = nil
+                                    deleteForEveryoneTarget = nil
                                 }
                                 .onPreferenceChange(ChatTimelineViewportMinYPreferenceKey.self) { value in
                                     if !chatTimelineGeometryMatches(timelineViewportMinY, value) {
@@ -475,7 +482,18 @@ struct ChatScreen: View {
                                 let capabilityBlocked = capability != nil && capability != .available
                                 VStack(spacing: 0) {
                                     IrisNameChangeNotice(manager: manager, chat: chat)
-                                    if let replyTarget, !composerBlocked, !isRequest, !chat.isRemovedFromGroup {
+                                    if editTarget != nil, !composerBlocked, !isRequest, !chat.isRemovedFromGroup {
+                                        HStack {
+                                            Label("Editing message", systemImage: "pencil")
+                                            Spacer()
+                                            Button("Cancel") { editTarget = nil }
+                                        }
+                                        .font(.callout)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 8)
+                                        .accessibilityIdentifier("chatEditingBanner")
+                                    }
+                                    if editTarget == nil, let replyTarget, !composerBlocked, !isRequest, !chat.isRemovedFromGroup {
                                         IrisReplyComposerStrip(message: replyTarget, explicitAuthorName: explicitPersonName(for: replyTarget.authorOwnerPubkeyHex, state: manager.state)) {
                                             self.replyTarget = nil
                                         }
@@ -518,8 +536,8 @@ struct ChatScreen: View {
                                         }
                                         .id(chat.chatId)
                                         IrisComposerBar(
-                                            composerState: composerState,
-                                            attachments: $selectedAttachments,
+                                            composerState: editTarget == nil ? composerState : editComposerState,
+                                            attachments: editTarget == nil ? $selectedAttachments : .constant([]),
                                             sendFilesDirectly: $sendFilesDirectly,
                                             directFilesAllowed: chat.kind == .direct,
                                             placeholder: "Message",
@@ -528,15 +546,16 @@ struct ChatScreen: View {
                                             uploadFraction: uploadFraction(manager.state.busy.uploadProgress),
                                             isFocused: $isComposerFocused,
                                             onUserEdit: { text in
-                                                if !capabilityBlocked { sendTypingIfNeeded(text: text) }
+                                                if editTarget == nil && !capabilityBlocked { sendTypingIfNeeded(text: text) }
                                             },
                                             onDraftChange: {
+                                                guard editTarget == nil else { return }
                                                 composerState.scheduleSave { text in
                                                     manager.dispatch(.setChatDraft(chatId: chatId, text: text))
                                                 }
                                             },
                                             onAttach: stageAttachments,
-                                            voiceRecordingAllowed: !capabilityBlocked && (manager.state.call == nil || manager.state.call?.phase == "ended"),
+                                            voiceRecordingAllowed: editTarget == nil && !capabilityBlocked && (manager.state.call == nil || manager.state.call?.phase == "ended"),
                                             onStageVoice: { try await manager.stageOutgoingAttachmentsAsync([$0]) },
                                             onSendVoice: { voice in
                                                 guard canAttachToCurrentChat,
@@ -553,11 +572,18 @@ struct ChatScreen: View {
                                                 return true
                                             },
                                             sendAllowed: !capabilityBlocked,
+                                            isEditing: editTarget != nil,
                                             isPreparingDroppedAttachments: isPreparingDroppedAttachments,
                                             onFileDropAvailabilityChange: { fileDropAvailable = $0 }
                                         ) { composerText in
                                             guard canAttachToCurrentChat else { return }
                                             let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+                                            if let editTarget {
+                                                guard !text.isEmpty else { return }
+                                                manager.dispatch(.editMessage(chatId: chatId, messageId: editTarget.id, text: editedMessageText(original: editTarget.body, text: text)))
+                                                self.editTarget = nil
+                                                return
+                                            }
                                             guard !text.isEmpty || !selectedAttachments.isEmpty else { return }
                                             resumeTimelineAutoFollow()
                                             shouldFollowLatest = true
@@ -579,6 +605,7 @@ struct ChatScreen: View {
                                             }
                                             stopTypingIfNeeded()
                                         }
+                                        .id(editTarget?.id ?? "newMessage")
                                         .task(id: chatId) {
                                             if IrisLayout.usesDesktopChrome {
                                                 isComposerFocused = true
@@ -620,6 +647,28 @@ struct ChatScreen: View {
                 messageInfoSelection = nil
             }
         }
+        .sheet(item: $editHistorySelection) { selection in
+            let context = messageInfoContext(for: selection)
+            MessageEditHistorySheet(initialMessage: context.message, manager: manager) { editHistorySelection = nil }
+                .irisModalSurface()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .confirmationDialog("Delete for everyone?", isPresented: Binding(
+            get: { deleteForEveryoneTarget != nil },
+            set: { if !$0 { deleteForEveryoneTarget = nil } }
+        ), titleVisibility: .visible) {
+            Button("Delete for everyone", role: .destructive) {
+                guard let target = deleteForEveryoneTarget else { return }
+                manager.dispatch(.deleteMessageForEveryone(chatId: target.chatId, messageId: target.messageId))
+                if editTarget?.id == target.messageId { editTarget = nil }
+                if replyTarget?.id == target.messageId { replyTarget = nil }
+                deleteForEveryoneTarget = nil
+            }
+            Button("Cancel", role: .cancel) { deleteForEveryoneTarget = nil }
+        } message: {
+            Text("People who allow message deletion will see “Message deleted”.")
+        }
         .sheet(item: $reactorsSelection) { selection in
             let context = reactorsContext(for: selection)
             MessageReactorsSheet(reactors: context.reactors, chat: context.chat, manager: manager) {
@@ -633,7 +682,7 @@ struct ChatScreen: View {
             }
         }
         .modifier(IrisAttachmentDropModifier(
-            enabled: fileDropAvailable && canAttachToCurrentChat,
+            enabled: editTarget == nil && fileDropAvailable && canAttachToCurrentChat,
             isPreparing: $isPreparingDroppedAttachments,
             onAttach: stageAttachments
         ))
@@ -644,6 +693,11 @@ struct ChatScreen: View {
             manager: manager
         ))
         .onReceive(manager.$state) { incoming in
+            if let current = incoming.currentChat, current.chatId == chatId {
+                let deletedIds = Set(current.messages.filter(\.deletedForEveryone).map(\.id))
+                if let editTarget, deletedIds.contains(editTarget.id) { self.editTarget = nil }
+                if let replyTarget, deletedIds.contains(replyTarget.id) { self.replyTarget = nil }
+            }
 #if os(iOS)
             guard case .chat(let activeID) = incoming.router.screenStack.last,
                   activeID == chatId, let current = chat, let next = incoming.currentChat,
@@ -692,7 +746,7 @@ struct ChatScreen: View {
     }
 
     private func stageAttachments(_ loadURLs: () async -> [URL]) async {
-        guard canAttachToCurrentChat else { return }
+        guard editTarget == nil, canAttachToCurrentChat else { return }
         let generation = composerState.attachmentGeneration
         do {
             let staged = try await manager.stageOutgoingAttachmentsAsync(loadURLs)
@@ -768,7 +822,7 @@ struct ChatScreen: View {
             showsGroupSenderName: showsGroupSenderName,
             showsGroupSenderAvatar: showsGroupSenderAvatar,
             reactions: message.reactions,
-            canReplyAndReact: !chat.isRemovedFromGroup,
+            canReplyAndReact: !chat.isRemovedFromGroup && !message.deletedForEveryone,
             swipeOffset: activeBubbleSwipe?.messageId == message.id ? activeBubbleSwipe?.offset ?? 0 : 0,
             isActionDockActive: activeMessageActionDockId == message.id,
             onActionDockActiveChange: { isActive in
@@ -779,6 +833,7 @@ struct ChatScreen: View {
                 )
             },
             onReply: {
+                editTarget = nil
                 guard self.chat?.isRemovedFromGroup != true else { return }
                 replyTarget = message
                 isComposerFocused = true
@@ -805,7 +860,21 @@ struct ChatScreen: View {
                     snapshot: message
                 )
             },
+            onEdit: {
+                flushDraftImmediately()
+                stopTypingIfNeeded()
+                editComposerState.restore(parseReplyEncodedMessage(message.body).body, replaceExisting: true)
+                editTarget = message
+                isComposerFocused = true
+            },
+            onEditHistory: {
+                editHistorySelection = MessageInfoSelection(chatId: chatId, messageId: message.id, snapshot: message)
+            },
+            onDeleteForEveryone: {
+                deleteForEveryoneTarget = MessageInfoSelection(chatId: chatId, messageId: message.id, snapshot: message)
+            },
             onDelete: {
+                if editTarget?.id == message.id { editTarget = nil }
                 manager.dispatch(.deleteLocalMessage(chatId: chatId, messageId: message.id))
                 if replyTarget?.id == message.id {
                     replyTarget = nil
@@ -921,7 +990,7 @@ struct ChatScreen: View {
             guard let messageId = timelineCoordinator.messageContentId(at: value.startLocation)
                     ?? timelineCoordinator.messageContentId(at: value.location),
                   let message = chat?.messages.first(where: { $0.id == messageId }),
-                  message.kind != .system, message.call == nil else {
+                  message.kind != .system, message.call == nil, !message.deletedForEveryone else {
                 timelineCoordinator.bubblePanRejected = true
                 return
             }

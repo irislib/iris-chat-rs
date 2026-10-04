@@ -2276,3 +2276,27 @@ final class IrisChatTests: XCTestCase {
     }
 
 }
+
+
+final class MessageEditingTests: XCTestCase {
+    func testEditingPreservesQuoteButReplacesOnlyMessageBody() {
+        XCTAssertEqual(editedMessageText(original: "↩ Alice: See you soon\n\nBefore", text: "After"),
+                       "↩ Alice: See you soon\n\nAfter")
+        XCTAssertEqual(editedMessageText(original: "Before\n\nsecond paragraph", text: "After"), "After")
+        XCTAssertEqual(editedMessageText(original: "↩ malformed", text: "After"), "After")
+    }
+
+    func testOnlySentOwnTextMessagesCanBeEdited() {
+        var message = makeMessage(chatId: "chat", id: "edit-message")
+        XCTAssertTrue(irisCanEditMessage(message))
+        message.isOutgoing = false
+        XCTAssertFalse(irisCanEditMessage(message))
+        message.isOutgoing = true
+        message.delivery = .queued
+        XCTAssertFalse(irisCanEditMessage(message))
+        message.delivery = .sent
+        message.deletedForEveryone = true
+        XCTAssertFalse(irisCanEditMessage(message))
+        XCTAssertEqual(replySnippet(for: message), "Message deleted")
+    }
+}

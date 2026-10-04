@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.automirrored.rounded.Reply
 import androidx.compose.material.icons.rounded.AddReaction
 import androidx.compose.material.icons.rounded.ContentCopy
@@ -134,6 +135,8 @@ internal fun MessageBubble(
     chat: CurrentChatSnapshot? = null,
     appManager: AppManager? = null,
     showFooter: Boolean = isLastInCluster,
+    onEdit: (() -> Unit)? = null,
+    onDeleteForEveryone: (() -> Unit)? = null,
 ) {
     message.call?.let { call ->
         CallHistoryRow(call)
@@ -144,7 +147,13 @@ internal fun MessageBubble(
         return
     }
 
-    val canReplyAndReact = chat?.isRemovedFromGroup != true
+    val canReplyAndReact = chat?.isRemovedFromGroup != true && !message.deletedForEveryone
+    val editAction = onEdit?.takeIf { canReplyAndReact && canEditMessage(message) }
+    val deleteForEveryoneAction = onDeleteForEveryone?.takeIf { canReplyAndReact && message.isOutgoing }
+    var isEditHistoryOpen by remember(message.id) { mutableStateOf(false) }
+    if (isEditHistoryOpen && !message.deletedForEveryone) {
+        MessageEditHistoryDialog(message) { isEditHistoryOpen = false }
+    }
     val clipboard = rememberIrisClipboard()
     val context = LocalContext.current.applicationContext
     val hapticFeedback = LocalHapticFeedback.current
@@ -186,8 +195,10 @@ internal fun MessageBubble(
         MessageActionsSheet(
             message = message,
             canReplyAndReact = canReplyAndReact,
-            parsedBody = parsed.body,
+            parsedBody = if (message.deletedForEveryone) "Message deleted" else parsed.body,
             reactions = reactions,
+            onEdit = editAction?.let { action -> { isActionsSheetOpen = false; action() } },
+            onDeleteForEveryone = deleteForEveryoneAction?.let { action -> { isActionsSheetOpen = false; action() } },
             onDismiss = { isActionsSheetOpen = false },
             onReact = { emoji ->
                 isActionsSheetOpen = false
@@ -301,7 +312,7 @@ internal fun MessageBubble(
                     .align(if (message.isOutgoing) Alignment.CenterEnd else Alignment.CenterStart)
                     .padding(horizontal = 16.dp)
                     .offset { IntOffset(swipeOffsetX.value.toInt(), 0) }
-                    .pointerInput(message.id) {
+                    .pointerInput(message.id, canReplyAndReact) {
                         detectHorizontalDragGestures(
                             onDragStart = { swipeFedHaptic = false },
                             onDragEnd = {
@@ -354,6 +365,9 @@ internal fun MessageBubble(
                 if (showActionDock && message.isOutgoing) {
                     MessageActionDock(
                         canReplyAndReact = canReplyAndReact,
+                        canCopyAndForward = !message.deletedForEveryone,
+                        onEdit = editAction,
+                        onDeleteForEveryone = deleteForEveryoneAction,
                         postReactionSuggestions = postReactionSuggestions,
                         onReact = { emoji -> pickReaction(emoji) },
                         onReply = onReply,
@@ -408,7 +422,9 @@ internal fun MessageBubble(
                         parsed.reply?.let { reply ->
                             ReplyPreview(reply = reply, isOutgoing = message.isOutgoing, onTap = onScrollToQuote)
                         }
-                        if (parsed.body.isNotBlank()) {
+                        if (message.deletedForEveryone) {
+                            Text("Message deleted", fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
+                        } else if (parsed.body.isNotBlank()) {
                             val messageSize = to.iris.chat.ui.theme.LocalMessageFontSize.current.body.sp
                             val bodyStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = messageSize, lineHeight = messageSize * 1.4f)
                             TruncatableMessageBody(
@@ -458,12 +474,20 @@ internal fun MessageBubble(
                                 onForward = { onForwardAttachment(attachment, appManager) },
                             )
                         }
-                        if (showFooter) {
+                        if (showFooter || message.editHistory.isNotEmpty()) {
                             Row(
                                 modifier = Modifier.align(Alignment.End),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                if (message.editHistory.isNotEmpty() && !message.deletedForEveryone) {
+                                    Text(
+                                        "Edited",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.clickable { isEditHistoryOpen = true }.testTag("chatMessageEdited-${message.id}"),
+                                        color = if (message.isOutgoing) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f) else IrisTheme.palette.muted,
+                                    )
+                                }
                                 if (message.expiresAtSecs != null) {
                                     Icon(
                                         imageVector = Icons.Rounded.Schedule,
@@ -503,6 +527,9 @@ internal fun MessageBubble(
                 if (showActionDock && !message.isOutgoing) {
                     MessageActionDock(
                         canReplyAndReact = canReplyAndReact,
+                        canCopyAndForward = !message.deletedForEveryone,
+                        onEdit = editAction,
+                        onDeleteForEveryone = deleteForEveryoneAction,
                         postReactionSuggestions = postReactionSuggestions,
                         onReact = { emoji -> pickReaction(emoji) },
                         onReply = onReply,
@@ -513,7 +540,7 @@ internal fun MessageBubble(
                     )
                 }
             }
-            if (reactions.isNotEmpty()) {
+            if (reactions.isNotEmpty() && !message.deletedForEveryone) {
                 ReactionRow(
                     reactions = reactions,
                     onTap = { isReactorsSheetOpen = true },
@@ -648,6 +675,8 @@ private fun MessageActionsSheet(
     onCopy: () -> Unit,
     onInfo: () -> Unit,
     onDelete: () -> Unit,
+    onEdit: (() -> Unit)?,
+    onDeleteForEveryone: (() -> Unit)?,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -674,16 +703,21 @@ private fun MessageActionsSheet(
                     label = "Reply",
                     onClick = onReply,
                 )
-                MessageActionRow(
-                    icon = IrisIcons.Share,
-                    label = "Forward",
-                    onClick = onForward,
-                )
-                MessageActionRow(
-                    icon = Icons.Rounded.ContentCopy,
-                    label = "Copy",
-                    onClick = onCopy,
-                )
+                onEdit?.let { action ->
+                    MessageActionRow(icon = Icons.Rounded.Edit, label = "Edit", onClick = action)
+                }
+                if (!message.deletedForEveryone) {
+                    MessageActionRow(
+                        icon = IrisIcons.Share,
+                        label = "Forward",
+                        onClick = onForward,
+                    )
+                    MessageActionRow(
+                        icon = Icons.Rounded.ContentCopy,
+                        label = "Copy",
+                        onClick = onCopy,
+                    )
+                }
                 MessageActionRow(
                     icon = Icons.Rounded.Info,
                     label = "Info",
@@ -691,10 +725,13 @@ private fun MessageActionsSheet(
                 )
                 MessageActionRow(
                     icon = Icons.Rounded.Delete,
-                    label = "Delete message",
+                    label = "Delete for me",
                     destructive = true,
                     onClick = onDelete,
                 )
+                onDeleteForEveryone?.let { action ->
+                    MessageActionRow(icon = Icons.Rounded.Delete, label = "Delete for everyone", destructive = true, onClick = action)
+                }
             }
         }
     }
@@ -1121,7 +1158,16 @@ internal fun parseReplyEncodedMessage(text: String): ParsedReplyMessage {
     )
 }
 
+internal fun editedMessageText(original: String, text: String): String =
+    if (parseReplyEncodedMessage(original).reply != null) original.substringBefore("\n\n") + "\n\n" + text else text
+
+internal fun canEditMessage(message: ChatMessageSnapshot): Boolean =
+    message.isOutgoing && !message.deletedForEveryone && message.kind != ChatMessageKind.SYSTEM &&
+        message.call == null && message.attachments.isEmpty() && message.directTransfer == null &&
+        message.delivery in listOf(DeliveryState.SENT, DeliveryState.RECEIVED, DeliveryState.SEEN)
+
 internal fun replySnippet(message: ChatMessageSnapshot): String {
+    if (message.deletedForEveryone) return "Message deleted"
     val parsed = parseReplyEncodedMessage(message.body)
     val source = parsed.body.ifBlank { copyableMessageText(message) }
     val normalized = source.replace('\n', ' ').trim()
@@ -1965,3 +2011,32 @@ internal val ChatEmojiChoices =
         "❤️", "🔥", "✨", "🙏", "👍", "👀", "🎉", "💜",
         "🌞", "🌙", "⭐️", "🍓", "☕️", "🌊", "🚀", "✅",
     )
+
+
+@Composable
+private fun MessageEditHistoryDialog(message: ChatMessageSnapshot, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit history") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        text = {
+            SelectionContainer {
+                Column(
+                    modifier = Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()).testTag("messageEditHistory"),
+                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                ) {
+                    message.editHistory.forEachIndexed { index, version ->
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                if (index == 0) "Original" else if (index == message.editHistory.lastIndex) "Current" else "Edit",
+                                style = MaterialTheme.typography.titleSmall,
+                            )
+                            Text(messageInfoDateTime(version.createdAtSecs.toLong()), style = MaterialTheme.typography.labelSmall)
+                            Text(parseReplyEncodedMessage(version.body).body)
+                        }
+                    }
+                }
+            }
+        },
+    )
+}

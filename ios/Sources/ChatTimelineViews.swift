@@ -408,6 +408,9 @@ struct ChatMessageRow: View, Equatable {
     let onForwardAttachment: (MessageAttachmentSnapshot) -> Void
     let onReact: (String) -> Void
     let onInfo: () -> Void
+    var onEdit: () -> Void = {}
+    var onEditHistory: () -> Void = {}
+    var onDeleteForEveryone: () -> Void = {}
     let onDelete: () -> Void
     let onScrollToQuote: (ReplyPreview) -> Void
     let onShowReactors: () -> Void
@@ -422,7 +425,7 @@ struct ChatMessageRow: View, Equatable {
     @State private var isPointerInside = false
     @State private var showReactionPicker = false
     @State private var showActionsSheet = false
-    @State private var replyAfterActionsDismiss = false
+    @State private var actionAfterDismiss: (() -> Void)?
     @State private var showOverflowActions = false
 
     private var showActionDock: Bool {
@@ -438,6 +441,9 @@ struct ChatMessageRow: View, Equatable {
         ChatMessageActionDock(
             isOverflowPresented: actionDockOverflowBinding,
             canReplyAndReact: canReplyAndReact,
+            canCopyAndForward: !message.deletedForEveryone,
+            onEdit: irisCanEditMessage(message) && canReplyAndReact ? onEdit : nil,
+            onDeleteForEveryone: message.isOutgoing && !message.deletedForEveryone && canReplyAndReact ? onDeleteForEveryone : nil,
             onShowReactionPicker: { showReactionPicker = true },
             onReply: onReply,
             onForward: onForward,
@@ -556,7 +562,9 @@ struct ChatMessageRow: View, Equatable {
                                     onTap: { onScrollToQuote(reply) }
                                 )
                             }
-                            if !parsed.body.isEmpty {
+                            if message.deletedForEveryone {
+                                Text("Message deleted").italic().foregroundStyle(.secondary)
+                            } else if !parsed.body.isEmpty {
                                 TruncatableMessageBody(
                                     attributed: linkedMessageAttributedString(
                                         parsed.body,
@@ -598,7 +606,7 @@ struct ChatMessageRow: View, Equatable {
                                     }
                                 )
                             }
-                            if showsFooter {
+                            if showsFooter || !message.editHistory.isEmpty {
                                 // Footer inherits the bubble VStack's
                                 // alignment (.trailing for outgoing,
                                 // .leading for incoming). No frame /
@@ -607,6 +615,12 @@ struct ChatMessageRow: View, Equatable {
                                 // alignment for incoming bubbles is
                                 // Signal-ish-but-leading on iOS.
                                 HStack(spacing: 6) {
+                                    if !message.editHistory.isEmpty && !message.deletedForEveryone {
+                                        Button("Edited", action: onEditHistory)
+                                            .buttonStyle(.plain)
+                                            .font(.caption2)
+                                            .accessibilityIdentifier("chatMessageEdited-\(message.id)")
+                                    }
                                     if message.expiresAtSecs != nil {
                                         Image(systemName: "timer")
                                             .font(.system(.caption2, design: .rounded, weight: .semibold))
@@ -653,16 +667,23 @@ struct ChatMessageRow: View, Equatable {
                         }
 #endif
                         .sheet(isPresented: $showActionsSheet, onDismiss: {
-                            if replyAfterActionsDismiss {
-                                replyAfterActionsDismiss = false
-                                onReply()
-                            }
+                            let action = actionAfterDismiss
+                            actionAfterDismiss = nil
+                            action?()
                         }) {
                             ChatMessageActionsSheet(
                                 message: message,
-                                bodyText: parsed.body,
+                                bodyText: message.deletedForEveryone ? "Message deleted" : parsed.body,
                                 explicitAuthorName: explicitPersonName(for: message.authorOwnerPubkeyHex, state: manager?.state),
                                 canReplyAndReact: canReplyAndReact,
+                                onEdit: irisCanEditMessage(message) && canReplyAndReact ? {
+                                    actionAfterDismiss = onEdit
+                                    showActionsSheet = false
+                                } : nil,
+                                onDeleteForEveryone: message.isOutgoing && !message.deletedForEveryone && canReplyAndReact ? {
+                                    actionAfterDismiss = onDeleteForEveryone
+                                    showActionsSheet = false
+                                } : nil,
                                 onReact: { emoji in
                                     showActionsSheet = false
                                     onReact(emoji)
@@ -672,7 +693,7 @@ struct ChatMessageRow: View, Equatable {
                                     showReactionPicker = true
                                 },
                                 onReply: {
-                                    replyAfterActionsDismiss = true
+                                    actionAfterDismiss = onReply
                                     showActionsSheet = false
                                 },
                                 onForward: {
@@ -693,7 +714,7 @@ struct ChatMessageRow: View, Equatable {
                                 }
                             )
                             .irisModalSurface()
-                            .presentationDetents([.medium])
+                            .presentationDetents([.medium, .large])
                             .presentationDragIndicator(.visible)
                         }
                         .sheet(isPresented: $showReactionPicker) {
@@ -714,7 +735,7 @@ struct ChatMessageRow: View, Equatable {
                         .background(contentFrame)
                         .padding(.bottom, reactions.isEmpty ? 0 : SignalConversationLayout.reactionPillProtrusion)
                         .overlay(alignment: message.isOutgoing ? .bottomLeading : .bottomTrailing) {
-                            if !reactions.isEmpty {
+                            if !reactions.isEmpty && !message.deletedForEveryone {
                                 ReactionRow(
                                     reactions: reactions,
                                     onTap: onShowReactors
