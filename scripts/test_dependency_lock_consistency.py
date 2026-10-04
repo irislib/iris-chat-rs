@@ -11,7 +11,7 @@ PLATFORM_LOCKS = (ROOT / "core" / "Cargo.lock", ROOT / "linux" / "Cargo.lock")
 EXPECTED = {
     "hashtree-blossom": "0.2.83",
     "hashtree-resolver": "0.2.86",
-    "hashtree-updater": "0.2.87",
+    "hashtree-updater": "0.2.88",
     "nvpn-fips-core": "0.4.94",
     "nvpn-fips-endpoint": "0.4.94",
     "nvpn-fips-tcp": "0.2.3",
