@@ -661,6 +661,15 @@ fn device_sync_history_interruption_has_no_legacy_downgrade_and_reconnects() {
 
 #[test]
 fn device_sync_history_revocation_cannot_reopen_same_key_same_second_pair() {
+    check_history_pair_revocation(false);
+}
+
+#[test]
+fn device_sync_completed_history_entitlement_is_removed_on_revoke_and_same_second_relink() {
+    check_history_pair_revocation(true);
+}
+
+fn check_history_pair_revocation(completed: bool) {
     for route in ["signed", "metadata", "local", "self"] {
         let owner = Keys::generate();
         let local = Keys::generate();
@@ -674,6 +683,21 @@ fn device_sync_history_revocation_cannot_reopen_same_key_same_second_pair() {
             core.device_history_send_since(&peer.public_key().to_hex()),
             Some(0)
         );
+        if completed {
+            core.handle_device_history_complete(&peer.public_key().to_hex(), 100, "ab".repeat(32));
+            let pair = core
+                .device_history_transfer(&peer.public_key().to_hex())
+                .unwrap();
+            assert!(pair.complete);
+            assert_eq!(
+                pair.since, 0,
+                "The completed pair retains its original history choice"
+            );
+            assert_eq!(
+                core.device_history_send_since(&peer.public_key().to_hex()),
+                Some(100)
+            );
+        }
         let retained = if route == "self" { &peer } else { &local };
         let retained_at = if route == "self" { 100 } else { 1 };
         let removed = AppKeys::new(vec![DeviceEntry::new(retained.public_key(), retained_at)])
