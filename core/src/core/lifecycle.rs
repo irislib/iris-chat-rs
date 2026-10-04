@@ -289,6 +289,11 @@ impl AppCore {
             #[cfg(test)]
             CoreMsg::PanicForTest => "PanicForTest",
         };
+        let _phase = match label {
+            "OpenChat" => crate::perflog::phase("foreground.handle.OpenChat"),
+            "SendMessage" => crate::perflog::phase("foreground.handle.SendMessage"),
+            _ => None,
+        };
         match msg {
             CoreMsg::Action(action) => self.handle_action(action),
             CoreMsg::AcceptDirectFiles {

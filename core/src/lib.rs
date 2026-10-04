@@ -418,6 +418,15 @@ impl FfiApp {
                 return;
             }
             self.recovery.remember_action(&action);
+            match &action {
+                AppAction::OpenChat { .. } => {
+                    crate::perflog::event("foreground.enqueue.OpenChat");
+                }
+                AppAction::SendMessage { .. } => {
+                    crate::perflog::event("foreground.enqueue.SendMessage");
+                }
+                _ => {}
+            }
             let _ = self.foreground_tx.send(CoreMsg::Action(action));
         })
     }

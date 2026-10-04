@@ -211,7 +211,11 @@ impl AppCore {
             self.process_protocol_engine_retry_batch(reason, ProtocolRetryBatch::default());
             return;
         }
-        let results = match protocol_engine.retry_pending_protocol(now) {
+        let results = {
+            let _phase = crate::perflog::phase("protocol.retry_pending");
+            protocol_engine.retry_pending_protocol(now)
+        };
+        let results = match results {
             Ok(results) => results,
             Err(error) => {
                 self.push_debug_log("appcore.protocol.retry.error", error.to_string());

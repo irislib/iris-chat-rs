@@ -3,7 +3,7 @@
 //! `android_logger` crates. Used to diagnose where time goes between an
 //! FFI dispatch, the core thread processing, and the UI reconcile.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[inline]
 pub fn now_ms() -> u64 {
@@ -67,8 +67,15 @@ mod sink {
 #[macro_export]
 macro_rules! perflog {
     ($($arg:tt)*) => {
-        $crate::perflog::__write(format_args!($($arg)*))
+        if $crate::perflog::__enabled() {
+            $crate::perflog::__write(format_args!($($arg)*))
+        }
     };
+}
+
+#[doc(hidden)]
+pub fn __enabled() -> bool {
+    sink::enabled()
 }
 
 #[doc(hidden)]
@@ -78,4 +85,40 @@ pub fn __write(args: std::fmt::Arguments<'_>) {
     }
     let msg = format!("{} {}", now_ms(), args);
     sink::write("IrisPerf", &msg);
+}
+
+fn monotonic_us() -> u128 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_micros()
+}
+
+pub(crate) fn event(label: &'static str) {
+    crate::perflog!("phase.event label={label} monotonic_us={}", monotonic_us());
+}
+
+pub(crate) fn phase(label: &'static str) -> Option<Phase> {
+    if !sink::enabled() {
+        return None;
+    }
+    let phase = Phase {
+        label,
+        started: Instant::now(),
+    };
+    crate::perflog!("phase.start label={label} monotonic_us={}", monotonic_us());
+    Some(phase)
+}
+
+pub(crate) struct Phase {
+    label: &'static str,
+    started: Instant,
+}
+
+impl Drop for Phase {
+    fn drop(&mut self) {
+        crate::perflog!(
+            "phase.end label={} elapsed_us={}",
+            self.label,
+            self.started.elapsed().as_micros()
+        );
+    }
 }
