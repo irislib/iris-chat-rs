@@ -62,5 +62,29 @@ final class ChatMessageActionDockSlotTests: XCTestCase {
             }
         }
     }
+
+    func testBubbleWidthLimitKeepsShortMessagesIntrinsic() {
+        let bubble = Text("Hi")
+            .padding(12)
+            .modifier(ChatMessageBubbleWidthLimit(maxWidth: 480))
+        let host = NSHostingView(rootView: bubble)
+        XCTAssertLessThan(host.fittingSize.width, 80)
+        XCTAssertGreaterThan(host.fittingSize.width, 24)
+    }
+
+    func testBubbleWidthLimitWrapsLongTextAndAdaptsToNarrowRows() {
+        let text = String(repeating: "A longer message that should wrap. ", count: 12)
+        func bubble(_ width: CGFloat) -> some View {
+            Text(text)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(12)
+                .modifier(ChatMessageBubbleWidthLimit(maxWidth: width))
+        }
+        let wide = NSHostingView(rootView: bubble(480)).fittingSize
+        let narrow = NSHostingView(rootView: bubble(240)).fittingSize
+        XCTAssertLessThanOrEqual(wide.width, 480)
+        XCTAssertLessThanOrEqual(narrow.width, 240)
+        XCTAssertGreaterThan(narrow.height, wide.height)
+    }
 }
 #endif

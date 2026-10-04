@@ -751,10 +751,7 @@ struct ChatMessageRow: View, Equatable {
 #if canImport(AppKit)
                         // Cap bubble width on macOS; iOS has no hover and
                         // phone widths self-limit.
-                        .frame(
-                            maxWidth: IrisLayout.chatBubbleMaxWidth,
-                            alignment: message.isOutgoing ? .trailing : .leading
-                        )
+                        .modifier(ChatMessageBubbleWidthLimit(maxWidth: IrisLayout.chatBubbleMaxWidth))
 #endif
                         // The actual pan is owned by the timeline scroll view.
                         // This modifier only renders the offset/reveal state,
