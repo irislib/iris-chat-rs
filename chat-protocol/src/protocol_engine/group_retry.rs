@@ -1,4 +1,5 @@
 const GROUP_SENDER_KEY_RETRY_LIMIT: usize = 8;
+const GROUP_SENDER_KEY_TRIALS_PER_TURN: usize = 256;
 const GROUP_SENDER_KEY_RETRY_SLICE: std::time::Duration = std::time::Duration::from_millis(25);
 
 #[derive(Clone, PartialEq, Eq)]
@@ -17,21 +18,45 @@ struct GroupSenderKeyRetryInput {
 /// Scheduling is ephemeral; the existing durable ciphertext queue is authoritative.
 /// One input change admits each affected candidate once, in FIFO order. A failed
 /// blind key search cannot run again until its actual decryption inputs change.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct ProtocolGroupSenderKeyRetry {
     inputs: BTreeMap<NdrDevicePubkey, GroupSenderKeyRetryInput>,
     ready: std::collections::VecDeque<(NdrDevicePubkey, String)>,
     queued: HashSet<String>,
     started: Option<std::time::Instant>,
     attempts: usize,
+    key_trials_remaining: usize,
+    active: Option<ActiveGroupSenderKeyDecrypt>,
+    prepared: Option<(String, nostr_double_ratchet::GroupSenderKeyReceivePlan)>,
+    yielded: bool,
     #[cfg(test)]
     total_attempts: usize,
+}
+
+impl Default for ProtocolGroupSenderKeyRetry {
+    fn default() -> Self {
+        Self {
+            inputs: BTreeMap::new(),
+            ready: Default::default(),
+            queued: HashSet::new(),
+            started: None,
+            attempts: 0,
+            key_trials_remaining: GROUP_SENDER_KEY_TRIALS_PER_TURN,
+            active: None,
+            prepared: None,
+            yielded: false,
+            #[cfg(test)]
+            total_attempts: 0,
+        }
+    }
 }
 
 impl ProtocolGroupSenderKeyRetry {
     fn reset_budget(&mut self) {
         self.started = None;
         self.attempts = 0;
+        self.key_trials_remaining = GROUP_SENDER_KEY_TRIALS_PER_TURN;
+        self.yielded = false;
     }
 
     fn next(&mut self) -> Option<(NdrDevicePubkey, String)> {
@@ -42,7 +67,19 @@ impl ProtocolGroupSenderKeyRetry {
         {
             return None;
         }
-        let next = self.ready.pop_front()?;
+        let active_fingerprint = self
+            .prepared
+            .as_ref()
+            .map(|(fingerprint, _)| fingerprint)
+            .or_else(|| self.active.as_ref().map(|active| &active.fingerprint));
+        let active_index = active_fingerprint.and_then(|fingerprint| {
+            self.ready
+                .iter()
+                .position(|(_, queued)| queued == fingerprint)
+        });
+        let next = active_index
+            .and_then(|index| self.ready.remove(index))
+            .or_else(|| self.ready.pop_front())?;
         self.queued.remove(&next.1);
         self.started.get_or_insert_with(std::time::Instant::now);
         self.attempts += 1;
@@ -61,9 +98,15 @@ impl ProtocolEngine {
     fn refresh_group_sender_key_retry_inputs(&self) {
         let mut retry = self.group_sender_key_retry.borrow_mut();
         if self.pending_group_sender_key_messages.is_empty() {
+            retry.active = None;
+            retry.prepared = None;
             retry.inputs.clear();
             retry.ready.clear();
             retry.queued.clear();
+            return;
+        }
+        if retry.active.is_some() {
+            // The library revalidates this one current input without cloning all groups.
             return;
         }
         // Clone once per pass, never once per pending ciphertext. Distribution
@@ -121,6 +164,12 @@ impl ProtocolEngine {
     fn retry_eligible_group_sender_key_messages(
         &mut self,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
+        if self.batch_depth.get() == 0 {
+            self.group_sender_key_retry.borrow_mut().reset_budget();
+        }
+        if self.advance_group_sender_key_continuation()? {
+            return Ok(ProtocolGroupIncomingResult::default());
+        }
         if self.batch_depth.get() > 0 {
             return self.retry_eligible_group_sender_key_messages_inner(&mut Vec::new());
         }
@@ -145,7 +194,11 @@ impl ProtocolEngine {
             self.batch_persist_dirty.get(),
         );
         let mut removed = Vec::new();
+        let remaining_key_trials = self.group_sender_key_retry.borrow().key_trials_remaining;
         self.enter_batch();
+        self.group_sender_key_retry
+            .borrow_mut()
+            .key_trials_remaining = remaining_key_trials;
         let outcome = self.retry_eligible_group_sender_key_messages_inner(&mut removed);
         let outcome = outcome.and_then(|result| self.exit_batch().map(|()| result));
         if outcome.is_err() {
@@ -156,6 +209,9 @@ impl ProtocolEngine {
             self.pending_group_fanouts = checkpoint.3;
             self.processed_group_sender_key_messages = checkpoint.4;
             self.group_sender_key_retry.replace(checkpoint.5);
+            // A failed save may be followed by new authenticated ratchet inputs.
+            // Replan the still-queued candidate instead of restoring a stale plan.
+            self.group_sender_key_retry.borrow_mut().prepared = None;
             self.batch_persist_dirty.set(checkpoint.6);
             for (index, parsed) in removed.into_iter().rev() {
                 self.pending_group_sender_key_messages.insert(index, parsed);
@@ -209,26 +265,32 @@ impl ProtocolEngine {
             let Some(message) = self.group_sender_key_message_from_parsed(&parsed) else {
                 continue;
             };
-            let discard = self
-                .group_sender_key_retry
-                .borrow()
-                .inputs
-                .get(&author)
-                .is_some_and(|input| {
-                    !input.members.contains(&self.local_owner)
-                        || input
-                            .distributions
-                            .iter()
-                            .map(|distribution| distribution.created_at.get())
-                            .min()
-                            .is_some_and(|first| parsed.created_at.get() < first)
-                });
+            let discard = self.local_owner_is_inactive_for_group(&message.group_id)
+                || self
+                    .group_sender_key_retry
+                    .borrow()
+                    .inputs
+                    .get(&author)
+                    .is_some_and(|input| {
+                        !input.members.contains(&self.local_owner)
+                            || input
+                                .distributions
+                                .iter()
+                                .map(|distribution| distribution.created_at.get())
+                                .min()
+                                .is_some_and(|first| parsed.created_at.get() < first)
+                    });
             if discard {
                 removed.push((index, self.pending_group_sender_key_messages.remove(index)));
                 self.persist()?;
                 continue;
             }
-            self.group_sender_key_retry.borrow_mut().record_attempt();
+            {
+                let mut retry = self.group_sender_key_retry.borrow_mut();
+                if retry.active.is_none() && retry.prepared.is_none() {
+                    retry.record_attempt();
+                }
+            }
             // Leave the durable candidate in place on any error, including a
             // persistence failure. Only successful consumption removes it.
             let outcome = match self.handle_group_sender_key_message(message) {
@@ -244,6 +306,17 @@ impl ProtocolEngine {
                 // unchanged. Keep it durable for a later change in inputs.
                 Err(_) => continue,
             };
+            if self.group_sender_key_retry.borrow().yielded {
+                let mut retry = self.group_sender_key_retry.borrow_mut();
+                if retry.queued.insert(fingerprint.clone()) {
+                    if retry.active.is_some() {
+                        retry.ready.push_front((author, fingerprint));
+                    } else {
+                        retry.ready.push_back((author, fingerprint));
+                    }
+                }
+                break;
+            }
             if !outcome.pending {
                 removed.push((index, self.pending_group_sender_key_messages.remove(index)));
                 self.persist()?;

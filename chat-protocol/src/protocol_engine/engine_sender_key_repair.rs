@@ -40,7 +40,9 @@ impl ProtocolEngine {
                 let fingerprint = group_sender_key_fingerprint(&message);
                 let mut retry = self.group_sender_key_retry.borrow_mut();
                 if retry.queued.insert(fingerprint.clone()) {
-                    retry.ready.push_back((parsed.sender_event_pubkey, fingerprint));
+                    retry
+                        .ready
+                        .push_back((parsed.sender_event_pubkey, fingerprint));
                 }
             }
             self.pending_group_sender_key_messages.push(parsed);
@@ -63,6 +65,16 @@ impl ProtocolEngine {
         &mut self,
         parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
     ) -> bool {
+        {
+            let mut retry = self.group_sender_key_retry.borrow_mut();
+            if retry
+                .active
+                .as_ref()
+                .is_some_and(|active| active.matches(parsed))
+            {
+                retry.active = None;
+            }
+        }
         let original_len = self.pending_group_sender_key_messages.len();
         self.pending_group_sender_key_messages
             .retain(|pending| pending != parsed);
@@ -136,8 +148,8 @@ impl ProtocolEngine {
 
     fn local_owner_is_inactive_for_group(&self, group_id: &str) -> bool {
         self.group_manager
-            .group(group_id)
-            .is_some_and(|group| !group.members.contains(&self.local_owner))
+            .group_has_member(group_id, self.local_owner)
+            == Some(false)
     }
 
     fn inactive_local_group_ids(&self) -> HashSet<String> {
@@ -215,6 +227,21 @@ impl ProtocolEngine {
         message: GroupSenderKeyMessage,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
         let fingerprint = group_sender_key_fingerprint(&message);
+        if self.local_owner_is_inactive_for_group(&message.group_id) {
+            let mut retry = self.group_sender_key_retry.borrow_mut();
+            if retry
+                .active
+                .as_ref()
+                .is_some_and(|active| active.fingerprint == fingerprint)
+            {
+                retry.active = None;
+            }
+            retry.prepared = None;
+            return Ok(ProtocolGroupIncomingResult {
+                consumed: true,
+                ..Default::default()
+            });
+        }
         if self
             .processed_group_sender_key_messages
             .contains(&fingerprint)
@@ -227,19 +254,11 @@ impl ProtocolEngine {
         // Our publishing chain has already advanced, so decrypting its relay echo
         // searches every skipped key and starts a pointless repair. This durable
         // secret identifies this device's own stream, including after restart.
-        if self
-            .group_manager
-            .snapshot()
-            .sender_keys
-            .iter()
-            .any(|record| {
-                record.group_id == message.group_id
-                    && record.sender_event_pubkey == message.sender_event_pubkey
-                    && record.sender_owner == self.local_owner
-                    && record.sender_device == self.local_device
-                    && record.sender_event_secret_key.is_some()
-            })
-        {
+        if self.group_manager.is_local_sender_key_stream(
+            &message.group_id,
+            message.sender_event_pubkey,
+            self.local_device,
+        ) {
             if self.clear_group_sender_key_repairs(
                 &message.group_id,
                 message.sender_event_pubkey,
@@ -260,11 +279,21 @@ impl ProtocolEngine {
             .encrypted_header
             .is_none()
             .then_some(message.message_number);
-        let result = match self
-            .group_manager
-            .handle_sender_key_message(message.clone())
-        {
-            Ok(result) => result,
+        let result = self
+            .prepare_group_sender_key_message(&message, &fingerprint)
+            .and_then(|plan| {
+                plan.map(|plan| self.group_manager.apply_sender_key_receive_plan(plan))
+                    .transpose()
+            });
+        let result = match result {
+            Ok(Some(result)) => result,
+            Ok(None) => {
+                return Ok(ProtocolGroupIncomingResult {
+                    consumed: true,
+                    pending: true,
+                    ..Default::default()
+                })
+            }
             Err(nostr_double_ratchet::Error::Decryption(error))
                 if error == "duplicate or missing sender-key message" =>
             {

@@ -1,6 +1,6 @@
 [package]
 name = "iris-chat-protocol"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 description = "Reusable Iris Chat double-ratchet protocol engine"
 license = "MIT"
@@ -12,7 +12,7 @@ anyhow = "1"
 base64 = "0.22"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 nostr = { version = "0.44.7", default-features = false, features = ["std", "nip44"] }
-nostr-double-ratchet = "0.0.169"
+nostr-double-ratchet = "0.0.170"
 nostr-double-ratchet-pairwise-codec = "0.0.168"
 rand = "0.8"
 rusqlite = { version = "0.31", features = ["bundled", "blob"] }

@@ -167,7 +167,7 @@ fn group_retry_unchanged_metadata_does_not_repeat_blind_search_or_checkpoint() {
     engine.storage = storage.clone();
     let now = NdrUnixSeconds(unix_now().get());
     let started = std::time::Instant::now();
-    engine.retry_pending_protocol(now).unwrap();
+    drain_group_retry(&mut engine, now);
     println!("one failed blind candidate: {:?}", started.elapsed());
     assert_eq!(engine.group_sender_key_retry.borrow().total_attempts, 1);
     assert_eq!(engine.pending_group_sender_key_messages.len(), 1);
@@ -281,12 +281,12 @@ fn group_retry_error_retains_the_candidate_and_unprocessed_tail() {
         .ciphertext
         .clear();
     let malformed = engine.pending_group_sender_key_messages[0].clone();
-    let recovered = engine.retry_pending_protocol(NdrUnixSeconds(30)).unwrap();
-    assert_eq!(recovered.group_result.events.len(), 2);
+    let recovered = drain_group_retry(&mut engine, NdrUnixSeconds(30));
+    assert_eq!(recovered.len(), 2);
     assert_eq!(&*engine.pending_group_sender_key_messages, &[malformed]);
     // Another success changes the ratchet once; after that input is attempted,
     // malformed ciphertext cannot spin indefinitely.
-    engine.retry_pending_protocol(NdrUnixSeconds(30)).unwrap();
+    drain_group_retry(&mut engine, NdrUnixSeconds(30));
     assert!(!engine.has_ready_group_sender_key_retry_work());
 }
 
@@ -379,9 +379,10 @@ fn group_retry_ratchet_progress_unlocks_an_earlier_out_of_window_candidate() {
             ciphertext: bridge.unwrap(),
             ..template
         },
-    ].into();
+    ]
+    .into();
     let mut delivered = 0;
-    for _ in 0..6 {
+    for _ in 0..256 {
         delivered += engine
             .retry_pending_protocol(NdrUnixSeconds(30))
             .unwrap()
@@ -453,16 +454,16 @@ fn group_retry_new_candidate_on_unchanged_stream_is_admitted_once() {
             .encrypt_to_bytes(b"synthetic unknown ciphertext")
             .unwrap()
             .1;
-    engine.retry_pending_protocol(NdrUnixSeconds(30)).unwrap();
+    drain_group_retry(&mut engine, NdrUnixSeconds(30));
     assert!(!engine.has_ready_group_sender_key_retry_work());
     engine
         .queue_pending_group_sender_key_message(next.clone())
         .unwrap();
     assert!(engine.has_ready_group_sender_key_retry_work());
-    let recovered = engine.retry_pending_protocol(NdrUnixSeconds(30)).unwrap();
-    assert_eq!(recovered.group_result.events.len(), 1);
+    let recovered = drain_group_retry(&mut engine, NdrUnixSeconds(30));
+    assert_eq!(recovered.len(), 1);
     engine.queue_pending_group_sender_key_message(next).unwrap();
-    engine.retry_pending_protocol(NdrUnixSeconds(30)).unwrap();
+    drain_group_retry(&mut engine, NdrUnixSeconds(30));
     assert!(!engine.has_ready_group_sender_key_retry_work());
 }
 

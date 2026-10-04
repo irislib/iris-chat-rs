@@ -3,6 +3,7 @@ use super::*;
 include!("protocol_engine/types.rs");
 include!("protocol_engine/group_replay.rs");
 include!("protocol_engine/group_retry.rs");
+include!("protocol_engine/group_decrypt.rs");
 include!("protocol_engine/engine_core.rs");
 include!("protocol_engine/engine_test_support.rs");
 include!("protocol_engine/engine_state_helpers.rs");
@@ -36,6 +37,7 @@ mod tests {
     include!("protocol_engine/receive_session_fallback_tests.rs");
     include!("protocol_engine/incident_first_contact_tests.rs");
     include!("protocol_engine/group_retry_budget_tests.rs");
+    include!("protocol_engine/group_decrypt_budget_tests.rs");
     include!("protocol_engine/checkpoint_pending_tests.rs");
 
     #[test]

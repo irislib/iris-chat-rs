@@ -700,7 +700,7 @@ dependencies = [
 
 [[package]]
 name = "iris-chat-protocol"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "anyhow",
  "base64",
@@ -839,9 +839,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet"
-version = "0.0.169"
+version = "0.0.170"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7137e1c700cd5b2a8954a9421d56533c8039dd7cdf22609b5711312f0690b0a7"
+checksum = "72fec096ab622105808f0d57b97a68968155541de1e38b7e03b74546724d6a8f"
 dependencies = [
  "base64",
  "hex",

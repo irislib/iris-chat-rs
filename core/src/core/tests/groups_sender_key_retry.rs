@@ -456,7 +456,21 @@ fn delivered_group_outer_replay_is_quiet_after_restart_and_event_cache_eviction(
     add_legacy_sender_second_ack(storage.as_ref(), &group_id, &outer);
     devices[1].engine =
         test_protocol_engine_with_storage(&devices[1].owner, &devices[1].device, storage.clone());
-    let first_old_replay = devices[1].engine.process_group_outer_event(&outer).unwrap();
+    let mut first_old_replay = devices[1].engine.process_group_outer_event(&outer).unwrap();
+    // Blind recovery yields within a search. Its one repair is produced only
+    // after the unchanged full key window has been exhausted.
+    for _ in 0..128 {
+        if !devices[1].engine.has_ready_group_sender_key_retry_work() {
+            break;
+        }
+        let retry = devices[1]
+            .engine
+            .retry_pending_protocol(NdrUnixSeconds(701))
+            .unwrap();
+        assert!(retry.group_result.events.is_empty());
+        first_old_replay.effects.extend(retry.group_result.effects);
+    }
+    assert!(!devices[1].engine.has_ready_group_sender_key_retry_work());
     assert!(first_old_replay.pending && !first_old_replay.effects.is_empty());
     let pending = devices[1].engine.debug_snapshot();
     assert_eq!(pending.pending_group_sender_key_repair_count, 1);
