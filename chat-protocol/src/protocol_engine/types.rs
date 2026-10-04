@@ -404,6 +404,7 @@ pub struct ProtocolEngine {
     answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
+    handshake_proof_cache: std::cell::RefCell<HandshakeProofCache>,
     known_message_author_cache: std::cell::RefCell<Option<KnownMessageAuthorCache>>,
     known_message_author_cache_build_count: std::cell::Cell<u64>,
     verified_app_keys_owners: BTreeSet<NdrOwnerPubkey>,

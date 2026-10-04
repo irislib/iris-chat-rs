@@ -827,7 +827,7 @@ impl ProtocolEngine {
             let chat_id = group_chat_id(&pending.group_id);
             effects.extend(protocol_effects_from_group_prepared_publish(
                 &prepared,
-                self.local_handshake_owner_proof(),
+                self,
                 pending.inner_event_id.clone(),
                 chat_id,
                 &mut event_ids,

@@ -107,7 +107,7 @@ impl ProtocolEngine {
         )?;
         let effects = protocol_effects_from_prepared(
             &prepared,
-            self.local_handshake_owner_proof(),
+            self,
             pending.inner_event_id.clone(),
             pending.chat_id.clone(),
             &mut Vec::new(),

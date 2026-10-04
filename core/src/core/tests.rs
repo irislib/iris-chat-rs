@@ -122,6 +122,7 @@ include!("tests/device_connections.rs");
 include!("tests/protocol_startup_guards.rs");
 include!("tests/profile_metadata_restart.rs");
 include!("tests/protocol_runtime_replay.rs");
+include!("tests/pending_publish_replay.rs");
 include!("tests/retry_publish_ordering.rs");
 include!("tests/nearby_publish_burst.rs");
 include!("tests/publish_drain_progress.rs");
