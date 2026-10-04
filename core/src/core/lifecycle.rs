@@ -83,6 +83,7 @@ impl AppCore {
                 COMPILED_DEVICE_APPROVAL_RELAY_URL.to_string(),
             ]),
             private_chat_invites: BTreeMap::new(),
+            open_invite_chat_on_join: true,
             pending_private_invite_responses: BTreeMap::new(),
             pending_private_invite_cleanup_retry: false,
             pending_outgoing_invite_acceptance: None,

@@ -106,6 +106,11 @@ impl AppCore {
                 &picture_filename,
             ),
             AppAction::CreatePublicInvite => self.create_public_invite(),
+            AppAction::SetInviteOpenOnJoin { enabled } => {
+                self.open_invite_chat_on_join = enabled;
+                self.rebuild_state();
+                self.emit_state();
+            }
             AppAction::AcceptInvite { invite_input } => self.accept_invite(&invite_input),
             AppAction::OpenChat { chat_id } => self.open_chat(&chat_id),
             AppAction::RetryDirectChatCapability { chat_id } => {

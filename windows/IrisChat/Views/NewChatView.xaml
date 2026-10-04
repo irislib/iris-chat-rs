@@ -24,6 +24,9 @@
                                HorizontalAlignment="Center"
                                Margin="0,0,0,18" />
 
+                    <CheckBox x:Name="OpenOnJoin" Content="Open chat when someone joins"
+                              IsChecked="True" Margin="0,12,0,12" Click="OnOpenOnJoinChanged" />
+
                     <Grid x:Name="ReadyBlock" Visibility="Collapsed">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />

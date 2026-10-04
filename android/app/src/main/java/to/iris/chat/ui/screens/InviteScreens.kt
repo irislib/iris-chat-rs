@@ -15,6 +15,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Checkbox
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -92,6 +95,9 @@ fun CreateInviteScreen(
                     size = 260.dp,
                     tag = "createInviteQrCode",
                 )
+                InviteOpenOnJoinCheckbox(appState.publicInvite?.openChatOnJoin ?: true) {
+                    appManager.dispatch(AppAction.SetInviteOpenOnJoin(it))
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     IrisSecondaryButton(
                         text = "Copy",
@@ -232,5 +238,17 @@ fun JoinInviteScreen(
                 null
             },
         )
+    }
+}
+
+@Composable
+internal fun InviteOpenOnJoinCheckbox(checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Checkbox, onValueChange = onChange)
+            .testTag("inviteOpenOnJoinToggle"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = checked, onCheckedChange = null)
+        Text("Open chat when someone joins", style = MaterialTheme.typography.bodyMedium)
     }
 }

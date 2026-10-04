@@ -55,6 +55,7 @@ struct NewChatScreen: View {
                     account: account,
                     initialTab: tab,
                     codeContent: newChatQrContent,
+                    showsInviteJoinPreference: true,
                     closeSettings: nil
                 )
                 .irisModalSurface()
@@ -89,6 +90,8 @@ struct NewChatScreen: View {
                     .font(.system(.footnote, design: .rounded))
                     .foregroundStyle(palette.muted)
                     .frame(maxWidth: .infinity, alignment: .center)
+
+                InviteOpenOnJoinToggle(manager: manager)
 
                 HStack(spacing: 10) {
                     NewChatInviteCopyButton(value: invite.url, manager: manager)
@@ -196,6 +199,19 @@ struct NewChatScreen: View {
 
 }
 
+struct InviteOpenOnJoinToggle: View {
+    @ObservedObject var manager: AppManager
+
+    var body: some View {
+        Toggle("Open chat when someone joins", isOn: Binding(
+            get: { manager.state.publicInvite?.openChatOnJoin ?? true },
+            set: { manager.dispatch(.setInviteOpenOnJoin(enabled: $0)) }
+        ))
+        .font(.subheadline)
+        .accessibilityIdentifier("inviteOpenOnJoinToggle")
+    }
+}
+
 struct NewChatInviteActionLabel: View {
     let systemImage: String
     let title: String
@@ -287,6 +303,8 @@ struct CreateInviteScreen: View {
                     QrCodeImage(text: invite.url)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .accessibilityIdentifier("createInviteQrCode")
+
+                    InviteOpenOnJoinToggle(manager: manager)
 
                     HStack(spacing: 10) {
                         Button("Copy") {

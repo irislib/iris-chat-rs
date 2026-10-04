@@ -43,6 +43,8 @@ public partial class NewChatView : UserControl
     {
         var invite = App.CurrentManager.PublicInvite;
         var ready = invite != null;
+        OpenOnJoin.IsChecked = invite?.openChatOnJoin ?? true;
+        OpenOnJoin.Visibility = ready ? Visibility.Visible : Visibility.Collapsed;
         ReadyBlock.Visibility = ready ? Visibility.Visible : Visibility.Collapsed;
         LoadingText.Visibility = ready ? Visibility.Collapsed : Visibility.Visible;
 
@@ -56,6 +58,9 @@ public partial class NewChatView : UserControl
             QrPanel.Visibility = Visibility.Collapsed;
         }
     }
+
+    private void OnOpenOnJoinChanged(object sender, RoutedEventArgs e) =>
+        App.CurrentManager.SetInviteOpenOnJoin(OpenOnJoin.IsChecked == true);
 
     private void OnCopyInvite(object sender, RoutedEventArgs e)
     {

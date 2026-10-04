@@ -115,6 +115,9 @@ pub enum AppAction {
         picture_filename: String,
     },
     CreatePublicInvite,
+    SetInviteOpenOnJoin {
+        enabled: bool,
+    },
     AcceptInvite {
         invite_input: String,
     },

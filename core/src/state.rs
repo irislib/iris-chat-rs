@@ -653,6 +653,8 @@ impl SearchResultSnapshot {
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct PublicInviteSnapshot {
     pub url: String,
+    #[uniffi(default = true)]
+    pub open_chat_on_join: bool,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
