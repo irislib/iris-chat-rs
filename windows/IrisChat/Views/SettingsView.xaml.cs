@@ -64,6 +64,7 @@ public partial class SettingsView : UserControl
         AcceptChatRequestsToggle.IsChecked = prefs.acceptUnknownDirectMessages;
         TypingToggle.IsChecked = prefs.sendTypingIndicators;
         ReceiptsToggle.IsChecked = prefs.sendReadReceipts;
+        AllowMessageDeletionToggle.IsChecked = prefs.allowMessageDeletionByOthers;
         NotificationsToggle.IsChecked = prefs.desktopNotificationsEnabled;
         StartupToggle.IsChecked = prefs.startupAtLoginEnabled;
         NearbyEnabledToggle.IsChecked = prefs.nearbyEnabled;
@@ -222,6 +223,12 @@ public partial class SettingsView : UserControl
     {
         if (_suppressToggleDispatch) return;
         App.CurrentManager.SetReadReceiptsEnabled(ReceiptsToggle.IsChecked == true);
+    }
+
+    private void OnAllowMessageDeletionChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggleDispatch) return;
+        App.CurrentManager.SetAllowMessageDeletionByOthers(AllowMessageDeletionToggle.IsChecked == true);
     }
 
     private void OnNotificationsChanged(object sender, RoutedEventArgs e)

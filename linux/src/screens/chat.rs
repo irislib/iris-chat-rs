@@ -29,6 +29,7 @@ mod direct_files;
 #[cfg(feature = "ui-tests")]
 pub use direct_files::verify_ui as verify_direct_files_ui;
 mod grouping;
+mod message_actions;
 mod safety;
 mod timeline;
 mod view;
@@ -683,6 +684,12 @@ fn present_message_info(
     scroll.set_child(Some(&content));
     dialog.set_child(Some(&scroll));
     dialog.present(parent);
+    let shown = message.clone();
+    message_actions::watch_message(&dialog, message, manager, move |current| {
+        current.deleted_for_everyone == shown.deleted_for_everyone
+            && current.body == shown.body
+            && current.edit_history == shown.edit_history
+    });
 }
 
 fn info_section(title: &str) -> gtk::Box {
@@ -1029,35 +1036,46 @@ fn render_message(
         .filter(|a| !a.is_image && !audio_message::is_audio(a))
         .collect();
 
-    if !image_attachments.is_empty() {
+    if !message.deleted_for_everyone && !image_attachments.is_empty() {
         bubble.append(&image_album(&image_attachments, prefs, manager));
     }
 
-    if !message.body.is_empty() {
+    if message.deleted_for_everyone {
+        let deleted = gtk::Label::new(Some("Message deleted"));
+        deleted.add_css_class("dim-label");
+        bubble.append(&deleted);
+    } else if !message.body.is_empty() {
         append_truncatable_body(&bubble, &message.body);
     }
 
     for attachment in message
         .attachments
         .iter()
-        .filter(|a| !a.is_image && audio_message::is_audio(a))
+        .filter(|a| !message.deleted_for_everyone && !a.is_image && audio_message::is_audio(a))
     {
         bubble.append(&audio_message::widget(&message.id, attachment));
     }
 
-    if let Some(transfer) = &message.direct_transfer {
+    if let Some(transfer) = message
+        .direct_transfer
+        .as_ref()
+        .filter(|_| !message.deleted_for_everyone)
+    {
         bubble.append(&direct_files::card(&chat.chat_id, transfer, manager));
     }
 
-    if !other_attachments.is_empty() {
+    if !message.deleted_for_everyone && !other_attachments.is_empty() {
         bubble.append(&attachment_summary_widget(&other_attachments, manager));
     }
 
-    if show_footer {
+    if show_footer || !message.edit_history.is_empty() {
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         footer.add_css_class("bubble-meta");
         let time = gtk::Label::new(Some(&relative_time(message.created_at_secs, now)));
         footer.append(&time);
+        if !message.deleted_for_everyone && !message.edit_history.is_empty() {
+            footer.append(&message_actions::history_button(message, manager));
+        }
         if message.is_outgoing {
             let glyph = gtk::Label::new(Some(delivery_glyph(&message.delivery)));
             footer.append(&glyph);
@@ -1089,7 +1107,7 @@ fn render_message(
 
     column.append(&bubble);
 
-    if !message.reactions.is_empty() {
+    if !message.deleted_for_everyone && !message.reactions.is_empty() {
         column.append(&reactions_row(message, &message.reactions, manager));
     }
 
@@ -1235,7 +1253,7 @@ fn build_message_popover(
     column.set_margin_end(6);
 
     let reactions_row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-    reactions_row.set_visible(!is_removed_group(chat));
+    reactions_row.set_visible(!message.deleted_for_everyone && !is_removed_group(chat));
     for emoji in reaction_picker_emojis() {
         let btn = gtk::Button::with_label(&emoji);
         btn.add_css_class("flat");
@@ -1288,6 +1306,7 @@ fn build_message_popover(
         popover_for_forward.popdown();
     });
     column.append(&forward);
+    forward.set_visible(!message.deleted_for_everyone);
 
     let copy = gtk::Button::with_label("Copy text");
     copy.add_css_class("flat");
@@ -1299,6 +1318,7 @@ fn build_message_popover(
         popover_for_copy.popdown();
     });
     column.append(&copy);
+    copy.set_visible(!message.deleted_for_everyone);
 
     let info_btn = gtk::Button::with_label("Info");
     info_btn.add_css_class("flat");
@@ -1319,7 +1339,9 @@ fn build_message_popover(
     });
     column.append(&info_btn);
 
-    let delete = gtk::Button::with_label("Delete locally");
+    message_actions::append_actions(&column, &popover, message, chat, manager);
+
+    let delete = gtk::Button::with_label("Delete for me");
     delete.add_css_class("flat");
     delete.add_css_class("error");
     delete.set_halign(gtk::Align::Fill);

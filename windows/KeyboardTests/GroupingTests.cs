@@ -13,7 +13,8 @@ internal static class GroupingTests
             "Hello", Array.Empty<MessageAttachmentSnapshot>(), Array.Empty<MessageReactionSnapshot>(),
             Array.Empty<MessageReactor>(), false, time, null, DeliveryState.Received,
             Array.Empty<MessageRecipientDeliverySnapshot>(),
-            new MessageDeliveryTraceSnapshot(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), null), null);
+            new MessageDeliveryTraceSnapshot(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), null), null,
+            editHistory: Array.Empty<MessageEditSnapshot>());
         var next = first with { id = "b", createdAtSecs = time + 179 };
         Check(!MessageGrouping.Breaks(first, next, ChatKind.Group), "179 seconds joins");
         Check(MessageGrouping.Breaks(first, next with { createdAtSecs = time + 180 }, ChatKind.Group), "180 seconds separates");

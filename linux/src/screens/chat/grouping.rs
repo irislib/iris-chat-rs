@@ -63,6 +63,8 @@ mod tests {
 
     fn message() -> ChatMessageSnapshot {
         ChatMessageSnapshot {
+            edit_history: vec![],
+            deleted_for_everyone: false,
             id: "first".into(),
             chat_id: "chat".into(),
             kind: ChatMessageKind::User,

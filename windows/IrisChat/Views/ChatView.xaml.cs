@@ -32,7 +32,8 @@ public partial class ChatView : UserControl
         _timeline = new MessageTimeline(ScrollHost, MessagesList, () =>
         {
             if (_focusedChatId is { } id) _ = App.CurrentManager.LoadOlderMessagesAsync(id);
-        });
+        }, BeginEdit);
+        Composer.EditSubmitted += OnEditSubmitted;
         Composer.AttachmentPasteScope = () => CanAttachFiles() &&
             App.CurrentManager.Account is {} account && _focusedChatId is {} chatId
                 ? new AttachmentPasteDestination(account.publicKeyHex, chatId) : null;
@@ -170,7 +171,11 @@ public partial class ChatView : UserControl
             _ => string.Empty,
         };
         RemovedGroupPanel.Visibility = removedFromGroup ? Visibility.Visible : Visibility.Collapsed;
-        Composer.SendAllowed = !capabilityBlocked && !removedFromGroup;
+        Composer.SendAllowed = !capabilityBlocked && !removedFromGroup && !userBlocked && !messageRequest &&
+            !App.CurrentManager.Busy.sendingMessage && !App.CurrentManager.Busy.uploadingAttachment;
+        if (Composer.EditingMessageId is { } editingId &&
+            !chat.messages.Any(message => message.id == editingId && MessageBubble.CanEdit(message)))
+            Composer.CancelEdit();
         Composer.DirectSendAllowed = chat.kind == ChatKind.Direct;
         Composer.Visibility = userBlocked || messageRequest || removedFromGroup
             ? Visibility.Collapsed
@@ -231,11 +236,25 @@ public partial class ChatView : UserControl
         }
     }
 
+    private void BeginEdit(ChatMessageSnapshot message)
+    {
+        if (!CanAttachFiles() || !MessageBubble.CanEdit(message)) return;
+        Composer.BeginEdit(message.id, message.body);
+    }
+
+    private void OnEditSubmitted(string messageId, string text)
+    {
+        var chat = App.CurrentManager.CurrentChat;
+        if (!Composer.SendAllowed || chat == null || chat.chatId != _focusedChatId ||
+            !chat.messages.Any(message => message.id == messageId && MessageBubble.CanEdit(message))) return;
+        App.CurrentManager.EditMessage(chat.chatId, messageId, text);
+    }
+
     private bool CanAttachFiles()
     {
         var manager = App.CurrentManager;
         var chat = manager.CurrentChat;
-        return IsLoaded && chat != null && !manager.IsRemovedFromGroup(chat.chatId) && chat.chatId == _focusedChatId &&
+        return Composer.EditingMessageId == null && IsLoaded && chat != null && !manager.IsRemovedFromGroup(chat.chatId) && chat.chatId == _focusedChatId &&
             (ChatId == null || ChatId == chat.chatId) &&
             !manager.Busy.sendingMessage && !manager.Busy.uploadingAttachment &&
             !(chat.kind == ChatKind.Direct && (chat.isRequest || manager.IsUserBlocked(chat.chatId))) &&

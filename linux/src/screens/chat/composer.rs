@@ -10,6 +10,114 @@ use crate::screens::chat_list::unix_now;
 
 type SendCallback = Rc<RefCell<Option<Box<dyn Fn()>>>>;
 
+#[derive(Clone)]
+struct EditControls {
+    state: Rc<RefCell<Option<(String, String)>>>,
+    buffer: gtk::TextBuffer,
+    input: glib::WeakRef<gtk::TextView>,
+    banner: glib::WeakRef<gtk::Box>,
+    send: glib::WeakRef<gtk::Button>,
+    attach: glib::WeakRef<gtk::MenuButton>,
+    preview: glib::WeakRef<gtk::ScrolledWindow>,
+    direct: glib::WeakRef<gtk::CheckButton>,
+}
+
+impl EditControls {
+    fn active(&self) -> bool {
+        self.state.borrow().is_some()
+    }
+
+    fn begin(&self, message: &iris_chat_core::ChatMessageSnapshot) {
+        let (Some(input), Some(banner), Some(send), Some(attach), Some(preview), Some(direct)) = (
+            self.input.upgrade(),
+            self.banner.upgrade(),
+            self.send.upgrade(),
+            self.attach.upgrade(),
+            self.preview.upgrade(),
+            self.direct.upgrade(),
+        ) else {
+            return;
+        };
+        let draft = self
+            .state
+            .borrow()
+            .as_ref()
+            .map(|(_, draft)| draft.clone())
+            .unwrap_or_else(|| composer_buffer_text(&self.buffer));
+        *self.state.borrow_mut() = Some((message.id.clone(), draft));
+        input.add_css_class("editing-message");
+        banner.set_visible(true);
+        attach.set_sensitive(false);
+        preview.set_visible(false);
+        direct.set_visible(false);
+        send.set_label("Save");
+        send.remove_css_class("circular");
+        send.set_tooltip_text(Some("Save changes"));
+        self.buffer.set_text(&message.body);
+        input.grab_focus();
+    }
+
+    fn cancel(&self) {
+        let previous = self.state.borrow_mut().take();
+        let Some((_, draft)) = previous else { return };
+        let (Some(input), Some(banner), Some(send), Some(attach), Some(preview)) = (
+            self.input.upgrade(),
+            self.banner.upgrade(),
+            self.send.upgrade(),
+            self.attach.upgrade(),
+            self.preview.upgrade(),
+        ) else {
+            return;
+        };
+        input.remove_css_class("editing-message");
+        banner.set_visible(false);
+        attach.set_sensitive(true);
+        send.set_icon_name("document-send-symbolic");
+        send.add_css_class("circular");
+        send.set_tooltip_text(Some("Send"));
+        preview.set_visible(
+            preview
+                .child()
+                .is_some_and(|row| row.first_child().is_some()),
+        );
+        self.buffer.set_text(&draft);
+        input.grab_focus();
+    }
+
+    fn submit(&self, manager: &Rc<AppManager>, chat_id: &str) {
+        if !can_send(manager, chat_id) || manager.current_state().busy.sending_message {
+            return;
+        }
+        let text = composer_buffer_text(&self.buffer).trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        let target = self.state.borrow().as_ref().map(|(id, _)| id.clone());
+        let Some(message_id) = target else { return };
+        let valid = manager
+            .current_state()
+            .current_chat
+            .as_ref()
+            .is_some_and(|chat| {
+                chat.chat_id == chat_id
+                    && chat
+                        .messages
+                        .iter()
+                        .any(|m| m.id == message_id && super::message_actions::can_edit(m))
+            });
+        if !valid {
+            self.cancel();
+            return;
+        }
+        manager.dispatch(AppAction::EditMessage {
+            chat_id: chat_id.to_owned(),
+            message_id,
+            text,
+        });
+        self.cancel();
+    }
+}
+
 pub(super) struct Composer {
     pub root: gtk::Box,
     send: gtk::Button,
@@ -20,6 +128,7 @@ pub(super) struct Composer {
     on_send: SendCallback,
     preview_row: gtk::Box,
     preview_scroll: gtk::ScrolledWindow,
+    edit: EditControls,
 }
 
 impl Composer {
@@ -29,6 +138,19 @@ impl Composer {
         outer.set_margin_bottom(8);
         outer.set_margin_start(12);
         outer.set_margin_end(12);
+
+        let editing = Rc::new(RefCell::new(None));
+        let edit_banner = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let editing_label = gtk::Label::new(Some("Editing message"));
+        editing_label.add_css_class("dim-label");
+        editing_label.set_hexpand(true);
+        editing_label.set_xalign(0.0);
+        edit_banner.append(&editing_label);
+        let cancel_edit = gtk::Button::with_label("Cancel");
+        cancel_edit.add_css_class("flat");
+        edit_banner.append(&cancel_edit);
+        edit_banner.set_visible(false);
+        outer.append(&edit_banner);
 
         let preview_scroll = gtk::ScrolledWindow::new();
         preview_scroll.set_hscrollbar_policy(gtk::PolicyType::Automatic);
@@ -84,12 +206,15 @@ impl Composer {
             let chat_id_for_attach = chat.chat_id.clone();
             let preview_row_for_attach = preview_row.clone();
             let preview_scroll_for_attach = preview_scroll.clone();
+            let editing_for_attach = editing.clone();
             source.connect_clicked(move |btn| {
                 let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
                 if let Some(popover) = popover.upgrade() {
                     popover.popdown();
                 }
-                if !can_attach(&manager_for_attach, &chat_id_for_attach) {
+                if editing_for_attach.borrow().is_some()
+                    || !can_attach(&manager_for_attach, &chat_id_for_attach)
+                {
                     return;
                 }
                 let dialog = gtk::FileDialog::builder().title(label).build();
@@ -107,12 +232,13 @@ impl Composer {
                 let chat_id = chat_id_for_attach.clone();
                 let preview_row = preview_row_for_attach.clone();
                 let preview_scroll = preview_scroll_for_attach.clone();
+                let editing = editing_for_attach.clone();
                 dialog.open_multiple(
                     parent.as_ref(),
                     gtk::gio::Cancellable::NONE,
                     move |result| {
                         let Ok(files) = result else { return };
-                        if !can_attach(&manager, &chat_id) {
+                        if editing.borrow().is_some() || !can_attach(&manager, &chat_id) {
                             return;
                         }
                         for index in 0..files.n_items() {
@@ -222,6 +348,7 @@ impl Composer {
             let manager_for_typing = manager.clone();
             let chat_id_for_typing = chat.chat_id.clone();
             let placeholder_for_typing = placeholder.clone();
+            let editing = editing.clone();
             buffer.connect_changed(move |buffer| {
                 let text = composer_buffer_text(buffer);
                 placeholder_for_typing.set_visible(text.is_empty());
@@ -234,10 +361,12 @@ impl Composer {
                         chat_id: chat_id_for_typing.clone(),
                     });
                 }
-                manager_for_typing.dispatch(AppAction::SetChatDraft {
-                    chat_id: chat_id_for_typing.clone(),
-                    text,
-                });
+                if editing.borrow().is_none() {
+                    manager_for_typing.dispatch(AppAction::SetChatDraft {
+                        chat_id: chat_id_for_typing.clone(),
+                        text,
+                    });
+                }
             });
         }
 
@@ -249,6 +378,19 @@ impl Composer {
         send.set_sensitive(!busy);
         row.append(&send);
 
+        let edit = EditControls {
+            state: editing,
+            buffer: buffer.clone(),
+            input: input.downgrade(),
+            banner: edit_banner.downgrade(),
+            send: send.downgrade(),
+            attach: attach.downgrade(),
+            preview: preview_scroll.downgrade(),
+            direct: direct.downgrade(),
+        };
+        let edit_for_cancel = edit.clone();
+        cancel_edit.connect_clicked(move |_| edit_for_cancel.cancel());
+
         let chat_id = chat.chat_id.clone();
         let ttl = Rc::new(Cell::new(chat.message_ttl_seconds));
         let ttl_for_click = ttl.clone();
@@ -259,7 +401,12 @@ impl Composer {
         let on_send: SendCallback = Rc::new(RefCell::new(None));
         let sent = on_send.clone();
         let direct_for_click = direct.clone();
+        let edit_for_click = edit.clone();
         send.connect_clicked(move |btn| {
+            if edit_for_click.active() {
+                edit_for_click.submit(&manager_for_click, &chat_id);
+                return;
+            }
             if submit_composer(
                 &manager_for_click,
                 &chat_id,
@@ -286,13 +433,22 @@ impl Composer {
         key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
         let direct_for_enter = direct.clone();
         let sent = on_send.clone();
+        let edit_for_enter = edit.clone();
         key_controller.connect_key_pressed(move |_, keyval, _, state| {
+            if keyval == gtk::gdk::Key::Escape && edit_for_enter.active() {
+                edit_for_enter.cancel();
+                return glib::Propagation::Stop;
+            }
             if !matches!(keyval, gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter)
                 || state.contains(gtk::gdk::ModifierType::SHIFT_MASK)
             {
                 return glib::Propagation::Proceed;
             }
 
+            if edit_for_enter.active() {
+                edit_for_enter.submit(&manager_for_enter, &chat_id);
+                return glib::Propagation::Stop;
+            }
             if submit_composer(
                 &manager_for_enter,
                 &chat_id,
@@ -321,6 +477,7 @@ impl Composer {
             on_send,
             preview_row,
             preview_scroll,
+            edit,
         };
         composer.update(chat, state);
         composer
@@ -328,6 +485,37 @@ impl Composer {
 
     pub fn on_send(&self, callback: impl Fn() + 'static) {
         *self.on_send.borrow_mut() = Some(Box::new(callback));
+    }
+
+    pub fn install_edit_action(&self, root: &gtk::Box, manager: &Rc<AppManager>, chat_id: &str) {
+        let actions = gtk::gio::SimpleActionGroup::new();
+        let action = gtk::gio::SimpleAction::new("edit", Some(&String::static_variant_type()));
+        let manager = manager.clone();
+        let chat_id = chat_id.to_owned();
+        let edit = self.edit.clone();
+        action.connect_activate(move |_, value| {
+            let Some(id) = value.and_then(|v| v.get::<String>()) else {
+                return;
+            };
+            if !can_attach(&manager, &chat_id) {
+                return;
+            }
+            let state = manager.current_state();
+            if let Some(message) = state
+                .current_chat
+                .as_ref()
+                .filter(|c| c.chat_id == chat_id)
+                .and_then(|c| {
+                    c.messages
+                        .iter()
+                        .find(|m| m.id == id && super::message_actions::can_edit(m))
+                })
+            {
+                edit.begin(message);
+            }
+        });
+        actions.add_action(&action);
+        root.insert_action_group("message", Some(&actions));
     }
 
     pub fn file_drop_target(&self, manager: &Rc<AppManager>, chat_id: &str) -> gtk::DropTarget {
@@ -343,8 +531,10 @@ impl Composer {
         let scroll = self.preview_scroll.clone();
         let manager_for_hover = manager.clone();
         let chat_for_hover = chat_id.clone();
+        let edit_for_hover = self.edit.clone();
         target.connect_value_notify(move |target| {
-            let valid = can_attach(&manager_for_hover, &chat_for_hover)
+            let valid = !edit_for_hover.active()
+                && can_attach(&manager_for_hover, &chat_for_hover)
                 && target.value().as_ref().and_then(dropped_files).is_some();
             if let Some(widget) = target.widget() {
                 if valid {
@@ -359,11 +549,12 @@ impl Composer {
                 widget.remove_css_class("file-drop-target");
             }
         });
+        let edit = self.edit.clone();
         target.connect_drop(move |target, value, _, _| {
             if let Some(widget) = target.widget() {
                 widget.remove_css_class("file-drop-target");
             }
-            if !can_attach(&manager, &chat_id) {
+            if edit.active() || !can_attach(&manager, &chat_id) {
                 return false;
             }
             let Some(files) = dropped_files(value) else {
@@ -380,6 +571,15 @@ impl Composer {
     }
 
     pub fn update(&self, chat: &CurrentChatSnapshot, state: &AppState) {
+        let editing_id = self.edit.state.borrow().as_ref().map(|(id, _)| id.clone());
+        if editing_id.is_some_and(|id| {
+            !chat
+                .messages
+                .iter()
+                .any(|m| m.id == id && super::message_actions::can_edit(m))
+        }) {
+            self.edit.cancel();
+        }
         // The live buffer owns local edits. Replaying a queued draft here would
         // overwrite newer typing, the selection, or an input method's preedit.
         self.ttl.set(chat.message_ttl_seconds);
@@ -392,8 +592,11 @@ impl Composer {
                     matches!(state, iris_chat_core::DirectChatCapabilityState::Available)
                 }),
         );
-        self.attach
-            .set_sensitive(!state.busy.uploading_attachment && !super::is_removed_group(chat));
+        self.attach.set_sensitive(
+            !self.edit.active()
+                && !state.busy.uploading_attachment
+                && !super::is_removed_group(chat),
+        );
         self.progress.set_visible(state.busy.uploading_attachment);
         if state.busy.uploading_attachment {
             if let Some(upload) = state

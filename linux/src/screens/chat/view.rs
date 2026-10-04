@@ -63,6 +63,8 @@ impl ChatView {
             clear(&self.footer);
             self.clear_capability();
             self.composer = None;
+            self.root
+                .insert_action_group("message", gtk::gio::ActionGroup::NONE);
             if let Some(target) = self.file_drop_target.take() {
                 self.root.remove_controller(&target);
                 self.root.remove_css_class("file-drop-target");
@@ -139,6 +141,8 @@ impl ChatView {
         if let Some(gate) = gate {
             clear(&self.footer);
             self.composer = None;
+            self.root
+                .insert_action_group("message", gtk::gio::ActionGroup::NONE);
             if let Some(target) = self.file_drop_target.take() {
                 self.root.remove_controller(&target);
                 self.root.remove_css_class("file-drop-target");
@@ -149,6 +153,7 @@ impl ChatView {
         } else {
             clear(&self.footer);
             let composer = composer::Composer::new(chat, state, manager);
+            composer.install_edit_action(&self.root, manager, &self.chat_id);
             let viewport = self.timeline.as_ref().unwrap().viewport.clone();
             composer.on_send(move || viewport.follow_latest());
             let target = composer.file_drop_target(manager, &self.chat_id);

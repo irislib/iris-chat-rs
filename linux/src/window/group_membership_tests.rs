@@ -59,6 +59,8 @@ pub(super) fn run(
         },
     ];
     chat.messages = vec![ChatMessageSnapshot {
+        edit_history: vec![],
+        deleted_for_everyone: false,
         system_notice_owner_pubkey_hex: None,
         id: "membership-history".into(),
         chat_id: chat_id.clone(),

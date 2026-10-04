@@ -6,6 +6,12 @@
             BorderThickness="0,1,0,0"
             Padding="14,10">
         <StackPanel Orientation="Vertical">
+            <DockPanel x:Name="EditBanner" Visibility="Collapsed" Margin="0,0,0,8">
+                <Button Content="Cancel" DockPanel.Dock="Right" Click="OnCancelEdit"
+                        Style="{StaticResource GhostButton}" HorizontalAlignment="Right" />
+                <TextBlock Text="Editing message" Foreground="{StaticResource TextMuted}"
+                           VerticalAlignment="Center" />
+            </DockPanel>
             <ItemsControl x:Name="StagedAttachmentsList"
                           Visibility="Collapsed"
                           Margin="0,0,0,8">
@@ -104,7 +110,7 @@
                         Margin="8,0,0,0"
                         Padding="16,8"
                         Click="OnSend">
-                    <TextBlock Text="Send" />
+                    <TextBlock x:Name="SendLabel" Text="Send" />
                 </Button>
             </Grid>
         </StackPanel>

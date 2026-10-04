@@ -802,6 +802,18 @@ fn messaging_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw
     }
     group.add(&receipts);
 
+    let deletions = adw::SwitchRow::builder()
+        .title("Allow others to delete their messages")
+        .build();
+    deletions.set_active(prefs.allow_message_deletion_by_others);
+    let manager = manager.clone();
+    deletions.connect_active_notify(move |row| {
+        manager.dispatch(AppAction::SetAllowMessageDeletionByOthers {
+            enabled: row.is_active(),
+        });
+    });
+    group.add(&deletions);
+
     group
 }
 

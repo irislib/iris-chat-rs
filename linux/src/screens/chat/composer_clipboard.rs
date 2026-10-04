@@ -43,7 +43,7 @@ pub(super) fn install(
             return;
         } // Ordinary text uses GTK's native paste.
         input.stop_signal_emission_by_name("paste-clipboard");
-        if !can_attach(&manager, &chat) {
+        if input.has_css_class("editing-message") || !can_attach(&manager, &chat) {
             return;
         }
         let account = manager.current_state().account;
@@ -91,6 +91,7 @@ pub(super) fn install(
                 return;
             };
             if input.root().is_none()
+                || input.has_css_class("editing-message")
                 || !can_attach(&manager, &chat)
                 || manager.current_state().account != account
                 || manager.attachment_draft_generation() != generation

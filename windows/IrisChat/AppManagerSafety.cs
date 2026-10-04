@@ -20,6 +20,8 @@ public sealed partial class AppManager
             AppAction.SendAttachments value => value.chatId,
             AppAction.SendTyping value => value.chatId,
             AppAction.ToggleReaction value => value.chatId,
+            AppAction.EditMessage value => value.chatId,
+            AppAction.DeleteMessageForEveryone value => value.chatId,
             _ => null,
         };
         return chatId != null && IsRemovedFromGroup(chatId);

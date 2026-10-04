@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Text;
 using System.Windows;
@@ -29,6 +30,15 @@ public class MessageInfoWindow : Window
             Background = bg;
         }
         Content = BuildContent();
+        PropertyChangedEventHandler changed = (_, _) =>
+        {
+            var chat = App.CurrentManager.CurrentChat;
+            var current = chat?.chatId == message.chatId ? chat.messages.FirstOrDefault(m => m.id == message.id) : null;
+            if (current == null || current.deletedForEveryone != message.deletedForEveryone ||
+                current.body != message.body || !(current.editHistory ?? []).SequenceEqual(message.editHistory ?? [])) Close();
+        };
+        Loaded += (_, _) => App.CurrentManager.PropertyChanged += changed;
+        Closed += (_, _) => App.CurrentManager.PropertyChanged -= changed;
     }
 
     private FrameworkElement BuildContent()

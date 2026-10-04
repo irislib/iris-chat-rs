@@ -51,7 +51,9 @@ public partial class MessageBubble : UserControl
         Bubble.CornerRadius = message.isOutgoing
             ? new CornerRadius(18, clusterStart ? 18 : 4, clusterEnd ? 18 : 4, 18)
             : new CornerRadius(clusterStart ? 18 : 4, 18, 18, clusterEnd ? 18 : 4);
-        MetaRow.Visibility = showFooter ? Visibility.Visible : Visibility.Collapsed;
+        MetaRow.Visibility = showFooter || message.editHistory is { Length: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+        EditedButton.Visibility = message.editHistory is { Length: > 0 } && !message.deletedForEveryone
+            ? Visibility.Visible : Visibility.Collapsed;
         SystemNoticeProfile.Visibility = Visibility.Collapsed;
         BuildContextMenu(message);
 
@@ -67,10 +69,11 @@ public partial class MessageBubble : UserControl
             AuthorText.Visibility = Visibility.Collapsed;
         }
 
-        BodyText.Text = message.body ?? string.Empty;
-        BodyText.Visibility = string.IsNullOrEmpty(message.body) ? Visibility.Collapsed : Visibility.Visible;
+        BodyText.Text = message.deletedForEveryone ? "Message deleted" : message.body ?? string.Empty;
+        BodyText.Visibility = string.IsNullOrEmpty(BodyText.Text) ? Visibility.Collapsed : Visibility.Visible;
         ApplyJumbomojiFont(message.body);
         ApplyBodyTruncation(message.body);
+        BodyText.FontStyle = message.deletedForEveryone ? FontStyles.Italic : FontStyles.Normal;
 
         if (message.kind == ChatMessageKind.System)
         {
@@ -111,11 +114,11 @@ public partial class MessageBubble : UserControl
             _ => string.Empty,
         };
 
-        DirectTransfer.Content = message.directTransfer is {} transfer
+        DirectTransfer.Content = !message.deletedForEveryone && message.directTransfer is {} transfer
             ? new DirectFileTransferCard(message.chatId, transfer) : null;
-        DirectTransfer.Visibility = message.directTransfer is null ? Visibility.Collapsed : Visibility.Visible;
+        DirectTransfer.Visibility = message.deletedForEveryone || message.directTransfer is null ? Visibility.Collapsed : Visibility.Visible;
 
-        if (message.attachments != null && message.attachments.Length > 0)
+        if (!message.deletedForEveryone && message.attachments != null && message.attachments.Length > 0)
         {
             AttachmentsList.ItemsSource = null;
             var panel = new StackPanel();
@@ -148,7 +151,7 @@ public partial class MessageBubble : UserControl
     private void BuildContextMenu(ChatMessageSnapshot message)
     {
         var menu = new ContextMenu();
-        if (message.kind != ChatMessageKind.System && !App.CurrentManager.IsRemovedFromGroup(message.chatId))
+        if (!message.deletedForEveryone && message.kind != ChatMessageKind.System && !App.CurrentManager.IsRemovedFromGroup(message.chatId))
         {
             var react = new MenuItem { Header = "React" };
             foreach (var emoji in ReactionPickerEmojis())
@@ -168,15 +171,37 @@ public partial class MessageBubble : UserControl
 
         var forward = new MenuItem { Header = "Forward" };
         forward.Click += OnForwardMessage;
-        menu.Items.Add(forward);
+        if (!message.deletedForEveryone) menu.Items.Add(forward);
 
         var copy = new MenuItem { Header = "Copy text" };
         copy.Click += OnCopyText;
-        menu.Items.Add(copy);
+        if (!message.deletedForEveryone) menu.Items.Add(copy);
 
         var info = new MenuItem { Header = "Info" };
         info.Click += OnShowInfo;
         menu.Items.Add(info);
+
+        if (!App.CurrentManager.IsRemovedFromGroup(message.chatId) && CanEdit(message))
+        {
+            var edit = new MenuItem { Header = "Edit message" };
+            edit.Click += (_, _) => EditRequested?.Invoke(message);
+            menu.Items.Add(edit);
+        }
+        if (!message.deletedForEveryone && message.editHistory is { Length: > 0 })
+        {
+            var history = new MenuItem { Header = "Edit history" };
+            history.Click += OnShowEditHistory;
+            menu.Items.Add(history);
+        }
+        var deleteLocal = new MenuItem { Header = "Delete for me" };
+        deleteLocal.Click += (_, _) => App.CurrentManager.DeleteLocalMessage(message.chatId, message.id);
+        menu.Items.Add(deleteLocal);
+        if (!App.CurrentManager.IsRemovedFromGroup(message.chatId) && CanDeleteForEveryone(message))
+        {
+            var deleteEveryone = new MenuItem { Header = "Delete for everyone" };
+            deleteEveryone.Click += (_, _) => ConfirmDeleteForEveryone(message);
+            menu.Items.Add(deleteEveryone);
+        }
 
         ContextMenu = menu;
     }

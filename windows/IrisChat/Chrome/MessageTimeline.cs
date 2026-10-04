@@ -14,6 +14,7 @@ internal sealed class MessageTimeline
     private readonly ScrollViewer _scroll;
     private readonly ItemsControl _list;
     private readonly Action _loadOlder;
+    private readonly Action<ChatMessageSnapshot>? _editMessage;
     private readonly Dictionary<string, Row> _rows = new();
     private bool _following = true;
     private bool _updating;
@@ -23,9 +24,11 @@ internal sealed class MessageTimeline
     private sealed record Row(MessageBubble View, ChatMessageSnapshot Message, bool Author, string Label,
         MessageGrouping.Layout Grouping);
 
-    public MessageTimeline(ScrollViewer scroll, ItemsControl list, Action loadOlder)
+    public MessageTimeline(ScrollViewer scroll, ItemsControl list, Action loadOlder,
+        Action<ChatMessageSnapshot>? editMessage = null)
     {
         _scroll = scroll; _list = list; _loadOlder = loadOlder;
+        _editMessage = editMessage;
         scroll.ScrollChanged += (_, e) =>
         {
             if (_updating) return;
@@ -49,7 +52,9 @@ internal sealed class MessageTimeline
         var transfer = left.directTransfer == null ? null : left.directTransfer with {
             files = right.directTransfer?.files ?? Array.Empty<DirectFileSnapshot>() };
         return left with { attachments = right.attachments, reactions = right.reactions, reactors = right.reactors,
-            recipientDeliveries = right.recipientDeliveries, deliveryTrace = trace, directTransfer = transfer } == right
+            recipientDeliveries = right.recipientDeliveries, deliveryTrace = trace, directTransfer = transfer,
+            editHistory = right.editHistory } == right
+            && (left.editHistory ?? []).SequenceEqual(right.editHistory ?? [])
             && left.attachments.SequenceEqual(right.attachments)
             && left.reactions.SequenceEqual(right.reactions) && left.reactors.SequenceEqual(right.reactors)
             && left.recipientDeliveries.SequenceEqual(right.recipientDeliveries)
@@ -86,6 +91,7 @@ internal sealed class MessageTimeline
             if (!_rows.TryGetValue(message.id, out var row))
             {
                 row = new Row(new MessageBubble { Uid = message.id }, message, author, label, grouping);
+                row.View.EditRequested += selected => _editMessage?.Invoke(selected);
                 row.View.Bind(message, author, label, grouping.Start, grouping.End, grouping.Footer);
                 _rows.Add(message.id, row); changed = true;
             }

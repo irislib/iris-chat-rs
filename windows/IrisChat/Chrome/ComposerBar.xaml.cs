@@ -13,6 +13,9 @@ namespace IrisChat.Chrome;
 public partial class ComposerBar : UserControl
 {
     public event Action<string, IList<string>>? Submitted;
+    public event Action<string, string>? EditSubmitted;
+    public string? EditingMessageId { get; private set; }
+    private string _savedDraft = string.Empty;
     public event Action<bool>? AttachRequested;
     public event Action? Typing;
     public event Action? StoppedTyping;
@@ -34,7 +37,7 @@ public partial class ComposerBar : UserControl
     {
         InitializeComponent();
         StagedAttachmentsList.ItemsSource = _staged;
-        _ = new AttachmentPasteTarget(Input, () => AttachmentPasteScope?.Invoke() is {} destination
+        _ = new AttachmentPasteTarget(Input, () => EditingMessageId == null && AttachmentPasteScope?.Invoke() is {} destination
                 ? new AttachmentPasteContext(destination, _draftGeneration, SendDirectly) : null,
             paths => AddAttachments(paths), _clipboardFiles,
             () => App.CurrentManager.ShowToast("Could not paste files."));
@@ -49,6 +52,11 @@ public partial class ComposerBar : UserControl
 
     public void Clear()
     {
+        EditingMessageId = null;
+        _savedDraft = string.Empty;
+        EditBanner.Visibility = Visibility.Collapsed;
+        SendLabel.Text = "Send";
+        AttachButton.IsEnabled = true;
         _draftGeneration++;
         Input.Clear();
         _clipboardFiles.Dispose();
@@ -59,6 +67,7 @@ public partial class ComposerBar : UserControl
 
     public void AddAttachments(IEnumerable<string> filePaths)
     {
+        if (EditingMessageId != null) return;
         foreach (var path in filePaths)
         {
             if (string.IsNullOrWhiteSpace(path)) continue;
@@ -70,6 +79,36 @@ public partial class ComposerBar : UserControl
 
     public IList<string> StagedFilePaths => _staged.Select(a => a.FilePath).ToList();
 
+    public void BeginEdit(string messageId, string text)
+    {
+        if (EditingMessageId == null) _savedDraft = Input.Text;
+        _draftGeneration++;
+        EditingMessageId = messageId;
+        EditBanner.Visibility = Visibility.Visible;
+        SendLabel.Text = "Save";
+        AttachButton.IsEnabled = false;
+        UpdateStagedVisibility();
+        Input.Text = text;
+        Input.CaretIndex = text.Length;
+        FocusInput();
+    }
+
+    public void CancelEdit()
+    {
+        if (EditingMessageId == null) return;
+        EditingMessageId = null;
+        _draftGeneration++;
+        EditBanner.Visibility = Visibility.Collapsed;
+        SendLabel.Text = "Send";
+        AttachButton.IsEnabled = true;
+        Input.Text = _savedDraft;
+        _savedDraft = string.Empty;
+        UpdateStagedVisibility();
+        FocusInput();
+    }
+
+    private void OnCancelEdit(object sender, RoutedEventArgs e) => CancelEdit();
+
     public void FocusInput()
     {
         Input.Focus();
@@ -78,6 +117,12 @@ public partial class ComposerBar : UserControl
 
     private void OnInputKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Escape && EditingMessageId != null)
+        {
+            e.Handled = true;
+            CancelEdit();
+            return;
+        }
         if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Shift) == 0)
         {
             e.Handled = true;
@@ -104,6 +149,7 @@ public partial class ComposerBar : UserControl
 
     private void OnAttach(object sender, RoutedEventArgs e)
     {
+        if (EditingMessageId != null) return;
         var menu = new ContextMenu { PlacementTarget = AttachButton, Placement = PlacementMode.Top };
         var media = new MenuItem { Header = "Photos and videos", Icon = AttachmentMenuIcon(true) };
         media.Click += (_, _) => AttachRequested?.Invoke(true);
@@ -190,6 +236,13 @@ public partial class ComposerBar : UserControl
     {
         if (!SendAllowed) return;
         var text = Input.Text?.Trim() ?? string.Empty;
+        if (EditingMessageId is { } messageId)
+        {
+            if (text.Length == 0) return;
+            EditSubmitted?.Invoke(messageId, text);
+            CancelEdit();
+            return;
+        }
         var paths = StagedFilePaths;
         if (string.IsNullOrEmpty(text) && paths.Count == 0) return;
         _draftGeneration++;
@@ -203,8 +256,8 @@ public partial class ComposerBar : UserControl
 
     private void UpdateStagedVisibility()
     {
-        StagedAttachmentsList.Visibility = _staged.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-        DirectMode.Visibility = _staged.Count > 0 && DirectSendAllowed ? Visibility.Visible : Visibility.Collapsed;
+        StagedAttachmentsList.Visibility = _staged.Count == 0 || EditingMessageId != null ? Visibility.Collapsed : Visibility.Visible;
+        DirectMode.Visibility = _staged.Count > 0 && DirectSendAllowed && EditingMessageId == null ? Visibility.Visible : Visibility.Collapsed;
         if (_staged.Count == 0) DirectMode.IsChecked = false;
     }
 }

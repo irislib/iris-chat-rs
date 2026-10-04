@@ -19,7 +19,8 @@ internal static class HistoryTests
             $"Message {i}: " + string.Join(" ", Enumerable.Repeat("varied text", i % 12)),
             Array.Empty<MessageAttachmentSnapshot>(), Array.Empty<MessageReactionSnapshot>(), Array.Empty<MessageReactor>(),
             false, 100, null, DeliveryState.Received, Array.Empty<MessageRecipientDeliverySnapshot>(),
-            new MessageDeliveryTraceSnapshot(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), null), null)).ToArray();
+            new MessageDeliveryTraceSnapshot(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), null), null,
+            editHistory: Array.Empty<MessageEditSnapshot>())).ToArray();
         var chat = manager.CurrentChat! with { messages = all.Skip(160).ToArray() };
         MergeChecks(manager, all);
         WarmWindowChecks(manager.State, all);
