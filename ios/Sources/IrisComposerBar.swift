@@ -790,6 +790,7 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
         textView.delegate = context.coordinator
 
         scrollView.documentView = textView
+        textView.composerFocusRequested = isFocused
         scrollView.revealSelectionAfterNextLayout(in: textView)
         return scrollView
     }
@@ -814,12 +815,7 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
             nsView.revealSelectionAfterNextLayout(in: textView)
         }
 
-        if isFocused, textView.window?.firstResponder !== textView {
-            DispatchQueue.main.async { [weak textView] in
-                guard let textView else { return }
-                textView.window?.makeFirstResponder(textView)
-            }
-        }
+        textView.composerFocusRequested = isFocused
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: IrisComposerScrollView, context: Context) -> CGSize? {

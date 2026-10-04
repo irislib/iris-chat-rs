@@ -425,11 +425,6 @@ struct ChatScreen: View {
                                 // `shouldScroll`, so each send fires exactly one
                                 // animated scroll once the new bubble has been
                                 // laid out.
-                                .task(id: chatId) {
-                                    if IrisLayout.usesDesktopChrome {
-                                        isComposerFocused = true
-                                    }
-                                }
 
                                 if timelineIsVisible && !isNearBottom && !chat.messages.isEmpty {
                                     ChatJumpToBottomButton {
@@ -583,6 +578,11 @@ struct ChatScreen: View {
                                                 manager.dispatch(.setChatDraft(chatId: chatId, text: text))
                                             }
                                             stopTypingIfNeeded()
+                                        }
+                                        .task(id: chatId) {
+                                            if IrisLayout.usesDesktopChrome {
+                                                isComposerFocused = true
+                                            }
                                         }
                                     }
                                 }

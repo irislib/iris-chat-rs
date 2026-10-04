@@ -42,6 +42,34 @@ final class IrisChatMacComposerTests: XCTestCase {
         return (box, parent.makeCoordinator())
     }
 
+    func testMacComposerFocusWaitsForWindowAttachment() {
+        let editor = IrisComposerNSTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 50))
+        editor.composerFocusRequested = true
+        runMainLoop()
+        let window = NSWindow(contentRect: editor.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        defer { window.orderOut(nil) }
+        let container = NSView(frame: editor.frame)
+        let search = NSTextField(frame: editor.frame)
+        container.addSubview(search)
+        window.contentView = container
+        window.makeFirstResponder(search)
+        container.addSubview(editor)
+        runMainLoop()
+        XCTAssertTrue(window.firstResponder === editor)
+    }
+
+    func testMacComposerCancelledFocusDoesNotStealFocus() {
+        let editor = IrisComposerNSTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 50))
+        let window = NSWindow(contentRect: editor.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        defer { window.orderOut(nil) }
+        window.contentView = editor
+        window.makeFirstResponder(nil)
+        editor.composerFocusRequested = true
+        editor.composerFocusRequested = false
+        runMainLoop()
+        XCTAssertFalse(window.firstResponder === editor)
+    }
+
     func testMacComposerIgnoresStaleBindingEcho() {
         let harness = makeCoordinator(bindingText: "hell")
         let textView = NSTextView()

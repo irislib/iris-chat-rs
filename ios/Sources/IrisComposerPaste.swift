@@ -76,6 +76,26 @@ protocol IrisComposerNSTextViewCommandDelegate: AnyObject {
 }
 
 final class IrisComposerNSTextView: NSTextView {
+    // SwiftUI may request focus before AppKit has attached this view to a
+    // window. Retry on attachment, and discard deferred requests after blur.
+    var composerFocusRequested = false {
+        didSet { applyComposerFocusIfNeeded() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyComposerFocusIfNeeded()
+    }
+
+    private func applyComposerFocusIfNeeded() {
+        guard composerFocusRequested, window != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.composerFocusRequested, let window = self.window,
+                  window.firstResponder !== self else { return }
+            window.makeFirstResponder(self)
+        }
+    }
+
     let composerMeasurement = IrisComposerTextMeasurement()
     weak var composerCommandDelegate: IrisComposerNSTextViewCommandDelegate?
     var onPasteAttachments: ((IrisClipboardAttachments) -> Void)?
