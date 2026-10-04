@@ -339,18 +339,60 @@ fn chat_page_busy_shared_connection_is_unavailable_not_empty() {
 }
 
 #[test]
+fn ffi_chat_around_shared_connection_waits_for_writer_without_losing_search_hit() {
+    let (app, database, _directory, chat_id) = chat_page_database_fixture(120);
+    // Exercise the mobile reader path even on a desktop test host.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        app.shared_db.write().unwrap().as_mut().unwrap().path = None;
+    }
+    let writer = database.lock().unwrap();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (page_tx, page_rx) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        started_tx.send(()).unwrap();
+        let page = app.chat_snapshot_around_message(chat_id, "page-0".into(), 40, 40);
+        page_tx.send(page).unwrap();
+    });
+    started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let premature = page_rx.recv_timeout(Duration::from_millis(100));
+    drop(writer);
+    let page = match premature {
+        Ok(page) => page,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            page_rx.recv_timeout(Duration::from_secs(2)).unwrap()
+        }
+        Err(error) => panic!("around reader disconnected: {error}"),
+    };
+    reader.join().unwrap();
+    let page = page.expect("a busy writer must not discard a one-shot historical search read");
+    assert_eq!(page.messages.len(), 41);
+    assert_eq!(page.messages.first().unwrap().id, "page-0");
+    assert_eq!(page.messages.last().unwrap().id, "page-40");
+}
+
+#[test]
 fn ffi_chat_page_distinguishes_empty_history_from_query_failure() {
     let (app, database, _directory, chat_id) = chat_page_database_fixture(0);
     let empty = app.chat_snapshot(chat_id.clone(), 80).unwrap();
     assert!(empty.messages.is_empty());
+    let missing = app
+        .chat_snapshot_around_message(chat_id.clone(), "missing".into(), 40, 40)
+        .unwrap();
+    assert!(missing.messages.is_empty());
     database
         .lock()
         .unwrap()
         .execute_batch("DROP TABLE messages")
         .unwrap();
     assert!(
-        app.chat_snapshot(chat_id, 80).is_none(),
+        app.chat_snapshot(chat_id.clone(), 80).is_none(),
         "query failure cannot mark pagination exhausted"
+    );
+    assert!(
+        app.chat_snapshot_around_message(chat_id, "missing".into(), 40, 40)
+            .is_none(),
+        "around-page query failure must remain distinguishable from a missing target"
     );
 }
 

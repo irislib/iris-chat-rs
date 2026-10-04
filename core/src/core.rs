@@ -433,9 +433,14 @@ fn load_chat_messages(
             ChatPageRequest::Before { .. } | ChatPageRequest::Around { .. } => None,
         };
     };
-    // Contention is not evidence of an empty history. Shells must not mark
-    // older pages exhausted when a concurrent checkpoint temporarily owns it.
-    let conn = shared.try_lock().ok()?;
+    let conn = match request {
+        // Search jumps are one-shot reads on shell background workers. Mobile
+        // shares the writer, so wait for it instead of losing the requested
+        // target. First-paint reads must remain nonblocking.
+        ChatPageRequest::Around { .. } => shared.lock().ok()?,
+        // Contention is not evidence that the remaining history is empty.
+        _ => shared.try_lock().ok()?,
+    };
     let result = match request {
         ChatPageRequest::Latest { limit } => storage::load_recent_messages(&conn, chat_id, limit),
         ChatPageRequest::Before {
@@ -448,7 +453,9 @@ fn load_chat_messages(
             after_limit,
         } => storage::load_messages_around(&conn, chat_id, message_id, before_limit, after_limit),
     };
-    let messages = result.ok()?;
+    let messages = result
+        .map_err(|error| crate::perflog!("chat.page.read.failed error={error}"))
+        .ok()?;
     Some(
         messages
             .iter()
