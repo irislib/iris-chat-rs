@@ -12,12 +12,14 @@ extension View {
     func observeChatTimelineScroll(
         coordinator: ChatTimelineInteractionCoordinator,
         viewportHeight: CGFloat,
+        onLayout: @escaping () -> Void,
         onPan: @escaping (CGFloat, CGFloat) -> Void
     ) -> some View {
 #if os(iOS)
         background(
             ChatTimelineScrollObserver(
                 timelineCoordinator: coordinator,
+                onLayout: onLayout,
                 onPan: onPan
             )
             .frame(width: 0, height: viewportHeight)
@@ -177,31 +179,40 @@ final class WindowTouchDownGestureRecognizer: UIGestureRecognizer, UIGestureReco
 
 struct ChatTimelineScrollObserver: UIViewRepresentable {
     let timelineCoordinator: ChatTimelineInteractionCoordinator
+    let onLayout: () -> Void
     let onPan: (CGFloat, CGFloat) -> Void
 
     func makeUIView(context: Context) -> ChatTimelineScrollObserverView {
         let view = ChatTimelineScrollObserverView()
         view.timelineCoordinator = timelineCoordinator
+        view.onLayout = onLayout
         view.onPan = onPan
         return view
     }
 
     func updateUIView(_ uiView: ChatTimelineScrollObserverView, context: Context) {
         uiView.timelineCoordinator = timelineCoordinator
+        uiView.onLayout = onLayout
         uiView.onPan = onPan
         uiView.bindToEnclosingScrollView()
     }
 
     static func dismantleUIView(_ uiView: ChatTimelineScrollObserverView, coordinator: ()) {
         uiView.unbind()
+        uiView.onLayout = nil
+        uiView.onPan = nil
     }
 }
 
 final class ChatTimelineScrollObserverView: UIView {
     weak var timelineCoordinator: ChatTimelineInteractionCoordinator?
     var onPan: ((CGFloat, CGFloat) -> Void)?
+    var onLayout: (() -> Void)?
+    private var layoutNotificationScheduled = false
 
     private weak var observedScrollView: UIScrollView?
+    private var contentSizeObservation: NSKeyValueObservation?
+    private var offsetObservation: NSKeyValueObservation?
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -214,6 +225,23 @@ final class ChatTimelineScrollObserverView: UIView {
         super.layoutSubviews()
         bindToEnclosingScrollView()
         timelineCoordinator?.applyPendingViewportResize()
+        timelineCoordinator?.applyPendingHistoryViewportAnchor()
+        scheduleLayoutNotification()
+    }
+
+    private func scheduleLayoutNotification() {
+        // A content-size commit need not lay out this fixed-size child again.
+        // Both native events wake pending geometry work outside the transaction.
+        guard !layoutNotificationScheduled else { return }
+        layoutNotificationScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.layoutNotificationScheduled = false
+            guard self.observedScrollView != nil else { return }
+            self.timelineCoordinator?.applyPendingViewportResize()
+            self.timelineCoordinator?.applyPendingHistoryViewportAnchor()
+            self.onLayout?()
+        }
     }
 
     func bindToEnclosingScrollView() {
@@ -226,12 +254,24 @@ final class ChatTimelineScrollObserverView: UIView {
         unbind()
         observedScrollView = scrollView
         timelineCoordinator?.scrollView = scrollView
+        contentSizeObservation = scrollView.observe(\.contentSize, options: [.prior]) { [weak self] _, change in
+            if change.isPrior { self?.timelineCoordinator?.historyExtentWillChange() }
+            else {
+                self?.timelineCoordinator?.historyExtentDidChange()
+                self?.scheduleLayoutNotification()
+            }
+        }
+        offsetObservation = scrollView.observe(\.contentOffset) { [weak self] _, _ in
+            self?.timelineCoordinator?.recordNativeScrollPosition()
+        }
         scrollView.panGestureRecognizer.addTarget(self, action: #selector(handleScrollPan(_:)))
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillResize), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardDidResize), name: UIResponder.keyboardDidChangeFrameNotification, object: nil)
     }
 
     func unbind() {
+        contentSizeObservation = nil
+        offsetObservation = nil
         NotificationCenter.default.removeObserver(self)
         if let scrollView = observedScrollView {
             scrollView.panGestureRecognizer.removeTarget(self, action: #selector(handleScrollPan(_:)))
@@ -239,6 +279,9 @@ final class ChatTimelineScrollObserverView: UIView {
         if timelineCoordinator?.scrollView === observedScrollView {
             timelineCoordinator?.scrollView = nil
             timelineCoordinator?.appliedViewportLayout = nil
+            timelineCoordinator?.pendingViewportResize = nil
+            timelineCoordinator?.keyboardViewportAnchor = nil
+            timelineCoordinator?.historyViewportAnchor = nil
         }
         observedScrollView = nil
     }

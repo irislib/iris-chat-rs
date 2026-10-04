@@ -168,6 +168,9 @@ final class ChatTimelineInteractionCoordinator: ObservableObject {
     var viewportHeight: CGFloat = 0
     var keyboardViewportAnchor: ChatKeyboardViewportAnchor?
     var appliedViewportLayout: ChatTimelineViewportLayout?
+    var historyViewportAnchor: ChatTimelineHistoryAnchor?
+    var historyLayoutScheduled = false
+    var latestPage = ChatTimelinePageFrames()
 #endif
     var messageContentFrames: [String: CGRect] = [:]
     var audioControlFrames: [CGRect] = []
@@ -175,6 +178,7 @@ final class ChatTimelineInteractionCoordinator: ObservableObject {
 
     func stopScrolling() {
 #if os(iOS)
+        historyViewportAnchor = nil
         guard let scrollView else { return }
         scrollView.layer.removeAllAnimations()
         scrollView.setContentOffset(scrollView.contentOffset, animated: false)
@@ -209,7 +213,7 @@ struct ChatTimelineTopMinYPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = -.greatestFiniteMagnitude
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+        value = max(value, nextValue())
     }
 }
 
@@ -239,11 +243,29 @@ struct ChatAudioControlFramePreferenceKey: PreferenceKey {
     }
 }
 
-struct ChatMessageContentFramePreferenceKey: PreferenceKey {
-    static var defaultValue: [String: CGRect] = [:]
+struct ChatTimelinePageFrames: Equatable {
+    var chatID = ""
+    var firstMessageID: String?
+    var lastMessageID: String?
+    var layoutGeneration = 0
+    var frames: [String: CGRect] = [:]
+    var heights: [String: CGFloat] = [:]
+    var contentHeight: CGFloat = 0
+}
 
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+struct ChatMessageContentFramePreferenceKey: PreferenceKey {
+    static var defaultValue = ChatTimelinePageFrames()
+    static func reduce(value: inout ChatTimelinePageFrames, nextValue: () -> ChatTimelinePageFrames) {
+        let next = nextValue()
+        value.frames.merge(next.frames, uniquingKeysWith: { _, new in new })
+        value.heights.merge(next.heights, uniquingKeysWith: { _, new in new })
+        value.contentHeight = max(value.contentHeight, next.contentHeight)
+        if !next.chatID.isEmpty {
+            value.chatID = next.chatID
+            value.firstMessageID = next.firstMessageID
+            value.lastMessageID = next.lastMessageID
+            value.layoutGeneration = next.layoutGeneration
+        }
     }
 }
 
@@ -430,7 +452,7 @@ struct ChatMessageRow: View, Equatable {
         GeometryReader { geometry in
             Color.clear.preference(
                 key: ChatMessageContentFramePreferenceKey.self,
-                value: [message.id: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))]
+                value: ChatTimelinePageFrames(frames: [message.id: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))])
             )
         }
     }
@@ -809,5 +831,59 @@ struct ChatMessageRow: View, Equatable {
                 )
                 .accessibilityHidden(true)
         }
+    }
+}
+
+
+
+struct ChatTimelineMessageLayout<Content: View>: View {
+    let content: Content
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+    var body: some View {
+#if os(iOS)
+        VStack(spacing: 0) { content }
+#else
+        LazyVStack(spacing: 0) { content }
+#endif
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func irisTimelineRowMeasurement(id: String) -> some View {
+#if os(iOS)
+        background(GeometryReader { geometry in
+            Color.clear.preference(key: ChatMessageContentFramePreferenceKey.self,
+                value: ChatTimelinePageFrames(heights: [id: geometry.size.height]))
+        })
+#else
+        self
+#endif
+    }
+}
+
+struct ChatTimelineScrollRequest {
+    let targetID: String
+    let anchor: UnitPoint
+    let animated: Bool
+    let chatGeneration: Int
+    var hasIssued = false
+}
+
+/// Measure the complete iOS scroll content, including its minimum height and
+/// trailing marker. A shrinking native extent must commit before correction.
+struct ChatTimelineContentLayout<Content: View>: View {
+    let content: Content
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+    var body: some View {
+#if os(iOS)
+        VStack(spacing: 8) { content }
+            .background(GeometryReader { geometry in
+                Color.clear.preference(key: ChatMessageContentFramePreferenceKey.self,
+                    value: ChatTimelinePageFrames(contentHeight: geometry.size.height))
+            })
+#else
+        content
+#endif
     }
 }

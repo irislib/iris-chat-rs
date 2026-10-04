@@ -46,6 +46,40 @@ final class ChatHistoryWindowTests: XCTestCase {
         XCTAssertEqual(history.replaceRecent(raw, in: visible), visible)
     }
 
+    func testAdvancedLatestPageKeepsTheGapAvailableToExplicitHistoryReads() {
+        var raw = messages(1...400)
+        // Reproduce the synthetic 400-message run: 316/317 share the cached
+        // boundary's second; 318...320 share the newer latest page's second.
+        for index in raw.indices { raw[index].createdAtSecs = index < 317 ? 10 : 11 }
+        raw[319].expiresAtSecs = 30
+        let cached = Array(raw[315..<395])
+        var history = ChatHistoryWindow(recent: cached)
+        var visible = history.replaceLatestPage(Array(raw[320...]), in: cached, now: 20)
+        XCTAssertEqual(visible.map(\.id), (321...400).map(String.init))
+        visible = history.replaceRecent(raw, in: visible, now: 20)
+
+        let olderPage = Array(raw[240..<320])
+        visible = history.addPage(olderPage, to: visible, now: 20)
+        XCTAssertEqual(visible.count, 160)
+        XCTAssertEqual(Set(olderPage.map(\.id)).subtracting(visible.map(\.id)), [],
+                       "Advancing the latest page must not strand 318...320 between the two pages")
+        for start in stride(from: 160, through: 0, by: -80) {
+            visible = history.addPage(Array(raw[start..<(start + 80)]), to: visible, now: 20)
+            visible = history.replaceRecent(raw, in: visible, now: 20)
+        }
+        XCTAssertEqual(visible.count, 400)
+        XCTAssertTrue(visible == raw, "All four explicit pages retain their exact rows and order")
+
+        raw.removeAll { $0.id == "318" }
+        raw[317].body = "fresh edit to 319"
+        visible = history.replaceRecent(raw, in: visible, now: 30)
+        let authoritative = visible
+        visible = history.addPage(olderPage, to: visible, now: 30)
+        XCTAssertEqual(visible, authoritative, "Late pages cannot undo deletion, expiry or a fresh edit")
+        XCTAssertFalse(visible.contains { $0.id == "318" || $0.id == "320" })
+        XCTAssertEqual(visible.first { $0.id == "319" }?.body, "fresh edit to 319")
+    }
+
     func testRawUpdatesRefreshPagedRowsAndKnownDeletionsRejectLatePages() {
         var raw = messages(1...240)
         var history = ChatHistoryWindow(recent: messages(161...240))

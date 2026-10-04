@@ -30,6 +30,7 @@ struct IrisDirectChatCapabilityBar: View {
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
         .background(.regularMaterial)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("directChatCapabilityBar")
     }
 

@@ -19,7 +19,10 @@ final class ChatPaginationUITests: IrisChatUITestCase {
         XCTAssertTrue(waitForChatList(app, timeout: 60))
         openSeededChat(app)
         let timeline = element(app, "chatTimeline")
-        XCTAssertTrue(timeline.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitUntil(timeout: 10) {
+            guard timeline.exists, let snapshot = try? timeline.snapshot() else { return false }
+            return messageSnapshots(in: snapshot).contains { snapshot.frame.intersects($0.frame) }
+        }, "The initial message page must be visible before measuring a drag")
         var observedOlderPage = false
         var observedHeights: [CGFloat] = []
 
@@ -45,6 +48,10 @@ final class ChatPaginationUITests: IrisChatUITestCase {
                 abs($0.frame.midY - (viewport.minY + viewport.height * 0.3))
                     < abs($1.frame.midY - (viewport.minY + viewport.height * 0.3))
             }) else {
+                capture(app, name: "mixed-history-anchor-candidates")
+                let detail = XCTAttachment(string: "viewport=\(viewport) rows=" + messageSnapshots(in: before).map { "\($0.label.prefix(20)): \($0.frame)" }.joined(separator: "\n"))
+                detail.lifetime = .keepAlways
+                add(detail)
                 XCTFail("No visible synthetic message could anchor the next controlled scroll")
                 return
             }
@@ -102,6 +109,99 @@ final class ChatPaginationUITests: IrisChatUITestCase {
                        "Measured system rows must remain ineligible for reply swipes")
 #endif
         capture(app, name: "long-group-final-notice")
+    }
+
+    func testDeepHistoryReturnsToLatestAndSendsFromTheBoundedWindow() throws {
+#if os(macOS)
+        throw XCTSkip("Bounded native timeline window is iOS-specific")
+#else
+        let app = fixtureApp([
+            "IRIS_UI_TEST_SEED_PEER": "self",
+            "IRIS_UI_TEST_SEED_COUNT": "400",
+            "IRIS_UI_TEST_SEED_MIXED_HEIGHTS": "1",
+            "IRIS_PERF_LOG": "1",
+        ])
+        submitWelcomeName(app)
+        XCTAssertTrue(waitForChatList(app, timeout: 60))
+        openSeededChat(app)
+        let timeline = element(app, "chatTimeline")
+        XCTAssertTrue(waitUntil(timeout: 10) {
+            guard timeline.exists, let snapshot = try? timeline.snapshot() else { return false }
+            return messageSnapshots(in: snapshot).contains { snapshot.frame.intersects($0.frame) }
+        }, "The initial message page must be visible before measuring a drag")
+        var reachedOlderHistory = false
+        for _ in 0..<70 {
+            let snapshot = try timeline.snapshot()
+            let messages = messageSnapshots(in: snapshot)
+            XCTAssertLessThanOrEqual(messages.count, 160, "The UI must not accumulate every fetched row")
+            if messages.contains(where: {
+                snapshot.frame.intersects($0.frame) && (ordinal($0.label).map { $0 <= 70 } ?? false)
+            }) {
+                reachedOlderHistory = true
+                break
+            }
+            timeline.swipeDown(velocity: .fast)
+        }
+        XCTAssertTrue(reachedOlderHistory, "The real history path must cross more than two rendering windows")
+        capture(app, name: "deep-history-bounded-window")
+        // Return through a real eviction boundary, measuring a slow drag just
+        // as in the original prepend regression. Fast flings only approach it.
+        for _ in 0..<20 {
+            let snapshot = try timeline.snapshot()
+            if messageSnapshots(in: snapshot).contains(where: {
+                snapshot.frame.intersects($0.frame) && (ordinal($0.label).map { $0 >= 100 } ?? false)
+            }) { break }
+            timeline.swipeUp(velocity: .fast)
+        }
+        let initialWindowFirst = messageSnapshots(in: try timeline.snapshot()).compactMap { ordinal($0.label) }.min()
+        var crossedEviction = false
+        for _ in 0..<40 {
+            let before = try timeline.snapshot()
+            let viewport = before.frame
+            let messages = messageSnapshots(in: before)
+            XCTAssertLessThanOrEqual(messages.count, 160)
+            if messages.compactMap({ ordinal($0.label) }).min() != initialWindowFirst {
+                crossedEviction = true
+                break
+            }
+            let candidates = messages.filter {
+                viewport.contains($0.frame) && $0.frame.minY > viewport.minY + viewport.height * 0.32
+            }
+            guard let anchor = candidates.min(by: {
+                abs($0.frame.midY - (viewport.minY + viewport.height * 0.7))
+                    < abs($1.frame.midY - (viewport.minY + viewport.height * 0.7))
+            }) else { return XCTFail("No visible message for the eviction continuity check") }
+            let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.7))
+            let end = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.4))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.25)
+            let after = messageSnapshots(in: try timeline.snapshot()).first { $0.label == anchor.label }
+            XCTAssertNotNil(after, "Evicting offscreen rows must retain the visible message")
+            XCTAssertEqual((after?.frame.minY ?? .nan) - anchor.frame.minY, -viewport.height * 0.3,
+                           accuracy: max(20, viewport.height * 0.06), "A window swap must preserve the ongoing drag")
+        }
+        XCTAssertTrue(crossedEviction, "Return scrolling must actually replace the older rendering window")
+        let jump = element(app, "chatJumpToBottom")
+        XCTAssertTrue(jump.exists)
+        jump.tap()
+        let last = timeline.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'LAST_SCROLL_SENTINEL'")).firstMatch
+        let input = editableElement(app, "chatMessageInput")
+        let banner = element(app, "directChatCapabilityBar")
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            let bottom = banner.exists ? banner.frame.minY : input.frame.minY
+            return last.exists && timeline.frame.intersects(last.frame) && last.frame.maxY <= bottom + 1
+                && !element(app, "chatJumpToBottom").exists
+        }, "Jump to latest must show the final line above the composer after leaving the older window")
+        typeText("WINDOW_SEND_SENTINEL", into: input, app: app)
+        let started = Date()
+        element(app, "chatSendButton").tap()
+        let sent = timeline.staticTexts["WINDOW_SEND_SENTINEL"]
+        XCTAssertTrue(waitUntil(timeout: 5) { sent.exists && timeline.frame.intersects(sent.frame) })
+        let timing = XCTAttachment(string: "send_to_visible_with_ui_automation_seconds=\(Date().timeIntervalSince(started))")
+        timing.name = "bounded-window-send-timing"
+        timing.lifetime = .keepAlways
+        add(timing)
+        capture(app, name: "deep-history-latest-send")
+#endif
     }
 
     private func fixtureApp(_ environment: [String: String]) -> XCUIApplication {

@@ -1712,7 +1712,8 @@ final class AppManager: ObservableObject {
     }
 
     @discardableResult
-    func loadOlderMessages(chatId: String, completion: @escaping (Bool) -> Void = { _ in }) -> Bool {
+    func loadOlderMessages(chatId: String, willMerge: @escaping () -> Void = {},
+                           completion: @escaping (Bool) -> Void = { _ in }) -> Bool {
         let trimmedChat = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !localResetInFlight, !trimmedChat.isEmpty,
               !exhaustedOlderChatPages.contains(trimmedChat),
@@ -1756,6 +1757,7 @@ final class AppManager: ObservableObject {
                 if loadedPage.messages.count < Int(pageSize) {
                     self.exhaustedOlderChatPages.insert(trimmedChat)
                 }
+                willMerge()
                 self.mergeCurrentChatSnapshot(loadedPage)
                 completion(true)
             }

@@ -5,6 +5,7 @@ import UIKit
 struct ChatTimelineViewportLayout {
     let nativeHeight: CGFloat
     let viewportHeight: CGFloat
+    var offsetY: CGFloat? = nil
 }
 
 struct ChatKeyboardViewportAnchor {
@@ -84,24 +85,31 @@ func chatTimelineOffsetAfterResize(
 
 
 extension ChatTimelineInteractionCoordinator {
-    func resizeViewport(from previousHeight: CGFloat, to height: CGFloat) {
+    func resizeViewport(from previousHeight: CGFloat, to height: CGFloat, preservingPosition: Bool = true) {
 #if os(iOS)
         viewportHeight = height
         guard previousHeight > 0, height > 0, let scrollView else { return }
-        let old = keyboardViewportAnchor?.bounds ?? scrollView.bounds
-        let previous = keyboardViewportAnchor?.viewportHeight ?? previousHeight
-        var resized = old
-        resized.size.height += height - previous
-        guard resized.height > 0 else { return }
-        let offset = chatTimelineOffsetAfterResize(
-            oldBounds: old, newBounds: resized,
-            contentHeight: scrollView.contentSize.height,
-            inset: scrollView.adjustedContentInset
-        )
-        pendingViewportResize = (resized.height, offset)
-        // SwiftUI can publish geometry before UIKit applies its bounds. The
-        // content observer's matching layout applies this anchor; the next
-        // main turn also handles updates that share the observer's layout.
+        guard preservingPosition else {
+            prepareForExplicitScroll()
+            return
+        }
+        var old = keyboardViewportAnchor?.bounds ?? scrollView.bounds
+        if keyboardViewportAnchor == nil, let appliedViewportLayout {
+            old.size.height = appliedViewportLayout.nativeHeight
+            old.origin.y = appliedViewportLayout.offsetY ?? old.origin.y
+        }
+        let previous = keyboardViewportAnchor?.viewportHeight ?? appliedViewportLayout?.viewportHeight ?? previousHeight
+        // Effective viewport change and native bounds are different inputs:
+        // an inset-only change must not invent a taller native clamp range.
+        let offset = old.minY + previous - height
+        let minimum = -scrollView.adjustedContentInset.top
+        let maximum = max(minimum, scrollView.contentSize.height
+                          + scrollView.adjustedContentInset.bottom - scrollView.bounds.height)
+        // Effective height can change through insets alone. UIKit has already
+        // committed its native bounds when this viewport value is published.
+        pendingViewportResize = (scrollView.bounds.height, min(maximum, max(minimum, offset)))
+        // The content observer and the next main turn cover both a native
+        // layout pass and an inset-only update within the same bounds.
         DispatchQueue.main.async { [weak self] in
             self?.applyPendingViewportResize()
         }
@@ -109,6 +117,29 @@ extension ChatTimelineInteractionCoordinator {
     }
 
 #if os(iOS)
+    func prepareForExplicitScroll() {
+        // A search, reply, or latest jump supersedes positions captured before
+        // it. A later keyboard layout must start from the new native position.
+        historyViewportAnchor = nil
+        pendingViewportResize = nil
+        keyboardViewportAnchor = nil
+        if let scrollView, let height = visibleViewportMaxY {
+            appliedViewportLayout = ChatTimelineViewportLayout(
+                nativeHeight: scrollView.bounds.height, viewportHeight: height,
+                offsetY: scrollView.contentOffset.y)
+        }
+    }
+
+    func recordNativeScrollPosition() {
+        guard let scrollView, let layout = appliedViewportLayout,
+              abs(scrollView.bounds.height - layout.nativeHeight) < 0.5,
+              abs((visibleViewportMaxY ?? 0) - layout.viewportHeight) < 0.5 else { return }
+        // Track real dragging and deceleration while this layout is current.
+        // A new inset/bounds can clamp the offset before layout notification;
+        // that mutation must not overwrite the previous viewport's position.
+        appliedViewportLayout?.offsetY = scrollView.contentOffset.y
+    }
+
     func captureKeyboardViewportAnchor(notification: Notification? = nil, now: CFTimeInterval = CACurrentMediaTime()) {
         guard let scrollView, viewportHeight > 0 else { return }
         let previousAnchor = keyboardViewportAnchor
@@ -140,7 +171,7 @@ extension ChatTimelineInteractionCoordinator {
 #if os(iOS)
         guard let scrollView else { return }
         if appliedViewportLayout == nil, pendingViewportResize == nil, viewportHeight > 0 {
-            appliedViewportLayout = ChatTimelineViewportLayout(nativeHeight: scrollView.bounds.height, viewportHeight: viewportHeight)
+            appliedViewportLayout = ChatTimelineViewportLayout(nativeHeight: scrollView.bounds.height, viewportHeight: viewportHeight, offsetY: scrollView.contentOffset.y)
         }
         guard let pendingViewportResize,
               abs(scrollView.bounds.height - pendingViewportResize.height) < 1 else { return }
@@ -175,7 +206,122 @@ extension ChatTimelineInteractionCoordinator {
             }
             UIView.performWithoutAnimation(update)
         }
-        appliedViewportLayout = ChatTimelineViewportLayout(nativeHeight: scrollView.bounds.height, viewportHeight: viewportHeight)
+        appliedViewportLayout = ChatTimelineViewportLayout(nativeHeight: scrollView.bounds.height, viewportHeight: viewportHeight, offsetY: scrollView.contentOffset.y)
 #endif
     }
 }
+
+#if os(iOS)
+struct ChatTimelineHistoryAnchor {
+    var chatID = ""
+    var firstMessageID = ""
+    var layoutGeneration = 0
+    let messageID: String
+    let originalContentY: CGFloat
+    var contentY: CGFloat?
+    var contentHeight: CGFloat = 0
+    var offsetBeforeExtentChange: CGFloat?
+    var clampCorrectionY: CGFloat = 0
+
+
+}
+
+extension ChatTimelineInteractionCoordinator {
+    func hasCommittedTimelineExtent(_ height: CGFloat) -> Bool {
+        guard height > 0, let scrollView else { return false }
+        return abs(scrollView.contentSize.height - height) <= 1
+    }
+
+    var visibleViewportMaxY: CGFloat? {
+        guard let scrollView else { return nil }
+        return scrollView.bounds.height - scrollView.adjustedContentInset.bottom
+    }
+
+    // Capture immediately before publishing the older page, not while its
+    // database read is pending and the user can continue scrolling.
+    func captureHistoryViewportAnchor(chatID: String, firstMessageID: String, layoutGeneration: Int = 0,
+                                      viewportMinY: CGFloat, viewportMaxY: CGFloat) {
+        historyViewportAnchor = nil
+        guard let scrollView else { return }
+        let visible = messageContentFrames.filter { _, frame in
+            frame.maxY > viewportMinY && frame.minY < viewportMaxY
+        }
+        guard let (id, frame) = visible.min(by: { $0.value.minY < $1.value.minY }) else { return }
+        historyViewportAnchor = ChatTimelineHistoryAnchor(
+            chatID: chatID, firstMessageID: firstMessageID, layoutGeneration: layoutGeneration,
+            messageID: id, originalContentY: frame.minY + scrollView.contentOffset.y)
+    }
+
+    @discardableResult
+    func restoreHistoryViewportAnchor(page: ChatTimelinePageFrames) -> Bool {
+        guard var anchor = historyViewportAnchor, let scrollView,
+              page.chatID == anchor.chatID, let first = page.firstMessageID,
+              first != anchor.firstMessageID || page.layoutGeneration != anchor.layoutGeneration,
+              let frame = page.frames[anchor.messageID] else { return false }
+        anchor.contentY = frame.minY + scrollView.contentOffset.y
+        anchor.contentHeight = page.contentHeight
+        historyViewportAnchor = anchor
+        if applyPendingHistoryViewportAnchor() { return true }
+        // Preference geometry can precede UIKit's new content extent. Stage
+        // one correction for the completed native layout, never an old extent.
+        if !historyLayoutScheduled {
+            historyLayoutScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                self?.historyLayoutScheduled = false
+                self?.applyPendingHistoryViewportAnchor()
+            }
+        }
+        return false
+    }
+
+    @discardableResult
+    func applyPendingHistoryViewportAnchor() -> Bool {
+        guard let anchor = historyViewportAnchor, let scrollView,
+              let contentY = anchor.contentY,
+              hasCommittedTimelineExtent(anchor.contentHeight) else { return false }
+        let offset = scrollView.contentOffset.y + contentY - anchor.originalContentY + anchor.clampCorrectionY
+        historyViewportAnchor = nil
+        if offset.isFinite, abs(offset - scrollView.contentOffset.y) > 1 {
+            UIView.performWithoutAnimation { scrollView.contentOffset.y = offset }
+        }
+        return true
+    }
+
+    func historyExtentWillChange() {
+        guard let scrollView, historyViewportAnchor != nil else { return }
+        historyViewportAnchor?.offsetBeforeExtentChange = scrollView.contentOffset.y
+    }
+
+    func historyExtentDidChange() {
+        guard let scrollView, let before = historyViewportAnchor?.offsetBeforeExtentChange else { return }
+        historyViewportAnchor?.offsetBeforeExtentChange = nil
+        let minimum = -scrollView.adjustedContentInset.top
+        let maximum = max(minimum, scrollView.contentSize.height
+                          + scrollView.adjustedContentInset.bottom - scrollView.bounds.height)
+        let clamped = min(maximum, max(minimum, before))
+        // Extent changes can clamp the offset before our one layout delta.
+        // Keep that correction separate from real dragging/deceleration.
+        if abs(clamped - before) > 0.5, abs(scrollView.contentOffset.y - clamped) <= 0.5 {
+            historyViewportAnchor?.clampCorrectionY += before - clamped
+        }
+    }
+
+    @discardableResult
+    func alignTimelineBottom(frame: CGRect, viewportMaxY: CGFloat,
+                             bottomSpacing: CGFloat, animated: Bool) -> Bool {
+        guard let scrollView, viewportMaxY > 0, !frame.isEmpty,
+              frame.maxY.isFinite else { return false }
+        let correction = frame.maxY + bottomSpacing - viewportMaxY
+        let minimum = -scrollView.adjustedContentInset.top
+        let maximum = max(minimum, scrollView.contentSize.height
+                          + scrollView.adjustedContentInset.bottom - scrollView.bounds.height)
+        let offset = min(maximum, max(minimum, scrollView.contentOffset.y + correction))
+        guard abs(offset - scrollView.contentOffset.y) > 0.5 else {
+            // A clamped estimate cannot prove that the last row was realized.
+            return abs(correction) <= 1
+        }
+        scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: offset), animated: animated)
+        return true
+    }
+}
+#endif

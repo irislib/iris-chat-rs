@@ -121,7 +121,7 @@ extension View {
     func irisDefaultScrollAnchorBottom() -> some View {
         if #available(iOS 18.0, macOS 15.0, *) {
             self.defaultScrollAnchor(.bottom, for: .initialOffset)
-        } else if #available(iOS 17.0, macOS 14.0, *) {
+        } else if #available(iOS 17.0, macOS 14.0, *), IrisLayout.usesDesktopChrome {
             self.defaultScrollAnchor(.bottom)
         } else {
             self

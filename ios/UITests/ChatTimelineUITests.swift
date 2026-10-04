@@ -132,6 +132,12 @@ final class ChatTimelineUITests: IrisChatUITestCase {
         XCTAssertTrue(waitUntil(timeout: 5) {
             latest.exists && !latest.frame.isEmpty && timeline.frame.intersects(latest.frame)
         }, "The actual final message must land inside the viewport after opening")
+        let composer = element(app, "chatMessageInput")
+        let banner = element(app, "directChatCapabilityBar")
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            let bottom = banner.exists ? banner.frame.minY : composer.frame.minY
+            return latest.exists && latest.frame.maxY <= bottom + 1
+        }, "The final line must clear the composer and any messaging status bar")
 
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.lifetime = .keepAlways
@@ -315,10 +321,15 @@ final class IrisChatTimelineUITests: IrisChatUITestCase {
                 format: "label BEGINSWITH 'FIRST_SCROLL_SENTINEL' OR value BEGINSWITH 'FIRST_SCROLL_SENTINEL'"
             )
         ).firstMatch
-        XCTAssertTrue(
-            oldestTimelineMessage.waitForExistence(timeout: 15),
-            "search hit outside the initial 80-message page did not load into the chat timeline"
-        )
+        let landed = waitUntil(timeout: 15) {
+            oldestTimelineMessage.exists && oldestTimelineMessage.isHittable
+                && element(app, "chatTimeline").frame.intersects(oldestTimelineMessage.frame)
+        }
+        let landing = XCTAttachment(screenshot: app.screenshot())
+        landing.name = "historical-search-landing"
+        landing.lifetime = .keepAlways
+        add(landing)
+        XCTAssertTrue(landed, "Search must load and visibly land on the message outside the initial 80-message page")
     }
 
     func testDesktopSidebarGroupedSearchOpensHistoricalMessage() throws {

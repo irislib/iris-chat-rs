@@ -77,7 +77,9 @@ struct ChatHistoryWindow {
         }
         olderIDs = Set(older.map(\.id))
         if let first = recent.first?.createdAtSecs {
-            recentBoundary = min(recentBoundary ?? first, first)
+            // A refreshed latest page can move forward; its previous boundary
+            // must not exclude the intervening rows from an explicit page.
+            recentBoundary = first
         }
         let result = merge(older, with: recent)
         // Preserve the displayed array's storage on repeated typing/draft updates.

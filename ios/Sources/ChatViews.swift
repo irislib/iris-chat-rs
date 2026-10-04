@@ -10,6 +10,8 @@ import AppKit
 struct ChatScreen: View {
     @Environment(\.irisPalette) private var palette
     @Environment(\.irisNavigationHeaderTopInset) private var navigationHeaderTopInset
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.displayScale) private var displayScale
     @ObservedObject var manager: AppManager
     let chatId: String
 
@@ -18,25 +20,29 @@ struct ChatScreen: View {
     @State private var sendFilesDirectly = false
     @State private var fileDropAvailable = false
     @State private var isPreparingDroppedAttachments = false
-    @State private var isNearBottom = true
-    @State private var shouldFollowLatest = true
-    @State private var forceScrollToLatest = false
-    @State private var pendingScrollSettle: DispatchWorkItem?
-    @State private var timelineUserScrollGeneration = 0
-    @State private var timelineScrollSettleGeneration = 0
-    @State private var timelineAutoFollowSuppressedUntil: Date?
-    @State private var timelineViewportMinY: CGFloat = 0
-    @State private var timelineViewportMaxY: CGFloat = 0
-    @State private var timelineTopMinY: CGFloat = -.greatestFiniteMagnitude
+    @State var isNearBottom = true
+    @State var shouldFollowLatest = true
+    @State var forceScrollToLatest = false
+    @State var pendingScrollSettle: DispatchWorkItem?
+    @State var timelineUserScrollGeneration = 0
+    @State var timelineScrollSettleGeneration = 0
+    @State var timelineAutoFollowSuppressedUntil: Date?
+    @State var timelineViewportMinY: CGFloat = 0
+    @State var timelineViewportMaxY: CGFloat = 0
+    @State var timelineTopMinY: CGFloat = -.greatestFiniteMagnitude
     @State private var timelineBottomMaxY: CGFloat = .greatestFiniteMagnitude
     @State private var timelineContentHeight: CGFloat = 0
     @State private var timelineDaySeparatorFrames: [String: ChatTimelineDaySeparatorFrame] = [:]
-    @State private var initialPlacement = ChatTimelineInitialPlacement()
-    @State private var timelineChatGeneration = 0
-    @State private var timelineReadyForDisplay = false
-    @State private var renderedMessageCount = 0
-    @State private var pendingPrependAnchorMessageId: String?
-    @StateObject private var timelineCoordinator = ChatTimelineInteractionCoordinator()
+    @State var initialPlacement = ChatTimelineInitialPlacement()
+    @State var timelineChatGeneration = 0
+    @State var timelineReadyForDisplay = false
+    @State var renderedMessageCount = 0
+    @State var pendingPrependAnchorMessageId: String?
+    @State private var rowHeightCache: [String: CGFloat] = [:]
+    @State var renderWindow = ChatTimelineRenderWindow()
+    @State var timelineLayoutGeneration = 0
+    @State var pendingTimelineScroll: ChatTimelineScrollRequest?
+    @StateObject var timelineCoordinator = ChatTimelineInteractionCoordinator()
     @State private var activeBubbleSwipe: ActiveMessageBubbleSwipe?
     @State private var activeMessageActionDockId: String?
     @State private var replyTarget: ChatMessageSnapshot?
@@ -51,11 +57,11 @@ struct ChatScreen: View {
     @State private var messageRequestDeleteChat: MessageRequestActionTarget?
     @State private var isComposerFocused = false
 
-    private var chat: CurrentChatSnapshot? {
+    var chat: CurrentChatSnapshot? {
         manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
     }
 
-    private var timelineIsVisible: Bool {
+    var timelineIsVisible: Bool {
         timelineReadyForDisplay && (chat?.messages.isEmpty != false
             || (!initialPlacement.isPending && !initialPlacement.isAwaitingVisibility))
     }
@@ -74,115 +80,130 @@ struct ChatScreen: View {
                             ZStack(alignment: .bottomTrailing) {
                                 GeometryReader { viewport in
                                     ScrollView {
-                                        let visibleMessages = chat.messages
-                                        // Realize only nearby rows. Initial placement targets the
-                                        // last message and waits for its actual visible geometry.
-                                        LazyVStack(spacing: 0) {
+                                        ChatTimelineContentLayout {
+                                            let ids = chat.messages.map(\.id)
+                                            let range = renderedTimelineRange(ids: ids)
+                                            let visibleMessages = Array(chat.messages[range])
+                                            let layoutGeneration = timelineLayoutGeneration
+                                            // Lay out one bounded window exactly; measured spacers
+                                            // preserve the coordinates of previously visited history.
+                                            ChatTimelineMessageLayout {
+                                                Color.clear.frame(height: ChatTimelineRenderWindow.spacerHeight(
+                                                    ids[..<range.lowerBound], measured: rowHeightCache))
+                                                    .accessibilityHidden(true)
+                                                Color.clear
+                                                    .frame(height: 1)
+                                                    .id(ChatTimelineAnchor.top)
+                                                    .accessibilityHidden(true)
+
+                                                ForEach(Array(visibleMessages.enumerated()), id: \.element.id) { index, message in
+                                                    let fullIndex = range.lowerBound + index
+                                                    let previous = fullIndex > 0 ? chat.messages[fullIndex - 1] : nil
+                                                    let next = fullIndex + 1 < chat.messages.count ? chat.messages[fullIndex + 1] : nil
+                                                    chatMessageRow(
+                                                        message: message,
+                                                        previous: previous,
+                                                        next: next,
+                                                        chat: chat,
+                                                        hidesInlineDayChip: floatingSeparator?.messageId == message.id,
+                                                        proxy: proxy
+                                                    )
+                                                }
+                                                Color.clear.frame(height: ChatTimelineRenderWindow.spacerHeight(
+                                                    ids[range.upperBound...], measured: rowHeightCache))
+                                                    .accessibilityHidden(true)
+                                            }
+                                            .transformPreference(ChatMessageContentFramePreferenceKey.self) { page in
+                                                page.chatID = chat.chatId
+                                                page.firstMessageID = visibleMessages.first?.id
+                                                page.lastMessageID = visibleMessages.last?.id
+                                                page.layoutGeneration = layoutGeneration
+                                            }
+                                            .padding(
+                                                .horizontal,
+                                                IrisLayout.usesDesktopChrome ? 18 : SignalConversationLayout.contentGutter
+                                            )
+                                            .padding(.top, SignalConversationLayout.contentTopMargin + navigationHeaderTopInset)
+                                            .padding(.bottom, SignalConversationLayout.contentBottomMargin)
+                                            .contentShape(Rectangle())
+                                            .simultaneousGesture(
+                                                TapGesture().onEnded {
+                                                    dismissComposerFocus()
+                                                }
+                                            )
+                                            .background(
+                                                // Publishes the timeline's
+                                                // intrinsic content height —
+                                                // this background sits on the
+                                                // padded timeline stack, so its
+                                                // size reflects "how tall do
+                                                // all the bubbles want to be"
+                                                // and changes only when bubbles
+                                                // are added/removed/resized,
+                                                // not when the user scrolls.
+                                                GeometryReader { geo in
+                                                    Color.clear.preference(
+                                                        key: ChatTimelineContentHeightPreferenceKey.self,
+                                                        value: geo.size.height
+                                                    )
+                                                    .preference(
+                                                        key: ChatTimelineTopMinYPreferenceKey.self,
+                                                        value: geo.frame(in: .named(ChatTimelineCoordinateSpace.name)).minY
+                                                    )
+                                                }
+                                            )
+                                            // Vertical ScrollView children do not
+                                            // automatically fill the viewport
+                                            // width on macOS. If the timeline stack
+                                            // keeps its ideal width, outgoing
+                                            // bubbles align to a narrow centered
+                                            // column instead of the chat pane edge.
+                                            .frame(width: viewport.size.width)
+                                            .frame(minHeight: viewport.size.height, alignment: .bottom)
+                                            .observeChatTimelineScroll(coordinator: timelineCoordinator, viewportHeight: viewport.size.height, onLayout: {
+                                                updateTimelineViewport(maxY: timelineViewportMaxY, proxy: proxy, chat: chat)
+                                                fulfillTimelineScroll(proxy: proxy)
+                                            }) { translationY, velocityY in
+                                                handleTimelineUserPan(translationY: translationY, velocityY: velocityY)
+                                            }
+
+                                            // Keep the end marker outside the message layout so it
+                                            // remains available on both eager and lazy platforms.
                                             Color.clear
                                                 .frame(height: 1)
-                                                .id(ChatTimelineAnchor.top)
+                                                .id(ChatTimelineAnchor.bottom)
                                                 .background(
                                                     GeometryReader { geometry in
                                                         Color.clear.preference(
-                                                            key: ChatTimelineTopMinYPreferenceKey.self,
-                                                            value: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name)).minY
+                                                            key: ChatTimelineBottomMaxYPreferenceKey.self,
+                                                            value: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name)).maxY
                                                         )
                                                     }
                                                 )
                                                 .accessibilityHidden(true)
-
-                                            ForEach(Array(visibleMessages.enumerated()), id: \.element.id) { index, message in
-                                                let previous = index > 0 ? visibleMessages[index - 1] : nil
-                                                let next = index + 1 < visibleMessages.count ? visibleMessages[index + 1] : nil
-                                                chatMessageRow(
-                                                    message: message,
-                                                    previous: previous,
-                                                    next: next,
-                                                    chat: chat,
-                                                    hidesInlineDayChip: floatingSeparator?.messageId == message.id,
-                                                    proxy: proxy
-                                                )
-                                            }
                                         }
-                                        .padding(
-                                            .horizontal,
-                                            IrisLayout.usesDesktopChrome ? 18 : SignalConversationLayout.contentGutter
-                                        )
-                                        .padding(.top, SignalConversationLayout.contentTopMargin + navigationHeaderTopInset)
-                                        .padding(.bottom, SignalConversationLayout.contentBottomMargin)
-                                        .contentShape(Rectangle())
-                                        .simultaneousGesture(
-                                            TapGesture().onEnded {
-                                                dismissComposerFocus()
-                                            }
-                                        )
-                                        .background(
-                                            // Publishes the timeline's
-                                            // intrinsic content height —
-                                            // this background sits on the
-                                            // padded timeline stack, so its
-                                            // size reflects "how tall do
-                                            // all the bubbles want to be"
-                                            // and changes only when bubbles
-                                            // are added/removed/resized,
-                                            // not when the user scrolls.
-                                            GeometryReader { geo in
-                                                Color.clear.preference(
-                                                    key: ChatTimelineContentHeightPreferenceKey.self,
-                                                    value: geo.size.height
-                                                )
-                                            }
-                                        )
-                                        // Vertical ScrollView children do not
-                                        // automatically fill the viewport
-                                        // width on macOS. If the timeline stack
-                                        // keeps its ideal width, outgoing
-                                        // bubbles align to a narrow centered
-                                        // column instead of the chat pane edge.
-                                        .frame(width: viewport.size.width)
-                                        .frame(minHeight: viewport.size.height, alignment: .bottom)
-                                        .observeChatTimelineScroll(coordinator: timelineCoordinator, viewportHeight: viewport.size.height) { translationY, velocityY in
-                                            handleTimelineUserPan(translationY: translationY, velocityY: velocityY)
-                                        }
-
-                                        // Trailing bottom anchor sits OUTSIDE
-                                        // the LazyVStack so SwiftUI always
-                                        // realises it. When it was a child of
-                                        // the LazyVStack, SwiftUI would only
-                                        // lay it out once it scrolled into
-                                        // view — so on a freshly opened long
-                                        // chat its frame.maxY stayed at the
-                                        // default `.greatestFiniteMagnitude`,
-                                        // `chatTimelineIsNearBottom` returned
-                                        // false, and the jump-to-bottom button
-                                        // flashed up even though we were at
-                                        // the latest message.
-                                        Color.clear
-                                            .frame(height: 1)
-                                            .id(ChatTimelineAnchor.bottom)
-                                            .background(
-                                                GeometryReader { geometry in
-                                                    Color.clear.preference(
-                                                        key: ChatTimelineBottomMaxYPreferenceKey.self,
-                                                        value: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name)).maxY
-                                                    )
-                                                }
-                                            )
-                                            .accessibilityHidden(true)
                                     }
                                     .irisDefaultScrollAnchorBottom()
+                                    .irisOnChange(of: viewport.size.width) { _ in preserveBrowsingPosition() }
                                     .coordinateSpace(name: ChatTimelineCoordinateSpace.name)
                                     .accessibilityIdentifier("chatTimeline")
                                     .overlay {
                                         GeometryReader { geometry in
                                             let frame = geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))
+#if os(iOS)
+                                            let visibleTop = frame.minY + geometry.safeAreaInsets.top
+#else
+                                            let visibleTop = frame.minY
+#endif
                                             Color.clear
                                                 .preference(
                                                     key: ChatTimelineViewportMinYPreferenceKey.self,
-                                                    value: frame.minY
+                                                    value: visibleTop
                                                 )
                                                 .preference(
                                                     key: ChatTimelineViewportMaxYPreferenceKey.self,
+                                                    // safeAreaInset already reduces this overlay frame.
+                                                    // Subtracting its inherited inset again hides valid space.
                                                     value: frame.maxY
                                                 )
                                         }
@@ -203,6 +224,9 @@ struct ChatScreen: View {
                                     pendingScrollSettle?.cancel()
                                     pendingScrollSettle = nil
                                     timelineCoordinator.messageContentFrames = [:]
+#if os(iOS)
+                                    timelineCoordinator.historyViewportAnchor = nil
+#endif
                                     initialPlacement.reset()
                                     timelineReadyForDisplay = false
                                     isNearBottom = true
@@ -211,6 +235,10 @@ struct ChatScreen: View {
                                     timelineAutoFollowSuppressedUntil = nil
                                     renderedMessageCount = 0
                                     pendingPrependAnchorMessageId = nil
+                                    rowHeightCache.removeAll()
+                                    renderWindow = ChatTimelineRenderWindow()
+                                    pendingTimelineScroll = nil
+                                    timelineLayoutGeneration += 1
                                     activeBubbleSwipe = nil
                                     activeMessageActionDockId = nil
                                     timelineCoordinator.bubblePanRejected = false
@@ -236,20 +264,7 @@ struct ChatScreen: View {
                                     maybeLoadOlderMessages(chat: chat)
                                 }
                                 .onPreferenceChange(ChatTimelineViewportMaxYPreferenceKey.self) { value in
-                                    let nearBottom = chatTimelineIsNearBottom(
-                                        viewportMaxY: value,
-                                        bottomMaxY: timelineBottomMaxY
-                                    )
-                                    if !chatTimelineGeometryMatches(timelineViewportMaxY, value) {
-                                        timelineCoordinator.resizeViewport(from: timelineViewportMaxY, to: value)
-                                        timelineViewportMaxY = value
-                                    }
-                                    updateTimelineFollowState(
-                                        nearBottom: nearBottom,
-                                        messageCount: chat.messages.count
-                                    )
-                                    advanceInitialPlacement(proxy: proxy, chat: chat)
-                                    recordInteractionLayout()
+                                    updateTimelineViewport(maxY: value, proxy: proxy, chat: chat)
                                 }
                                 .onPreferenceChange(ChatTimelineBottomMaxYPreferenceKey.self) { value in
                                     let nearBottom = chatTimelineIsNearBottom(
@@ -280,13 +295,45 @@ struct ChatScreen: View {
                                     let grew = previous > 0 && value > previous + 1
                                     let canAutoFollow = (shouldFollowLatest || isNearBottom)
                                         && !timelineAutoFollowIsSuppressed()
+                                        && pendingTimelineScroll == nil && manager.pendingScrollMessageId == nil
+                                        && pendingPrependAnchorMessageId == nil
                                     if !initialPlacement.isPending, canAutoFollow, grew {
                                         scrollToBottom(proxy: proxy, animated: false)
                                     }
                                     advanceInitialPlacement(proxy: proxy, chat: chat)
                                 }
-                                .onPreferenceChange(ChatMessageContentFramePreferenceKey.self) { value in
-                                    timelineCoordinator.messageContentFrames = value
+                                .onPreferenceChange(ChatMessageContentFramePreferenceKey.self) { page in
+                                    guard page.chatID == chatId else { return }
+                                    timelineCoordinator.messageContentFrames = page.frames
+#if os(iOS)
+                                    for (id, height) in page.heights where rowHeightCache[id] != height {
+                                        rowHeightCache[id] = height
+                                    }
+                                    timelineCoordinator.latestPage = page
+                                    if timelineCoordinator.historyViewportAnchor == nil,
+                                       let boundary = pendingPrependAnchorMessageId,
+                                       chat.messages.first?.id != boundary {
+                                        pendingPrependAnchorMessageId = nil
+                                    }
+                                    if let anchor = timelineCoordinator.historyViewportAnchor,
+                                       let first = page.firstMessageID,
+                                       first != anchor.firstMessageID || page.layoutGeneration != anchor.layoutGeneration {
+                                        if !chat.messages.contains(where: { $0.id == anchor.messageID }) {
+                                            timelineCoordinator.historyViewportAnchor = nil
+                                            pendingPrependAnchorMessageId = nil
+                                        } else if timelineCoordinator.restoreHistoryViewportAnchor(page: page) {
+                                            pendingPrependAnchorMessageId = nil
+                                            // Offset changed; these frames still belong to the old viewport.
+                                            return
+                                        }
+                                    }
+#endif
+                                    updateTimelineFollowState(nearBottom: chatTimelineIsNearBottom(
+                                        viewportMaxY: timelineViewportMaxY, bottomMaxY: timelineBottomMaxY),
+                                        messageCount: chat.messages.count)
+                                    fulfillTimelineScroll(proxy: proxy)
+                                    maybeShiftRenderWindow(page: page, chat: chat)
+                                    maybeLoadOlderMessages(chat: chat)
                                     advanceInitialPlacement(proxy: proxy, chat: chat)
                                     recordInteractionLayout()
                                 }
@@ -306,13 +353,22 @@ struct ChatScreen: View {
                                         return
                                     }
                                     let messageCount = chat.messages.count
+#if os(iOS)
+                                    let retainedIDs = Set(chat.messages.map(\.id))
+                                    for id in rowHeightCache.keys where !retainedIDs.contains(id) {
+                                        rowHeightCache[id] = nil
+                                    }
+#endif
                                     if let anchorId = pendingPrependAnchorMessageId,
+                                       chat.messages.first?.id != anchorId,
                                        chat.messages.contains(where: { $0.id == anchorId }) {
                                         renderedMessageCount = messageCount
                                         initialPlacement.cancel()
+#if !os(iOS)
                                         scrollToMessage(proxy: proxy, messageId: anchorId, anchor: .top, animated: false)
-                                        revealTimelineAfterLayout()
                                         pendingPrependAnchorMessageId = nil
+#endif
+                                        revealTimelineAfterLayout()
                                         return
                                     }
                                     let messageCountIncreased = messageCount > renderedMessageCount
@@ -341,6 +397,7 @@ struct ChatScreen: View {
                                         || forceScrollToLatest
                                         || (
                                             messageCountIncreased
+                                                && pendingTimelineScroll == nil && manager.pendingScrollMessageId == nil
                                                 && (shouldFollowLatest || isNearBottom)
                                                 && !timelineAutoFollowIsSuppressed()
                                         )
@@ -461,6 +518,10 @@ struct ChatScreen: View {
                                             }
                                         )
                                     } else {
+                                        IrisDelayedCapabilityStatus(state: capability) {
+                                            manager.dispatch(.retryDirectChatCapability(chatId: chat.chatId))
+                                        }
+                                        .id(chat.chatId)
                                         IrisComposerBar(
                                             composerState: composerState,
                                             attachments: $selectedAttachments,
@@ -523,13 +584,6 @@ struct ChatScreen: View {
                                             }
                                             stopTypingIfNeeded()
                                         }
-                                        .overlay(alignment: .top) {
-                                            IrisDelayedCapabilityStatus(state: capability) {
-                                                manager.dispatch(.retryDirectChatCapability(chatId: chat.chatId))
-                                            }
-                                            .id(chat.chatId)
-                                            .alignmentGuide(.top) { $0[.bottom] }
-                                        }
                                     }
                                 }
                             }
@@ -589,7 +643,18 @@ struct ChatScreen: View {
             deleteTarget: $messageRequestDeleteChat,
             manager: manager
         ))
+        .onReceive(manager.$state) { incoming in
+#if os(iOS)
+            guard case .chat(let activeID) = incoming.router.screenStack.last,
+                  activeID == chatId, let current = chat, let next = incoming.currentChat,
+                  next.chatId == chatId, next.messages != current.messages else { return }
+            preserveBrowsingPosition()
+#endif
+        }
+        .irisOnChange(of: dynamicTypeSize) { _ in preserveBrowsingPosition() }
+        .irisOnChange(of: displayScale) { _ in preserveBrowsingPosition() }
         .onDisappear {
+            pendingTimelineScroll = nil
             timelineChatGeneration += 1
             timelineScrollSettleGeneration += 1
             composerState.invalidatePendingAttachments()
@@ -788,30 +853,12 @@ struct ChatScreen: View {
                 )
             }
         ))
+        .irisTimelineRowMeasurement(id: message.id)
         .id(message.id)
     }
 
-    private func maybeLoadOlderMessages(chat: CurrentChatSnapshot) {
-        guard timelineIsVisible, !initialPlacement.isPending,
-              let firstMessageId = chat.messages.first?.id,
-              timelineTopMinY.isFinite,
-              timelineViewportMinY.isFinite,
-              timelineTopMinY >= timelineViewportMinY - 44 else {
-            return
-        }
-        if pendingPrependAnchorMessageId == nil {
-            pendingPrependAnchorMessageId = firstMessageId
-        }
-        if !manager.loadOlderMessages(chatId: chat.chatId, completion: { loaded in
-            if !loaded {
-                pendingPrependAnchorMessageId = nil
-            }
-        }) {
-            pendingPrependAnchorMessageId = nil
-        }
-    }
-
     private func handleTimelineUserPan(translationY: CGFloat, velocityY: CGFloat) {
+        if abs(translationY) > 6 || abs(velocityY) > 60 { pendingTimelineScroll = nil }
         if pendingScrollSettle != nil {
             pendingScrollSettle?.cancel()
             pendingScrollSettle = nil
@@ -820,6 +867,10 @@ struct ChatScreen: View {
         }
 
         if translationY > 6 || velocityY > 60 {
+            if shouldFollowLatest, let chat {
+                let ids = chat.messages.map(\.id)
+                renderWindow.start(at: renderWindow.range(in: ids).lowerBound, in: ids)
+            }
             shouldFollowLatest = false
             timelineAutoFollowSuppressedUntil = Date().addingTimeInterval(1.2)
         } else if translationY < -6 || velocityY < -60 {
@@ -920,99 +971,6 @@ struct ChatScreen: View {
 #endif
     }
 
-    private func timelineAutoFollowIsSuppressed(now: Date = Date()) -> Bool {
-        guard let until = timelineAutoFollowSuppressedUntil else { return false }
-        return until > now
-    }
-
-    private func resumeTimelineAutoFollow() {
-        timelineAutoFollowSuppressedUntil = nil
-    }
-
-    private func chatTimelineScrollTaskToken(for chat: CurrentChatSnapshot) -> String {
-        [
-            chat.chatId,
-            chat.messages.first?.id ?? "",
-            chat.messages.last?.id ?? "",
-            String(chat.messages.count),
-            manager.pendingScrollMessageId ?? "",
-            pendingPrependAnchorMessageId ?? "",
-        ].joined(separator: "|")
-    }
-
-    private func recordInteractionLayout() {
-        guard let timing = manager.interactionTiming, let chat else { return }
-        timing.layout(chatID: chat.chatId, frames: timelineCoordinator.messageContentFrames,
-                      viewportMinY: timelineViewportMinY, viewportMaxY: timelineViewportMaxY,
-                      ready: timelineIsVisible, messageCount: chat.messages.count)
-    }
-
-    private func advanceInitialPlacement(proxy: ScrollViewProxy, chat: CurrentChatSnapshot) {
-        guard initialPlacement.isPending || initialPlacement.isAwaitingVisibility,
-              manager.pendingScrollMessageId == nil, pendingPrependAnchorMessageId == nil,
-              manager.state.currentChat?.chatId == chat.chatId,
-              let last = chat.messages.last,
-              manager.state.currentChat?.messages.last?.id == last.id else { return }
-        let targetID = last.id
-        let step = initialPlacement.update(
-            targetID: targetID, frame: timelineCoordinator.messageContentFrames[targetID],
-            viewportMinY: timelineViewportMinY, viewportMaxY: timelineViewportMaxY
-        )
-        if step == .scroll || step == .scrollAndReveal {
-            renderedMessageCount = chat.messages.count
-            shouldFollowLatest = true
-            scrollToBottom(proxy: proxy, animated: false)
-        }
-        if step == .reveal || step == .scrollAndReveal {
-            revealTimelineAfterLayout()
-        }
-    }
-
-    private func revealTimelineAfterLayout() {
-        guard !timelineReadyForDisplay else { return }
-        let generation = timelineChatGeneration
-        DispatchQueue.main.async {
-            guard timelineChatGeneration == generation, !timelineReadyForDisplay else { return }
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                timelineReadyForDisplay = true
-            }
-            recordInteractionLayout()
-        }
-    }
-
-    /// Centre the targeted bubble in the viewport for search-hit
-    /// taps. Reuses the multi-tick re-scroll pattern from
-    /// `scrollToBottom` so quoted-reply previews / images that
-    /// resolve a moment after layout don't end up just off-screen.
-    private func scrollToMessage(
-        proxy: ScrollViewProxy,
-        messageId: String,
-        anchor: UnitPoint = .center,
-        animated: Bool = true
-    ) {
-        pendingScrollSettle?.cancel()
-        pendingScrollSettle = nil
-        timelineScrollSettleGeneration += 1
-        let scroll = {
-            let action = {
-                proxy.scrollTo(messageId, anchor: anchor)
-            }
-            if animated {
-                withAnimation(.easeOut(duration: 0.25)) {
-                    action()
-                }
-            } else {
-                action()
-            }
-        }
-        DispatchQueue.main.async { scroll() }
-        if animated {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { scroll() }
-        }
-    }
-
     /// Debounce composer writes so a fast typist generates one
     /// SQLite-row update every ~500ms instead of one per keystroke.
     /// On disappear / send we flush eagerly so the latest text always
@@ -1066,58 +1024,6 @@ struct ChatScreen: View {
         return [manager.seenEligibilityToken, messageIds].joined(separator: "|")
     }
 
-    private func scrollToBottom(
-        proxy: ScrollViewProxy,
-        animated: Bool,
-        settleAfterLayout: Bool = true
-    ) {
-        // Prefer the last message's own id over the trailing 1pt
-        // anchor: SwiftUI must realise & measure the targeted row, so
-        // a scroll to the actual final bubble forces SwiftUI to lay
-        // it out and lands the bottom of that bubble at the
-        // viewport's bottom. Scrolling to the empty anchor view
-        // doesn't have that effect — SwiftUI happily resolves it to
-        // its current (wrong) position when sibling rows haven't
-        // been measured yet.
-        //
-        // We previously queued four scrolls (immediate + async + 100ms
-        // + 300ms) to catch images/quotes settling. With the chat
-        // re-scrolling on every state push (send → queued, queued →
-        // pending, pending → sent), those overlapping batches stacked
-        // up to ~12 scrollTo calls per send, which iOS rendered as a
-        // visible flicker. We now keep a single deferred follow-up
-        // and cancel any earlier pending one — so a fresh send
-        // collapses cleanly to one immediate scroll + one short
-        // settle, with no leftover scrolls fighting the next state
-        // push.
-        let target = chat?.messages.last?.id ?? ChatTimelineAnchor.bottom
-        let scroll = {
-            proxy.scrollTo(target, anchor: .bottom)
-        }
-        if animated {
-            withAnimation(.easeOut(duration: 0.2)) { scroll() }
-        } else {
-            scroll()
-        }
-        pendingScrollSettle?.cancel()
-        guard settleAfterLayout else {
-            pendingScrollSettle = nil
-            timelineScrollSettleGeneration += 1
-            return
-        }
-        let userScrollGeneration = timelineUserScrollGeneration
-        timelineScrollSettleGeneration += 1
-        let settleGeneration = timelineScrollSettleGeneration
-        let guardedItem = DispatchWorkItem {
-            guard timelineScrollSettleGeneration == settleGeneration else { return }
-            guard timelineUserScrollGeneration == userScrollGeneration else { return }
-            guard !timelineAutoFollowIsSuppressed() else { return }
-            scroll()
-        }
-        pendingScrollSettle = guardedItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: guardedItem)
-    }
-
     // The wire format for a quoted reply only carries author + a snippet
     // (max 96 chars, newlines flattened). To find the message the snippet
     // came from, walk backwards from the replying message and match the
@@ -1136,24 +1042,12 @@ struct ChatScreen: View {
             guard candidate.author == reply.author else { continue }
             let candidateSnippet = replySnippet(for: candidate)
             if candidateSnippet == target {
-                withAnimation(.easeOut(duration: 0.25)) {
-                    proxy.scrollTo(candidate.id, anchor: .center)
-                }
+                scrollToMessage(proxy: proxy, messageId: candidate.id)
                 #if os(iOS)
                 PlatformHaptics.messageMenuOpened()
                 #endif
                 return
             }
-        }
-    }
-
-    private func updateTimelineFollowState(nearBottom: Bool, messageCount: Int) {
-        if isNearBottom != nearBottom {
-            isNearBottom = nearBottom
-        }
-        let nextShouldFollow = nearBottom && !timelineAutoFollowIsSuppressed()
-        if messageCount == renderedMessageCount, shouldFollowLatest != nextShouldFollow {
-            shouldFollowLatest = nextShouldFollow
         }
     }
 

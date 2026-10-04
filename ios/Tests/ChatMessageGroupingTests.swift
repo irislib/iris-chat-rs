@@ -102,7 +102,7 @@ final class ChatMessageGroupingTests: XCTestCase {
                 }
             }
             .coordinateSpace(name: ChatTimelineCoordinateSpace.name)
-            .onPreferenceChange(ChatMessageContentFramePreferenceKey.self) { frames = $0 }
+            .onPreferenceChange(ChatMessageContentFramePreferenceKey.self) { frames = $0.frames }
             .padding(24).frame(width: 700)
             .background(Color.black)
             .environment(\.colorScheme, .dark)

@@ -4,6 +4,182 @@ import XCTest
 @testable import IrisChat
 
 final class ChatTimelineViewportAnchorTests: XCTestCase {
+    func testTopGeometryReductionKeepsTheMeasuredValueAcrossEmptySiblings() {
+        var value: CGFloat = -435
+        ChatTimelineTopMinYPreferenceKey.reduce(value: &value) { ChatTimelineTopMinYPreferenceKey.defaultValue }
+        XCTAssertEqual(value, -435)
+    }
+
+    @MainActor
+    func testVisibleBottomUsesNativeInsetOnceAndIgnoresTheScrollFrameOrigin() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 62, width: 390, height: 778))
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        scroll.contentInset.bottom = 56
+        XCTAssertEqual(coordinator.visibleViewportMaxY, 722)
+        scroll.contentInset.bottom = 98
+        XCTAssertEqual(coordinator.visibleViewportMaxY, 680, "A 42-point bar removes exactly 42 points")
+        scroll.contentOffset.y = 3_000
+        XCTAssertEqual(coordinator.visibleViewportMaxY, 680, "Content offset and outer frame origin are not visible height")
+    }
+
+    @MainActor
+    func testHistoryAnchorWaitsForTheNewNativeContentExtent() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        scroll.contentSize = CGSize(width: 390, height: 1_000)
+        scroll.contentOffset.y = 100
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
+            chatID: "chat", firstMessageID: "81", messageID: "83", originalContentY: 220)
+        let loaded = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "1",
+            frames: ["83": CGRect(x: 0, y: 920, width: 100, height: 80)], contentHeight: 3_000)
+        XCTAssertFalse(coordinator.restoreHistoryViewportAnchor(page: loaded))
+        XCTAssertEqual(scroll.contentOffset.y, 100, "Never correct against the previous page's clamp range")
+        XCTAssertNotNil(coordinator.historyViewportAnchor)
+        scroll.contentSize.height = 3_000
+        XCTAssertTrue(coordinator.applyPendingHistoryViewportAnchor())
+        XCTAssertEqual(scroll.contentOffset.y, 900)
+        XCTAssertFalse(coordinator.applyPendingHistoryViewportAnchor())
+    }
+
+    @MainActor
+    func testHistoryAnchorWaitsForAShrinkingNativeContentExtent() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        scroll.contentSize.height = 3_000
+        scroll.contentOffset.y = 1_000
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
+            chatID: "chat", firstMessageID: "1", messageID: "83", originalContentY: 1_120)
+        let page = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "21",
+            frames: ["83": CGRect(x: 0, y: -280, width: 100, height: 80)], contentHeight: 2_600)
+        XCTAssertFalse(coordinator.restoreHistoryViewportAnchor(page: page))
+        XCTAssertEqual(scroll.contentOffset.y, 1_000)
+        XCTAssertNotNil(coordinator.historyViewportAnchor)
+        scroll.contentSize.height = 2_600
+        XCTAssertTrue(coordinator.applyPendingHistoryViewportAnchor())
+        XCTAssertEqual(scroll.contentOffset.y, 600)
+    }
+
+    @MainActor
+    func testHistoryAndKeyboardCorrectionsComposeWithoutUndoingTheResize() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        scroll.contentSize = CGSize(width: 390, height: 3_000)
+        scroll.contentOffset.y = 100
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        coordinator.viewportHeight = 600
+        coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
+            chatID: "chat", firstMessageID: "81", messageID: "83", originalContentY: 220,
+            contentY: 1_020, contentHeight: 3_000)
+        coordinator.applyPendingViewportResize()
+        scroll.bounds.size.height = 300
+        coordinator.resizeViewport(from: 600, to: 300)
+        coordinator.applyPendingViewportResize()
+        XCTAssertEqual(scroll.contentOffset.y, 400)
+        XCTAssertTrue(coordinator.applyPendingHistoryViewportAnchor())
+        XCTAssertEqual(scroll.contentOffset.y, 1_200,
+                       "The history delta must preserve the keyboard's 300-point composer-relative shift")
+    }
+
+    @MainActor
+    func testCancelledHistoryLayoutCannotMoveAnotherChat() {
+        let coordinator = ChatTimelineInteractionCoordinator()
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        scroll.contentSize.height = 1_000
+        coordinator.scrollView = scroll
+        coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
+            chatID: "chat", firstMessageID: "1", messageID: "3", originalContentY: 80,
+            contentY: 900, contentHeight: 2_000)
+        coordinator.stopScrolling()
+        scroll.contentSize.height = 2_000
+        XCTAssertFalse(coordinator.applyPendingHistoryViewportAnchor())
+        XCTAssertEqual(scroll.contentOffset.y, 0)
+    }
+
+    @MainActor
+    func testHistoryCorrectionPreservesNativeMovementAfterCapture() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        scroll.contentSize.height = 3_000
+        scroll.contentOffset.y = 160
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
+            chatID: "chat", firstMessageID: "81", messageID: "83", originalContentY: 220)
+        let page = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "1",
+            frames: ["83": CGRect(x: 0, y: 860, width: 100, height: 80)], contentHeight: 3_000)
+        XCTAssertTrue(coordinator.restoreHistoryViewportAnchor(page: page))
+        XCTAssertEqual(scroll.contentOffset.y, 960, "Keep UIKit's 60-point deceleration movement")
+    }
+
+    @MainActor
+    func testHistoryDeltaDoesNotIncludeAnAutomaticExtentClamp() throws {
+        let window = try makeWindow()
+        defer { window.isHidden = true }
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        scroll.contentInsetAdjustmentBehavior = .never
+        scroll.contentSize.height = 3_000
+        scroll.contentOffset.y = 2_200
+        window.rootViewController!.view.addSubview(scroll)
+        let coordinator = ChatTimelineInteractionCoordinator()
+        let observer = ChatTimelineScrollObserverView()
+        observer.timelineCoordinator = coordinator
+        scroll.addSubview(observer)
+        observer.bindToEnclosingScrollView()
+        coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
+            chatID: "chat", firstMessageID: "1", messageID: "83", originalContentY: 2_300)
+        scroll.contentSize.height = 2_600
+        scroll.layoutIfNeeded()
+        XCTAssertEqual(scroll.contentOffset.y, 2_000, "Exercise a real UIKit extent clamp before the layout delta")
+        let page = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "21",
+            frames: ["83": CGRect(x: 0, y: 1_900 - scroll.contentOffset.y, width: 100, height: 80)],
+            contentHeight: 2_600)
+        XCTAssertTrue(coordinator.restoreHistoryViewportAnchor(page: page))
+        XCTAssertEqual(scroll.contentOffset.y, 1_800, "Apply the -400 layout delta to the pre-clamp position")
+        observer.unbind()
+    }
+
+    @MainActor
+    func testHistoryAnchorOnlyConsumesGeometryFromThePublishedOlderPage() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        scroll.contentSize = CGSize(width: 390, height: 3_000)
+        scroll.contentOffset.y = 100
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
+            chatID: "chat", firstMessageID: "81", messageID: "83", originalContentY: 220)
+        let old = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "81",
+                                        frames: ["83": CGRect(x: 0, y: 120, width: 100, height: 80)])
+        XCTAssertFalse(coordinator.restoreHistoryViewportAnchor(page: old))
+        XCTAssertNotNil(coordinator.historyViewportAnchor)
+        let loaded = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "1",
+                                           frames: ["83": CGRect(x: 0, y: 920, width: 100, height: 80)], contentHeight: 3_000)
+        XCTAssertTrue(coordinator.restoreHistoryViewportAnchor(page: loaded))
+        XCTAssertEqual(scroll.contentOffset.y, 900)
+        XCTAssertNil(coordinator.historyViewportAnchor)
+        XCTAssertFalse(coordinator.restoreHistoryViewportAnchor(page: loaded))
+        XCTAssertEqual(scroll.contentOffset.y, 900, "A repeated layout must not apply the offset twice")
+    }
+
+    @MainActor
+    func testBottomAlignmentUsesInsetsAndFallsBackWhenEstimatedEndCannotReachLastRow() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        scroll.contentSize = CGSize(width: 390, height: 1_000)
+        scroll.contentInset.bottom = 80
+        scroll.contentOffset.y = 400
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        XCTAssertTrue(coordinator.alignTimelineBottom(frame: CGRect(x: 0, y: 570, width: 100, height: 30),
+                                                     viewportMaxY: 520, bottomSpacing: 0, animated: false))
+        XCTAssertEqual(scroll.contentOffset.y, 480)
+        XCTAssertTrue(coordinator.alignTimelineBottom(frame: CGRect(x: 0, y: 490, width: 100, height: 30),
+                                                     viewportMaxY: 520, bottomSpacing: 0, animated: false))
+        XCTAssertEqual(scroll.contentOffset.y, 480)
+        XCTAssertFalse(coordinator.alignTimelineBottom(frame: CGRect(x: 0, y: 650, width: 100, height: 30),
+                                                      viewportMaxY: 520, bottomSpacing: 0, animated: false))
+    }
+
     func testKeyboardAnimationKeepsFullSystemTimingIndependentOfLayoutDelay() throws {
         let notification = Notification(name: UIResponder.keyboardWillChangeFrameNotification, userInfo: [
             UIResponder.keyboardAnimationDurationUserInfoKey: NSNumber(value: 0.35),
@@ -144,8 +320,8 @@ final class ChatTimelineViewportAnchorTests: XCTestCase {
         coordinator.scrollView = scroll
         coordinator.viewportHeight = 762
         coordinator.applyPendingViewportResize()
-        coordinator.resizeViewport(from: 762, to: 468)
         scroll.frame.size.height = 465
+        coordinator.resizeViewport(from: 762, to: 468)
         coordinator.applyPendingViewportResize()
         XCTAssertEqual(scroll.contentOffset.y, 3_410)
         let anchor = ChatKeyboardViewportAnchor(
@@ -169,36 +345,113 @@ final class ChatTimelineViewportAnchorTests: XCTestCase {
     }
 
     @MainActor
-    func testReplyInsetBeforeKeyboardDoesNotBecomeCumulativeNativeResize() throws {
-        // Reply changes the safe area preference without resizing the native
-        // scroll view. The subsequent keyboard change has its own native delta.
-        let visible = CGRect(x: 0, y: 249.66666666666666, width: 393, height: 759)
-        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 393, height: 759))
-        scroll.contentSize = CGSize(width: 393, height: 2_000)
-        scroll.bounds = visible
+    func testExplicitSearchJumpSupersedesPendingKeyboardPosition() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 477))
+        scroll.contentInset.bottom = 118
+        scroll.contentSize.height = 14_500
+        scroll.contentOffset.y = 4_857
         let coordinator = ChatTimelineInteractionCoordinator()
         coordinator.scrollView = scroll
-        coordinator.viewportHeight = 762
+        coordinator.viewportHeight = 359
         coordinator.applyPendingViewportResize()
-        let replyViewport: CGFloat = 683.6666666666667
-        let keyboardViewport: CGFloat = 389.6666666666667
-        coordinator.resizeViewport(from: 762, to: replyViewport)
-        coordinator.applyPendingViewportResize()
-        XCTAssertEqual(scroll.bounds, visible)
-        XCTAssertNotNil(coordinator.pendingViewportResize)
+        coordinator.captureKeyboardViewportAnchor()
+        coordinator.resizeViewport(from: 359, to: 359)
 
-        coordinator.resizeViewport(from: replyViewport, to: keyboardViewport)
-        XCTAssertEqual(try XCTUnwrap(coordinator.pendingViewportResize).height, 465, accuracy: 0.000001)
-        scroll.frame.size.height = 465
+        coordinator.prepareForExplicitScroll()
+        scroll.contentOffset.y = 0
+        coordinator.recordNativeScrollPosition()
+        coordinator.applyPendingViewportResize()
+        XCTAssertEqual(scroll.contentOffset.y, 0, "An already queued resize must not undo the search jump")
+
+        scroll.bounds.size.height = 778
+        coordinator.resizeViewport(from: 359, to: 660)
+        coordinator.applyPendingViewportResize()
+        XCTAssertEqual(scroll.contentOffset.y, 0, "Keyboard dismissal must preserve the new target instead of the old bottom")
+    }
+
+    @MainActor
+    func testExplicitJumpOwnsPositionWhenNativeBoundsCommitFirst() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 477))
+        scroll.contentInset.bottom = 118
+        scroll.contentSize.height = 14_500
+        scroll.contentOffset.y = 4_857
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        coordinator.viewportHeight = 359
+        coordinator.applyPendingViewportResize()
+        coordinator.captureKeyboardViewportAnchor()
+        coordinator.prepareForExplicitScroll()
+
+        scroll.bounds.size.height = 778
+        scroll.contentOffset.y = 1_200
+        coordinator.recordNativeScrollPosition()
+        coordinator.resizeViewport(from: 359, to: 660, preservingPosition: false)
+        coordinator.applyPendingViewportResize()
+        XCTAssertEqual(scroll.contentOffset.y, 1_200, "An explicit target owns position when layout commits before its offset")
+
+        coordinator.prepareForExplicitScroll()
+        coordinator.resizeViewport(from: 359, to: 660)
+        coordinator.applyPendingViewportResize()
+        XCTAssertEqual(scroll.contentOffset.y, 1_200, "Landing establishes the current layout even before its SwiftUI preference arrives")
+    }
+
+    @MainActor
+    func testInsetOnlyResizePreservesBrowsingAndLatestPositionsInBothDirections() {
+        for initialOffset: CGFloat in [1_000, 2_278] {
+            let scroll = UIScrollView(frame: CGRect(x: 0, y: 62, width: 390, height: 778))
+            scroll.contentSize.height = 3_000
+            scroll.contentInset.bottom = 56
+            scroll.contentOffset.y = initialOffset
+            let coordinator = ChatTimelineInteractionCoordinator()
+            coordinator.scrollView = scroll
+            coordinator.viewportHeight = 722
+            coordinator.applyPendingViewportResize()
+            let observer = ChatTimelineScrollObserverView()
+            observer.timelineCoordinator = coordinator
+            scroll.addSubview(observer)
+            observer.bindToEnclosingScrollView()
+            defer { observer.unbind() }
+            scroll.contentInset.bottom = 98
+            coordinator.resizeViewport(from: 722, to: 680)
+            XCTAssertEqual(coordinator.pendingViewportResize?.height, 778)
+            coordinator.applyPendingViewportResize()
+            XCTAssertNil(coordinator.pendingViewportResize)
+            XCTAssertEqual(scroll.contentOffset.y, initialOffset + 42)
+            XCTAssertEqual(scroll.bounds.height, 778)
+            scroll.contentInset.bottom = 56
+            coordinator.resizeViewport(from: 680, to: 722)
+            coordinator.applyPendingViewportResize()
+            XCTAssertNil(coordinator.pendingViewportResize)
+            XCTAssertEqual(scroll.contentOffset.y, initialOffset)
+        }
+    }
+
+    @MainActor
+    func testReplyInsetThenKeyboardEachAdjustsOnlyItsOwnViewportDelta() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 778))
+        scroll.contentSize.height = 3_000
+        scroll.contentInset.bottom = 56
+        scroll.contentOffset.y = 1_000
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        coordinator.viewportHeight = 722
+        coordinator.applyPendingViewportResize()
+        scroll.contentInset.bottom = 98
+        coordinator.resizeViewport(from: 722, to: 680)
+        coordinator.applyPendingViewportResize()
+        XCTAssertEqual(scroll.contentOffset.y, 1_042)
+        coordinator.captureKeyboardViewportAnchor()
+        scroll.frame.size.height = 478
+        coordinator.resizeViewport(from: 680, to: 380)
         coordinator.applyPendingViewportResize()
         XCTAssertNil(coordinator.pendingViewportResize)
-        XCTAssertEqual(scroll.contentOffset.y, visible.minY + 294, accuracy: 0.000001)
-        let anchor = ChatKeyboardViewportAnchor(
-            bounds: scroll.bounds, frame: scroll.frame, viewportHeight: coordinator.viewportHeight, animation: nil,
-            presentationBounds: visible, presentationFrame: CGRect(x: 0, y: 0, width: 393, height: 759),
-            appliedLayout: coordinator.appliedViewportLayout
-        )
-        XCTAssertEqual(anchor.viewportHeight, replyViewport, accuracy: 0.000001)
+        XCTAssertEqual(scroll.contentOffset.y, 1_342)
+        coordinator.clearKeyboardViewportAnchor()
+        coordinator.captureKeyboardViewportAnchor()
+        scroll.frame.size.height = 778
+        coordinator.resizeViewport(from: 380, to: 680)
+        coordinator.applyPendingViewportResize()
+        XCTAssertEqual(scroll.contentOffset.y, 1_042)
     }
 
     @MainActor
@@ -302,9 +555,10 @@ final class ChatTimelineViewportAnchorTests: XCTestCase {
         coordinator.viewportHeight = 600
         coordinator.captureKeyboardViewportAnchor()
 
+        scroll.frame.size.height = 500
         coordinator.resizeViewport(from: 600, to: 500)
         coordinator.applyPendingViewportResize()
-        XCTAssertEqual(scroll.contentOffset.y, 1_000, "The old UIKit layout must not consume the pending anchor")
+        XCTAssertEqual(scroll.contentOffset.y, 1_100, "The first committed viewport applies its exact delta")
         scroll.frame.size.height = 300
         coordinator.resizeViewport(from: 500, to: 300)
         coordinator.applyPendingViewportResize()

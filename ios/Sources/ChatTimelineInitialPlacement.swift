@@ -24,7 +24,9 @@ struct ChatTimelineInitialPlacement {
                   frame.minY.isFinite, frame.maxY.isFinite else { return .wait }
         }
 
-        let visible = frame.map { $0.maxY > viewportMinY && $0.minY < viewportMaxY } ?? false
+        // A partly visible final bubble may still hide its last lines behind
+        // the composer. Tall rows only need their bottom edge in view.
+        let visible = frame.map { $0.maxY > viewportMinY && $0.maxY <= viewportMaxY + 1 } ?? false
         if isPending || awaitingTarget != targetID {
             isPending = false
             awaitingTarget = visible ? nil : targetID

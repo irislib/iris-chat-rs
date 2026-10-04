@@ -77,4 +77,17 @@ final class ChatTimelineInitialPlacementTests: XCTestCase {
         XCTAssertFalse(placement.isAwaitingVisibility)
     }
 
+    func testPartiallyVisibleLastRowWaitsUntilItsLastLineClearsTheComposer() {
+        for frame in [CGRect(x: 0, y: 590, width: 100, height: 80),
+                      CGRect(x: 0, y: -400, width: 100, height: 1_100)] {
+            var placement = ChatTimelineInitialPlacement()
+            XCTAssertEqual(placement.update(targetID: "last", frame: frame,
+                                            viewportMinY: 0, viewportMaxY: 600), .scroll)
+            XCTAssertTrue(placement.isAwaitingVisibility)
+            let landed = frame.offsetBy(dx: 0, dy: 600 - frame.maxY)
+            XCTAssertEqual(placement.update(targetID: "last", frame: landed,
+                                            viewportMinY: 0, viewportMaxY: 600), .reveal)
+        }
+    }
+
 }
