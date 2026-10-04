@@ -129,7 +129,9 @@
                             <TextBlock Text="x" />
                         </Button>
                     </Grid>
-                    <ItemsControl x:Name="KnownUsersList" />
+            <ScrollViewer x:Name="KnownUsersScroll" MaxHeight="360" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl x:Name="KnownUsersList" />
+                    </ScrollViewer>
                 </StackPanel>
             </Border>
 

@@ -2,6 +2,7 @@ use super::*;
 use std::time::{Duration, Instant};
 
 mod group_membership_tests;
+mod group_member_picker_tests;
 
 const PEER: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
@@ -441,6 +442,7 @@ pub fn run() {
     println!("PASS: whole-chat file drop stages files, preserves text, rejects folders/URLs/stale chat/request");
 
     group_membership_tests::run(&manager, &slot, &header, &target, &files);
+    group_member_picker_tests::run(&manager, &slot, &header);
 
     if let Some(path) = std::env::var_os("IRIS_UI_TEST_SCREENSHOT") {
         pump_until(|| window.width() > 0 && window.height() > 0);

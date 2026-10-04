@@ -11,8 +11,6 @@ use iris_chat_core::{
 use crate::app_manager::AppManager;
 use crate::widgets::image_cache;
 
-const ADD_MEMBER_CANDIDATE_LIMIT: usize = 8;
-
 pub fn render(group_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let scrolled = gtk::ScrolledWindow::new();
     scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
@@ -460,6 +458,19 @@ fn add_members_card(
         results_header.add_suffix(&close);
         group.add(&results_header);
 
+        let scroll = gtk::ScrolledWindow::builder()
+            .max_content_height(360)
+            .propagate_natural_height(true)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .build();
+        scroll.set_widget_name("group-member-candidates");
+        let list = gtk::ListBox::new();
+        list.set_widget_name("group-member-candidate-list");
+        list.set_selection_mode(gtk::SelectionMode::None);
+        list.add_css_class("boxed-list");
+        scroll.set_child(Some(&list));
+        group.add(&scroll);
+
         let mut row_widgets: Vec<(ChatThreadSnapshot, adw::ActionRow)> =
             Vec::with_capacity(candidates.len());
         for chat in &candidates {
@@ -510,7 +521,7 @@ fn add_members_card(
             row.connect_activated(move |_| {
                 check_for_row.set_active(!check_for_row.is_active());
             });
-            group.add(&row);
+            list.append(&row);
             row_widgets.push((chat.clone(), row));
         }
 
@@ -521,6 +532,7 @@ fn add_members_card(
             let results_header = results_header.clone();
             let row_widgets = row_widgets.clone();
             let results_visible = results_visible.clone();
+            let scroll = scroll.clone();
             Rc::new(move || {
                 let visible = *results_visible.borrow();
                 let query = entry.text().to_lowercase();
@@ -541,13 +553,14 @@ fn add_members_card(
                             .as_ref()
                             .map(|s| s.to_lowercase().contains(trimmed))
                             .unwrap_or(false);
-                    let show_row = visible && matches && shown < ADD_MEMBER_CANDIDATE_LIMIT;
+                    let show_row = visible && matches;
                     if show_row {
                         shown += 1;
                     }
                     row.set_visible(show_row);
                 }
                 results_header.set_visible(visible && shown > 0);
+                scroll.set_visible(visible && shown > 0);
             })
         };
 

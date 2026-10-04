@@ -136,6 +136,7 @@ internal static class Program
             GroupingTests.Run();
             MessageActionsTests.Run(window);
             HistoryTests.Run(window, manager);
+            GroupMemberPickerTests.Run(window, manager);
             Console.WriteLine("PASS: WPF Tab/Shift-Tab, arrows, Enter/Space, update focus and composer isolation");
             return 0;
         }
