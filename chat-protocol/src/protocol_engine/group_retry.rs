@@ -109,8 +109,10 @@ impl ProtocolEngine {
             retry.queued.clear();
             return;
         }
-        if retry.active.is_some() {
-            // The library revalidates this one current input without cloning all groups.
+        if retry.active.is_some() || retry.prepared.is_some() {
+            // A frozen search's prepared result still belongs to its old inputs.
+            // Observe new keys only after applying it, so a missing-key result
+            // cannot consume the wakeup for a newly arrived distribution.
             return;
         }
         // Clone once per pass, never once per pending ciphertext. Distribution
@@ -265,6 +267,14 @@ impl ProtocolEngine {
                             })
                 })
             else {
+                let mut retry = self.group_sender_key_retry.borrow_mut();
+                if retry
+                    .prepared
+                    .as_ref()
+                    .is_some_and(|(ready, _)| ready == &fingerprint)
+                {
+                    retry.prepared = None;
+                }
                 continue;
             };
             let parsed = self.pending_group_sender_key_messages[index].clone();

@@ -54,6 +54,7 @@ fn appcore_sender_key_repair_request_survives_restart_and_throttles() {
         .engine
         .process_group_outer_event(&outer)
         .expect("process outer missing rotated key");
+    let pending = finish_group_search_for_test(&mut devices[bob].engine, pending);
     assert!(!pending.effects.is_empty());
     let before_restart = devices[bob].engine.debug_snapshot();
     assert_eq!(before_restart.pending_group_sender_key_repair_count, 1);
@@ -218,6 +219,7 @@ fn appcore_sender_key_missing_metadata_revision_repairs_and_applies_pending_oute
         .engine
         .process_group_outer_event(&outer)
         .expect("process outer missing metadata revision");
+    let pending = finish_group_search_for_test(&mut devices[bob].engine, pending);
     assert!(pending.pending);
     assert!(
         !pending.effects.is_empty(),
@@ -225,12 +227,12 @@ fn appcore_sender_key_missing_metadata_revision_repairs_and_applies_pending_oute
     );
 
     let (_alice_events, metadata_response_effects) =
-        deliver_protocol_effects_to_engine_once(&mut devices[alice].engine, &pending.effects);
+        deliver_protocol_effects_with_ready_work_once(&mut devices[alice].engine, &pending.effects);
     assert!(
         !metadata_response_effects.is_empty(),
         "sender should answer revision repair with metadata"
     );
-    let (bob_events, _followup) = deliver_protocol_effects_to_engine_once(
+    let (bob_events, _followup) = deliver_protocol_effects_with_ready_work_once(
         &mut devices[bob].engine,
         &metadata_response_effects,
     );
@@ -536,6 +538,7 @@ fn legacy_sender_second_ack_preserves_unknown_ciphertext_and_repair_backoff() {
     devices[1].engine =
         test_protocol_engine_with_storage(&devices[1].owner, &devices[1].device, storage.clone());
     let first = devices[1].engine.process_group_outer_event(&outer).unwrap();
+    let first = finish_group_search_for_test(&mut devices[1].engine, first);
     assert!(first.pending && !first.effects.is_empty());
     let pending = devices[1].engine.debug_snapshot();
     assert_eq!(
@@ -568,8 +571,8 @@ fn legacy_sender_second_ack_preserves_unknown_ciphertext_and_repair_backoff() {
         "missing-key repair must still resume"
     );
     let (_, response) =
-        deliver_protocol_effects_to_engine_once(&mut devices[0].engine, &due.group_result.effects);
-    let (received, _) = deliver_protocol_effects_to_engine_once(&mut devices[1].engine, &response);
+        deliver_protocol_effects_with_ready_work_once(&mut devices[0].engine, &due.group_result.effects);
+    let (received, _) = deliver_protocol_effects_with_ready_work_once(&mut devices[1].engine, &response);
     assert!(group_events_contain_body(
         &received,
         &group_id,

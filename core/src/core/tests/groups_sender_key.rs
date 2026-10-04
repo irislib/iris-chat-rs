@@ -602,6 +602,7 @@ fn appcore_sender_key_missing_rotated_distribution_repairs_and_applies_pending_o
         .engine
         .process_group_outer_event(&outer)
         .expect("process outer missing rotated key");
+    let pending = finish_group_search_for_test(&mut devices[bob].engine, pending);
     assert!(pending.pending);
     assert!(
         devices[bob]
@@ -623,7 +624,7 @@ fn appcore_sender_key_missing_rotated_distribution_repairs_and_applies_pending_o
     );
 
     let (alice_events, repair_response_effects) =
-        deliver_protocol_effects_to_engine_once(&mut devices[alice].engine, &pending.effects);
+        deliver_protocol_effects_with_ready_work_once(&mut devices[alice].engine, &pending.effects);
     assert!(
         alice_events.is_empty(),
         "repair request should not be surfaced as an app group event"
@@ -633,7 +634,7 @@ fn appcore_sender_key_missing_rotated_distribution_repairs_and_applies_pending_o
         "sender should answer repair request with pairwise key material"
     );
 
-    let (bob_repaired_events, revision_request_effects) = deliver_protocol_effects_to_engine_once(
+    let (bob_repaired_events, revision_request_effects) = deliver_protocol_effects_with_ready_work_once(
         &mut devices[bob].engine,
         &repair_response_effects,
     );
@@ -650,7 +651,7 @@ fn appcore_sender_key_missing_rotated_distribution_repairs_and_applies_pending_o
             !revision_request_effects.is_empty(),
             "decrypting with repaired key should request missing metadata revision if the repaired key does not apply immediately"
         );
-        let (_alice_events, metadata_response_effects) = deliver_protocol_effects_to_engine_once(
+        let (_alice_events, metadata_response_effects) = deliver_protocol_effects_with_ready_work_once(
             &mut devices[alice].engine,
             &revision_request_effects,
         );
@@ -658,7 +659,7 @@ fn appcore_sender_key_missing_rotated_distribution_repairs_and_applies_pending_o
             !metadata_response_effects.is_empty(),
             "sender should answer revision repair request with current metadata"
         );
-        let (bob_final_events, _followup) = deliver_protocol_effects_to_engine_once(
+        let (bob_final_events, _followup) = deliver_protocol_effects_with_ready_work_once(
             &mut devices[bob].engine,
             &metadata_response_effects,
         );
@@ -742,18 +743,19 @@ fn appcore_sender_key_repair_response_survives_sender_restart() {
         .engine
         .process_group_outer_event(&outer)
         .expect("process outer missing rotated key");
+    let pending = finish_group_search_for_test(&mut devices[bob].engine, pending);
     assert!(!pending.effects.is_empty());
 
     devices[alice].engine =
         test_protocol_engine_with_storage(&alice_owner, &alice_device, alice_storage.clone());
     let (_alice_events, key_response_effects) =
-        deliver_protocol_effects_to_engine_once(&mut devices[alice].engine, &pending.effects);
+        deliver_protocol_effects_with_ready_work_once(&mut devices[alice].engine, &pending.effects);
     assert!(
         !key_response_effects.is_empty(),
         "restarted sender should answer repair from distribution history"
     );
     let (bob_after_key_events, revision_request_effects) =
-        deliver_protocol_effects_to_engine_once(&mut devices[bob].engine, &key_response_effects);
+        deliver_protocol_effects_with_ready_work_once(&mut devices[bob].engine, &key_response_effects);
     if group_events_contain_body(
         &bob_after_key_events,
         &group_id,
@@ -767,11 +769,11 @@ fn appcore_sender_key_repair_response_survives_sender_restart() {
         !revision_request_effects.is_empty(),
         "key repair should apply immediately or request missing metadata"
     );
-    let (_alice_events, metadata_response_effects) = deliver_protocol_effects_to_engine_once(
+    let (_alice_events, metadata_response_effects) = deliver_protocol_effects_with_ready_work_once(
         &mut devices[alice].engine,
         &revision_request_effects,
     );
-    let (bob_final_events, _followup) = deliver_protocol_effects_to_engine_once(
+    let (bob_final_events, _followup) = deliver_protocol_effects_with_ready_work_once(
         &mut devices[bob].engine,
         &metadata_response_effects,
     );
@@ -1314,7 +1316,7 @@ fn appcore_sender_key_late_member_and_remove_member_enforce_membership_window() 
         .expect("create sender-key group");
     let group_id = created.snapshot.expect("created group").group_id;
     for recipient_index in [bob, carol] {
-        deliver_protocol_effects_to_engine(&mut devices[recipient_index].engine, &created.effects);
+        deliver_protocol_effects_with_ready_work(&mut devices[recipient_index].engine, &created.effects);
     }
 
     let before_add = b"before dave joined".to_vec();
@@ -1327,7 +1329,7 @@ fn appcore_sender_key_late_member_and_remove_member_enforce_membership_window() 
         )
         .expect("send before late member add");
     let dave_before =
-        deliver_protocol_effects_to_engine(&mut devices[dave].engine, &before_add_sent.effects);
+        deliver_protocol_effects_with_ready_work(&mut devices[dave].engine, &before_add_sent.effects);
     assert!(
         !group_events_contain_body(
             &dave_before,
@@ -1344,7 +1346,7 @@ fn appcore_sender_key_late_member_and_remove_member_enforce_membership_window() 
         .add_group_members(&group_id, vec![dave_owner_pubkey])
         .expect("add late member");
     for recipient_index in [bob, carol, dave] {
-        let events = deliver_protocol_effects_to_engine(
+        let events = deliver_protocol_effects_with_ready_work(
             &mut devices[recipient_index].engine,
             &add_dave.effects,
         );
@@ -1370,7 +1372,7 @@ fn appcore_sender_key_late_member_and_remove_member_enforce_membership_window() 
         )
         .expect("send after late member add");
     for recipient_index in [bob, carol, dave] {
-        let events = deliver_protocol_effects_to_engine(
+        let events = deliver_protocol_effects_with_ready_work(
             &mut devices[recipient_index].engine,
             &after_add_sent.effects,
         );
@@ -1391,7 +1393,7 @@ fn appcore_sender_key_late_member_and_remove_member_enforce_membership_window() 
         .remove_group_member(&group_id, bob_owner_pubkey)
         .expect("remove member");
     for recipient_index in [bob, carol, dave] {
-        deliver_protocol_effects_to_engine(
+        deliver_protocol_effects_with_ready_work(
             &mut devices[recipient_index].engine,
             &remove_bob.effects,
         );
@@ -1407,7 +1409,7 @@ fn appcore_sender_key_late_member_and_remove_member_enforce_membership_window() 
         )
         .expect("send after member removal");
     let bob_events =
-        deliver_protocol_effects_to_engine(&mut devices[bob].engine, &after_remove_sent.effects);
+        deliver_protocol_effects_with_ready_work(&mut devices[bob].engine, &after_remove_sent.effects);
     assert!(
         !group_events_contain_body(
             &bob_events,
@@ -1428,7 +1430,7 @@ fn appcore_sender_key_late_member_and_remove_member_enforce_membership_window() 
         "removed member should not keep sender-key repair rows for post-removal outers"
     );
     for recipient_index in [carol, dave] {
-        let events = deliver_protocol_effects_to_engine(
+        let events = deliver_protocol_effects_with_ready_work(
             &mut devices[recipient_index].engine,
             &after_remove_sent.effects,
         );

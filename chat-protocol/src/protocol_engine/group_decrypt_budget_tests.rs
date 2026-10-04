@@ -24,21 +24,56 @@ fn group_receive_checkpoints_only_ready_mutations_not_replays_or_search_slices()
     let (mut engine, _, device) = queued_group_history(1);
     long_group_candidate(&mut engine, &device, 700);
     let parsed = engine.pending_group_sender_key_messages[0].clone();
-    let message = engine.group_sender_key_message_from_parsed(&parsed).unwrap();
-    assert!(engine.handle_group_sender_key_message(message.clone()).unwrap().pending);
-    assert_eq!(engine.group_sender_key_retry.borrow().receive_checkpoints, 0,
-        "Pure bounded search must not clone the complete receive state");
+    let message = engine
+        .group_sender_key_message_from_parsed(&parsed)
+        .unwrap();
+    assert!(
+        engine
+            .handle_group_sender_key_message(message.clone())
+            .unwrap()
+            .pending
+    );
+    assert_eq!(
+        engine.group_sender_key_retry.borrow().receive_checkpoints,
+        0,
+        "Pure bounded search must not clone the complete receive state"
+    );
     engine.group_sender_key_retry.borrow_mut().reset_budget();
-    assert!(engine.handle_group_sender_key_message(message.clone()).unwrap().pending);
-    assert_eq!(engine.group_sender_key_retry.borrow().receive_checkpoints, 0);
+    assert!(
+        engine
+            .handle_group_sender_key_message(message.clone())
+            .unwrap()
+            .pending
+    );
+    assert_eq!(
+        engine.group_sender_key_retry.borrow().receive_checkpoints,
+        0
+    );
     engine.group_sender_key_retry.borrow_mut().reset_budget();
-    assert_eq!(engine.handle_group_sender_key_message(message.clone()).unwrap().events.len(), 1);
-    assert_eq!(engine.group_sender_key_retry.borrow().receive_checkpoints, 1);
+    assert_eq!(
+        engine
+            .handle_group_sender_key_message(message.clone())
+            .unwrap()
+            .events
+            .len(),
+        1
+    );
+    assert_eq!(
+        engine.group_sender_key_retry.borrow().receive_checkpoints,
+        1
+    );
     for _ in 0..32 {
-        assert!(engine.handle_group_sender_key_message(message.clone()).unwrap().events.is_empty());
+        assert!(engine
+            .handle_group_sender_key_message(message.clone())
+            .unwrap()
+            .events
+            .is_empty());
     }
-    assert_eq!(engine.group_sender_key_retry.borrow().receive_checkpoints, 1,
-        "Already processed events must remain borrowed fast paths");
+    assert_eq!(
+        engine.group_sender_key_retry.borrow().receive_checkpoints,
+        1,
+        "Already processed events must remain borrowed fast paths"
+    );
 }
 
 fn long_group_candidate_at_revision(
@@ -416,4 +451,86 @@ fn group_retry_completion_does_not_reset_the_shared_trial_budget() {
         0,
         "255 remaining trials plus one other message consumes the same turn's 256 budget"
     );
+}
+
+#[test]
+fn group_retry_key_arriving_during_frozen_search_gets_a_fresh_pass() {
+    for outer_batch in [false, true] {
+        let (mut engine, _, device) = queued_group_history(1);
+        let plaintext = JsonGroupPayloadCodecV1
+            .encode_sender_key_plaintext(
+                nostr_double_ratchet::GroupPayloadEncodeContext {
+                    local_device_pubkey: ndr_device(device.public_key()),
+                    created_at: NdrUnixSeconds(20),
+                },
+                &nostr_double_ratchet::GroupSenderKeyPlaintext {
+                    group_id: "queued-group".into(),
+                    revision: 1,
+                    body: b"new key arrived".to_vec(),
+                },
+            )
+            .unwrap();
+        let new_key = nostr_double_ratchet::SenderKeyState::new(2, [7; 32], 0);
+        engine.pending_group_sender_key_messages[0].ciphertext =
+            new_key.clone().encrypt_to_bytes(&plaintext).unwrap().1;
+        if outer_batch {
+            engine.enter_batch();
+        }
+        assert!(engine
+            .retry_pending_protocol(NdrUnixSeconds(30))
+            .unwrap()
+            .group_result
+            .events
+            .is_empty());
+        if outer_batch {
+            engine.exit_batch().unwrap();
+        }
+        assert!(engine.group_sender_key_retry.borrow().active.is_some());
+        let mut state = engine.group_manager.snapshot();
+        state.sender_keys[0].states.push(new_key);
+        state.sender_keys[0].latest_key_id = Some(2);
+        engine.group_manager = GroupEventManager::from_snapshot(state).unwrap();
+        let mut events = Vec::new();
+        for _ in 0..128 {
+            if !engine.has_ready_group_sender_key_retry_work() {
+                break;
+            }
+            if outer_batch {
+                engine.enter_batch();
+            }
+            events.extend(
+                engine
+                    .retry_pending_protocol(NdrUnixSeconds(30))
+                    .unwrap()
+                    .group_result
+                    .events,
+            );
+            if outer_batch {
+                engine.exit_batch().unwrap();
+            }
+        }
+        assert_eq!(events.len(), 1, "New inputs must survive the old prepared missing-key result; outer_batch={outer_batch}");
+        assert!(engine.pending_group_sender_key_messages.is_empty());
+        assert!(!engine.has_ready_group_sender_key_retry_work());
+    }
+}
+
+#[test]
+fn group_retry_orphan_prepared_plan_does_not_hide_other_ready_work() {
+    let (mut engine, _, device) = queued_group_history(1);
+    long_group_candidate(&mut engine, &device, 700);
+    engine.retry_pending_protocol(NdrUnixSeconds(30)).unwrap();
+    for _ in 0..2 {
+        engine.group_sender_key_retry.borrow_mut().reset_budget();
+        engine.advance_group_sender_key_continuation().unwrap();
+    }
+    assert!(engine.group_sender_key_retry.borrow().prepared.is_some());
+    engine.pending_group_sender_key_messages.remove(0);
+    let other = add_other_group_stream(&mut engine);
+    engine
+        .queue_pending_group_sender_key_message(other)
+        .unwrap();
+    assert_eq!(drain_group_retry(&mut engine, NdrUnixSeconds(30)).len(), 1);
+    assert!(engine.pending_group_sender_key_messages.is_empty());
+    assert!(engine.group_sender_key_retry.borrow().prepared.is_none());
 }

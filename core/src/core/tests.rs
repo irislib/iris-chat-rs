@@ -152,6 +152,7 @@ include!("tests/open_chat_finalize.rs");
 include!("tests/direct_messages_runtime_regressions.rs");
 include!("tests/direct_group_sender_key_ack.rs");
 include!("tests/groups_sender_key.rs");
+include!("tests/groups_sender_key_continuation.rs");
 include!("tests/group_reactions.rs");
 include!("tests/groups_mutation_delivery.rs");
 include!("tests/group_message_ids.rs");
