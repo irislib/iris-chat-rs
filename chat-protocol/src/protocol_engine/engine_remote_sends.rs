@@ -21,11 +21,13 @@ impl ProtocolEngine {
         let mut pending = if let Some(existing) = existing {
             existing
         } else {
-            let snapshot = self.session_manager.snapshot();
-            let eligible_devices = user_record_snapshot(&snapshot, recipient_owner)
-                .and_then(roster_device_pubkeys)
+            let eligible_devices = self
+                .session_manager
+                .roster(recipient_owner)
                 .ok_or_else(|| anyhow::anyhow!("missing recipient device list"))?
-                .into_iter()
+                .devices()
+                .iter()
+                .map(|device| device.device_pubkey)
                 .collect();
             let expires_at_secs = serde_json::from_slice::<UnsignedEvent>(&payload)
                 .ok()
@@ -78,17 +80,14 @@ impl ProtocolEngine {
         {
             return Ok((Vec::new(), true));
         }
-        let snapshot = self.session_manager.snapshot();
-        let Some(current) = user_record_snapshot(&snapshot, pending.recipient_owner)
-            .and_then(roster_device_pubkeys)
-        else {
+        let Some(current) = self.session_manager.roster(pending.recipient_owner) else {
             return Ok((Vec::new(), false));
         };
         // Permanently remove revoked targets. Neither later linking nor
         // reauthorizing a device grants it historical queued message bodies.
         pending
             .eligible_devices
-            .retain(|device| current.contains(device));
+            .retain(|device| current.get_device(device).is_some());
         let targets = pending
             .eligible_devices
             .difference(&pending.completed_devices)
