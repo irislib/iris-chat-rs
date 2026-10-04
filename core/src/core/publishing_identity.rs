@@ -180,12 +180,21 @@ impl AppCore {
         }
         for (label, event) in durable_events {
             let app_keys_author = (label == "app-keys").then_some(event.pubkey);
-            if !self.publish_runtime_event(event, label, None) {
-                if let Some(pending_event) =
-                    app_keys_author.and_then(|author| self.newest_pending_app_keys_event(author))
-                {
-                    self.emit_nearby_published_event(&pending_event);
+            let queued_advertisement = self
+                .pending_relay_publishes
+                .contains_key(&event.id.to_hex())
+                .then(|| event.clone());
+            if self.publish_runtime_event(event, label, None) {
+                // Explicit identity publication must reach newly attached nearby
+                // transports, even when its exact event survived in the outbox.
+                // Generic retry effects still retain their paced, write-free path.
+                if let Some(event) = queued_advertisement {
+                    self.emit_nearby_published_event(&event);
                 }
+            } else if let Some(pending_event) =
+                app_keys_author.and_then(|author| self.newest_pending_app_keys_event(author))
+            {
+                self.emit_nearby_published_event(&pending_event);
             }
         }
 
