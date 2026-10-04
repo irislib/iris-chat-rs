@@ -225,7 +225,7 @@ final class ChatTimelineScrollObserverView: UIView {
         super.layoutSubviews()
         bindToEnclosingScrollView()
         timelineCoordinator?.applyPendingViewportResize()
-        timelineCoordinator?.applyPendingHistoryViewportAnchor()
+        timelineCoordinator?.applyPendingHistoryViewportAnchor(origin: .nativeLayout)
         scheduleLayoutNotification()
     }
 
@@ -239,7 +239,7 @@ final class ChatTimelineScrollObserverView: UIView {
             self.layoutNotificationScheduled = false
             guard self.observedScrollView != nil else { return }
             self.timelineCoordinator?.applyPendingViewportResize()
-            self.timelineCoordinator?.applyPendingHistoryViewportAnchor()
+            self.timelineCoordinator?.applyPendingHistoryViewportAnchor(origin: .mainTurn)
             self.onLayout?()
         }
     }
@@ -295,6 +295,9 @@ final class ChatTimelineScrollObserverView: UIView {
     @objc private func handleScrollPan(_ recognizer: UIPanGestureRecognizer) {
         guard let scrollView = observedScrollView else { return }
         let translation = recognizer.translation(in: scrollView)
+        if recognizer.state == .ended || recognizer.state == .cancelled || recognizer.state == .failed {
+            timelineCoordinator?.recordHistoryPanEnded()
+        }
         switch recognizer.state {
         case .began, .changed:
             let velocity = recognizer.velocity(in: scrollView)

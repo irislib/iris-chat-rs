@@ -4,6 +4,130 @@ import OSLog
 
 private let irisInteractionLogger = Logger(subsystem: "fi.siriusbusiness.irischat", category: "interaction")
 
+#if os(iOS)
+/// Temporary, main-thread diagnostics for anonymous pagination UI fixtures.
+/// Geometry stays outside Equatable preferences, so tracing cannot cause delivery.
+final class IrisTimelineAnchorTrace {
+    enum Event: String {
+        case ready, capture, restore, awaitExtent = "await_extent", apply
+        case extentWill = "extent_will", extentDid = "extent_did"
+        case postApply = "post_apply", nativeOffset = "native_offset", panEnded = "pan_ended"
+    }
+    enum Origin: String { case direct, preference, nativeLayout = "native_layout", mainTurn = "main_turn" }
+    struct Sample {
+        var offsetY: CGFloat = .nan
+        var nativeContentHeight: CGFloat = .nan
+        var viewportHeight: CGFloat = .nan
+        var insetTop: CGFloat = .nan
+        var insetBottom: CGFloat = .nan
+        var panY: CGFloat = .nan
+        var velocityY: CGFloat = .nan
+        var panState = -1
+        var dragging = false
+        var decelerating = false
+        var anchorViewportY: CGFloat = .nan
+        var originalContentY: CGFloat = .nan
+        var contentY: CGFloat = .nan
+        var preferenceContentHeight: CGFloat = .nan
+        var clampCorrectionY: CGFloat = 0
+        var offsetBeforeExtent: CGFloat = .nan
+        var candidateOffsetY: CGFloat = .nan
+        var extentCommitted = false
+        var firstChanged = false
+        var generationChanged = false
+    }
+    struct Record {
+        let event: Event
+        let origin: Origin
+        let elapsedMilliseconds: Double
+        let preferenceAgeMilliseconds: Double
+        let preferenceOffsetY: CGFloat
+        let sample: Sample
+
+        var line: String {
+            let s = sample
+            return "iris.timeline_anchor event=\(event.rawValue) origin=\(origin.rawValue) elapsed_ms=\(elapsedMilliseconds)"
+                + " preference_age_ms=\(preferenceAgeMilliseconds) preference_offset_y=\(preferenceOffsetY) offset_y=\(s.offsetY)"
+                + " native_content_height=\(s.nativeContentHeight) viewport_height=\(s.viewportHeight) inset_top=\(s.insetTop) inset_bottom=\(s.insetBottom)"
+                + " pan_y=\(s.panY) velocity_y=\(s.velocityY) pan_state=\(s.panState) dragging=\(s.dragging) decelerating=\(s.decelerating)"
+                + " anchor_viewport_y=\(s.anchorViewportY) original_content_y=\(s.originalContentY) content_y=\(s.contentY)"
+                + " preference_content_height=\(s.preferenceContentHeight) clamp_correction_y=\(s.clampCorrectionY) offset_before_extent=\(s.offsetBeforeExtent)"
+                + " candidate_offset_y=\(s.candidateOffsetY) extent_committed=\(s.extentCommitted) first_changed=\(s.firstChanged) generation_changed=\(s.generationChanged)"
+        }
+    }
+
+    private let clock: () -> TimeInterval
+    private let emit: (Record) -> Void
+    private var remaining = 128
+    private var started: TimeInterval?
+    private var preferenceTime: TimeInterval?
+    private var preferenceOffsetY: CGFloat = .nan
+    private var lastMotionTime: TimeInterval?
+    private var motionRemaining = 0
+    private var recordedAwaitExtent = false
+    private(set) var captureGeneration = 0
+
+    static func configured(environment: [String: String]) -> IrisTimelineAnchorTrace? {
+        guard environment["IRIS_UI_TEST_TRACE_PAGINATION"] == "1",
+              environment["IRIS_UI_TEST_RESET"] == "1",
+              environment["IRIS_UI_TEST_SEED_PEER"] == "self",
+              environment["IRIS_UI_TEST_SEED_COUNT"].flatMap(Int.init).map({ $0 > 0 }) == true else { return nil }
+        let trace = IrisTimelineAnchorTrace()
+        trace.emit(Record(event: .ready, origin: .direct, elapsedMilliseconds: 0,
+                          preferenceAgeMilliseconds: .nan, preferenceOffsetY: .nan, sample: Sample()))
+        return trace
+    }
+
+    init(clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         emit: @escaping (Record) -> Void = {
+             let line = $0.line
+             irisInteractionLogger.notice("\(line, privacy: .public)")
+             // XCTest's app StandardOutputAndStandardError attachment preserves
+             // this bounded synthetic-only mirror even without a log archive.
+             FileHandle.standardError.write(Data((line + "\n").utf8))
+         }) {
+        self.clock = clock
+        self.emit = emit
+    }
+
+    func preferenceDelivered(offsetY: CGFloat) {
+        preferenceTime = clock()
+        preferenceOffsetY = offsetY
+    }
+
+    func begin(_ sample: () -> Sample) {
+        guard remaining > 0 else { return }
+        started = clock()
+        captureGeneration += 1
+        motionRemaining = 12
+        lastMotionTime = nil
+        recordedAwaitExtent = false
+        record(.capture, sample: sample)
+    }
+
+    @discardableResult
+    func record(_ event: Event, origin: Origin = .direct, sample: () -> Sample) -> Bool {
+        guard remaining > 0, let started else { return false }
+        let now = clock()
+        guard now - started <= 5 else { return false }
+        if event == .awaitExtent {
+            guard !recordedAwaitExtent else { return false }
+            recordedAwaitExtent = true
+        }
+        if event == .nativeOffset {
+            guard motionRemaining > 0, lastMotionTime.map({ now - $0 >= 0.1 }) ?? true else { return false }
+            motionRemaining -= 1
+            lastMotionTime = now
+        }
+        remaining -= 1
+        emit(Record(event: event, origin: origin, elapsedMilliseconds: max(0, now - started) * 1_000,
+                    preferenceAgeMilliseconds: preferenceTime.map { max(0, now - $0) * 1_000 } ?? .nan,
+                    preferenceOffsetY: preferenceOffsetY, sample: sample()))
+        return true
+    }
+}
+#endif
+
 protocol IrisInteractionMessage {
     var id: String { get }
     var body: String { get }
