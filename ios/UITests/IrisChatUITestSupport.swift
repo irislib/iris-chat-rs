@@ -278,7 +278,10 @@ extension IrisChatUITestCase {
             timing.lifetime = .keepAlways
             add(timing)
             guard ready else {
-                capture(app, name: "seeded-chat-not-ready")
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "seeded-chat-not-ready"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
                 XCTFail("Seeded messages did not return to the chat list: \(detail)", file: file, line: line)
                 return
             }
