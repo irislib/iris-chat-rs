@@ -172,6 +172,7 @@ final class ChatTimelineInteractionCoordinator: ObservableObject {
     var historyViewportAnchor: ChatTimelineHistoryAnchor?
     var historyLayoutScheduled = false
     var latestPage = ChatTimelinePageFrames()
+    var anchorTrace: IrisTimelineAnchorTrace?
 #endif
     var messageContentFrames: [String: CGRect] = [:]
     var audioControlFrames: [CGRect] = []

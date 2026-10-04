@@ -991,6 +991,9 @@ final class AppManager: ObservableObject {
         didSet { recordInteractionState() }
     }
     let interactionTiming: IrisInteractionTiming?
+#if os(iOS)
+    let timelineAnchorTrace: IrisTimelineAnchorTrace?
+#endif
     @Published private(set) var bootstrapInFlight = true
     @Published private(set) var pendingShare: PendingShare?
     @Published private(set) var lastForegroundedAt = Date()
@@ -1145,6 +1148,9 @@ final class AppManager: ObservableObject {
             environment: environment,
             enabledInBundle: Bundle.main.object(forInfoDictionaryKey: "IrisPerformanceTracing") as? Bool == true
         )
+#if os(iOS)
+        self.timelineAnchorTrace = IrisTimelineAnchorTrace.configured(environment: environment)
+#endif
         self.fileManager = fileManager
         self.pushNotificationResolver = pushNotificationResolver
         self.sharedContainerOverride = environment["IRIS_SHARE_CONTAINER_DIR"]

@@ -14,6 +14,7 @@ final class ChatPaginationUITests: IrisChatUITestCase {
             "IRIS_UI_TEST_SEED_PEER": "self",
             "IRIS_UI_TEST_SEED_COUNT": "160",
             "IRIS_UI_TEST_SEED_MIXED_HEIGHTS": "1",
+            "IRIS_UI_TEST_TRACE_PAGINATION": "1",
         ])
         submitWelcomeName(app)
         XCTAssertTrue(waitForChatList(app, timeout: 60))
