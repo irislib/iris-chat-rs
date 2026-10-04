@@ -298,6 +298,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                     raise "Expired or rejected another build" if options[:expire_previous_builds] || options[:reject_build_waiting_for_review]
                     if existing
                       raise "Existing build was re-uploaded" unless options[:distribute_only] == true && !options.key?(:ipa)
+                      raise "Existing build lacks explicit iOS platform" unless options[:app_platform] == "ios"
                     else
                       raise "New IPA was skipped" unless options[:ipa] == "attested.ipa" && !options.key?(:distribute_only)
                     end
