@@ -821,7 +821,8 @@ struct ChatMessageRow: View, Equatable {
                 ownerPubkeyHex: message.authorOwnerPubkeyHex,
                 label: message.author,
                 size: SignalConversationLayout.groupMessageAvatarSize,
-                manager: manager
+                manager: manager,
+                groupSenderColorKey: message.author
             )
             if let owner = message.authorOwnerPubkeyHex, !owner.isEmpty, let manager {
                 Button {

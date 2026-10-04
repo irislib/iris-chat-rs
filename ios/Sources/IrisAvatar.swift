@@ -212,6 +212,7 @@ func irisAvatarImageSource(
 
 struct IrisAvatar: View {
     @Environment(\.irisPalette) private var palette
+    @Environment(\.colorScheme) private var colorScheme
 
     let socialConnection: SocialConnectionSnapshot?
     let ownerPubkeyHex: String?
@@ -223,6 +224,7 @@ struct IrisAvatar: View {
     let manager: AppManager?
     let loadedImageIdentifier: String?
     let showsNearbyBadge: Bool
+    let groupSenderColorKey: String?
 
     @State private var avatarImage: PlatformImage?
 
@@ -236,7 +238,8 @@ struct IrisAvatar: View {
         preferences: PreferencesSnapshot? = nil,
         manager: AppManager? = nil,
         loadedImageIdentifier: String? = nil,
-        showsNearbyBadge: Bool = true
+        showsNearbyBadge: Bool = true,
+        groupSenderColorKey: String? = nil
     ) {
         self.socialConnection = socialConnection
         self.ownerPubkeyHex = ownerPubkeyHex
@@ -248,6 +251,7 @@ struct IrisAvatar: View {
         self.manager = manager
         self.loadedImageIdentifier = loadedImageIdentifier
         self.showsNearbyBadge = showsNearbyBadge
+        self.groupSenderColorKey = groupSenderColorKey
         let source = irisAvatarImageSource(
             pictureUrl: pictureUrl,
             preferences: preferences,
@@ -259,7 +263,9 @@ struct IrisAvatar: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(emphasize ? palette.accent : palette.panelAlt)
+                .fill((avatarImage == nil ? groupSenderColorKey : nil).map {
+                    irisGroupSenderNameColor(for: $0, isDarkMode: colorScheme == .dark)
+                } ?? (emphasize ? palette.accent : palette.panelAlt))
                 .overlay(Circle().stroke(palette.border, lineWidth: 1))
 
             if let avatarImage {
@@ -352,6 +358,8 @@ struct IrisAvatar: View {
     private var avatarInitial: some View {
         Text(String((label.trimmingCharacters(in: .whitespacesAndNewlines).first ?? "?")).uppercased())
             .font(.system(size: size * 0.42, weight: .bold, design: .rounded))
-            .foregroundStyle(emphasize ? palette.onAccent : palette.textPrimary)
+            .foregroundStyle(groupSenderColorKey == nil
+                ? (emphasize ? palette.onAccent : palette.textPrimary)
+                : (colorScheme == .dark ? Color.black : Color.white))
     }
 }
