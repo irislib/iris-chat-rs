@@ -115,6 +115,8 @@ mod invites;
 mod lifecycle;
 mod mesh_pubsub;
 mod message_expiry;
+mod message_mutations;
+use message_mutations::{MessageMutation, MESSAGE_DELETE_KIND, MESSAGE_EDIT_KIND};
 mod mobile_push;
 mod model;
 pub(crate) mod notifications;

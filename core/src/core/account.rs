@@ -648,40 +648,7 @@ impl AppCore {
                             messages: thread
                                 .messages
                                 .iter()
-                                .map(|message| {
-                                    let (body, parsed_attachments) =
-                                        extract_message_attachments(&message.body);
-                                    ChatMessageSnapshot {
-                                        system_notice_owner_pubkey_hex: message
-                                            .system_notice_owner_pubkey_hex
-                                            .clone(),
-                                        direct_transfer: None,
-                                        call: message.call.clone(),
-                                        id: message.id.clone(),
-                                        chat_id: message.chat_id.clone(),
-                                        kind: message.kind.clone(),
-                                        author: message.author.clone(),
-                                        author_owner_pubkey_hex: message
-                                            .author_owner_pubkey_hex
-                                            .clone(),
-                                        author_picture_url: None,
-                                        body,
-                                        attachments: if message.attachments.is_empty() {
-                                            parsed_attachments
-                                        } else {
-                                            message.attachments.clone()
-                                        },
-                                        reactions: message.reactions.clone(),
-                                        reactors: message.reactors.clone(),
-                                        is_outgoing: message.is_outgoing,
-                                        created_at_secs: message.created_at_secs,
-                                        expires_at_secs: message.expires_at_secs,
-                                        delivery: message.delivery.clone().into(),
-                                        recipient_deliveries: message.recipient_deliveries.clone(),
-                                        delivery_trace: message.delivery_trace.clone(),
-                                        source_event_id: message.source_event_id.clone(),
-                                    }
-                                })
+                                .map(chats::chat_message_from_persisted)
                                 .collect(),
                             draft: thread.draft.clone(),
                         },

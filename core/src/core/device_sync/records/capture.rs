@@ -60,10 +60,10 @@ impl AppCore {
         &mut self,
         chat: &str,
         event: &UnsignedEvent,
-    ) {
+    ) -> bool {
         let mut event = event.clone();
         event.ensure_id();
-        let Some(id) = event.id else { return };
+        let Some(id) = event.id else { return false };
         self.capture_device_sync_control(
             chat,
             &id.to_hex(),
@@ -72,7 +72,7 @@ impl AppCore {
             event.kind.as_u16() as u32,
             &event.content,
             &event.tags.iter().cloned().collect::<Vec<_>>(),
-        );
+        )
     }
     #[allow(clippy::too_many_arguments)]
     pub(in crate::core) fn capture_device_sync_control(
@@ -85,6 +85,58 @@ impl AppCore {
         content: &str,
         tags: &[nostr::Tag],
     ) -> bool {
+        if kind == MESSAGE_EDIT_KIND || kind == MESSAGE_DELETE_KIND {
+            let targets = message_ids_from_tags(tags.iter());
+            if targets.len() != 1 {
+                return true;
+            }
+            let ms_tags: Vec<_> = tags
+                .iter()
+                .filter(|tag| tag.as_slice().first().is_some_and(|s| s == "ms"))
+                .collect();
+            if ms_tags.len() > 1 {
+                return true;
+            }
+            let created_at_ms = match ms_tags.first() {
+                Some(tag) => match tag.as_slice().get(1).and_then(|s| s.parse().ok()) {
+                    Some(ms) => Some(ms),
+                    None => return true,
+                },
+                None => None,
+            };
+            let record = DeviceSyncRecord::MessageMutation {
+                mutation: MessageMutation {
+                    chat_id: chat.to_string(),
+                    id: id.to_string(),
+                    author: author.to_string(),
+                    created_at,
+                    created_at_ms,
+                    expires_at: message_expiration_from_tags(tags.iter()),
+                    message_id: targets[0].clone(),
+                    operation: if kind == MESSAGE_EDIT_KIND {
+                        "edit"
+                    } else {
+                        "delete"
+                    }
+                    .into(),
+                    content: content.to_string(),
+                },
+            };
+            let DeviceSyncRecord::MessageMutation { mutation } = &record else {
+                unreachable!()
+            };
+            match self.message_mutation_allowed(mutation) {
+                Ok(true) => {}
+                Ok(false) => return true,
+                Err(_) => return false,
+            }
+            let existed = self.sync_record_is_stored(&record);
+            let accepted = self.apply_sync_record(record);
+            if accepted && !existed {
+                self.broadcast_device_sync_snapshot();
+            }
+            return accepted;
+        }
         if kind != REACTION_KIND && kind != CHAT_SETTINGS_KIND {
             return true;
         }
@@ -187,6 +239,7 @@ impl AppCore {
         }
     }
     pub(in crate::core) fn restore_device_sync_reactions(&mut self, chat: &str, message: &str) {
+        self.project_message_mutations(chat, message);
         for record in self.reaction_records_for_message(chat, message) {
             if let DeviceSyncRecord::Reaction { reaction: r } = record {
                 if r.chat_id == chat

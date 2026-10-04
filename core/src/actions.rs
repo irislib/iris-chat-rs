@@ -293,6 +293,18 @@ pub enum AppAction {
         receipt_type: String,
         message_ids: Vec<String>,
     },
+    EditMessage {
+        chat_id: String,
+        message_id: String,
+        text: String,
+    },
+    DeleteMessageForEveryone {
+        chat_id: String,
+        message_id: String,
+    },
+    SetAllowMessageDeletionByOthers {
+        enabled: bool,
+    },
     DeleteLocalMessage {
         chat_id: String,
         message_id: String,

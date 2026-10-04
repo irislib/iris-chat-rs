@@ -117,6 +117,8 @@ fn redelivered_persisted_message_after_restart_does_not_increment_unread() {
     let chat_id = peer.public_key().to_hex();
     let mut core = logged_in_test_core("redelivered-persisted-message", &owner, &device);
     let old_message = ChatMessageSnapshot {
+        edit_history: Vec::new(),
+        deleted_for_everyone: false,
         system_notice_owner_pubkey_hex: None,
         direct_transfer: None,
         call: None,
@@ -139,6 +141,8 @@ fn redelivered_persisted_message_after_restart_does_not_increment_unread() {
         source_event_id: Some("outer-old".to_string()),
     };
     let latest_message = ChatMessageSnapshot {
+        edit_history: Vec::new(),
+        deleted_for_everyone: false,
         system_notice_owner_pubkey_hex: None,
         direct_transfer: None,
         call: None,
@@ -215,6 +219,8 @@ fn prune_expired_messages_removes_loaded_messages_and_sqlite_rows() {
             updated_at_secs: 200,
             messages: vec![
                 ChatMessageSnapshot {
+                    edit_history: Vec::new(),
+                    deleted_for_everyone: false,
                     system_notice_owner_pubkey_hex: None,
                     direct_transfer: None,
                     call: None,
@@ -237,6 +243,8 @@ fn prune_expired_messages_removes_loaded_messages_and_sqlite_rows() {
                     source_event_id: None,
                 },
                 ChatMessageSnapshot {
+                    edit_history: Vec::new(),
+                    deleted_for_everyone: false,
                     system_notice_owner_pubkey_hex: None,
                     direct_transfer: None,
                     call: None,
@@ -346,7 +354,11 @@ fn suspend_gate_drops_internal_events_until_foregrounded() {
     assert!(core.profile_search_runtime.query.is_empty());
     assert!(!core.profile_search_runtime.in_flight);
     assert!(core.profile_search_runtime.fetch_task.is_none());
-    assert!(core.runtime.block_on(search_task).unwrap_err().is_cancelled());
+    assert!(core
+        .runtime
+        .block_on(search_task)
+        .unwrap_err()
+        .is_cancelled());
     assert!(!core.user_discovery_syncing);
 
     // While suspended, internal events must be dropped — the gate is
@@ -385,6 +397,8 @@ fn internal_prune_expired_messages_event_ignores_stale_tokens_and_updates_state(
             updated_at_secs: now,
             messages: vec![
                 ChatMessageSnapshot {
+                    edit_history: Vec::new(),
+                    deleted_for_everyone: false,
                     system_notice_owner_pubkey_hex: None,
                     direct_transfer: None,
                     call: None,
@@ -407,6 +421,8 @@ fn internal_prune_expired_messages_event_ignores_stale_tokens_and_updates_state(
                     source_event_id: None,
                 },
                 ChatMessageSnapshot {
+                    edit_history: Vec::new(),
+                    deleted_for_everyone: false,
                     system_notice_owner_pubkey_hex: None,
                     direct_transfer: None,
                     call: None,
@@ -543,6 +559,8 @@ fn test_chat_message(
     is_outgoing: bool,
 ) -> ChatMessageSnapshot {
     ChatMessageSnapshot {
+        edit_history: Vec::new(),
+        deleted_for_everyone: false,
         system_notice_owner_pubkey_hex: None,
         direct_transfer: None,
         call: None,
@@ -571,8 +589,7 @@ fn test_chat_message(
 }
 
 fn test_protocol_engine(owner: &Keys, device: &Keys) -> ProtocolEngine {
-    let storage =
-        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    let storage = Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     test_protocol_engine_with_storage(owner, device, storage)
 }
 
@@ -589,12 +606,8 @@ fn test_protocol_engine_with_storage(
     let group_manager = GroupEventManager::new(local_owner).snapshot();
     seed_protocol_storage_if_missing_for_test(storage.as_ref(), session_manager, group_manager)
         .expect("seed protocol state");
-    ProtocolEngine::load_or_create_for_local_device(
-        storage,
-        owner.public_key(),
-        device,
-    )
-    .expect("protocol engine")
+    ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), device)
+        .expect("protocol engine")
 }
 
 fn observe_current_device_appkeys_for_test(
@@ -729,12 +742,8 @@ fn install_test_protocol_engine(
     )
     .expect("seed protocol state");
     core.protocol_engine = Some(
-        ProtocolEngine::load_or_create_for_local_device(
-            storage,
-            owner.public_key(),
-            device,
-        )
-        .expect("protocol engine"),
+        ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), device)
+            .expect("protocol engine"),
     );
 }
 
@@ -846,7 +855,6 @@ fn serializable_key_pair_for_test(keys: &Keys) -> nostr_double_ratchet::Serializ
         private_key: keys.secret_key().to_secret_bytes(),
     }
 }
-
 
 /// End-to-end round-trip: upload a real image to the hashtree network and
 /// verify the same bytes can be read back via the same path the iOS shell

@@ -381,6 +381,40 @@ impl ProtocolEngine {
         }
     }
 
+    /// Resolve a sender-key delivery already authenticated and durably journaled.
+    /// External pairwise group-message payloads remain unsupported. The caller
+    /// acknowledges this ID only after its application snapshot is saved.
+    pub fn pending_group_decrypted_delivery(
+        &self,
+        event_id: &str,
+    ) -> anyhow::Result<Option<GroupIncomingEvent>> {
+        if !event_id.starts_with("group-delivery:") {
+            return Ok(None);
+        }
+        let pending = self
+            .pending_decrypted_deliveries
+            .iter()
+            .find(|pending| pending.event_id.as_deref() == Some(event_id))
+            .ok_or_else(|| anyhow::anyhow!("group delivery is not in the authenticated journal"))?;
+        let Some(GroupPairwiseCommand::GroupMessage {
+            group_id,
+            revision,
+            body,
+        }) = JsonGroupPayloadCodecV1.decode_pairwise_command(pending.content.as_bytes())?
+        else {
+            anyhow::bail!("invalid group delivery journal envelope");
+        };
+        Ok(Some(GroupIncomingEvent::Message(
+            nostr_double_ratchet::GroupReceivedMessage {
+                group_id,
+                revision,
+                body,
+                sender_owner: ndr_owner(pending.sender),
+                sender_device: pending.sender_device.map(ndr_device),
+            },
+        )))
+    }
+
     pub fn retry_pending_protocol(
         &mut self,
         now: NdrUnixSeconds,

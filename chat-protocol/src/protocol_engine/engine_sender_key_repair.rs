@@ -226,6 +226,38 @@ impl ProtocolEngine {
         &mut self,
         message: GroupSenderKeyMessage,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
+        if self.batch_depth.get() > 0 {
+            return self.handle_group_sender_key_message_inner(message);
+        }
+        // The sender ratchet, replay marker and app delivery must advance together.
+        // The ciphertext queue is unchanged here; avoid cloning its backlog.
+        let checkpoint = (
+            self.group_manager.clone(),
+            self.session_manager.clone(),
+            self.pending_group_sender_key_repairs.clone(),
+            self.pending_group_fanouts.clone(),
+            self.processed_group_sender_key_messages.clone(),
+            self.pending_decrypted_deliveries.clone(),
+            self.batch_persist_dirty.get(),
+        );
+        let result = self.handle_group_sender_key_message_inner(message);
+        if result.is_err() {
+            self.group_manager = checkpoint.0;
+            self.session_manager = checkpoint.1;
+            self.pending_group_sender_key_repairs = checkpoint.2;
+            self.pending_group_fanouts = checkpoint.3;
+            self.processed_group_sender_key_messages = checkpoint.4;
+            self.pending_decrypted_deliveries = checkpoint.5;
+            self.batch_persist_dirty.set(checkpoint.6);
+            self.invalidate_known_message_author_cache();
+        }
+        result
+    }
+
+    fn handle_group_sender_key_message_inner(
+        &mut self,
+        message: GroupSenderKeyMessage,
+    ) -> anyhow::Result<ProtocolGroupIncomingResult> {
         let fingerprint = group_sender_key_fingerprint(&message);
         if self.local_owner_is_inactive_for_group(&message.group_id) {
             let mut retry = self.group_sender_key_retry.borrow_mut();
@@ -317,6 +349,34 @@ impl ProtocolEngine {
             SenderKeyRepairRequest::from_pending_sender_key_message(&message, &result, now);
         match result {
             GroupSenderKeyHandleResult::Event(event) => {
+                if let GroupIncomingEvent::Message(received) = &event {
+                    // Replay through the authenticated group envelope, retaining its
+                    // scope even if the inner rumor contains a conflicting group tag.
+                    let payload = JsonGroupPayloadCodecV1.encode_pairwise_command(
+                        nostr_double_ratchet::GroupPayloadEncodeContext {
+                            local_device_pubkey: received
+                                .sender_device
+                                .unwrap_or(self.local_device),
+                            created_at: message.created_at,
+                        },
+                        &GroupPairwiseCommand::GroupMessage {
+                            group_id: received.group_id.clone(),
+                            revision: received.revision,
+                            body: received.body.clone(),
+                        },
+                    )?;
+                    self.record_pending_decrypted_delivery(
+                        ProtocolDecryptedMessage {
+                            sender: public_owner(received.sender_owner)?,
+                            sender_device: received.sender_device.map(public_device).transpose()?,
+                            conversation_owner: None,
+                            content: String::from_utf8(payload)?,
+                            event_id: Some(format!("group-delivery:{fingerprint}")),
+                            created_at_secs: message.created_at.get(),
+                        },
+                        message.created_at.get(),
+                    );
+                }
                 self.clear_group_sender_key_repairs(
                     &message_repair_group_id,
                     message_repair_sender,

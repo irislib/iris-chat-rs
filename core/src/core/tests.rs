@@ -153,6 +153,7 @@ include!("tests/direct_messages_runtime_regressions.rs");
 include!("tests/direct_group_sender_key_ack.rs");
 include!("tests/groups_sender_key.rs");
 include!("tests/group_reactions.rs");
+include!("tests/groups_mutation_delivery.rs");
 include!("tests/group_message_ids.rs");
 include!("tests/groups_sender_key_retry.rs");
 include!("tests/protocol_ready_retry.rs");
@@ -194,3 +195,7 @@ include!("tests/public_follow.rs");
 
 include!("tests/synthetic_history_scale.rs");
 include!("tests/synthetic_protocol_checkpoint.rs");
+
+include!("tests/message_mutations.rs");
+
+include!("tests/message_mutation_cleanup.rs");

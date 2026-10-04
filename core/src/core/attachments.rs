@@ -31,6 +31,9 @@ pub(super) fn extract_message_attachments(text: &str) -> (String, Vec<MessageAtt
 }
 
 pub(super) fn message_preview(message: &ChatMessageSnapshot) -> String {
+    if message.deleted_for_everyone {
+        return "Message deleted".to_string();
+    }
     let body = chat_message_body_preview(&message.body);
     if !body.is_empty() {
         return body;
@@ -291,6 +294,8 @@ mod tests {
         attachments: Vec<MessageAttachmentSnapshot>,
     ) -> ChatMessageSnapshot {
         ChatMessageSnapshot {
+            edit_history: Vec::new(),
+            deleted_for_everyone: false,
             system_notice_owner_pubkey_hex: None,
             direct_transfer: None,
             call: None,

@@ -29,6 +29,9 @@ impl AppCore {
         else {
             return;
         };
+        if message.deleted_for_everyone {
+            return;
+        }
         let outgoing_emoji = toggle_local_reaction(message, &local_owner, emoji);
         self.send_reaction(&normalized_chat_id, message_id, &outgoing_emoji);
         self.persist_best_effort();
@@ -111,6 +114,9 @@ impl AppCore {
         else {
             return;
         };
+        if message.deleted_for_everyone {
+            return;
+        }
         apply_reaction_from(message, sender_hex, emoji, local_owner.as_deref());
     }
 }

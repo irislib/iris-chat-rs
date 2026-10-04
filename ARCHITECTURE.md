@@ -175,6 +175,14 @@ Current relevant files:
 - `core/src/state.rs`
 - `core/src/updates.rs`
 
+## Message Edits and Deletions
+
+The original message ID and timestamp stay stable. Author edits travel as encrypted inner kind `1009`, with replacement text and one `e` tag naming the original message. Author deletions use inner kind `5`, the same target tag, and empty content. Both carry `k=14`, ordinary conversation tags, and the millisecond `ms` tag. Only the authenticated original author in the same conversation can change a message. Plain text can be edited; attachments, calls, and file transfers cannot. No edit age or count limit is imposed.
+
+Edits are ordered by `(ms, event ID)` and retain the original and accepted versions. Controls arriving before their target are durable. An honored deletion leaves a tombstone, clears content, attachments, reactions, and edit history, and removes retained edit records. Later edits and replayed originals cannot restore it. Local deletion remains a separate local-only operation. Local message/chat deletion and expiry also purge saved edit records; disappearing-message controls carry the original expiration and expire even if received before their target. The default-on “Allow others to delete their messages” preference controls incoming author deletions; it never authorizes deleting another author's messages.
+
+Linked devices reconcile immutable `messageMutation` history records with `chatId`, `id`, `author`, `createdAt`, optional `createdAtMs` and `expiresAt`, `messageId`, `operation` (`edit` or `delete`), and `content`. Their record ID hashes the compact JSON array `["messageMutation", chatId, id]`. Message records retain the original text until deletion, then carry an empty body. New history initiators advertise `messageMutations: 1`; responders omit mutation records for older initiators. Older apps do not display edits or honor retractions. This is a best-effort remote deletion request, not a guarantee that every recipient removed its copy.
+
 ## Router Model
 
 Routing is Rust-owned.

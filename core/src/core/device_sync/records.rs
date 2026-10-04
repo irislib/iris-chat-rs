@@ -24,6 +24,7 @@ pub(super) enum RecordLocator {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(super) enum DeviceSyncRecord {
     Message { message: DeviceSyncMessage },
+    MessageMutation { mutation: MessageMutation },
     Reaction { reaction: DeviceSyncReaction },
     Group { group: DeviceSyncGroup },
     GroupSettings { settings: DeviceSyncGroupSettings },
@@ -59,6 +60,9 @@ impl DeviceSyncRecord {
     pub(super) fn id(&self) -> [u8; 32] {
         let value = match self {
             Self::Message { message } => serde_json::json!([message.chat_id, message.id]),
+            Self::MessageMutation { mutation: m } => {
+                serde_json::json!(["messageMutation", m.chat_id, m.id])
+            }
             Self::Reaction { reaction: r } => serde_json::json!(["reaction", r.chat_id, r.id]),
             Self::Profile { event } => {
                 serde_json::json!(["profile", event.pubkey.to_hex(), event.id.to_hex()])
@@ -95,13 +99,16 @@ impl DeviceSyncRecord {
     pub(super) fn timestamp(&self) -> u64 {
         match self {
             Self::Message { message } => message.created_at,
+            Self::MessageMutation { mutation } => mutation.created_at,
             Self::Reaction { reaction } => reaction.created_at,
             _ => 0,
         }
     }
     pub(super) fn scope(&self) -> RecordScope {
         match self {
-            Self::Message { .. } | Self::Reaction { .. } => RecordScope::History,
+            Self::Message { .. } | Self::Reaction { .. } | Self::MessageMutation { .. } => {
+                RecordScope::History
+            }
             _ => RecordScope::State,
         }
     }
@@ -113,6 +120,9 @@ impl DeviceSyncRecord {
     }
     fn storage_key(&self) -> Option<String> {
         Some(match self {
+            Self::MessageMutation { mutation: m } => {
+                serde_json::json!(["messageMutation", m.chat_id, m.message_id, m.id]).to_string()
+            }
             Self::Reaction { reaction: r } => {
                 serde_json::json!(["reaction", r.chat_id, r.message_id, r.author]).to_string()
             }
@@ -179,6 +189,9 @@ impl AppCore {
             DeviceSyncRecord::Message { message } => {
                 messages::history_message_allowed(self, message)
             }
+            DeviceSyncRecord::MessageMutation { mutation: m } => {
+                self.message_mutation_allowed(m).unwrap_or(false)
+            }
             DeviceSyncRecord::Reaction { reaction: r } => {
                 !r.id.is_empty()
                     && r.id.len() <= 128
@@ -222,6 +235,46 @@ impl AppCore {
                         .is_some_and(|login| group.members.contains(&login.owner_pubkey.to_hex()))
             }
         }
+    }
+    pub(super) fn message_mutation_allowed(&self, m: &MessageMutation) -> anyhow::Result<bool> {
+        let locally_deleted =
+            self.app_store
+                .message_was_locally_deleted(&m.chat_id, Some(&m.message_id), None)?;
+        let target = self.message_for_mutation_result(&m.chat_id, &m.message_id)?;
+        Ok(!m.id.is_empty()
+            && m.id.len() <= 128
+            && !m.message_id.is_empty()
+            && m.message_id.len() <= 128
+            && m.id != m.message_id
+            && valid_time(m.created_at, m.created_at_ms)
+            && m.expires_at
+                .is_none_or(|expiry| expiry > unix_now().get() && expiry <= 9_007_199_254_740_991)
+            && ((m.operation == "delete" && m.content.is_empty())
+                || (m.operation == "edit"
+                    && !m.content.trim().is_empty()
+                    && m.content.len() <= 32 * 1024
+                    && extract_message_attachments(&m.content).1.is_empty()
+                    && !m.content.starts_with("iris-direct-file-v1:")))
+            && (if is_group_chat_id(&m.chat_id) {
+                self.sync_record_author_allowed(&m.chat_id, &m.author, false)
+            } else {
+                PublicKey::from_hex(&m.chat_id).is_ok()
+                    && self.logged_in.as_ref().is_some_and(|login| {
+                        m.author == m.chat_id || m.author == login.owner_pubkey.to_hex()
+                    })
+            })
+            && !self.chat_activity_is_deleted(&m.chat_id, m.created_at)
+            && !locally_deleted
+            && target.is_none_or(|message| {
+                message
+                    .expires_at_secs
+                    .is_none_or(|expiry| expiry > unix_now().get())
+                    && message.author_owner_pubkey_hex.as_deref() == Some(m.author.as_str())
+                    && matches!(message.kind, ChatMessageKind::User)
+                    && m.created_at >= message.created_at_secs
+                    && (m.operation == "delete"
+                        || super::super::message_mutations::editable_message(&message))
+            }))
     }
     fn sync_reaction_target_expired(&self, chat: &str, id: &str) -> bool {
         let expiry = self
@@ -267,6 +320,17 @@ impl AppCore {
                 return true;
             }
         }
+        if let DeviceSyncRecord::MessageMutation { mutation: m } = &record {
+            if m.operation == "delete"
+                && !self.preferences.allow_message_deletion_by_others
+                && self
+                    .logged_in
+                    .as_ref()
+                    .is_some_and(|login| login.owner_pubkey.to_hex() != m.author)
+            {
+                return true;
+            }
+        }
         if !self.sync_record_allowed(&record) {
             return false;
         }
@@ -295,6 +359,12 @@ impl AppCore {
                 };
                 if accepted {
                     match &record {
+                        DeviceSyncRecord::MessageMutation { mutation: m } => {
+                            if !self.project_message_mutations(&m.chat_id, &m.message_id) {
+                                return false;
+                            }
+                            self.schedule_next_message_expiry();
+                        }
                         DeviceSyncRecord::Reaction { reaction: r } => self
                             .apply_incoming_reaction_to_chat(
                                 &r.chat_id,

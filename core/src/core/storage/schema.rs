@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 40;
+const SCHEMA_VERSION: u32 = 41;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS direct_file_transfers (
@@ -617,6 +617,28 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
     if current < 40 && !column_exists(&tx, "messages", "system_notice_owner_pubkey_hex")? {
         tx.execute_batch("ALTER TABLE messages ADD COLUMN system_notice_owner_pubkey_hex TEXT;")?;
     }
+    if !column_exists(&tx, "messages", "edit_history_json")? {
+        tx.execute_batch(
+            "ALTER TABLE messages ADD COLUMN edit_history_json TEXT NOT NULL DEFAULT '[]';",
+        )?;
+    }
+    if !column_exists(&tx, "messages", "deleted_for_everyone")? {
+        tx.execute_batch(
+            "ALTER TABLE messages ADD COLUMN deleted_for_everyone INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    if !column_exists(&tx, "preferences", "allow_message_deletion_by_others")? {
+        tx.execute_batch("ALTER TABLE preferences ADD COLUMN allow_message_deletion_by_others INTEGER NOT NULL DEFAULT 1;")?;
+    }
+    // Target lookups span old device identities after account restoration.
+    // Index the guarded JSON fields so history exports never scan every control
+    // for each message; unrelated/non-JSON app metadata remains valid.
+    tx.execute_batch(
+        "CREATE INDEX IF NOT EXISTS app_meta_message_mutation_target ON app_meta (
+        json_extract(CASE WHEN json_valid(value) THEN value END, '$.mutation.chatId'),
+        json_extract(CASE WHEN json_valid(value) THEN value END, '$.mutation.messageId')
+    );",
+    )?;
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;
     Ok(())

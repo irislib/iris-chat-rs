@@ -37,6 +37,12 @@ impl AppStore {
         let tx = conn.transaction()?;
         tx.execute("INSERT INTO app_meta(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params![format!("{DELETION_PREFIX}{chat_id}"), deleted_at.to_string()])?;
+        store_message_deletions::purge_deleted_chat_controls(
+            &tx,
+            chat_id,
+            deleted_at,
+            keep_thread,
+        )?;
         tx.execute(
             "DELETE FROM messages WHERE chat_id = ?1 AND created_at_secs <= ?2",
             params![chat_id, deleted_at as i64],

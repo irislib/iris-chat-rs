@@ -645,6 +645,8 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                 updated_at_secs: 200,
                 messages: vec![
                     ChatMessageSnapshot {
+                        edit_history: Vec::new(),
+                        deleted_for_everyone: false,
                         system_notice_owner_pubkey_hex: None,
                         direct_transfer: None,
                         call: None,
@@ -667,6 +669,8 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                         source_event_id: None,
                     },
                     ChatMessageSnapshot {
+                        edit_history: Vec::new(),
+                        deleted_for_everyone: false,
                         system_notice_owner_pubkey_hex: None,
                         direct_transfer: None,
                         call: None,
@@ -700,6 +704,8 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                 unread_count: 0,
                 updated_at_secs: 50,
                 messages: vec![ChatMessageSnapshot {
+                    edit_history: Vec::new(),
+                    deleted_for_everyone: false,
                     system_notice_owner_pubkey_hex: None,
                     direct_transfer: None,
                     call: None,
@@ -855,6 +861,8 @@ fn delete_chat_removes_thread_and_navigates_back() {
             unread_count: 2,
             updated_at_secs: 100,
             messages: vec![ChatMessageSnapshot {
+                edit_history: Vec::new(),
+                deleted_for_everyone: false,
                 system_notice_owner_pubkey_hex: None,
                 direct_transfer: None,
                 call: None,

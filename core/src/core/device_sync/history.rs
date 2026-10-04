@@ -115,6 +115,7 @@ impl HistorySession {
         capacity: usize,
         scope: RecordScope,
         prefix: &str,
+        message_mutations: bool,
     ) -> Option<Self> {
         let mut records = BTreeMap::new();
         let mut cursor = None;
@@ -150,7 +151,8 @@ impl HistorySession {
             }
         }
         let mut add = |record: DeviceSyncRecord| {
-            if record.scope() == scope
+            if (message_mutations || !matches!(record, DeviceSyncRecord::MessageMutation { .. }))
+                && record.scope() == scope
                 && filter.contains(record.timestamp())
                 && hex(&record.id()).starts_with(prefix)
                 && core.sync_record_allowed(&record)
@@ -496,6 +498,7 @@ impl AppCore {
             .sessions
             .retain(|_, state| state.started.elapsed() < TTL);
         if let DeviceSyncPacket::HistoryOpen {
+            message_mutations,
             since,
             until,
             frame,
@@ -559,6 +562,7 @@ impl AppCore {
                 capacity,
                 scope,
                 &prefix,
+                message_mutations == Some(1),
             ) else {
                 self.send_history_packets(
                     peer,

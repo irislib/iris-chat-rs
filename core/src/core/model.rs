@@ -523,6 +523,8 @@ pub(super) struct PersistedPreferences {
     #[serde(default)]
     pub(super) send_read_receipts: bool,
     #[serde(default = "default_true")]
+    pub(super) allow_message_deletion_by_others: bool,
+    #[serde(default = "default_true")]
     pub(super) desktop_notifications_enabled: bool,
     #[serde(default = "default_true")]
     pub(super) invite_acceptance_notifications_enabled: bool,
@@ -578,6 +580,7 @@ impl Default for PersistedPreferences {
             call_max_bitrate_bps: defaults.call_max_bitrate_bps,
             send_typing_indicators: defaults.send_typing_indicators,
             send_read_receipts: defaults.send_read_receipts,
+            allow_message_deletion_by_others: defaults.allow_message_deletion_by_others,
             desktop_notifications_enabled: defaults.desktop_notifications_enabled,
             invite_acceptance_notifications_enabled: defaults
                 .invite_acceptance_notifications_enabled,
@@ -639,6 +642,10 @@ pub(super) struct PersistedThread {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PersistedMessage {
+    #[serde(default)]
+    pub(super) edit_history: Vec<crate::state::MessageEditSnapshot>,
+    #[serde(default)]
+    pub(super) deleted_for_everyone: bool,
     #[serde(default)]
     pub(super) system_notice_owner_pubkey_hex: Option<String>,
     pub(super) id: String,

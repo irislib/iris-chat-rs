@@ -21,6 +21,117 @@ pub(super) fn contains(
         .is_some())
 }
 
+// Restrict cleanup to typed, well-formed message controls. Other app metadata
+// (including malformed legacy values) must not break deletion or be removed.
+const MESSAGE_CONTROL_RECORDS: &str = "WITH message_controls AS (
+    SELECT key, CASE WHEN json_valid(value) THEN CASE
+        WHEN json_extract(value, '$.type') = 'messageMutation'
+             AND json_type(value, '$.mutation') = 'object'
+            THEN json_extract(value, '$.mutation')
+        WHEN json_extract(value, '$.type') = 'reaction'
+             AND json_type(value, '$.reaction') = 'object'
+            THEN json_extract(value, '$.reaction')
+        END END AS record,
+        CASE WHEN json_valid(value) THEN json_extract(value, '$.type') END AS kind
+    FROM app_meta
+    WHERE key >= 'iris-chat-sync-record-v1:' AND key < 'iris-chat-sync-record-v1;'
+) ";
+
+fn purge_message_controls(
+    conn: &rusqlite::Connection,
+    chat_id: &str,
+    message_id: &str,
+    source_event_id: Option<&str>,
+    stored_source_event_id: Option<&str>,
+) -> anyhow::Result<()> {
+    conn.execute(
+        &format!(
+            "{MESSAGE_CONTROL_RECORDS} DELETE FROM app_meta WHERE key IN (
+            SELECT key FROM message_controls
+            WHERE json_extract(record, '$.chatId') = ?1
+              AND json_extract(record, '$.messageId') IN (?2, ?3, ?4)
+        )"
+        ),
+        params![chat_id, message_id, source_event_id, stored_source_event_id],
+    )?;
+    Ok(())
+}
+
+pub(super) fn next_control_expiration_after(
+    conn: &rusqlite::Connection,
+    now_secs: u64,
+) -> anyhow::Result<Option<u64>> {
+    let expires_at = conn.query_row(
+        &format!(
+            "{MESSAGE_CONTROL_RECORDS}
+            SELECT MIN(json_extract(record, '$.expiresAt')) FROM message_controls
+            WHERE json_type(record, '$.expiresAt') = 'integer'
+              AND json_extract(record, '$.expiresAt') > ?1"
+        ),
+        [now_secs as i64],
+        |row| row.get::<_, Option<i64>>(0),
+    )?;
+    Ok(expires_at.map(|seconds| seconds as u64))
+}
+
+pub(super) fn purge_expired_controls(
+    conn: &rusqlite::Connection,
+    now_secs: u64,
+) -> anyhow::Result<()> {
+    conn.execute(
+        &format!(
+            "{MESSAGE_CONTROL_RECORDS} DELETE FROM app_meta WHERE key IN (
+            SELECT key FROM message_controls
+            WHERE (json_type(record, '$.expiresAt') = 'integer'
+                   AND json_extract(record, '$.expiresAt') <= ?1)
+               OR EXISTS (
+                   SELECT 1 FROM messages
+                   WHERE messages.chat_id = json_extract(record, '$.chatId')
+                     AND (messages.id = json_extract(record, '$.messageId')
+                          OR messages.source_event_id = json_extract(record, '$.messageId'))
+                     AND messages.expires_at_secs IS NOT NULL
+                     AND messages.expires_at_secs <= ?1
+               )
+        )"
+        ),
+        [now_secs as i64],
+    )?;
+    Ok(())
+}
+
+pub(super) fn purge_deleted_chat_controls(
+    conn: &rusqlite::Connection,
+    chat_id: &str,
+    deleted_at: u64,
+    keep_thread: bool,
+) -> anyhow::Result<()> {
+    // A delayed chat deletion can leave newer messages in the same chat.
+    // Keep their versions, but remove edits of deleted targets even when the
+    // edits themselves arrived after the deletion cutoff.
+    conn.execute(
+        &format!(
+            "{MESSAGE_CONTROL_RECORDS} DELETE FROM app_meta WHERE key IN (
+            SELECT key FROM message_controls
+            WHERE json_extract(record, '$.chatId') = ?1
+              AND (EXISTS (
+                  SELECT 1 FROM messages
+                  WHERE messages.chat_id = ?1
+                    AND (messages.id = json_extract(record, '$.messageId')
+                         OR messages.source_event_id = json_extract(record, '$.messageId'))
+                    AND (NOT ?3 OR messages.created_at_secs <= ?2)
+              ) OR (json_extract(record, '$.createdAt') <= ?2 AND NOT EXISTS (
+                  SELECT 1 FROM messages
+                  WHERE messages.chat_id = ?1
+                    AND (messages.id = json_extract(record, '$.messageId')
+                         OR messages.source_event_id = json_extract(record, '$.messageId'))
+              )))
+        )"
+        ),
+        params![chat_id, deleted_at as i64, keep_thread],
+    )?;
+    Ok(())
+}
+
 pub(super) fn mark_expired(conn: &rusqlite::Connection, now_secs: u64) -> anyhow::Result<()> {
     // Match deletion_key's UTF-8 byte length, including non-ASCII group IDs.
     for (column, kind) in [("id", "id"), ("source_event_id", "source")] {
@@ -98,6 +209,13 @@ impl AppStore {
                 [key],
             )?;
         }
+        purge_message_controls(
+            &tx,
+            chat_id,
+            message_id,
+            source_event_id,
+            stored_source.as_deref(),
+        )?;
         tx.execute(
             "DELETE FROM messages WHERE chat_id = ?1 AND id = ?2",
             params![chat_id, message_id],
@@ -157,5 +275,47 @@ impl AppStore {
             .optional()?
             .is_some();
         Ok(exists)
+    }
+}
+
+impl AppStore {
+    /// Keep the visible row, FTS, and removal of old plaintext versions atomic.
+    pub(crate) fn save_message_mutation_projection(
+        &mut self,
+        message: &ChatMessageSnapshot,
+    ) -> anyhow::Result<()> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Storage lock"))?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO threads(chat_id,updated_at_secs) VALUES (?1,?2)",
+            params![message.chat_id, message.created_at_secs as i64],
+        )?;
+        upsert_message_row(&tx, &message.chat_id, message)?;
+        if message.deleted_for_everyone {
+            tx.execute(
+                "UPDATE messages SET outgoing_event_json=NULL WHERE chat_id=?1 AND id=?2",
+                params![message.chat_id, message.id],
+            )?;
+            // Account databases can retain several device namespaces. Purge
+            // every copy of this target's plaintext while keeping deletion
+            // heads so stale history cannot resurrect the content.
+            tx.execute(
+                &format!(
+                    "{MESSAGE_CONTROL_RECORDS} DELETE FROM app_meta WHERE key IN (
+                    SELECT key FROM message_controls
+                    WHERE json_extract(record, '$.chatId') = ?1
+                      AND json_extract(record, '$.messageId') IN (?2, ?3)
+                      AND (kind = 'reaction' OR json_extract(record, '$.operation') = 'edit')
+                )"
+                ),
+                params![message.chat_id, message.id, message.source_event_id],
+            )?;
+        }
+        tx.commit()?;
+        self.cache.threads.remove(&message.chat_id);
+        Ok(())
     }
 }

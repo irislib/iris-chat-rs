@@ -66,6 +66,8 @@ pub struct PreferencesSnapshot {
     pub call_max_bitrate_bps: u32,
     pub send_typing_indicators: bool,
     pub send_read_receipts: bool,
+    #[uniffi(default = true)]
+    pub allow_message_deletion_by_others: bool,
     pub desktop_notifications_enabled: bool,
     pub invite_acceptance_notifications_enabled: bool,
     pub startup_at_login_enabled: bool,
@@ -116,6 +118,7 @@ impl Default for PreferencesSnapshot {
             call_max_bitrate_bps: 2_000_000,
             send_typing_indicators: false,
             send_read_receipts: false,
+            allow_message_deletion_by_others: true,
             desktop_notifications_enabled: true,
             invite_acceptance_notifications_enabled: true,
             startup_at_login_enabled: true,
@@ -288,8 +291,19 @@ pub struct CallHistorySnapshot {
     pub duration_secs: u64,
 }
 
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct MessageEditSnapshot {
+    pub id: String,
+    pub body: String,
+    pub created_at_secs: u64,
+}
+
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ChatMessageSnapshot {
+    #[uniffi(default = [])]
+    pub edit_history: Vec<MessageEditSnapshot>,
+    #[uniffi(default = false)]
+    pub deleted_for_everyone: bool,
     /// Profile subject of a system notice, independent of the message author.
     #[uniffi(default = None)]
     pub system_notice_owner_pubkey_hex: Option<String>,

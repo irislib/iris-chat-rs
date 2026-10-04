@@ -148,14 +148,30 @@ impl AppCore {
                 continue;
             }
             let event_id = decrypted.event_id.clone();
-            if !self.apply_decrypted_runtime_message_with_metadata(
-                decrypted.sender,
-                decrypted.sender_device,
-                decrypted.conversation_owner,
-                decrypted.content,
-                decrypted.event_id,
-                decrypted.created_at_secs,
-            ) {
+            let group_delivery = event_id
+                .as_deref()
+                .and_then(|id| {
+                    self.protocol_engine
+                        .as_ref()
+                        .map(|engine| engine.pending_group_decrypted_delivery(id))
+                })
+                .transpose();
+            let applied = match group_delivery {
+                Ok(Some(Some(event))) => self.apply_group_decrypted_event(event),
+                Ok(_) => self.apply_decrypted_runtime_message_with_metadata(
+                    decrypted.sender,
+                    decrypted.sender_device,
+                    decrypted.conversation_owner,
+                    decrypted.content,
+                    decrypted.event_id,
+                    decrypted.created_at_secs,
+                ),
+                Err(error) => {
+                    self.push_debug_log("appcore.protocol.group.delivery.error", error.to_string());
+                    false
+                }
+            };
+            if !applied {
                 continue;
             }
             if let Some(event_id) = event_id {

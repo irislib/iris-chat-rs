@@ -183,6 +183,7 @@ pub(super) fn apply_persisted_preferences(
     };
     preferences.send_typing_indicators = persisted.send_typing_indicators;
     preferences.send_read_receipts = persisted.send_read_receipts;
+    preferences.allow_message_deletion_by_others = persisted.allow_message_deletion_by_others;
     preferences.desktop_notifications_enabled = persisted.desktop_notifications_enabled;
     preferences.invite_acceptance_notifications_enabled =
         persisted.invite_acceptance_notifications_enabled;

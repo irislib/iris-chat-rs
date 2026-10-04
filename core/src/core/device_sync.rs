@@ -104,6 +104,8 @@ enum DeviceSyncPacket {
     },
     HistoryOpen {
         v: u8,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_mutations: Option<u8>,
         scope: RecordScope,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prefix: Option<String>,
@@ -495,20 +497,13 @@ impl AppCore {
         let Some(roster_at) = self.device_sync_roster_at() else {
             return;
         };
-        let Some(author) = message.author_owner_pubkey_hex.clone() else {
+        let Some(message) = messages::from_snapshot(self, message) else {
             return;
         };
+        let created_at = message.created_at;
         let packet = DeviceSyncSnapshot {
             roster_at,
-            messages: vec![DeviceSyncMessage {
-                legacy_reactions: None,
-                chat_id: message.chat_id.clone(),
-                id: message.id.clone(),
-                body: message_wire_text(&message.body, &message.attachments),
-                author,
-                created_at: message.created_at_secs,
-                expires_at: message.expires_at_secs,
-            }],
+            messages: vec![message],
             ..DeviceSyncSnapshot::default()
         }
         .packet();
@@ -535,7 +530,7 @@ impl AppCore {
             .filter(|peer| {
                 self.device_history_send_since(&peer.pubkey().to_string())
                     .or_else(|| self.device_sync_peer_since(&peer.pubkey().to_string()))
-                    .is_some_and(|since| message.created_at_secs >= since)
+                    .is_some_and(|since| created_at >= since)
             })
             .collect::<Vec<_>>();
         send_device_sync_packets(&tcp, &recipients, std::slice::from_ref(&packet));

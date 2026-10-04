@@ -102,7 +102,7 @@ impl AppCore {
             let filter = plan.filter;
             let link_id = plan.link_id.clone();
             let Some(mut state) =
-                HistorySession::snapshot(self, filter, true, capacity, scope, &prefix)
+                HistorySession::snapshot(self, filter, true, capacity, scope, &prefix, true)
             else {
                 let split = self
                     .device_sync
@@ -135,6 +135,7 @@ impl AppCore {
             let session = hex(&rand::random::<[u8; 16]>());
             let packet = DeviceSyncPacket::HistoryOpen {
                 v: 1,
+                message_mutations: Some(1),
                 session: session.clone(),
                 scope,
                 prefix: (!prefix.is_empty()).then_some(prefix),

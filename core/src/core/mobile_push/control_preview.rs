@@ -54,7 +54,12 @@ impl AppCore {
         if sender == owner
             || !matches!(
                 rumor.kind,
-                RECEIPT_KIND | TYPING_KIND | CHAT_SETTINGS_KIND | REACTION_KIND
+                RECEIPT_KIND
+                    | TYPING_KIND
+                    | CHAT_SETTINGS_KIND
+                    | REACTION_KIND
+                    | MESSAGE_EDIT_KIND
+                    | MESSAGE_DELETE_KIND
             )
         {
             return;

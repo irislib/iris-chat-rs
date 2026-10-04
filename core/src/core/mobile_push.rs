@@ -607,7 +607,7 @@ fn lookup_mobile_push_preview(
     }
     let (chat_id, body, author_hex, dismiss): (String, String, String, bool) = conn
         .query_row(
-            "SELECT chat_id, body, author, is_outgoing = 1 OR delivery = 'seen'
+            "SELECT chat_id, body, author, is_outgoing = 1 OR delivery = 'seen' OR deleted_for_everyone = 1
              FROM messages
              WHERE source_event_id = ?1
              LIMIT 1",

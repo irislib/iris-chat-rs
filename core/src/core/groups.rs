@@ -458,7 +458,7 @@ impl AppCore {
         self.ensure_thread_record(&group_chat_id(&group.group_id), updated_at_secs);
     }
 
-    pub(super) fn apply_group_decrypted_event(&mut self, event: GroupIncomingEvent) {
+    pub(super) fn apply_group_decrypted_event(&mut self, event: GroupIncomingEvent) -> bool {
         self.mark_mobile_push_dirty();
         match event {
             GroupIncomingEvent::MetadataUpdated(group) => {
@@ -466,14 +466,14 @@ impl AppCore {
                     &group_chat_id(&group.group_id),
                     group.updated_at.get(),
                 ) {
-                    return;
+                    return true;
                 }
                 let previous = self.groups.get(&group.group_id).cloned();
                 if !self.apply_group_roster_snapshot(
                     group.clone(),
                     unix_now().get().max(group.updated_at.get()),
                 ) {
-                    return;
+                    return true;
                 }
                 self.apply_group_metadata_notice(previous.as_ref(), &group);
             }
@@ -481,20 +481,19 @@ impl AppCore {
                 let chat_id = group_chat_id(&message.group_id);
                 let Ok(sender_owner) = PublicKey::from_slice(&message.sender_owner.to_bytes())
                 else {
-                    return;
+                    return true;
                 };
                 let body = String::from_utf8_lossy(&message.body).to_string();
                 if let Some(runtime_rumor) = parse_runtime_rumor(&body) {
                     let sender_device = message
                         .sender_device
                         .and_then(|device| PublicKey::from_slice(&device.to_bytes()).ok());
-                    self.apply_group_runtime_rumor(
+                    return self.apply_group_runtime_rumor(
                         &chat_id,
                         sender_owner,
                         sender_device,
                         runtime_rumor,
                     );
-                    return;
                 }
                 let reason = if looks_like_runtime_rumor(&body) {
                     "invalid_runtime_rumor"
@@ -512,6 +511,7 @@ impl AppCore {
             }
             GroupIncomingEvent::SenderKeyRepairRequested(_) => {}
         }
+        true
     }
 
     fn apply_group_runtime_rumor(
@@ -520,7 +520,7 @@ impl AppCore {
         sender_owner: PublicKey,
         sender_device: Option<PublicKey>,
         runtime_rumor: RuntimeRumor,
-    ) {
+    ) -> bool {
         if !self.runtime_rumor_pubkey_matches_authenticated_sender(
             sender_owner,
             sender_device,
@@ -534,7 +534,7 @@ impl AppCore {
                     runtime_rumor.pubkey.to_hex()
                 ),
             );
-            return;
+            return true;
         }
         let local_owner = self
             .logged_in
@@ -553,7 +553,8 @@ impl AppCore {
             &runtime_rumor.content,
             &runtime_rumor.tags,
         ) {
-            return;
+            return runtime_rumor.kind != MESSAGE_EDIT_KIND
+                && runtime_rumor.kind != MESSAGE_DELETE_KIND;
         }
         match runtime_rumor.kind {
             CHAT_MESSAGE_KIND => {
@@ -619,6 +620,7 @@ impl AppCore {
             }
             _ => {}
         }
+        true
     }
 
     pub(super) fn apply_group_metadata_notice(

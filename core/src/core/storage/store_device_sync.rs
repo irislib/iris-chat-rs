@@ -17,7 +17,7 @@ impl AppStore {
         let mut stmt = conn.prepare(
             "SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing,
                     created_at_secs, expires_at_secs, delivery, attachments_json, reactions_json,
-                    reactors_json, source_event_id, recipient_deliveries_json, delivery_trace_json, call_json, system_notice_owner_pubkey_hex
+                    reactors_json, source_event_id, recipient_deliveries_json, delivery_trace_json, call_json, system_notice_owner_pubkey_hex, edit_history_json, deleted_for_everyone
              FROM messages
              WHERE kind = 'user' AND created_at_secs >= ?1
                AND (delivery NOT IN ('queued', 'pending', 'failed')

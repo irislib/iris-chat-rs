@@ -415,6 +415,7 @@ fn group_retry_storage_failure_restores_ratchet_and_delivers_once_after_retry() 
     assert!(error.downcast_ref::<StorageError>().is_some());
     assert_eq!(engine.pending_group_sender_key_messages, before);
     assert_eq!(engine.group_manager.snapshot(), group_before);
+    assert!(engine.pending_decrypted_deliveries.is_empty());
     assert!(engine.has_ready_group_sender_key_retry_work());
     let mut delivered = 0;
     for _ in 0..3 {
@@ -430,6 +431,8 @@ fn group_retry_storage_failure_restores_ratchet_and_delivers_once_after_retry() 
     }
     assert_eq!(delivered, 3);
     assert!(engine.pending_group_sender_key_messages.is_empty());
+    assert_eq!(engine.pending_decrypted_deliveries.len(), 3);
+    engine.ack_pending_decrypted_deliveries().unwrap();
     assert!(engine
         .retry_pending_protocol(NdrUnixSeconds(30))
         .unwrap()
@@ -520,4 +523,116 @@ fn group_retry_checkpoint_restores_eligibility_without_restarting_forever() {
         1
     );
     assert!(!engine.has_ready_group_sender_key_retry_work());
+}
+
+#[test]
+fn group_sender_key_delivery_journal_preserves_author_scope_and_survives_restart() {
+    let (mut engine, sender, sender_device) = queued_group_history(1);
+    let owner = engine.owner_pubkey;
+    let keys = Keys::new(nostr::SecretKey::from_slice(&engine.local_device_secret).unwrap());
+    let parsed = engine.pending_group_sender_key_messages.pop().unwrap();
+    let message = engine
+        .group_sender_key_message_from_parsed(&parsed)
+        .unwrap();
+    let result = engine
+        .handle_group_sender_key_message(message.clone())
+        .unwrap();
+    assert_eq!(result.events.len(), 1);
+    assert_eq!(engine.pending_decrypted_deliveries.len(), 1);
+    assert!(engine
+        .handle_group_sender_key_message(message)
+        .unwrap()
+        .events
+        .is_empty());
+    let storage = engine.storage.clone();
+    drop(engine);
+    let mut restored =
+        ProtocolEngine::load_or_create_for_local_device(storage, owner, &keys).unwrap();
+    let batch = restored.retry_pending_protocol(NdrUnixSeconds(30)).unwrap();
+    assert_eq!(batch.direct_messages.len(), 1);
+    let delivery = &batch.direct_messages[0];
+    assert_eq!(delivery.sender, sender.public_key());
+    assert_eq!(delivery.sender_device, Some(sender_device.public_key()));
+    assert_eq!(delivery.created_at_secs, 20);
+    let Some(GroupPairwiseCommand::GroupMessage {
+        group_id,
+        revision,
+        body,
+    }) = JsonGroupPayloadCodecV1
+        .decode_pairwise_command(delivery.content.as_bytes())
+        .unwrap()
+    else {
+        panic!("scoped group wrapper");
+    };
+    assert_eq!(group_id, "queued-group");
+    assert_eq!(revision, 1);
+    assert_eq!(body, b"history-0");
+    let Some(GroupIncomingEvent::Message(received)) = restored
+        .pending_group_decrypted_delivery(delivery.event_id.as_deref().unwrap())
+        .unwrap()
+    else {
+        panic!("journaled group message");
+    };
+    assert_eq!(received.group_id, group_id);
+    assert_eq!(received.sender_owner, ndr_owner(sender.public_key()));
+    assert_eq!(
+        received.sender_device,
+        Some(ndr_device(sender_device.public_key()))
+    );
+    assert_eq!(received.body, body);
+    assert!(restored
+        .pending_group_decrypted_delivery("group-delivery:forged")
+        .is_err());
+    assert!(
+        restored
+            .process_group_pairwise_payload(
+                delivery.content.as_bytes(),
+                delivery.sender,
+                delivery.sender_device
+            )
+            .unwrap()
+            .events
+            .is_empty(),
+        "external legacy group-message payloads remain unsupported"
+    );
+    restored
+        .ack_decrypted_delivery_ids(&HashSet::from(["unrelated".into()]))
+        .unwrap();
+    assert_eq!(restored.pending_decrypted_deliveries.len(), 1);
+    restored
+        .ack_decrypted_delivery_ids(&HashSet::from([delivery.event_id.clone().unwrap()]))
+        .unwrap();
+    assert!(restored
+        .retry_pending_protocol(NdrUnixSeconds(31))
+        .unwrap()
+        .direct_messages
+        .is_empty());
+}
+
+#[test]
+fn group_sender_key_receive_storage_failure_retries_without_losing_plaintext() {
+    let (mut engine, _, _) = queued_group_history(1);
+    let parsed = engine.pending_group_sender_key_messages.pop().unwrap();
+    let message = engine
+        .group_sender_key_message_from_parsed(&parsed)
+        .unwrap();
+    let before = engine.group_manager.snapshot();
+    engine.persist().unwrap();
+    engine.storage = Arc::new(GroupRetryCountingStorage {
+        inner: engine.storage.clone(),
+        puts: 0.into(),
+        fail_next: true.into(),
+    });
+    assert!(engine
+        .handle_group_sender_key_message(message.clone())
+        .unwrap_err()
+        .is::<StorageError>());
+    assert_eq!(engine.group_manager.snapshot(), before);
+    assert!(engine.pending_decrypted_deliveries.is_empty());
+    assert!(!engine
+        .processed_group_sender_key_messages
+        .contains(&group_sender_key_fingerprint(&message)));
+    let result = engine.handle_group_sender_key_message(message).unwrap();
+    assert_eq!(result.events.len(), 1);
+    assert_eq!(engine.pending_decrypted_deliveries.len(), 1);
 }

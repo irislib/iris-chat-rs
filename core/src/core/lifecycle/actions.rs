@@ -235,6 +235,21 @@ impl AppCore {
                 receipt_type,
                 message_ids,
             } => self.send_receipt(&chat_id, &receipt_type, message_ids),
+            AppAction::EditMessage {
+                chat_id,
+                message_id,
+                text,
+            } => self.mutate_own_message(&chat_id, &message_id, Some(&text)),
+            AppAction::DeleteMessageForEveryone {
+                chat_id,
+                message_id,
+            } => self.mutate_own_message(&chat_id, &message_id, None),
+            AppAction::SetAllowMessageDeletionByOthers { enabled } => {
+                self.preferences.allow_message_deletion_by_others = enabled;
+                self.persist_best_effort();
+                self.rebuild_state();
+                self.emit_state();
+            }
             AppAction::DeleteLocalMessage {
                 chat_id,
                 message_id,

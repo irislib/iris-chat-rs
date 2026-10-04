@@ -16,7 +16,7 @@ pub(super) fn collect_device_sync_messages(
         if eligible(message, roster_at, now)
             && after.is_none_or(|cursor| after_cursor(message, cursor))
         {
-            if let Some(value) = from_snapshot(message) {
+            if let Some(value) = from_snapshot(core, message) {
                 insert_bounded(&mut messages, value, limit);
             }
         }
@@ -55,7 +55,9 @@ pub(super) fn collect_device_sync_messages(
             ) {
                 continue;
             }
-            insert_bounded(&mut messages, from_persisted(message), limit);
+            if let Some(value) = from_persisted(core, message) {
+                insert_bounded(&mut messages, value, limit);
+            }
         }
         let page_is_known = messages
             .last_key_value()
@@ -125,29 +127,46 @@ fn after_cursor(message: &ChatMessageSnapshot, cursor: &DeviceSyncCursor) -> boo
         > (cursor.created_at, &cursor.chat_id, &cursor.id)
 }
 
-fn from_snapshot(message: &ChatMessageSnapshot) -> Option<DeviceSyncMessage> {
-    Some(DeviceSyncMessage {
-        legacy_reactions: None,
-        chat_id: message.chat_id.clone(),
-        id: message.id.clone(),
-        body: message_wire_text(&message.body, &message.attachments),
-        author: message.author_owner_pubkey_hex.clone()?,
-        created_at: message.created_at_secs,
-        expires_at: message.expires_at_secs,
-    })
+pub(super) fn from_snapshot(
+    core: &AppCore,
+    message: &ChatMessageSnapshot,
+) -> Option<DeviceSyncMessage> {
+    redact_deleted_body(
+        core,
+        DeviceSyncMessage {
+            legacy_reactions: None,
+            chat_id: message.chat_id.clone(),
+            id: message.id.clone(),
+            body: message
+                .edit_history
+                .first()
+                .map(|v| v.body.clone())
+                .unwrap_or_else(|| message_wire_text(&message.body, &message.attachments)),
+            author: message.author_owner_pubkey_hex.clone()?,
+            created_at: message.created_at_secs,
+            expires_at: message.expires_at_secs,
+        },
+    )
 }
 
-fn from_persisted(message: PersistedMessage) -> DeviceSyncMessage {
-    let body = message_wire_text(&message.body, &message.attachments);
-    DeviceSyncMessage {
-        legacy_reactions: None,
-        chat_id: message.chat_id,
-        id: message.id,
-        body,
-        author: message.author_owner_pubkey_hex.unwrap_or(message.author),
-        created_at: message.created_at_secs,
-        expires_at: message.expires_at_secs,
-    }
+fn from_persisted(core: &AppCore, message: PersistedMessage) -> Option<DeviceSyncMessage> {
+    let body = message
+        .edit_history
+        .first()
+        .map(|v| v.body.clone())
+        .unwrap_or_else(|| message_wire_text(&message.body, &message.attachments));
+    redact_deleted_body(
+        core,
+        DeviceSyncMessage {
+            legacy_reactions: None,
+            chat_id: message.chat_id,
+            id: message.id,
+            body,
+            author: message.author_owner_pubkey_hex.unwrap_or(message.author),
+            created_at: message.created_at_secs,
+            expires_at: message.expires_at_secs,
+        },
+    )
 }
 
 fn message_key(message: &DeviceSyncMessage) -> MessageKey {
@@ -156,6 +175,30 @@ fn message_key(message: &DeviceSyncMessage) -> MessageKey {
         message.chat_id.clone(),
         message.id.clone(),
     )
+}
+
+// A mutation head may be durable while its message-row projection is awaiting
+// retry. Never export retained plaintext in that interval, including unloaded rows.
+fn redact_deleted_body(
+    core: &AppCore,
+    mut message: DeviceSyncMessage,
+) -> Option<DeviceSyncMessage> {
+    if !message.body.is_empty() {
+        let records = core
+            .message_mutation_records_result(&message.chat_id, &message.id)
+            .ok()?;
+        if records.iter().any(|record| {
+            record.operation == "delete"
+                && record.author == message.author
+                && record.created_at >= message.created_at
+                && record
+                    .expires_at
+                    .is_none_or(|expiry| expiry > unix_now().get())
+        }) {
+            message.body.clear();
+        }
+    }
+    Some(message)
 }
 
 pub(super) fn history_message_allowed(core: &AppCore, message: &DeviceSyncMessage) -> bool {
@@ -182,7 +225,7 @@ pub(super) fn load_history_message(
         if !eligible(message, 0, unix_now().get()) {
             return None;
         }
-        from_snapshot(message)?
+        from_snapshot(core, message)?
     } else {
         let message = core
             .app_store
@@ -200,7 +243,7 @@ pub(super) fn load_history_message(
         {
             return None;
         }
-        from_persisted(message)
+        from_persisted(core, message)?
     };
     (message.created_at == cursor.created_at && history_message_allowed(core, &message))
         .then_some(message)

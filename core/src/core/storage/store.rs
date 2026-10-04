@@ -279,6 +279,7 @@ impl AppStore {
                 chat_ids
             };
             store_message_deletions::mark_expired(&tx, now_secs)?;
+            store_message_deletions::purge_expired_controls(&tx, now_secs)?;
             let deleted = tx.execute(
                 "DELETE FROM messages
                  WHERE expires_at_secs IS NOT NULL AND expires_at_secs <= ?1",
@@ -308,7 +309,13 @@ impl AppStore {
             [now_secs as i64],
             |row| row.get::<_, Option<i64>>(0),
         )?;
-        Ok(expires_at.map(|secs| secs as u64))
+        let control_expiry =
+            store_message_deletions::next_control_expiration_after(&conn, now_secs)?;
+        Ok(expires_at
+            .map(|secs| secs as u64)
+            .into_iter()
+            .chain(control_expiry)
+            .min())
     }
 
     pub(crate) fn load_recent_messages(
@@ -781,6 +788,8 @@ fn hash_thread(thread: &ThreadRecord) -> u64 {
         message.id.hash(&mut hasher);
         message.author.hash(&mut hasher);
         message.body.hash(&mut hasher);
+        message.edit_history.hash(&mut hasher);
+        message.deleted_for_everyone.hash(&mut hasher);
         message.is_outgoing.hash(&mut hasher);
         message.created_at_secs.hash(&mut hasher);
         message.expires_at_secs.hash(&mut hasher);
@@ -879,8 +888,8 @@ fn upsert_message_row(
         "INSERT INTO messages(
             chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs,
             expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
-            source_event_id, recipient_deliveries_json, delivery_trace_json, call_json, system_notice_owner_pubkey_hex
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            source_event_id, recipient_deliveries_json, delivery_trace_json, call_json, system_notice_owner_pubkey_hex, edit_history_json, deleted_for_everyone
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
          ON CONFLICT(chat_id, id) DO UPDATE SET
             kind = excluded.kind,
             author = excluded.author,
@@ -897,7 +906,9 @@ fn upsert_message_row(
             recipient_deliveries_json = excluded.recipient_deliveries_json,
             delivery_trace_json = excluded.delivery_trace_json,
             call_json = excluded.call_json,
-            system_notice_owner_pubkey_hex = excluded.system_notice_owner_pubkey_hex",
+            system_notice_owner_pubkey_hex = excluded.system_notice_owner_pubkey_hex,
+            edit_history_json = excluded.edit_history_json,
+            deleted_for_everyone = excluded.deleted_for_everyone",
         params![
             chat_id,
             message.id,
@@ -921,6 +932,8 @@ fn upsert_message_row(
                 .map(serde_json::to_string)
                 .transpose()?,
             message.system_notice_owner_pubkey_hex,
+            serde_json::to_string(&message.edit_history)?,
+            message.deleted_for_everyone as i64,
         ],
     )?;
     Ok(())
@@ -935,8 +948,8 @@ fn upsert_notification_preview_message_row(
         "INSERT INTO messages(
             chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs,
             expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
-            source_event_id, recipient_deliveries_json, delivery_trace_json, call_json, system_notice_owner_pubkey_hex
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            source_event_id, recipient_deliveries_json, delivery_trace_json, call_json, system_notice_owner_pubkey_hex, edit_history_json, deleted_for_everyone
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
          ON CONFLICT(chat_id, id) DO UPDATE SET
             author_owner_pubkey_hex = COALESCE(messages.author_owner_pubkey_hex, excluded.author_owner_pubkey_hex),
             source_event_id = COALESCE(NULLIF(messages.source_event_id, ''), excluded.source_event_id),
@@ -960,6 +973,8 @@ fn upsert_notification_preview_message_row(
             serde_json::to_string(&message.delivery_trace)?,
             message.call.as_ref().map(serde_json::to_string).transpose()?,
             message.system_notice_owner_pubkey_hex,
+            serde_json::to_string(&message.edit_history)?,
+            message.deleted_for_everyone as i64,
         ],
     )?;
     Ok(())
@@ -1312,11 +1327,11 @@ pub(crate) fn load_recent_messages(
     let mut stmt = conn.prepare(
         "SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs, expires_at_secs,
 	                delivery, attachments_json, reactions_json, reactors_json, source_event_id,
-	                recipient_deliveries_json, delivery_trace_json, call_json, system_notice_owner_pubkey_hex
+	                recipient_deliveries_json, delivery_trace_json, call_json, system_notice_owner_pubkey_hex, edit_history_json, deleted_for_everyone
 	         FROM (
 	             SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs, expires_at_secs,
 	                    delivery, attachments_json, reactions_json, reactors_json, source_event_id,
-	                    recipient_deliveries_json, delivery_trace_json, call_json, system_notice_owner_pubkey_hex,
+	                    recipient_deliveries_json, delivery_trace_json, call_json, system_notice_owner_pubkey_hex, edit_history_json, deleted_for_everyone,
 	                    rowid AS storage_order
 	             FROM messages
 	             WHERE chat_id = ?1
@@ -1352,12 +1367,12 @@ pub(crate) fn load_messages_before(
 	         )
          SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs, expires_at_secs,
                 delivery, attachments_json, reactions_json, reactors_json, source_event_id,
-                recipient_deliveries_json, delivery_trace_json, call_json, system_notice_owner_pubkey_hex
+                recipient_deliveries_json, delivery_trace_json, call_json, system_notice_owner_pubkey_hex, edit_history_json, deleted_for_everyone
          FROM (
              SELECT m.chat_id, m.id, m.kind, m.author, m.author_owner_pubkey_hex, m.body, m.is_outgoing,
 	                    m.created_at_secs, m.expires_at_secs, m.delivery, m.attachments_json,
 	                    m.reactions_json, m.reactors_json, m.source_event_id,
-	                    m.recipient_deliveries_json, m.delivery_trace_json, m.call_json, m.system_notice_owner_pubkey_hex,
+	                    m.recipient_deliveries_json, m.delivery_trace_json, m.call_json, m.system_notice_owner_pubkey_hex, m.edit_history_json, m.deleted_for_everyone,
 	                    m.rowid AS storage_order
 	             FROM messages m, anchor
 	             WHERE m.chat_id = ?1
@@ -1403,7 +1418,7 @@ pub(crate) fn load_messages_around(
          SELECT m.chat_id, m.id, m.kind, m.author, m.author_owner_pubkey_hex, m.body, m.is_outgoing, m.created_at_secs,
                 m.expires_at_secs, m.delivery, m.attachments_json, m.reactions_json,
                 m.reactors_json, m.source_event_id, m.recipient_deliveries_json,
-                m.delivery_trace_json, m.call_json, m.system_notice_owner_pubkey_hex
+                m.delivery_trace_json, m.call_json, m.system_notice_owner_pubkey_hex, m.edit_history_json, m.deleted_for_everyone
          FROM messages m, anchor
          WHERE m.chat_id = ?1
            AND (
@@ -1431,6 +1446,8 @@ pub(crate) fn load_messages_around(
 fn persisted_message_from_row(row: &Row<'_>) -> rusqlite::Result<PersistedMessage> {
     let chat_id: String = row.get(0)?;
     Ok(PersistedMessage {
+        edit_history: serde_json::from_str(&row.get::<_, String>(18)?).unwrap_or_default(),
+        deleted_for_everyone: row.get::<_, i64>(19)? != 0,
         system_notice_owner_pubkey_hex: row.get(17)?,
         call: row
             .get::<_, Option<String>>(16)?
@@ -1588,6 +1605,8 @@ mod tests {
 
     fn sample_message(id: &str, body: &str, ts: u64) -> ChatMessageSnapshot {
         ChatMessageSnapshot {
+            edit_history: Vec::new(),
+            deleted_for_everyone: false,
             system_notice_owner_pubkey_hex: None,
             direct_transfer: None,
             call: None,

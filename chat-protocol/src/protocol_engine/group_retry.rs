@@ -192,6 +192,7 @@ impl ProtocolEngine {
             self.processed_group_sender_key_messages.clone(),
             self.group_sender_key_retry.borrow().clone(),
             self.batch_persist_dirty.get(),
+            self.pending_decrypted_deliveries.clone(),
         );
         let mut removed = Vec::new();
         let remaining_key_trials = self.group_sender_key_retry.borrow().key_trials_remaining;
@@ -213,6 +214,7 @@ impl ProtocolEngine {
             // Replan the still-queued candidate instead of restoring a stale plan.
             self.group_sender_key_retry.borrow_mut().prepared = None;
             self.batch_persist_dirty.set(checkpoint.6);
+            self.pending_decrypted_deliveries = checkpoint.7;
             for (index, parsed) in removed.into_iter().rev() {
                 self.pending_group_sender_key_messages.insert(index, parsed);
             }

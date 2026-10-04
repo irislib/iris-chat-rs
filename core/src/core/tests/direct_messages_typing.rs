@@ -158,20 +158,13 @@ fn unknown_users_toggle_off_excludes_non_accepted_peers_from_subs() {
 
     let mut bob = logged_in_test_core("push-filter-toggle-bob", &bob_owner, &bob_device);
     bob.pending_relay_publishes.clear();
-    let alice_app_keys = signed_app_keys_authorization_event(
-        &alice_owner,
-        alice_device.public_key(),
-        10,
-    );
+    let alice_app_keys =
+        signed_app_keys_authorization_event(&alice_owner, alice_device.public_key(), 10);
     bob.handle_relay_event(alice_app_keys.clone());
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
     });
-    ingest_invite_owner_app_keys(
-        &mut bob,
-        alice_owner.public_key(),
-        vec![alice_app_keys],
-    );
+    ingest_invite_owner_app_keys(&mut bob, alice_owner.public_key(), vec![alice_app_keys]);
     bob.handle_action(AppAction::SendMessage {
         chat_id: alice_owner.public_key().to_hex(),
         text: "hi alice".to_string(),
@@ -180,18 +173,10 @@ fn unknown_users_toggle_off_excludes_non_accepted_peers_from_subs() {
         .into_iter()
         .next()
         .expect("invite response event");
-    let bob_app_keys = signed_app_keys_authorization_event(
-        &bob_owner,
-        bob_device.public_key(),
-        10,
-    );
+    let bob_app_keys = signed_app_keys_authorization_event(&bob_owner, bob_device.public_key(), 10);
     alice.handle_relay_event(bob_app_keys.clone());
     alice.handle_relay_event(response);
-    ingest_invite_owner_app_keys(
-        &mut alice,
-        bob_owner.public_key(),
-        vec![bob_app_keys],
-    );
+    ingest_invite_owner_app_keys(&mut alice, bob_owner.public_key(), vec![bob_app_keys]);
     let messages = pending_events_with_kind(&bob, MESSAGE_EVENT_KIND);
     for event in messages {
         alice.handle_relay_event(event);
@@ -429,8 +414,7 @@ fn incoming_direct_message_from_unverified_claimed_peer_device_is_not_attributed
                 created_at: NdrUnixSeconds(1),
             }],
         });
-    let storage =
-        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    let storage = Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     install_test_protocol_engine(
         &mut core,
         &owner,
@@ -903,6 +887,8 @@ fn open_chat_populates_current_chat_for_preview_only_thread() {
     // event ingest, which the suspended app didn't have a chance to
     // run).
     let preview = ChatMessageSnapshot {
+        edit_history: Vec::new(),
+        deleted_for_everyone: false,
         system_notice_owner_pubkey_hex: None,
         direct_transfer: None,
         call: None,
@@ -966,6 +952,8 @@ fn duplicate_persisted_incoming_message_surfaces_missing_chat_row() {
     );
 
     let preview = ChatMessageSnapshot {
+        edit_history: Vec::new(),
+        deleted_for_everyone: false,
         system_notice_owner_pubkey_hex: None,
         direct_transfer: None,
         call: None,
@@ -2034,20 +2022,13 @@ fn group_delivered_receipt_is_queued_directly_to_message_author() {
 
     let mut bob = logged_in_test_core("group-delivered-author-only-bob", &bob_owner, &bob_device);
     bob.preferences.send_read_receipts = true;
-    let alice_app_keys = signed_app_keys_authorization_event(
-        &alice_owner,
-        alice_device.public_key(),
-        10,
-    );
+    let alice_app_keys =
+        signed_app_keys_authorization_event(&alice_owner, alice_device.public_key(), 10);
     bob.handle_relay_event(alice_app_keys.clone());
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
     });
-    ingest_invite_owner_app_keys(
-        &mut bob,
-        alice_owner.public_key(),
-        vec![alice_app_keys],
-    );
+    ingest_invite_owner_app_keys(&mut bob, alice_owner.public_key(), vec![alice_app_keys]);
     bob.pending_relay_publishes.clear();
 
     let group_id = "group-delivered-author-only".to_string();
@@ -2126,38 +2107,23 @@ fn assert_group_seen_receipt_updates_sender_copy(batched_unloaded: bool) {
     let mut bob = logged_in_test_core("group-seen-author-bob", &bob_owner, &bob_device);
     bob.preferences.send_read_receipts = true;
     bob.pending_relay_publishes.clear();
-    let alice_app_keys = signed_app_keys_authorization_event(
-        &alice_owner,
-        alice_device.public_key(),
-        10,
-    );
+    let alice_app_keys =
+        signed_app_keys_authorization_event(&alice_owner, alice_device.public_key(), 10);
     bob.handle_relay_event(alice_app_keys.clone());
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
     });
-    ingest_invite_owner_app_keys(
-        &mut bob,
-        alice_owner.public_key(),
-        vec![alice_app_keys],
-    );
+    ingest_invite_owner_app_keys(&mut bob, alice_owner.public_key(), vec![alice_app_keys]);
     bob.handle_action(AppAction::SendMessage {
         chat_id: alice_owner.public_key().to_hex(),
         text: "direct bootstrap".to_string(),
     });
-    let bob_app_keys = signed_app_keys_authorization_event(
-        &bob_owner,
-        bob_device.public_key(),
-        10,
-    );
+    let bob_app_keys = signed_app_keys_authorization_event(&bob_owner, bob_device.public_key(), 10);
     alice.handle_relay_event(bob_app_keys.clone());
     for event in pending_events_with_kind(&bob, INVITE_RESPONSE_KIND) {
         alice.handle_relay_event(event);
     }
-    ingest_invite_owner_app_keys(
-        &mut alice,
-        bob_owner.public_key(),
-        vec![bob_app_keys],
-    );
+    ingest_invite_owner_app_keys(&mut alice, bob_owner.public_key(), vec![bob_app_keys]);
     for event in pending_events_with_kind(&bob, MESSAGE_EVENT_KIND) {
         alice.handle_relay_event(event);
     }
@@ -2207,7 +2173,11 @@ fn assert_group_seen_receipt_updates_sender_copy(batched_unloaded: bool) {
         assert!(bob.pending_relay_publishes.is_empty());
         bob.exit_batch();
         let messages = &bob.threads[&chat_id].messages;
-        assert_eq!(messages.len(), 1, "receipt routing must preserve pagination");
+        assert_eq!(
+            messages.len(),
+            1,
+            "receipt routing must preserve pagination"
+        );
         assert_eq!(messages[0].id, "newer-preview");
     }
 

@@ -621,7 +621,9 @@ impl AppCore {
             }
         }
         if let Some(message) = device_sync_message {
-            self.broadcast_device_sync_message(&message);
+            if let Some(projected) = self.message_for_mutation(chat_id, &message.id) {
+                self.broadcast_device_sync_message(&projected);
+            }
         }
     }
 
@@ -834,6 +836,8 @@ impl AppCore {
             .as_ref()
             .and_then(|owner_hex| self.owner_picture_url(owner_hex));
         let message = ChatMessageSnapshot {
+            edit_history: Vec::new(),
+            deleted_for_everyone: false,
             system_notice_owner_pubkey_hex: None,
             direct_transfer: None,
             call: None,
@@ -889,7 +893,9 @@ impl AppCore {
             self.schedule_next_message_expiry();
         }
         self.restore_device_sync_reactions(chat_id, &message.id);
-        self.broadcast_device_sync_message(&message);
+        if let Some(projected) = self.message_for_mutation(chat_id, &message.id) {
+            self.broadcast_device_sync_message(&projected);
+        }
         message
     }
 
@@ -980,6 +986,8 @@ impl AppCore {
             push_unique(&mut delivery_trace.transport_channels, &channel);
         }
         let message = ChatMessageSnapshot {
+            edit_history: Vec::new(),
+            deleted_for_everyone: false,
             system_notice_owner_pubkey_hex: None,
             direct_transfer: None,
             call: None,
@@ -1023,25 +1031,27 @@ impl AppCore {
             thread.insert_message_sorted(message.clone());
             (thread.unread_count, thread.updated_at_secs)
         };
-        if message.source_event_id.is_some() {
-            if let Err(error) = self.app_store.upsert_notification_preview_message(
-                chat_id,
-                thread_unread_count,
-                thread_updated_at_secs,
-                &message,
-            ) {
-                self.push_debug_log(
-                    "storage.message.preview_upsert.error",
-                    format!("chat_id={chat_id} message_id={} error={error}", message.id),
-                );
-            }
-        }
         self.bump_typing_floor(chat_id, created_at_secs);
         if expires_at_secs.is_some() {
             self.schedule_next_message_expiry();
         }
         self.restore_device_sync_reactions(chat_id, &message.id);
-        self.broadcast_device_sync_message(&message);
+        if let Some(projected) = self.message_for_mutation(chat_id, &message.id) {
+            if projected.source_event_id.is_some() {
+                if let Err(error) = self.app_store.upsert_notification_preview_message(
+                    chat_id,
+                    thread_unread_count,
+                    thread_updated_at_secs,
+                    &projected,
+                ) {
+                    self.push_debug_log(
+                        "storage.message.preview_upsert.error",
+                        format!("chat_id={chat_id} message_id={} error={error}", message.id),
+                    );
+                }
+            }
+            self.broadcast_device_sync_message(&projected);
+        }
     }
 
     pub(super) fn push_system_notice(&mut self, chat_id: &str, body: String, created_at_secs: u64) {
@@ -1084,6 +1094,8 @@ impl AppCore {
         }
         thread.updated_at_secs = thread.updated_at_secs.max(created_at_secs);
         thread.insert_message_sorted(ChatMessageSnapshot {
+            edit_history: Vec::new(),
+            deleted_for_everyone: false,
             system_notice_owner_pubkey_hex,
             direct_transfer: None,
             call: None,
@@ -1276,7 +1288,7 @@ impl AppCore {
             &runtime_rumor.content,
             &runtime_rumor.tags,
         ) {
-            return true;
+            return kind != MESSAGE_EDIT_KIND && kind != MESSAGE_DELETE_KIND;
         }
         match kind {
             CHAT_MESSAGE_KIND => {
@@ -1372,12 +1384,16 @@ impl AppCore {
         {
             return Ok(false);
         }
+        let mut delivered = true;
         for group_event in group_outcome.events {
-            self.apply_group_decrypted_event(group_event);
+            delivered &= self.apply_group_decrypted_event(group_event);
         }
         self.process_protocol_engine_effects(group_outcome.effects);
         self.request_protocol_subscription_refresh();
         self.schedule_fast_protocol_retry_if_pending();
+        if !delivered {
+            return Err(StorageError::new("group message mutation could not be stored").into());
+        }
         Ok(true)
     }
 
@@ -1657,6 +1673,8 @@ impl AppCore {
 pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMessageSnapshot {
     let (body, parsed_attachments) = extract_message_attachments(&message.body);
     ChatMessageSnapshot {
+        edit_history: message.edit_history.clone(),
+        deleted_for_everyone: message.deleted_for_everyone,
         system_notice_owner_pubkey_hex: message.system_notice_owner_pubkey_hex.clone(),
         direct_transfer: None,
         call: message.call.clone(),

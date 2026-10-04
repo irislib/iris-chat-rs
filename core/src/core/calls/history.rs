@@ -85,6 +85,8 @@ impl AppCore {
         } else {
             thread.updated_at_secs = thread.updated_at_secs.max(call.started_at_secs);
             thread.insert_message_sorted(ChatMessageSnapshot {
+                edit_history: Vec::new(),
+                deleted_for_everyone: false,
                 system_notice_owner_pubkey_hex: None,
                 direct_transfer: None,
                 id,

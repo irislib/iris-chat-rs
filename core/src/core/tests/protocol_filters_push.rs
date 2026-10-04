@@ -83,12 +83,7 @@ fn appcore_ownerless_invite_uses_known_roster_owner_for_first_contact() {
     let mut engine = test_protocol_engine(&owner, &device);
     observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
 
-    observe_peer_appkeys_for_test(
-        &mut engine,
-        &peer_owner,
-        &[peer_device.public_key()],
-        1,
-    );
+    observe_peer_appkeys_for_test(&mut engine, &peer_owner, &[peer_device.public_key()], 1);
 
     let mut rng = OsRng;
     let mut ctx = ProtocolContext::new(NdrUnixSeconds(2), &mut rng);
@@ -120,8 +115,8 @@ fn appcore_ownerless_invite_uses_known_roster_owner_for_first_contact() {
 
     assert!(
         protocol_publish_events_with_kind(&result.effects, INVITE_RESPONSE_KIND)
-        .iter()
-        .any(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND),
+            .iter()
+            .any(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND),
         "first contact should publish an invite response for ownerless peer invites"
     );
 }
@@ -193,20 +188,16 @@ fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys
             }],
         }],
     };
-    let storage =
-        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    let storage = Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     seed_protocol_storage_for_test(
         storage.as_ref(),
         seed_session_manager,
         GroupEventManager::new(local_owner).snapshot(),
     )
     .expect("seed protocol state");
-    let engine = ProtocolEngine::load_or_create_for_local_device(
-        storage,
-        owner.public_key(),
-        &device,
-    )
-    .expect("protocol engine");
+    let engine =
+        ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), &device)
+            .expect("protocol engine");
 
     let authors = engine.message_author_pubkeys_for_owner(peer_owner.public_key());
     assert!(
@@ -221,15 +212,9 @@ fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys
         authors.contains(&skipped_sender.public_key()),
         "skipped sender author must be backfilled for out-of-order relay delivery"
     );
-    assert_eq!(
-        engine.known_message_author_cache_build_count_for_test(),
-        0
-    );
+    assert_eq!(engine.known_message_author_cache_build_count_for_test(), 0);
     assert!(engine.is_known_message_author(current_sender.public_key()));
-    assert_eq!(
-        engine.known_message_author_cache_build_count_for_test(),
-        1
-    );
+    assert_eq!(engine.known_message_author_cache_build_count_for_test(), 1);
     assert!(engine.is_known_message_author(next_sender.public_key()));
     assert!(!engine.is_known_message_author(Keys::generate().public_key()));
     assert_eq!(
@@ -241,17 +226,27 @@ fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys
     core.protocol_engine = Some(engine);
     let chat_id = peer_owner.public_key().to_hex();
     let until = unix_now().get() + 3600;
-    core.handle_action(AppAction::SetChatMuteUntil { chat_id: chat_id.clone(), until_secs: until });
+    core.handle_action(AppAction::SetChatMuteUntil {
+        chat_id: chat_id.clone(),
+        until_secs: until,
+    });
     let push = core.build_mobile_push_sync_snapshot();
     for author in &authors {
         assert!(!push.message_author_pubkeys.contains(&author.to_hex()));
-        assert!(push.delayed_message_authors.iter().any(|entry| entry.author_pubkey == author.to_hex() && entry.since_secs == until));
+        assert!(push
+            .delayed_message_authors
+            .iter()
+            .any(|entry| entry.author_pubkey == author.to_hex() && entry.since_secs == until));
     }
-    core.handle_action(AppAction::SetChatMuted { chat_id, muted: true });
+    core.handle_action(AppAction::SetChatMuted {
+        chat_id,
+        muted: true,
+    });
     let push = core.build_mobile_push_sync_snapshot();
     assert!(push.delayed_message_authors.is_empty());
-    for author in &authors { assert!(!push.message_author_pubkeys.contains(&author.to_hex())); }
-
+    for author in &authors {
+        assert!(!push.message_author_pubkeys.contains(&author.to_hex()));
+    }
 }
 
 #[test]
@@ -300,8 +295,8 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
             UnixSeconds(2),
         )
         .expect("primary imports linked session");
-    let response_event = nostr_double_ratchet::invite_response_event(&response)
-        .expect("invite response event");
+    let response_event =
+        nostr_double_ratchet::invite_response_event(&response).expect("invite response event");
     let linked_response = nostr_double_ratchet::process_invite_response_event(
         &linked_invite,
         &response_event,
@@ -466,7 +461,10 @@ fn recipient_filter_stays_until_every_known_peer_device_has_a_session() {
     observe_peer_appkeys_for_test(
         core.protocol_engine.as_mut().expect("protocol engine"),
         &peer_owner,
-        &[peer_devices[1].public_key(), replacement_device.public_key()],
+        &[
+            peer_devices[1].public_key(),
+            replacement_device.public_key(),
+        ],
         4,
     );
     assert!(
@@ -496,8 +494,7 @@ fn remote_sender_cannot_forge_a_local_sibling_wrapper() {
         .expect("remote accepts receiver invite");
     receiver
         .observe_invite_response_event(
-            &nostr_double_ratchet::invite_response_event(&response)
-                .expect("invite response event"),
+            &nostr_double_ratchet::invite_response_event(&response).expect("invite response event"),
         )
         .expect("receiver observes invite response");
     let wrapper = serde_json::json!({
@@ -564,8 +561,7 @@ fn remote_group_metadata_syncs_to_local_sibling() {
         .expect("primary imports linked session");
     let linked_response = nostr_double_ratchet::process_invite_response_event(
         &linked_invite,
-        &nostr_double_ratchet::invite_response_event(&response)
-            .expect("invite response event"),
+        &nostr_double_ratchet::invite_response_event(&response).expect("invite response event"),
         linked_device.secret_key().to_secret_bytes(),
     )
     .expect("linked processes invite response")
@@ -591,12 +587,7 @@ fn remote_group_metadata_syncs_to_local_sibling() {
         .observe_invite_event(&primary_invite_event)
         .expect("linked observes primary invite");
 
-    observe_peer_appkeys_for_test(
-        &mut primary,
-        &admin_owner,
-        &[admin_device.public_key()],
-        1,
-    );
+    observe_peer_appkeys_for_test(&mut primary, &admin_owner, &[admin_device.public_key()], 1);
 
     let group_id = "remote-group-local-sibling-sync".to_string();
     let snapshot = test_group_snapshot(
@@ -634,12 +625,10 @@ fn remote_group_metadata_syncs_to_local_sibling() {
 
     let target_owner_hex = owner.public_key().to_hex();
     let target_device_hex = linked_device.public_key().to_hex();
-    let bootstrap_events = protocol_publish_events_with_kind(&outcome.effects, INVITE_RESPONSE_KIND);
-    let sibling_payload_events = protocol_publish_events_for_target(
-        &outcome.effects,
-        &target_owner_hex,
-        &target_device_hex,
-    );
+    let bootstrap_events =
+        protocol_publish_events_with_kind(&outcome.effects, INVITE_RESPONSE_KIND);
+    let sibling_payload_events =
+        protocol_publish_events_for_target(&outcome.effects, &target_owner_hex, &target_device_hex);
     assert!(
         !sibling_payload_events.is_empty(),
         "remote group metadata should be republished to linked local devices"
@@ -767,8 +756,7 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
         .expect("primary imports linked session");
     let linked_response = nostr_double_ratchet::process_invite_response_event(
         &linked_invite,
-        &nostr_double_ratchet::invite_response_event(&response)
-            .expect("invite response event"),
+        &nostr_double_ratchet::invite_response_event(&response).expect("invite response event"),
         linked_device.secret_key().to_secret_bytes(),
     )
     .expect("linked processes invite response")
@@ -794,18 +782,8 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
         .observe_invite_event(&primary_invite_event)
         .expect("linked observes primary invite");
 
-    observe_peer_appkeys_for_test(
-        &mut primary,
-        &admin_owner,
-        &[admin_device.public_key()],
-        1,
-    );
-    observe_peer_appkeys_for_test(
-        &mut linked,
-        &admin_owner,
-        &[admin_device.public_key()],
-        1,
-    );
+    observe_peer_appkeys_for_test(&mut primary, &admin_owner, &[admin_device.public_key()], 1);
+    observe_peer_appkeys_for_test(&mut linked, &admin_owner, &[admin_device.public_key()], 1);
 
     let group_id = "linked-sibling-group".to_string();
     let snapshot = test_group_snapshot(
@@ -871,20 +849,14 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
             Some("linked-group-inner".to_string()),
         )
         .expect("linked group send");
-    let candidate_message_events = protocol_publish_events_for_target(
-        &result.effects,
-        &target_owner_hex,
-        &target_device_hex,
-    );
-    let local_sibling_bootstrap_events = if protocol_has_publish_target(
-        &result.effects,
-        &target_owner_hex,
-        &target_device_hex,
-    ) {
-        protocol_publish_events_with_kind(&result.effects, INVITE_RESPONSE_KIND)
-    } else {
-        Vec::new()
-    };
+    let candidate_message_events =
+        protocol_publish_events_for_target(&result.effects, &target_owner_hex, &target_device_hex);
+    let local_sibling_bootstrap_events =
+        if protocol_has_publish_target(&result.effects, &target_owner_hex, &target_device_hex) {
+            protocol_publish_events_with_kind(&result.effects, INVITE_RESPONSE_KIND)
+        } else {
+            Vec::new()
+        };
 
     assert!(
         !candidate_message_events.is_empty(),
@@ -1312,9 +1284,9 @@ fn appcore_hot_path_has_no_runtime_references() {
     let mut hits = Vec::new();
     for path in files {
         if path.file_name().and_then(|name| name.to_str()) == Some("tests.rs")
-            || path.components().any(|component| {
-                component.as_os_str().to_str() == Some("tests")
-            })
+            || path
+                .components()
+                .any(|component| component.as_os_str().to_str() == Some("tests"))
         {
             continue;
         }
@@ -1511,8 +1483,9 @@ fn editing_profile_preserves_extra_metadata_fields_and_tags() {
         .map(|tag| tag.as_slice().to_vec())
         .collect();
     assert!(
-        tags.iter().any(|tag| tag.as_slice()
-            == ["alt".to_string(), "Custom alt tag".to_string()].as_slice()),
+        tags.iter()
+            .any(|tag| tag.as_slice()
+                == ["alt".to_string(), "Custom alt tag".to_string()].as_slice()),
         "expected `alt` tag preserved, got tags={tags:?}"
     );
     assert!(
@@ -1718,7 +1691,10 @@ fn mobile_push_decrypts_signed_apns_event_payload() {
     let message_event =
         appcore_direct_message_event_for_test(&mut bob_engine, &alice_keys, message, 200);
     for (key, event_payload) in [
-        ("event", serde_json::to_value(&message_event).expect("signed event")),
+        (
+            "event",
+            serde_json::to_value(&message_event).expect("signed event"),
+        ),
         (
             "outer_event",
             serde_json::to_value(&message_event).expect("signed event"),
@@ -1771,8 +1747,7 @@ fn mobile_push_decrypts_signed_apns_event_payload() {
 fn mobile_push_payload_ingest_rejects_invalid_events_before_session_restore() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();
-    let bob_storage =
-        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    let bob_storage = Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     let mut bob_engine =
         test_protocol_engine_with_storage(&bob_keys, &bob_keys, Arc::clone(&bob_storage));
     let message = "push-only event";
@@ -1925,6 +1900,8 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
             unread_count: 1,
             updated_at_secs: 200,
             messages: vec![ChatMessageSnapshot {
+                edit_history: Vec::new(),
+                deleted_for_everyone: false,
                 system_notice_owner_pubkey_hex: None,
                 direct_transfer: None,
                 call: None,
@@ -2183,8 +2160,8 @@ fn mobile_push_decrypt_renders_matching_pending_invite_response_with_chat_id() {
             Some(peer.public_key()),
         )
         .expect("accept invite");
-    let response_event = nostr_double_ratchet::invite_response_event(&response)
-        .expect("invite response event");
+    let response_event =
+        nostr_double_ratchet::invite_response_event(&response).expect("invite response event");
     let payload = serde_json::json!({
         "event": serde_json::to_string(&response_event).expect("event json"),
         "title": "Iris Chat",
@@ -2243,8 +2220,8 @@ fn mobile_push_decrypt_suppresses_unverified_invite_owner_claim() {
             Some(claimed_owner.public_key()),
         )
         .expect("accept invite with forged owner claim");
-    let response_event = nostr_double_ratchet::invite_response_event(&response)
-        .expect("invite response event");
+    let response_event =
+        nostr_double_ratchet::invite_response_event(&response).expect("invite response event");
     let payload = serde_json::json!({
         "event": serde_json::to_string(&response_event).expect("event json"),
         "title": "Iris Chat",
@@ -2281,11 +2258,8 @@ fn mobile_push_decrypt_uses_verified_invite_owner_claim() {
         .next()
         .expect("private invite")
         .clone();
-    let peer_app_keys = signed_app_keys_authorization_event(
-        &peer_owner,
-        peer_device.public_key(),
-        10,
-    );
+    let peer_app_keys =
+        signed_app_keys_authorization_event(&peer_owner, peer_device.public_key(), 10);
     core.handle_relay_event(peer_app_keys);
     let (_session, response) = invite
         .accept_with_owner(
@@ -2295,8 +2269,8 @@ fn mobile_push_decrypt_uses_verified_invite_owner_claim() {
             Some(peer_owner.public_key()),
         )
         .expect("accept invite with verified owner claim");
-    let response_event = nostr_double_ratchet::invite_response_event(&response)
-        .expect("invite response event");
+    let response_event =
+        nostr_double_ratchet::invite_response_event(&response).expect("invite response event");
     let payload = serde_json::json!({
         "event": serde_json::to_string(&response_event).expect("event json"),
         "title": "Iris Chat",
@@ -2329,9 +2303,12 @@ fn mobile_push_decrypt_suppresses_unmatched_invite_response() {
     let device = Keys::generate();
     let peer = Keys::generate();
     let core = logged_in_test_core("mobile-push-invite-response-miss", &owner, &device);
-    let missing_invite =
-        Invite::create_new(device.public_key(), Some(device.public_key().to_hex()), Some(1))
-            .expect("missing invite");
+    let missing_invite = Invite::create_new(
+        device.public_key(),
+        Some(device.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("missing invite");
     let (_session, response) = missing_invite
         .accept_with_owner(
             peer.public_key(),
@@ -2340,8 +2317,8 @@ fn mobile_push_decrypt_suppresses_unmatched_invite_response() {
             Some(peer.public_key()),
         )
         .expect("accept invite");
-    let response_event = nostr_double_ratchet::invite_response_event(&response)
-        .expect("invite response event");
+    let response_event =
+        nostr_double_ratchet::invite_response_event(&response).expect("invite response event");
     let payload = serde_json::json!({
         "event": serde_json::to_string(&response_event).expect("event json"),
         "title": "Iris Chat",
@@ -2389,7 +2366,10 @@ fn mobile_push_subscription_body_includes_invite_response_filter() {
         serde_json::from_str(request.body_json.as_deref().expect("body json")).expect("json");
 
     assert_eq!(body["filter"]["authors"][0].as_str(), Some(author.as_str()));
-    assert_eq!(body["background_authors"][0].as_str(), Some(author.as_str()));
+    assert_eq!(
+        body["background_authors"][0].as_str(),
+        Some(author.as_str())
+    );
     assert_eq!(
         body["filters"][1]["kinds"][0],
         serde_json::json!(INVITE_RESPONSE_KIND)
@@ -2623,14 +2603,13 @@ fn core_with_divergent_login_and_protocol_invites_with_updates(
     core.preferences.nostr_relay_urls.clear();
 
     let device_id = device.public_key().to_hex();
-    let mut login_invite =
-        Invite::create_new(device.public_key(), Some(device_id.clone()), None)
-            .expect("login invite");
+    let mut login_invite = Invite::create_new(device.public_key(), Some(device_id.clone()), None)
+        .expect("login invite");
     login_invite.owner_public_key = Some(owner.public_key());
     login_invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
 
-    let mut protocol_invite = Invite::create_new(device.public_key(), Some(device_id), None)
-        .expect("protocol invite");
+    let mut protocol_invite =
+        Invite::create_new(device.public_key(), Some(device_id), None).expect("protocol invite");
     protocol_invite.owner_public_key = Some(owner.public_key());
     protocol_invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
 
@@ -2643,26 +2622,17 @@ fn core_with_divergent_login_and_protocol_invites_with_updates(
         authorization_state: LocalAuthorizationState::Authorized,
     });
 
-    let storage =
-        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    let storage = Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     let local_owner = ndr_owner_pubkey(owner.public_key());
     let mut seed_session_manager =
         SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();
     seed_session_manager.local_invite = Some(protocol_invite.clone());
     let seed_group_manager = GroupEventManager::new(local_owner).snapshot();
-    seed_protocol_storage_for_test(
-        storage.as_ref(),
-        seed_session_manager,
-        seed_group_manager,
-    )
-    .expect("seed protocol state");
+    seed_protocol_storage_for_test(storage.as_ref(), seed_session_manager, seed_group_manager)
+        .expect("seed protocol state");
     core.protocol_engine = Some(
-        ProtocolEngine::load_or_create_for_local_device(
-            storage,
-            owner.public_key(),
-            device,
-        )
-        .expect("protocol engine"),
+        ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), device)
+            .expect("protocol engine"),
     );
 
     (core, login_invite, protocol_invite)
@@ -2716,19 +2686,25 @@ fn nearby_master_toggle_preserves_transport_preferences() {
 
     core.handle_action(AppAction::SetNearbyBluetoothEnabled { enabled: true });
     core.handle_action(AppAction::SetNearbyLanEnabled { enabled: true });
-    assert!(core.device_sync.is_some(), "Enabling LAN must immediately start the shared call endpoint");
+    assert!(
+        core.device_sync.is_some(),
+        "Enabling LAN must immediately start the shared call endpoint"
+    );
     let nearby_endpoint = core.device_sync_endpoint_for_test().unwrap();
     core.handle_action(AppAction::SetNearbyEnabled { enabled: false });
-    assert!(core.runtime.block_on(nearby_endpoint.peers()).is_err(), "Disabling Nearby shuts down its LAN endpoint");
+    assert!(
+        core.runtime.block_on(nearby_endpoint.peers()).is_err(),
+        "Disabling Nearby shuts down its LAN endpoint"
+    );
     let (local_endpoint, sibling_tcp, siblings, _blobs) = core
         .same_host_runtime_for_test()
         .expect("local attachment sharing remains available with Nearby disabled");
     assert!(!core.device_sync.as_ref().unwrap().nearby_enabled);
     assert!(!sibling_tcp);
     assert_eq!(siblings, 0);
-    core.runtime.block_on(local_endpoint.register_service_receiver(
-        super::fips_nearby::FIPS_NEARBY_PORT,
-    )).expect("the local-only endpoint must not register the Nearby service");
+    core.runtime
+        .block_on(local_endpoint.register_service_receiver(super::fips_nearby::FIPS_NEARBY_PORT))
+        .expect("the local-only endpoint must not register the Nearby service");
 
     assert!(!core.state.preferences.nearby_enabled);
     assert!(core.state.preferences.nearby_bluetooth_enabled);

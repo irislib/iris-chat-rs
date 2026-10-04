@@ -47,6 +47,9 @@ pub(super) fn hash_preferences(preferences: &PreferencesSnapshot) -> u64 {
     preferences.call_max_bitrate_bps.hash(&mut hasher);
     preferences.send_typing_indicators.hash(&mut hasher);
     preferences.send_read_receipts.hash(&mut hasher);
+    preferences
+        .allow_message_deletion_by_others
+        .hash(&mut hasher);
     preferences.desktop_notifications_enabled.hash(&mut hasher);
     preferences
         .invite_acceptance_notifications_enabled
@@ -88,13 +91,14 @@ pub(super) fn load_preferences(
                     debug_logging_enabled, accept_unknown_direct_messages,
                     nearby_enabled,
                     blocked_owner_pubkeys_json, accepted_owner_pubkeys_json,
-                    nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps, timed_chat_mutes_json
+                    nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps, timed_chat_mutes_json, allow_message_deletion_by_others
              FROM preferences WHERE id = 1",
             [],
             |row| {
                 Ok(PersistedPreferences {
                     send_typing_indicators: row.get::<_, i64>(0)? != 0,
                     send_read_receipts: row.get::<_, i64>(1)? != 0,
+                    allow_message_deletion_by_others: row.get::<_, i64>(28)? != 0,
                     desktop_notifications_enabled: row.get::<_, i64>(2)? != 0,
                     invite_acceptance_notifications_enabled: row.get::<_, i64>(3)? != 0,
                     startup_at_login_enabled: row.get::<_, i64>(4)? != 0,
@@ -147,8 +151,8 @@ pub(super) fn write_preferences(
             mobile_push_server_url, muted_chat_ids_json, pinned_chat_ids_json,
             debug_logging_enabled, accept_unknown_direct_messages, nearby_enabled,
             blocked_owner_pubkeys_json, accepted_owner_pubkeys_json,
-            nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps, timed_chat_mutes_json
-         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)
+            nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps, timed_chat_mutes_json, allow_message_deletion_by_others
+         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
          ON CONFLICT(id) DO UPDATE SET
             voice_calls_enabled = excluded.voice_calls_enabled,
             video_calls_enabled = excluded.video_calls_enabled,
@@ -156,6 +160,7 @@ pub(super) fn write_preferences(
             call_max_bitrate_bps = excluded.call_max_bitrate_bps,
             send_typing_indicators = excluded.send_typing_indicators,
             send_read_receipts = excluded.send_read_receipts,
+            allow_message_deletion_by_others = excluded.allow_message_deletion_by_others,
             desktop_notifications_enabled = excluded.desktop_notifications_enabled,
             invite_acceptance_notifications_enabled = excluded.invite_acceptance_notifications_enabled,
             startup_at_login_enabled = excluded.startup_at_login_enabled,
@@ -207,6 +212,7 @@ pub(super) fn write_preferences(
             preferences.call_quality,
             preferences.call_max_bitrate_bps,
             serde_json::to_string(&preferences.timed_chat_mutes)?,
+            preferences.allow_message_deletion_by_others as i64,
         ],
     )?;
     Ok(())

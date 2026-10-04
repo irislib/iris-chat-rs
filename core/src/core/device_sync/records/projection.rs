@@ -18,6 +18,9 @@ impl AppCore {
                     continue;
                 }
                 match record {
+                    DeviceSyncRecord::MessageMutation { mutation: m } => {
+                        self.project_message_mutations(&m.chat_id, &m.message_id);
+                    }
                     DeviceSyncRecord::Reaction { reaction: r } => self
                         .apply_incoming_reaction_to_chat(
                             &r.chat_id,
