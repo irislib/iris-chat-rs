@@ -815,14 +815,26 @@ struct ChatMessageRow: View, Equatable {
     @ViewBuilder
     private var groupSenderAvatar: some View {
         if showsGroupSenderAvatar {
-            IrisAvatar(
+            let avatar = IrisAvatar(
                 socialConnection: socialConnection,
                 ownerPubkeyHex: message.authorOwnerPubkeyHex,
                 label: message.author,
                 size: SignalConversationLayout.groupMessageAvatarSize,
                 manager: manager
             )
-            .accessibilityHidden(true)
+            if let owner = message.authorOwnerPubkeyHex, !owner.isEmpty, let manager {
+                Button {
+                    manager.dispatch(.pushScreen(screen: .directChatInfo(chatId: owner)))
+                } label: {
+                    avatar
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(message.author)
+                .accessibilityHint("Open profile")
+                .accessibilityIdentifier("chatSenderAvatar-\(message.id)")
+            } else {
+                avatar.accessibilityHidden(true)
+            }
         } else {
             Color.clear
                 .frame(

@@ -562,7 +562,9 @@ extension ScreenshotFixture {
         } else if message.groupAuthorName == nil {
             authorOwnerPubkeyHex = author
         } else {
-            authorOwnerPubkeyHex = nil
+            authorOwnerPubkeyHex = threads.first {
+                $0.kind == .direct && $0.displayName == message.groupAuthorName
+            }?.chatId
         }
         let id = "\(chat.chatId)-msg-\(index)"
         return ChatMessageSnapshot(

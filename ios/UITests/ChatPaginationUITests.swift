@@ -111,6 +111,32 @@ final class ChatPaginationUITests: IrisChatUITestCase {
         capture(app, name: "long-group-final-notice")
     }
 
+    func testGroupSenderAvatarOpensProfileAndReturnsToConversation() {
+        let app = fixtureApp([
+            "IRIS_UI_TEST_SCREENSHOT_FIXTURE": "1",
+            "IRIS_UI_TEST_GROUP_NOTICE": "1",
+            "IRIS_UI_TEST_GROUP_NOTICE_PREFIX_COUNT": "2",
+        ])
+        submitWelcomeName(app, name: "Timeline test", assertFocus: false)
+        XCTAssertTrue(waitForChatList(app, timeout: 30))
+        element(app, "chatRow-fx-chat-2").tap()
+        let avatar = app.buttons["chatSenderAvatar-fx-chat-2-msg-1"]
+        XCTAssertTrue(avatar.waitForExistence(timeout: 10))
+        XCTAssertTrue(avatar.isHittable)
+        capture(app, name: "group-sender-avatar")
+        avatar.tap()
+        XCTAssertTrue(element(app, "directChatCopyUserIdButton").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Sam Park"].firstMatch.waitForExistence(timeout: 5))
+        capture(app, name: "group-sender-profile")
+#if os(macOS)
+        element(app, "desktopPaneBackButton").tap()
+#else
+        element(app, "navigationBackButton").tap()
+#endif
+        XCTAssertTrue(avatar.waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "chatMessageInput").exists)
+    }
+
     func testDeepHistoryReturnsToLatestAndSendsFromTheBoundedWindow() throws {
 #if os(macOS)
         throw XCTSkip("Bounded native timeline window is iOS-specific")
