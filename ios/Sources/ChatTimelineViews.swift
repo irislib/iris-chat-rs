@@ -376,6 +376,8 @@ struct ChatMessageRow: View, Equatable {
     static func == (lhs: ChatMessageRow, rhs: ChatMessageRow) -> Bool {
         lhs.message == rhs.message
             && lhs.socialConnection == rhs.socialConnection
+            && lhs.senderPictureUrl == rhs.senderPictureUrl
+            && lhs.avatarPreferences == rhs.avatarPreferences
             && lhs.reactions == rhs.reactions
             && lhs.chatKind == rhs.chatKind
             && lhs.canReplyAndReact == rhs.canReplyAndReact
@@ -393,6 +395,8 @@ struct ChatMessageRow: View, Equatable {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.irisPalette) private var palette
     var socialConnection: SocialConnectionSnapshot? = nil
+    var senderPictureUrl: String? = nil
+    var avatarPreferences: PreferencesSnapshot? = nil
     var manager: AppManager? = nil
     let message: ChatMessageSnapshot
     let chatKind: ChatKind
@@ -769,6 +773,9 @@ struct ChatMessageRow: View, Equatable {
                         // This modifier only renders the offset/reveal state,
                         // keeping vertical flicks on bubbles in the scroll path.
                         .applyMessageBubbleSwipe(offset: swipeOffset)
+                        .modifier(ChatMessageBubbleBottomAlignment(
+                            reactionProtrusion: reactions.isEmpty ? 0 : SignalConversationLayout.reactionPillProtrusion
+                        ))
 
                         if !message.isOutgoing {
                             desktopActionDockSlot()
@@ -851,6 +858,8 @@ struct ChatMessageRow: View, Equatable {
                 ownerPubkeyHex: message.authorOwnerPubkeyHex,
                 label: message.author,
                 size: SignalConversationLayout.groupMessageAvatarSize,
+                pictureUrl: senderPictureUrl,
+                preferences: avatarPreferences,
                 manager: manager,
                 groupSenderColorKey: message.author
             )

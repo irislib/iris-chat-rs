@@ -808,9 +808,12 @@ struct ChatScreen: View {
             next: next,
             chatKind: chat.kind
         )
+        let participant = chat.participants.first { $0.ownerPubkeyHex == message.authorOwnerPubkeyHex }
 
         return EquatableView(content: ChatMessageRow(
-            socialConnection: chat.participants.first { $0.ownerPubkeyHex == message.authorOwnerPubkeyHex }?.socialConnection,
+            socialConnection: participant?.socialConnection,
+            senderPictureUrl: irisGroupSenderPictureURL(messagePictureURL: message.authorPictureUrl, participant: participant),
+            avatarPreferences: manager.state.preferences,
             manager: manager,
             message: message,
             chatKind: chat.kind,

@@ -1,5 +1,17 @@
 import SwiftUI
 
+// Reactions reserve space below the bubble, but adjacent avatars and controls
+// follow the bubble itself. Apply after wrappers that can replace alignment.
+struct ChatMessageBubbleBottomAlignment: ViewModifier {
+    let reactionProtrusion: CGFloat
+
+    func body(content: Content) -> some View {
+        content.alignmentGuide(.bottom) { dimensions in
+            dimensions[.bottom] - reactionProtrusion
+        }
+    }
+}
+
 // A maximum-width frame expands even a short bubble to the maximum, separating
 // its visible edge from the adjacent action dock. Limit the proposal instead.
 struct ChatMessageBubbleWidthLimit: ViewModifier {

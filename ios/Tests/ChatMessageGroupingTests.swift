@@ -8,6 +8,25 @@ import SwiftUI
 #endif
 
 final class ChatMessageGroupingTests: XCTestCase {
+    @MainActor
+    func testEquatableRowTracksSenderPictureAndAvatarPreferencesWithoutAMessageChange() {
+        let item = message(at: 1_790_157_600)
+        let original = avatarRow(item)
+        var changed = original
+        changed.senderPictureUrl = "htree://updated-sender"
+        XCTAssertNotEqual(original, changed)
+        XCTAssertEqual(original.message, changed.message)
+        changed = original
+        var preferences = buildLargeTestAppState(directChatCount: 0, groupChatCount: 0,
+                                                 messagesInCurrentChat: 0).preferences
+        changed.avatarPreferences = preferences
+        var samePicture = changed
+        preferences.imageProxyEnabled.toggle()
+        samePicture.avatarPreferences = preferences
+        XCTAssertNotEqual(changed, samePicture)
+        XCTAssertEqual(changed.message, samePicture.message)
+    }
+
     func testSameSenderClustersForLessThanThreeMinutesOnBothChatKinds() {
         let first = message(at: 1_790_157_600)
         for kind in [ChatKind.direct, .group] {
@@ -156,5 +175,17 @@ final class ChatMessageGroupingTests: XCTestCase {
         message.reactions = []
         message.expiresAtSecs = nil
         return message
+    }
+
+    @MainActor
+    private func avatarRow(_ item: ChatMessageSnapshot) -> ChatMessageRow {
+        ChatMessageRow(message: item, chatKind: .group, showDayChip: false,
+            hidesInlineDayChip: true, isFirstInCluster: true, isLastInCluster: true,
+            showsFooter: true, showsGroupSenderName: true, showsGroupSenderAvatar: true,
+            reactions: [], swipeOffset: 0, isActionDockActive: false,
+            onActionDockActiveChange: { _ in }, onReply: {}, onForward: {},
+            onForwardAttachment: { _ in }, onReact: { _ in }, onInfo: {}, onDelete: {},
+            onScrollToQuote: { _ in }, onShowReactors: {}, downloadAttachment: { _ in nil },
+            openAttachment: { _ in }, onOpenImage: { _, _ in })
     }
 }

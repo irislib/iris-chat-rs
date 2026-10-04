@@ -81,7 +81,7 @@ final class NearbyAvatarTests: XCTestCase {
         attach(window, name: "ios-nearby-cleared")
     }
 
-    func testGroupMessageSenderBadgeUpdatesInsideEquatableRow() async throws {
+    func testGroupMessageSenderAvatarUpdatesInsideEquatableRow() async throws {
         var state = buildLargeTestAppState(directChatCount: 0, groupChatCount: 1, messagesInCurrentChat: 1)
         let chatId = try XCTUnwrap(state.currentChat?.chatId)
         let social = SocialConnectionSnapshot(badge: .following, followDistance: 1, followedByFriends: 0, description: "Followed by you")
@@ -93,6 +93,15 @@ final class NearbyAvatarTests: XCTestCase {
         state.currentChat?.messages[0].kind = .user
         state.currentChat?.messages[0].author = "Alice"
         state.currentChat?.messages[0].authorOwnerPubkeyHex = "alice"
+        let pictureKey = "equatable-group-sender-photo"
+        let pictureURL = "htree://\(pictureKey)"
+        let picture = UIGraphicsImageRenderer(size: CGSize(width: 48, height: 48)).image { context in
+            UIColor.magenta.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 48, height: 48))
+        }
+        IrisAvatarImageCache.store(picture, for: "htree:\(pictureKey)")
+        // Keep this message snapshot unchanged while the current profile changes.
+        state.currentChat?.messages[0].authorPictureUrl = pictureURL
         state.currentChat?.messages[0].isOutgoing = false
         state.currentChat?.messages[0].body = "See you at the park!"
         state.currentChat?.messages[0].reactions = []
@@ -122,6 +131,49 @@ final class NearbyAvatarTests: XCTestCase {
         let clearedImage = attach(window, name: "ios-nearby-group-sender-cleared")
         XCTAssertNotEqual(nearbyImage, clearedImage)
         XCTAssertEqual(manager.state.currentChat?.messages, state.currentChat?.messages)
+        try await waitForSenderPhoto(in: window, visible: false)
+
+        state.rev += 1
+        state.currentChat?.participants[0].pictureUrl = pictureURL
+        rust.emit(.fullState(state))
+        try await waitForSenderPhoto(in: window, visible: true)
+        attach(window, name: "ios-group-sender-profile-photo")
+        XCTAssertEqual(manager.state.currentChat?.messages, state.currentChat?.messages)
+
+        state.rev += 1
+        state.currentChat?.participants[0].pictureUrl = nil
+        rust.emit(.fullState(state))
+        try await waitForSenderPhoto(in: window, visible: false)
+        attach(window, name: "ios-group-sender-profile-photo-removed")
+        XCTAssertEqual(manager.state.currentChat?.messages, state.currentChat?.messages)
+    }
+
+    private func waitForSenderPhoto(in window: UIWindow, visible: Bool) async throws {
+        let deadline = Date().addingTimeInterval(3)
+        var readyFrames = 0
+        while Date() < deadline {
+            window.layoutIfNeeded()
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            let cgImage = try XCTUnwrap(image.cgImage)
+            let width = cgImage.width, height = cgImage.height
+            var pixels = [UInt8](repeating: 0, count: width * height * 4)
+            let photoPixels = try pixels.withUnsafeMutableBytes { buffer -> Int in
+                let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: width,
+                    height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+                return stride(from: 0, to: buffer.count, by: 4).reduce(0) { count, index in
+                    count + (buffer[index] > 240 && buffer[index + 1] < 15 && buffer[index + 2] > 240 ? 1 : 0)
+                }
+            }
+            readyFrames = (photoPixels > 100) == visible ? readyFrames + 1 : 0
+            if readyFrames >= 2 { return }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTFail("The group sender photo should \(visible ? "appear" : "disappear") without changing the message")
     }
 
     private func peer(_ owner: String?) -> IrisNearbyPeer {
