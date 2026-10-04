@@ -93,6 +93,65 @@ fn candidate_search_includes_profiles_pending_verification() {
 }
 
 #[test]
+fn passive_cached_profiles_are_not_people_suggestions() {
+    let conn = people_search_connection();
+    let root = Keys::generate().public_key().to_hex();
+    conn.execute(
+        "INSERT INTO user_discovery_state VALUES (1, ?1, 0, NULL)",
+        [&root],
+    )
+    .unwrap();
+    let owners = (0..18)
+        .map(|_| Keys::generate().public_key().to_hex())
+        .collect::<Vec<_>>();
+    for owner in &owners {
+        conn.execute(
+            "INSERT INTO owner_profiles VALUES (?1, 'Call test', NULL, NULL, NULL, NULL, NULL)",
+            [owner],
+        )
+        .unwrap();
+    }
+    let search =
+        |query| search_people_candidates(&conn, query, &HashSet::new(), Some(&root)).unwrap();
+    assert!(
+        search("tes").is_empty(),
+        "Cached metadata is not a social connection"
+    );
+    assert_eq!(
+        search(&owners[0]).len(),
+        1,
+        "An exact user ID remains discoverable"
+    );
+
+    // Different people may legitimately share a name. Keep both follows and
+    // a global-index result, deduplicating only their actual identities.
+    for (position, owner) in owners[..2].iter().enumerate() {
+        conn.execute(
+            "INSERT INTO user_discovery_users VALUES (?1, ?2, NULL)",
+            rusqlite::params![owner, position],
+        )
+        .unwrap();
+    }
+    for owner in [&owners[0], &owners[2]] {
+        conn.execute(
+            "INSERT INTO profile_search_candidates VALUES (?1, 'Call test', '[]', NULL, NULL, 1, 1)",
+            [owner],
+        )
+        .unwrap();
+    }
+    let results = search("tes");
+    assert_eq!(results.len(), 3);
+    assert_eq!(
+        results
+            .iter()
+            .map(|row| &row.owner_pubkey_hex)
+            .collect::<HashSet<_>>()
+            .len(),
+        3
+    );
+}
+
+#[test]
 fn people_search_matches_camel_case_against_spaced_names() {
     let conn = people_search_connection();
     let owner = Keys::generate().public_key().to_hex();
@@ -645,8 +704,8 @@ fn people_search_avatars_read_private_favorites_from_offline_contact_memory() {
         .unwrap();
     let rows =
         search_people_candidates(&conn, "alice", &HashSet::new(), Some(&local_owner)).unwrap();
-    assert!(!rows[0]
-        .social_connection
-        .as_ref()
-        .is_some_and(|connection| connection.is_favorite));
+    assert!(
+        rows.is_empty(),
+        "An unfavorited cached stranger is no longer a suggestion"
+    );
 }

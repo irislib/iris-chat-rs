@@ -25,7 +25,7 @@ final class GroupedSearchSessionTests: XCTestCase {
         }
         XCTAssertEqual(session.snapshot(for: request)?.people.count, 11)
         XCTAssertNil(session.snapshot(for: session.request(for: "Other", discoveryRevision: 1)))
-        XCTAssertNil(session.snapshot(for: session.request(for: "Needle", discoveryRevision: 2)))
+        XCTAssertEqual(session.snapshot(for: session.request(for: "Needle", discoveryRevision: 2))?.people.count, 11)
         XCTAssertNil(session.snapshot(for: nil))
     }
 
@@ -50,7 +50,8 @@ final class GroupedSearchSessionTests: XCTestCase {
         XCTAssertEqual(session.snapshot(for: first)?.people.count, 1)
 
         let refreshed = try XCTUnwrap(session.request(for: "needle", discoveryRevision: 8))
-        XCTAssertNil(session.snapshot(for: refreshed))
+        XCTAssertEqual(session.snapshot(for: refreshed)?.people.count, 1,
+                       "Keep current-query results visible while discovery refreshes")
         session.refresh(refreshed, using: search)
         XCTAssertEqual(calls.count, 2)
         XCTAssertEqual(session.snapshot(for: refreshed)?.people.count, 2)
@@ -86,5 +87,20 @@ final class GroupedSearchSessionTests: XCTestCase {
         session.queryChanged("different")
         XCTAssertEqual(session.messageLimit, 50)
         XCTAssertTrue(session.expandedSections.isEmpty)
+    }
+
+    func testLoadingMoreKeepsExistingRowsButNeverShowsAnotherQuery() throws {
+        var session = GroupedSearchSession()
+        let first = try XCTUnwrap(session.request(for: "needle", discoveryRevision: 1))
+        session.refresh(first) { query, limit in
+            buildLargeTestSearchResult(query: query, personCount: 0, contactCount: 0,
+                                       groupCount: 0, messageCount: limit)
+        }
+        session.viewMore(.messages)
+        session.viewMore(.messages)
+        let expanded = try XCTUnwrap(session.request(for: "needle", discoveryRevision: 2))
+        XCTAssertTrue(session.needsRefresh(expanded))
+        XCTAssertEqual(session.snapshot(for: expanded)?.messages.count, 50)
+        XCTAssertNil(session.snapshot(for: session.request(for: "other", discoveryRevision: 2)))
     }
 }

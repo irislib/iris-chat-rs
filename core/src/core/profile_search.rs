@@ -368,7 +368,8 @@ fn search_people_candidates(
          SELECT c.owner_pubkey_hex, d.follow_position, d.petname,
                 p.name, p.display_name, p.picture, p.about,
                 p.owner_pubkey_hex IS NOT NULL,
-                s.name, s.aliases_json, s.nip05, s.picture, r.friend_support, p.nickname, p.contact_memory_json
+                s.name, s.aliases_json, s.nip05, s.picture, r.friend_support, p.nickname, p.contact_memory_json,
+                s.owner_pubkey_hex IS NOT NULL
          FROM candidate_owners c
          LEFT JOIN current_discovery d
            ON d.owner_pubkey_hex = c.owner_pubkey_hex
@@ -402,6 +403,7 @@ fn search_people_candidates(
             row.get::<_, Option<u16>>(12)?.map(usize::from),
             row.get::<_, Option<String>>(13)?,
             row.get::<_, Option<String>>(14)?,
+            row.get::<_, bool>(15)?,
         ))
     })?;
 
@@ -423,6 +425,7 @@ fn search_people_candidates(
             personalized_friend_support,
             nickname,
             contact_memory_json,
+            indexed_candidate,
         ) = row?;
         let contact_memory: crate::contact_memory::ContactMemory = contact_memory_json
             .as_deref()
@@ -516,6 +519,19 @@ fn search_people_candidates(
             personalized_friend_support,
             personal_graph.as_deref(),
         );
+        // Nearby traffic can cache profiles for people we have never met.
+        // Metadata and a messaging-capable device list alone are not a reason
+        // to suggest them. Keep intentional contacts and indexed discovery.
+        if explicit_owner.as_deref() != Some(owner_hex.as_str())
+            && follow_position.is_none()
+            && !indexed_candidate
+            && nickname.is_none()
+            && contact_memory.accepted_name.is_none()
+            && !contact_memory.favorite
+            && social_distance >= 1_000
+        {
+            continue;
+        }
         matches.push((
             text_rank,
             follow_position.unwrap_or(u32::MAX),

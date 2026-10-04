@@ -221,7 +221,10 @@ struct GroupedSearchSession {
     }
 
     func snapshot(for request: Request?) -> SearchResultSnapshot? {
-        guard let request, entry?.request == request else { return nil }
+        // Discovery and pagination refresh the same query in the background.
+        // Keep its current rows visible until the replacement arrives, while
+        // never displaying results belonging to a different search term.
+        guard let request, entry?.request.query == request.query else { return nil }
         return entry?.snapshot
     }
 
