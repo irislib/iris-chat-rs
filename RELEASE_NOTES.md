@@ -7,6 +7,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### GitHub
 
 - Route signed update discovery to the configured trusted publisher in the CLI and shared native runtime, preserving a connection slot for the network seed and keeping update peers separate from linked-device permissions.
+- Enable same-machine update-provider discovery when the standalone updater also uses WebSocket seeds.
 - Open a sender's profile from their avatar in a group chat on Mac and iPhone.
 - Publish the same attested iOS build to internal and public TestFlight groups, reusing existing uploads and submitting only beta review when required.
 
