@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0
+
+- Require mutable access for `ProtocolEngine::exit_batch` so consumed delivery
+  markers retire only after the checkpoint is successfully saved. Failed writes
+  retain pending work for retry. This is a breaking Rust API change.
+- Consume authenticated own-device edit and deletion controls before plaintext
+  delivery journaling. Applications synchronize these controls through their
+  history-aware reconciliation path; remote participant delivery is preserved.
+- Bound group decryption per turn, preserve new sender-key wakeups during an
+  existing search, and discard prepared work for revoked candidates.
+- Borrow recipient device lists when sending and retrying rather than copying
+  unrelated sessions and saved keys.
+- Preserve existing checkpoints, sessions, keys, and the wire format.
+
 ## 0.2.1
 
 - Reject linked-device group copies whose protocol conflicts with authenticated
