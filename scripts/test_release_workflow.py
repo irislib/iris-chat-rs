@@ -53,7 +53,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_one_apple_workflow_reuses_exact_tagged_ipa(self) -> None:
         workflow = (ROOT / ".github/workflows/ios-distribution.yml").read_text()
         self.assertIn("- testflight", workflow)
+        self.assertIn("- testflight-public", workflow)
         self.assertIn("- app-store", workflow)
+        self.assertIn("group: ios-distribution-${{ inputs.tag }}", workflow)
         self.assertIn('ipa_name="iris-chat-${RELEASE_TAG}-ios.ipa"', workflow)
         self.assertIn("gh attestation verify", workflow)
         self.assertIn("gh release verify-asset", workflow)
@@ -64,7 +66,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("existing_build", workflow)
         self.assertIn("distribute_only", workflow)
         self.assertIn(
-            "IRIS_TESTFLIGHT_GROUPS must name at least one internal group",
+            "#{group_setting} must name at least one #{group_kind} group",
             workflow,
         )
         self.assertIn("get_edit_app_store_version", workflow)
@@ -136,7 +138,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("existing_version = !edit_version.nil?", workflow)
 
     @unittest.skipUnless(shutil.which("ruby"), "Ruby is needed to exercise the Fastfile")
-    def test_testflight_only_distributes_to_verified_internal_groups(self) -> None:
+    def test_testflight_routes_validate_audience_and_never_enter_app_store(self) -> None:
         workflow = (ROOT / ".github/workflows/ios-distribution.yml").read_text()
         fastfile = textwrap.dedent(
             workflow.split("<<'RUBY'\n", 1)[1].split("\n          RUBY", 1)[0]
@@ -157,7 +159,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
               raise UserError, message
             end
           end
-          Group = Struct.new(:name, :is_internal_group)
+          Group = Struct.new(:name, :is_internal_group, :public_link_enabled)
           class FakeApp
             def id
               "test-app"
@@ -188,7 +190,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 end
               end
               module Build
-                def self.all(**)
+                def self.all(**options)
+                  raise "Wrong exact version" unless options[:version] == "2026.10.100" && options[:build_number] == "1"
                   $existing_build ? [Object.new] : []
                 end
               end
@@ -237,47 +240,79 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "IPA_PATH" => "attested.ipa"
           )
           Tempfile.create("iris-testflight-notes") do |notes|
-            notes.write("Internal release notes\n")
+            notes.write("Tagged release notes\n")
             notes.flush
             ENV["RELEASE_NOTES_PATH"] = notes.path
             internal = [Group.new("Team", true), Group.new("QA", true)]
-            cases = [
-              [" Team, QA, Team ", internal, nil],
-              ["Team, Missing", internal, "not found"],
-              ["Team, Public", internal + [Group.new("Public", false)], "internal"],
-              ["Team", internal + [Group.new("Team", false)], "internal"],
-              ["Unknown", [Group.new("Unknown", nil)], "internal"],
-              [" , ", internal, "at least one internal group"]
-            ]
+            public_groups = [Group.new("Public", false, true), Group.new("Preview", false, true)]
+            audience_cases = {
+              "testflight" => [
+                [" Team, QA, Team ", internal, nil],
+                ["Team, Missing", internal, "not found"],
+                ["Team, Public", internal + public_groups, "internal"],
+                ["Team", internal + [Group.new("Team", false, true)], "internal"],
+                ["Unknown", [Group.new("Unknown", nil)], "internal"],
+                [" , ", internal, "at least one internal group"]
+              ],
+              "testflight-public" => [
+                [" Public, Preview, Public ", public_groups, nil],
+                ["Public, Missing", public_groups, "not found"],
+                ["Public, Team", public_groups + internal, "public external"],
+                ["Public", public_groups + [Group.new("Public", true, true)], "public external"],
+                ["Unknown", [Group.new("Unknown", nil, true)], "public external"],
+                ["Closed", [Group.new("Closed", false, false)], "public link enabled"],
+                ["Unknown", [Group.new("Unknown", false, nil)], "public link enabled"],
+                [" , ", public_groups, "at least one public external group"]
+              ]
+            }
             [false, true].each do |existing|
-              cases.each do |configured, available, expected_error|
-                ENV["IRIS_TESTFLIGHT_GROUPS"] = configured
-                $groups = available
-                $existing_build = existing
-                $events = []
-                $uploaded_options = nil
-                error = nil
-                begin
-                  $distribution_lane.call
-                rescue UserError => failure
-                  error = failure.message
-                end
-                if expected_error
-                  raise "Missing expected rejection: #{configured}" unless error&.include?(expected_error)
-                  raise "Mutation before rejection: #{$events}" unless ($events - [:read_groups]).empty?
-                else
-                  raise error if error
-                  raise "Unexpected actions: #{$events}" unless $events == [:read_groups, :testflight]
-                  options = $uploaded_options
-                  raise "Wrong groups" unless options[:groups] == ["Team", "QA"]
-                  raise "Wrong release notes" unless options[:changelog] == "Internal release notes"
-                  if existing
-                    raise "Existing build was re-uploaded" unless options[:distribute_only] == true && !options.key?(:ipa)
+              audience_cases.each do |target, cases|
+                public_target = target == "testflight-public"
+                ENV["DISTRIBUTION_TARGET"] = target
+                cases.each do |configured, available, expected_error|
+                  ENV["IRIS_TESTFLIGHT_GROUPS"] = public_target ? "Must not use internal groups" : configured
+                  ENV["IRIS_TESTFLIGHT_PUBLIC_GROUPS"] = public_target ? configured : "Must not use public groups"
+                  $groups = available
+                  $existing_build = existing
+                  $events = []
+                  $uploaded_options = nil
+                  error = nil
+                  begin
+                    $distribution_lane.call
+                  rescue UserError => failure
+                    error = failure.message
+                  end
+                  if expected_error
+                    raise "Missing expected rejection: #{target}: #{configured}" unless error&.include?(expected_error)
+                    raise "Mutation before rejection: #{$events}" unless ($events - [:read_groups]).empty?
                   else
-                    raise "New IPA was skipped" unless options[:ipa] == "attested.ipa" && !options.key?(:distribute_only)
+                    raise error if error
+                    expected_events = [:read_groups, :testflight]
+                    expected_events += [:beta_review, :external_distribution_or_notification] if public_target
+                    raise "Unexpected actions: #{$events}" unless $events == expected_events
+                    options = $uploaded_options
+                    wanted_groups = public_target ? ["Public", "Preview"] : ["Team", "QA"]
+                    raise "Wrong groups" unless options[:groups] == wanted_groups
+                    raise "Wrong release notes" unless options[:changelog] == "Tagged release notes"
+                    raise "Unexpected notification" unless options[:notify_external_testers] == false
+                    raise "Expired or rejected another build" if options[:expire_previous_builds] || options[:reject_build_waiting_for_review]
+                    if existing
+                      raise "Existing build was re-uploaded" unless options[:distribute_only] == true && !options.key?(:ipa)
+                    else
+                      raise "New IPA was skipped" unless options[:ipa] == "attested.ipa" && !options.key?(:distribute_only)
+                    end
                   end
                 end
               end
+            end
+            ENV["DISTRIBUTION_TARGET"] = "typo"
+            $events = []
+            begin
+              $distribution_lane.call
+              raise "Unknown target was accepted"
+            rescue UserError => failure
+              raise failure unless failure.message.include?("Unknown Apple distribution target")
+              raise "Unknown target mutated Apple state" unless $events.empty?
             end
           end
         '''

@@ -16,7 +16,13 @@ on:
         type: choice
         options:
           - testflight
+          - testflight-public
           - app-store
+      public_groups:
+        description: "Existing public TestFlight group names, separated by commas; used only for testflight-public."
+        required: false
+        default: Public
+        type: string
       release_mode:
         description: "For App Store submissions, how to release after approval."
         required: true
@@ -31,7 +37,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ios-distribution-${{ inputs.target }}-${{ inputs.tag }}
+  group: ios-distribution-${{ inputs.tag }}
   cancel-in-progress: false
 
 env:
@@ -228,6 +234,7 @@ jobs:
           DISTRIBUTION_TARGET: ${{ inputs.target }}
           RELEASE_MODE: ${{ inputs.release_mode }}
           IRIS_TESTFLIGHT_GROUPS: ${{ vars.IRIS_TESTFLIGHT_GROUPS }}
+          IRIS_TESTFLIGHT_PUBLIC_GROUPS: ${{ inputs.public_groups }}
         run: |
           set -Eeuo pipefail
           work_dir="$RUNNER_TEMP/ios-distribution-fastlane"
@@ -282,21 +289,28 @@ jobs:
                 platform: Spaceship::ConnectAPI::Platform::IOS
               ).first
 
-              if ENV.fetch("DISTRIBUTION_TARGET") == "testflight"
-                groups = ENV.fetch("IRIS_TESTFLIGHT_GROUPS", "")
+              target = ENV.fetch("DISTRIBUTION_TARGET")
+              public_testflight = target == "testflight-public"
+              if target == "testflight" || public_testflight
+                group_setting = public_testflight ? "IRIS_TESTFLIGHT_PUBLIC_GROUPS" : "IRIS_TESTFLIGHT_GROUPS"
+                group_kind = public_testflight ? "public external" : "internal"
+                groups = ENV.fetch(group_setting, "")
                   .split(",")
                   .map(&:strip)
                   .reject(&:empty?)
                   .uniq
                 UI.user_error!(
-                  "IRIS_TESTFLIGHT_GROUPS must name at least one internal group"
+                  "#{group_setting} must name at least one #{group_kind} group"
                 ) if groups.empty?
                 available_groups = app.get_beta_groups(client: client)
                 groups.each do |name|
                   matches = available_groups.select { |group| group.name == name }
                   UI.user_error!("TestFlight group #{name.inspect} was not found") if matches.empty?
-                  unless matches.all? { |group| group.is_internal_group == true }
-                    UI.user_error!("TestFlight group #{name.inspect} must be an internal group")
+                  unless matches.all? { |group| group.is_internal_group == !public_testflight }
+                    UI.user_error!("TestFlight group #{name.inspect} must be a #{group_kind} group")
+                  end
+                  if public_testflight && !matches.all? { |group| group.public_link_enabled == true }
+                    UI.user_error!("TestFlight group #{name.inspect} must have its public link enabled")
                   end
                 end
                 testflight_options = {
@@ -306,8 +320,8 @@ jobs:
                   build_number: build_number,
                   changelog: File.read(ENV.fetch("RELEASE_NOTES_PATH")).strip,
                   groups: groups,
-                  distribute_external: false,
-                  submit_beta_review: false,
+                  distribute_external: public_testflight,
+                  submit_beta_review: public_testflight,
                   notify_external_testers: false,
                   skip_waiting_for_build_processing: false,
                   uses_non_exempt_encryption: false
@@ -320,6 +334,8 @@ jobs:
                 upload_to_testflight(**testflight_options)
                 next
               end
+
+              UI.user_error!("Unknown Apple distribution target: #{target}") unless target == "app-store"
 
               exact_versions = app.get_app_store_versions(
                 client: client,

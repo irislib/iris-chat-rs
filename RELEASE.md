@@ -12,7 +12,7 @@ exact, attested files from an immutable GitHub Release.
 | Hashtree | The complete GitHub Release asset set and update metadata | `./scripts/distribute hashtree --tag <tag>` |
 | Zapstore | The exact GitHub Android APK | `./scripts/distribute zapstore --tag <tag>` |
 | Homebrew | The exact GitHub CLI archives through immutable Hashtree URLs | `./scripts/distribute homebrew --tag <tag>` |
-| TestFlight | The exact GitHub IPA | Run the **iOS Distribution** workflow with `testflight` |
+| TestFlight | The exact GitHub IPA | Run **iOS Distribution** with `testflight` (internal) or `testflight-public` (public beta) |
 | Apple App Store | The exact GitHub IPA | Run the **iOS Distribution** workflow with `app-store` |
 | Google Play | A signed AAB is built, but upload is not automated | Roadmap |
 | crates.io | Existing packages are outside this release process | Legacy |
@@ -175,6 +175,11 @@ In GitHub, open **Actions → iOS Distribution → Run workflow**.
 - Enter the exact stable tag.
 - Choose `testflight` to upload or reuse that build and attach it to the
   configured internal TestFlight groups.
+- Choose `testflight-public` to upload or reuse that same build, submit Beta App
+  Review when required, and attach it to the existing public external groups
+  named by `public_groups` (default `Public`). Their public links must already
+  be enabled. This does not submit an App Store release or expire older builds.
+  Public availability depends on Apple's Beta App Review approval.
 - Choose `app-store` to upload or reuse that build, apply the Apple notes, and
   submit it for review.
 - For App Store, choose automatic, manual, or phased release after approval.
