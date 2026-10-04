@@ -1449,6 +1449,8 @@ fn appcore_sender_key_late_member_and_remove_member_enforce_membership_window() 
 
 #[test]
 fn appcore_sender_key_existing_sender_handles_late_add_and_removed_member() {
+    // Rotated hidden-position keys can require more than one bounded search turn.
+    // Drive the continuations the app actor schedules before asserting delivery.
     let mut devices = sender_key_matrix_devices(4);
     let alice = 0;
     let bob = 1;
@@ -1469,7 +1471,7 @@ fn appcore_sender_key_existing_sender_handles_late_add_and_removed_member() {
         .expect("create sender-key group");
     let group_id = created.snapshot.expect("created group").group_id;
     for recipient_index in [bob, carol] {
-        deliver_protocol_effects_to_engine(&mut devices[recipient_index].engine, &created.effects);
+        deliver_protocol_effects_with_ready_work(&mut devices[recipient_index].engine, &created.effects);
     }
 
     let before_add = devices[bob]
@@ -1481,7 +1483,7 @@ fn appcore_sender_key_existing_sender_handles_late_add_and_removed_member() {
         )
         .expect("bob sends before late member");
     for recipient_index in [alice, carol] {
-        let events = deliver_protocol_effects_to_engine(
+        let events = deliver_protocol_effects_with_ready_work(
             &mut devices[recipient_index].engine,
             &before_add.effects,
         );
@@ -1502,7 +1504,7 @@ fn appcore_sender_key_existing_sender_handles_late_add_and_removed_member() {
         .add_group_members(&group_id, vec![dave_owner_pubkey])
         .expect("add late member");
     for recipient_index in [bob, carol, dave] {
-        deliver_protocol_effects_to_engine(&mut devices[recipient_index].engine, &add_dave.effects);
+        deliver_protocol_effects_with_ready_work(&mut devices[recipient_index].engine, &add_dave.effects);
     }
 
     let after_add = devices[bob]
@@ -1514,7 +1516,7 @@ fn appcore_sender_key_existing_sender_handles_late_add_and_removed_member() {
         )
         .expect("existing member sends after late add");
     let dave_events =
-        deliver_protocol_effects_to_engine(&mut devices[dave].engine, &after_add.effects);
+        deliver_protocol_effects_with_ready_work(&mut devices[dave].engine, &after_add.effects);
     assert!(
         group_events_contain_body(
             &dave_events,
@@ -1531,7 +1533,7 @@ fn appcore_sender_key_existing_sender_handles_late_add_and_removed_member() {
         .remove_group_member(&group_id, carol_owner_pubkey)
         .expect("remove original member");
     for recipient_index in [bob, carol, dave] {
-        deliver_protocol_effects_to_engine(
+        deliver_protocol_effects_with_ready_work(
             &mut devices[recipient_index].engine,
             &remove_carol.effects,
         );
@@ -1546,7 +1548,7 @@ fn appcore_sender_key_existing_sender_handles_late_add_and_removed_member() {
         )
         .expect("existing member sends after removal");
     let carol_events =
-        deliver_protocol_effects_to_engine(&mut devices[carol].engine, &after_remove.effects);
+        deliver_protocol_effects_with_ready_work(&mut devices[carol].engine, &after_remove.effects);
     assert!(
         !group_events_contain_body(
             &carol_events,
@@ -1567,7 +1569,7 @@ fn appcore_sender_key_existing_sender_handles_late_add_and_removed_member() {
         "removed member should not keep sender-key repair rows for post-removal outers"
     );
     for recipient_index in [alice, dave] {
-        let events = deliver_protocol_effects_to_engine(
+        let events = deliver_protocol_effects_with_ready_work(
             &mut devices[recipient_index].engine,
             &after_remove.effects,
         );
