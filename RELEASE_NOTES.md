@@ -7,11 +7,13 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### GitHub
 
 - Route signed update discovery to the configured trusted publisher in the CLI and shared native runtime, preserving a connection slot for the network seed and keeping update peers separate from linked-device permissions.
+- Open a sender's profile from their avatar in a group chat on Mac and iPhone.
 - Publish the same attested iOS build to internal and public TestFlight groups, reusing existing uploads and submitting only beta review when required.
 
 ### Apple
 
 - Improve app update discovery while keeping existing chats and linked devices connected.
+- Open a sender's profile by tapping their avatar in a group chat.
 - Make this build available through public TestFlight after beta review.
 
 ### Zapstore
