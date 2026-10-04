@@ -93,7 +93,7 @@ pub async fn check_secure_update(
     let result = updater
         .check(UpdateCheckOptions {
             reference: reference.clone(),
-            current_version,
+            current_version: installed_release_version(&current_version).to_owned(),
             target,
             ..Default::default()
         })
@@ -106,6 +106,13 @@ pub async fn check_secure_update(
         remember_update_event(&reference, event)?;
     }
     Ok((updater, result?))
+}
+
+fn installed_release_version(version: &str) -> &str {
+    // Local Apple builds can append this marker to the calendar release. The
+    // updater accepts YYYY.M.D.N, but not YYYY.M.D.N-debug. Compare the
+    // underlying installed release; never rewrite a signed manifest version.
+    version.strip_suffix("-debug").unwrap_or(version)
 }
 
 fn remember_update_event(
@@ -360,6 +367,52 @@ mod tests {
         publisher_endpoint.shutdown().await.unwrap();
         seed.shutdown().await.unwrap();
         assert_eq!(resolved.unwrap().unwrap().hash, [0x42; 32]);
+    }
+
+    #[test]
+    fn signed_updater_accepts_installed_calendar_debug_build() {
+        let manifest = hashtree_updater::UpdateManifest {
+            version: "2026.9.30+3".into(),
+            tag: Some("v2026.9.30.3".into()),
+            ..Default::default()
+        };
+        assert!(manifest
+            .is_newer_than(installed_release_version("2026.9.24.4-debug"))
+            .expect("the locally built Mac version must be comparable"));
+        let calendar_manifest = hashtree_updater::UpdateManifest {
+            version: "2026.9.30.3".into(),
+            ..Default::default()
+        };
+        for version in ["2026.9.30.3", "2026.9.30.3-debug"] {
+            assert!(!calendar_manifest
+                .is_newer_than(installed_release_version(version))
+                .unwrap());
+        }
+        assert!(!manifest
+            .is_newer_than(installed_release_version("2026.10.1.8-debug"))
+            .unwrap());
+    }
+
+    #[test]
+    fn installed_update_version_preserves_release_and_unknown_suffixes() {
+        for version in [
+            "2026.9.30.3",
+            "2026.9.30",
+            "1.2.3-beta.1",
+            "2026.9.24.4-unknown",
+        ] {
+            assert_eq!(installed_release_version(version), version);
+        }
+        let manifest = hashtree_updater::UpdateManifest {
+            version: "2026.9.30+3".into(),
+            ..Default::default()
+        };
+        assert!(manifest
+            .is_newer_than(installed_release_version("2026.9.24.4-unknown"))
+            .is_err());
+        assert!(manifest
+            .is_newer_than(installed_release_version("not-a-version-debug"))
+            .is_err());
     }
 
     #[tokio::test]
