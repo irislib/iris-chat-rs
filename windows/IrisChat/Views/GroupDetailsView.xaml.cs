@@ -12,8 +12,6 @@ namespace IrisChat.Views;
 
 public partial class GroupDetailsView : UserControl
 {
-    private const int KnownUserLimit = 8;
-
     private readonly HashSet<string> _selectedAddOwners = new(StringComparer.OrdinalIgnoreCase);
     private bool _knownUsersVisible = true;
 
@@ -70,8 +68,6 @@ public partial class GroupDetailsView : UserControl
                 : Visibility.Visible;
         }
 
-        UpdateAddMemberButton(details);
-
         MembersList.Items.Clear();
         foreach (var m in details.members)
         {
@@ -79,6 +75,7 @@ public partial class GroupDetailsView : UserControl
         }
 
         RebuildKnownUsers();
+        UpdateAddMemberButton(details);
     }
 
     private void OnAddMemberTextChanged(object sender, TextChangedEventArgs e)
@@ -104,6 +101,7 @@ public partial class GroupDetailsView : UserControl
             details.members.Select(m => m.ownerPubkeyHex),
             StringComparer.OrdinalIgnoreCase
         );
+        _selectedAddOwners.RemoveWhere(owner => memberHexes.Contains(owner));
         var query = (AddMemberInput.Text ?? string.Empty).Trim().ToLowerInvariant();
 
         var candidates = App.CurrentManager.ChatList
@@ -114,7 +112,6 @@ public partial class GroupDetailsView : UserControl
                 || (c.displayName ?? string.Empty).ToLowerInvariant().Contains(query)
                 || (c.chatId ?? string.Empty).ToLowerInvariant().Contains(query)
                 || (c.subtitle ?? string.Empty).ToLowerInvariant().Contains(query))
-            .Take(KnownUserLimit)
             .ToList();
 
         KnownUsersList.Items.Clear();
@@ -377,7 +374,7 @@ public partial class GroupDetailsView : UserControl
         App.CurrentManager.AddGroupMembers(details.groupId, inputs);
         _selectedAddOwners.Clear();
         AddMemberInput.Clear();
-        _knownUsersVisible = false;
+        _knownUsersVisible = true;
         RebuildKnownUsers();
         UpdateAddMemberButton(details);
     }

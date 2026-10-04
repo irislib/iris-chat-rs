@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -59,8 +62,6 @@ import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
 
-private const val GroupDetailsMemberCandidateLimit = 8
-
 @Composable
 fun GroupDetailsScreen(
     appManager: AppManager,
@@ -84,15 +85,7 @@ fun GroupDetailsScreen(
     val localOwnerHex = appState.account?.publicKeyHex
     val existingMemberHexes =
         details?.members?.map { it.ownerPubkeyHex }?.toSet().orEmpty()
-    val knownUsers =
-        appState.chatList
-            .filter { chat ->
-                chat.kind == to.iris.chat.rust.ChatKind.DIRECT &&
-                    chat.chatId != localOwnerHex &&
-                    chat.chatId !in existingMemberHexes
-            }
-            .filterByQuery(memberInput)
-    val visibleKnownUsers = knownUsers.take(GroupDetailsMemberCandidateLimit)
+    val knownUsers = groupMemberCandidates(appState.chatList, localOwnerHex, existingMemberHexes, memberInput)
     val typedMemberInput =
         normalizedInput.takeIf {
             it.isNotBlank() &&
@@ -512,7 +505,7 @@ fun GroupDetailsScreen(
                             appManager.addGroupMembers(groupId, pendingAddMemberInputs)
                             selectedAddMemberOwners = emptySet()
                             memberInput = ""
-                            memberResultsVisible = false
+                            memberResultsVisible = true
                         },
                         enabled = pendingAddMemberInputs.isNotEmpty() && !appState.busy.updatingGroup,
                         modifier = Modifier.testTag("groupDetailsAddMembersButton"),
@@ -525,7 +518,7 @@ fun GroupDetailsScreen(
                     )
                 }
 
-                if (memberResultsVisible && visibleKnownUsers.isNotEmpty()) {
+                if (memberResultsVisible && knownUsers.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -549,65 +542,67 @@ fun GroupDetailsScreen(
                             }
                         }
                         IrisListSection {
-                            visibleKnownUsers.forEach { chat ->
-                                val selected = chat.chatId in selectedAddMemberOwners
-                                val presented = to.iris.chat.ui.components.personName(chat.displayName, chat.chatId, to.iris.chat.ui.components.explicitPersonName(chat.nickname, chat.profileName))
-                                val title = presented.name
-                                val subtitle =
-                                    chat.subtitle?.takeIf { it.isNotBlank() && it != title }
-                                val interactionSource = remember(chat.chatId) { MutableInteractionSource() }
-                                Row(
-                                    modifier =
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .clickable(
-                                                interactionSource = interactionSource,
-                                                indication = null,
-                                            ) {
+                            LazyColumn(Modifier.heightIn(max = 360.dp).testTag("groupDetailsMemberCandidates")) {
+                                items(knownUsers, key = { it.chatId }) { chat ->
+                                    val selected = chat.chatId in selectedAddMemberOwners
+                                    val presented = to.iris.chat.ui.components.personName(chat.displayName, chat.chatId, to.iris.chat.ui.components.explicitPersonName(chat.nickname, chat.profileName))
+                                    val title = presented.name
+                                    val subtitle =
+                                        chat.subtitle?.takeIf { it.isNotBlank() && it != title }
+                                    val interactionSource = remember(chat.chatId) { MutableInteractionSource() }
+                                    Row(
+                                        modifier =
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .clickable(
+                                                    interactionSource = interactionSource,
+                                                    indication = null,
+                                                ) {
+                                                    haptics.press()
+                                                    selectedAddMemberOwners =
+                                                        if (selected) {
+                                                            selectedAddMemberOwners - chat.chatId
+                                                        } else {
+                                                            selectedAddMemberOwners + chat.chatId
+                                                        }
+                                                }
+                                                .padding(16.dp)
+                                                .testTag("groupDetailsKnownUser-${chat.chatId.take(12)}"),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        IrisAvatar(ownerPubkeyHex = chat.chatId, label = title, size = 38.dp, imageUrl = chat.pictureUrl, socialConnection = chat.socialConnection)
+                                        Column(
+                                            modifier = Modifier.weight(1f),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                                        ) {
+                                            Text(
+                                                text = title,
+                                                fontStyle = presented.fontStyle,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                            )
+                                            if (subtitle != null) {
+                                                Text(
+                                                    text = subtitle,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = IrisTheme.palette.muted,
+                                                )
+                                            }
+                                        }
+                                        Checkbox(
+                                            checked = selected,
+                                            onCheckedChange = { checked ->
                                                 haptics.press()
                                                 selectedAddMemberOwners =
-                                                    if (selected) {
-                                                        selectedAddMemberOwners - chat.chatId
-                                                    } else {
+                                                    if (checked) {
                                                         selectedAddMemberOwners + chat.chatId
+                                                    } else {
+                                                        selectedAddMemberOwners - chat.chatId
                                                     }
-                                            }
-                                            .padding(16.dp)
-                                            .testTag("groupDetailsKnownUser-${chat.chatId.take(12)}"),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    IrisAvatar(ownerPubkeyHex = chat.chatId, label = title, size = 38.dp, imageUrl = chat.pictureUrl, socialConnection = chat.socialConnection)
-                                    Column(
-                                        modifier = Modifier.weight(1f),
-                                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                                    ) {
-                                        Text(
-                                            text = title,
-                                            fontStyle = presented.fontStyle,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.SemiBold,
+                                            },
                                         )
-                                        if (subtitle != null) {
-                                            Text(
-                                                text = subtitle,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = IrisTheme.palette.muted,
-                                            )
-                                        }
                                     }
-                                    Checkbox(
-                                        checked = selected,
-                                        onCheckedChange = { checked ->
-                                            haptics.press()
-                                            selectedAddMemberOwners =
-                                                if (checked) {
-                                                    selectedAddMemberOwners + chat.chatId
-                                                } else {
-                                                    selectedAddMemberOwners - chat.chatId
-                                                }
-                                        },
-                                    )
                                 }
                             }
                         }
