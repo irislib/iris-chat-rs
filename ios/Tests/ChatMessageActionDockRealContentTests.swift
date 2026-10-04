@@ -72,7 +72,7 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
         long.author = "Lee"
         long.authorOwnerPubkeyHex = String(repeating: "2", count: 64)
         var incoming = message(Fixture(name: "wide-short", body: "Hi"), outgoing: false, reacted: true)
-        incoming.author = "Tim"
+        incoming.author = "Pat"
         var outgoing = message(Fixture(name: "wide-outgoing", body: "Hi"), outgoing: true, reacted: true)
         outgoing.author = "You"
         let items = [long, incoming, outgoing]
