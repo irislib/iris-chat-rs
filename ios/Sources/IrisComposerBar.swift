@@ -224,7 +224,7 @@ struct IrisComposerBar: View {
         #if os(iOS)
         if voiceRecorder.phase == .ready, let url = voiceRecorder.recordingURL {
             HStack(spacing: 8) {
-                Button { voiceRecorder.cancel() } label: {
+                Button { voiceRecorder.cancel(userInitiated: true) } label: {
                     Image(systemName: "trash.fill")
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())

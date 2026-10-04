@@ -62,6 +62,21 @@ final class IrisVoiceMessageRecorder: ObservableObject {
         case idle, requestingPermission, recording, locked, finishing, ready
     }
 
+    enum Feedback: Equatable {
+        case started, locked, finished, cancelled
+
+        @MainActor func play() {
+            switch self {
+            case .started:
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            case .locked, .finished:
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            case .cancelled:
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            }
+        }
+    }
+
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var level: Double = 0
@@ -72,6 +87,7 @@ final class IrisVoiceMessageRecorder: ObservableObject {
 
     private let backend: IrisVoiceRecordingBackend
     private let requestPermission: () async -> Bool
+    private let feedback: @MainActor (Feedback) -> Void
     private let notificationCenter: NotificationCenter
     private let maximumDuration: TimeInterval
     private let meteringIntervalNanoseconds: UInt64
@@ -86,10 +102,12 @@ final class IrisVoiceMessageRecorder: ObservableObject {
         requestPermission: @escaping () async -> Bool = IrisVoiceMessageRecorder.microphonePermission,
         notificationCenter: NotificationCenter = .default,
         maximumDuration: TimeInterval = 10 * 60,
-        meteringIntervalNanoseconds: UInt64 = 100_000_000
+        meteringIntervalNanoseconds: UInt64 = 100_000_000,
+        feedback: @escaping @MainActor (Feedback) -> Void = { $0.play() }
     ) {
         self.backend = backend
         self.requestPermission = requestPermission
+        self.feedback = feedback
         self.notificationCenter = notificationCenter
         self.maximumDuration = maximumDuration
         self.meteringIntervalNanoseconds = meteringIntervalNanoseconds
@@ -165,6 +183,7 @@ final class IrisVoiceMessageRecorder: ObservableObject {
                     return
                 }
                 self.phase = self.locksWhenStarted ? .locked : .recording
+                self.feedback(.started)
                 self.startMetering(request)
             } catch {
                 await backend.discard(request)
@@ -178,7 +197,10 @@ final class IrisVoiceMessageRecorder: ObservableObject {
 
     func lock() {
         if phase == .requestingPermission { locksWhenStarted = true }
-        else if phase == .recording { phase = .locked }
+        else if phase == .recording {
+            phase = .locked
+            feedback(.locked)
+        }
     }
 
     // A release while permission/preparation is pending cancels the request;
@@ -211,12 +233,14 @@ final class IrisVoiceMessageRecorder: ObservableObject {
             await backend.discard(request)
             guard owns(request) else { return nil }
             reset()
+            feedback(.cancelled)
             return nil
         }
         duration = recording.duration
         level = 0
         recordingURL = recording.url
         phase = .ready
+        feedback(.finished)
         return previewOnly ? nil : recording.url
     }
 
@@ -228,13 +252,14 @@ final class IrisVoiceMessageRecorder: ObservableObject {
         _ = await finish()
     }
 
-    func cancel() {
+    func cancel(userInitiated: Bool = false) {
         guard let request else {
             reset()
             return
         }
         request.cancel()
         reset()
+        if userInitiated { feedback(.cancelled) }
         let backend = backend
         Task {
             await backend.discard(request)
@@ -347,6 +372,9 @@ final class IrisAVVoiceRecordingBackend: IrisVoiceRecordingBackend, @unchecked S
                         try session.setCategory(.record, mode: .default)
                         self.activeRequest = request
                         self.ownsSession = true
+                        // iOS suppresses recording/lock feedback while using the
+                        // microphone unless the recording session opts in.
+                        try session.setAllowHapticsAndSystemSoundsDuringRecording(true)
                         try session.setActive(true)
                         return true
                     }) == true else { throw CancellationError() }

@@ -16,7 +16,7 @@ struct IrisVoiceRecordingStatus: View {
                 .accessibilityIdentifier("chatVoiceDuration")
             Spacer(minLength: 0)
             if recorder.phase == .locked {
-                Button { recorder.cancel() } label: {
+                Button { recorder.cancel(userInitiated: true) } label: {
                     Image(systemName: "trash.fill").frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
@@ -84,11 +84,9 @@ struct IrisVoiceRecordButton: View {
                 onMove: { delta in
                     guard recorder.phase == .recording || recorder.phase == .requestingPermission else { return }
                     if delta.width < -100 {
-                        recorder.cancel()
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        recorder.cancel(userInitiated: true)
                     } else if delta.height < -100 {
                         recorder.lock()
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     }
                 },
                 onEnd: { cancelled in

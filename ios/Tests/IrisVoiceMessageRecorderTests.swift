@@ -6,6 +6,43 @@ import XCTest
 
 @MainActor
 final class IrisVoiceMessageRecorderTests: XCTestCase {
+    func testFeedbackFollowsCompletedRecordingTransitionsOnlyOnce() async throws {
+        let backend = VoiceTestBackend(delayStart: true, delayStop: true)
+        var feedback: [IrisVoiceMessageRecorder.Feedback] = []
+        let recorder = makeRecorder(backend, feedback: { feedback.append($0) })
+        recorder.begin()
+        try await eventually { await backend.isWaitingToStart }
+        XCTAssertEqual(feedback, [])
+        await backend.resumeStart()
+        try await eventually { recorder.phase == .recording }
+        XCTAssertEqual(feedback, [.started])
+
+        recorder.lock()
+        recorder.lock()
+        XCTAssertEqual(feedback, [.started, .locked])
+        let finishing = Task { await recorder.finish() }
+        try await eventually { await backend.isWaitingToStop }
+        XCTAssertEqual(feedback, [.started, .locked])
+        await backend.resumeStop()
+        _ = await finishing.value
+        _ = await recorder.finish()
+        XCTAssertEqual(feedback, [.started, .locked, .finished])
+        recorder.cancel()
+        XCTAssertEqual(feedback, [.started, .locked, .finished], "Cleanup after sending must stay silent.")
+    }
+
+    func testUserCancellationWarnsOnce() async throws {
+        let backend = VoiceTestBackend()
+        var feedback: [IrisVoiceMessageRecorder.Feedback] = []
+        let recorder = makeRecorder(backend, feedback: { feedback.append($0) })
+        recorder.begin(locked: true)
+        try await eventually { recorder.phase == .locked }
+        recorder.cancel(userInitiated: true)
+        recorder.cancel(userInitiated: true)
+        XCTAssertEqual(feedback, [.started, .cancelled])
+        try await eventually { !(await backend.fileExists) }
+    }
+
     func testReleaseBeforePermissionPreventsLateRecording() async throws {
         let permission = VoicePermissionGate()
         let backend = VoiceTestBackend()
@@ -26,17 +63,20 @@ final class IrisVoiceMessageRecorderTests: XCTestCase {
 
     func testDeniedPermissionLeavesHelpfulErrorWithoutStartingRecorder() async throws {
         let backend = VoiceTestBackend()
-        let recorder = makeRecorder(backend, permission: { false })
+        var feedback: [IrisVoiceMessageRecorder.Feedback] = []
+        let recorder = makeRecorder(backend, permission: { false }, feedback: { feedback.append($0) })
         recorder.begin()
         try await eventually { recorder.phase == .idle }
         XCTAssertNotNil(recorder.errorMessage)
         let starts = await backend.startCount
         XCTAssertEqual(starts, 0)
+        XCTAssertEqual(feedback, [])
     }
 
     func testCancellationWhileRecorderStartsDiscardsLateCompletion() async throws {
         let backend = VoiceTestBackend(delayStart: true)
-        let recorder = makeRecorder(backend)
+        var feedback: [IrisVoiceMessageRecorder.Feedback] = []
+        let recorder = makeRecorder(backend, feedback: { feedback.append($0) })
         recorder.begin()
         try await eventually { await backend.isWaitingToStart }
         recorder.cancel()
@@ -47,6 +87,7 @@ final class IrisVoiceMessageRecorderTests: XCTestCase {
         XCTAssertNil(recorder.recordingURL)
         let exists = await backend.fileExists
         XCTAssertFalse(exists)
+        XCTAssertEqual(feedback, [])
     }
 
     func testLockAndFinishKeepRecordingForPreviewUntilCancelled() async throws {
@@ -90,7 +131,8 @@ final class IrisVoiceMessageRecorderTests: XCTestCase {
 
     func testRecordingShorterThanOneSecondIsDiscarded() async throws {
         let backend = VoiceTestBackend(duration: 0.7)
-        let recorder = makeRecorder(backend)
+        var feedback: [IrisVoiceMessageRecorder.Feedback] = []
+        let recorder = makeRecorder(backend, feedback: { feedback.append($0) })
         recorder.begin()
         try await eventually { recorder.phase == .recording }
         let result = await recorder.finish()
@@ -99,6 +141,7 @@ final class IrisVoiceMessageRecorderTests: XCTestCase {
         XCTAssertNil(recorder.recordingURL)
         let exists = await backend.fileExists
         XCTAssertFalse(exists)
+        XCTAssertEqual(feedback, [.started, .cancelled])
     }
 
     func testCancellationWhileFinishingNeverReturnsStaleFile() async throws {
@@ -229,11 +272,13 @@ final class IrisVoiceMessageRecorderTests: XCTestCase {
         permission: @escaping () async -> Bool = { true },
         notificationCenter: NotificationCenter = NotificationCenter(),
         maximumDuration: TimeInterval = 600,
-        meteringInterval: UInt64 = 60_000_000_000
+        meteringInterval: UInt64 = 60_000_000_000,
+        feedback: @escaping @MainActor (IrisVoiceMessageRecorder.Feedback) -> Void = { _ in }
     ) -> IrisVoiceMessageRecorder {
         IrisVoiceMessageRecorder(
             backend: backend, requestPermission: permission, notificationCenter: notificationCenter,
-            maximumDuration: maximumDuration, meteringIntervalNanoseconds: meteringInterval
+            maximumDuration: maximumDuration, meteringIntervalNanoseconds: meteringInterval,
+            feedback: feedback
         )
     }
 
