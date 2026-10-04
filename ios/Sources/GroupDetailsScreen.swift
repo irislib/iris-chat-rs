@@ -279,7 +279,7 @@ struct GroupDetailsScreen: View {
                                 manager.dispatch(.addGroupMembers(groupId: groupId, memberInputs: pendingInputs))
                                 selectedAddMemberOwners.removeAll()
                                 memberInput = ""
-                                addMemberSuggestionsVisible = false
+                                addMemberSuggestionsVisible = true
                             }
                             .buttonStyle(IrisPrimaryButtonStyle())
                             .disabled(pendingInputs.isEmpty || manager.state.busy.updatingGroup)
@@ -288,60 +288,16 @@ struct GroupDetailsScreen: View {
                     }
 
                     let candidateChats = knownUsersForAdding(details: details)
-                    let visibleCandidateChats = Array(candidateChats.prefix(groupDetailsMemberCandidateLimit))
-                    if addMemberSuggestionsVisible && !visibleCandidateChats.isEmpty {
-                        IrisSectionCard {
-                            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                                CardHeader(
-                                    title: memberInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Known users" : "Search results"
-                                )
-                                Spacer()
-                                Button {
-                                    addMemberSuggestionsVisible = false
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 18, weight: .semibold))
-                                }
-                                .buttonStyle(.irisPlain)
-                                .foregroundStyle(palette.muted)
-                                .accessibilityLabel("Close search results")
-                                .accessibilityIdentifier("groupDetailsCloseMemberResultsButton")
-                            }
-
-                            ForEach(Array(visibleCandidateChats.enumerated()), id: \.element.chatId) { index, chat in
-                                let selected = selectedAddMemberOwners.contains(chat.chatId)
-                                Button {
-                                    toggleSelectedAddMember(chat.chatId)
-                                } label: {
-                                    HStack(spacing: 12) {
-                                        IrisAvatar(socialConnection: chat.socialConnection, ownerPubkeyHex: chat.chatId, label: chat.displayName, size: 38, emphasize: selected, manager: manager)
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            personNameText(chat.displayName, identity: chat.chatId, explicitName: explicitPersonName(nickname: chat.nickname, profileName: chat.profileName))
-                                                .font(.system(.headline, design: .rounded, weight: .semibold))
-                                                .foregroundStyle(palette.textPrimary)
-                                            if let subtitle = secondaryDisplayName(chat.subtitle, primary: chat.displayName) {
-                                                Text(subtitle)
-                                                    .font(.system(.footnote, design: .rounded))
-                                                    .foregroundStyle(palette.muted)
-                                            }
-                                        }
-                                        Spacer()
-                                        Image(systemName: selected ? "checkmark.square.fill" : "square")
-                                            .font(.system(size: 22, weight: .semibold))
-                                            .foregroundStyle(selected ? palette.textPrimary : palette.muted)
-                                    }
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.irisPlain)
-                                .accessibilityIdentifier("groupDetailsKnownUser-\(String(chat.chatId.prefix(12)))")
-                                .accessibilityValue(selected ? "Selected" : "Not selected")
-                                .disabled(manager.state.busy.updatingGroup)
-
-                                if index < visibleCandidateChats.count - 1 {
-                                    Divider().overlay(palette.border)
-                                }
-                            }
-                        }
+                    if addMemberSuggestionsVisible && !candidateChats.isEmpty {
+                        GroupMemberCandidates(
+                            chats: candidateChats,
+                            query: memberInput,
+                            selectedOwners: selectedAddMemberOwners,
+                            isBusy: manager.state.busy.updatingGroup,
+                            manager: manager,
+                            onSelect: toggleSelectedAddMember,
+                            onClose: { addMemberSuggestionsVisible = false }
+                        )
                     }
                 }
 
@@ -507,15 +463,12 @@ struct GroupDetailsScreen: View {
     }
 
     private func knownUsersForAdding(details: GroupDetailsSnapshot) -> [ChatThreadSnapshot] {
-        let localOwnerHex = manager.state.account?.publicKeyHex
-        let memberHexes = Set(details.members.map { $0.ownerPubkeyHex })
-        return manager.state.chatList
-            .filter { chat in
-                chat.kind == .direct
-                    && chat.chatId != localOwnerHex
-                    && !memberHexes.contains(chat.chatId)
-            }
-            .filteredByQuery(memberInput)
+        groupMemberCandidates(
+            chats: manager.state.chatList,
+            localOwner: manager.state.account?.publicKeyHex,
+            memberOwners: Set(details.members.map(\.ownerPubkeyHex)),
+            query: memberInput
+        )
     }
 
     private func pendingAddMemberInputs(details: GroupDetailsSnapshot) -> [String] {

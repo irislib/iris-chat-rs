@@ -360,5 +360,3 @@ struct NewGroupScreen: View {
     }
     #endif
 }
-
-let groupDetailsMemberCandidateLimit = 8
