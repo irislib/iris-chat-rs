@@ -52,7 +52,9 @@ impl MeshProtocolSubscriptions {
                 .enumerate()
             {
                 if !matches!(
-                    self.subscriptions[index].delivery_status(),
+                    self.subscriptions
+                        .get(index)
+                        .and_then(|subscription| subscription.delivery_status()),
                     Some(SubscriptionDeliveryStatus::Closed | SubscriptionDeliveryStatus::Lagged)
                 ) {
                     continue;
