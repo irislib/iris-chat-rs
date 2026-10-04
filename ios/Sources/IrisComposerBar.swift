@@ -433,7 +433,15 @@ struct IrisComposerBar: View {
         } label: {
             attachmentControlLabel
         }
+        #if os(macOS)
+        // Menu needs a visual ButtonStyle; the keyboard primitive style leaves native popup chrome.
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(IrisPlainButtonVisualStyle())
+        .frame(width: 40, height: 40)
+        #else
         .buttonStyle(.irisPlain)
+        #endif
         .disabled(isSending || isUploading || isPreparingAttachments)
         .accessibilityIdentifier("chatAttachButton")
         #endif

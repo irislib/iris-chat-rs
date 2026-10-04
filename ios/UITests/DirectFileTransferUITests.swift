@@ -15,6 +15,14 @@ final class DirectFileTransferUITests: IrisChatUITestCase {
         typeText("For my laptop", into: input, app: app)
         let attach = element(app, "chatAttachButton")
         XCTAssertTrue(attach.waitForExistence(timeout: 10))
+#if os(macOS)
+        let composer = element(app, "chatComposerBar")
+        XCTAssertTrue(composer.exists)
+        XCTAssertEqual(attach.frame.width, 40, accuracy: 2, "Add must stay a compact circular control")
+        XCTAssertEqual(attach.frame.height, 40, accuracy: 2)
+        XCTAssertLessThan(input.frame.minX - composer.frame.minX, 160,
+                          "The attachment menu must not consume the message field's width")
+#endif
         attach.tap()
 #if os(iOS)
         if #available(iOS 17.0, *) {
