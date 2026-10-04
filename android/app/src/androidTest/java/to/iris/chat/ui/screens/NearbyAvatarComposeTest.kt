@@ -52,16 +52,16 @@ class NearbyAvatarComposeTest {
     fun headerAndListBadgesCoexistWithIdentityAndUpdateLive() {
         val peers = mutableStateOf(snapshot())
         val enabled = mutableStateOf(true)
-        val social = SocialConnectionSnapshot(SocialBadge.FOLLOWING, 1u, 0u, "Followed by you")
+        val social = mutableStateOf(SocialConnectionSnapshot(SocialBadge.FOLLOWING, 1u, 0u, "Followed by you", true))
         composeRule.setContent {
             IrisChatTheme(darkTheme = false) {
                 CompositionLocalProvider(LocalNearbyAvatarOwners provides nearbyAvatarOwners(peers.value, enabled.value, "self")) {
                     Surface {
                         Column(Modifier.testTag("nearbyAvatarScreen")) {
                             IrisTopBar(title = "Alice", onBack = {}, titleAccessoryLeading = {
-                                IrisAvatar(socialConnection = social, ownerPubkeyHex = "alice", label = "Alice", size = 36.dp)
+                                IrisAvatar(socialConnection = social.value, ownerPubkeyHex = "alice", label = "Alice", size = 36.dp)
                             })
-                            IrisChatListRow(socialConnection = social, ownerPubkeyHex = "alice", title = "Alice", preview = "See you soon", timeLabel = "Now", unreadCount = 0, lastMessageMine = false, lastDelivery = null, onClick = {})
+                            IrisChatListRow(socialConnection = social.value, ownerPubkeyHex = "alice", title = "Alice", preview = "See you soon", timeLabel = "Now", unreadCount = 0, lastMessageMine = false, lastDelivery = null, onClick = {})
                             IrisChatListRow(ownerPubkeyHex = "self", title = "Note to self", preview = "Packing list", timeLabel = "Yesterday", unreadCount = 0, lastMessageMine = true, lastDelivery = null, onClick = {})
                             IrisChatListRow(title = "Weekend plans", preview = "A group conversation", timeLabel = "Yesterday", unreadCount = 0, lastMessageMine = false, lastDelivery = null, onClick = {})
                         }
@@ -72,6 +72,13 @@ class NearbyAvatarComposeTest {
         composeRule.onAllNodesWithTag("nearbyAvatarBadge", useUnmergedTree = true).assertCountEquals(2)
         composeRule.onAllNodesWithContentDescription("Followed by you", useUnmergedTree = true).assertCountEquals(2)
         composeRule.onNodeWithTag("nearbyAvatarScreen").assertIsDisplayed()
+        composeRule.onAllNodesWithTag("favoriteAvatarBadge", useUnmergedTree = true).assertCountEquals(2)
+        composeRule.runOnIdle { social.value = social.value.copy(isFavorite = false) }
+        composeRule.onAllNodesWithTag("favoriteAvatarBadge", useUnmergedTree = true).assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("Followed by you", useUnmergedTree = true).assertCountEquals(2)
+        composeRule.onAllNodesWithTag("nearbyAvatarBadge", useUnmergedTree = true).assertCountEquals(2)
+        composeRule.runOnIdle { social.value = social.value.copy(isFavorite = true) }
+        composeRule.onAllNodesWithTag("favoriteAvatarBadge", useUnmergedTree = true).assertCountEquals(2)
         capture("android-nearby-header-list.png")
         composeRule.runOnIdle { enabled.value = false }
         composeRule.onAllNodesWithTag("nearbyAvatarBadge", useUnmergedTree = true).assertCountEquals(0)

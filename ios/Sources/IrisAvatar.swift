@@ -278,6 +278,12 @@ struct IrisAvatar: View {
             }
         }
         .frame(width: size, height: size)
+        .overlay(alignment: .topLeading) {
+            if socialConnection?.isFavorite == true {
+                IrisFavoriteBadge(size: max(14, min(22, size * 0.3)))
+                    .offset(x: -2, y: -2)
+            }
+        }
         .overlay(alignment: .topTrailing) {
             if let socialConnection, socialConnection.badge != nil {
                 IrisSocialBadge(connection: socialConnection, size: max(14, min(22, size * 0.3)))

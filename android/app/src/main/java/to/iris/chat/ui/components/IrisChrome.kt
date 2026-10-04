@@ -417,6 +417,9 @@ fun IrisAvatar(
             fontWeight = FontWeight.Bold,
         )
     }
+        if (socialConnection?.isFavorite == true) {
+            IrisFavoriteBadge((size * 0.3f).coerceIn(14.dp, 22.dp), Modifier.align(Alignment.TopStart))
+        }
         socialConnection?.let { connection ->
             IrisSocialBadge(connection, Modifier.align(Alignment.TopEnd))
         }

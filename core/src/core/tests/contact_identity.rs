@@ -60,6 +60,32 @@ fn contact_identity_keeps_first_name_until_exact_approval_and_persists_private_h
         owner_pubkey_hex: id.clone(),
         favorite: true,
     });
+    let avatar = pair
+        .a
+        .state
+        .current_chat
+        .as_ref()
+        .unwrap()
+        .social_connection
+        .as_ref()
+        .unwrap();
+    assert!(
+        avatar.is_favorite,
+        "The private favorite must reach the open chat avatar"
+    );
+    assert!(
+        pair.a
+            .state
+            .chat_list
+            .iter()
+            .find(|chat| chat.chat_id == id)
+            .unwrap()
+            .social_connection
+            .as_ref()
+            .unwrap()
+            .is_favorite,
+        "The chat-list avatar must update with the same private favorite"
+    );
     // Favorites queue authenticated sibling ratchet events, never public follow metadata.
     assert!(pair.a.pending_relay_publishes.len() > pending);
     assert_only_public_invites_pending(&pair.a);
@@ -75,9 +101,43 @@ fn contact_identity_keeps_first_name_until_exact_approval_and_persists_private_h
     assert_eq!(memory.accepted_name.as_deref(), Some("Carol"));
     assert_eq!(memory.name_changes.len(), 1);
     assert!(memory.favorite);
+    let participant = pair
+        .a
+        .state
+        .current_chat
+        .as_ref()
+        .unwrap()
+        .participants
+        .iter()
+        .find(|participant| participant.owner_pubkey_hex == id)
+        .unwrap();
+    assert!(participant.social_connection.as_ref().unwrap().is_favorite);
     let public = build_profile_metadata_json(&stored.owner_profiles[&id]);
     assert!(!public.contains("Alice"));
     assert!(!public.contains("favorite"));
+    pair.a.handle_action(AppAction::SetContactFavorite {
+        owner_pubkey_hex: id.clone(),
+        favorite: false,
+    });
+    assert!(!pair
+        .a
+        .state
+        .current_chat
+        .as_ref()
+        .unwrap()
+        .social_connection
+        .as_ref()
+        .is_some_and(|connection| connection.is_favorite));
+    assert!(!pair
+        .a
+        .state
+        .chat_list
+        .iter()
+        .find(|chat| chat.chat_id == id)
+        .unwrap()
+        .social_connection
+        .as_ref()
+        .is_some_and(|connection| connection.is_favorite));
     save_contact_details(&mut pair.a, &peer, "Work friend", "");
     pair.a.apply_profile_metadata_event(&metadata("Dana", 13));
     pair.a.handle_action(AppAction::ApproveContactName {

@@ -14,7 +14,14 @@ impl AppCore {
 
     pub(super) fn social_connection(&self, target: &str) -> Option<SocialConnectionSnapshot> {
         let owner = self.logged_in.as_ref()?.owner_pubkey.to_hex();
-        social_connection(Some(&owner), target, self.social_graph.as_ref())
+        social_connection(
+            Some(&owner),
+            target,
+            self.social_graph.as_ref(),
+            self.owner_profiles
+                .get(target)
+                .is_some_and(|profile| profile.contact_memory.favorite),
+        )
     }
 }
 
@@ -22,19 +29,29 @@ pub(super) fn social_connection(
     owner: Option<&str>,
     target: &str,
     graph: Option<&SocialGraph>,
+    is_favorite: bool,
 ) -> Option<SocialConnectionSnapshot> {
     let owner = owner?;
     // Group IDs and device IDs must never acquire a person's social badge.
     PublicKey::from_hex(target).ok()?;
     if owner == target {
         return Some(SocialConnectionSnapshot {
+            is_favorite: false,
             badge: Some(SocialBadge::Following),
             follow_distance: Some(0),
             followed_by_friends: 0,
             description: "You".into(),
         });
     }
-    let graph = graph.filter(|graph| graph.get_root() == owner)?;
+    let Some(graph) = graph.filter(|graph| graph.get_root() == owner) else {
+        return is_favorite.then(|| SocialConnectionSnapshot {
+            badge: None,
+            follow_distance: None,
+            followed_by_friends: 0,
+            description: "Favorite · Only you".into(),
+            is_favorite: true,
+        });
+    };
     let distance = graph.get_follow_distance(target);
     let friends = graph
         .get_followers_by_user(target)
@@ -74,6 +91,7 @@ pub(super) fn social_connection(
         "Not followed by anyone you follow".into()
     };
     Some(SocialConnectionSnapshot {
+        is_favorite,
         badge,
         follow_distance: (distance < 1_000).then_some(distance),
         followed_by_friends: friends,
@@ -117,7 +135,8 @@ mod tests {
         }
         event(&mut graph, 2, &[20, 21], 3, 2);
         event(&mut graph, 21, &[30], 3, 1);
-        let connection = |n| social_connection(Some(&key(1)), &key(n), Some(&graph)).unwrap();
+        let connection =
+            |n| social_connection(Some(&key(1)), &key(n), Some(&graph), false).unwrap();
         assert_eq!(connection(1).description, "You");
         assert_eq!(connection(2).badge, Some(SocialBadge::Following));
         assert_eq!(connection(20).badge, Some(SocialBadge::Trusted));
@@ -129,14 +148,14 @@ mod tests {
         assert_eq!(connection(40).follow_distance, None);
         event(&mut graph, 1, &[20], 10_000, 3);
         assert_eq!(
-            social_connection(Some(&key(1)), &key(20), Some(&graph))
+            social_connection(Some(&key(1)), &key(20), Some(&graph), false)
                 .unwrap()
                 .badge,
             Some(SocialBadge::Muted)
         );
         event(&mut graph, 1, &[2], 3, 4);
         assert_eq!(
-            social_connection(Some(&key(1)), &key(20), Some(&graph))
+            social_connection(Some(&key(1)), &key(20), Some(&graph), false)
                 .unwrap()
                 .followed_by_friends,
             1
@@ -150,7 +169,7 @@ mod tests {
         event(&mut graph, 2, &[20], 3, 1);
         event(&mut graph, 3, &[20], 10_000, 1);
         event(&mut graph, 4, &[20], 10_000, 1);
-        let warning = social_connection(Some(&key(1)), &key(20), Some(&graph)).unwrap();
+        let warning = social_connection(Some(&key(1)), &key(20), Some(&graph), false).unwrap();
         assert_eq!(warning.badge, Some(SocialBadge::Warning));
         assert_eq!(
             warning.description,
@@ -158,14 +177,14 @@ mod tests {
         );
         event(&mut graph, 1, &[2, 3, 4, 20], 3, 2);
         assert_eq!(
-            social_connection(Some(&key(1)), &key(20), Some(&graph))
+            social_connection(Some(&key(1)), &key(20), Some(&graph), false)
                 .unwrap()
                 .badge,
             Some(SocialBadge::Following)
         );
         event(&mut graph, 1, &[20], 10_000, 2);
         assert_eq!(
-            social_connection(Some(&key(1)), &key(20), Some(&graph))
+            social_connection(Some(&key(1)), &key(20), Some(&graph), false)
                 .unwrap()
                 .badge,
             Some(SocialBadge::Muted)
@@ -175,15 +194,41 @@ mod tests {
     #[test]
     fn missing_or_other_accounts_graph_never_claims_a_connection() {
         let graph = SocialGraph::new(&key(1));
-        assert!(social_connection(None, &key(1), Some(&graph)).is_none());
-        assert!(social_connection(Some(&key(2)), &key(1), Some(&graph)).is_none());
-        assert!(social_connection(Some(&key(1)), &key(2), None).is_none());
-        assert!(social_connection(Some(&key(1)), "group:abc", Some(&graph)).is_none());
+        assert!(social_connection(None, &key(1), Some(&graph), false).is_none());
+        assert!(social_connection(Some(&key(2)), &key(1), Some(&graph), false).is_none());
+        assert!(social_connection(Some(&key(1)), &key(2), None, false).is_none());
+        assert!(social_connection(Some(&key(1)), "group:abc", Some(&graph), false).is_none());
         assert_eq!(
-            social_connection(Some(&key(1)), &key(1), None)
+            social_connection(Some(&key(1)), &key(1), None, false)
                 .unwrap()
                 .description,
             "You"
+        );
+    }
+    #[test]
+    fn private_favorite_is_independent_of_public_relationships_and_available_offline() {
+        let owner = key(1);
+        let peer = key(2);
+        let mut graph = SocialGraph::new(&owner);
+        event(&mut graph, 1, &[2], 3, 1);
+        let favorite = social_connection(Some(&owner), &peer, Some(&graph), true).unwrap();
+        assert!(favorite.is_favorite);
+        assert_eq!(favorite.badge, Some(SocialBadge::Following));
+        event(&mut graph, 1, &[2], 10_000, 2);
+        let muted = social_connection(Some(&owner), &peer, Some(&graph), true).unwrap();
+        assert!(muted.is_favorite);
+        assert_eq!(muted.badge, Some(SocialBadge::Muted));
+        let offline = social_connection(Some(&owner), &peer, None, true).unwrap();
+        assert!(offline.is_favorite);
+        assert_eq!(offline.badge, None);
+        assert_eq!(offline.follow_distance, None);
+        assert!(social_connection(Some(&owner), &peer, None, false).is_none());
+        assert!(social_connection(None, &peer, None, true).is_none());
+        assert!(social_connection(Some(&owner), "group:test", None, true).is_none());
+        assert!(
+            !social_connection(Some(&owner), &owner, None, true)
+                .unwrap()
+                .is_favorite
         );
     }
 }

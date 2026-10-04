@@ -346,6 +346,9 @@ pub struct SocialConnectionSnapshot {
     pub follow_distance: Option<u32>,
     pub followed_by_friends: u32,
     pub description: String,
+    /// Private account contact preference, independent of public follow relationships.
+    #[uniffi(default = false)]
+    pub is_favorite: bool,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]

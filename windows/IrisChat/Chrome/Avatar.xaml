@@ -20,6 +20,14 @@
                 <ImageBrush x:Name="ImageBrush" Stretch="UniformToFill" />
             </Border.Background>
         </Border>
+        <Border x:Name="FavoriteMark" Width="16" Height="16" CornerRadius="8"
+                HorizontalAlignment="Left" VerticalAlignment="Top" Visibility="Collapsed"
+                Background="#FBBF24" BorderBrush="{StaticResource Background}" BorderThickness="1"
+                ToolTip="Favorite · Only you" AutomationProperties.Name="Favorite"
+                AutomationProperties.AutomationId="favoriteAvatarBadge" IsHitTestVisible="False">
+            <TextBlock x:Name="FavoriteMarkIcon" Text="&#xE735;" FontFamily="Segoe MDL2 Assets"
+                       Foreground="#352900" FontSize="10" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Border>
         <Border x:Name="SocialMark" Width="16" Height="16" CornerRadius="8"
                 HorizontalAlignment="Right" VerticalAlignment="Top" Visibility="Collapsed">
             <TextBlock x:Name="SocialMarkText" Foreground="White" FontSize="12" FontWeight="Bold"

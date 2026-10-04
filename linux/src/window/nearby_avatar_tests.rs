@@ -71,6 +71,7 @@ pub fn run() {
     state.rev += 1;
     manager.apply_update(AppUpdate::FullState(state.clone()));
     let connection = SocialConnectionSnapshot {
+        is_favorite: true,
         badge: Some(SocialBadge::Following),
         follow_distance: Some(1),
         followed_by_friends: 0,
@@ -84,6 +85,24 @@ pub fn run() {
     );
     let mark = badge(avatar.upcast_ref(), "nearby-avatar-badge");
     let social = badge(avatar.upcast_ref(), "social-badge");
+    let favorite = badge(avatar.upcast_ref(), "favorite-avatar-badge");
+    assert!(favorite.is_visible());
+    assert_eq!(
+        (favorite.halign(), favorite.valign()),
+        (gtk::Align::Start, gtk::Align::Start)
+    );
+    let mut ordinary = connection.clone();
+    ordinary.is_favorite = false;
+    let ordinary_avatar = crate::widgets::social_badge::avatar(
+        &adw::Avatar::new(64, Some("Alex"), true),
+        Some(&ordinary),
+    );
+    assert!(!ordinary_avatar
+        .observe_children()
+        .iter::<gtk::Widget>()
+        .filter_map(Result::ok)
+        .any(|widget| widget.has_css_class("favorite-avatar-badge")));
+
     assert!(
         !mark.is_visible(),
         "not nearby until a matching peer appears"

@@ -63,6 +63,7 @@ fn private_contacts_ratcheted_outbox_restores_and_linked_device_converges() {
     assert!(private_contact_values_v2(&restored, &id).favorite);
     deliver_pending_relay_events_for_test(&pair.a, &mut pair.b);
     assert!(pair.b.owner_profiles[&id].contact_memory.favorite);
+    assert!(pair.b.social_connection(&id).unwrap().is_favorite);
     assert_eq!(
         pair.b.owner_profiles[&id].nickname.as_deref(),
         Some("Tea friend")
@@ -80,6 +81,10 @@ fn private_contacts_ratcheted_outbox_restores_and_linked_device_converges() {
     deliver_pending_relay_events_for_test(&pair.b, &mut pair.a);
     pair.a.merge_private_contact_from_sibling(&old);
     assert!(!pair.a.owner_profiles[&id].contact_memory.favorite);
+    assert!(!pair
+        .a
+        .social_connection(&id)
+        .is_some_and(|connection| connection.is_favorite));
     assert!(pair.a.owner_profiles[&id].contact_note.is_none());
     assert_eq!(
         pair.a.owner_profiles[&id].nickname.as_deref(),

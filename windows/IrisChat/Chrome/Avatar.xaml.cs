@@ -90,6 +90,7 @@ public partial class Avatar : UserControl
     private void UpdateSocialBadge()
     {
         var connection = SocialConnection;
+        FavoriteMark.Visibility = connection?.isFavorite == true ? Visibility.Visible : Visibility.Collapsed;
         SocialMark.Visibility = connection?.badge == null ? Visibility.Collapsed : Visibility.Visible;
         if (connection?.badge == null) return;
         SocialMark.ToolTip = connection.description;
@@ -179,6 +180,10 @@ public partial class Avatar : UserControl
         BackgroundBorder.CornerRadius = new CornerRadius(Size / 2);
         ImageHost.CornerRadius = new CornerRadius(Size / 2);
         Initials.FontSize = Size * 0.36;
+        var favoriteSize = Math.Clamp(Size * 0.3, 14, 22);
+        FavoriteMark.Width = FavoriteMark.Height = favoriteSize;
+        FavoriteMark.CornerRadius = new CornerRadius(favoriteSize / 2);
+        FavoriteMarkIcon.FontSize = favoriteSize * 0.62;
         var badgeSize = Math.Clamp(Size * 0.4, 14, 24);
         NearbyMark.Width = NearbyMark.Height = badgeSize;
         NearbyMark.CornerRadius = new CornerRadius(badgeSize / 2);

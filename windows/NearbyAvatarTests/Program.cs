@@ -43,7 +43,7 @@ internal static class Program
             PumpUntil(() => manager.Account != null);
             manager.CreateChat(Peer);
             PumpUntil(() => manager.CurrentChat?.chatId == Peer);
-            var connection = new SocialConnectionSnapshot(SocialBadge.Following, 1, 0, "Following");
+            var connection = new SocialConnectionSnapshot(SocialBadge.Following, 1, 0, "Following", true);
             var state = manager.State with {
                 rev = manager.State.rev + 1,
                 preferences = manager.Preferences with { nearbyEnabled = true, nearbyShowInChatList = false },
@@ -73,6 +73,15 @@ internal static class Program
             Check(!own.IsNearby && !unknown.IsNearby, "Own devices and unrelated people stay unbadged");
             Check(!((Avatar)group.FindName("AvatarView")).IsNearby, "Group avatar stays unbadged");
             Check(mark.Visibility == Visibility.Visible && social.Visibility == Visibility.Visible, "Nearby and verified marks coexist");
+            var favorite = (Border)avatar.FindName("FavoriteMark");
+            Check(favorite.Visibility == Visibility.Visible, "Private favorite coexists with public and nearby badges");
+            Check(favorite.HorizontalAlignment == HorizontalAlignment.Left && favorite.VerticalAlignment == VerticalAlignment.Top,
+                "Favorite mark uses a separate corner");
+            avatar.SocialConnection = connection with { isFavorite = false };
+            Check(favorite.Visibility == Visibility.Collapsed && social.Visibility == Visibility.Visible && mark.Visibility == Visibility.Visible,
+                "Unfavoriting leaves public and nearby badges unchanged");
+            avatar.SocialConnection = connection;
+            Check(favorite.Visibility == Visibility.Visible, "Favorite updates on an existing avatar");
             Check(mark.HorizontalAlignment == HorizontalAlignment.Right && mark.VerticalAlignment == VerticalAlignment.Bottom,
                 "Nearby mark anchors bottom-right");
             Check(social.VerticalAlignment == VerticalAlignment.Top, "Verified mark remains at top");

@@ -9,6 +9,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PriorityHigh
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.foundation.border
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -46,4 +50,18 @@ fun IrisSocialConnectionLabel(connection: SocialConnectionSnapshot) {
         IrisSocialBadge(connection)
         Text(connection.description, style = MaterialTheme.typography.bodySmall, color = IrisTheme.palette.muted)
     }
+}
+
+@Composable
+fun IrisFavoriteBadge(size: Dp, modifier: Modifier = Modifier) {
+    Icon(
+        Icons.Default.Star,
+        contentDescription = "Favorite",
+        tint = Color(0xFF352900),
+        modifier = modifier.size(size)
+            .background(Color(0xFFFBBF24), CircleShape)
+            .border(1.dp, IrisTheme.palette.panel, CircleShape)
+            .padding(size * 0.19f)
+            .testTag("favoriteAvatarBadge"),
+    )
 }

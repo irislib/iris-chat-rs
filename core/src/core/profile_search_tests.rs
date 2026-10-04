@@ -622,3 +622,31 @@ fn people_search_filters_closest_mute_opinions_but_keeps_ties_unknowns_and_expli
     .unwrap()
     .is_empty());
 }
+
+#[test]
+fn people_search_avatars_read_private_favorites_from_offline_contact_memory() {
+    let conn = people_search_connection();
+    let local_owner = Keys::generate().public_key().to_hex();
+    let contact = Keys::generate().public_key().to_hex();
+    conn.execute(
+        "INSERT INTO owner_profiles VALUES (?1, 'Alice', NULL, NULL, NULL, NULL, ?2)",
+        rusqlite::params![contact, r#"{"favorite":true}"#],
+    )
+    .unwrap();
+    let rows =
+        search_people_candidates(&conn, "alice", &HashSet::new(), Some(&local_owner)).unwrap();
+    let connection = rows[0].social_connection.as_ref().unwrap();
+    assert!(connection.is_favorite);
+    assert_eq!(
+        connection.badge, None,
+        "Favorite does not imply a public follow"
+    );
+    conn.execute("UPDATE owner_profiles SET contact_memory_json = '{}'", [])
+        .unwrap();
+    let rows =
+        search_people_candidates(&conn, "alice", &HashSet::new(), Some(&local_owner)).unwrap();
+    assert!(!rows[0]
+        .social_connection
+        .as_ref()
+        .is_some_and(|connection| connection.is_favorite));
+}

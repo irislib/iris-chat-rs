@@ -528,6 +528,7 @@ fn search_people_candidates(
                     current_owner_hex,
                     &owner_hex,
                     personal_graph.as_deref(),
+                    contact_memory.favorite,
                 ),
                 owner_pubkey_hex: owner_hex,
                 display_label,

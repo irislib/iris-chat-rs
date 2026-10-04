@@ -183,6 +183,7 @@ struct GroupDetailsScreen: View {
                         VStack(alignment: .leading, spacing: 10) {
                             let memberHeader = HStack(alignment: .top, spacing: 12) {
                                 IrisAvatar(
+                                    socialConnection: member.socialConnection,
                                     ownerPubkeyHex: member.ownerPubkeyHex,
                                     label: primary,
                                     size: 38,
