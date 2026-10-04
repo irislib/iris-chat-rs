@@ -3,6 +3,11 @@ import Foundation
 extension ChatMessageSnapshot: IrisInteractionMessage {}
 
 extension AppManager {
+    func syncDebugLogging(_ enabled: Bool) {
+        irisSetDebugLoggingEnabled(enabled)
+        interactionTimingController.update(debugLoggingEnabled: enabled)
+    }
+
     func recordInteractionState(historyLoaded: Bool = false) {
         guard let timing = interactionTiming, let chat = state.currentChat else { return }
         timing.stateAvailable(chatID: chat.chatId, messages: chat.messages, historyLoaded: historyLoaded)

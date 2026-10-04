@@ -990,7 +990,8 @@ final class AppManager: ObservableObject {
     @Published private(set) var state: AppState {
         didSet { recordInteractionState() }
     }
-    let interactionTiming: IrisInteractionTiming?
+    let interactionTimingController: IrisInteractionTimingController
+    var interactionTiming: IrisInteractionTiming? { interactionTimingController.timing }
     @Published private(set) var bootstrapInFlight = true
     @Published private(set) var pendingShare: PendingShare?
     @Published private(set) var lastForegroundedAt = Date()
@@ -1141,10 +1142,7 @@ final class AppManager: ObservableObject {
         rustFactory: (() -> RustAppClient)? = nil,
         pushNotificationResolver: MobilePushNotificationResolver = MobilePushNotificationResolver()
     ) {
-        self.interactionTiming = IrisInteractionTiming.configured(
-            environment: environment,
-            enabledInBundle: Bundle.main.object(forInfoDictionaryKey: "IrisPerformanceTracing") as? Bool == true
-        )
+        self.interactionTimingController = IrisInteractionTimingController(environment: environment)
         self.fileManager = fileManager
         self.pushNotificationResolver = pushNotificationResolver
         self.sharedContainerOverride = environment["IRIS_SHARE_CONTAINER_DIR"]
@@ -1223,7 +1221,7 @@ final class AppManager: ObservableObject {
         self.updates = DesktopUpdateController()
 #endif
         self.state = initialState
-        irisSetDebugLoggingEnabled(initialState.preferences.debugLoggingEnabled)
+        syncDebugLogging(initialState.preferences.debugLoggingEnabled)
         self.lastRevApplied = initialState.rev
         let initialChat = initialState.currentChat
         syncChatPageScope(to: &initialState)
@@ -3085,6 +3083,7 @@ final class AppManager: ObservableObject {
 #endif
         reconciledState = stateByApplyingScreenshotFixture(reconciledState)
         lastRevApplied = nextState.rev
+        syncDebugLogging(reconciledState.preferences.debugLoggingEnabled)
         state = reconciledState
         if nextState.currentChat?.chatId == reconciledState.currentChat?.chatId {
             recordInteractionState(historyLoaded: true)
@@ -3105,7 +3104,6 @@ final class AppManager: ObservableObject {
         postDesktopNotifications(from: oldState, to: reconciledState)
         syncCurrentDeviceLabelsIfNeeded(state: reconciledState)
         rememberCurrentChatIfPresent()
-        irisSetDebugLoggingEnabled(reconciledState.preferences.debugLoggingEnabled)
 #if os(iOS) || os(macOS)
         syncNearbyBluetoothPreference(from: oldState, to: reconciledState)
         syncNearbyLanPreference(from: oldState, to: reconciledState)

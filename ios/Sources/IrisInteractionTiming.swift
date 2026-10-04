@@ -11,6 +11,26 @@ protocol IrisInteractionMessage {
     var createdAtSecs: UInt64 { get }
 }
 
+@MainActor
+final class IrisInteractionTimingController {
+    private let explicitlyEnabled: Bool
+    private(set) var timing: IrisInteractionTiming?
+
+    init(environment: [String: String], enabledInBundle: Bool =
+         Bundle.main.object(forInfoDictionaryKey: "IrisPerformanceTracing") as? Bool == true) {
+        timing = IrisInteractionTiming.configured(environment: environment, enabledInBundle: enabledInBundle)
+        explicitlyEnabled = timing != nil
+    }
+
+    func update(debugLoggingEnabled: Bool) {
+        // Explicit test/performance launches remain enabled across ordinary
+        // state updates with the preference off. Otherwise off releases all
+        // pending message IDs and bodies with the helper itself.
+        guard !explicitlyEnabled else { return }
+        timing = debugLoggingEnabled ? timing ?? IrisInteractionTiming() : nil
+    }
+}
+
 /// Opt-in measurements of state and visible layout, not display/paint completion.
 @MainActor
 final class IrisInteractionTiming {
