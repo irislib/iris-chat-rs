@@ -123,6 +123,19 @@ impl AppCore {
         (transfer.link_at == current_link).then_some(transfer)
     }
 
+    pub(super) fn device_history_mutation_target_since(&self, peer: &str) -> u64 {
+        // Completion closes the original backfill, but an approved pair may
+        // still exchange later edits to the history it already shared.
+        self.device_history_transfer(peer)
+            .filter(|record| record.policy_known)
+            .map(|record| record.since)
+            .unwrap_or_else(|| {
+                self.device_sync_peer_since(peer)
+                    .unwrap_or(u64::MAX)
+                    .max(self.device_sync_roster_at().unwrap_or(u64::MAX))
+            })
+    }
+
     pub(in crate::core) fn device_history_send_since(&self, peer: &str) -> Option<u64> {
         self.device_history_transfer(peer)
             .filter(|record| record.outbound)

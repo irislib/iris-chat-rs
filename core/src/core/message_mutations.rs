@@ -110,41 +110,40 @@ impl AppCore {
             .fold(unix_now_ms(), |ms, record| {
                 ms.max(record.millis().saturating_add(1))
             });
-        let mut tags = vec![
-            nostr::Tag::parse(["e", id]).unwrap(),
-            nostr::Tag::parse(["k", "14"]).unwrap(),
-        ];
-        if let Some(expiry) = message.expires_at_secs {
-            tags.push(nostr::Tag::parse(["expiration", &expiry.to_string()]).unwrap());
-        }
-        let event = if let Some(group) = parse_group_id_from_chat_id(&chat) {
-            self.prepare_group_event(
-                &group,
-                kind,
-                content,
-                tags,
-                pairwise_codec::EncodeOptions::new(millis / 1000, millis),
-            )
-        } else {
-            tags.push(nostr::Tag::parse(["p", chat.as_str()]).unwrap());
-            tags.push(nostr::Tag::parse(["ms", &millis.to_string()]).unwrap());
-            tags.push(
-                nostr::Tag::parse([
+        let event = (|| -> anyhow::Result<UnsignedEvent> {
+            let mut tags = vec![
+                nostr::Tag::parse(["e", id])?,
+                nostr::Tag::parse(["k", "14"])?,
+            ];
+            if let Some(expiry) = message.expires_at_secs {
+                tags.push(nostr::Tag::parse(["expiration", &expiry.to_string()])?);
+            }
+            if let Some(group) = parse_group_id_from_chat_id(&chat) {
+                self.prepare_group_event(
+                    &group,
+                    kind,
+                    content,
+                    tags,
+                    pairwise_codec::EncodeOptions::new(millis / 1000, millis),
+                )
+            } else {
+                tags.push(nostr::Tag::parse(["p", chat.as_str()])?);
+                tags.push(nostr::Tag::parse(["ms", &millis.to_string()])?);
+                tags.push(nostr::Tag::parse([
                     "iris-message-id",
                     &uuid::Uuid::new_v4().simple().to_string(),
-                ])
-                .unwrap(),
-            );
-            let mut event = UnsignedEvent::new(
-                owner,
-                Timestamp::from_secs(millis / 1000),
-                Kind::Custom(kind as u16),
-                tags,
-                content,
-            );
-            event.ensure_id();
-            Ok(event)
-        };
+                ])?);
+                let mut event = UnsignedEvent::new(
+                    owner,
+                    Timestamp::from_secs(millis / 1000),
+                    Kind::Custom(kind as u16),
+                    tags,
+                    content,
+                );
+                event.ensure_id();
+                Ok(event)
+            }
+        })();
         let Ok(event) = event else { return };
         // Only project after the encrypted send has been accepted into the durable protocol queue.
         let sent = if let Some(group) = parse_group_id_from_chat_id(&chat) {
@@ -255,7 +254,9 @@ impl AppCore {
                         created_at_secs: edit.created_at,
                     });
                 }
-                message.body = message.edit_history.last().unwrap().body.clone();
+                if let Some(latest) = message.edit_history.last() {
+                    message.body = latest.body.clone();
+                }
             }
         }
         // Honor a durable deletion in memory even if its database projection

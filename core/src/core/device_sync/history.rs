@@ -42,6 +42,14 @@ struct HistorySession {
     received: BTreeSet<String>,
     withheld: bool,
     batch_imported: u64,
+    imported_original: bool,
+    deferred_mutation: bool,
+}
+
+#[derive(Clone, Copy)]
+struct HistoryMutationAccess {
+    supported: bool,
+    target_since: u64,
 }
 
 #[derive(Clone)]
@@ -115,7 +123,7 @@ impl HistorySession {
         capacity: usize,
         scope: RecordScope,
         prefix: &str,
-        message_mutations: bool,
+        mutation_access: HistoryMutationAccess,
     ) -> Option<Self> {
         let mut records = BTreeMap::new();
         let mut cursor = None;
@@ -151,11 +159,13 @@ impl HistorySession {
             }
         }
         let mut add = |record: DeviceSyncRecord| {
-            if (message_mutations || !matches!(record, DeviceSyncRecord::MessageMutation { .. }))
+            if (mutation_access.supported
+                || !matches!(record, DeviceSyncRecord::MessageMutation { .. }))
                 && record.scope() == scope
                 && filter.contains(record.timestamp())
                 && hex(&record.id()).starts_with(prefix)
                 && core.sync_record_allowed(&record)
+                && core.history_mutation_target_allowed(&record, mutation_access.target_since)
             {
                 if let Some(locator) = record.locator() {
                     records.insert(
@@ -221,6 +231,8 @@ impl HistorySession {
             received: BTreeSet::new(),
             withheld: false,
             batch_imported: 0,
+            imported_original: false,
+            deferred_mutation: false,
         })
     }
 
@@ -562,7 +574,10 @@ impl AppCore {
                 capacity,
                 scope,
                 &prefix,
-                message_mutations == Some(1),
+                HistoryMutationAccess {
+                    supported: message_mutations == Some(1),
+                    target_since: self.device_history_mutation_target_since(peer),
+                },
             ) else {
                 self.send_history_packets(
                     peer,
@@ -666,7 +681,10 @@ impl AppCore {
                             continue;
                         };
                         if let Some(mut record) = cursor.load(self).filter(|record| {
-                            state.filter.contains(record.timestamp())
+                            self.history_mutation_target_allowed(
+                                record,
+                                self.device_history_mutation_target_since(peer),
+                            ) && state.filter.contains(record.timestamp())
                                 && (state.scope == RecordScope::State
                                     || current_peer_floor
                                         .is_some_and(|floor| record.timestamp() >= floor))

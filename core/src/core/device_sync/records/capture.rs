@@ -87,9 +87,9 @@ impl AppCore {
     ) -> bool {
         if kind == MESSAGE_EDIT_KIND || kind == MESSAGE_DELETE_KIND {
             let targets = message_ids_from_tags(tags.iter());
-            if targets.len() != 1 {
+            let [target] = targets.as_slice() else {
                 return true;
-            }
+            };
             let ms_tags: Vec<_> = tags
                 .iter()
                 .filter(|tag| tag.as_slice().first().is_some_and(|s| s == "ms"))
@@ -112,7 +112,7 @@ impl AppCore {
                     created_at,
                     created_at_ms,
                     expires_at: message_expiration_from_tags(tags.iter()),
-                    message_id: targets[0].clone(),
+                    message_id: target.clone(),
                     operation: if kind == MESSAGE_EDIT_KIND {
                         "edit"
                     } else {

@@ -7,6 +7,9 @@ pub(super) struct HistoryPartition {
     link_id: Option<String>,
     pending: VecDeque<String>,
     withheld: bool,
+    deferred_mutation: bool,
+    imported_original: bool,
+    retried_mutations: bool,
 }
 impl HistoryPartition {
     pub(super) fn new(filter: Filter, link_id: Option<String>) -> Self {
@@ -15,6 +18,9 @@ impl HistoryPartition {
             link_id,
             pending: VecDeque::from([String::new()]),
             withheld: false,
+            deferred_mutation: false,
+            imported_original: false,
+            retried_mutations: false,
         }
     }
     fn split(&mut self, prefix: &str) -> bool {
@@ -101,9 +107,18 @@ impl AppCore {
             };
             let filter = plan.filter;
             let link_id = plan.link_id.clone();
-            let Some(mut state) =
-                HistorySession::snapshot(self, filter, true, capacity, scope, &prefix, true)
-            else {
+            let Some(mut state) = HistorySession::snapshot(
+                self,
+                filter,
+                true,
+                capacity,
+                scope,
+                &prefix,
+                HistoryMutationAccess {
+                    supported: true,
+                    target_since: self.device_history_mutation_target_since(peer),
+                },
+            ) else {
                 let split = self
                     .device_sync
                     .as_mut()
@@ -166,6 +181,21 @@ impl AppCore {
             return;
         };
         plan.withheld |= state.withheld;
+        plan.deferred_mutation |= state.deferred_mutation;
+        plan.imported_original |= state.imported_original;
+        // A target can live in a later hash partition. Retry once after actual
+        // original import progress; absent/invalid targets cannot create a loop.
+        if plan.pending.is_empty()
+            && plan.deferred_mutation
+            && plan.imported_original
+            && !plan.retried_mutations
+        {
+            plan.pending.push_back(String::new());
+            plan.withheld = false;
+            plan.deferred_mutation = false;
+            plan.imported_original = false;
+            plan.retried_mutations = true;
+        }
         if !plan.pending.is_empty() {
             self.advance_device_history_partition(peer, state.scope);
             return;

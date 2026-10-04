@@ -429,6 +429,9 @@ fn message_mutations_linked_device_history_converges_without_changing_originals(
                 .any(|r| r["type"] == "messageMutation"));
         } else {
             assert_eq!(edited.body, "Original");
+            assert!(right.message_for_mutation(&chat, "sync-delete")
+                .is_none_or(|message| message.body.is_empty()),
+                "Older readers must never receive retracted plaintext");
             assert!(
                 !trace
                     .iter()
@@ -437,6 +440,14 @@ fn message_mutations_linked_device_history_converges_without_changing_originals(
                     .any(|r| r["type"] == "messageMutation"),
                 "old initiators must never receive unknown typed records"
             );
+        }
+        if !capable {
+            if let Some(path) = std::env::var_os("IRIS_MESSAGE_MUTATION_LEGACY_TRACE") {
+                std::fs::write(path, serde_json::to_vec(&serde_json::json!({
+                    "owner": owner.public_key().to_hex(), "packets": trace,
+                    "messageId": "sync-edit", "body": edited.body,
+                })).unwrap()).unwrap();
+            }
         }
         assert_eq!(left.device_history_session_count_for_test(), 0);
         assert_eq!(right.device_history_session_count_for_test(), 0);

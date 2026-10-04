@@ -168,6 +168,7 @@ include!("tests/device_sync.rs");
 include!("tests/device_sync_history.rs");
 include!("tests/device_sync_history_restart.rs");
 include!("tests/device_sync_records.rs");
+include!("tests/device_sync_mutation_privacy.rs");
 include!("tests/chat_read_sync.rs");
 include!("tests/mobile_push_read_sync.rs");
 include!("tests/mobile_push_controls.rs");

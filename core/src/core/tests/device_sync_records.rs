@@ -31,7 +31,7 @@ fn run_device_sync_typed_records(record_limit: Option<usize>) {
         right
             .record_device_history_approver(&a.public_key().to_hex(), 100, "ac".repeat(32))
             .unwrap();
-        for (period, created) in [("old", 50), ("new", 200)] {
+        for (period, created, mutated) in [("old", 50, 51), ("old-late", 50, 201), ("new", 200, 201)] {
             for (operation, kind, content) in [
                 ("edit", MESSAGE_EDIT_KIND, "Updated"),
                 ("delete", MESSAGE_DELETE_KIND, ""),
@@ -42,7 +42,7 @@ fn run_device_sync_typed_records(record_limit: Option<usize>) {
                     None, None, Some(chat.clone()), None,
                 );
                 assert!(left.capture_device_sync_control(
-                    &chat, &format!("control-{target}"), &chat, created + 1,
+                    &chat, &format!("control-{target}"), &chat, mutated,
                     kind, content, &[nostr::Tag::parse(["e", target.as_str()]).unwrap()],
                 ));
             }
@@ -232,7 +232,7 @@ fn run_device_sync_typed_records(record_limit: Option<usize>) {
             include_history
         );
         assert!(has_device_sync_message(&right, &chat, "new"));
-        for period in ["old", "new"] {
+        for period in ["old", "old-late", "new"] {
             for operation in ["edit", "delete"] {
                 let target = format!("mutation-{period}-{operation}");
                 let expected = period == "new" || include_history;
@@ -359,7 +359,7 @@ fn run_device_sync_typed_records(record_limit: Option<usize>) {
                         .as_ref()
                         .unwrap()
                         .imported_messages,
-                    11 // Nine ordinary messages plus the two pre-link mutation targets.
+                    13 // Nine ordinary messages plus four pre-link mutation targets.
                 );
             }
         }

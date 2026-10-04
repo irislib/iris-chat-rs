@@ -236,6 +236,36 @@ impl AppCore {
             }
         }
     }
+    // Reconciliation controls may carry an entire replacement message. Their
+    // target must be known and within this pair's history choice independently
+    // of the control's timestamp. Direct participant delivery remains separate.
+    pub(super) fn history_mutation_target_allowed(
+        &self,
+        record: &DeviceSyncRecord,
+        target_since: u64,
+    ) -> bool {
+        let DeviceSyncRecord::MessageMutation { mutation } = record else {
+            return true;
+        };
+        self.message_for_mutation(&mutation.chat_id, &mutation.message_id)
+            .is_some_and(|target| {
+                target.created_at_secs >= target_since
+                    && target.author_owner_pubkey_hex.as_deref() == Some(mutation.author.as_str())
+                    && matches!(target.kind, ChatMessageKind::User)
+                    && target
+                        .expires_at_secs
+                        .is_none_or(|expiry| expiry > unix_now().get())
+                    && !self.chat_activity_is_deleted(&mutation.chat_id, target.created_at_secs)
+                    && !self
+                        .app_store
+                        .message_was_locally_deleted(
+                            &mutation.chat_id,
+                            Some(&mutation.message_id),
+                            None,
+                        )
+                        .unwrap_or(true)
+            })
+    }
     pub(super) fn message_mutation_allowed(&self, m: &MessageMutation) -> anyhow::Result<bool> {
         let locally_deleted =
             self.app_store

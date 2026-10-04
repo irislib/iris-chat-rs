@@ -73,7 +73,12 @@ impl AppCore {
         let prefix = self
             .sync_record_prefix()
             .ok_or_else(|| anyhow::anyhow!("No account"))?;
-        let owner = self.logged_in.as_ref().unwrap().owner_pubkey.to_hex();
+        let owner = self
+            .logged_in
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No account"))?
+            .owner_pubkey
+            .to_hex();
         let owner_start = format!("iris-chat-sync-record-v1:{owner}:");
         let owner_end = format!("iris-chat-sync-record-v1:{owner};");
         let device_end = format!("{};", prefix.trim_end_matches(':'));

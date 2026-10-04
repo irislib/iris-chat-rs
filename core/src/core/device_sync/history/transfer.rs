@@ -29,6 +29,7 @@ impl AppCore {
             return true;
         }
         let mut messages = Vec::new();
+        let mut mutations = Vec::new();
         self.enter_batch();
         for (hash, record) in std::mem::take(&mut state.pending_records) {
             if let DeviceSyncRecord::Message { mut message } = record {
@@ -36,6 +37,8 @@ impl AppCore {
                     message.legacy_reactions = None;
                 }
                 messages.push(message);
+            } else if matches!(record, DeviceSyncRecord::MessageMutation { .. }) {
+                mutations.push((hash, record));
             } else if self.apply_sync_record(record) {
                 state.received.insert(hash);
             } else {
@@ -63,6 +66,19 @@ impl AppCore {
             },
             Some(state.filter.since),
         );
+        // Originals are admitted before any control is accepted, regardless of
+        // packet/hash order within the batch. An unknown target is not stored.
+        let target_since = self.device_history_mutation_target_since(peer);
+        for (hash, record) in mutations {
+            if self.history_mutation_target_allowed(&record, target_since)
+                && self.apply_sync_record(record)
+            {
+                state.received.insert(hash);
+            } else {
+                state.deferred_mutation = true;
+                state.withheld = true;
+            }
+        }
         self.rebuild_state();
         self.emit_state();
         self.exit_batch();
@@ -75,6 +91,7 @@ impl AppCore {
             {
                 if state.received.insert(hash) && !existed {
                     state.batch_imported += 1;
+                    state.imported_original = true;
                 }
             } else {
                 state.withheld = true;
