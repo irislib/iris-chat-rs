@@ -30,3 +30,22 @@ pub struct DirectFileTransferSnapshot {
     pub total_bytes: u64,
     pub error: Option<String>,
 }
+
+// Shared by signed manifests, preparation, transport and chosen destinations.
+pub(crate) fn valid_filename(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 240
+        && name != "."
+        && name != ".."
+        && !name
+            .chars()
+            .any(|c| c.is_control() || "/\\<>:\"|?*".contains(c))
+}
+
+pub(crate) fn valid_transfer_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}

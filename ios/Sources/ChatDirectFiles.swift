@@ -42,7 +42,9 @@ struct ChatDirectFileTransferView: View {
     let transfer: DirectFileTransferSnapshot
     let chatId: String
     let dispatch: (AppAction) -> Void
+    var accept: (String, String, DirectFileDestination) -> Void = { _, _, _ in }
     @State private var openFailed = false
+    @State private var choosingDestination = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -83,7 +85,7 @@ struct ChatDirectFileTransferView: View {
             }
             if transfer.canAcceptOnThisDevice {
                 HStack(spacing: 18) {
-                    Button("Accept") { dispatch(.acceptDirectFiles(chatId: chatId, transferId: transfer.id)) }
+                    Button("Accept") { choosingDestination = true }
                         .accessibilityIdentifier("chatDirectTransferAccept-\(transfer.id)")
                     Button("Decline") { dispatch(.declineDirectFiles(chatId: chatId, transferId: transfer.id)) }
                         .accessibilityIdentifier("chatDirectTransferDecline-\(transfer.id)")
@@ -98,6 +100,10 @@ struct ChatDirectFileTransferView: View {
         .frame(maxWidth: 260, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chatDirectTransfer-\(transfer.id)")
+        .fileImporter(isPresented: $choosingDestination, allowedContentTypes: [.folder]) { result in
+            guard case .success(let folder) = result else { return }
+            accept(chatId, transfer.id, IrisDirectFileDestination(folder: folder))
+        }
         .alert("Couldn’t open file", isPresented: $openFailed) { Button("OK", role: .cancel) {} }
     }
 
@@ -122,7 +128,10 @@ struct ChatDirectFileTransferView: View {
 // Transfer storage prefixes remain private and no upload/cache downloader runs.
 func irisDirectFileExportURL(path: String, filename: String) async throws -> URL {
     try await Task.detached(priority: .userInitiated) {
-        let source = URL(fileURLWithPath: path)
+        let location = try IrisDirectFileLocation.resolve(path)
+        let accessed = location.scope?.startAccessingSecurityScopedResource() ?? false
+        defer { if accessed { location.scope?.stopAccessingSecurityScopedResource() } }
+        let source = location.file
         let name = URL(fileURLWithPath: filename.replacingOccurrences(of: "\\", with: "/")).lastPathComponent
         guard !name.isEmpty, name != ".", name != ".." else { throw CocoaError(.fileReadInvalidFileName) }
         let directory = FileManager.default.temporaryDirectory

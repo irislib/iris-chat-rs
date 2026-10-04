@@ -435,7 +435,8 @@ internal fun MessageBubble(
                             )
                         }
                         message.directTransfer?.let { transfer ->
-                            ChatDirectFileTransfer(transfer, chat?.chatId.orEmpty(), isOutgoing = message.isOutgoing) { action -> appManager?.dispatch(action) }
+                            ChatDirectFileTransfer(transfer, chat?.chatId.orEmpty(), isOutgoing = message.isOutgoing,
+                                accept = { chatId, id, destination -> appManager?.acceptDirectFiles(chatId, id, destination) }) { action -> appManager?.dispatch(action) }
                         }
                         val imageAttachments = message.attachments.filter { it.isImage }
                         val nonImageAttachments = message.attachments.filter { !it.isImage }

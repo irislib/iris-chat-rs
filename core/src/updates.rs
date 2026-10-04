@@ -70,6 +70,11 @@ pub(crate) struct FipsNearbyLinkSnapshot {
 #[derive(Debug)]
 pub(crate) enum CoreMsg {
     Action(AppAction),
+    AcceptDirectFiles {
+        chat_id: String,
+        transfer_id: String,
+        destination: std::sync::Arc<dyn crate::DirectFileDestination>,
+    },
     Internal(Box<InternalEvent>),
     ExportSupportBundle(Sender<String>),
     PeerProfileDebug {

@@ -258,7 +258,9 @@ fn exercise_direct_files_actions(same_owner: bool, outcome: crate::DirectFileTra
     );
     assert_eq!(offer.status, crate::DirectFileTransferStatus::Offered);
     assert!(offer.files.iter().all(|f| f.local_path.is_none()));
-    let receiving = bdir.path().join("direct-files").join(&id);
+    let selected_destination = bdir.path().join("chosen-destination");
+    std::fs::create_dir(&selected_destination).unwrap();
+    let receiving = selected_destination.join(format!("Iris files {id}"));
     let waiting = std::time::Instant::now() + Duration::from_millis(150);
     while std::time::Instant::now() < waiting {
         pump_call_pair(&mut a, &ar, &mut b, &br);
@@ -274,9 +276,12 @@ fn exercise_direct_files_actions(same_owner: bool, outcome: crate::DirectFileTra
             // The offer is already in both histories. Losing a staged source
             // produces a real mid-batch transport failure after the first file.
             std::fs::remove_file(&record.paths[1]).unwrap();
-            b.handle_action(AppAction::AcceptDirectFiles {
+            b.handle_message(CoreMsg::AcceptDirectFiles {
                 chat_id: b_chat.clone(),
                 transfer_id: id.clone(),
+                destination: crate::direct_file_directory_destination(
+                    selected_destination.to_string_lossy().into_owned(),
+                ),
             });
         }
         crate::DirectFileTransferStatus::Cancelled => {
@@ -288,9 +293,12 @@ fn exercise_direct_files_actions(same_owner: bool, outcome: crate::DirectFileTra
             }
         }
         crate::DirectFileTransferStatus::Completed => {
-            b.handle_action(AppAction::AcceptDirectFiles {
+            b.handle_message(CoreMsg::AcceptDirectFiles {
                 chat_id: b_chat.clone(),
                 transfer_id: id.clone(),
+                destination: crate::direct_file_directory_destination(
+                    selected_destination.to_string_lossy().into_owned(),
+                ),
             });
         }
         _ => unreachable!("unsupported test outcome"),
@@ -335,6 +343,7 @@ fn exercise_direct_files_actions(same_owner: bool, outcome: crate::DirectFileTra
         .unwrap()
         .error;
     // Removing local copies must not remove the message or change its outcome.
+    std::fs::remove_dir_all(&selected_destination).unwrap();
     for dir in [&adir, &bdir] {
         let files = dir.path().join("direct-files");
         if files.exists() {
@@ -536,4 +545,181 @@ fn direct_files_failed_offer_send_keeps_failed_history_after_restart() {
     assert_eq!(transfer.status, crate::DirectFileTransferStatus::Failed);
     assert_eq!(transfer.error, record.error);
     assert!(transfer.files.iter().all(|file| file.local_path.is_none()));
+}
+
+#[test]
+fn direct_files_first_message_waits_for_authenticated_device_discovery() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let (mut core, _updates, directory) =
+        logged_in_test_core_with_updates("file-first-bootstrap", &owner, &device);
+    core.preferences.nostr_relay_urls.clear();
+    core.preferences.nearby_enabled = false;
+    let (tx, rx) = flume::unbounded();
+    core.core_sender = tx.clone();
+    core.priority_sender = tx;
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let std::net::SocketAddr::V4(rendezvous) = socket.local_addr().unwrap() else {
+        unreachable!()
+    };
+    drop(socket);
+    core.reconcile_device_sync_at_rendezvous_for_test(rendezvous);
+    let chat = peer_owner.public_key().to_hex();
+    assert!(!core.app_keys.contains_key(&chat));
+    assert!(active_session_device_pubkeys(&core, peer_owner.public_key()).is_empty());
+    let source = directory.path().join("first.txt");
+    std::fs::write(&source, b"first content is a file").unwrap();
+    core.handle_action(AppAction::SendDirectFiles {
+        chat_id: chat.clone(),
+        attachments: vec![OutgoingAttachment {
+            file_path: source.to_string_lossy().into_owned(),
+            filename: "first.txt".into(),
+        }],
+        caption: String::new(),
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while core.state.busy.sending_message {
+        for message in rx.try_iter().take(128) {
+            core.handle_message(message);
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let records = direct_files_test_records(&core);
+    assert_eq!(
+        records.len(),
+        1,
+        "file-first must queue an offer, not reject an undiscovered device: {:?}",
+        core.state.toast
+    );
+    let record = &records[0];
+    assert_eq!(record.status, crate::DirectFileTransferStatus::Offered);
+    assert!(record.waiting_for_devices);
+    assert_eq!(core.threads[&chat].messages.len(), 1);
+    assert_eq!(core.threads[&chat].messages[0].body, record.wire);
+    assert_eq!(
+        core.threads[&chat].messages[0].delivery,
+        DeliveryState::Queued
+    );
+    // Only an authenticated owner-signed roster may unlock the file capability.
+    let roster = signed_app_keys_authorization_event(
+        &peer_owner,
+        peer_device.public_key(),
+        unix_now().get(),
+    );
+    core.handle_relay_event(roster);
+    assert!(!direct_files_test_records(&core)[0].waiting_for_devices);
+    assert_eq!(
+        direct_files_test_records(&core)[0].status,
+        crate::DirectFileTransferStatus::Offered
+    );
+    core.handle_action(AppAction::CancelDirectFiles {
+        chat_id: chat,
+        transfer_id: record.offer.id.clone(),
+    });
+    assert_eq!(
+        direct_files_test_records(&core)[0].status,
+        crate::DirectFileTransferStatus::Cancelled
+    );
+}
+
+#[test]
+fn direct_files_fresh_invite_peers_transfer_a_file_as_the_first_chat_content() {
+    let ao = Keys::generate();
+    let ad = Keys::generate();
+    let bo = Keys::generate();
+    let bd = Keys::generate();
+    let (mut a, _au, adir) = logged_in_test_core_with_updates("fresh-file-inviter", &ao, &ad);
+    let (mut b, _bu, bdir) = logged_in_test_core_with_updates("fresh-file-acceptor", &bo, &bd);
+    for core in [&mut a, &mut b] {
+        core.preferences.nostr_relay_urls.clear();
+        core.preferences.nearby_enabled = false;
+    }
+    let (at, ar) = flume::unbounded();
+    a.core_sender = at.clone();
+    a.priority_sender = at;
+    let (bt, br) = flume::unbounded();
+    b.core_sender = bt.clone();
+    b.priority_sender = bt;
+    let reservation = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let std::net::SocketAddr::V4(rendezvous) = reservation.local_addr().unwrap() else {
+        unreachable!()
+    };
+    drop(reservation);
+    a.reconcile_device_sync_at_rendezvous_for_test(rendezvous);
+    b.reconcile_device_sync_at_rendezvous_for_test(rendezvous);
+    assert!(active_session_device_pubkeys(&a, bo.public_key()).is_empty());
+    assert!(active_session_device_pubkeys(&b, ao.public_key()).is_empty());
+    a.handle_action(AppAction::CreatePublicInvite);
+    let invite = a.state.public_invite.as_ref().unwrap().url.clone();
+    // Account startup normally publishes each device roster. Let the ordinary
+    // invite action produce that signed self proof for the synthetic second account.
+    b.handle_action(AppAction::CreatePublicInvite);
+    b.handle_action(AppAction::AcceptInvite {
+        invite_input: invite,
+    });
+    // Exchange only events authored by normal actions, never injected sessions or rosters.
+    settle_pending_relay_events_for_test(&mut a, &mut b);
+    let source = bdir.path().join("first.txt");
+    std::fs::write(&source, b"file is first chat content").unwrap();
+    b.handle_action(AppAction::SendDirectFiles {
+        chat_id: ao.public_key().to_hex(),
+        attachments: vec![OutgoingAttachment {
+            file_path: source.to_string_lossy().into_owned(),
+            filename: "first.txt".into(),
+        }],
+        caption: String::new(),
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        pump_call_pair(&mut a, &ar, &mut b, &br);
+        settle_pending_relay_events_for_test(&mut a, &mut b);
+        if a.threads.get(&bo.public_key().to_hex()).is_some_and(|t| {
+            t.messages
+                .iter()
+                .any(|m| m.body.starts_with("iris-direct-file-v1:"))
+        }) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "fresh file-first did not arrive: {:?} / {:?}, records={:?}/{:?}, threads={:?}/{:?}, busy={:?}/{:?}",
+            a.state.toast, b.state.toast, direct_files_test_records(&a), direct_files_test_records(&b),
+            a.threads.keys(), b.threads.keys(), a.state.busy.accepting_invite, b.state.busy.accepting_invite
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let record = direct_files_test_records(&b).remove(0);
+    assert!(a.threads[&bo.public_key().to_hex()]
+        .messages
+        .iter()
+        .all(|m| m.body.starts_with("iris-direct-file-v1:")));
+    let destination = adir.path().join("chosen-folder");
+    std::fs::create_dir(&destination).unwrap();
+    assert_eq!(std::fs::read_dir(&destination).unwrap().count(), 0);
+    a.handle_message(CoreMsg::AcceptDirectFiles {
+        chat_id: bo.public_key().to_hex(),
+        transfer_id: record.offer.id.clone(),
+        destination: crate::direct_file_directory_destination(
+            destination.to_string_lossy().into_owned(),
+        ),
+    });
+    direct_files_wait(&mut a, &ar, &mut b, &br, |a, b| {
+        direct_files_test_records(a)
+            .first()
+            .is_some_and(|r| r.status == crate::DirectFileTransferStatus::Completed)
+            && direct_files_test_records(b)
+                .first()
+                .is_some_and(|r| r.status == crate::DirectFileTransferStatus::Completed)
+    });
+    let received = direct_files_test_records(&a).remove(0);
+    assert_eq!(
+        std::fs::read(&received.paths[0]).unwrap(),
+        b"file is first chat content"
+    );
+    assert!(std::path::Path::new(&received.paths[0]).starts_with(&destination));
+    a.stop_device_sync_now();
+    b.stop_device_sync_now();
 }

@@ -57,6 +57,7 @@ import to.iris.chat.rust.DeviceHistorySyncSnapshot
 import to.iris.chat.rust.DesktopNearbySnapshot
 import to.iris.chat.rust.GroupDetailsSnapshot
 import to.iris.chat.rust.NetworkStatusSnapshot
+import to.iris.chat.rust.DirectFileDestination
 import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.PublicInviteSnapshot
 import to.iris.chat.rust.Router
@@ -78,6 +79,8 @@ interface RustAppClient {
     fun state(): AppState
 
     fun dispatch(action: AppAction)
+
+    fun acceptDirectFiles(chatId: String, transferId: String, destination: DirectFileDestination)
 
     fun search(query: String, scopeChatId: String?, limit: UInt): SearchResultSnapshot
 
@@ -122,6 +125,10 @@ private class LiveRustAppClient(
 
     override fun dispatch(action: AppAction) {
         ffi.dispatch(action)
+    }
+
+    override fun acceptDirectFiles(chatId: String, transferId: String, destination: DirectFileDestination) {
+        ffi.acceptDirectFiles(chatId, transferId, destination)
     }
 
     override fun search(query: String, scopeChatId: String?, limit: UInt): SearchResultSnapshot =
@@ -407,6 +414,11 @@ class AppManager(
             return
         }
         dispatchToRust(action)
+    }
+
+    fun acceptDirectFiles(chatId: String, transferId: String, destination: DirectFileDestination) {
+        try { rust.acceptDirectFiles(chatId, transferId, destination) }
+        catch (_: Exception) { publishShellToast("Couldn’t receive files") }
     }
 
     fun receiveNotificationChat(chatId: String, owner: String?) {

@@ -77,7 +77,7 @@ enum Command {
         token: String,
         peer: PeerIdentity,
         files: Vec<TransferFile>,
-        directory: PathBuf,
+        destination: Arc<dyn crate::DirectFileDestination>,
     },
     Decline {
         id: String,
@@ -123,6 +123,26 @@ impl DirectFileSender {
         files: Vec<TransferFile>,
         destination_dir: PathBuf,
     ) -> Result<(), String> {
+        // The smoke/transport harness creates its own isolated destination.
+        std::fs::create_dir_all(&destination_dir).map_err(|e| e.to_string())?;
+        self.receive_into(
+            id,
+            token,
+            sender_peer,
+            files,
+            crate::direct_file_directory_destination(
+                destination_dir.to_string_lossy().into_owned(),
+            ),
+        )
+    }
+    pub fn receive_into(
+        &self,
+        id: String,
+        token: String,
+        sender_peer: PeerIdentity,
+        files: Vec<TransferFile>,
+        destination: Arc<dyn crate::DirectFileDestination>,
+    ) -> Result<(), String> {
         wire::validate_claim(&id, &token)?;
         files::validate(&files)?;
         self.send(Command::Receive {
@@ -130,7 +150,7 @@ impl DirectFileSender {
             token,
             peer: sender_peer,
             files,
-            directory: destination_dir,
+            destination,
         })
     }
     pub fn decline(
@@ -445,7 +465,7 @@ async fn handle_command(
             token,
             peer,
             files,
-            directory,
+            destination,
         } => {
             if connections.values().any(|c| c.id == id) {
                 return;
@@ -454,7 +474,7 @@ async fn handle_command(
                 if peer == local {
                     return Err("Choose another device to receive these files".to_string());
                 }
-                let receive = ReceiveFiles::new(files, directory, &id)?;
+                let receive = ReceiveFiles::new(files, destination, &id)?;
                 let stream = tcp.connect(peer, time).await.map_err(|e| e.to_string())?;
                 let mut connection =
                     Connection::new(id.clone(), peer, Role::Receiving(receive), time);

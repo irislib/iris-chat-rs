@@ -401,6 +401,16 @@ impl AppManager {
             });
     }
 
+    pub fn accept_direct_files(
+        &self,
+        chat_id: String,
+        transfer_id: String,
+        destination: Arc<dyn iris_chat_core::DirectFileDestination>,
+    ) {
+        self.ffi
+            .accept_direct_files(chat_id, transfer_id, destination);
+    }
+
     pub fn dispatch(&self, action: AppAction) {
         if self.handle_optimistic_navigation(action.clone()) {
             return;

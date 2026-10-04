@@ -78,13 +78,7 @@ pub(super) fn parse(body: &str) -> Option<Offer> {
         || offer.files.is_empty()
         || offer.files.len() > MAX_FILES
         || offer.files.iter().any(|f| {
-            f.filename.is_empty()
-                || f.filename.len() > 240
-                || f.filename
-                    .chars()
-                    .any(|c| c.is_control() || "/\\<>:\"|?*".contains(c))
-                || f.filename == "."
-                || f.filename == ".."
+            !crate::direct_files::valid_filename(&f.filename)
                 || f.size_bytes > MAX_FILE_BYTES
                 || !is_hex(&f.sha256, 64)
         })
@@ -107,6 +101,8 @@ pub(crate) struct Record {
     pub wire: String,
     pub offer: Offer,
     pub is_sender: bool,
+    #[serde(default)]
+    pub waiting_for_devices: bool,
     pub status: DirectFileTransferStatus,
     pub paths: Vec<String>,
     pub peer: Option<String>,

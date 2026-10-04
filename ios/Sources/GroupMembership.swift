@@ -28,7 +28,6 @@ extension AppManager {
              .sendAttachment(chatId: let chatId, filePath: _, filename: _, caption: _),
              .sendAttachments(chatId: let chatId, attachments: _, caption: _),
              .sendDirectFiles(chatId: let chatId, attachments: _, caption: _),
-             .acceptDirectFiles(chatId: let chatId, transferId: _),
              .sendTyping(chatId: let chatId),
              .toggleReaction(chatId: let chatId, messageId: _, emoji: _):
             return shouldBlockOutgoingChat(chatId: chatId)

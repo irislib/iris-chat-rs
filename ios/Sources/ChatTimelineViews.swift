@@ -416,6 +416,7 @@ struct ChatMessageRow: View, Equatable {
     let openAttachment: (MessageAttachmentSnapshot) async -> Void
     var directTransferChatId = ""
     var onDirectTransferAction: (AppAction) -> Void = { _ in }
+    var onDirectTransferAccept: (String, String, DirectFileDestination) -> Void = { _, _, _ in }
     let onOpenImage: (Data, MessageAttachmentSnapshot) -> Void
 
     @State private var isPointerInside = false
@@ -568,7 +569,7 @@ struct ChatMessageRow: View, Equatable {
                                 )
                             }
                             if let transfer = message.directTransfer {
-                                ChatDirectFileTransferView(transfer: transfer, chatId: directTransferChatId, dispatch: onDirectTransferAction)
+                                ChatDirectFileTransferView(transfer: transfer, chatId: directTransferChatId, dispatch: onDirectTransferAction, accept: onDirectTransferAccept)
                                     .tint(message.isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs)
                             }
                             let imageAttachments = message.attachments.filter { $0.isImage }

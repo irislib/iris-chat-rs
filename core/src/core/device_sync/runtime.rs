@@ -43,6 +43,8 @@ impl AppCore {
         };
         self.reconcile_shared_fips(SharedFipsOptions {
             same_host_hashtree: same_host_hashtree_enabled(),
+            #[cfg(test)]
+            rendezvous_addr: self.test_fips_rendezvous_addr,
             additional_peers,
             routed_peers,
             udp_bind_addr: std::env::var("IRIS_CHAT_FIPS_UDP_BIND_ADDR")
@@ -58,6 +60,7 @@ impl AppCore {
         &mut self,
         rendezvous_addr: SocketAddrV4,
     ) {
+        self.test_fips_rendezvous_addr = Some(rendezvous_addr);
         // Preserve the production runtime key while keeping fixture discovery
         // separate from other tests and any applications running on this host.
         self.reconcile_shared_fips(SharedFipsOptions {
@@ -658,6 +661,7 @@ impl AppCore {
             recent_peers,
             tasks,
         });
+        self.restrict_direct_file_devices();
         self.reconcile_mesh_protocol_subscriptions();
         self.replay_mesh_outbox();
         if device_sync_enabled {

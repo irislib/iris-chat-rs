@@ -213,7 +213,7 @@ async fn authenticated_unauthorized_device_and_bad_token_cannot_claim_offer() {
         a.events.is_empty(),
         "unauthorized request did not claim offer"
     );
-    assert!(!destination.path().join("private").exists());
+    assert!(!destination.path().join("Iris files private").exists());
     b.sender
         .receive(
             "private".into(),
@@ -336,7 +336,7 @@ async fn cancellation_removes_partial_files_and_notifies_both_devices() {
         .await;
     a.event(|e| matches!(e, DirectFileEvent::Cancelled { .. }))
         .await;
-    assert!(!destination.path().join("cancel").exists());
+    assert!(!destination.path().join("Iris files cancel").exists());
     a.stop().await;
     b.stop().await;
 }
@@ -391,8 +391,8 @@ async fn concurrent_accepts_deliver_to_exactly_one_authorized_device() {
     let b_won = matches!(b_result, DirectFileEvent::Completed { .. });
     let c_won = matches!(c_result, DirectFileEvent::Completed { .. });
     assert_ne!(b_won, c_won, "exactly one accepting device receives bytes");
-    assert_eq!(first.path().join("race").exists(), b_won);
-    assert_eq!(second.path().join("race").exists(), c_won);
+    assert_eq!(first.path().join("Iris files race").exists(), b_won);
+    assert_eq!(second.path().join("Iris files race").exists(), c_won);
     a.stop().await;
     b.stop().await;
     c.stop().await;
@@ -432,7 +432,7 @@ async fn roster_revocation_aborts_active_transfer_and_removes_partial_files() {
         .await;
     b.event(|e| matches!(e, DirectFileEvent::Failed { .. }))
         .await;
-    assert!(!destination.path().join("revoke").exists());
+    assert!(!destination.path().join("Iris files revoke").exists());
     a.stop().await;
     b.stop().await;
 }
@@ -462,7 +462,7 @@ async fn hash_mismatch_fails_and_removes_received_bytes() {
     assert!(
         matches!(failed, DirectFileEvent::Failed { error, .. } if error.contains("did not match"))
     );
-    assert!(!destination.path().join("hash").exists());
+    assert!(!destination.path().join("Iris files hash").exists());
     a.stop().await;
     b.stop().await;
 }

@@ -21,8 +21,13 @@ public sealed partial class AppManager
         catch { ShowToast("File could not be opened"); }
     }
 
-    public void AcceptDirectFiles(string chatId, string transferId) =>
-        DispatchToRust(new AppAction.AcceptDirectFiles(chatId, transferId));
+    public void AcceptDirectFiles(string chatId, string transferId)
+    {
+        var picker = new Microsoft.Win32.OpenFolderDialog { Title = "Save files", Multiselect = false };
+        if (picker.ShowDialog() != true) return;
+        try { _ffi.AcceptDirectFiles(chatId, transferId, Native.DirectFileDirectoryDestination(picker.FolderName)); }
+        catch { ShowToast("Couldn’t receive files"); }
+    }
     public void DeclineDirectFiles(string chatId, string transferId) =>
         DispatchToRust(new AppAction.DeclineDirectFiles(chatId, transferId));
     public void CancelDirectFiles(string chatId, string transferId) =>

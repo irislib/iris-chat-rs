@@ -107,6 +107,7 @@ fn preparing_direct_files_owns_stable_copies_and_cleans_up_failed_batches() {
         wire: String::new(),
         offer: manifest,
         is_sender: true,
+        waiting_for_devices: false,
         status: DirectFileTransferStatus::Offered,
         paths: vec![],
         peer: None,
@@ -148,6 +149,7 @@ fn interrupted_transfers_never_become_replayable_on_restart() {
         wire: offer.wire(&keys).unwrap(),
         offer,
         is_sender: true,
+        waiting_for_devices: false,
         status: DirectFileTransferStatus::Transferring,
         paths: vec![],
         peer: Some("01".repeat(32)),
@@ -155,7 +157,35 @@ fn interrupted_transfers_never_become_replayable_on_restart() {
         error: None,
     };
     storage::save(&db, &record).unwrap();
-    storage::interrupt(&db).unwrap();
+    let mut queued = record.clone();
+    queued.offer.id = "never-registered".into();
+    queued.status = DirectFileTransferStatus::Offered;
+    queued.waiting_for_devices = true;
+    queued.peer = None;
+    storage::save(&db, &queued).unwrap();
+    storage::interrupt(&db, true).unwrap();
+    assert_eq!(
+        storage::load(&db, &record.offer.id)
+            .unwrap()
+            .unwrap()
+            .status,
+        DirectFileTransferStatus::Unavailable
+    );
+    assert_eq!(
+        storage::load(&db, &queued.offer.id)
+            .unwrap()
+            .unwrap()
+            .status,
+        DirectFileTransferStatus::Offered
+    );
+    storage::interrupt(&db, false).unwrap();
+    assert_eq!(
+        storage::load(&db, &queued.offer.id)
+            .unwrap()
+            .unwrap()
+            .status,
+        DirectFileTransferStatus::Unavailable
+    );
     assert_eq!(
         storage::load(&db, &record.offer.id)
             .unwrap()

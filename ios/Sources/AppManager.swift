@@ -293,6 +293,7 @@ final class FileAccountSecretStore: AccountSecretStore, PendingDeviceLinkSecretS
 protocol RustAppClient: AnyObject {
     func state() -> AppState
     func dispatch(action: AppAction) throws
+    func acceptDirectFiles(chatId: String, transferId: String, destination: DirectFileDestination) throws
     func search(query: String, scopeChatId: String?, limit: UInt32) -> SearchResultSnapshot
     func chatSnapshot(chatId: String, limit: UInt32) -> CurrentChatSnapshot?
     func chatSnapshotBefore(chatId: String, beforeMessageId: String, limit: UInt32) -> CurrentChatSnapshot?
@@ -351,6 +352,10 @@ final class LiveRustAppClient: RustAppClient {
 
     func state() -> AppState {
         ffi.stateSafely()
+    }
+
+    func acceptDirectFiles(chatId: String, transferId: String, destination: DirectFileDestination) throws {
+        ffi.acceptDirectFiles(chatId: chatId, transferId: transferId, destination: destination)
     }
 
     func dispatch(action: AppAction) throws {
@@ -1386,6 +1391,11 @@ final class AppManager: ObservableObject {
         )
     }
 #endif
+
+    func acceptDirectFiles(chatId: String, transferId: String, destination: DirectFileDestination) {
+        do { try rust.acceptDirectFiles(chatId: chatId, transferId: transferId, destination: destination) }
+        catch { showToast("Couldn’t receive files") }
+    }
 
     func dispatch(_ action: AppAction) {
         if shouldBlockOutgoingAction(action) {

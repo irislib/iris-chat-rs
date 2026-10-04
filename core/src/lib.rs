@@ -1,6 +1,8 @@
 mod actions;
+mod direct_file_destination;
 mod direct_file_smoke;
 mod direct_files;
+pub use direct_file_destination::*;
 pub use direct_file_smoke::run_direct_file_transfer_smoke;
 pub use direct_files::*;
 mod call_audio;
@@ -391,6 +393,21 @@ impl FfiApp {
                 Err(poison) => poison.into_inner().clone(),
             }
         })
+    }
+
+    /// A selected output resource is handed to the background transfer worker.
+    /// Unlike ordinary UI actions it is neither serializable nor replayable.
+    pub fn accept_direct_files(
+        &self,
+        chat_id: String,
+        transfer_id: String,
+        destination: Arc<dyn DirectFileDestination>,
+    ) {
+        let _ = self.foreground_tx.send(CoreMsg::AcceptDirectFiles {
+            chat_id,
+            transfer_id,
+            destination,
+        });
     }
 
     pub fn dispatch(&self, action: AppAction) {

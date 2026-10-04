@@ -12,7 +12,7 @@ pub(crate) use model::Record;
 use model::*;
 
 pub(super) enum Action {
-    Accept,
+    Accept(Arc<dyn crate::DirectFileDestination>),
     Decline,
     Cancel,
 }
@@ -56,9 +56,6 @@ impl AppCore {
         self.direct_sender()?;
         let account = self.logged_in.as_ref().ok_or("Sign in first.")?;
         let device = account.device_keys.public_key().to_hex();
-        if self.direct_allowed_peers(&chat_id, &device).is_empty() {
-            return Err("No other device is available to receive these files.".into());
-        }
         let id = hex_random::<16>();
         let record = Record {
             chat_id: chat_id.clone(),
@@ -74,6 +71,7 @@ impl AppCore {
                 files: Vec::new(),
             },
             is_sender: true,
+            waiting_for_devices: false,
             status: DirectFileTransferStatus::Offered,
             paths: Vec::new(),
             peer: None,
@@ -122,7 +120,7 @@ impl AppCore {
         }
         self.state.busy.sending_message = false;
         let result = result.and_then(|mut record| {
-            let outcome = self.publish_direct_offer(&record);
+            let outcome = self.publish_direct_offer(&mut record);
             if let Err(error) = &outcome {
                 if let Ok(tx) = self.direct_sender() {
                     let _ = tx.cancel(&record.offer.id);
@@ -142,19 +140,22 @@ impl AppCore {
         self.emit_state();
     }
 
-    fn publish_direct_offer(&mut self, record: &Record) -> Result<(), String> {
+    fn publish_direct_offer(&mut self, record: &mut Record) -> Result<(), String> {
         if !self.can_use_chats() || self.is_owner_blocked(&record.chat_id) {
             return Err("The chat is unavailable.".into());
         }
         let tx = self.direct_sender()?;
         let peers = self.direct_allowed_peers(&record.offer.recipient, &record.offer.device);
+        record.waiting_for_devices = peers.is_empty();
         storage::save(&self.app_store.shared(), record)?;
-        tx.register_offer(
-            record.offer.id.clone(),
-            record.offer.token.clone(),
-            peers,
-            record.offer.transport_files(&record.paths),
-        )?;
+        if !record.waiting_for_devices {
+            tx.register_offer(
+                record.offer.id.clone(),
+                record.offer.token.clone(),
+                peers,
+                record.offer.transport_files(&record.paths),
+            )?;
+        }
         self.send_message(&record.chat_id, &record.wire, None);
         if !self.threads.get(&record.chat_id).is_some_and(|t| {
             t.messages
@@ -262,6 +263,7 @@ impl AppCore {
             wire,
             offer,
             is_sender: false,
+            waiting_for_devices: false,
             status: DirectFileTransferStatus::Offered,
             paths: vec![],
             peer: None,
@@ -284,7 +286,7 @@ impl AppCore {
             }
             let tx = self.direct_sender()?;
             match action {
-                Action::Accept | Action::Decline => {
+                Action::Accept(_) | Action::Decline => {
                     if record.is_sender || record.status != DirectFileTransferStatus::Offered {
                         return Err("Open this offer on the receiving device.".into());
                     }
@@ -295,15 +297,15 @@ impl AppCore {
                     )?;
                     let peer = fips_peer_from_hex(&record.offer.device)
                         .ok_or("Invalid sending device.")?;
-                    if matches!(action, Action::Accept) {
+                    if let Action::Accept(destination) = action {
                         record.status = DirectFileTransferStatus::Connecting;
                         storage::save(&self.app_store.shared(), &record)?;
-                        if let Err(error) = tx.receive(
+                        if let Err(error) = tx.receive_into(
                             id.into(),
                             record.offer.token.clone(),
                             peer,
                             record.offer.transport_files(&[]),
-                            self.data_dir.join("direct-files").join(id).join("received"),
+                            destination,
                         ) {
                             record.status = DirectFileTransferStatus::Failed;
                             record.error = Some(error.clone());
@@ -447,11 +449,33 @@ impl AppCore {
         let Ok(records) = storage::all(&self.app_store.shared()) else {
             return;
         };
-        for record in records.into_iter().filter(|r| active(&r.status)) {
+        for mut record in records.into_iter().filter(|r| active(&r.status)) {
             if record.is_sender {
                 let peers =
                     self.direct_allowed_peers(&record.offer.recipient, &record.offer.device);
-                let _ = tx.restrict_offer(&record.offer.id, peers);
+                if record.waiting_for_devices {
+                    // File-first messages use the normal authenticated chat bootstrap.
+                    // Do not expose a transport capability until its owner-signed roster arrives.
+                    if peers.is_empty() {
+                        continue;
+                    }
+                    if record.offer.expires_at_secs <= unix_now().get() {
+                        record.status = DirectFileTransferStatus::Unavailable;
+                    } else if let Err(error) = tx.register_offer(
+                        record.offer.id.clone(),
+                        record.offer.token.clone(),
+                        peers,
+                        record.offer.transport_files(&record.paths),
+                    ) {
+                        record.status = DirectFileTransferStatus::Failed;
+                        record.error = Some(error);
+                    }
+                    record.waiting_for_devices = false;
+                    self.cleanup_direct_sources(&mut record);
+                    let _ = storage::save(&self.app_store.shared(), &record);
+                } else {
+                    let _ = tx.restrict_offer(&record.offer.id, peers);
+                }
             } else if !self.app_keys.get(&record.offer.owner).is_some_and(|r| {
                 r.devices
                     .iter()
@@ -483,7 +507,7 @@ impl AppCore {
     }
 
     pub(super) fn interrupt_direct_files(&mut self) {
-        if let Err(error) = storage::interrupt(&self.app_store.shared()) {
+        if let Err(error) = storage::interrupt(&self.app_store.shared(), true) {
             self.push_debug_log("direct_files.interrupt", error);
         }
         if let Ok(records) = storage::all(&self.app_store.shared()) {
@@ -637,9 +661,13 @@ pub(super) fn decorate(
                     .filter(|r| r.status == DirectFileTransferStatus::Completed)
                     .and_then(|r| r.paths.get(i))
                     .filter(|path| {
-                        std::fs::metadata(path).is_ok_and(|metadata| {
-                            metadata.is_file() && metadata.len() == f.size_bytes
-                        })
+                        // Android's system document picker returns a persisted content URI.
+                        // Its platform opener checks access; the core cannot stat a provider URI.
+                        path.starts_with("content://")
+                            || path.starts_with("iris-file-bookmark:")
+                            || std::fs::metadata(path).is_ok_and(|metadata| {
+                                metadata.is_file() && metadata.len() == f.size_bytes
+                            })
                     })
                     .cloned(),
             })
@@ -653,5 +681,5 @@ pub(super) fn decorate(
 }
 
 pub(super) fn interrupt_stored(db: &SharedConnection) {
-    let _ = storage::interrupt(db);
+    let _ = storage::interrupt(db, false);
 }

@@ -1,6 +1,14 @@
 package to.iris.chat.ui.screens
 
 import android.graphics.Bitmap
+import android.app.Activity
+import android.content.Intent
+import androidx.activity.result.ActivityResultRegistry
+import androidx.activity.result.ActivityResultRegistryOwner
+import androidx.activity.result.contract.ActivityResultContract
+import androidx.activity.compose.LocalActivityResultRegistryOwner
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.core.app.ActivityOptionsCompat
 import android.net.Uri
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.Box
@@ -36,18 +44,34 @@ class DirectFileTransferComposeTest {
     @get:Rule val composeRule = createComposeRule()
 
     @Test
-    fun recipientDeviceCanAcceptSelfChatOfferAndDecline() {
+    fun cancellingDestinationPickerLeavesOfferUnacceptedAndAllowsDecline() {
         val actions = mutableListOf<AppAction>()
+        val acceptedIds = mutableListOf<String>()
+        var pickers = 0
+        val registry = object : ActivityResultRegistry() {
+            override fun <I, O> onLaunch(requestCode: Int, contract: ActivityResultContract<I, O>, input: I, options: ActivityOptionsCompat?) {
+                pickers += 1
+                dispatchResult(requestCode, Activity.RESULT_CANCELED, Intent())
+            }
+        }
+        val owner = object : ActivityResultRegistryOwner { override val activityResultRegistry = registry }
         composeRule.setContent {
             IrisChatTheme(darkTheme = false) {
-                Surface { ChatDirectFileTransfer(fixture(isSender = false), "self-chat", dispatch = actions::add) }
+                CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
+                    Surface { ChatDirectFileTransfer(fixture(isSender = false), "self-chat",
+                        accept = { _, id, _ -> acceptedIds.add(id) }, dispatch = actions::add) }
+                }
             }
         }
         composeRule.onNodeWithText("Weekend photos.zip").assertIsDisplayed()
         composeRule.onNodeWithText("Packing list.txt").assertIsDisplayed()
         composeRule.onNodeWithTag("chatDirectTransferCancel-test-transfer").assertDoesNotExist()
         composeRule.onNodeWithTag("chatDirectTransferAccept-test-transfer").performClick()
-        assertEquals(AppAction.AcceptDirectFiles("self-chat", "test-transfer"), actions.last())
+        composeRule.runOnIdle {
+            assertEquals(1, pickers)
+            assertTrue(acceptedIds.isEmpty())
+            assertTrue("Cancelling the save picker must not accept or decline the offer", actions.isEmpty())
+        }
         composeRule.onNodeWithTag("chatDirectTransferDecline-test-transfer").performClick()
         assertEquals(AppAction.DeclineDirectFiles("self-chat", "test-transfer"), actions.last())
         val context = InstrumentationRegistry.getInstrumentation().targetContext
