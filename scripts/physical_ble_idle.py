@@ -127,6 +127,62 @@ def require_isolated_instrumentation(output):
         raise ValueError("The test runner must target only the isolated .blegate app")
 
 
+def evaluate_capture(directory, probe, seconds, max_cpu, max_writes):
+    summary = json.loads((directory / "test-summary.log").read_text())
+    if (summary.get("result") != "Passed" or summary.get("totalTestCount") != 1
+            or summary.get("passedTests") != 1 or summary.get("failedTests") != 0
+            or summary.get("skippedTests") != 0 or summary.get("testFailures")):
+        raise ValueError("Require one passed physical test with no skips or failures")
+    require_android_success((directory / "receiver.log").read_text(),
+                            {"seen": "true", "accepted": "true", "message": probe})
+    checks = [json.loads(line) for line in (directory / "network-checks.jsonl").read_text().splitlines()]
+    # The controller samples every ~5 seconds. Allow command latency but reject
+    # missing coverage, long gaps, or a claimed success that contains IP routes.
+    times = [check["time"] for check in checks]
+    start, end = summary["startTime"], summary["finishTime"]
+    if (len(times) < 2 or not math.isfinite(start) or not math.isfinite(end) or start >= end
+            or any(not math.isfinite(t) for t in times)
+            or any(not 0 < b - a <= 15 for a, b in zip(times, times[1:]))
+            or not start - 90 <= times[0] <= start + 15 or not end - 15 <= times[-1] <= end + 15):
+        raise ValueError("Network isolation evidence does not cover the physical test")
+    if any(check.get("ok") is not True or check.get("ipv4Routes") != ""
+           or check.get("ipv6Routes") != "" for check in checks):
+        raise ValueError("Android had an IP path or failed network isolation")
+    metrics = json.loads((directory / "metrics.log").read_text())
+    result = evaluate_metrics(metrics, seconds, max_cpu, max_writes)
+    result.update(physicalTestPassed=True, exactMessageSeen=True, androidOfflineChecks=len(checks))
+    return result
+
+
+def evaluate_saved_run(directory, max_cpu, max_writes):
+    original = json.loads((directory / "result.json").read_text())
+    restored = original.get("restoration", {})
+    required = ("wifi_on", "mobile_data", "bluetooth_unchanged", "ios_normal_launch")
+    if any(restored.get(k) is not True for k in required) or any(v is not True for v in restored.values()):
+        raise ValueError("Saved run has missing or failed device restoration")
+    data = plistlib.loads((directory / "physical-idle.xctestrun").read_bytes())
+    targets = ([t for c in data["TestConfigurations"] for t in c.get("TestTargets", [])]
+               if "TestConfigurations" in data else [v for v in data.values() if isinstance(v, dict)])
+    environments = [t.get("EnvironmentVariables", {}) for t in targets]
+    environments = [e for e in environments if e.get("IRIS_FIPS_IDLE_METRICS") == "1"]
+    if len(environments) != 1:
+        raise ValueError("Expected one configured physical idle test")
+    env = environments[0]
+    if not original.get("testRunId") or original["testRunId"] != env.get("IRIS_FIPS_PHYSICAL_RUN_ID"):
+        raise ValueError("Saved result belongs to a different test run")
+    seconds = float(env["IRIS_FIPS_IDLE_SECONDS"])
+    if not 10 <= seconds <= 120:
+        raise ValueError("Invalid saved measurement interval")
+    result = evaluate_capture(directory, env["IRIS_FIPS_PHYSICAL_MESSAGE"], seconds, max_cpu, max_writes)
+    evidence = ("result.json", "physical-idle.xctestrun", "test-summary.log", "metrics.log",
+                "receiver.log", "network-checks.jsonl")
+    result.update(evaluationMode="saved-capture", restoration=restored,
+                  originalResultOk=original.get("ok"), originalError=original.get("error"),
+                  evidenceSha256={name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
+                                  for name in evidence})
+    return result
+
+
 def write_json(path, data):
     path.write_text(json.dumps(data, indent=2) + "\n")
 
@@ -330,20 +386,21 @@ class Gate:
             self.android.wait(timeout=90)
         except subprocess.TimeoutExpired:
             raise RuntimeError("Android did not finish its bounded idle hold") from None
-        require_android_success((self.out / "receiver.log").read_text(),
-                                {"seen": "true", "accepted": "true", "message": self.probe})
-        summary = json.loads(self.command(["xcrun", "xcresulttool", "get", "test-results", "summary",
-                                          "--path", str(result_path)], "test-summary"))
-        if summary.get("passedTests") != 1 or summary.get("failedTests") != 0 or summary.get("skippedTests") != 0:
-            raise RuntimeError("Require one passed physical test with no skips or failures")
-        metrics = json.loads(self.command(["xcrun", "xcresulttool", "get", "test-results", "metrics",
-                                          "--path", str(result_path)], "metrics"))
-        self.result.update(evaluate_metrics(metrics, self.args.sample_seconds,
-                                            self.args.max_cpu_percent, self.args.max_write_mib_per_minute))
+        if self.android.returncode:
+            raise RuntimeError("Android receiver process failed; see private log")
+        self.command(["xcrun", "xcresulttool", "get", "test-results", "summary",
+                      "--path", str(result_path)], "test-summary")
+        self.command(["xcrun", "xcresulttool", "get", "test-results", "metrics",
+                      "--path", str(result_path)], "metrics")
+        self.result.update(evaluate_capture(self.out, self.probe, self.args.sample_seconds,
+                                           self.args.max_cpu_percent, self.args.max_write_mib_per_minute))
 
     def restore(self):
-        stop(self.ios)
-        stop(self.android)
+        for label, child in (("ios_controller_stopped", self.ios), ("android_controller_stopped", self.android)):
+            try:
+                stop(child)
+            except Exception:
+                self.restored[label] = False
         if self.snapshot:
             for key, service in (("wifi_on", "wifi"), ("mobile_data", "data")):
                 try:
@@ -361,6 +418,7 @@ class Gate:
             try:
                 self.restored["bluetooth_unchanged"] = self.adb("settings", "get", "global", "bluetooth_on") == self.snapshot["bluetooth_on"]
                 self.adb("am", "force-stop", PACKAGE)
+                self.restored["android_cleanup"] = True
             except Exception:
                 self.restored["android_cleanup"] = False
         if self.ios is not None:
@@ -374,17 +432,21 @@ class Gate:
         if any(v is not True for v in self.restored.values()):
             self.result["ok"] = False
             self.result["restorationError"] = "Some device settings could not be restored; check result.json"
-        write_json(self.out / "result.json", self.result)
-        for lock in self.locks:
-            release(lock)
+        try:
+            write_json(self.out / "result.json", self.result)
+        finally:
+            for lock in self.locks:
+                release(lock)
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--iphone", required=True, help="Explicit physical iPhone name or identifier")
-    p.add_argument("--android-serial", required=True, help="Explicit physical Android adb serial")
-    p.add_argument("--xctestrun", required=True, type=Path, help="Current-source device build-for-testing products")
-    p.add_argument("--artifact-dir", required=True, type=Path, help="New private directory; existing runs are preserved")
+    p.add_argument("--iphone", help="Explicit physical iPhone name or identifier")
+    p.add_argument("--android-serial", help="Explicit physical Android adb serial")
+    p.add_argument("--xctestrun", type=Path, help="Current-source device build-for-testing products")
+    p.add_argument("--artifact-dir", type=Path, help="New private directory; existing runs are preserved")
+    p.add_argument("--evaluate", type=Path, help="Recheck a saved run without accessing either phone")
+    p.add_argument("--output", type=Path, help="New JSON result file for --evaluate; never overwrite evidence")
     p.add_argument("--sample-seconds", type=float, default=60)
     p.add_argument("--max-cpu-percent", type=float, default=5)
     p.add_argument("--max-write-mib-per-minute", type=float, default=5)
@@ -392,6 +454,21 @@ def main():
     if not 10 <= args.sample_seconds <= 120 or any(not math.isfinite(v) or v <= 0 for v in (args.max_cpu_percent, args.max_write_mib_per_minute)):
         p.error("Use 10–120 second intervals and finite positive budgets")
     os.umask(0o077)
+    if args.evaluate:
+        if not args.output or any((args.iphone, args.android_serial, args.xctestrun, args.artifact_dir)):
+            p.error("--evaluate requires --output and cannot be combined with device-run inputs")
+        # Reserve the output before reading evidence so accidental reuse cannot
+        # replace original results, including when evaluation fails.
+        with args.output.open("x") as output:
+            try:
+                result = evaluate_saved_run(args.evaluate, args.max_cpu_percent, args.max_write_mib_per_minute)
+            except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+                result = {"ok": False, "evaluationMode": "saved-capture", "error": str(error)}
+            output.write(json.dumps(result, indent=2) + "\n")
+        print(json.dumps(result, indent=2))
+        return 0 if result["ok"] else 1
+    if args.output or not all((args.iphone, args.android_serial, args.xctestrun, args.artifact_dir)):
+        p.error("A device run requires --iphone, --android-serial, --xctestrun and --artifact-dir")
     gate = Gate(args)
     def interrupted(_signum, _frame):
         raise KeyboardInterrupt()
