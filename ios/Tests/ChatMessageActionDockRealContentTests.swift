@@ -65,6 +65,81 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
         }
     }
 
+    func testWideLazyTimelineKeepsTheSelectedDockBesideItsRealBubble() throws {
+        var long = message(Fixture(name: "wide-paragraph",
+            body: String(repeating: "Warm blankets and a small map for the woodland walk. ", count: 10)),
+            outgoing: false, reacted: false)
+        long.author = "Lee"
+        long.authorOwnerPubkeyHex = String(repeating: "2", count: 64)
+        var incoming = message(Fixture(name: "wide-short", body: "Hi"), outgoing: false, reacted: true)
+        incoming.author = "Tim"
+        var outgoing = message(Fixture(name: "wide-outgoing", body: "Hi"), outgoing: true, reacted: true)
+        outgoing.author = "You"
+        let items = [long, incoming, outgoing]
+        let sink = FrameSink()
+        var activeID: String? = nil
+        let renderer = ImageRenderer(content: timeline(items, activeID: activeID, sink: sink))
+        renderer.scale = 2
+        var snapshots: [(String, Snapshot)] = []
+        var captureFailed = false
+        let failuresBefore = testRun?.failureCount ?? 0
+        defer {
+            if captureFailed || (testRun?.failureCount ?? 0) > failuresBefore {
+                for (stage, snapshot) in snapshots {
+                    retain(snapshot.image, named: "real-dock-failure-wide-timeline-\(stage)")
+                }
+            }
+        }
+        func captureStage(_ stage: String) throws -> Snapshot {
+            let snapshot = try captureRendered(stage: stage, name: "wide-timeline", message: incoming) {
+                let image = renderer.cgImage
+                return (image, sink.frames)
+            }
+            snapshots.append((stage, snapshot))
+            return snapshot
+        }
+        do {
+            let hidden = try captureStage("initial-hidden")
+            for selected in [incoming, outgoing] {
+                activeID = irisNextActiveMessageActionDockId(
+                    current: activeID, messageId: selected.id, isActive: true)
+                XCTAssertEqual(activeID, selected.id)
+                // Keep the renderer's view graph: the production EquatableView
+                // must update when only the selected message ID changes.
+                renderer.content = timeline(items, activeID: activeID, sink: sink)
+                let visible = try captureStage(selected.isOutgoing ? "outgoing-visible" : "incoming-visible")
+                try assertTimelineFrames(visible, match: hidden, items: items)
+                guard let bubble = visible.frames[selected.id] else {
+                    throw CaptureError(reason: "Wide timeline selected bubble preference missing: \(selected.id)")
+                }
+                try assertDock(visible, from: hidden, bubble: bubble, outgoing: selected.isOutgoing,
+                    context: "927 pt lazy timeline, selected=\(selected.id)")
+                retain(visible.image, named: "real-dock-wide-timeline-\(selected.isOutgoing ? "outgoing" : "incoming")-reacted")
+            }
+            activeID = irisNextActiveMessageActionDockId(current: activeID, messageId: incoming.id, isActive: false)
+            XCTAssertEqual(activeID, outgoing.id, "A late leave from the prior row must keep the selected dock")
+            renderer.content = timeline(items, activeID: activeID, sink: sink)
+            let stillOutgoing = try captureStage("outgoing-after-prior-leave")
+            try assertTimelineFrames(stillOutgoing, match: hidden, items: items)
+            guard let outgoingBubble = stillOutgoing.frames[outgoing.id] else {
+                throw CaptureError(reason: "Wide timeline outgoing bubble preference missing after prior leave")
+            }
+            try assertDock(stillOutgoing, from: hidden, bubble: outgoingBubble, outgoing: true,
+                context: "927 pt lazy timeline, prior incoming row left")
+            activeID = irisNextActiveMessageActionDockId(current: activeID, messageId: outgoing.id, isActive: false)
+            XCTAssertNil(activeID)
+            renderer.content = timeline(items, activeID: activeID, sink: sink)
+            let hiddenAgain = try captureStage("hidden-again")
+            try assertTimelineFrames(hiddenAgain, match: hidden, items: items)
+            XCTAssertTrue(hidden.raster.sameOutsideBubble(as: hiddenAgain.raster, bubble: hidden.bubble),
+                          "Wide timeline hidden baselines must agree outside the actual bubble")
+        } catch {
+            captureFailed = true
+            XCTFail("Rendered production timeline capture failed: \(error)")
+            throw error
+        }
+    }
+
     private struct Fixture {
         let name: String
         let body: String
@@ -105,6 +180,19 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
 
     private func content(_ item: ChatMessageSnapshot, kind: ChatKind, footer: Bool, active: Bool,
                          width: CGFloat, onFrames: @escaping ([String: CGRect]) -> Void) -> some View {
+        row(item, kind: kind, footer: footer, active: active)
+            .padding(24)
+            .frame(width: width, height: 1200, alignment: .topLeading)
+            .coordinateSpace(name: ChatTimelineCoordinateSpace.name)
+            .overlayPreferenceValue(ChatMessageContentFramePreferenceKey.self) { value in
+                self.readFrames(value.frames, into: onFrames)
+            }
+            .environment(\.irisPalette, .dark)
+            .environment(\.colorScheme, .dark)
+            .background(Color.black)
+    }
+
+    private func row(_ item: ChatMessageSnapshot, kind: ChatKind, footer: Bool, active: Bool) -> ChatMessageRow {
         ChatMessageRow(message: item, chatKind: kind, showDayChip: false, hidesInlineDayChip: true,
             isFirstInCluster: true, isLastInCluster: true, showsFooter: footer,
             showsGroupSenderName: kind == .group && !item.isOutgoing,
@@ -113,11 +201,32 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
             onActionDockActiveChange: { _ in }, onReply: {}, onForward: {}, onForwardAttachment: { _ in },
             onReact: { _ in }, onInfo: {}, onDelete: {}, onScrollToQuote: { _ in }, onShowReactors: {},
             downloadAttachment: { _ in nil }, openAttachment: { _ in }, onOpenImage: { _, _ in })
-            .padding(24)
-            .frame(width: width, height: 1200, alignment: .topLeading)
+    }
+
+    private func timeline(_ items: [ChatMessageSnapshot], activeID: String?, sink: FrameSink) -> some View {
+        GeometryReader { viewport in
+            ScrollView {
+                ChatTimelineContentLayout {
+                    ChatTimelineMessageLayout {
+                        ForEach(items, id: \.id) { item in
+                            EquatableView(content: row(item, kind: .group, footer: false, active: activeID == item.id))
+                                .id(item.id)
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.top, SignalConversationLayout.contentTopMargin)
+                    .padding(.bottom, SignalConversationLayout.contentBottomMargin)
+                    .frame(width: viewport.size.width)
+                    .frame(minHeight: viewport.size.height, alignment: .bottom)
+                    Color.clear.frame(height: 1).accessibilityHidden(true)
+                }
+            }
+            .irisDefaultScrollAnchorBottom()
             .coordinateSpace(name: ChatTimelineCoordinateSpace.name)
+        }
+            .frame(width: 927, height: 600)
             .overlayPreferenceValue(ChatMessageContentFramePreferenceKey.self) { value in
-                self.readFrames(value.frames, into: onFrames)
+                self.readFrames(value.frames) { sink.frames = $0 }
             }
             .environment(\.irisPalette, .dark)
             .environment(\.colorScheme, .dark)
@@ -139,6 +248,7 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
         let image: CGImage
         let bubble: CGRect
         let raster: Raster
+        let frames: [String: CGRect]
     }
 
     @discardableResult
@@ -185,22 +295,7 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
             guard hidden.raster.sameOutsideBubble(as: hiddenAgain.raster, bubble: visible.bubble) else {
                 throw CaptureError(reason: "Hidden baselines differ outside the actual bubble")
             }
-            let components = try visible.raster.changedComponents(from: hidden.raster,
-                excluding: visible.bubble, toolbar: IrisPalette.dark.toolbar)
-            guard components.count == 1 else {
-                throw CaptureError(reason: "Expected one real dock pixel component; found \(components.count), firstBounds=\(components.prefix(8).map { $0.bounds })")
-            }
-            let component = components[0]
-            guard component.toolbarPixels >= 4 else {
-                throw CaptureError(reason: "Changed component has no unambiguous actual toolbar fill")
-            }
-            let dock = component.bounds
-            XCTAssertEqual(dock.width, 136, accuracy: 0.5, "Actual rendered dock width: \(context)")
-            XCTAssertEqual(dock.height, 38, accuracy: 0.5, "Actual rendered dock height: \(context)")
-            let gap = outgoing ? visible.bubble.minX - dock.maxX : dock.minX - visible.bubble.maxX
-            XCTAssertEqual(gap, 8, accuracy: 0.5, "Dock must follow the actual bubble edge: \(context)")
-            XCTAssertEqual(dock.maxY, visible.bubble.maxY, accuracy: 0.5,
-                           "Reaction space must not lower the dock: \(context)")
+            try assertDock(visible, from: hidden, bubble: visible.bubble, outgoing: outgoing, context: context)
 
             if ["short", "reply-footer", "image-caption", "file"].contains(fixture.name)
                 && kind == .group && reacted && width == 700 {
@@ -214,26 +309,73 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
         }
     }
 
+    private func assertTimelineFrames(_ snapshot: Snapshot, match baseline: Snapshot,
+                                      items: [ChatMessageSnapshot]) throws {
+        for item in items {
+            guard let bubble = snapshot.frames[item.id], let before = baseline.frames[item.id],
+                  bubble.width > 0, bubble.height > 0, before.width > 0, before.height > 0,
+                  bubble.minX.isFinite, bubble.minY.isFinite, bubble.maxX.isFinite, bubble.maxY.isFinite,
+                  before.minX.isFinite, before.minY.isFinite, before.maxX.isFinite, before.maxY.isFinite else {
+                throw CaptureError(reason: "Wide timeline bubble preference missing/empty/nonfinite: \(item.id)")
+            }
+            let context = "927 pt lazy timeline, bubble=\(item.id)"
+            XCTAssertEqual(bubble.minX, before.minX, accuracy: 0.5, context)
+            XCTAssertEqual(bubble.minY, before.minY, accuracy: 0.5, context)
+            XCTAssertEqual(bubble.width, before.width, accuracy: 0.5, context)
+            XCTAssertEqual(bubble.height, before.height, accuracy: 0.5, context)
+            XCTAssertLessThanOrEqual(bubble.width, IrisLayout.chatBubbleMaxWidth + 0.5, context)
+        }
+    }
+
+    private func assertDock(_ visible: Snapshot, from hidden: Snapshot, bubble: CGRect,
+                            outgoing: Bool, context: String) throws {
+        let components = try visible.raster.changedComponents(from: hidden.raster,
+            excluding: bubble, toolbar: IrisPalette.dark.toolbar)
+        guard components.count == 1 else {
+            throw CaptureError(reason: "Expected one real dock pixel component; found \(components.count), firstBounds=\(components.prefix(8).map { $0.bounds })")
+        }
+        let component = components[0]
+        guard component.toolbarPixels >= 4 else {
+            throw CaptureError(reason: "Changed component has no unambiguous actual toolbar fill")
+        }
+        let dock = component.bounds
+        XCTAssertEqual(dock.width, 136, accuracy: 0.5, "Actual rendered dock width: \(context)")
+        XCTAssertEqual(dock.height, 38, accuracy: 0.5, "Actual rendered dock height: \(context)")
+        let gap = outgoing ? bubble.minX - dock.maxX : dock.minX - bubble.maxX
+        XCTAssertEqual(gap, 8, accuracy: 0.5, "Dock must follow the actual bubble edge: \(context)")
+        XCTAssertEqual(dock.maxY, bubble.maxY, accuracy: 0.5,
+                       "Reaction space must not lower the dock: \(context)")
+    }
+
     private func capture<Content: View>(stage: String, name: String,
                                        message: ChatMessageSnapshot,
                                        view: (FrameSink) -> Content) throws -> Snapshot {
+        try captureRendered(stage: stage, name: name, message: message) {
+            let sink = FrameSink()
+            let renderer = ImageRenderer(content: view(sink))
+            renderer.scale = 2
+            let image = renderer.cgImage
+            return (image, sink.frames)
+        }
+    }
+
+    private func captureRendered(stage: String, name: String, message: ChatMessageSnapshot,
+                                 render: () -> (CGImage?, [String: CGRect])) throws -> Snapshot {
         let deadline = Date().addingTimeInterval(2)
         var readyPasses = 0
         var previous: Snapshot?
         var latestImage: CGImage?
         var diagnostic = "No rendered image"
         repeat {
-            let sink = FrameSink()
-            let renderer = ImageRenderer(content: view(sink))
-            renderer.scale = 2
-            if let image = renderer.cgImage {
+            let (renderedImage, frames) = render()
+            if let image = renderedImage {
                 latestImage = image
-                if let bubble = sink.frames[message.id], bubble.width > 0, bubble.height > 0,
+                if let bubble = frames[message.id], bubble.width > 0, bubble.height > 0,
                    bubble.minX.isFinite, bubble.minY.isFinite, bubble.maxX.isFinite, bubble.maxY.isFinite {
                     do {
                         let raster = try Raster(image: image, bubble: bubble,
                             bubbleColor: message.isOutgoing ? IrisPalette.dark.bubbleMine : IrisPalette.dark.bubbleTheirs)
-                        let snapshot = Snapshot(image: image, bubble: bubble, raster: raster)
+                        let snapshot = Snapshot(image: image, bubble: bubble, raster: raster, frames: frames)
                         if let previous, previous.bubble == bubble,
                            raster.sameOutsideBubble(as: previous.raster, bubble: bubble) {
                             readyPasses += 1
