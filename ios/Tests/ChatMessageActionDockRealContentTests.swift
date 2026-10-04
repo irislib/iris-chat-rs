@@ -209,7 +209,7 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
                 ChatTimelineContentLayout {
                     ChatTimelineMessageLayout {
                         ForEach(items, id: \.id) { item in
-                            EquatableView(content: row(item, kind: .group, footer: false, active: activeID == item.id))
+                            EquatableView(content: self.row(item, kind: .group, footer: false, active: activeID == item.id))
                                 .id(item.id)
                         }
                     }

@@ -16,7 +16,7 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, core, android, windows, apple]
+        options: [all, core, android, windows, apple, macos]
 
 permissions:
   contents: read
@@ -272,7 +272,7 @@ jobs:
           retention-days: 14
 
   macos:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'macos' }}
     name: macOS build and tests
     runs-on: macos-15
     timeout-minutes: 75
