@@ -67,6 +67,42 @@ mod remote_roster_tests {
         (result, bytes)
     }
 
+    #[test]
+    fn large_checkpoint_comparison_does_not_allocate_previous_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("state.sqlite3")).unwrap();
+        conn.execute_batch(
+            "PRAGMA journal_mode=DELETE; CREATE TABLE ndr_kv (
+            owner_pubkey_hex TEXT NOT NULL, device_pubkey_hex TEXT NOT NULL,
+            key TEXT NOT NULL, value TEXT NOT NULL,
+            PRIMARY KEY(owner_pubkey_hex, device_pubkey_hex, key));",
+        )
+        .unwrap();
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(conn));
+        let adapter = crate::SqliteStorageAdapter::new(shared, "owner".into(), "device".into());
+        let original = "a".repeat(8 * 1024 * 1024 + 31);
+        adapter.put("checkpoint", original.clone()).unwrap();
+        let mut changed = original.clone();
+        changed.replace_range(0..1, "b");
+        let last = changed.len() - 1;
+        changed.replace_range(last..last + 1, "c");
+
+        for (case, value) in [("equal", original), ("changed", changed)] {
+            // Input construction and the verification read are outside the
+            // measured production put. SQLite's C allocations are not counted.
+            let expected = value.clone();
+            let (result, bytes) = allocated_bytes(|| adapter.put("checkpoint", value));
+            result.unwrap();
+            eprintln!("{case} checkpoint comparison allocated {bytes} Rust bytes");
+            assert!(
+                bytes < 64 * 1024,
+                "{case} comparison allocated {bytes} Rust bytes for an {}-byte checkpoint",
+                expected.len()
+            );
+            assert_eq!(adapter.get("checkpoint").unwrap(), Some(expected));
+        }
+    }
+
     fn pending_for(owner: PublicKey, device: PublicKey) -> ProtocolPendingRemoteSend {
         ProtocolPendingRemoteSend {
             recipient_owner: ndr_owner(owner),

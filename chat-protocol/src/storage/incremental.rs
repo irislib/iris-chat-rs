@@ -14,50 +14,62 @@ pub(super) fn try_put(
     key: &str,
     value: &str,
 ) -> StorageResult<bool> {
-    try_put_with(conn, owner, device, key, value, |blob, bytes, offset| {
-        blob.write_at(bytes, offset)
-    })
+    try_put_with(
+        conn,
+        (owner, device, key),
+        value,
+        |blob, bytes, offset| blob.read_at_exact(bytes, offset),
+        |blob, bytes, offset| blob.write_at(bytes, offset),
+        |blob| blob.close(),
+    )
 }
 
 fn try_put_with(
     conn: &mut Connection,
-    owner: &str,
-    device: &str,
-    key: &str,
+    namespace: (&str, &str, &str),
     value: &str,
+    mut read: impl FnMut(&Blob<'_>, &mut [u8], usize) -> rusqlite::Result<()>,
     mut write: impl FnMut(&mut Blob<'_>, &[u8], usize) -> rusqlite::Result<()>,
+    close: impl FnOnce(Blob<'_>) -> rusqlite::Result<()>,
 ) -> StorageResult<bool> {
     if value.len() < MIN_INCREMENTAL_BYTES {
         return Ok(false);
     }
+    let (owner, device, key) = namespace;
     let transaction = conn.savepoint().map_err(SqliteStorageAdapter::map_err)?;
-    let previous: Option<(i64, String)> = transaction.query_row(
-        "SELECT rowid, value FROM ndr_kv WHERE owner_pubkey_hex = ?1 AND device_pubkey_hex = ?2 AND key = ?3",
-        (owner, device, key), |row| Ok((row.get(0)?, row.get(1)?)),
+    let rowid: Option<i64> = transaction.query_row(
+        "SELECT rowid FROM ndr_kv WHERE owner_pubkey_hex = ?1 AND device_pubkey_hex = ?2 AND key = ?3",
+        (owner, device, key), |row| row.get(0),
     ).optional().map_err(SqliteStorageAdapter::map_err)?;
-    let Some((rowid, previous)) = previous.filter(|(_, old)| old.len() == value.len()) else {
+    let Some(rowid) = rowid else {
         transaction
             .commit()
             .map_err(SqliteStorageAdapter::map_err)?;
         return Ok(false);
     };
-    if previous != value {
-        let mut blob = transaction
-            .blob_open(DatabaseName::Main, "ndr_kv", "value", rowid, false)
+    let mut blob = transaction
+        .blob_open(DatabaseName::Main, "ndr_kv", "value", rowid, false)
+        .map_err(SqliteStorageAdapter::map_err)?;
+    // Blob metadata gives the byte length of TEXT, including UTF-8 and NULs,
+    // without materializing another full checkpoint in either SQLite or Rust.
+    if blob.len() != value.len() {
+        close(blob).map_err(SqliteStorageAdapter::map_err)?;
+        transaction
+            .commit()
             .map_err(SqliteStorageAdapter::map_err)?;
-        for (index, (old, new)) in previous
-            .as_bytes()
-            .chunks(PAGE_BYTES)
-            .zip(value.as_bytes().chunks(PAGE_BYTES))
-            .enumerate()
-        {
-            if old != new {
-                write(&mut blob, new, index * PAGE_BYTES).map_err(SqliteStorageAdapter::map_err)?;
-            }
-        }
-        // Propagate close failures before committing; Drop cannot report them.
-        blob.close().map_err(SqliteStorageAdapter::map_err)?;
+        return Ok(false);
     }
+    let mut previous = [0; PAGE_BYTES];
+    for (index, new) in value.as_bytes().chunks(PAGE_BYTES).enumerate() {
+        let offset = index * PAGE_BYTES;
+        let old = &mut previous[..new.len()];
+        read(&blob, old, offset).map_err(SqliteStorageAdapter::map_err)?;
+        if old != new {
+            write(&mut blob, new, offset).map_err(SqliteStorageAdapter::map_err)?;
+        }
+    }
+    // Propagate close failures before committing; Drop cannot report them.
+    close(blob).map_err(SqliteStorageAdapter::map_err)?;
     transaction
         .commit()
         .map_err(SqliteStorageAdapter::map_err)?;
@@ -149,6 +161,68 @@ mod tests {
     }
 
     #[test]
+    fn unicode_and_embedded_nul_updates_compare_bytes_through_the_partial_last_page() {
+        let (_dir, shared, adapter) = database();
+        let original = format!("{}🦀", "ä\0".repeat(24 * 1024));
+        adapter.put("state", original.clone()).unwrap();
+        let mut changed = original;
+        changed.replace_range(0..2, "ö");
+        let last = changed.len() - 4;
+        changed.replace_range(last..last + 4, "🐬");
+        let mut writes = Vec::new();
+        assert!(try_put_with(
+            &mut shared.lock().unwrap(),
+            ("owner", "device", "state"),
+            &changed,
+            |blob, bytes, offset| blob.read_at_exact(bytes, offset),
+            |blob, bytes, offset| {
+                writes.push((offset, bytes.len()));
+                blob.write_at(bytes, offset)
+            },
+            |blob| blob.close(),
+        )
+        .unwrap());
+        let last_page = (changed.len() - 1) / PAGE_BYTES * PAGE_BYTES;
+        assert_eq!(
+            writes,
+            [(0, PAGE_BYTES), (last_page, changed.len() - last_page)]
+        );
+        assert_eq!(adapter.get("state").unwrap(), Some(changed.clone()));
+        writes.clear();
+        assert!(try_put_with(
+            &mut shared.lock().unwrap(),
+            ("owner", "device", "state"),
+            &changed,
+            |blob, bytes, offset| blob.read_at_exact(bytes, offset),
+            |blob, bytes, offset| {
+                writes.push((offset, bytes.len()));
+                blob.write_at(bytes, offset)
+            },
+            |blob| blob.close(),
+        )
+        .unwrap());
+        assert!(writes.is_empty(), "equal bytes must not be written");
+    }
+
+    #[test]
+    fn absent_rows_and_different_byte_lengths_fall_back_without_changing_text() {
+        let (_dir, shared, adapter) = database();
+        let original = "ä".repeat(40 * 1024);
+        adapter.put("state", original.clone()).unwrap();
+        for (owner, device, key, value) in [
+            ("other", "device", "state", original.clone()),
+            ("owner", "other", "state", original.clone()),
+            ("owner", "device", "missing", original.clone()),
+            ("owner", "device", "state", "a".repeat(original.len() - 1)),
+            ("owner", "device", "state", "a".repeat(original.len() + 1)),
+        ] {
+            assert!(!try_put(&mut shared.lock().unwrap(), owner, device, key, &value).unwrap());
+            assert_eq!(adapter.get("state").unwrap(), Some(original.clone()));
+            assert!(shared.lock().unwrap().is_autocommit());
+        }
+    }
+
+    #[test]
     fn failed_second_region_rolls_back_first_region_on_actual_text_column() {
         let (_dir, shared, adapter) = database();
         let original = "a".repeat(128 * 1024);
@@ -159,10 +233,9 @@ mod tests {
         let mut writes = 0;
         let result = try_put_with(
             &mut shared.lock().unwrap(),
-            "owner",
-            "device",
-            "state",
+            ("owner", "device", "state"),
             &changed,
+            |blob, bytes, offset| blob.read_at_exact(bytes, offset),
             |blob, bytes, offset| {
                 writes += 1;
                 if writes == 2 {
@@ -170,12 +243,97 @@ mod tests {
                 }
                 blob.write_at(bytes, offset)
             },
+            |blob| blob.close(),
         );
         assert!(result.is_err());
         assert_eq!(writes, 2);
         assert_eq!(adapter.get("state").unwrap(), Some(original));
         assert!(shared.lock().unwrap().is_autocommit());
     }
+
+    #[test]
+    fn failed_read_after_a_write_rolls_back_only_its_savepoint() {
+        let (_dir, shared, adapter) = database();
+        let original = "a".repeat(128 * 1024);
+        adapter.put("state", original.clone()).unwrap();
+        shared
+            .lock()
+            .unwrap()
+            .execute_batch("BEGIN IMMEDIATE")
+            .unwrap();
+        adapter.put("earlier", "caller's update".into()).unwrap();
+        let mut changed = original.clone();
+        changed.replace_range(0..1, "b");
+        let mut reads = 0;
+        let mut writes = 0;
+        let result = try_put_with(
+            &mut shared.lock().unwrap(),
+            ("owner", "device", "state"),
+            &changed,
+            |blob, bytes, offset| {
+                reads += 1;
+                if reads == 2 {
+                    return Err(rusqlite::Error::InvalidQuery);
+                }
+                blob.read_at_exact(bytes, offset)
+            },
+            |blob, bytes, offset| {
+                writes += 1;
+                blob.write_at(bytes, offset)
+            },
+            |blob| blob.close(),
+        );
+        assert!(result.is_err());
+        assert_eq!((reads, writes), (2, 1));
+        assert_eq!(adapter.get("state").unwrap(), Some(original));
+        assert_eq!(
+            adapter.get("earlier").unwrap(),
+            Some("caller's update".into())
+        );
+        assert!(!shared.lock().unwrap().is_autocommit());
+        shared.lock().unwrap().execute_batch("ROLLBACK").unwrap();
+        assert_eq!(adapter.get("earlier").unwrap(), None);
+    }
+
+    #[test]
+    fn close_failure_is_propagated_before_commit_or_length_fallback() {
+        let (_dir, shared, adapter) = database();
+        let original = "a".repeat(128 * 1024);
+        adapter.put("state", original.clone()).unwrap();
+        let mut changed = original.clone();
+        changed.replace_range(0..1, "b");
+        for (value, expected_writes) in [
+            (original.clone(), 0),
+            (changed, 1),
+            (format!("{original}a"), 0),
+        ] {
+            let mut writes = 0;
+            let mut closes = 0;
+            let result = try_put_with(
+                &mut shared.lock().unwrap(),
+                ("owner", "device", "state"),
+                &value,
+                |blob, bytes, offset| blob.read_at_exact(bytes, offset),
+                |blob, bytes, offset| {
+                    writes += 1;
+                    blob.write_at(bytes, offset)
+                },
+                |blob| {
+                    closes += 1;
+                    blob.close()?;
+                    Err(rusqlite::Error::InvalidQuery)
+                },
+            );
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                rusqlite::Error::InvalidQuery.to_string()
+            );
+            assert_eq!((writes, closes), (expected_writes, 1));
+            assert_eq!(adapter.get("state").unwrap(), Some(original.clone()));
+            assert!(shared.lock().unwrap().is_autocommit());
+        }
+    }
+
     #[test]
     fn incremental_updates_respect_accounts_and_outer_transaction_rollback() {
         let (_dir, shared, adapter) = database();
