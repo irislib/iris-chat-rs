@@ -131,17 +131,37 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
         }
         let host = NSHostingView(rootView: view(false))
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: width, height: 1200),
-                              styleMask: .borderless, backing: .buffered, defer: false)
+                              styleMask: .titled, backing: .buffered, defer: false)
+        window.title = "Message dock test fixture"
         window.isReleasedWhenClosed = false
         window.contentView = host
         host.frame = CGRect(x: 0, y: 0, width: width, height: 1200)
-        defer { window.close() }
+        // AppKit can omit accessibility children for an unordered window. Keep
+        // the synthetic row's top on screen even when its fixture is taller
+        // than the hosted runner's display.
+        if let screen = NSScreen.main {
+            window.setFrameTopLeftPoint(NSPoint(x: screen.visibleFrame.minX + 16,
+                                                y: screen.visibleFrame.maxY - 16))
+        }
+        window.makeKeyAndOrderFront(nil)
+        window.displayIfNeeded()
+        defer {
+            window.orderOut(nil)
+            window.close()
+        }
         let context = "\(fixture.name), \(kind), outgoing=\(outgoing), reacted=\(reacted), width=\(width)"
-        try waitForLayout(host) { frames[item.id] != nil && self.actionFrames(in: host).isEmpty }
+        func diagnostics() -> String {
+            self.captureDiagnostics(host: host, window: window, bubble: frames[item.id])
+        }
+        try waitForLayout(host, stage: "initial-hidden", context: context, diagnostics: diagnostics) {
+            frames[item.id] != nil && self.actionFrames(in: host).isEmpty
+        }
         let hidden = try XCTUnwrap(frames[item.id], context)
 
         host.rootView = view(true)
-        try waitForLayout(host) { frames[item.id] != nil && self.actionFrames(in: host).count == 4 }
+        try waitForLayout(host, stage: "visible", context: context, diagnostics: diagnostics) {
+            frames[item.id] != nil && self.actionFrames(in: host).count == 4
+        }
         let visible = try XCTUnwrap(frames[item.id], context)
         XCTAssertEqual(visible.minX, hidden.minX, accuracy: 0.5, context)
         XCTAssertEqual(visible.minY, hidden.minY, accuracy: 0.5, context)
@@ -181,7 +201,9 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
             add(attachment)
         }
         host.rootView = view(false)
-        try waitForLayout(host) { self.actionFrames(in: host).isEmpty }
+        try waitForLayout(host, stage: "hidden-again", context: context, diagnostics: diagnostics) {
+            self.actionFrames(in: host).isEmpty
+        }
         let hiddenAgain = try XCTUnwrap(frames[item.id], context)
         XCTAssertEqual(hiddenAgain.minX, visible.minX, accuracy: 0.5, context)
         XCTAssertEqual(hiddenAgain.minY, visible.minY, accuracy: 0.5, context)
@@ -190,7 +212,8 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
         return visible
     }
 
-    private func waitForLayout(_ host: NSView, ready: () -> Bool) throws {
+    private func waitForLayout(_ host: NSView, stage: String, context: String,
+                               diagnostics: () -> String, ready: () -> Bool) throws {
         let deadline = Date().addingTimeInterval(2)
         var readyPasses = 0
         repeat {
@@ -199,22 +222,44 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
             readyPasses = ready() ? readyPasses + 1 : 0
             if readyPasses >= 3 { return }
         } while Date() < deadline
-        XCTFail("Production row did not expose stable bubble/action geometry")
+        XCTFail("Production row capture failed at \(stage) [\(context)]; readyPasses=\(readyPasses)/3; \(diagnostics())")
         throw CaptureError.missingGeometry
     }
 
-    private func actionFrames(in host: NSView) -> [String: CGRect] {
-        let identifiers: Set<String> = ["messageReactButton", "messageReplyButton", "messageInfoButton", "messageMoreButton"]
+    private let actionIdentifiers: Set<String> = ["messageReactButton", "messageReplyButton", "messageInfoButton", "messageMoreButton"]
+
+    private struct ActionCapture {
         var frames: [String: CGRect] = [:]
+        var seenIdentifiers: Set<String> = []
+        var emptyFrames: [String: CGRect] = [:]
+        var unavailableFrames: Set<String> = []
+        var visitedNodes = 0
+    }
+
+    private func actionFrames(in host: NSView) -> [String: CGRect] {
+        captureActions(in: host).frames
+    }
+
+    private func captureActions(in host: NSView) -> ActionCapture {
+        var capture = ActionCapture()
         var visited: Set<ObjectIdentifier> = []
         func walk(_ object: NSObject) {
             guard visited.insert(ObjectIdentifier(object)).inserted else { return }
+            capture.visitedNodes += 1
             if object.responds(to: NSSelectorFromString("accessibilityIdentifier")),
                let identifier = object.value(forKey: "accessibilityIdentifier") as? String,
-               identifiers.contains(identifier), object.responds(to: NSSelectorFromString("accessibilityFrame")),
-               let value = object.value(forKey: "accessibilityFrame") as? NSValue,
-               value.rectValue.width > 0 && value.rectValue.height > 0 {
-                frames[identifier] = value.rectValue
+               actionIdentifiers.contains(identifier) {
+                capture.seenIdentifiers.insert(identifier)
+                if object.responds(to: NSSelectorFromString("accessibilityFrame")),
+                   let value = object.value(forKey: "accessibilityFrame") as? NSValue {
+                    if value.rectValue.width > 0 && value.rectValue.height > 0 {
+                        capture.frames[identifier] = value.rectValue
+                    } else {
+                        capture.emptyFrames[identifier] = value.rectValue
+                    }
+                } else {
+                    capture.unavailableFrames.insert(identifier)
+                }
             }
             if object.responds(to: NSSelectorFromString("accessibilityChildren")),
                let children = object.value(forKey: "accessibilityChildren") as? [NSObject] {
@@ -223,7 +268,24 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
             if let view = object as? NSView { view.subviews.forEach { walk($0) } }
         }
         walk(host)
-        return frames
+        return capture
+    }
+
+    private func captureDiagnostics(host: NSView, window: NSWindow, bubble: CGRect?) -> String {
+        let capture = captureActions(in: host)
+        let missing = actionIdentifiers.subtracting(capture.seenIdentifiers).sorted().joined(separator: ",")
+        let valid = capture.frames.keys.sorted().joined(separator: ",")
+        let empty = capture.emptyFrames.keys.sorted().map { "\($0)=\(capture.emptyFrames[$0]!)" }.joined(separator: ",")
+        let unavailable = capture.unavailableFrames.sorted().joined(separator: ",")
+        // Only known fixture IDs, geometry, and counts are recorded; do not dump
+        // the application's unrelated accessibility tree or user-visible text.
+        return "bubble=\(bubble.map { String(describing: $0) } ?? "missing"); " +
+            "actionIDs=\(capture.seenIdentifiers.count)/4, validFrames=\(capture.frames.count)/4 [\(valid)], " +
+            "absentIDs=[\(missing)], emptyFrames=[\(empty)], unavailableFrames=[\(unavailable)]; " +
+            "windowVisible=\(window.isVisible), windowKey=\(window.isKeyWindow), " +
+            "windowOccluded=\(!window.occlusionState.contains(.visible)), " +
+            "hostAttached=\(host.window === window), windowFrame=\(window.frame), " +
+            "hostBounds=\(host.bounds), visitedAXNodes=\(capture.visitedNodes)"
     }
 
     private enum CaptureError: Error { case missingGeometry }
