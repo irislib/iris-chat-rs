@@ -10,7 +10,16 @@ impl ProtocolEngine {
         &self,
         sender: NdrDevicePubkey,
     ) -> ProtocolSenderOwnerResolution {
-        self.resolve_message_sender_owner_with_snapshot(sender, &self.session_manager.snapshot())
+        self.session_manager
+            .message_sender_record(sender)
+            .map(|record| self.owner_resolution_for_sender_record(ProtocolSenderDeviceRecord {
+                storage_owner: record.owner_pubkey,
+                device_pubkey: record.device_pubkey,
+                claimed_owner_pubkey: record.claimed_owner_pubkey,
+            }))
+            .unwrap_or_else(|| ProtocolSenderOwnerResolution::ProvisionalDeviceOwner {
+                owner: provisional_owner_from_sender_pubkey(sender),
+            })
     }
 
     fn resolve_message_sender_owner_with_snapshot(
@@ -57,10 +66,9 @@ impl ProtocolEngine {
         &self,
         record: ProtocolSenderDeviceRecord,
     ) -> ProtocolSenderOwnerResolution {
-        self.owner_resolution_for_sender_record_with_snapshot(
-            record,
-            &self.session_manager.snapshot(),
-        )
+        Self::owner_resolution_for_sender_record_checking(record, |owner, device| {
+            self.has_verified_device_owner_claim(owner, device)
+        })
     }
 
     fn owner_resolution_for_sender_record_with_snapshot(
@@ -68,13 +76,20 @@ impl ProtocolEngine {
         record: ProtocolSenderDeviceRecord,
         snapshot: &SessionManagerSnapshot,
     ) -> ProtocolSenderOwnerResolution {
+        Self::owner_resolution_for_sender_record_checking(record, |owner, device| {
+            self.has_verified_device_owner_claim_with_snapshot(owner, device, snapshot)
+        })
+    }
+
+    fn owner_resolution_for_sender_record_checking(
+        record: ProtocolSenderDeviceRecord,
+        has_verified_claim: impl Fn(NdrOwnerPubkey, NdrDevicePubkey) -> bool,
+    ) -> ProtocolSenderOwnerResolution {
         if let Some(claimed_owner) = record
             .claimed_owner_pubkey
             .filter(|claimed_owner| *claimed_owner != record.storage_owner)
         {
-            if self.has_verified_device_owner_claim_with_snapshot(
-                claimed_owner, record.device_pubkey, snapshot,
-            ) {
+            if has_verified_claim(claimed_owner, record.device_pubkey) {
                 return ProtocolSenderOwnerResolution::Verified {
                     owner: claimed_owner,
                 };
@@ -89,9 +104,7 @@ impl ProtocolEngine {
             ProtocolSenderOwnerResolution::ProvisionalDeviceOwner {
                 owner: record.storage_owner,
             }
-        } else if self.has_verified_device_owner_claim_with_snapshot(
-            record.storage_owner, record.device_pubkey, snapshot,
-        ) {
+        } else if has_verified_claim(record.storage_owner, record.device_pubkey) {
             ProtocolSenderOwnerResolution::Verified {
                 owner: record.storage_owner,
             }
@@ -153,9 +166,10 @@ impl ProtocolEngine {
         owner: NdrOwnerPubkey,
         device: NdrDevicePubkey,
     ) -> bool {
-        self.has_verified_device_owner_claim_with_snapshot(
-            owner, device, &self.session_manager.snapshot(),
-        )
+        owner == provisional_owner_from_sender_pubkey(device)
+            || (self.verified_app_keys_owners.contains(&owner)
+                && self.session_manager.roster(owner)
+                    .is_some_and(|roster| roster.get_device(&device).is_some()))
     }
 
     fn has_verified_device_owner_claim_with_snapshot(
