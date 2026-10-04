@@ -31,6 +31,8 @@ struct ProtocolGroupSenderKeyRetry {
     yielded: bool,
     #[cfg(test)]
     total_attempts: usize,
+    #[cfg(test)]
+    receive_checkpoints: usize,
 }
 
 impl Default for ProtocolGroupSenderKeyRetry {
@@ -47,6 +49,8 @@ impl Default for ProtocolGroupSenderKeyRetry {
             yielded: false,
             #[cfg(test)]
             total_attempts: 0,
+            #[cfg(test)]
+            receive_checkpoints: 0,
         }
     }
 }

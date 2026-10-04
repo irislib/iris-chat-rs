@@ -226,38 +226,6 @@ impl ProtocolEngine {
         &mut self,
         message: GroupSenderKeyMessage,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
-        if self.batch_depth.get() > 0 {
-            return self.handle_group_sender_key_message_inner(message);
-        }
-        // The sender ratchet, replay marker and app delivery must advance together.
-        // The ciphertext queue is unchanged here; avoid cloning its backlog.
-        let checkpoint = (
-            self.group_manager.clone(),
-            self.session_manager.clone(),
-            self.pending_group_sender_key_repairs.clone(),
-            self.pending_group_fanouts.clone(),
-            self.processed_group_sender_key_messages.clone(),
-            self.pending_decrypted_deliveries.clone(),
-            self.batch_persist_dirty.get(),
-        );
-        let result = self.handle_group_sender_key_message_inner(message);
-        if result.is_err() {
-            self.group_manager = checkpoint.0;
-            self.session_manager = checkpoint.1;
-            self.pending_group_sender_key_repairs = checkpoint.2;
-            self.pending_group_fanouts = checkpoint.3;
-            self.processed_group_sender_key_messages = checkpoint.4;
-            self.pending_decrypted_deliveries = checkpoint.5;
-            self.batch_persist_dirty.set(checkpoint.6);
-            self.invalidate_known_message_author_cache();
-        }
-        result
-    }
-
-    fn handle_group_sender_key_message_inner(
-        &mut self,
-        message: GroupSenderKeyMessage,
-    ) -> anyhow::Result<ProtocolGroupIncomingResult> {
         let fingerprint = group_sender_key_fingerprint(&message);
         if self.local_owner_is_inactive_for_group(&message.group_id) {
             let mut retry = self.group_sender_key_retry.borrow_mut();
@@ -304,6 +272,56 @@ impl ProtocolEngine {
                 ..Default::default()
             });
         }
+        // Planning and duplicate/self-echo checks do not mutate durable state.
+        // Only a ready receive (or duplicate marker) needs a rollback checkpoint.
+        let plan = match self.prepare_group_sender_key_message(&message, &fingerprint) {
+            Ok(Some(plan)) => Ok(plan),
+            Ok(None) => return Ok(ProtocolGroupIncomingResult {
+                consumed: true,
+                pending: true,
+                ..Default::default()
+            }),
+            Err(error @ nostr_double_ratchet::Error::Decryption(_))
+                if matches!(&error, nostr_double_ratchet::Error::Decryption(reason)
+                    if reason == "duplicate or missing sender-key message") => Err(error),
+            Err(error) => return Err(error.into()),
+        };
+        if self.batch_depth.get() > 0 {
+            return self.apply_group_sender_key_message(message, fingerprint, plan);
+        }
+        // The sender ratchet, replay marker and app delivery must advance together.
+        // The ciphertext queue is unchanged here; avoid cloning its backlog.
+        #[cfg(test)]
+        { self.group_sender_key_retry.borrow_mut().receive_checkpoints += 1; }
+        let checkpoint = (
+            self.group_manager.clone(),
+            self.session_manager.clone(),
+            self.pending_group_sender_key_repairs.clone(),
+            self.pending_group_fanouts.clone(),
+            self.processed_group_sender_key_messages.clone(),
+            self.pending_decrypted_deliveries.clone(),
+            self.batch_persist_dirty.get(),
+        );
+        let result = self.apply_group_sender_key_message(message, fingerprint, plan);
+        if result.is_err() {
+            self.group_manager = checkpoint.0;
+            self.session_manager = checkpoint.1;
+            self.pending_group_sender_key_repairs = checkpoint.2;
+            self.pending_group_fanouts = checkpoint.3;
+            self.processed_group_sender_key_messages = checkpoint.4;
+            self.pending_decrypted_deliveries = checkpoint.5;
+            self.batch_persist_dirty.set(checkpoint.6);
+            self.invalidate_known_message_author_cache();
+        }
+        result
+    }
+
+    fn apply_group_sender_key_message(
+        &mut self,
+        message: GroupSenderKeyMessage,
+        fingerprint: String,
+        plan: nostr_double_ratchet::Result<nostr_double_ratchet::GroupSenderKeyReceivePlan>,
+    ) -> anyhow::Result<ProtocolGroupIncomingResult> {
         let message_repair_group_id = message.group_id.clone();
         let message_repair_sender = message.sender_event_pubkey;
         let message_repair_key_id = message.encrypted_header.is_none().then_some(message.key_id);
@@ -311,21 +329,8 @@ impl ProtocolEngine {
             .encrypted_header
             .is_none()
             .then_some(message.message_number);
-        let result = self
-            .prepare_group_sender_key_message(&message, &fingerprint)
-            .and_then(|plan| {
-                plan.map(|plan| self.group_manager.apply_sender_key_receive_plan(plan))
-                    .transpose()
-            });
-        let result = match result {
-            Ok(Some(result)) => result,
-            Ok(None) => {
-                return Ok(ProtocolGroupIncomingResult {
-                    consumed: true,
-                    pending: true,
-                    ..Default::default()
-                })
-            }
+        let result = match plan.and_then(|plan| self.group_manager.apply_sender_key_receive_plan(plan)) {
+            Ok(result) => result,
             Err(nostr_double_ratchet::Error::Decryption(error))
                 if error == "duplicate or missing sender-key message" =>
             {

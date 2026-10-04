@@ -19,6 +19,28 @@ fn long_group_candidate(engine: &mut ProtocolEngine, sender_device: &Keys, numbe
     long_group_candidate_at_revision(engine, sender_device, number, 1);
 }
 
+#[test]
+fn group_receive_checkpoints_only_ready_mutations_not_replays_or_search_slices() {
+    let (mut engine, _, device) = queued_group_history(1);
+    long_group_candidate(&mut engine, &device, 700);
+    let parsed = engine.pending_group_sender_key_messages[0].clone();
+    let message = engine.group_sender_key_message_from_parsed(&parsed).unwrap();
+    assert!(engine.handle_group_sender_key_message(message.clone()).unwrap().pending);
+    assert_eq!(engine.group_sender_key_retry.borrow().receive_checkpoints, 0,
+        "Pure bounded search must not clone the complete receive state");
+    engine.group_sender_key_retry.borrow_mut().reset_budget();
+    assert!(engine.handle_group_sender_key_message(message.clone()).unwrap().pending);
+    assert_eq!(engine.group_sender_key_retry.borrow().receive_checkpoints, 0);
+    engine.group_sender_key_retry.borrow_mut().reset_budget();
+    assert_eq!(engine.handle_group_sender_key_message(message.clone()).unwrap().events.len(), 1);
+    assert_eq!(engine.group_sender_key_retry.borrow().receive_checkpoints, 1);
+    for _ in 0..32 {
+        assert!(engine.handle_group_sender_key_message(message.clone()).unwrap().events.is_empty());
+    }
+    assert_eq!(engine.group_sender_key_retry.borrow().receive_checkpoints, 1,
+        "Already processed events must remain borrowed fast paths");
+}
+
 fn long_group_candidate_at_revision(
     engine: &mut ProtocolEngine,
     sender_device: &Keys,

@@ -31,6 +31,22 @@ fn run_device_sync_typed_records(record_limit: Option<usize>) {
         right
             .record_device_history_approver(&a.public_key().to_hex(), 100, "ac".repeat(32))
             .unwrap();
+        for (period, created) in [("old", 50), ("new", 200)] {
+            for (operation, kind, content) in [
+                ("edit", MESSAGE_EDIT_KIND, "Updated"),
+                ("delete", MESSAGE_DELETE_KIND, ""),
+            ] {
+                let target = format!("mutation-{period}-{operation}");
+                left.push_incoming_message_from(
+                    &chat, Some(target.clone()), "Original".into(), created,
+                    None, None, Some(chat.clone()), None,
+                );
+                assert!(left.capture_device_sync_control(
+                    &chat, &format!("control-{target}"), &chat, created + 1,
+                    kind, content, &[nostr::Tag::parse(["e", target.as_str()]).unwrap()],
+                ));
+            }
+        }
         for (id, time) in [("old", 50), ("new", 200)] {
             left.push_incoming_message_from(
                 &chat,
@@ -216,6 +232,25 @@ fn run_device_sync_typed_records(record_limit: Option<usize>) {
             include_history
         );
         assert!(has_device_sync_message(&right, &chat, "new"));
+        for period in ["old", "new"] {
+            for operation in ["edit", "delete"] {
+                let target = format!("mutation-{period}-{operation}");
+                let expected = period == "new" || include_history;
+                let message = right.message_for_mutation(&chat, &target);
+                assert_eq!(message.is_some(), expected);
+                assert_eq!(!right.message_mutation_records(&chat, &target).is_empty(), expected,
+                    "Chats-only must exclude pre-link edit and deletion records too");
+                if let Some(message) = message {
+                    assert_eq!(message.deleted_for_everyone, operation == "delete");
+                    assert_eq!(message.body, if operation == "edit" { "Updated" } else { "" });
+                }
+            }
+        }
+        assert_eq!(trace.iter().filter_map(|packet| packet["records"].as_array())
+            .flatten().any(|record| record["type"] == "messageMutation"
+                && record["mutation"]["messageId"].as_str()
+                    .is_some_and(|id| id.starts_with("mutation-old-"))), include_history,
+            "Pre-link mutations must never escape through state reconciliation");
         assert!(
             right.threads[&chat]
                 .messages
@@ -324,7 +359,7 @@ fn run_device_sync_typed_records(record_limit: Option<usize>) {
                         .as_ref()
                         .unwrap()
                         .imported_messages,
-                    9
+                    11 // Nine ordinary messages plus the two pre-link mutation targets.
                 );
             }
         }

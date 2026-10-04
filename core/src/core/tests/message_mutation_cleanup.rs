@@ -16,6 +16,8 @@ mod message_mutation_cleanup {
         store.save_message_mutation_projection(&message).unwrap();
     }
 
+    // Mirror the independently varied wire-record fields in these cleanup fixtures.
+    #[allow(clippy::too_many_arguments)]
     fn control(
         store: &AppStore,
         device: &str,
