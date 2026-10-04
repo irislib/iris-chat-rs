@@ -21,15 +21,19 @@ fn pump_until(mut ready: impl FnMut() -> bool) {
     }
 }
 
-fn badge(widget: &gtk::Widget, class: &str) -> gtk::Widget {
+fn find_badge(widget: &gtk::Widget, class: &str) -> Option<gtk::Widget> {
     let mut child = widget.first_child();
     while let Some(widget) = child {
         if widget.has_css_class(class) {
-            return widget;
+            return Some(widget);
         }
         child = widget.next_sibling();
     }
-    panic!("missing {class}");
+    None
+}
+
+fn badge(widget: &gtk::Widget, class: &str) -> gtk::Widget {
+    find_badge(widget, class).unwrap_or_else(|| panic!("missing {class}"))
 }
 
 pub fn run() {
@@ -121,11 +125,7 @@ pub fn run() {
         &adw::Avatar::new(64, Some("Alex"), true),
         Some(&ordinary),
     );
-    assert!(!ordinary_avatar
-        .observe_children()
-        .iter::<gtk::Widget>()
-        .filter_map(Result::ok)
-        .any(|widget| widget.has_css_class("favorite-avatar-badge")));
+    assert!(find_badge(ordinary_avatar.upcast_ref(), "favorite-avatar-badge").is_none());
 
     assert!(
         !mark.is_visible(),
