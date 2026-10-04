@@ -13,6 +13,7 @@ include!("protocol_engine/engine_pending_retirement.rs");
 include!("protocol_engine/engine_remote_sends.rs");
 include!("protocol_engine/engine_invite_owner.rs");
 include!("protocol_engine/engine_handshake_proof.rs");
+include!("protocol_engine/handshake_proof_cache.rs");
 include!("protocol_engine/roster_helpers.rs");
 include!("protocol_engine/engine_incoming_retry.rs");
 include!("protocol_engine/engine_resolution.rs");

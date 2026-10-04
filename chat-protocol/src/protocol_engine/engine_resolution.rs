@@ -297,14 +297,14 @@ impl ProtocolEngine {
             .retain(|message| !prepared.remote.sender_key_messages.contains(message));
         effects.extend(protocol_effects_from_group_prepared_publish(
             &local_sibling,
-            self.local_handshake_owner_proof(),
+            self,
             inner_event_id.clone(),
             chat_id.clone(),
             &mut event_ids,
         )?);
         effects.extend(protocol_effects_from_group_prepared_publish(
             &prepared.remote,
-            self.local_handshake_owner_proof(),
+            self,
             inner_event_id,
             chat_id,
             &mut event_ids,
@@ -332,7 +332,7 @@ impl ProtocolEngine {
         let mut event_ids = Vec::new();
         let effects = protocol_effects_from_group_prepared_publish(
             &prepared,
-            self.local_handshake_owner_proof(),
+            self,
             None,
             group_chat_id(&group.group_id),
             &mut event_ids,
@@ -374,7 +374,7 @@ impl ProtocolEngine {
         let mut event_ids = Vec::new();
         protocol_effects_from_group_prepared_publish(
             &prepared,
-            self.local_handshake_owner_proof(),
+            self,
             None,
             group_chat_id(group_id),
             &mut event_ids,

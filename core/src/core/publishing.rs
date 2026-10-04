@@ -2,6 +2,12 @@ use super::*;
 use crate::core::protocol::PROTOCOL_RECONNECT_CHECK_SECS;
 
 mod nearby;
+mod outbox;
+
+enum PendingPublishChange {
+    Inserted,
+    Existing,
+}
 
 const PENDING_RELAY_DRAIN_CONCURRENCY: usize = 4;
 const PENDING_RELAY_DRAIN_BATCH_SIZE: usize = 16;
@@ -142,9 +148,16 @@ impl AppCore {
         }
         self.remember_event(event.id.to_string());
         let event_id = event.id.to_string();
-        let stored = self.remember_pending_relay_publish(&event, label, chat_id, inner_event_id);
-        if !stored {
-            return false;
+        match self.remember_pending_relay_publish(&event, label, chat_id, inner_event_id) {
+            None => return false,
+            Some(PendingPublishChange::Existing) => {
+                // Retrying the protocol is not another network attempt. Existing
+                // work keeps its paced relay/nearby retries and in-flight state.
+                self.replay_pending_nearby_publishes();
+                self.schedule_fast_protocol_retry_if_pending();
+                return true;
+            }
+            Some(PendingPublishChange::Inserted) => {}
         }
         // Record the outer event on its message before exposing it to a
         // low-latency nearby transport. Otherwise a BLE receipt can race the
@@ -169,73 +182,6 @@ impl AppCore {
         }
 
         self.retry_pending_relay_publishes(label);
-        true
-    }
-
-    fn remember_pending_relay_publish(
-        &mut self,
-        event: &Event,
-        label: &str,
-        chat_id: Option<String>,
-        inner_event_id: Option<String>,
-    ) -> bool {
-        let Some(logged_in) = self.logged_in.as_ref() else {
-            return false;
-        };
-        let owner_pubkey_hex = logged_in.owner_pubkey.to_hex();
-        let event_json = match serde_json::to_string(event) {
-            Ok(json) => json,
-            Err(error) => {
-                self.push_debug_log("publish.runtime.queue", format!("serialize_failed={error}"));
-                return false;
-            }
-        };
-        let pending = PendingRelayPublish {
-            owner_pubkey_hex,
-            event_id: event.id.to_string(),
-            label: label.to_string(),
-            event_json,
-            inner_event_id,
-            chat_id,
-            created_at_secs: event.created_at.as_secs(),
-            attempt_count: 0,
-            last_error: None,
-        };
-        if !self.prune_or_skip_superseded_app_keys_publish(event) {
-            return false;
-        }
-        if !self.prune_or_skip_superseded_protocol_invite_response_publish(&pending, event) {
-            return false;
-        }
-        if !self.prune_or_skip_superseded_local_invite_publish(&pending, event) {
-            return false;
-        }
-        if let Err(error) = self.app_store.upsert_pending_relay_publish(&pending) {
-            self.push_debug_log("publish.runtime.queue", format!("store_failed={error}"));
-            return false;
-        }
-        if !self.prune_stored_superseded_protocol_control_publish(&pending, event) {
-            return false;
-        }
-        if let (Some(message_id), Some(chat_id)) = (
-            pending.inner_event_id.as_deref(),
-            pending.chat_id.as_deref(),
-        ) {
-            self.record_message_outer_event(chat_id, message_id, &pending.event_id);
-        }
-        self.pending_relay_publishes
-            .insert(pending.event_id.clone(), pending);
-        if let Some(pending) = self.pending_relay_publishes.get(&event.id.to_string()) {
-            if let (Some(message_id), Some(chat_id)) =
-                (pending.inner_event_id.clone(), pending.chat_id.clone())
-            {
-                self.sync_message_delivery_trace(&chat_id, &message_id);
-            }
-        }
-        self.prune_pending_relay_control_publish_backlog_to_limit(
-            PENDING_RELAY_CONTROL_PUBLISH_MAX_ROWS,
-            "enqueue",
-        );
         true
     }
 

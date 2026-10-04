@@ -277,7 +277,7 @@ impl ProtocolEngine {
             // through the newly-created session. The second event bootstraps
             // the inviter's receiving state without showing a typing indicator.
             let response_event =
-                invite_response_with_owner_proof(&response, self.local_handshake_owner_proof())?;
+                self.cached_invite_response_with_owner_proof(&response)?;
             let mut typing = pairwise_codec::typing_event(
                 self.owner_pubkey,
                 pairwise_codec::EncodeOptions::new(now.get(), current_unix_millis())
@@ -769,7 +769,7 @@ impl ProtocolEngine {
         let mut event_ids = Vec::new();
         let effects = protocol_effects_from_prepared(
             &local,
-            self.local_handshake_owner_proof(),
+            self,
             inner_event_id.clone(),
             chat_id.to_string(),
             &mut event_ids,

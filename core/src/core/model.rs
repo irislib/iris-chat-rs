@@ -313,7 +313,7 @@ pub(super) struct RelayTransportRuntime {
     pub(super) last_drain_reason: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct PendingRelayPublish {
     pub(super) owner_pubkey_hex: String,
     pub(super) event_id: String,

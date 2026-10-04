@@ -1,4 +1,150 @@
 #[test]
+fn retry_effects_reuse_the_same_signed_owner_proof_response() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let receiver = Keys::generate();
+    let mut engine = test_engine(&owner, &device);
+    engine
+        .ingest_app_keys_event(&signed_app_keys(&owner, &[device.public_key()], 10))
+        .unwrap();
+    let invite = Invite::create_new(receiver.public_key(), None, None).unwrap();
+    let (_, response) = invite
+        .accept_with_owner(
+            device.public_key(),
+            device.secret_key().to_secret_bytes(),
+            None,
+            Some(owner.public_key()),
+        )
+        .unwrap();
+    let prepared = PreparedSend {
+        recipient_owner: ndr_owner(receiver.public_key()),
+        payload: vec![],
+        deliveries: vec![],
+        invite_responses: vec![response],
+        relay_gaps: vec![],
+    };
+    let build = |engine: &ProtocolEngine| {
+        let effects =
+            protocol_effects_from_prepared(&prepared, engine, None, "chat".into(), &mut vec![])
+                .unwrap();
+        let ProtocolEffect::Publish(publish) = &effects[0];
+        publish.event.clone()
+    };
+    let original = build(&engine);
+    for _ in 0..12 {
+        assert!(
+            build(&engine) == original,
+            "re-encrypting the same proof changes the event ID and churns the durable outbox"
+        );
+    }
+}
+
+#[test]
+fn cached_handshake_proof_tracks_roster_changes_and_restart() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let receiver = Keys::generate();
+    let extra = Keys::generate();
+    let mut engine = test_engine(&owner, &device);
+    let proof = signed_app_keys(&owner, &[device.public_key()], 10);
+    engine.ingest_app_keys_event(&proof).unwrap();
+    let invite = Invite::create_new(receiver.public_key(), None, None).unwrap();
+    let (_, response) = invite
+        .accept_with_owner(
+            device.public_key(),
+            device.secret_key().to_secret_bytes(),
+            None,
+            Some(owner.public_key()),
+        )
+        .unwrap();
+    let original = engine
+        .cached_invite_response_with_owner_proof(&response)
+        .unwrap();
+    assert_eq!(
+        handshake_owner_proof(&invite, &original).unwrap().id,
+        proof.id
+    );
+
+    engine = ProtocolEngine::load_or_create_for_local_device(
+        engine.storage.clone(),
+        owner.public_key(),
+        &device,
+    )
+    .unwrap();
+    let restarted = engine
+        .cached_invite_response_with_owner_proof(&response)
+        .unwrap();
+    assert!(restarted.verify().is_ok());
+    assert_eq!(
+        handshake_owner_proof(&invite, &restarted).unwrap().id,
+        proof.id
+    );
+    assert!(
+        engine
+            .cached_invite_response_with_owner_proof(&response)
+            .unwrap()
+            == restarted
+    );
+
+    let changed = signed_app_keys(&owner, &[device.public_key(), extra.public_key()], 20);
+    engine.ingest_app_keys_event(&changed).unwrap();
+    let refreshed = engine
+        .cached_invite_response_with_owner_proof(&response)
+        .unwrap();
+    assert_ne!(refreshed.id, restarted.id);
+    assert_eq!(
+        handshake_owner_proof(&invite, &refreshed).unwrap().id,
+        changed.id
+    );
+    engine
+        .ingest_app_keys_event(&signed_app_keys(&owner, &[extra.public_key()], 30))
+        .unwrap();
+    let revoked = engine
+        .cached_invite_response_with_owner_proof(&response)
+        .unwrap();
+    assert!(
+        handshake_owner_proof(&invite, &revoked).is_none(),
+        "cached authorization must not outlive device revocation"
+    );
+}
+
+#[test]
+fn handshake_proof_cache_bounds_entries_and_bytes() {
+    let keys = Keys::generate();
+    let event = nostr::EventBuilder::new(Kind::TextNote, "small")
+        .sign_with_keys(&keys)
+        .unwrap();
+    let key = |index: u64| {
+        let mut bytes = [0; 32];
+        bytes[..8].copy_from_slice(&index.to_be_bytes());
+        (nostr::EventId::from_byte_array(bytes), event.id)
+    };
+    let mut cache = HandshakeProofCache::default();
+    for index in 0..=HANDSHAKE_PROOF_CACHE_ENTRIES {
+        cache.insert(key(index as u64), event.clone()).unwrap();
+    }
+    assert_eq!(cache.events.len(), HANDSHAKE_PROOF_CACHE_ENTRIES);
+    assert!(!cache.events.contains_key(&key(0)));
+    assert!(cache
+        .events
+        .contains_key(&key(HANDSHAKE_PROOF_CACHE_ENTRIES as u64)));
+    let large = nostr::EventBuilder::new(Kind::TextNote, "x".repeat(32 * 1024))
+        .sign_with_keys(&keys)
+        .unwrap();
+    for index in 1000..1100 {
+        cache.insert(key(index), large.clone()).unwrap();
+        assert!(cache.bytes <= HANDSHAKE_PROOF_CACHE_BYTES);
+    }
+    assert!(cache.events.len() < HANDSHAKE_PROOF_CACHE_ENTRIES);
+    assert!(cache.events.contains_key(&key(1099)));
+    assert_eq!(cache.events.len(), cache.order.len());
+    assert_eq!(
+        cache.bytes,
+        cache.events.values().map(|(_, size)| size).sum::<usize>()
+    );
+}
+
+#[test]
 fn bundled_proof_preserves_released_rust_handshake_parser() {
     let owner = Keys::generate();
     let device = Keys::generate();

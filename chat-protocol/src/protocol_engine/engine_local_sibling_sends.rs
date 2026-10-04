@@ -40,7 +40,7 @@ impl ProtocolEngine {
         let mut event_ids = Vec::new();
         let effects = protocol_effects_from_prepared(
             &prepared,
-            self.local_handshake_owner_proof(),
+            self,
             Some(pending.message_id.clone()),
             pending.chat_id.clone(),
             &mut event_ids,
