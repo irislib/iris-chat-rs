@@ -1227,8 +1227,8 @@ final class AppManager: ObservableObject {
         self.updates = DesktopUpdateController()
 #endif
         self.state = initialState
-        syncDebugLogging(initialState.preferences.debugLoggingEnabled)
         self.lastRevApplied = initialState.rev
+        syncDebugLogging(initialState.preferences.debugLoggingEnabled)
         let initialChat = initialState.currentChat
         syncChatPageScope(to: &initialState)
         if let initialChat, activeChatSnapshotID(in: initialState) == initialChat.chatId {
