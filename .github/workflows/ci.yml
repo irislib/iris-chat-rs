@@ -373,6 +373,7 @@ jobs:
             -parallel-testing-enabled NO \
             -only-testing:IrisChatTests \
             -only-testing:IrisChatUITests/ChatTimelineUITests/testReopeningLongChatLandsAtBottom \
+            -only-testing:IrisChatUITests/IrisChatTimelineUITests/testSearchHitInSeededLongChatOpensInTimeline \
             -only-testing:IrisChatUITests/ChatPaginationUITests \
             -resultBundlePath work/clipboard/ios.xcresult test
 
