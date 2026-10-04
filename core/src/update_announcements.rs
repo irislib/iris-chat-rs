@@ -165,7 +165,6 @@ async fn standalone_update_provider(
             .map(|provider| Arc::new(provider) as Arc<dyn NostrEventSubscriber>)
             .map_err(|error| UpdateError::Announcement(error.to_string()));
     }
-    let pubsub_options = update_pubsub_options(reference)?;
     let mut config = fips_core::Config::new();
     config.node.control.enabled = false;
     config.node.discovery.nostr.enabled = false;
@@ -178,6 +177,14 @@ async fn standalone_update_provider(
         ),
         ..WebSocketConfig::default()
     });
+    standalone_fips_update_provider(reference, config).await
+}
+
+async fn standalone_fips_update_provider(
+    reference: &UpdateRef,
+    config: fips_core::Config,
+) -> Result<Arc<dyn NostrEventSubscriber>, UpdateError> {
+    let pubsub_options = update_pubsub_options(reference)?;
     let endpoint = fips_core::FipsEndpoint::builder()
         .config(config)
         .identity_nsec(
@@ -187,6 +194,7 @@ async fn standalone_update_provider(
                 .map_err(|error| UpdateError::Announcement(error.to_string()))?,
         )
         .discovery_scope("iris-chat-updates")
+        .local_rendezvous()
         .without_system_tun()
         .bind()
         .await
@@ -246,6 +254,112 @@ mod tests {
         );
         let malformed = UpdateRef::parse("htree://npub1invalid/releases/test").unwrap();
         assert!(update_pubsub_options(&malformed).is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn standalone_websocket_updater_discovers_local_provider_across_scopes() {
+        let rendezvous = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let std::net::SocketAddr::V4(rendezvous_addr) = rendezvous.local_addr().unwrap() else {
+            panic!("expected loopback IPv4 address");
+        };
+        drop(rendezvous);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let seed_addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        // The WebSocket seed cannot reach the local-only publisher. Joining
+        // local rendezvous is the only path to its retained signed event.
+        let mut seed_config = fips_core::Config::new();
+        seed_config.node.control.enabled = false;
+        seed_config.node.discovery.nostr.enabled = false;
+        seed_config.node.discovery.lan.enabled = false;
+        seed_config.transports.websocket = TransportInstances::Single(WebSocketConfig {
+            bind_addr: Some(seed_addr.to_string()),
+            ..WebSocketConfig::default()
+        });
+        let seed = fips_core::FipsEndpoint::builder()
+            .config(seed_config)
+            .without_system_tun()
+            .bind()
+            .await
+            .unwrap();
+
+        let keys = Keys::generate();
+        let reference = UpdateRef {
+            npub: keys.public_key().to_bech32().unwrap(),
+            tree_name: "releases/local-regression".into(),
+            path: Some("latest".into()),
+        };
+        let mut config = fips_core::Config::new();
+        config.node.control.enabled = false;
+        config.node.discovery.nostr.enabled = false;
+        config.node.discovery.nostr.advertise = false;
+        config.node.discovery.lan.enabled = false;
+        config.node.discovery.local.rendezvous_addr = rendezvous_addr;
+        config.transports.websocket = TransportInstances::Single(WebSocketConfig {
+            seed_urls: vec![format!("ws://{seed_addr}/fips")],
+            ..WebSocketConfig::default()
+        });
+        let mut publisher_config = config.clone();
+        publisher_config.transports.websocket =
+            TransportInstances::Single(WebSocketConfig::default());
+        let publisher_endpoint = Arc::new(
+            fips_core::FipsEndpoint::builder()
+                .config(publisher_config)
+                .identity_nsec(keys.secret_key().to_bech32().unwrap())
+                .discovery_scope("hashtree-provider")
+                .local_rendezvous()
+                .without_system_tun()
+                .bind()
+                .await
+                .unwrap(),
+        );
+        let publisher = FipsPubsubClient::start(
+            publisher_endpoint.clone(),
+            FipsPubsubClientOptions::default(),
+        )
+        .await
+        .unwrap();
+        let event = EventBuilder::new(Kind::Custom(HASHTREE_KIND), "")
+            .tags([
+                Tag::identifier(&reference.tree_name),
+                Tag::custom(TagKind::Custom("hash".into()), ["42".repeat(32)]),
+            ])
+            .sign_with_keys(&keys)
+            .unwrap();
+        publisher
+            .publish(
+                VerifiedEvent::try_from(event).unwrap(),
+                EventSource::local_index("release-test"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            update_pubsub_options(&reference).unwrap().routed_peers,
+            [reference.npub.clone()],
+            "same-machine discovery must retain the trusted publisher route"
+        );
+        let provider = standalone_fips_update_provider(&reference, config)
+            .await
+            .unwrap();
+        let updater = build_secure_pubsub_blossom_updater(
+            provider,
+            SecurePubsubBlossomConfig {
+                blossom_read_servers: Vec::new(),
+                ..secure_update_config()
+            },
+        )
+        .await
+        .unwrap();
+        // Subscribe immediately: production startup must replay the request
+        // when the authenticated local provider becomes reachable.
+        let resolved = updater.resolver().resolve(&reference.resolver_key()).await;
+        drop(updater);
+        publisher.shutdown().await;
+        publisher_endpoint.shutdown().await.unwrap();
+        seed.shutdown().await.unwrap();
+        assert_eq!(resolved.unwrap().unwrap().hash, [0x42; 32]);
     }
 
     #[tokio::test]
