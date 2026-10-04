@@ -2,6 +2,44 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.4.11
+
+### GitHub
+
+- Show current group sender profile pictures, including photo removal, without changing message snapshots. Align group avatars and both desktop action docks with the bubble while reserving reaction space.
+- Preserve iOS history position using stable content geometry during rendering-window transitions.
+- Recover closed or lagged mesh subscriptions during background liveness checks, drain admitted events before replacement, and pin the verified public delivery stack.
+- Add message editing, edit history, deletion for this device, and deletion for everyone across native platforms. Authenticate changes against the original author and retain deletion tombstones during reconciliation.
+- Keep linked-device edits and deletions on the private history-aware reconciliation path. Preserve the chats-and-groups-only choice through live delivery, queued messages, interrupted transfers, and failed database writes.
+- Bound group decryption work per turn, preserve newly arriving sender-key wakeups, and retire revoked search results without leaving pending work stuck.
+- Read recipient device lists without copying unrelated encrypted sessions when sending and retrying messages.
+- Remove the eight-person member-picker cutoff. Scroll through all eligible contacts, refresh after each addition, and preserve current group permissions across Apple, Android, Linux, and Windows.
+- Keep People search scoped to recognized contacts and preserve current results during refresh. Restore favorite badges on additional avatar surfaces.
+- Match group avatar placeholder colors to sender names, anchor desktop message actions beside their bubble, and align Mac composer controls.
+- Confirm group administrator promotions, restore Mac composer focus after window attachment, and compare locally installed debug versions correctly when checking for updates.
+- Update iris-chat-protocol to 0.3.0 and nostr-pubsub-relay to 0.1.13. The protocol library's batch completion now requires a mutable engine.
+
+### Apple
+
+- Show profile pictures beside group messages and keep avatars and message actions aligned when reactions appear.
+- Keep your place while scrolling through older messages on iPhone.
+- Improve message delivery after a connection interruption.
+- Edit your messages, view their edit history, and delete messages for yourself or everyone.
+- Respect your history choice when linking another device.
+- Keep chats responsive while catching up on group messages.
+- Scroll through everyone you can add to a group, with the list updating after each addition.
+- Improve search results and favorite indicators.
+- Fix message-action placement, group avatar colors, and Mac message-bar alignment and focus.
+
+### Zapstore
+
+- Improve message delivery after a connection interruption.
+- Edit your messages, view their edit history, and delete messages for yourself or everyone.
+- Respect your history choice when linking another device.
+- Keep chats responsive while catching up on group messages.
+- Scroll through everyone you can add to a group, with the list updating after each addition.
+- Improve search results, favorite indicators, and group avatar colors.
+
 ## v2026.10.4.10
 
 ### GitHub
