@@ -159,6 +159,121 @@ final class ChatTimelineViewportAnchorTests: XCTestCase {
     }
 
     @MainActor
+    func testProtectedRenderSpanUsesLiveNativeBoundsAndCurrentIntrinsicGeometry() {
+        let ids = (0..<160).map(String.init)
+        let range = 40..<120
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        scroll.contentSize.height = 3_200
+        scroll.contentInset = UIEdgeInsets(top: 50, left: 0, bottom: 80, right: 0)
+        scroll.contentOffset.y = 1_000
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        coordinator.latestPage = ChatTimelinePageFrames(chatID: "chat", firstMessageID: ids[40],
+            lastMessageID: ids[119], layoutGeneration: 7,
+            frames: Dictionary(uniqueKeysWithValues: range.map { (ids[$0], CGRect(x: 0, y: 9_999, width: 100, height: 10)) }),
+            contentFrames: Dictionary(uniqueKeysWithValues: range.map { (ids[$0], CGRect(x: 0, y: CGFloat($0 * 20), width: 100, height: 10)) }),
+            heights: Dictionary(uniqueKeysWithValues: range.map { (ids[$0], CGFloat(20)) }), contentHeight: 3_200)
+        XCTAssertEqual(coordinator.measuredVisibleMessageRange(in: ids, renderedRange: range,
+            chatID: "chat", layoutGeneration: 7), 52..<77)
+        scroll.contentOffset.y += 200
+        XCTAssertEqual(coordinator.measuredVisibleMessageRange(in: ids, renderedRange: range,
+            chatID: "chat", layoutGeneration: 7), 62..<87, "Stale viewport preferences must not choose the window")
+        XCTAssertNil(coordinator.measuredVisibleMessageRange(in: ids, renderedRange: range,
+            chatID: "chat", layoutGeneration: 8))
+        scroll.contentSize.height = 3_100
+        XCTAssertNil(coordinator.measuredVisibleMessageRange(in: ids, renderedRange: range,
+            chatID: "chat", layoutGeneration: 7), "Retain the window until native extent commits")
+        scroll.contentSize.height = 3_200
+        coordinator.latestPage.heights.removeValue(forKey: ids[70])
+        XCTAssertNil(coordinator.measuredVisibleMessageRange(in: ids, renderedRange: range,
+            chatID: "chat", layoutGeneration: 7), "An incomplete measured page cannot safely trim rows")
+    }
+
+    @MainActor
+    func testProtectedRenderSpanIncludesVisibleRowPaddingBeforeItsBubble() {
+        let ids = ["day-row", "next-row", "last-row"]
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 80))
+        scroll.contentSize.height = 400
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        coordinator.latestPage = ChatTimelinePageFrames(chatID: "chat", firstMessageID: ids[0], lastMessageID: ids[2],
+            contentFrames: [ids[0]: CGRect(x: 0, y: 100, width: 100, height: 30),
+                            ids[1]: CGRect(x: 0, y: 170, width: 100, height: 30),
+                            ids[2]: CGRect(x: 0, y: 260, width: 100, height: 30)],
+            heights: [ids[0]: 160, ids[1]: 80, ids[2]: 100], contentHeight: 400)
+        XCTAssertEqual(coordinator.measuredVisibleMessageRange(in: ids, renderedRange: ids.indices,
+            chatID: "chat", layoutGeneration: 0), 0..<1,
+            "The day separator can be visible while its bubble lies below the viewport")
+    }
+
+    @MainActor
+    func testBoundedPrependAndEstimatedSpacerRefinementPreserveNativeMovement() throws {
+        let old = (81...160).map(String.init)
+        let all = (1...160).map(String.init)
+        let actual = Dictionary(uniqueKeysWithValues: all.enumerated().map { ($0.element, CGFloat(40 + $0.offset % 3 * 70)) })
+        var measured = actual.filter { old.contains($0.key) }
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        func page(_ ids: [String], _ range: Range<Int>, generation: Int) -> ChatTimelinePageFrames {
+            var y = ChatTimelineRenderWindow.spacerHeight(ids[..<range.lowerBound], measured: measured)
+            var frames: [String: CGRect] = [:]
+            for id in ids[range] {
+                frames[id] = CGRect(x: 0, y: y, width: 100, height: actual[id]!)
+                y += actual[id]!
+            }
+            return ChatTimelinePageFrames(chatID: "chat", firstMessageID: ids[range.lowerBound],
+                lastMessageID: ids[range.upperBound - 1], layoutGeneration: generation,
+                frames: frames.mapValues { $0.offsetBy(dx: 0, dy: -scroll.contentOffset.y) }, contentFrames: frames,
+                heights: actual.filter { ids[range].contains($0.key) },
+                contentHeight: y + ChatTimelineRenderWindow.spacerHeight(ids[range.upperBound...], measured: measured))
+        }
+        var window = ChatTimelineRenderWindow()
+        let initial = page(old, old.indices, generation: 0)
+        scroll.contentSize.height = initial.contentHeight
+        scroll.contentOffset.y = 450
+        coordinator.latestPage = page(old, old.indices, generation: 0)
+        coordinator.messageContentFrames = coordinator.latestPage.frames
+        let visible = try XCTUnwrap(coordinator.measuredVisibleMessageRange(in: old,
+            renderedRange: old.indices, chatID: "chat", layoutGeneration: 0))
+        coordinator.captureHistoryViewportAnchor(chatID: "chat", firstMessageID: old[0], viewportMinY: 0, viewportMaxY: 600)
+        let anchor = try XCTUnwrap(coordinator.historyViewportAnchor)
+        let position = anchor.originalContentY - scroll.contentOffset.y
+        XCTAssertTrue(window.preserveVisible(visible, including: anchor.messageID, in: old))
+        let loadedRange = window.range(in: all)
+        XCTAssertEqual(loadedRange.count, 80)
+        scroll.contentOffset.y += 60
+        let loaded = page(all, loadedRange, generation: 1)
+        scroll.contentSize.height = loaded.contentHeight
+        XCTAssertTrue(coordinator.restoreHistoryViewportAnchor(page: loaded))
+        XCTAssertEqual(try XCTUnwrap(loaded.contentFrames[anchor.messageID]).minY - scroll.contentOffset.y,
+                       position - 60, accuracy: 0.0001)
+        measured.merge(loaded.heights, uniquingKeysWith: { _, new in new })
+        coordinator.latestPage = page(all, loadedRange, generation: 1)
+        coordinator.messageContentFrames = coordinator.latestPage.frames
+        let nextVisible = try XCTUnwrap(coordinator.measuredVisibleMessageRange(in: all,
+            renderedRange: loadedRange, chatID: "chat", layoutGeneration: 1))
+        coordinator.captureHistoryViewportAnchor(chatID: "chat", firstMessageID: all[loadedRange.lowerBound],
+            layoutGeneration: 1, viewportMinY: 0, viewportMaxY: 600)
+        let refining = try XCTUnwrap(coordinator.historyViewportAnchor)
+        let before = refining.originalContentY - scroll.contentOffset.y
+        XCTAssertTrue(window.preserveVisible(nextVisible, including: refining.messageID, in: all,
+            startAt: loadedRange.lowerBound - ChatTimelineRenderWindow.step))
+        let refinedRange = window.range(in: all)
+        XCTAssertLessThan(refinedRange.lowerBound, loadedRange.lowerBound)
+        scroll.contentOffset.y -= 25
+        let refined = page(all, refinedRange, generation: 2)
+        XCTAssertNotEqual(refined.contentFrames[refining.messageID]?.minY, refining.originalContentY,
+                          "Realizing unknown mixed rows must replace their 100-point spacer estimate")
+        scroll.contentSize.height = refined.contentHeight
+        XCTAssertTrue(coordinator.restoreHistoryViewportAnchor(page: refined))
+        XCTAssertEqual(try XCTUnwrap(refined.contentFrames[refining.messageID]).minY - scroll.contentOffset.y,
+                       before + 25, accuracy: 0.0001)
+        XCTAssertFalse(coordinator.restoreHistoryViewportAnchor(page: refined))
+        XCTAssertEqual(scroll.decelerationRate, .normal)
+    }
+
+    @MainActor
     func testHistoryDeltaDoesNotIncludeAnAutomaticExtentClamp() throws {
         let window = try makeWindow()
         defer { window.isHidden = true }

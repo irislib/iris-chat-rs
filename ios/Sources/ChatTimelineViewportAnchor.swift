@@ -240,6 +240,34 @@ extension ChatTimelineInteractionCoordinator {
         return scrollView.bounds.height - scrollView.adjustedContentInset.bottom
     }
 
+    func measuredVisibleMessageRange(in ids: [String], renderedRange: Range<Int>,
+                                     chatID: String, layoutGeneration: Int) -> Range<Int>? {
+        guard let scrollView, !renderedRange.isEmpty, renderedRange.lowerBound >= 0,
+              renderedRange.upperBound <= ids.count, latestPage.chatID == chatID,
+              latestPage.layoutGeneration == layoutGeneration,
+              latestPage.firstMessageID == ids[renderedRange.lowerBound],
+              latestPage.lastMessageID == ids[renderedRange.upperBound - 1],
+              hasCommittedTimelineExtent(latestPage.contentHeight) else { return nil }
+        let minimum = scrollView.bounds.minY + scrollView.adjustedContentInset.top
+        let maximum = scrollView.bounds.maxY - scrollView.adjustedContentInset.bottom
+        guard minimum.isFinite, maximum.isFinite, maximum > minimum else { return nil }
+        var first: Int?
+        var last: Int?
+        for index in renderedRange {
+            guard let frame = latestPage.contentFrames[ids[index]],
+                  let height = latestPage.heights[ids[index]], height.isFinite, height > 0,
+                  frame.minY.isFinite, frame.maxY.isFinite, height >= frame.height else { return nil }
+            // The body lies inside the measured row. This conservative interval
+            // also protects a visible day separator or cluster padding.
+            if frame.maxY - height < maximum, frame.minY + height > minimum {
+                first = first ?? index
+                last = index
+            }
+        }
+        guard let first, let last else { return nil }
+        return first..<(last + 1)
+    }
+
     // Capture immediately before publishing the older page, not while its
     // database read is pending and the user can continue scrolling.
     func captureHistoryViewportAnchor(chatID: String, firstMessageID: String, layoutGeneration: Int = 0,

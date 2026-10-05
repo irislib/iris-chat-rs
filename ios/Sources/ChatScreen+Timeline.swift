@@ -87,23 +87,33 @@ extension ChatScreen {
               pendingTimelineScroll == nil else { return }
         let ids = chat.messages.map(\.id)
         let range = renderWindow.range(in: ids)
-        guard !range.isEmpty, page.firstMessageID == ids[range.lowerBound],
-              page.lastMessageID == ids[range.upperBound - 1],
-              let first = page.frames[ids[range.lowerBound]],
-              let last = page.frames[ids[range.upperBound - 1]] else { return }
-        let margin = (timelineViewportMaxY - timelineViewportMinY) * 0.75
+        guard let visible = timelineCoordinator.measuredVisibleMessageRange(in: ids, renderedRange: range,
+                  chatID: chat.chatId, layoutGeneration: timelineLayoutGeneration),
+              let scroll = timelineCoordinator.scrollView,
+              let first = timelineCoordinator.latestPage.contentFrames[ids[range.lowerBound]],
+              let last = timelineCoordinator.latestPage.contentFrames[ids[range.upperBound - 1]] else { return }
+        let minimum = scroll.bounds.minY + scroll.adjustedContentInset.top
+        let maximum = scroll.bounds.maxY - scroll.adjustedContentInset.bottom
+        let margin = (maximum - minimum) * 0.75
         let start: Int
-        if range.lowerBound > 0 && first.maxY > timelineViewportMinY - margin {
+        if range.lowerBound > 0 && first.maxY > minimum - margin {
             start = max(0, range.lowerBound - ChatTimelineRenderWindow.step)
-        } else if range.upperBound < ids.count && last.minY < timelineViewportMaxY + margin {
-            start = min(ids.count - ChatTimelineRenderWindow.capacity,
+        } else if range.upperBound < ids.count && last.minY < maximum + margin {
+            start = min(ids.count - range.count,
                         range.lowerBound + ChatTimelineRenderWindow.step)
         } else { return }
         guard timelineCoordinator.historyViewportAnchor == nil else { return }
         timelineCoordinator.captureHistoryViewportAnchor(
             chatID: chat.chatId, firstMessageID: ids[range.lowerBound], layoutGeneration: timelineLayoutGeneration,
             viewportMinY: timelineViewportMinY, viewportMaxY: timelineViewportMaxY)
-        renderWindow.start(at: start, in: ids)
+        guard let anchor = timelineCoordinator.historyViewportAnchor else { return }
+        var nextWindow = renderWindow
+        guard nextWindow.preserveVisible(visible, including: anchor.messageID, in: ids, startAt: start),
+              nextWindow.range(in: ids) != range else {
+            timelineCoordinator.historyViewportAnchor = nil
+            return
+        }
+        renderWindow = nextWindow
 #endif
     }
 
@@ -131,11 +141,19 @@ extension ChatScreen {
 #if os(iOS)
             guard pendingPrependAnchorMessageId == firstMessageId,
                   pendingTimelineScroll == nil, manager.pendingScrollMessageId == nil else { return }
+            let ids = chat.messages.map(\.id)
+            let range = renderWindow.range(in: ids)
+            let visible = timelineCoordinator.measuredVisibleMessageRange(in: ids, renderedRange: range,
+                chatID: chat.chatId, layoutGeneration: timelineLayoutGeneration)
             timelineCoordinator.captureHistoryViewportAnchor(
                 chatID: chat.chatId, firstMessageID: firstMessageId, layoutGeneration: timelineLayoutGeneration,
                 viewportMinY: timelineViewportMinY, viewportMaxY: timelineViewportMaxY)
-            if let visibleID = timelineCoordinator.historyViewportAnchor?.messageID {
-                renderWindow.show(visibleID, in: chat.messages.map(\.id))
+            var preserved = false
+            if let visible, let anchor = timelineCoordinator.historyViewportAnchor {
+                preserved = renderWindow.preserveVisible(visible, including: anchor.messageID, in: ids)
+            }
+            if !preserved {
+                renderWindow.start(at: range.lowerBound, in: ids)
             }
             timelineLayoutGeneration += 1
 #endif
