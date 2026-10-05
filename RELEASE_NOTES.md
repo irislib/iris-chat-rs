@@ -19,6 +19,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Confirm group administrator promotions, restore Mac composer focus after window attachment, and compare locally installed debug versions correctly when checking for updates.
 - Compare large protocol checkpoints in fixed-size pages without allocating another copy of the stored checkpoint; preserve transactional rollback on read, write, or close failures.
 - Keep signed update roots when discovery is interrupted before a complete observation.
+- Measure chat opening and sending through the existing Debug logging setting, with timing records limited to durations and message counts.
 - Update iris-chat-protocol to 0.3.1, hashtree-updater to 0.2.88, nostr-pubsub to 0.1.16, nostr-pubsub-fips to 0.5.19, and nostr-pubsub-relay to 0.1.13.
 
 ### Apple
