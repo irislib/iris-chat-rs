@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import textwrap
@@ -11,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
-    def test_tagged_core_gate_reuses_default_branch_cargo_cache(self) -> None:
+    def test_tagged_gates_reuse_default_branch_cargo_caches(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         gate = workflow.split("\n  mesh-resource:\n", 1)[0]
         self.assertIn("CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target", gate)
@@ -31,6 +32,31 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertIn(fragment, ci)
             self.assertIn(fragment, gate)
         self.assertIn("scripts/verify.sh fast", gate)
+        builds = (ROOT / ".github/workflows/build-artifacts.yml").read_text()
+        recipes = {
+            "android": (
+                "android-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/android/**/*.gradle*', 'iris-chat-rs/android/gradle/**/*.toml') }}",
+                ("~/.gradle/caches", "~/.gradle/wrapper"),
+            ),
+            "macos": (
+                "macos-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/macos/project.yml') }}",
+                ("${{ github.workspace }}/iris-chat-rs/macos/.build/cargo-target",),
+            ),
+        }
+        for job, (key, extra_paths) in recipes.items():
+            with self.subTest(platform=job):
+                caches = []
+                for text in (ci, builds):
+                    body = re.split(r"\n  (?=\S)", text.split(f"\n  {job}:\n", 1)[1], maxsplit=1)[0]
+                    cache = body.split("      - name: Cache Cargo", 1)[1].split("\n      - ", 1)[0].strip()
+                    caches.append(cache)
+                    self.assertNotIn("cache-hit", body)
+                self.assertEqual(caches[0], caches[1])
+                self.assertIn("uses: actions/cache@v6", caches[0])
+                self.assertIn(f"key: {key}", caches[0])
+                self.assertIn(f"            {key.split('${{ hashFiles', 1)[0]}", caches[0])
+                for path in ("~/.cargo/registry", "~/.cargo/git", "${{ github.workspace }}/cargo-target", *extra_paths):
+                    self.assertIn(path, caches[0])
 
     def test_release_only_edits_keep_contract_checks_without_native_rebuilds(self) -> None:
         ci = (ROOT / ".github/workflows/ci.yml").read_text()

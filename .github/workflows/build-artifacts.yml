@@ -153,8 +153,9 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             ${{ github.workspace }}/cargo-target
-          key: all-builds-android-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/android/**/*.gradle*') }}
-          restore-keys: all-builds-android-
+          key: android-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/android/**/*.gradle*', 'iris-chat-rs/android/gradle/**/*.toml') }}
+          restore-keys: |
+            android-${{ runner.os }}-
       - name: Configure Android signing
         env:
           KEYSTORE_BASE64: ${{ secrets.IRIS_RELEASE_KEYSTORE_BASE64 }}
@@ -401,9 +402,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
-            ${{ github.workspace }}/${{ env.APP_DIR }}/macos/.build/cargo-target
-          key: all-builds-macos-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/macos/project.yml') }}
-          restore-keys: all-builds-macos-${{ runner.arch }}-
+            ${{ github.workspace }}/iris-chat-rs/macos/.build/cargo-target
+          key: macos-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/macos/project.yml') }}
+          restore-keys: |
+            macos-${{ runner.os }}-${{ runner.arch }}-
       - name: Verify local FIPS calls without internet
         run: ./scripts/test_calls_offline.sh
       - name: Configure macOS signing and notarization
