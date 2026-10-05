@@ -66,24 +66,24 @@ internal static class DraftTests
         var row = new ChatRow { Chat = manager.ChatList.First(chat => chat.chatId == own) with
             { lastMessagePreview = "Earlier message" } };
         var preview = (TextBlock)row.FindName("PreviewText");
-        Check(preview.Text == "Earlier message", "Whitespace-only drafts use the last message preview");
-        row.Chat = row.Chat! with { draft = firstDraft };
-        var previewDiagnostic = JsonSerializer.Serialize(new
+        string Preview() => new TextRange(preview.ContentStart, preview.ContentEnd).Text;
+        string PreviewDiagnostic() => JsonSerializer.Serialize(new
         {
             text = preview.Text,
             inlines = preview.Inlines.Cast<Inline>().Select(inline => new { type = inline.GetType().Name, text = (inline as Run)?.Text }).ToArray(),
-            textRange = new TextRange(preview.ContentStart, preview.ContentEnd).Text,
+            textRange = Preview(),
             draft = row.Chat.draft,
             isTyping = row.Chat.isTyping,
         });
-        Console.WriteLine("Synthetic draft preview diagnostic: " + previewDiagnostic);
-        Check(preview.Text == "Draft: Forest walk\nBring a map",
-            "List trims the preview while storage retains the full draft; " + previewDiagnostic);
+        Check(Preview() == "Earlier message", "Whitespace-only drafts use the last message preview; " + PreviewDiagnostic());
+        row.Chat = row.Chat! with { draft = firstDraft };
+        Check(Preview() == "Draft: Forest walk\nBring a map",
+            "List trims the preview while storage retains the full draft; " + PreviewDiagnostic());
         Check(preview.Inlines.OfType<Run>().First().FontStyle == FontStyles.Italic, "Draft prefix is distinguished from message text");
         row.Chat = row.Chat! with { isTyping = true };
-        Check(preview.Text == "typing…", "Typing takes precedence over the saved draft");
+        Check(Preview() == "typing…", "Typing takes precedence over the saved draft; " + PreviewDiagnostic());
         row.Chat = row.Chat! with { isTyping = false, draft = "" };
-        Check(preview.Text == "Earlier message", "Cleared drafts return to the message preview");
+        Check(Preview() == "Earlier message", "Cleared drafts return to the message preview; " + PreviewDiagnostic());
         input.Clear();
         Until(() => Draft(own).Length == 0);
 
