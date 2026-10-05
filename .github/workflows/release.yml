@@ -27,6 +27,11 @@ jobs:
     name: Verify release inputs and core gate
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+    defaults:
+      run:
+        working-directory: iris-chat-rs
     outputs:
       sha: ${{ steps.release_commit.outputs.sha }}
     steps:
@@ -35,6 +40,7 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
+          path: iris-chat-rs
 
       - name: Validate tag and release notes
         id: release_commit
@@ -87,9 +93,9 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            core/target
-          key: release-gate-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: release-gate-${{ runner.os }}-
+            ${{ github.workspace }}/cargo-target
+          key: rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
+          restore-keys: rust-${{ runner.os }}-
 
       - name: Run hosted release gate
         run: |

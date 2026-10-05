@@ -11,6 +11,27 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_tagged_core_gate_reuses_default_branch_cargo_cache(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        gate = workflow.split("\n  mesh-resource:\n", 1)[0]
+        self.assertIn("CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target", gate)
+        self.assertIn("working-directory: iris-chat-rs", gate)
+        self.assertIn("path: iris-chat-rs", gate)
+        ci = (ROOT / ".github/workflows/ci.yml").read_text()
+        for text in (ci, gate):
+            cache = text.split("- name: Cache Cargo\n", 1)[1].split("- name:", 1)[0]
+            self.assertIn("uses: actions/cache@v6", cache)
+        for fragment in (
+            "~/.cargo/registry",
+            "~/.cargo/git",
+            "${{ github.workspace }}/cargo-target",
+            "key: rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}",
+            "rust-${{ runner.os }}-",
+        ):
+            self.assertIn(fragment, ci)
+            self.assertIn(fragment, gate)
+        self.assertIn("scripts/verify.sh fast", gate)
+
     def test_release_only_edits_keep_contract_checks_without_native_rebuilds(self) -> None:
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
         expected = [
