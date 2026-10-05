@@ -238,6 +238,7 @@ extension IrisChatUITestCase {
         line: UInt = #line
     ) {
         let seedCount = app.launchEnvironment["IRIS_UI_TEST_SEED_COUNT"].flatMap(Int.init)
+        var seededRowIdentifier: String?
         if let seedCount, seedCount > 0 {
             // All sends precede the queued return to the list. LAST in the
             // timeline is not enough: that final navigation is still pending.
@@ -265,6 +266,7 @@ extension IrisChatUITestCase {
                        item.label.contains("LAST_SCROLL_SENTINEL"),
                        !item.frame.isEmpty, item.isEnabled {
                         lastLocation = "chat list"
+                        seededRowIdentifier = item.identifier
                         return true
                     }
                     pending.append(contentsOf: item.children)
@@ -291,12 +293,46 @@ extension IrisChatUITestCase {
         let deadline = Date().addingTimeInterval(rowTimeout)
         var sawRow = false
         repeat {
+#if os(iOS)
+            let window = app.windows.firstMatch
+            if let snapshot = try? window.snapshot() {
+                // A UIKit cell can have a valid visible frame while
+                // XCTest cannot resolve its activation point. Tap the exact
+                // seeded row's visible center after navigation has settled.
+                var pending = [(snapshot, Optional<CGRect>.none)]
+                var rows: [XCUIElementSnapshot] = []
+                var hasVisibleComposer = false
+                while let (item, parentTableFrame) = pending.popLast() {
+                    if item.identifier == "chatMessageInput", !item.frame.isEmpty,
+                       snapshot.frame.intersects(item.frame) {
+                        hasVisibleComposer = true
+                    }
+                    let tableFrame = item.identifier == "chatListTable" ? item.frame : parentTableFrame
+                    if let tableFrame, item.elementType == .cell, item.isEnabled, !item.frame.isEmpty,
+                       (seededRowIdentifier.map { item.identifier == $0 }
+                            ?? item.identifier.hasPrefix("chatRow-")),
+                       tableFrame.contains(item.frame), snapshot.frame.contains(item.frame) {
+                        rows.append(item)
+                    }
+                    pending.append(contentsOf: item.children.map { ($0, tableFrame) })
+                }
+                if !hasVisibleComposer, rows.count == 1, let row = rows.first {
+                    sawRow = true
+                    window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                        dx: row.frame.midX - snapshot.frame.minX,
+                        dy: row.frame.midY - snapshot.frame.minY
+                    )).tap()
+                    if element(app, "chatMessageInput").waitForExistence(timeout: 2) { return }
+                }
+            }
+#else
             let row = seededChatRowPreview(app)
             if row.waitForExistence(timeout: min(5, max(0.1, deadline.timeIntervalSinceNow))), row.isHittable {
                 sawRow = true
                 row.tap()
                 if element(app, "chatMessageInput").waitForExistence(timeout: 2) { return }
             }
+#endif
             _ = waitForChatList(app, timeout: 1)
         } while Date() < deadline
         XCTAssertTrue(sawRow, "seeded chat row never appeared", file: file, line: line)
