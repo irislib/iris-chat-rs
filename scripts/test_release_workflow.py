@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class ReleaseWorkflowTests(unittest.TestCase):
     def test_resource_gate_binds_tag_commit_and_blocks_publication(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        pin = "ff7212a17394041c532b11f2522ee51732843b5f"
+        pin = "e34fa190b41a3ced5148e92b103418004bdd0b65"
         self.assertIn(f"irislib/iris-stack/.github/workflows/product-lab.yml@{pin}", workflow)
         self.assertIn(f"lab_rev: {pin}", workflow)
         self.assertIn("chat_rev: ${{ needs.verify.outputs.sha }}", workflow)
