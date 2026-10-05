@@ -172,6 +172,9 @@ final class ChatTimelineInteractionCoordinator: ObservableObject {
     var historyViewportAnchor: ChatTimelineHistoryAnchor?
     var historyLayoutScheduled = false
     var latestPage = ChatTimelinePageFrames()
+#if DEBUG
+    var historyDiagnostic = ChatTimelineHistoryDiagnostic.configured(environment: ProcessInfo.processInfo.environment)
+#endif
 #endif
     var messageContentFrames: [String: CGRect] = [:]
     var audioControlFrames: [CGRect] = []

@@ -131,6 +131,9 @@ extension ChatTimelineInteractionCoordinator {
     }
 
     func recordNativeScrollPosition() {
+#if DEBUG
+        recordHistoryDiagnostic(.nativeOffset, origin: historyDiagnostic?.writeOrigin ?? .direct)
+#endif
         guard let scrollView, let layout = appliedViewportLayout,
               abs(scrollView.bounds.height - layout.nativeHeight) < 0.5,
               abs((visibleViewportMaxY ?? 0) - layout.viewportHeight) < 0.5 else { return }
@@ -251,6 +254,9 @@ extension ChatTimelineInteractionCoordinator {
         historyViewportAnchor = ChatTimelineHistoryAnchor(
             chatID: chatID, firstMessageID: firstMessageID, layoutGeneration: layoutGeneration,
             messageID: id, originalContentY: contentFrame.minY)
+#if DEBUG
+        recordHistoryDiagnostic(.capture)
+#endif
     }
 
     @discardableResult
@@ -262,6 +268,10 @@ extension ChatTimelineInteractionCoordinator {
         anchor.contentY = frame.minY
         anchor.contentHeight = page.contentHeight
         historyViewportAnchor = anchor
+#if DEBUG
+        recordHistoryDiagnostic(.restore, origin: .preference)
+        historyDiagnostic?.nextApplyOrigin = .preference
+#endif
         if applyPendingHistoryViewportAnchor() { return true }
         // Preference geometry can precede UIKit's new content extent. Stage
         // one correction for the completed native layout, never an old extent.
@@ -269,6 +279,9 @@ extension ChatTimelineInteractionCoordinator {
             historyLayoutScheduled = true
             DispatchQueue.main.async { [weak self] in
                 self?.historyLayoutScheduled = false
+#if DEBUG
+                self?.historyDiagnostic?.nextApplyOrigin = .mainTurn
+#endif
                 self?.applyPendingHistoryViewportAnchor()
             }
         }
@@ -277,23 +290,48 @@ extension ChatTimelineInteractionCoordinator {
 
     @discardableResult
     func applyPendingHistoryViewportAnchor() -> Bool {
+#if DEBUG
+        let diagnosticOrigin = historyDiagnostic?.nextApplyOrigin ?? .direct
+        historyDiagnostic?.nextApplyOrigin = .direct
+#endif
         guard let anchor = historyViewportAnchor, let scrollView,
               let contentY = anchor.contentY,
               hasCommittedTimelineExtent(anchor.contentHeight) else { return false }
         let offset = scrollView.contentOffset.y + contentY - anchor.originalContentY + anchor.clampCorrectionY
+#if DEBUG
+        recordHistoryDiagnostic(.applyBefore, origin: diagnosticOrigin, anchor: anchor, targetOffsetY: offset)
+#endif
         historyViewportAnchor = nil
         if offset.isFinite, abs(offset - scrollView.contentOffset.y) > 1 {
+#if DEBUG
+            historyDiagnostic?.writeOrigin = diagnosticOrigin
+            historyDiagnostic?.ownOffsetWrite = true
+#endif
             UIView.performWithoutAnimation { scrollView.contentOffset.y = offset }
+#if DEBUG
+            historyDiagnostic?.ownOffsetWrite = false
+            historyDiagnostic?.writeOrigin = .direct
+#endif
         }
+#if DEBUG
+        recordHistoryDiagnostic(.applyAfter, origin: diagnosticOrigin, anchor: anchor, targetOffsetY: offset)
+        scheduleHistoryDiagnosticExport()
+#endif
         return true
     }
 
     func historyExtentWillChange() {
+#if DEBUG
+        recordHistoryDiagnostic(.extentWill)
+#endif
         guard let scrollView, historyViewportAnchor != nil else { return }
         historyViewportAnchor?.offsetBeforeExtentChange = scrollView.contentOffset.y
     }
 
     func historyExtentDidChange() {
+#if DEBUG
+        recordHistoryDiagnostic(.extentDid)
+#endif
         guard let scrollView, let before = historyViewportAnchor?.offsetBeforeExtentChange else { return }
         historyViewportAnchor?.offsetBeforeExtentChange = nil
         let minimum = -scrollView.adjustedContentInset.top
