@@ -434,6 +434,7 @@ struct SettingsScreen: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .irisHoverPointer()
                 .accessibilityIdentifier("myProfileCallQualityButton")
 
             }

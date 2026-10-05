@@ -13,6 +13,7 @@ use iris_chat_core::{
 
 use crate::app_manager::AppManager;
 use crate::screens::chat_list::{relative_time, unix_now};
+use crate::widgets::clickable::PointerCursorExt;
 use crate::widgets::{audio_message, image_cache};
 
 mod chat_links;
@@ -810,6 +811,7 @@ fn info_recipient_row(
             });
         });
         row.add_controller(click);
+        row.show_pointer_cursor();
     }
 
     let avatar = adw::Avatar::new(32, Some(&info.name), true);
@@ -962,6 +964,7 @@ fn render_message(
         if let Some(owner) = &message.system_notice_owner_pubkey_hex {
             label.set_selectable(false);
             let button = gtk::Button::new();
+            button.show_pointer_cursor();
             button.add_css_class("flat");
             button.set_halign(gtk::Align::Center);
             button.set_tooltip_text(Some("Open profile"));

@@ -104,6 +104,7 @@ private struct OnboardingTermsAgreement: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
+            .irisHoverPointer()
             .font(.system(.callout, design: .rounded, weight: .semibold))
             .foregroundStyle(palette.textPrimary)
             .accessibilityIdentifier("onboardingTermsAgreementToggle")

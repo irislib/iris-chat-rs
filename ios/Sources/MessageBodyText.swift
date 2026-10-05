@@ -57,6 +57,7 @@ struct TruncatableMessageBody: View {
                 .padding(.top, 2)
         }
         .buttonStyle(.plain)
+        .irisHoverPointer()
         .accessibilityIdentifier("chatMessageBodyToggle")
     }
 }

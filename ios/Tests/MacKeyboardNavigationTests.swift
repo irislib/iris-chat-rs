@@ -145,6 +145,49 @@ final class MacKeyboardNavigationTests: XCTestCase {
         try capture(window)
     }
 
+    func testTabOnlyScrollsEnoughToRevealTheFocusedChat() throws {
+        prepareApplication()
+        let state = KeyboardListTestState()
+        let previous = NSApp.keyWindow
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 600, height: 340),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: KeyboardListTestView(state: state))
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close(); previous?.makeKeyAndOrderFront(nil) }
+        pumpEvents()
+        state.listRequest = UUID()
+        waitFor { state.listRequest == nil }
+        let viewport = try XCTUnwrap(descendant(DesktopChatListViewport.self, in: window.contentView!))
+        let scroll = try XCTUnwrap(viewport.enclosingScrollView)
+        XCTAssertTrue(window.firstResponder === viewport)
+        let top = scroll.contentView.bounds.origin.y
+
+        // The first six 48-point rows fit in this viewport. Moving focus among
+        // them must leave their positions unchanged.
+        for _ in 0..<5 {
+            press(48, "\t", in: window)
+            XCTAssertEqual(scroll.contentView.bounds.origin.y, top, accuracy: 1)
+        }
+        for _ in 0..<2 { press(48, "\t", in: window) }
+        let lower = scroll.contentView.bounds.origin.y
+        XCTAssertGreaterThan(lower, top, "An offscreen row must become visible")
+        XCTAssertLessThan(lower - top, 100, "Reveal the row at the near edge instead of centering it")
+
+        for _ in 0..<2 {
+            press(48, "\t", modifiers: .shift, in: window)
+            XCTAssertEqual(scroll.contentView.bounds.origin.y, lower, accuracy: 1,
+                           "Shift-Tab must also keep already visible rows in place")
+        }
+        for _ in 0..<5 { press(48, "\t", modifiers: .shift, in: window) }
+        XCTAssertEqual(scroll.contentView.bounds.origin.y, top, accuracy: 1)
+        XCTAssertEqual(state.openCount, 0, "Tab only moves focus")
+        press(36, "\r", in: window)
+        waitFor { window.firstResponder === state.composer }
+        XCTAssertEqual(state.opened, "chat-0")
+        XCTAssertEqual(state.openCount, 1)
+    }
+
     private func capture(_ window: NSWindow, suffix: String = "") throws {
         if let path = ProcessInfo.processInfo.environment["IRIS_KEYBOARD_SCREENSHOT"],
            let view = window.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {

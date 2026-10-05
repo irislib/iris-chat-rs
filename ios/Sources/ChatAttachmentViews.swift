@@ -171,6 +171,7 @@ struct ChatAlbumImageCell: View {
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .irisHoverPointer()
         .onTapGesture {
             if let localImageData {
                 onOpenImage(localImageData, attachment)
@@ -273,6 +274,7 @@ struct ChatAttachmentView: View {
             .frame(width: 220, height: 150)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .irisHoverPointer()
             .onTapGesture {
                 if let localImageData {
                     onOpenImage(localImageData, attachment)

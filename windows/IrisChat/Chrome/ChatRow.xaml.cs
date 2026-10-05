@@ -1,6 +1,7 @@
 using System;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using IrisChat.Bindings;
 
@@ -83,9 +84,14 @@ public partial class ChatRow : UserControl
             TimeText.Text = string.Empty;
         }
 
-        var preview = chat.lastMessagePreview ?? string.Empty;
-        if (chat.isTyping) preview = "typing…";
-        PreviewText.Text = preview;
+        var draft = chat.draft.Trim();
+        PreviewText.Inlines.Clear();
+        if (!chat.isTyping && draft.Length > 0)
+        {
+            PreviewText.Inlines.Add(new Run("Draft: ") { FontStyle = FontStyles.Italic });
+            PreviewText.Inlines.Add(new Run(draft));
+        }
+        else PreviewText.Text = chat.isTyping ? "typing…" : chat.lastMessagePreview ?? string.Empty;
 
         if (chat.unreadCount > 0)
         {

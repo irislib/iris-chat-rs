@@ -534,6 +534,7 @@ struct ChatMessageRow: View, Equatable {
                             systemNoticeLabel
                         }
                         .buttonStyle(.plain)
+                        .irisHoverPointer()
                         .accessibilityHint("Open profile")
                     } else {
                         systemNoticeLabel.irisDesktopTextSelection()
@@ -634,6 +635,7 @@ struct ChatMessageRow: View, Equatable {
                                     if !message.editHistory.isEmpty && !message.deletedForEveryone {
                                         Button("Edited", action: onEditHistory)
                                             .buttonStyle(.plain)
+                                            .irisHoverPointer()
                                             .font(.caption2)
                                             .accessibilityIdentifier("chatMessageEdited-\(message.id)")
                                     }
@@ -870,6 +872,7 @@ struct ChatMessageRow: View, Equatable {
                     avatar
                 }
                 .buttonStyle(.plain)
+                .irisHoverPointer()
                 .accessibilityLabel(message.author)
                 .accessibilityHint("Open profile")
                 .accessibilityIdentifier("chatSenderAvatar-\(message.id)")

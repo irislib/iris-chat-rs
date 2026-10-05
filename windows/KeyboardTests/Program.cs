@@ -135,6 +135,7 @@ internal static class Program
             using (var file = File.Create(Path.Combine(output, "windows-keyboard.png"))) encoder.Save(file);
             GroupingTests.Run();
             MessageActionsTests.Run(window);
+            DraftTests.Run(window, manager);
             HistoryTests.Run(window, manager);
             GroupMemberPickerTests.Run(window, manager);
             Console.WriteLine("PASS: WPF Tab/Shift-Tab, arrows, Enter/Space, update focus and composer isolation");

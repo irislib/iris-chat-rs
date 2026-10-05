@@ -125,6 +125,7 @@ pub(super) fn history_button(
     manager: &Rc<AppManager>,
 ) -> gtk::Button {
     let button = gtk::Button::with_label("Edited");
+    button.show_pointer_cursor();
     button.add_css_class("flat");
     button.add_css_class("caption");
     button.set_tooltip_text(Some("Edit history"));

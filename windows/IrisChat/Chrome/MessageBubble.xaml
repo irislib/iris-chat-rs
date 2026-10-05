@@ -30,7 +30,7 @@
                      HorizontalScrollBarVisibility="Disabled"
                      VerticalScrollBarVisibility="Disabled" />
             <Button x:Name="SystemNoticeProfile" Visibility="Collapsed"
-                    Click="OnOpenSystemNoticeProfile" ToolTip="Open profile"
+                    Click="OnOpenSystemNoticeProfile" ToolTip="Open profile" Cursor="Hand"
                     Background="Transparent" BorderThickness="0" Padding="0">
                 <TextBlock x:Name="SystemNoticeProfileText" TextWrapping="Wrap"
                            TextAlignment="Center" Foreground="{StaticResource TextMuted}" />
@@ -62,7 +62,7 @@
                            Opacity="0.6"
                            FontSize="10" />
                 <Button x:Name="EditedButton" Content="Edited" Visibility="Collapsed"
-                        Click="OnShowEditHistory" Background="Transparent" BorderThickness="0"
+                        Click="OnShowEditHistory" Background="Transparent" BorderThickness="0" Cursor="Hand"
                         Foreground="White" Opacity="0.8" FontSize="10" Padding="0"
                         Margin="6,0,0,0" ToolTip="Edit history" />
                 <TextBlock x:Name="DeliveryText"

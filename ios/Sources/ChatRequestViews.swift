@@ -106,6 +106,7 @@ struct IrisMessageRequestBar: View {
                 )
         }
         .buttonStyle(.plain)
+        .irisHoverPointer()
         .accessibilityIdentifier(accessibilityId)
     }
 }

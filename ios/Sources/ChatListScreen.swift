@@ -324,6 +324,7 @@ struct ChatListSearchField: View {
                         .foregroundStyle(palette.muted)
                 }
                 .buttonStyle(.plain)
+                .irisHoverPointer()
                 .accessibilityLabel("Close search")
                 .accessibilityIdentifier("chatListSearchCloseButton")
             } else if !text.isEmpty {
@@ -335,6 +336,7 @@ struct ChatListSearchField: View {
                         .foregroundStyle(palette.muted)
                 }
                 .buttonStyle(.plain)
+                .irisHoverPointer()
                 .accessibilityLabel("Clear search")
             }
         }
@@ -853,6 +855,7 @@ struct InChatSearchSheet: View {
                             .foregroundStyle(palette.muted)
                     }
                     .buttonStyle(.plain)
+                    .irisHoverPointer()
                 }
                 IrisModalCloseButton(action: onClose)
                     .accessibilityIdentifier("inChatSearchCloseButton")

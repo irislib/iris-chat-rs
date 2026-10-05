@@ -19,11 +19,13 @@ public partial class ComposerBar : UserControl
     public event Action<bool>? AttachRequested;
     public event Action? Typing;
     public event Action? StoppedTyping;
+    public event Action<string>? DraftChanged;
     public Func<AttachmentPasteDestination?>? AttachmentPasteScope { get; set; }
     private readonly ClipboardAttachmentFiles _clipboardFiles = new();
     private long _draftGeneration;
 
     private bool _wasTyping;
+    private bool _restoringDraft;
     private bool _directSendAllowed;
     public bool DirectSendAllowed
     {
@@ -58,11 +60,22 @@ public partial class ComposerBar : UserControl
         SendLabel.Text = "Send";
         AttachButton.IsEnabled = true;
         _draftGeneration++;
-        Input.Clear();
+        RestoreDraft(string.Empty);
         _clipboardFiles.Dispose();
         _staged.Clear();
         UpdateStagedVisibility();
         _wasTyping = false;
+    }
+
+    public void RestoreDraft(string text)
+    {
+        _restoringDraft = true;
+        try
+        {
+            Input.Text = text;
+            Input.CaretIndex = text.Length;
+        }
+        finally { _restoringDraft = false; }
     }
 
     public void AddAttachments(IEnumerable<string> filePaths)
@@ -88,8 +101,7 @@ public partial class ComposerBar : UserControl
         SendLabel.Text = "Save";
         AttachButton.IsEnabled = false;
         UpdateStagedVisibility();
-        Input.Text = text;
-        Input.CaretIndex = text.Length;
+        RestoreDraft(text);
         FocusInput();
     }
 
@@ -101,8 +113,9 @@ public partial class ComposerBar : UserControl
         EditBanner.Visibility = Visibility.Collapsed;
         SendLabel.Text = "Send";
         AttachButton.IsEnabled = true;
-        Input.Text = _savedDraft;
+        RestoreDraft(_savedDraft);
         _savedDraft = string.Empty;
+        if (string.IsNullOrWhiteSpace(Input.Text)) StopTyping();
         UpdateStagedVisibility();
         FocusInput();
     }
@@ -138,9 +151,11 @@ public partial class ComposerBar : UserControl
         {
             var text = Input.Text;
             ComposerTextLayout.Update(Input, text.Length);
+            if (_restoringDraft) return;
+            if (EditingMessageId == null) DraftChanged?.Invoke(text);
             var hasText = !string.IsNullOrWhiteSpace(text);
             if (hasText && !_wasTyping) { _wasTyping = true; Typing?.Invoke(); }
-            else if (!hasText && _wasTyping) { _wasTyping = false; StoppedTyping?.Invoke(); }
+            else if (!hasText) StopTyping();
         }
         finally { timing?.Mark("composer_text_changed_callback"); }
     }
@@ -248,10 +263,17 @@ public partial class ComposerBar : UserControl
         _draftGeneration++;
         Submitted?.Invoke(text, paths);
         _clipboardFiles.HandOff(paths);
-        Input.Clear();
+        RestoreDraft(string.Empty);
         _staged.Clear();
         UpdateStagedVisibility();
-        if (_wasTyping) { _wasTyping = false; StoppedTyping?.Invoke(); }
+        StopTyping();
+    }
+
+    private void StopTyping()
+    {
+        if (!_wasTyping) return;
+        _wasTyping = false;
+        StoppedTyping?.Invoke();
     }
 
     private void UpdateStagedVisibility()

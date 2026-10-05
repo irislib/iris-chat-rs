@@ -583,11 +583,15 @@ struct DesktopSidebarChatRow: View, Equatable {
             && lhs.preferences == rhs.preferences
     }
 
-    private var preview: String {
+    private var preview: Text {
         if chat.isTyping {
-            return "Typing"
+            return Text("Typing")
         }
-        return chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"
+        let draft = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !draft.isEmpty {
+            return Text("Draft: ").italic() + Text(draft)
+        }
+        return Text(chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet")
     }
 
     var body: some View {
@@ -641,7 +645,7 @@ struct DesktopSidebarChatRow: View, Equatable {
                     }
 
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(preview)
+                        preview
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(chat.unreadCount > 0 ? palette.textPrimary : palette.muted)
                             .lineLimit(2)

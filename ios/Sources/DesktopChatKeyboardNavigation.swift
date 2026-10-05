@@ -51,7 +51,7 @@ struct DesktopKeyboardChatList<Item, Row: View>: View {
 
     private func focusRow(_ chatID: String?) {
         focusedChatID = chatID
-        if let chatID { proxy.scrollTo(chatID, anchor: .center) }
+        if let chatID { proxy.scrollTo(chatID) }
     }
 
     private func moveFocus(_ offset: Int) -> Bool {

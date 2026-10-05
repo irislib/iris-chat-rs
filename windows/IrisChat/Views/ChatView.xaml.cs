@@ -23,6 +23,9 @@ public partial class ChatView : UserControl
 
     private DateTime? _checkingSince;
     private readonly System.Windows.Threading.DispatcherTimer _capabilityTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private readonly System.Windows.Threading.DispatcherTimer _draftTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    private (string ChatId, string Text)? _pendingDraft;
+    private Window? _hostWindow;
     private string? _focusedChatId;
     private MessageTimeline? _timeline;
 
@@ -41,6 +44,7 @@ public partial class ChatView : UserControl
             files => Composer.AddAttachments(files),
             active => FileDropHighlight.Visibility = active ? Visibility.Visible : Visibility.Collapsed);
         _capabilityTimer.Tick += (_, _) => { _capabilityTimer.Stop(); Refresh(); };
+        _draftTimer.Tick += (_, _) => FlushDraft();
         PreviewKeyDown += OnUserActivity;
         PreviewMouseDown += OnUserActivity;
         PreviewMouseMove += OnUserActivity;
@@ -48,15 +52,26 @@ public partial class ChatView : UserControl
         TouchDown += OnUserActivity;
         Loaded += (_, _) =>
         {
+            var hostWindow = Window.GetWindow(this);
+            if (_hostWindow != hostWindow)
+            {
+                if (_hostWindow != null) _hostWindow.Closing -= OnWindowClosing;
+                _hostWindow = hostWindow;
+                if (_hostWindow != null) _hostWindow.Closing += OnWindowClosing;
+            }
             App.CurrentManager.PropertyChanged += OnChanged;
             Composer.Submitted += OnSubmit;
             Composer.AttachRequested += OnAttach;
             Composer.Typing += OnTyping;
             Composer.StoppedTyping += OnStoppedTyping;
+            Composer.DraftChanged += OnDraftChanged;
             Refresh();
         };
         Unloaded += (_, _) =>
         {
+            FlushDraft();
+            if (_hostWindow != null) _hostWindow.Closing -= OnWindowClosing;
+            _hostWindow = null;
             _capabilityTimer.Stop();
             _checkingSince = null;
             DirectCapabilityPanel.Visibility = Visibility.Collapsed;
@@ -65,6 +80,7 @@ public partial class ChatView : UserControl
             Composer.AttachRequested -= OnAttach;
             Composer.Typing -= OnTyping;
             Composer.StoppedTyping -= OnStoppedTyping;
+            Composer.DraftChanged -= OnDraftChanged;
         };
     }
 
@@ -90,7 +106,9 @@ public partial class ChatView : UserControl
         var capabilityBlocked = directCapability != null && directCapability != DirectChatCapabilityState.Available;
         if (chatChanged)
         {
+            FlushDraft();
             Composer.Clear();
+            Composer.RestoreDraft(chat.draft);
             _checkingSince = null;
             _capabilityTimer.Stop();
             _focusedChatId = chat.chatId;
@@ -223,6 +241,7 @@ public partial class ChatView : UserControl
         if (!CanAttachFiles()) return;
         var chatId = App.CurrentManager.CurrentChat?.chatId;
         if (string.IsNullOrEmpty(chatId)) return;
+        FlushDraft();
         _timeline!.FollowLatest();
         if (stagedAttachments != null && stagedAttachments.Count > 0)
         {
@@ -287,6 +306,24 @@ public partial class ChatView : UserControl
         var chatId = App.CurrentManager.CurrentChat?.chatId;
         if (!string.IsNullOrEmpty(chatId)) App.CurrentManager.SendTyping(chatId);
     }
+
+    private void OnDraftChanged(string text)
+    {
+        if (_focusedChatId is not { } chatId) return;
+        _pendingDraft = (chatId, text);
+        _draftTimer.Stop();
+        _draftTimer.Start();
+    }
+
+    private void FlushDraft()
+    {
+        _draftTimer.Stop();
+        if (_pendingDraft is not { } draft) return;
+        _pendingDraft = null;
+        App.CurrentManager.SetChatDraft(draft.ChatId, draft.Text);
+    }
+
+    private void OnWindowClosing(object? sender, CancelEventArgs e) => FlushDraft();
 
     private void OnStoppedTyping()
     {
