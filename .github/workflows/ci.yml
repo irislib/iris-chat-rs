@@ -7,9 +7,13 @@ on:
       - dev
     paths-ignore:
       - "**/*.md"
+      - ".github/workflows/release.yml"
+      - "scripts/test_release_workflow.py"
   pull_request:
     paths-ignore:
       - "**/*.md"
+      - ".github/workflows/release.yml"
+      - "scripts/test_release_workflow.py"
   workflow_dispatch:
     inputs:
       scope:

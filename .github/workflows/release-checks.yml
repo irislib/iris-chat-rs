@@ -1,0 +1,57 @@
+name: Release checks
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/release-checks.yml"
+      - "RELEASE_NOTES.md"
+      - "scripts/test_release_workflow.py"
+      - "scripts/test_release_notes.py"
+      - "scripts/render-release-notes.py"
+      - "scripts/build_common.sh"
+      - "scripts/test_build_common.py"
+  pull_request:
+    paths:
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/release-checks.yml"
+      - "RELEASE_NOTES.md"
+      - "scripts/test_release_workflow.py"
+      - "scripts/test_release_notes.py"
+      - "scripts/render-release-notes.py"
+      - "scripts/build_common.sh"
+      - "scripts/test_build_common.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check release workflows and versions
+        run: |
+          set -Eeuo pipefail
+          ruby --version
+          python3 scripts/test_release_workflow.py
+          python3 scripts/test_release_notes.py
+          python3 scripts/test_build_common.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
+          tag = re.search(r"^## (.+)$", Path("RELEASE_NOTES.md").read_text(), re.MULTILINE).group(1)
+          subprocess.run([sys.executable, "scripts/render-release-notes.py",
+                          "--channel", "validate", "--tag", tag], check=True)
+          PY

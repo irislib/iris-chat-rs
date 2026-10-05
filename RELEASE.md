@@ -99,6 +99,17 @@ just verify-fast
 
 The hosted release workflow runs the authoritative release gate.
 
+Release workflow and release-note edits run the short **Release checks**
+workflow. Changes limited to Markdown, `.github/workflows/release.yml`, and
+`scripts/test_release_workflow.py` do not restart the full native CI matrix.
+Before tagging, require all nine jobs to succeed in a full CI run from `main`
+with the default scope, or an explicitly selected `all` run. Skipped platform
+jobs do not qualify. Record the run ID and source commit, then compare that
+commit with the candidate: only the excluded paths above may differ. Any other
+difference requires a new full CI run. When Release checks applies, require it
+to succeed at the exact candidate commit and record that run ID too.
+The tagged release still runs every release and mesh resource gate.
+
 Bluetooth changes also require a physical iPhone/Android check before release.
 `--on-device` checks LAN visibility; it does not exercise Bluetooth, and the
 opt-in `FipsBlePhysicalUITests` skip without `IRIS_FIPS_PHYSICAL_PEER_NPUB`.

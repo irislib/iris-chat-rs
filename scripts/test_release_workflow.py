@@ -11,6 +11,31 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_release_only_edits_keep_contract_checks_without_native_rebuilds(self) -> None:
+        ci = (ROOT / ".github/workflows/ci.yml").read_text()
+        expected = [
+            '      - "**/*.md"',
+            '      - ".github/workflows/release.yml"',
+            '      - "scripts/test_release_workflow.py"',
+        ]
+        # Keep this exclusion narrow: changing any app/build input must still
+        # trigger the original full platform checks.
+        for block in ci.split("    paths-ignore:\n")[1:]:
+            lines = []
+            for line in block.splitlines():
+                if not line.startswith("      - "):
+                    break
+                lines.append(line)
+            self.assertEqual(lines, expected)
+        self.assertEqual(ci.count("    paths-ignore:\n"), 2)
+        quick = (ROOT / ".github/workflows/release-checks.yml").read_text()
+        for path in (".github/workflows/ci.yml", ".github/workflows/release.yml", "scripts/test_release_workflow.py"):
+            self.assertEqual(quick.count(f'      - "{path}"'), 2)
+        for script in ("test_release_workflow.py", "test_release_notes.py", "test_build_common.py"):
+            self.assertIn(f"python3 scripts/{script}", quick)
+        self.assertIn('"scripts/render-release-notes.py"', quick)
+        self.assertIn('"--channel", "validate"', quick)
+
     def test_resource_gate_binds_tag_commit_and_blocks_publication(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         pin = "e34fa190b41a3ced5148e92b103418004bdd0b65"
