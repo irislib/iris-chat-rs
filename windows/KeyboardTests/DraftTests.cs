@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Reflection;
+using System.Text.Json;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
@@ -67,7 +68,17 @@ internal static class DraftTests
         var preview = (TextBlock)row.FindName("PreviewText");
         Check(preview.Text == "Earlier message", "Whitespace-only drafts use the last message preview");
         row.Chat = row.Chat! with { draft = firstDraft };
-        Check(preview.Text == "Draft: Forest walk\nBring a map", "List trims the preview while storage retains the full draft");
+        var previewDiagnostic = JsonSerializer.Serialize(new
+        {
+            text = preview.Text,
+            inlines = preview.Inlines.Cast<Inline>().Select(inline => new { type = inline.GetType().Name, text = (inline as Run)?.Text }).ToArray(),
+            textRange = new TextRange(preview.ContentStart, preview.ContentEnd).Text,
+            draft = row.Chat.draft,
+            isTyping = row.Chat.isTyping,
+        });
+        Console.WriteLine("Synthetic draft preview diagnostic: " + previewDiagnostic);
+        Check(preview.Text == "Draft: Forest walk\nBring a map",
+            "List trims the preview while storage retains the full draft; " + previewDiagnostic);
         Check(preview.Inlines.OfType<Run>().First().FontStyle == FontStyles.Italic, "Draft prefix is distinguished from message text");
         row.Chat = row.Chat! with { isTyping = true };
         Check(preview.Text == "typing…", "Typing takes precedence over the saved draft");

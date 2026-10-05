@@ -69,9 +69,16 @@ final class DesktopSidebarDraftPreviewTests: XCTestCase {
     }
 
     private func accessibilityText(_ element: Any, depth: Int = 0) -> String {
-        guard depth < 12, let accessible = element as? NSAccessibility else { return "" }
-        let own = [accessible.accessibilityLabel(), accessible.accessibilityValue() as? String].compactMap { $0 }
-        let children = (accessible.accessibilityChildren() ?? []).map { accessibilityText($0, depth: depth + 1) }
+        guard depth < 12, let accessible = element as? NSObject else { return "" }
+        // SwiftUI accessibility nodes expose AppKit getters without adopting
+        // the complete NSAccessibilityProtocol.
+        func value(_ name: String) -> Any? {
+            let selector = NSSelectorFromString(name)
+            guard accessible.responds(to: selector) else { return nil }
+            return accessible.perform(selector)?.takeUnretainedValue()
+        }
+        let own = [value("accessibilityLabel") as? String, value("accessibilityValue") as? String].compactMap { $0 }
+        let children = (value("accessibilityChildren") as? [Any] ?? []).map { accessibilityText($0, depth: depth + 1) }
         return (own + children).joined(separator: "\n")
     }
 
