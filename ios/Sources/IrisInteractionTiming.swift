@@ -4,15 +4,6 @@ import OSLog
 
 private let irisInteractionLogger = Logger(subsystem: "fi.siriusbusiness.irischat", category: "interaction")
 
-#if DEBUG && os(iOS)
-import Darwin
-
-func irisEmitAnonymousPaginationDiagnostic(_ text: String) {
-    irisInteractionLogger.notice("\(text, privacy: .public)")
-    text.withCString { _ = fputs($0, stderr) }
-}
-#endif
-
 protocol IrisInteractionMessage {
     var id: String { get }
     var body: String { get }

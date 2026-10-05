@@ -16,7 +16,7 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, core, android, windows, apple, macos, ios-history]
+        options: [all, core, android, windows, apple, macos]
 
 permissions:
   contents: read
@@ -319,7 +319,7 @@ jobs:
           retention-days: 14
 
   ios:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'ios-history' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' }}
     name: iOS simulator build and composer tests
     runs-on: macos-15
     timeout-minutes: 75
@@ -367,23 +367,15 @@ jobs:
           key: ${{ steps.ios_cargo_cache.outputs.cache-primary-key }}
 
       - name: iOS native composer, clipboard, and timeline tests
-        env:
-          IRIS_CI_TEST_SCOPE: ${{ inputs.scope }}
         run: |
           mkdir -p work/clipboard
-          ios_ui_tests=(
-            -only-testing:IrisChatUITests/ChatTimelineUITests/testReopeningLongChatLandsAtBottom
-            -only-testing:IrisChatUITests/IrisChatTimelineUITests/testSearchHitInSeededLongChatOpensInTimeline
-            -only-testing:IrisChatUITests/ChatPaginationUITests
-          )
-          if [[ "${IRIS_CI_TEST_SCOPE:-}" == "ios-history" ]]; then
-            ios_ui_tests=(-only-testing:IrisChatUITests/ChatPaginationUITests/testMixedHeightHistoryPrependPreservesVisibleMessage)
-          fi
           xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
             -destination "$(./scripts/ios-simulator-destination)" \
             -parallel-testing-enabled NO \
             -only-testing:IrisChatTests \
-            "${ios_ui_tests[@]}" \
+            -only-testing:IrisChatUITests/ChatTimelineUITests/testReopeningLongChatLandsAtBottom \
+            -only-testing:IrisChatUITests/IrisChatTimelineUITests/testSearchHitInSeededLongChatOpensInTimeline \
+            -only-testing:IrisChatUITests/ChatPaginationUITests \
             -resultBundlePath work/clipboard/ios.xcresult test
 
       - name: Upload iOS test results
