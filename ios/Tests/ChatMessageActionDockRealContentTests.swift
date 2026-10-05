@@ -78,8 +78,22 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
         let items = [long, incoming, outgoing]
         let sink = FrameSink()
         var activeID: String? = nil
-        let renderer = ImageRenderer(content: timeline(items, activeID: activeID, sink: sink))
-        renderer.scale = 2
+        let host = NSHostingView(rootView: timeline(items, activeID: activeID, sink: sink))
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 927, height: 600),
+                              styleMask: .titled, backing: .buffered, defer: false)
+        window.title = "Wide message dock test fixture"
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        host.frame = CGRect(x: 0, y: 0, width: 927, height: 600)
+        if let screen = NSScreen.main {
+            window.setFrameTopLeftPoint(NSPoint(x: screen.visibleFrame.minX + 16,
+                                                y: screen.visibleFrame.maxY - 16))
+        }
+        window.makeKeyAndOrderFront(nil)
+        defer {
+            window.orderOut(nil)
+            window.close()
+        }
         var snapshots: [(String, Snapshot)] = []
         var captureFailed = false
         let failuresBefore = testRun?.failureCount ?? 0
@@ -91,8 +105,9 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
             }
         }
         func captureStage(_ stage: String) throws -> Snapshot {
-            let snapshot = try captureRendered(stage: stage, name: "wide-timeline", message: incoming) {
-                let image = renderer.cgImage
+            let snapshot = try captureRendered(stage: stage, name: "wide-timeline", message: incoming,
+                readiness: { self.nativeWindowReadiness(host: host, window: window) }) {
+                let image = self.nativeBitmap(host: host, window: window)
                 return (image, sink.frames)
             }
             snapshots.append((stage, snapshot))
@@ -104,9 +119,9 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
                 activeID = irisNextActiveMessageActionDockId(
                     current: activeID, messageId: selected.id, isActive: true)
                 XCTAssertEqual(activeID, selected.id)
-                // Keep the renderer's view graph: the production EquatableView
+                // Keep the native host's view graph: the production EquatableView
                 // must update when only the selected message ID changes.
-                renderer.content = timeline(items, activeID: activeID, sink: sink)
+                host.rootView = timeline(items, activeID: activeID, sink: sink)
                 let visible = try captureStage(selected.isOutgoing ? "outgoing-visible" : "incoming-visible")
                 try assertTimelineFrames(visible, match: hidden, items: items)
                 guard let bubble = visible.frames[selected.id] else {
@@ -118,7 +133,7 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
             }
             activeID = irisNextActiveMessageActionDockId(current: activeID, messageId: incoming.id, isActive: false)
             XCTAssertEqual(activeID, outgoing.id, "A late leave from the prior row must keep the selected dock")
-            renderer.content = timeline(items, activeID: activeID, sink: sink)
+            host.rootView = timeline(items, activeID: activeID, sink: sink)
             let stillOutgoing = try captureStage("outgoing-after-prior-leave")
             try assertTimelineFrames(stillOutgoing, match: hidden, items: items)
             guard let outgoingBubble = stillOutgoing.frames[outgoing.id] else {
@@ -128,7 +143,7 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
                 context: "927 pt lazy timeline, prior incoming row left")
             activeID = irisNextActiveMessageActionDockId(current: activeID, messageId: outgoing.id, isActive: false)
             XCTAssertNil(activeID)
-            renderer.content = timeline(items, activeID: activeID, sink: sink)
+            host.rootView = timeline(items, activeID: activeID, sink: sink)
             let hiddenAgain = try captureStage("hidden-again")
             try assertTimelineFrames(hiddenAgain, match: hidden, items: items)
             XCTAssertTrue(hidden.raster.sameOutsideBubble(as: hiddenAgain.raster, bubble: hidden.bubble),
@@ -359,7 +374,35 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
         }
     }
 
+    private func nativeWindowReadiness(host: NSView, window: NSWindow) -> String? {
+        let expectedBounds = CGRect(x: 0, y: 0, width: 927, height: 600)
+        guard window.isVisible, window.isKeyWindow, window.occlusionState.contains(.visible),
+              host.window === window, !host.isHiddenOrHasHiddenAncestor, host.bounds == expectedBounds else {
+            return "Native window not ready: visible=\(window.isVisible), key=\(window.isKeyWindow), "
+                + "occluded=\(!window.occlusionState.contains(.visible)), hostAttached=\(host.window === window), "
+                + "hostHidden=\(host.isHiddenOrHasHiddenAncestor), hostBounds=\(host.bounds)"
+        }
+        return nil
+    }
+
+    private func nativeBitmap(host: NSView, window: NSWindow) -> CGImage? {
+        window.displayIfNeeded()
+        host.layoutSubtreeIfNeeded()
+        host.displayIfNeeded()
+        let width = Int(host.bounds.width * Raster.scale)
+        let height = Int(host.bounds.height * Raster.scale)
+        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: width * 4, bitsPerPixel: 32) else { return nil }
+        // Render the actual native viewport at two pixels per point. The
+        // production preference uses this same hosting view's local points.
+        bitmap.size = host.bounds.size
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        return bitmap.cgImage
+    }
+
     private func captureRendered(stage: String, name: String, message: ChatMessageSnapshot,
+                                 readiness: () -> String? = { nil },
                                  render: () -> (CGImage?, [String: CGRect])) throws -> Snapshot {
         let deadline = Date().addingTimeInterval(2)
         var readyPasses = 0
@@ -367,7 +410,14 @@ final class ChatMessageActionDockRealContentTests: XCTestCase {
         var latestImage: CGImage?
         var diagnostic = "No rendered image"
         repeat {
-            let (renderedImage, frames) = render()
+            let rendered: (CGImage?, [String: CGRect])
+            if let reason = readiness() {
+                diagnostic = reason
+                rendered = (nil, [:])
+            } else {
+                rendered = render()
+            }
+            let (renderedImage, frames) = rendered
             if let image = renderedImage {
                 latestImage = image
                 if let bubble = frames[message.id], bubble.width > 0, bubble.height > 0,
