@@ -2,6 +2,24 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.5.2
+
+### GitHub
+
+- Show a pointing-hand cursor on clickable desktop avatars, attachment previews, and other controls.
+- Show unsent drafts in the Mac and Windows chat lists. Save Windows drafts when switching chats or closing the window, keep message edits separate, and clear drafts after sending.
+- Keep the Mac chat list steady during Tab navigation, scrolling only enough to reveal the focused chat.
+
+### Apple
+
+- Show unsent drafts in the Mac chat list.
+- Keep the Mac chat list steady when navigating with Tab.
+- Show a pointing-hand cursor on clickable Mac avatars, attachment previews, and other controls.
+
+### Zapstore
+
+- Desktop interface improvements.
+
 ## v2026.10.5.1
 
 ### GitHub
