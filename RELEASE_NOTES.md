@@ -9,6 +9,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Show a pointing-hand cursor on clickable desktop avatars, attachment previews, and other controls.
 - Show unsent drafts in the Mac and Windows chat lists. Save Windows drafts when switching chats or closing the window, keep message edits separate, and clear drafts after sending.
 - Keep the Mac chat list steady during Tab navigation, scrolling only enough to reveal the focused chat.
+- Save command-line sign-in data with an atomic file replacement so an interrupted update cannot truncate the existing file.
 
 ### Apple
 

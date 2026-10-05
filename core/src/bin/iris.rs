@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::io::Write;
 #[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -18,6 +18,7 @@ use iris_chat_core::{
 use serde::Serialize;
 use serde_json::{json, Value};
 
+mod iris_account_file;
 mod iris_cli_run;
 mod iris_contacts;
 mod iris_service;
@@ -1933,7 +1934,9 @@ fn read_account_bundle(data_dir: &Path) -> Result<Option<AccountBundle>> {
 fn write_account_bundle(data_dir: &Path, bundle: &AccountBundle) -> Result<()> {
     ensure_private_data_dir(data_dir)?;
     let path = account_bundle_path(data_dir);
-    write_private_account_bundle_file(&path, &serde_json::to_vec_pretty(bundle)?)
+    secure_account_bundle_file(&path)?;
+    iris_account_file::replace(&path, &serde_json::to_vec_pretty(bundle)?)
+        .with_context(|| format!("write account bundle {}", path.display()))
 }
 
 fn remove_account_bundle(data_dir: &Path) -> Result<()> {
@@ -2067,27 +2070,6 @@ fn secure_account_bundle_file(path: &Path) -> Result<()> {
 #[cfg(not(unix))]
 fn secure_account_bundle_file(_path: &Path) -> Result<()> {
     Ok(())
-}
-
-#[cfg(unix)]
-fn write_private_account_bundle_file(path: &Path, bytes: &[u8]) -> Result<()> {
-    secure_account_bundle_file(path)?;
-    let mut options = std::fs::OpenOptions::new();
-    options.create(true).truncate(true).write(true).mode(0o600);
-    let mut file = options
-        .open(path)
-        .with_context(|| format!("write account bundle {}", path.display()))?;
-    file.write_all(bytes)
-        .with_context(|| format!("write account bundle {}", path.display()))?;
-    file.flush()
-        .with_context(|| format!("flush account bundle {}", path.display()))?;
-    drop(file);
-    secure_account_bundle_file(path)
-}
-
-#[cfg(not(unix))]
-fn write_private_account_bundle_file(path: &Path, bytes: &[u8]) -> Result<()> {
-    std::fs::write(path, bytes).with_context(|| format!("write account bundle {}", path.display()))
 }
 
 #[cfg(unix)]

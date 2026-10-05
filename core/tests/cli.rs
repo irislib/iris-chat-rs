@@ -558,8 +558,10 @@ fn account_profile_preserves_omitted_fields_across_processes() {
             .unwrap();
         assert!(
             output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stdout)
+            "iris failed args={args:?} status={}\nstdout={}\nstderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
         );
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
