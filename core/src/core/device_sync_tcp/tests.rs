@@ -328,6 +328,7 @@ fn sender_rejects_oversized_records_before_the_command_queue() {
     let (tx, rx) = flume::bounded(1);
     let sender = DeviceSyncTcpSender {
         tx,
+        peers: Arc::new(Mutex::new(HashSet::new())),
         max_record_bytes: 4,
         dirty: Arc::new(Mutex::new(HashSet::new())),
         control_retry: Arc::new(Mutex::new(HashMap::new())),
@@ -583,4 +584,121 @@ async fn authenticated_same_host_non_sibling_cannot_read_device_sync() {
     owner_task.abort();
     attacker.shutdown().await.expect("shutdown attacker");
     owner.shutdown().await.expect("shutdown owner");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn authorized_devices_exchange_records_through_a_seed_without_direct_links() {
+    use fips_core::config::{TransportInstances, WebSocketConfig};
+    async fn endpoint(websocket: WebSocketConfig) -> Arc<FipsEndpoint> {
+        let mut config = fips_core::Config::new();
+        config.node.control.enabled = false;
+        config.node.discovery.nostr.enabled = false;
+        config.node.discovery.local.enabled = false;
+        config.transports.websocket = TransportInstances::Single(websocket);
+        Arc::new(
+            FipsEndpoint::builder()
+                .config(config)
+                .without_system_tun()
+                .bind()
+                .await
+                .unwrap(),
+        )
+    }
+    let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = reservation.local_addr().unwrap();
+    drop(reservation);
+    let seed = endpoint(WebSocketConfig {
+        bind_addr: Some(address.to_string()),
+        ..Default::default()
+    })
+    .await;
+    let client = || WebSocketConfig {
+        seed_urls: vec![format!("ws://{address}/fips")],
+        ..Default::default()
+    };
+    let first = endpoint(client()).await;
+    let second = endpoint(client()).await;
+    wait_for_authenticated_peer(&first, seed.npub()).await;
+    wait_for_authenticated_peer(&second, seed.npub()).await;
+    let (first_tx, first_rx) = flume::unbounded();
+    let (second_tx, second_rx) = flume::unbounded();
+    let (first_sender, first_task) = start_device_sync_tcp(
+        first.clone(),
+        HashSet::new(),
+        39_020,
+        1024,
+        b"first history request".to_vec(),
+        b"resync".to_vec(),
+        first_tx,
+    )
+    .await
+    .unwrap();
+    let (second_sender, second_task) = start_device_sync_tcp(
+        second.clone(),
+        HashSet::from([first.npub().to_string()]),
+        39_020,
+        1024,
+        b"second history request".to_vec(),
+        b"resync".to_vec(),
+        second_tx,
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        first_rx.is_empty() && second_rx.is_empty(),
+        "an unapproved device cannot exchange records"
+    );
+    first_sender.update_peers(HashSet::from([second.npub().to_string()]));
+    let received = tokio::time::timeout(Duration::from_secs(15), async {
+        for (rx, expected) in [
+            (&first_rx, b"second history request".as_slice()),
+            (&second_rx, b"first history request".as_slice()),
+        ] {
+            loop {
+                if let CoreMsg::Internal(event) = rx.recv_async().await.unwrap() {
+                    if let InternalEvent::DeviceSyncPacket { data, .. } = *event {
+                        // An authorization retry may request a fresh sync before
+                        // the initial history request on the replacement stream.
+                        if data == b"resync" { continue; }
+                        assert_eq!(data, expected);
+                        break;
+                    }
+                }
+            }
+        }
+    })
+    .await;
+    for (local, remote) in [(&first, &second), (&second, &first)] {
+        assert!(
+            !local
+                .peers()
+                .await
+                .unwrap()
+                .iter()
+                .any(|p| p.connected && p.npub == remote.npub()),
+            "fixture must not establish a direct sibling link"
+        );
+    }
+    if received.is_ok() {
+        first_sender.update_peers(HashSet::new());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let first_identity = PeerIdentity::from_npub(first.npub()).unwrap();
+        second_sender.send_batch(first_identity, vec![b"revoked device data".to_vec()]);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(500), first_rx.recv_async())
+                .await
+                .is_err(),
+            "revocation must apply to an existing stream on the retained endpoint"
+        );
+    }
+    first_task.abort();
+    second_task.abort();
+    first.shutdown().await.unwrap();
+    second.shutdown().await.unwrap();
+    seed.shutdown().await.unwrap();
+    assert!(
+        received.is_ok(),
+        "authorized TCP history must work through an intermediate FIPS seed"
+    );
 }

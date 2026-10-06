@@ -899,3 +899,57 @@ fn device_sync_keeps_link_boundary_when_another_device_is_added() {
     assert!(has_device_sync_message(&core, &peer.public_key().to_hex(), "offline-gap"),
         "adding a third device must not hide earlier eligible gaps between existing devices");
 }
+
+#[test]
+fn linking_first_sibling_starts_sync_on_a_preserved_mobile_endpoint() {
+    let owner = Keys::generate();
+    let local = Keys::generate();
+    let sibling = Keys::generate();
+    let (mut core, _, _dir) =
+        logged_in_test_core_with_updates("link-preserved-endpoint", &owner, &local);
+    core.logged_in.as_mut().unwrap().relay_urls.clear();
+    let websocket = fips_core::config::WebSocketConfig {
+        bind_addr: Some(reserve_tcp_addr().to_string()),
+        ..Default::default()
+    };
+    core.reconcile_device_sync_with_isolated_websocket_for_test(websocket.clone());
+    let (original, had_tcp, _, _) = core.same_host_runtime_for_test().unwrap();
+    assert!(!had_tcp);
+    // Mobile transport ownership forces reconciliation to retain this endpoint.
+    core.host_ble_attached = true;
+    configure_test_device_sync_profile(&mut core, &owner, &local, &sibling, None);
+    core.reconcile_device_sync_with_isolated_websocket_for_test(websocket);
+    let (updated, has_tcp, siblings, _) = core.same_host_runtime_for_test().unwrap();
+    assert!(Arc::ptr_eq(&original, &updated));
+    assert_eq!(siblings, 1);
+    assert!(
+        has_tcp,
+        "linking must start history sync even when the mobile endpoint is retained"
+    );
+    let third = Keys::generate();
+    let roster = core.app_keys.get_mut(&owner.public_key().to_hex()).unwrap();
+    let mut entry = roster.devices[1].clone();
+    entry.identity_pubkey_hex = third.public_key().to_hex();
+    roster.devices.push(entry);
+    roster.created_at_secs += 1;
+    core.reconcile_device_sync();
+    let (again, has_tcp, siblings, _) = core.same_host_runtime_for_test().unwrap();
+    assert!(Arc::ptr_eq(&original, &again));
+    assert!(
+        has_tcp,
+        "updating authorization must rebind the history service"
+    );
+    assert_eq!(siblings, 2);
+    let roster = core.app_keys.get_mut(&owner.public_key().to_hex()).unwrap();
+    roster
+        .devices
+        .retain(|device| device.identity_pubkey_hex == local.public_key().to_hex());
+    roster.created_at_secs += 1;
+    core.reconcile_device_sync();
+    let (_, _, siblings, _) = core.same_host_runtime_for_test().unwrap();
+    assert_eq!(
+        siblings, 0,
+        "removing devices updates the retained endpoint"
+    );
+    core.stop_device_sync();
+}

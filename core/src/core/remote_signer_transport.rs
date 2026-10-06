@@ -18,9 +18,7 @@ pub(super) async fn run(
 ) {
     let result = tokio::select! {
         _ = cancel => None,
-        result = tokio::time::timeout(Duration::from_secs(180), authorize(&mut rpc, &relays, connection, &challenge, &mut commands)) => {
-            Some(result.unwrap_or_else(|_| Err(anyhow::anyhow!("Sign-in timed out. Try again."))))
-        }
+        result = authorize(&mut rpc, &relays, connection, &challenge, &mut commands) => Some(result),
     };
     if let Some(Err(error)) = result {
         // Never surface encrypted payloads, secrets, or full connection URLs.
@@ -50,8 +48,9 @@ async fn authorize(
 ) -> anyhow::Result<()> {
     rpc.subscribe(relays).await?;
     if let Some(connection) = connection {
-        let result = rpc
-            .request(
+        let result = tokio::time::timeout(
+            Duration::from_secs(90),
+            rpc.request(
                 "connect",
                 vec![
                     connection.signer.to_hex(),
@@ -59,8 +58,10 @@ async fn authorize(
                     PERMISSIONS.into(),
                     serde_json::json!({"name":"Iris Chat", "url":"https://iris.to"}).to_string(),
                 ],
-            )
-            .await?;
+            ),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Sign-in timed out. Try again."))??;
         let value = result.as_str().unwrap_or_default();
         anyhow::ensure!(
             value == "ack" || (!connection.secret.is_empty() && value == connection.secret),
@@ -79,6 +80,20 @@ async fn authorize(
             break;
         }
     }
+    // A displayed code remains usable until the user cancels. Only the actual
+    // approval exchange is timed, after an authenticated phone has responded.
+    tokio::time::timeout(
+        Duration::from_secs(180),
+        finish_authorization(rpc, commands),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("Sign-in timed out. Try again."))?
+}
+
+async fn finish_authorization(
+    rpc: &mut SignerRpc,
+    commands: &mut mpsc::Receiver<RemoteSignRequest>,
+) -> anyhow::Result<()> {
     rpc.progress(crate::RemoteSignerPhase::WaitingForApproval, None);
     rpc.switch_relays().await?;
     let result = rpc.request("get_public_key", Vec::new()).await?;

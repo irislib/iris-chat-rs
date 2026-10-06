@@ -120,6 +120,15 @@ trace; restore the original network settings afterward. Keep the device logs
 and test result locally with the tested commit. A simulator pass is not a
 physical Bluetooth result.
 
+Device-linking or history-transfer changes also require the web repository's
+`pnpm test:public-device-link` against the intended native development build and
+web candidate. Set `IRIS_CHAT_RS_DIR` and the explicitly selected physical
+`IRIS_LINK_TEST_UDID`; use `IRIS_LINK_TEST_URL` for a candidate preview. Keep the
+default public message/FIPS servers. Require successful approval plus a pre-link
+message appearing exactly once after browser reload, and record both source
+commits with the private evidence. Repeat against the deployed web release.
+Local loopback interop and a phone's new device entry alone do not pass this gate.
+
 The hosted workflow also runs the pinned Iris Stack process gate against the exact tagged Chat
 commit and known-good public Drive/Hashtree versions. Relayless recovery, CPU,
 and bandwidth checks, including two 65-second idle windows covering periodic

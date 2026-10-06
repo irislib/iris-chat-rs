@@ -14,7 +14,7 @@ mod control;
 mod framing;
 
 const POLL_MILLIS: u64 = 25;
-const PEER_REFRESH_MILLIS: u64 = 250;
+const CONNECTION_RETRY_MILLIS: u64 = 250;
 const FRAME_HEADER_BYTES: usize = 4;
 const COMMAND_CAPACITY: usize = 16;
 const MAX_COMMAND_BATCH_RECORDS: usize = 64;
@@ -28,6 +28,7 @@ const MAX_DEFERRED_RECORDS_TOTAL: usize = 512;
 #[derive(Clone)]
 pub(super) struct DeviceSyncTcpSender {
     tx: flume::Sender<SendBatch>,
+    peers: Arc<Mutex<HashSet<String>>>,
     max_record_bytes: usize,
     dirty: Arc<Mutex<HashSet<String>>>,
     control_retry: Arc<Mutex<HashMap<String, ControlRecord>>>,
@@ -52,6 +53,12 @@ struct ControlRecord {
 }
 
 impl DeviceSyncTcpSender {
+    pub(super) fn update_peers(&self, peers: HashSet<String>) {
+        if let Ok(mut allowed) = self.peers.lock() {
+            *allowed = peers;
+        }
+    }
+
     pub(super) fn send_batch(&self, peer: PeerIdentity, records: Vec<Vec<u8>>) -> bool {
         if records
             .iter()
@@ -107,6 +114,7 @@ impl DeviceSyncTcpSender {
         (
             Self {
                 tx,
+                peers: Arc::new(Mutex::new(HashSet::new())),
                 max_record_bytes,
                 dirty: Arc::new(Mutex::new(HashSet::new())),
                 control_retry: Arc::new(Mutex::new(HashMap::new())),
@@ -143,9 +151,10 @@ pub(super) async fn start_device_sync_tcp(
     let (tx, rx) = flume::bounded(COMMAND_CAPACITY);
     let dirty = Arc::new(Mutex::new(HashSet::new()));
     let control_retry = Arc::new(Mutex::new(HashMap::new()));
+    let peers = Arc::new(Mutex::new(allowed_peers));
     let task = tokio::spawn(run_device_sync_tcp(
         endpoint,
-        allowed_peers,
+        peers.clone(),
         tcp,
         rx,
         dirty.clone(),
@@ -159,6 +168,7 @@ pub(super) async fn start_device_sync_tcp(
     Ok((
         DeviceSyncTcpSender {
             tx,
+            peers,
             max_record_bytes,
             dirty,
             control_retry,
@@ -170,7 +180,7 @@ pub(super) async fn start_device_sync_tcp(
 #[allow(clippy::too_many_arguments)]
 async fn run_device_sync_tcp(
     endpoint: Arc<FipsEndpoint>,
-    allowed_peers: HashSet<String>,
+    peers: Arc<Mutex<HashSet<String>>>,
     mut tcp: FipsTcpEndpoint,
     commands: flume::Receiver<SendBatch>,
     dirty: Arc<Mutex<HashSet<String>>>,
@@ -186,13 +196,13 @@ async fn run_device_sync_tcp(
         Ok(identity) => identity,
         Err(_) => return,
     };
-    let mut connected = HashSet::new();
+    let mut allowed_peers = HashSet::new();
     let mut connections = HashMap::<String, ConnectionId>::new();
     let mut readers = HashMap::<ConnectionId, RecordReader>::new();
     let mut pending = HashMap::<String, VecDeque<PendingRecord>>::new();
     let mut pending_count = 0;
     let mut requested = HashSet::<ConnectionId>::new();
-    let mut last_peer_refresh = 0;
+    let mut last_connection_retry = 0;
     let mut deferred = HashMap::<String, VecDeque<Vec<u8>>>::new();
     let mut deferred_count = 0;
 
@@ -228,28 +238,50 @@ async fn run_device_sync_tcp(
         }
 
         let now = elapsed_millis(started);
-        if now.saturating_sub(last_peer_refresh) >= PEER_REFRESH_MILLIS {
-            last_peer_refresh = now;
-            if let Ok(peers) = endpoint.peers().await {
-                connected = peers
-                    .into_iter()
-                    .filter(|peer| peer.connected && allowed_peers.contains(&peer.npub))
-                    .map(|peer| peer.npub)
-                    .collect();
-                reconcile_connections(
-                    &local,
-                    &connected,
-                    &mut connections,
-                    &mut readers,
-                    &mut pending,
-                    &mut requested,
-                    &dirty,
-                    &mut tcp,
-                    max_record_bytes,
-                    now,
-                )
-                .await;
+        let current_peers = peers.lock().map(|peers| peers.clone()).unwrap_or_default();
+        let authorization_changed = allowed_peers != current_peers;
+        if authorization_changed {
+            allowed_peers = current_peers;
+            pending.retain(|peer, records| {
+                if allowed_peers.contains(peer) {
+                    return true;
+                }
+                pending_count = pending_count.saturating_sub(records.len());
+                false
+            });
+            deferred.retain(|peer, records| {
+                if allowed_peers.contains(peer) {
+                    return true;
+                }
+                deferred_count = deferred_count.saturating_sub(records.len());
+                false
+            });
+            if let Ok(mut controls) = control_retry.lock() {
+                controls.retain(|peer, _| allowed_peers.contains(peer));
             }
+            if let Ok(mut dirty) = dirty.lock() {
+                dirty.retain(|peer| allowed_peers.contains(peer));
+            }
+        }
+        if authorization_changed
+            || now.saturating_sub(last_connection_retry) >= CONNECTION_RETRY_MILLIS
+        {
+            last_connection_retry = now;
+            // An authenticated sibling can be reached through another FIPS node.
+            // Link-layer adjacency is not a prerequisite for end-to-end TCP.
+            reconcile_connections(
+                &local,
+                &allowed_peers,
+                &mut connections,
+                &mut readers,
+                &mut pending,
+                &mut requested,
+                &dirty,
+                &mut tcp,
+                max_record_bytes,
+                now,
+            )
+            .await;
         }
 
         let _ = tcp.poll(now).await;
@@ -270,7 +302,6 @@ async fn run_device_sync_tcp(
         accept_connections(
             &local,
             &allowed_peers,
-            &connected,
             &mut connections,
             &mut readers,
             &mut pending,
@@ -286,7 +317,7 @@ async fn run_device_sync_tcp(
 #[allow(clippy::too_many_arguments)]
 async fn reconcile_connections(
     local: &PeerIdentity,
-    connected: &HashSet<String>,
+    authorized: &HashSet<String>,
     connections: &mut HashMap<String, ConnectionId>,
     readers: &mut HashMap<ConnectionId, RecordReader>,
     pending: &mut HashMap<String, VecDeque<PendingRecord>>,
@@ -299,7 +330,7 @@ async fn reconcile_connections(
     let stale = connections
         .iter()
         .filter(|&(peer, id)| {
-            connection_requires_retirement(connected.contains(peer), tcp.state(*id))
+            connection_requires_retirement(authorized.contains(peer), tcp.state(*id))
         })
         .map(|(peer, id)| (peer.clone(), *id))
         .collect::<Vec<_>>();
@@ -317,7 +348,7 @@ async fn reconcile_connections(
         .await;
     }
 
-    for npub in connected {
+    for npub in authorized {
         if connections.contains_key(npub) {
             continue;
         }
@@ -338,7 +369,6 @@ async fn reconcile_connections(
 async fn accept_connections(
     local: &PeerIdentity,
     allowed_peers: &HashSet<String>,
-    connected: &HashSet<String>,
     connections: &mut HashMap<String, ConnectionId>,
     readers: &mut HashMap<ConnectionId, RecordReader>,
     pending: &mut HashMap<String, VecDeque<PendingRecord>>,
@@ -353,7 +383,7 @@ async fn accept_connections(
             continue;
         };
         let peer = identity.npub();
-        if !allowed_peers.contains(&peer) || !connected.contains(&peer) {
+        if !allowed_peers.contains(&peer) {
             let _ = tcp.abort(id).await;
             continue;
         }

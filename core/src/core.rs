@@ -685,6 +685,8 @@ pub struct AppCore {
     fips_connection_generation: u64,
     #[cfg(test)]
     test_fips_rendezvous_addr: Option<std::net::SocketAddrV4>,
+    #[cfg(test)]
+    test_fips_udp: Option<(std::net::SocketAddr, std::net::SocketAddr, String)>,
     pending_relay_publishes: BTreeMap<String, PendingRelayPublish>,
     pending_relay_publish_inflight: HashSet<String>,
     pending_decrypted_delivery_acks: HashSet<String>,

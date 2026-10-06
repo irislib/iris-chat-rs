@@ -121,6 +121,9 @@ fn call_history_two_recipient_devices_record_answered_elsewhere_over_fips() {
     // The unaccepted sibling must recover a lost disposition automatically.
     wait(&mut peers, &|states| states[2] == "ended");
     assert!(!drop_sibling_end.get());
+    for ((core, _, _), endpoint) in peers.iter().zip(&endpoints) {
+        assert!(Arc::ptr_eq(endpoint, &core.device_sync_endpoint_for_test().unwrap()), "routed history must not replace the fixture's configured call transport");
+    }
     peers[0].0.handle_action(AppAction::SetCallMediaConnected {
         call_id: id.clone(),
         connected: true,
@@ -134,7 +137,7 @@ fn call_history_two_recipient_devices_record_answered_elsewhere_over_fips() {
         .call
         .clone()
         .unwrap();
-    assert_eq!(elsewhere.outcome, "answered_elsewhere");
+    assert_eq!(elsewhere.outcome, "answered_elsewhere", "losing device call state: {:?}", peers[2].0.state.call);
     assert_eq!(elsewhere.answered_at_secs, None);
     assert_eq!(elsewhere.duration_secs, 0);
     assert!(

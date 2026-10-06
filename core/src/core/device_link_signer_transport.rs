@@ -5,6 +5,14 @@ use nostr::nips::nip44;
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
+fn progress(tx: &Sender<CoreMsg>, phase: &'static str) {
+    // Diagnostics must never contain the code, account keys, or encrypted messages.
+    let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+        category: "device_link.approval".into(),
+        detail: phase.into(),
+    })));
+}
+
 pub(super) async fn run(
     connection: SignerConnection,
     owner: PublicKey,
@@ -28,6 +36,14 @@ pub(super) async fn run(
         _ = cancel => { client.shutdown().await; return; },
         result = tokio::time::timeout(Duration::from_secs(180), work) => matches!(result, Ok(Ok(()))),
     };
+    progress(
+        &tx,
+        if success {
+            "finished"
+        } else {
+            "failed_or_timed_out"
+        },
+    );
     let _ = tx.send(CoreMsg::Internal(Box::new(
         InternalEvent::DeviceLinkSignerFinished { token, success },
     )));
@@ -49,11 +65,7 @@ async fn response(
     let event = EventBuilder::new(Kind::NostrConnect, content)
         .tag(nostr::Tag::public_key(peer))
         .sign_with_keys(keys)?;
-    anyhow::ensure!(
-        !client.send_event(&event).await?.success.is_empty(),
-        "Device link unavailable."
-    );
-    Ok(())
+    super::remote_signer_rpc::send_signer_event(client, &event).await
 }
 
 async fn serve(
@@ -66,6 +78,7 @@ async fn serve(
     tx: &Sender<CoreMsg>,
 ) -> anyhow::Result<()> {
     let started = Timestamp::from(Timestamp::now().as_secs().saturating_sub(10));
+    progress(tx, "connecting");
     let mut notifications = client.notifications();
     for relay in &connection.relays {
         client.add_relay(relay.clone()).await?;
@@ -87,7 +100,9 @@ async fn serve(
             .is_empty(),
         "Device link unavailable."
     );
+    progress(tx, "checking_device_list");
     prepare_owner_roster(owner, roster_relays, token, tx).await?;
+    progress(tx, "sending_confirmation");
     response(
         client,
         keys,
@@ -95,6 +110,7 @@ async fn serve(
         &json!({"id":uuid::Uuid::new_v4().to_string(),"result":connection.secret}),
     )
     .await?;
+    progress(tx, "waiting_for_new_device");
     let mut replies = BTreeMap::<String, (String, Value)>::new();
     let mut approved: Option<(String, Event, DeviceLinkInfo)> = None;
     let mut success_announced = false;
@@ -139,6 +155,16 @@ async fn serve(
         else {
             continue;
         };
+        progress(
+            tx,
+            match method {
+                "get_public_key" => "received_get_public_key",
+                "switch_relays" => "received_switch_relays",
+                "sign_event" => "received_sign_event",
+                "iris_get_link_info" => "received_link_info",
+                _ => "received_other_request",
+            },
+        );
         let fingerprint = json!([method, params]).to_string();
         if let Some((prior, reply)) = replies.get(id) {
             let changed = json!({"id":id,"error":"Request ID already used."});
@@ -210,7 +236,10 @@ async fn serve(
         .await;
         let reply = match result {
             Ok(result) => json!({"id":id,"result":result}),
-            Err(_) => json!({"id":id,"error":"Request not authorized or unsupported."}),
+            Err(_) => {
+                progress(tx, "request_rejected");
+                json!({"id":id,"error":"Request not authorized or unsupported."})
+            }
         };
         response(client, keys, connection.signer, &reply).await?;
         replies.insert(id.to_string(), (fingerprint, reply.clone()));
@@ -277,4 +306,37 @@ async fn prepare_owner_roster(
         event,
     ))))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn approval_reply_does_not_wait_for_a_server_that_omits_acknowledgements() {
+        let healthy = crate::local_relay::TestRelay::start();
+        let silent = crate::local_relay::TestRelay::start();
+        silent.ignore_acknowledgements(24133);
+        let keys = Keys::generate();
+        let client = Client::new(keys.clone());
+        client.add_relay(healthy.url()).await.unwrap();
+        client.add_relay(silent.url()).await.unwrap();
+        client.connect().await;
+        client.wait_for_connection(Duration::from_secs(2)).await;
+        let sent = tokio::time::timeout(
+            Duration::from_secs(2),
+            response(
+                &client,
+                &keys,
+                Keys::generate().public_key(),
+                &json!({"id":"test", "result":"approved"}),
+            ),
+        )
+        .await;
+        client.shutdown().await;
+        assert!(
+            matches!(sent, Ok(Ok(()))),
+            "one missing acknowledgement delayed the next signing/history request: {sent:?}"
+        );
+    }
 }

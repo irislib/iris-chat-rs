@@ -26,6 +26,7 @@ struct RelayState {
 struct RelayFaults {
     drop_event_ids_file: Option<PathBuf>,
     drop_matching_events_once: bool,
+    unacknowledged_kinds: HashSet<u64>,
 }
 
 impl RelayState {
@@ -60,6 +61,7 @@ impl RelayFaults {
         Self {
             drop_event_ids_file,
             drop_matching_events_once,
+            unacknowledged_kinds: HashSet::new(),
         }
     }
 }
@@ -92,6 +94,7 @@ fn lock_relay_state(state: &Arc<Mutex<RelayState>>) -> MutexGuard<'_, RelayState
 }
 
 enum RelayControl {
+    IgnoreAcknowledgements(u64, std_mpsc::Sender<()>),
     ReplayStored,
     Snapshot(std_mpsc::Sender<Vec<Value>>),
     Shutdown,
@@ -162,6 +165,10 @@ impl TestRelay {
                     tokio::select! {
                         Some(control) = control_rx.recv() => {
                             match control {
+                                RelayControl::IgnoreAcknowledgements(kind, reply) => {
+                                    lock_relay_state(&state).faults.unacknowledged_kinds.insert(kind);
+                                    let _ = reply.send(());
+                                }
                                 RelayControl::ReplayStored => replay_stored_events(&state),
                                 RelayControl::Snapshot(reply_tx) => {
                                     let events = lock_relay_state(&state)
@@ -209,6 +216,12 @@ impl TestRelay {
 
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    pub fn ignore_acknowledgements(&self, kind: u64) {
+        let (tx, rx) = std_mpsc::channel();
+        self.control_tx.send(RelayControl::IgnoreAcknowledgements(kind, tx)).unwrap();
+        rx.recv_timeout(StdDuration::from_secs(5)).unwrap();
     }
 
     pub fn replay_stored(&self) {
@@ -385,7 +398,12 @@ fn handle_client_message(client_id: usize, raw_message: &str, state: &Arc<Mutex<
             let event_id = event_id.to_string();
             let (sender, deliveries, dropped) = {
                 let mut relay = lock_relay_state(state);
-                let sender = relay.clients.get(&client_id).cloned();
+                let sender = if event.get("kind").and_then(Value::as_u64)
+                    .is_some_and(|kind| relay.faults.unacknowledged_kinds.contains(&kind)) {
+                    None
+                } else {
+                    relay.clients.get(&client_id).cloned()
+                };
                 if relay.should_drop_event(&event_id) {
                     (sender, Vec::new(), true)
                 } else {
@@ -591,6 +609,7 @@ mod tests {
             faults: RelayFaults {
                 drop_event_ids_file: Some(file.path().to_path_buf()),
                 drop_matching_events_once: true,
+                ..RelayFaults::default()
             },
             ..RelayState::default()
         };
@@ -608,6 +627,7 @@ mod tests {
             faults: RelayFaults {
                 drop_event_ids_file: Some(file.path().to_path_buf()),
                 drop_matching_events_once: false,
+                ..RelayFaults::default()
             },
             ..RelayState::default()
         };

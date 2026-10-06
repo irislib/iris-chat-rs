@@ -1,5 +1,4 @@
 use super::*;
-use base64::Engine;
 use fips_core::config::{PeerConfig, RoutingMode, TransportInstances, UdpConfig};
 use fips_core::FipsEndpoint;
 use hashtree_core::{BlobRoute, MemoryStore, StoreBlobRoute};
@@ -60,13 +59,20 @@ async fn seed_file(store: Arc<MemoryStore>, bytes: &[u8]) -> String {
     .expect("encode seeded file")
 }
 
-async fn download_bytes(nhash: &str) -> Vec<u8> {
-    let data = download_hashtree_attachment_base64(nhash)
-        .await
-        .expect("download attachment");
-    base64::engine::general_purpose::STANDARD
-        .decode(data)
-        .expect("decode attachment")
+async fn download_bytes(nhash: &str, store: Arc<RoutedStore<AttachmentChunkStore>>) -> Vec<u8> {
+    // Other AppCore fixtures run concurrently and replace the process-wide active
+    // store. Exercise this profile's real routes without borrowing another test's.
+    let data = nhash_decode(nhash).expect("decode attachment hash");
+    read_hashtree_attachment(
+        &Cid {
+            hash: data.hash,
+            key: data.decrypt_key,
+        },
+        store,
+        MAX_ATTACHMENT_BYTES,
+    )
+    .await
+    .expect("download attachment")
 }
 
 #[test]
@@ -150,10 +156,6 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
         .expect("shared FIPS runtime and attachment store");
     assert!(!has_device_sync, "device-sync service stays disabled");
     assert_eq!(sibling_count, 0, "no device-sync peer is synthesized");
-    assert!(Arc::ptr_eq(
-        &store.store,
-        &active_attachment_blob_store().expect("registered attachment store")
-    ));
 
     wait_until(|| {
         consumer
@@ -176,10 +178,15 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
     });
 
     assert_eq!(
-        core.runtime.block_on(download_bytes(&provider_nhash)),
+        core.runtime
+            .block_on(download_bytes(&provider_nhash, store.store.clone())),
         provider_data
     );
-    assert_eq!(core.runtime.block_on(download_bytes(&before_nhash)), before);
+    assert_eq!(
+        core.runtime
+            .block_on(download_bytes(&before_nhash, store.store.clone())),
+        before
+    );
     wait_until(|| {
         provider_endpoint
             .local_instance_advertisements()
@@ -240,7 +247,11 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
             })
     });
 
-    assert_eq!(core.runtime.block_on(download_bytes(&after_nhash)), after);
+    assert_eq!(
+        core.runtime
+            .block_on(download_bytes(&after_nhash, store.store.clone())),
+        after
+    );
     assert!(core
         .runtime
         .block_on(consumer.peers())

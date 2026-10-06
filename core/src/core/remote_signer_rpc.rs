@@ -1,5 +1,6 @@
 use super::remote_signer_uri::{safe_auth_url, validate_signer_relays};
 use super::*;
+use futures_util::{stream::FuturesUnordered, StreamExt};
 use nostr::nips::nip44;
 use serde_json::{json, Value};
 use tokio::sync::broadcast;
@@ -49,11 +50,7 @@ impl SignerRpc {
         let event = EventBuilder::new(Kind::NostrConnect, content)
             .tag(nostr::Tag::public_key(signer))
             .sign_with_keys(&self.keys)?;
-        let output = self.client.send_event(&event).await?;
-        anyhow::ensure!(
-            !output.success.is_empty(),
-            "Could not reach the signer. Try again."
-        );
+        send_signer_event(&self.client, &event).await?;
         Ok(id)
     }
 
@@ -176,4 +173,24 @@ impl SignerRpc {
             },
         )));
     }
+}
+
+/// A signing response is delivered once one server acknowledges it. Waiting for
+/// every server here stalls subsequent requests (including private history info).
+/// Roster discovery still separately checks every observed signed head.
+pub(super) async fn send_signer_event(client: &Client, event: &Event) -> anyhow::Result<()> {
+    let mut sends: FuturesUnordered<_> = client
+        .relays()
+        .await
+        .into_values()
+        .map(|relay| async move {
+            tokio::time::timeout(Duration::from_secs(10), relay.send_event(event)).await
+        })
+        .collect();
+    while let Some(result) = sends.next().await {
+        if matches!(result, Ok(Ok(_))) {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("Could not reach the signer. Try again.")
 }

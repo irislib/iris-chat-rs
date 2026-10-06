@@ -227,6 +227,52 @@ final class InteropHarnessTests: XCTestCase {
             }
             status("toast", manager.state.toast ?? "")
             try await waitForRelayDrainIfRequested(manager: manager, dataDir: dataDir, env: env)
+        case "link_browser_with_history_from_args":
+            // Opt-in physical-device interoperability: keep ordinary app storage intact.
+            guard !useAppStorage else {
+                throw HarnessError.unexpected("Browser linking requires isolated test storage")
+            }
+            let account = try await createOrLoadAccount(manager: manager, env: env)
+            let message = try requiredEnv("IRIS_IOS_HARNESS_MESSAGE", env: env)
+            let chatID = try await ensureChatOpen(
+                manager: manager, dataDir: dataDir, chatID: nil, peerInput: account.publicKeyHex
+            )
+            manager.dispatch(.sendMessage(chatId: chatID, text: message))
+            _ = try await waitFor(label: "history message saved before linking", timeout: 20) {
+                manager.state.currentChat?.messages.contains(where: { $0.body == message }) == true ? true : nil
+            }
+            status("history_ready", "true")
+            manager.dispatch(.setDebugLoggingEnabled(enabled: true))
+            let initialCount = manager.state.deviceRoster?.devices.count ?? 0
+            manager.addAuthorizedDevice(
+                deviceInput: try requiredEnv("IRIS_IOS_HARNESS_DEVICE_INPUT", env: env),
+                includeMessageHistory: true
+            )
+            let deadline = Date().addingTimeInterval(185)
+            while Date() < deadline {
+                if (manager.state.deviceRoster?.devices.count ?? 0) > initialCount {
+                    status("device_count", String(manager.state.deviceRoster!.devices.count))
+                    // Keep the actual phone online until the browser confirms durable history.
+                    try await Task.sleep(nanoseconds: 90_000_000_000)
+                    await reportRuntimeDebugSnapshot(manager: manager, dataDir: dataDir)
+                    if let debug = await liveRuntimeDebugSnapshot(manager: manager) {
+                        let entries = arrayValue(debug["recent_log"]).compactMap { $0 as? JsonObject }
+                        for entry in entries where ["device_link", "device_sync", "fips"].contains(where: {
+                            stringValue(entry["category"]).hasPrefix($0)
+                        }) {
+                            status("link_trace", "\(stringValue(entry["category"])): \(stringValue(entry["detail"]))")
+                        }
+                    }
+                    return
+                }
+                if !manager.state.busy.updatingRoster, let toast = manager.state.toast,
+                   toast != "Device added" {
+                    await reportRuntimeDebugSnapshot(manager: manager, dataDir: dataDir)
+                    throw HarnessError.unexpected("Device linking failed: \(toast)")
+                }
+                try await Task.sleep(nanoseconds: 200_000_000)
+            }
+            throw HarnessError.timeout("new browser in phone device list; toast=\(manager.state.toast ?? "none")")
         case "wait_for_authorization_state_from_args":
             let expected = try requiredEnv("IRIS_IOS_HARNESS_AUTHORIZATION_STATE", env: env).lowercased()
             let snapshot: AccountSnapshot = try await waitFor(label: "authorization state \(expected)", timeout: 180) {

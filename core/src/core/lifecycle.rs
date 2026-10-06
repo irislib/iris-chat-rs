@@ -142,6 +142,8 @@ impl AppCore {
             fips_connection_generation: 0,
             #[cfg(test)]
             test_fips_rendezvous_addr: None,
+            #[cfg(test)]
+            test_fips_udp: None,
             pending_relay_publishes: BTreeMap::new(),
             pending_relay_publish_inflight: HashSet::new(),
             pending_decrypted_delivery_acks: HashSet::new(),

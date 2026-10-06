@@ -745,6 +745,7 @@ impl AppCore {
         }
         self.reconcile_device_sync();
         self.migrate_verified_device_owner_threads(event.pubkey, &effective_app_keys);
+        self.complete_authorized_device_link();
         self.mark_mobile_push_dirty();
         let _authorization_changed = self.refresh_local_authorization_state();
         self.rebuild_persist_and_emit_state();

@@ -52,6 +52,14 @@ struct SettingsScreen: View {
             // Links still receive taps; inert Text can be selected.
             .textSelection(.enabled)
             .irisModalSurface()
+            .overlay(alignment: .top) {
+                // A sheet covers RootView's toast overlay, including link failures.
+                if modalClose != nil {
+                    ToastOverlay(center: manager.toasts)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("settingsToastOverlay")
+                }
+            }
     }
 
     @ViewBuilder

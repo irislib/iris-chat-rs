@@ -34,6 +34,13 @@ impl AppCore {
         if self.apply_current_device_labels_to_local_app_keys(false) {
             self.persist_best_effort();
         }
+        #[cfg(test)]
+        if let Some((local, peer, identity)) = self.test_fips_udp.clone() {
+            // History can now reach a sibling through the caller. Reconciliation
+            // must retain this fixture's transport, just like configured production peers.
+            self.reconcile_calls_udp_for_test(local, peer, &identity);
+            return;
+        }
         let (additional_peers, routed_peers) = match super::settings::configured_peer_hints() {
             Ok(peers) => peers,
             Err(error) => {
@@ -84,6 +91,7 @@ impl AppCore {
         peer: std::net::SocketAddr,
         identity: &str,
     ) {
+        self.test_fips_udp = Some((local, peer, identity.to_owned()));
         self.reconcile_shared_fips(SharedFipsOptions {
             udp_bind_addr: Some(local.to_string()),
             additional_peers: vec![PeerConfig::new(
@@ -253,6 +261,25 @@ impl AppCore {
             options.rendezvous_addr,
             discovery_scope,
         );
+        let device_sync_packets = if device_sync_enabled {
+            let request = serde_json::to_vec(&DeviceSyncPacket::Request {
+                v: DEVICE_SYNC_VERSION,
+                roster_at: config.roster_at,
+                page: None,
+                record_reconcile: Some(1),
+                history_since: None,
+            });
+            let resync_required = serde_json::to_vec(&DeviceSyncPacket::ResyncRequired {
+                v: DEVICE_SYNC_VERSION,
+            });
+            match (request, resync_required) {
+                (Ok(request), Ok(resync_required)) => Some((request, resync_required)),
+                _ => return,
+            }
+        } else {
+            None
+        };
+
         // Host BLE I/O is single-use. Native hosts serialize detach/reattach
         // when LAN settings change; keep this bridge alive until that detach.
         let refresh_peers = self.host_ble_attached
@@ -264,6 +291,31 @@ impl AppCore {
         if refresh_peers {
             self.restrict_direct_file_devices();
             if let Some(runtime) = self.device_sync.as_mut() {
+                let siblings = config.siblings.iter().map(|peer| peer.npub()).collect();
+                if let Some(tcp) = &runtime.tcp {
+                    tcp.update_peers(siblings);
+                } else if let Some((request, resync_required)) = device_sync_packets {
+                    // Keep the mobile transport alive while enabling history for
+                    // the first linked device on that existing endpoint.
+                    match self.runtime.block_on(start_device_sync_tcp(
+                        runtime.endpoint.clone(),
+                        siblings,
+                        DEVICE_SYNC_PORT,
+                        DEVICE_SYNC_MAX_PACKET_BYTES,
+                        request,
+                        resync_required,
+                        self.core_sender.clone(),
+                    )) {
+                        Ok((tcp, task)) => {
+                            runtime.tcp = Some(tcp);
+                            runtime.tasks.push(task);
+                        }
+                        Err(error) => {
+                            crate::perflog!("device_sync.tcp.refresh.error={error}");
+                            return;
+                        }
+                    }
+                }
                 runtime.key = runtime_key;
                 runtime.peer_refresh_key = peer_refresh_key;
                 runtime.siblings = config.siblings.clone();
@@ -408,25 +460,6 @@ impl AppCore {
         if let Some(websocket) = options.websocket {
             fips_config.transports.websocket = TransportInstances::Single(websocket);
         }
-
-        let device_sync_packets = if device_sync_enabled {
-            let request = serde_json::to_vec(&DeviceSyncPacket::Request {
-                v: DEVICE_SYNC_VERSION,
-                roster_at: config.roster_at,
-                page: None,
-                record_reconcile: Some(1),
-                history_since: None,
-            });
-            let resync_required = serde_json::to_vec(&DeviceSyncPacket::ResyncRequired {
-                v: DEVICE_SYNC_VERSION,
-            });
-            match (request, resync_required) {
-                (Ok(request), Ok(resync_required)) => Some((request, resync_required)),
-                _ => return,
-            }
-        } else {
-            None
-        };
 
         let mut builder = FipsEndpoint::builder()
             .config(fips_config)

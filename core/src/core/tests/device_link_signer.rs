@@ -2,6 +2,8 @@
 fn nostrconnect_device_link_preserves_private_history_choice_and_external_signer_boundary() {
     for include_history in [false, true] {
         let relay = crate::local_relay::TestRelay::start();
+        let missing_ack = crate::local_relay::TestRelay::start();
+        missing_ack.ignore_acknowledgements(24133);
         let owner = Keys::generate();
         let approver = Keys::generate();
         let (mut source, _, _source_dir) =
@@ -12,6 +14,8 @@ fn nostrconnect_device_link_preserves_private_history_choice_and_external_signer
         if include_history {
             // A default server being down must not prevent phone-to-browser linking.
             relays.push("ws://127.0.0.1:1".into());
+            // Connected-but-silent publication differs from connection refusal.
+            relays.push(missing_ack.url().to_string());
         }
         source.preferences.nostr_relay_urls = relays.clone();
         source.preferences.nearby_enabled = false;
@@ -283,6 +287,18 @@ fn nostrconnect_approval_replay_is_idempotent_and_cancellation_revokes_signing()
             .is_none(),
         "unsigned/unpublished target cannot receive history"
     );
+    source.finish_device_link_signer(&token, true);
+    assert!(
+        source.state.busy.updating_roster,
+        "a returned signature is not a completed link"
+    );
+    assert_ne!(source.state.toast.as_deref(), Some("Device added"));
+    source.apply_app_keys_event(&signed).unwrap();
+    assert!(
+        !source.state.busy.updating_roster,
+        "observing the published authorization completes linking"
+    );
+    assert_eq!(source.state.toast.as_deref(), Some("Device added"));
     source.stop_device_link_signer();
     assert!(source
         .sign_device_link_request(&token, &json, Some(&old))

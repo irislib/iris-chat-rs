@@ -98,6 +98,11 @@ impl AppCore {
         {
             return;
         }
+        if success && !self.device_link_is_authorized() {
+            // Returning a signature is not proof that the new device saved and
+            // published it. Keep progress visible until its authorization arrives.
+            return;
+        }
         let Some(pending) = self.pending_device_link_signer.as_mut() else {
             return;
         };
@@ -115,6 +120,37 @@ impl AppCore {
             .into(),
         );
         self.emit_state();
+    }
+
+    fn device_link_is_authorized(&self) -> bool {
+        self.pending_device_link_signer
+            .as_ref()
+            .is_some_and(|pending| {
+                pending.signed.as_ref().is_some_and(|(signed, info, _)| {
+                    self.app_keys
+                        .get(&pending.owner.to_hex())
+                        .is_some_and(|known| {
+                            known.created_at_secs >= signed.created_at.as_secs()
+                                && known.devices.iter().any(|device| {
+                                    device.identity_pubkey_hex == info.device
+                                        && device.created_at_secs == info.link_at
+                                })
+                        })
+                })
+            })
+    }
+
+    pub(super) fn complete_authorized_device_link(&mut self) {
+        if self.device_link_is_authorized() {
+            if let Some(pending) = self
+                .pending_device_link_signer
+                .as_ref()
+                .filter(|p| !p.completed)
+            {
+                let token = pending.token.clone();
+                self.finish_device_link_signer(&token, true);
+            }
+        }
     }
 
     pub(super) fn sign_device_link_request(
