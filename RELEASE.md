@@ -128,6 +128,10 @@ default public message/FIPS servers. Require successful approval plus a pre-link
 message appearing exactly once after browser reload, and record both source
 commits with the private evidence. Repeat against the deployed web release.
 Local loopback interop and a phone's new device entry alone do not pass this gate.
+Also run `python3 scripts/test_public_native_device_link.py` with the same
+explicit phone and intended native CLI (`--binary` can select its build).
+Require that pre-link history arrives exactly once and survives a native
+service restart. Both physical tests preserve ordinary account storage.
 
 The hosted workflow also runs the pinned Iris Stack process gate against the exact tagged Chat
 commit and known-good public Drive/Hashtree versions. Relayless recovery, CPU,
