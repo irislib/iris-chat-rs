@@ -1,14 +1,19 @@
 #[test]
 fn device_sync_metadata_refresh_restarts_an_inflight_record_request() {
-    sync_metadata_refresh_during_records(true);
+    sync_metadata_refresh_during_records(true, false);
 }
 
 #[test]
 fn device_sync_record_request_completes_without_refresh() {
-    sync_metadata_refresh_during_records(false);
+    sync_metadata_refresh_during_records(false, false);
 }
 
-fn sync_metadata_refresh_during_records(refresh: bool) {
+#[test]
+fn device_sync_history_survives_a_direct_carrier_disconnect() {
+    sync_metadata_refresh_during_records(false, true);
+}
+
+fn sync_metadata_refresh_during_records(refresh: bool, carrier_changed: bool) {
     let owner = Keys::generate();
     let a = Keys::generate();
     let b = Keys::generate();
@@ -66,6 +71,17 @@ fn sync_metadata_refresh_during_records(refresh: bool) {
     drain_history_wire(&mut right, &b, &mut left, &a, &right_rx, &mut trace);
     drain_history_wire(&mut left, &a, &mut right, &b, &left_rx, &mut trace);
     assert!(right.device_history_session_count_for_test() > 0);
+    if carrier_changed {
+        // The end-to-end stream remains usable through the routed transport;
+        // losing a direct link must not cancel the active record exchange.
+        right.fips_nearby_links = vec![crate::updates::FipsNearbyLinkSnapshot {
+            device_pubkey_hex: a.public_key().to_hex(),
+            transport_type: "websocket".into(),
+            transport_addr: None,
+        }];
+        right.update_fips_connection_links(Vec::new());
+        assert!(right.device_history_session_count_for_test() > 0);
+    }
     // A metadata refresh can arrive between the inventory response and its
     // record request. The other device must not wait on a silently lost round.
     if refresh {
