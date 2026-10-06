@@ -2,6 +2,23 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.6
+
+### GitHub
+
+- Fix device linking when a message server is unavailable, including approval with message history. Keep verified conflicting and newer device lists visible, and reject incomplete empty discovery.
+- Show linking progress on Apple devices. Make command-line linking wait for the new device to appear and support including message history.
+- Cover server outages during linking and conflicting device lists from interrupted responses with regression tests.
+
+### Apple
+
+- Fix linking another device when a message server is unavailable.
+- Show progress while linking a device, including when sharing message history.
+
+### Zapstore
+
+- Fix linking another device when a message server is unavailable, including when sharing message history.
+
 ## v2026.10.5.2
 
 ### GitHub

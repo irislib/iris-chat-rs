@@ -329,7 +329,11 @@ enum InviteCommands {
 #[derive(Subcommand)]
 enum LinkCommands {
     Create,
-    Accept { invite: String },
+    Accept {
+        invite: String,
+        #[arg(long)]
+        include_message_history: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -914,13 +918,47 @@ fn handle_invite_device_command(cli: &CliApp, command: InviteDeviceTopCommands) 
                 "device_input": link.device_input,
             }))
         }
-        InviteDeviceTopCommands::Link(LinkCommands::Accept { invite }) => {
+        InviteDeviceTopCommands::Link(LinkCommands::Accept {
+            invite,
+            include_message_history,
+        }) => {
+            let is_signer_link = invite.trim().starts_with("nostrconnect://");
+            let previous_count = cli
+                .app
+                .state()
+                .device_roster
+                .map_or(0, |roster| roster.devices.len());
             cli.dispatch_and_wait(
-                AppAction::AddAuthorizedDevice {
-                    device_input: invite,
+                if include_message_history {
+                    AppAction::AddAuthorizedDeviceWithHistory {
+                        device_input: invite,
+                        include_message_history: true,
+                    }
+                } else {
+                    AppAction::AddAuthorizedDevice {
+                        device_input: invite,
+                    }
                 },
                 Duration::from_secs(4),
             )?;
+            if is_signer_link {
+                let deadline = Instant::now() + Duration::from_secs(180);
+                loop {
+                    let state = cli.app.state();
+                    fail_on_toast_except(&state, &["Device added"])?;
+                    if state
+                        .device_roster
+                        .is_some_and(|roster| roster.devices.len() > previous_count)
+                    {
+                        break;
+                    }
+                    anyhow::ensure!(
+                        Instant::now() < deadline,
+                        "Device linking timed out. Try again."
+                    );
+                    thread::sleep(Duration::from_millis(50));
+                }
+            }
             let state = cli.app.state();
             fail_on_toast_except(&state, &["Device added"])?;
             Ok(json!({

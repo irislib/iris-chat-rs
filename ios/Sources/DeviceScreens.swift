@@ -139,6 +139,10 @@ struct DeviceRosterContent: View {
                     }
 
                     VStack(spacing: 10) {
+                        if manager.state.busy.updatingRoster {
+                            ProgressView("Linking…")
+                                .accessibilityIdentifier("deviceLinkProgress")
+                        }
                         if irisSupportsQrScanning {
                             Button("Scan code") { showingScanner = true }
                                 .buttonStyle(IrisPrimaryButtonStyle())

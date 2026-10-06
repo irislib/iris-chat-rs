@@ -6,6 +6,11 @@ use nostr_double_ratchet::VerifiedAppKeysIndex;
 const SIGNER_RELAY_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_SIGNER_ROSTER_EVENTS: usize = 1024;
 
+struct RosterLookup {
+    events: Vec<Event>,
+    complete: bool,
+}
+
 pub(super) async fn fetch_signer_roster(
     owner: PublicKey,
     relay_urls: &[RelayUrl],
@@ -41,8 +46,13 @@ pub(super) async fn fetch_signer_roster_heads(
     let mut index = VerifiedAppKeysIndex::default();
     let mut heads = BTreeMap::new();
     let mut newest = 0;
+    let mut complete = 0;
+    let mut incomplete = false;
     for result in results {
-        for event in result? {
+        let result = result?;
+        complete += usize::from(result.complete);
+        incomplete |= !result.complete;
+        for event in result.events {
             if event.pubkey != owner || !is_app_keys_event(&event) {
                 continue;
             }
@@ -59,6 +69,12 @@ pub(super) async fn fetch_signer_roster_heads(
             }
         }
     }
+    // A server outage must not veto a verified roster from responding servers.
+    // Keep every observed head (even from a partial response) for conflict and
+    // freshness checks. Never interpret incomplete, empty discovery as a new account.
+    if complete == 0 || (incomplete && heads.is_empty()) {
+        return Err("Could not check all message servers. Try again.".into());
+    }
     Ok(heads.into_values().collect())
 }
 
@@ -66,7 +82,9 @@ async fn fetch_signer_roster_from_relay(
     client: &Client,
     url: &RelayUrl,
     owner: PublicKey,
-) -> Result<Vec<Event>, String> {
+) -> Result<RosterLookup, String> {
+    let mut events = Vec::new();
+    let mut exceeded_limit = false;
     let result = tokio::time::timeout(SIGNER_RELAY_TIMEOUT, async {
         client.add_relay(url.clone()).await?;
         let relay = client.relay(url.clone()).await?;
@@ -81,7 +99,6 @@ async fn fetch_signer_roster_from_relay(
             .subscribe_with_id(subscription_id.clone(), filter, SubscribeOptions::default())
             .await?;
         let result = async {
-            let mut events = Vec::new();
             loop {
                 match notifications.recv().await? {
                     RelayNotification::Message {
@@ -91,17 +108,15 @@ async fn fetch_signer_roster_from_relay(
                                 event,
                             },
                     } if incoming.as_ref() == &subscription_id => {
-                        anyhow::ensure!(
-                            events.len() < MAX_SIGNER_ROSTER_EVENTS - 1,
-                            "device list lookup exceeded limit"
-                        );
+                        if events.len() >= MAX_SIGNER_ROSTER_EVENTS - 1 {
+                            exceeded_limit = true;
+                            anyhow::bail!("device list lookup exceeded limit");
+                        }
                         events.push(event.into_owned());
                     }
                     RelayNotification::Message {
                         message: RelayMessage::EndOfStoredEvents(incoming),
-                    } if incoming.as_ref() == &subscription_id => {
-                        return Ok::<_, anyhow::Error>(events)
-                    }
+                    } if incoming.as_ref() == &subscription_id => return Ok::<_, anyhow::Error>(()),
                     RelayNotification::Message {
                         message:
                             RelayMessage::Closed {
@@ -119,13 +134,17 @@ async fn fetch_signer_roster_from_relay(
             }
         }
         .await;
-        relay.unsubscribe(&subscription_id).await?;
+        let _ = relay.unsubscribe(&subscription_id).await;
         result
     })
     .await;
-    result
-        .map_err(|_| "Could not check all message servers. Try again.".to_string())?
-        .map_err(|_| "Could not check all message servers. Try again.".to_string())
+    if exceeded_limit {
+        return Err("Device list is too large.".into());
+    }
+    Ok(RosterLookup {
+        events,
+        complete: matches!(result, Ok(Ok(()))),
+    })
 }
 
 pub(super) async fn publish_signer_authorization(

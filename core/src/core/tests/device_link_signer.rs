@@ -8,9 +8,15 @@ fn nostrconnect_device_link_preserves_private_history_choice_and_external_signer
             logged_in_test_core_with_updates("nip46-approver", &owner, &approver);
         let (source_tx, source_messages) = flume::unbounded();
         source.core_sender = source_tx;
-        source.preferences.nostr_relay_urls = vec![relay.url().into()];
+        let mut relays = vec![relay.url().to_string()];
+        if include_history {
+            // A default server being down must not prevent phone-to-browser linking.
+            relays.push("ws://127.0.0.1:1".into());
+        }
+        source.preferences.nostr_relay_urls = relays.clone();
         source.preferences.nearby_enabled = false;
-        source.logged_in.as_mut().unwrap().relay_urls = vec![RelayUrl::parse(relay.url()).unwrap()];
+        source.logged_in.as_mut().unwrap().relay_urls = relays
+            .iter().map(|url| RelayUrl::parse(url).unwrap()).collect();
         let old = AppKeys::new(vec![DeviceEntry::new(
             approver.public_key(),
             unix_now().get() - 10,
@@ -39,7 +45,7 @@ fn nostrconnect_device_link_preserves_private_history_choice_and_external_signer
         }
         let target_dir = tempfile::TempDir::new().unwrap();
         let (mut target, target_messages, _) =
-            signer_test_core(target_dir.path(), vec![relay.url().into()]);
+            signer_test_core(target_dir.path(), relays);
         target.handle_action(AppAction::StartRemoteSignerLogin);
         pump_signer_core_until(&mut target, &target_messages, |core| {
             core.state
@@ -65,11 +71,12 @@ fn nostrconnect_device_link_preserves_private_history_choice_and_external_signer
             include_message_history: include_history,
         });
         assert!(source.pending_device_link_signer.is_some());
-        let deadline = Instant::now() + Duration::from_secs(20);
+        let deadline = Instant::now() + Duration::from_secs(100);
         while target.logged_in.is_none() && target.state.busy.restoring_session {
             for message in source_messages.try_iter() {
                 source.handle_message(message);
             }
+            assert_ne!(source.state.toast.as_deref(), Some("Could not link device. Try again."));
             if let Ok(message) = target_messages.recv_timeout(Duration::from_millis(10)) {
                 target.handle_message(message);
             }
