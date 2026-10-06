@@ -2,6 +2,28 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.6.1
+
+### GitHub
+
+- Continue device approval after the first message-server acknowledgement, without waiting for an unresponsive server. Report completion only after the authorized device list is observed.
+- Transfer linked-device history through routed FIPS connections, and refresh history authorization while preserving the mobile transport. Keep unused sign-in codes available until canceled.
+- Make device-link errors visible in iOS settings. Add routed native/browser regression tests and a physical iPhone public-network release gate that checks history after reload.
+- Accelerate desktop video color conversion on ARM with NEON while preserving encoded output.
+- Update Hashtree Core to 0.2.91 for accelerated, verified hashing.
+
+### Apple
+
+- Improve device linking and message-history transfer.
+- Keep sign-in codes available while you prepare your other device.
+- Show device-link errors in settings.
+- Improve video-call performance on Apple silicon Macs.
+
+### Zapstore
+
+- Improve device linking and message-history transfer.
+- Keep sign-in codes available while you prepare your other device.
+
 ## v2026.10.6
 
 ### GitHub

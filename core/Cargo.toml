@@ -59,7 +59,7 @@ nvpn-fips-tcp = { version = "=0.2.3" }
 nvpn-fips-tcp-endpoint = { version = "=0.2.29" }
 hashtree-blossom = { version = "=0.2.83", default-features = false, features = ["store"] }
 hashtree-config = "=0.2.83"
-hashtree-core = "=0.2.89"
+hashtree-core = "=0.2.91"
 hashtree-fips-transport = "=0.4.26"
 hashtree-index = "=0.2.84"
 hashtree-network = "=0.2.88"
