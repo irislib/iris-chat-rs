@@ -377,7 +377,7 @@ jobs:
             -destination "$(./scripts/ios-simulator-destination)" \
             -parallel-testing-enabled NO \
             -only-testing:IrisChatTests \
-            -only-testing:IrisChatUITests/IrisChatUITests/testDeviceLinkShowsProgressAfterHistoryApproval \
+            -only-testing:IrisChatUITests/IrisChatFlowUITests/testDeviceLinkShowsProgressAfterHistoryApproval \
             -only-testing:IrisChatUITests/ChatTimelineUITests/testReopeningLongChatLandsAtBottom \
             -only-testing:IrisChatUITests/IrisChatTimelineUITests/testSearchHitInSeededLongChatOpensInTimeline \
             -only-testing:IrisChatUITests/ChatPaginationUITests \

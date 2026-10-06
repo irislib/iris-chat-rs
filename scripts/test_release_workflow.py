@@ -12,6 +12,28 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_selected_ios_ui_tests_name_existing_classes_and_methods(self) -> None:
+        tests = {}
+        for path in (ROOT / "ios/UITests").glob("*.swift"):
+            current = None
+            for line in path.read_text().splitlines():
+                declaration = re.match(r"(?:final )?class (\w+)\s*:", line)
+                if declaration:
+                    current = declaration.group(1)
+                    tests.setdefault(current, set())
+                method = re.match(r"\s+func (test\w+)\s*\(", line)
+                if current and method:
+                    tests[current].add(method.group(1))
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        selectors = re.findall(r"-only-testing:IrisChatUITests/([\w/]+)", workflow)
+        self.assertTrue(selectors)
+        for selector in selectors:
+            parts = selector.split("/")
+            with self.subTest(selector=selector):
+                self.assertIn(parts[0], tests)
+                if len(parts) == 2:
+                    self.assertIn(parts[1], tests[parts[0]])
+
     def test_tagged_gates_reuse_default_branch_cargo_caches(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         gate = workflow.split("\n  mesh-resource:\n", 1)[0]
