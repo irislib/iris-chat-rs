@@ -947,9 +947,8 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
         let scan = element(app, "deviceRosterScanButton")
         XCTAssertTrue(scan.waitForExistence(timeout: 10))
         scan.tap()
-        let history = app.alerts.buttons["deviceRosterConfirmAdd"].firstMatch
+        let history = app.buttons["Include message history"]
         XCTAssertTrue(history.waitForExistence(timeout: 10))
-        XCTAssertEqual(history.label, "Include message history")
         XCTAssertTrue(app.buttons["Chats and groups only"].exists)
         XCTAssertTrue(app.staticTexts["Both options include your chats, groups, and new messages."].exists)
         let attachment = XCTAttachment(screenshot: app.screenshot())
@@ -973,8 +972,9 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
         element(app, "chatListProfileButton").tap()
         openSettingsPage(app, "settingsDevicesRow")
         element(app, "deviceRosterScanButton").tap()
-        let history = app.buttons["Include message history"]
+        let history = app.alerts.buttons["deviceRosterConfirmAdd"].firstMatch
         XCTAssertTrue(history.waitForExistence(timeout: 10))
+        XCTAssertEqual(history.label, "Include message history")
         history.tap()
         XCTAssertTrue(element(app, "deviceLinkProgress").waitForExistence(timeout: 5))
         let attachment = XCTAttachment(screenshot: app.screenshot())
