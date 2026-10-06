@@ -961,6 +961,28 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
 #endif
     }
 
+    func testDeviceLinkShowsProgressAfterHistoryApproval() throws {
+#if os(macOS)
+        throw XCTSkip("The device scanner is available on iOS")
+#else
+        let code = "nostrconnect://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+            + "?relay=ws%3A%2F%2F127.0.0.1%3A1&secret=progress-test&perms=sign_event%3A37368"
+        let app = launchCleanApp(qrValue: code)
+        createAccount(app)
+        element(app, "chatListProfileButton").tap()
+        openSettingsPage(app, "settingsDevicesRow")
+        element(app, "deviceRosterScanButton").tap()
+        let history = app.buttons["Include message history"]
+        XCTAssertTrue(history.waitForExistence(timeout: 10))
+        history.tap()
+        XCTAssertTrue(element(app, "deviceLinkProgress").waitForExistence(timeout: 5))
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "device-link-in-progress"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+#endif
+    }
+
     func testLinkDeviceShowsScannableCode() throws {
         let app = launchCleanApp()
 
