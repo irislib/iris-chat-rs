@@ -197,9 +197,23 @@ fn bootstrap_only_link_finishes_pairing_and_authorizes_linked_device() {
         .public_key()
         .to_hex();
 
-    primary.device_approval_relay_urls = relay_urls_from_strings(&[approval_relay.url().to_string()]);
-    primary.handle_action(AppAction::AddAuthorizedDeviceWithHistory { device_input: approval_bootstrap, include_message_history: true });
-    assert!(primary.device_history_transfer(&linked_device_hex).is_some_and(|record| record.outbound && record.since == 0));
+    assert!(
+        !primary.device_sync_has_sibling_tcp_for_test(),
+        "an unlinked profile has no sibling history service"
+    );
+    primary.device_approval_relay_urls =
+        relay_urls_from_strings(&[approval_relay.url().to_string()]);
+    primary.handle_action(AppAction::AddAuthorizedDeviceWithHistory {
+        device_input: approval_bootstrap,
+        include_message_history: true,
+    });
+    assert!(primary
+        .device_history_transfer(&linked_device_hex)
+        .is_some_and(|record| record.outbound && record.since == 0));
+    assert!(
+        primary.device_sync_has_sibling_tcp_for_test(),
+        "successful approval must start history without an echoed roster event"
+    );
 
     assert_eq!(primary.state.toast.as_deref(), Some("Device added"));
     assert!(relay_events(&approval_relay).iter().chain(relay_events(&ordinary_relay).iter()).all(|event| event.kind != Kind::Custom(30078) && !event.content.contains("iris-chat-history")), "history choice stays on the private linking pair, never public relays");

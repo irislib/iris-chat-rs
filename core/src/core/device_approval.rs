@@ -200,6 +200,9 @@ impl AppCore {
                 unix_now(),
             )?;
         self.sync_local_app_keys_to_protocol_engine("device_approval");
+        // Activate the signed local roster immediately. Approval must not rely
+        // on receiving our own authorization back from a message server.
+        self.reconcile_device_sync();
         self.publish_local_protocol_invite();
         self.mark_mobile_push_dirty();
         self.process_protocol_engine_retry_batch("link_invite_import", retry_batch);
