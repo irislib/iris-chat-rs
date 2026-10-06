@@ -113,6 +113,9 @@ extension ChatScreen {
             timelineCoordinator.historyViewportAnchor = nil
             return
         }
+        if ProcessInfo.processInfo.environment["IRIS_TIMELINE_TRACE"] == "1" {
+            NSLog("WINDOWTRACE swap %@ -> %@ anchor=%@ oldY=%f offset=%f size=%f pan=%f state=%ld", String(describing: range), String(describing: nextWindow.range(in: ids)), anchor.messageID, anchor.originalContentY, scroll.contentOffset.y, scroll.contentSize.height, scroll.panGestureRecognizer.translation(in: scroll).y, scroll.panGestureRecognizer.state.rawValue)
+        }
         renderWindow = nextWindow
 #endif
     }

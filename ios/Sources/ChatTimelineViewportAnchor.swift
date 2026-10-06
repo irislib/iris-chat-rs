@@ -309,8 +309,12 @@ extension ChatTimelineInteractionCoordinator {
               let contentY = anchor.contentY,
               hasCommittedTimelineExtent(anchor.contentHeight) else { return false }
         let offset = scrollView.contentOffset.y + contentY - anchor.originalContentY + anchor.clampCorrectionY
+        if ProcessInfo.processInfo.environment["IRIS_TIMELINE_TRACE"] == "1" {
+            NSLog("WINDOWTRACE restore anchor=%@ oldY=%f newY=%f height=%f nativeHeight=%f offset=%f target=%f clamp=%f pan=%f state=%ld", anchor.messageID, anchor.originalContentY, contentY, anchor.contentHeight, scrollView.contentSize.height, scrollView.contentOffset.y, offset, anchor.clampCorrectionY, scrollView.panGestureRecognizer.translation(in: scrollView).y, scrollView.panGestureRecognizer.state.rawValue)
+        }
         historyViewportAnchor = nil
         if offset.isFinite, abs(offset - scrollView.contentOffset.y) > 1 {
+
             UIView.performWithoutAnimation { scrollView.contentOffset.y = offset }
         }
         return true

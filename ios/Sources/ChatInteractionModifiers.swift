@@ -261,7 +261,10 @@ final class ChatTimelineScrollObserverView: UIView {
                 self?.scheduleLayoutNotification()
             }
         }
-        offsetObservation = scrollView.observe(\.contentOffset) { [weak self] _, _ in
+        offsetObservation = scrollView.observe(\.contentOffset) { [weak self] scroll, _ in
+            if ProcessInfo.processInfo.environment["IRIS_TIMELINE_TRACE"] == "1", scroll.isDecelerating {
+                NSLog("WINDOWTRACE decel offset=%f pan=%f velocity=%f state=%ld", scroll.contentOffset.y, scroll.panGestureRecognizer.translation(in: scroll).y, scroll.panGestureRecognizer.velocity(in: scroll).y, scroll.panGestureRecognizer.state.rawValue)
+            }
             self?.timelineCoordinator?.recordNativeScrollPosition()
         }
         scrollView.panGestureRecognizer.addTarget(self, action: #selector(handleScrollPan(_:)))
@@ -295,6 +298,9 @@ final class ChatTimelineScrollObserverView: UIView {
     @objc private func handleScrollPan(_ recognizer: UIPanGestureRecognizer) {
         guard let scrollView = observedScrollView else { return }
         let translation = recognizer.translation(in: scrollView)
+        if ProcessInfo.processInfo.environment["IRIS_TIMELINE_TRACE"] == "1", recognizer.state == .ended {
+            NSLog("WINDOWTRACE end pan=%f velocity=%f offset=%f decelerating=%d", translation.y, recognizer.velocity(in: scrollView).y, scrollView.contentOffset.y, scrollView.isDecelerating)
+        }
         switch recognizer.state {
         case .began, .changed:
             let velocity = recognizer.velocity(in: scrollView)

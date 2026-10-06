@@ -313,7 +313,11 @@ struct ChatScreen: View {
                                     guard page.chatID == chatId else { return }
                                     timelineCoordinator.messageContentFrames = page.frames
 #if os(iOS)
+                                    if ProcessInfo.processInfo.environment["IRIS_TIMELINE_TRACE"] == "1", page.contentHeight != timelineCoordinator.latestPage.contentHeight {
+                                        NSLog("WINDOWTRACE extent height=%f oldHeight=%f pending=%@", page.contentHeight, timelineCoordinator.latestPage.contentHeight, String(describing: timelineCoordinator.historyViewportAnchor))
+                                    }
                                     for (id, height) in page.heights where rowHeightCache[id] != height {
+
                                         rowHeightCache[id] = height
                                     }
                                     timelineCoordinator.latestPage = page

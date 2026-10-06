@@ -146,6 +146,7 @@ final class ChatPaginationUITests: IrisChatUITestCase {
             "IRIS_UI_TEST_SEED_COUNT": "400",
             "IRIS_UI_TEST_SEED_MIXED_HEIGHTS": "1",
             "IRIS_PERF_LOG": "1",
+            "IRIS_TIMELINE_TRACE": "1",
         ])
         submitWelcomeName(app)
         XCTAssertTrue(waitForChatList(app, timeout: 60))
@@ -203,6 +204,7 @@ final class ChatPaginationUITests: IrisChatUITestCase {
             let afterMessages = messageSnapshots(in: try timeline.snapshot())
             let after = afterMessages.first { $0.label == anchor.label }
             let delta = (after?.frame.minY ?? .nan) - anchor.frame.minY
+            print("WINDOWSTEP ordinal=\(ordinal(anchor.label) ?? -1) delta=\(delta) expected=\(-viewport.height * 0.3)")
             let tolerance = max(20, viewport.height * 0.06)
             if after == nil || !delta.isFinite || abs(delta + viewport.height * 0.3) > tolerance {
                 capture(app, name: "render-window-drag-discontinuity")

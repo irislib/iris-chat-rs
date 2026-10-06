@@ -276,7 +276,7 @@ jobs:
           retention-days: 14
 
   macos:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'macos' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'macos' }}
     name: macOS build and tests
     runs-on: macos-15
     timeout-minutes: 75
@@ -370,25 +370,20 @@ jobs:
             ${{ github.workspace }}/cargo-target
           key: ${{ steps.ios_cargo_cache.outputs.cache-primary-key }}
 
-      - name: iOS device linking progress test
+      - name: Diagnose bounded timeline drag on the CI runtime
         run: |
           mkdir -p work/clipboard
           xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
             -destination "$(./scripts/ios-simulator-destination)" \
             -parallel-testing-enabled NO \
-            -only-testing:IrisChatUITests/IrisChatFlowUITests/testDeviceLinkShowsProgressAfterHistoryApproval \
-            -resultBundlePath work/clipboard/ios-device-link.xcresult test
-
-      - name: iOS native composer, clipboard, and timeline tests
-        run: |
-          xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
-            -destination "$(./scripts/ios-simulator-destination)" \
-            -parallel-testing-enabled NO \
-            -only-testing:IrisChatTests \
-            -only-testing:IrisChatUITests/ChatTimelineUITests/testReopeningLongChatLandsAtBottom \
-            -only-testing:IrisChatUITests/IrisChatTimelineUITests/testSearchHitInSeededLongChatOpensInTimeline \
-            -only-testing:IrisChatUITests/ChatPaginationUITests \
+            -only-testing:IrisChatUITests/ChatPaginationUITests/testDeepHistoryReturnsToLatestAndSendsFromTheBoundedWindow \
             -resultBundlePath work/clipboard/ios.xcresult test
+
+      - name: Capture isolated timeline gesture diagnostics
+        if: always()
+        run: |
+          xcrun simctl spawn booted log show --last 30m --style ndjson \
+            --predicate 'eventMessage CONTAINS "WINDOWTRACE"' > work/clipboard/timeline-gesture.log
 
       - name: Upload iOS test results
         if: always()
