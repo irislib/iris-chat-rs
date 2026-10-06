@@ -370,14 +370,21 @@ jobs:
             ${{ github.workspace }}/cargo-target
           key: ${{ steps.ios_cargo_cache.outputs.cache-primary-key }}
 
-      - name: iOS native composer, clipboard, and timeline tests
+      - name: iOS device linking progress test
         run: |
           mkdir -p work/clipboard
           xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
             -destination "$(./scripts/ios-simulator-destination)" \
             -parallel-testing-enabled NO \
-            -only-testing:IrisChatTests \
             -only-testing:IrisChatUITests/IrisChatFlowUITests/testDeviceLinkShowsProgressAfterHistoryApproval \
+            -resultBundlePath work/clipboard/ios-device-link.xcresult test
+
+      - name: iOS native composer, clipboard, and timeline tests
+        run: |
+          xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
+            -destination "$(./scripts/ios-simulator-destination)" \
+            -parallel-testing-enabled NO \
+            -only-testing:IrisChatTests \
             -only-testing:IrisChatUITests/ChatTimelineUITests/testReopeningLongChatLandsAtBottom \
             -only-testing:IrisChatUITests/IrisChatTimelineUITests/testSearchHitInSeededLongChatOpensInTimeline \
             -only-testing:IrisChatUITests/ChatPaginationUITests \
