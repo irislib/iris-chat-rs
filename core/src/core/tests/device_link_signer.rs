@@ -3,7 +3,7 @@ fn nostrconnect_device_link_preserves_private_history_choice_and_external_signer
     for include_history in [false, true] {
         let relay = crate::local_relay::TestRelay::start();
         let missing_ack = crate::local_relay::TestRelay::start();
-        missing_ack.ignore_acknowledgements(24133);
+        missing_ack.ignore_acknowledgements(24133).unwrap();
         let owner = Keys::generate();
         let approver = Keys::generate();
         let (mut source, _, _source_dir) =

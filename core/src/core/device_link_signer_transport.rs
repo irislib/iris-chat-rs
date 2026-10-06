@@ -316,7 +316,7 @@ mod tests {
     async fn approval_reply_does_not_wait_for_a_server_that_omits_acknowledgements() {
         let healthy = crate::local_relay::TestRelay::start();
         let silent = crate::local_relay::TestRelay::start();
-        silent.ignore_acknowledgements(24133);
+        silent.ignore_acknowledgements(24133).unwrap();
         let keys = Keys::generate();
         let client = Client::new(keys.clone());
         client.add_relay(healthy.url()).await.unwrap();

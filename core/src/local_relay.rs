@@ -218,10 +218,14 @@ impl TestRelay {
         &self.url
     }
 
-    pub fn ignore_acknowledgements(&self, kind: u64) {
+    pub fn ignore_acknowledgements(&self, kind: u64) -> anyhow::Result<()> {
         let (tx, rx) = std_mpsc::channel();
-        self.control_tx.send(RelayControl::IgnoreAcknowledgements(kind, tx)).unwrap();
-        rx.recv_timeout(StdDuration::from_secs(5)).unwrap();
+        self.control_tx
+            .send(RelayControl::IgnoreAcknowledgements(kind, tx))
+            .context("configure test relay acknowledgements")?;
+        rx.recv_timeout(StdDuration::from_secs(5))
+            .context("test relay acknowledgement configuration")?;
+        Ok(())
     }
 
     pub fn replay_stored(&self) {
