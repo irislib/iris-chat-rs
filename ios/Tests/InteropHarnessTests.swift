@@ -47,6 +47,15 @@ final class InteropHarnessTests: XCTestCase {
         let action = try requiredEnv("IRIS_IOS_HARNESS_ACTION", env: env)
         let runID = env["IRIS_IOS_HARNESS_RUN_ID"] ?? UUID().uuidString
         let useAppStorage = env["IRIS_IOS_HARNESS_USE_APP_STORAGE"] == "1"
+        if let seeds = env["IRIS_IOS_HARNESS_FIPS_SEEDS"] {
+            guard !useAppStorage else {
+                throw HarnessError.unexpected("Network overrides require isolated test storage")
+            }
+            // Xcode normalizes raw URL environment values. Decode before the core
+            // reads its configuration, preserving the exact secure server URL.
+            setenv("IRIS_FIPS_WEBSOCKET_SEED_URLS", seeds, 1)
+            status("fips_seed_override", seeds.isEmpty ? "none" : seeds)
+        }
         let service = env["IRIS_IOS_HARNESS_SERVICE"] ?? (
             useAppStorage ? "fi.siriusbusiness.irischat" : "fi.siriusbusiness.irischat.harness.\(runID)"
         )

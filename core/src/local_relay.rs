@@ -402,8 +402,11 @@ fn handle_client_message(client_id: usize, raw_message: &str, state: &Arc<Mutex<
             let event_id = event_id.to_string();
             let (sender, deliveries, dropped) = {
                 let mut relay = lock_relay_state(state);
-                let sender = if event.get("kind").and_then(Value::as_u64)
-                    .is_some_and(|kind| relay.faults.unacknowledged_kinds.contains(&kind)) {
+                let sender = if event
+                    .get("kind")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|kind| relay.faults.unacknowledged_kinds.contains(&kind))
+                {
                     None
                 } else {
                     relay.clients.get(&client_id).cloned()

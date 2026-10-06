@@ -53,9 +53,10 @@ def main():
                            "DISPLAY_NAME": "Public link test"}.items():
             env["IRIS_IOS_HARNESS_" + key + "_B64"] = base64.b64encode(value.encode()).decode()
         if os.environ.get("IRIS_LINK_TEST_SEEDLESS") == "1":
-            env["IRIS_FIPS_WEBSOCKET_SEED_URLS"] = ""
+            env["IRIS_IOS_HARNESS_FIPS_SEEDS_B64"] = ""
         elif os.environ.get("IRIS_LINK_TEST_FIPS_SEEDS"):
-            env["IRIS_FIPS_WEBSOCKET_SEED_URLS"] = os.environ["IRIS_LINK_TEST_FIPS_SEEDS"]
+            env["IRIS_IOS_HARNESS_FIPS_SEEDS_B64"] = base64.b64encode(
+                os.environ["IRIS_LINK_TEST_FIPS_SEEDS"].encode()).decode()
         target = harness.prepare_xctestrun(source, env)
         target.chmod(0o600)
         launched = True

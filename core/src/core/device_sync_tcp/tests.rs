@@ -660,7 +660,9 @@ async fn authorized_devices_exchange_records_through_a_seed_without_direct_links
                     if let InternalEvent::DeviceSyncPacket { data, .. } = *event {
                         // An authorization retry may request a fresh sync before
                         // the initial history request on the replacement stream.
-                        if data == b"resync" { continue; }
+                        if data == b"resync" {
+                            continue;
+                        }
                         assert_eq!(data, expected);
                         break;
                     }
