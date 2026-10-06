@@ -7,6 +7,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### GitHub
 
 - Continue device approval after the first message-server acknowledgement, without waiting for an unresponsive server. Report completion only after the authorized device list is observed.
+- Start native history transfer immediately after verified local device approval, without waiting for the phone to receive its own device-list event.
 - Transfer linked-device history through routed FIPS connections, and refresh history authorization while preserving the mobile transport. Keep unused sign-in codes available until canceled.
 - Make device-link errors visible in iOS settings. Add routed native/browser regression tests and a physical iPhone public-network release gate that checks history after reload.
 - Accelerate desktop video color conversion on ARM with NEON while preserving encoded output.
