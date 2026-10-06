@@ -5,7 +5,7 @@ use openh264::{
         BitRate, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod, Profile,
         RateControlMode, UsageType,
     },
-    formats::{RgbSliceU8, YUVBuffer, YUVSource},
+    formats::YUVSource,
     OpenH264API,
 };
 use std::{
@@ -128,8 +128,7 @@ impl VideoEncoder {
         if key {
             self.encoder.force_intra_frame();
         }
-        let yuv =
-            YUVBuffer::from_rgb8_source(RgbSliceU8::new(rgb, (width as usize, height as usize)));
+        let yuv = super::video_rgb::convert(rgb, width as usize, height as usize);
         self.dimensions = Some((width, height));
         let encoded = self.encoder.encode(&yuv)?;
         let key = matches!(encoded.frame_type(), FrameType::IDR | FrameType::I);

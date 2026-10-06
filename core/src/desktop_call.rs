@@ -13,6 +13,8 @@ mod devices;
 mod engine;
 #[cfg(feature = "desktop-media")]
 mod video;
+#[cfg(feature = "desktop-media")]
+mod video_rgb;
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct DesktopAudioDevice {
