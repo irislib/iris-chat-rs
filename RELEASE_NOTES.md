@@ -2,6 +2,24 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.7
+
+### GitHub
+
+- Fix device approval for existing accounts with equivalent signed device lists that retain older encrypted device labels. Repair preserves device authorization and removes retired labels from the replacement publication.
+- Preserve recent device-link diagnostics during background receipt traffic and distinguish failed approvals from timeouts.
+- Cover mixed legacy device lists, unchanged membership, conflicting authorizations, and approval with message history in regression tests.
+
+### Apple
+
+- Fix device linking for accounts used with older app versions.
+- Improve diagnostics when device linking fails.
+
+### Zapstore
+
+- Fix device linking for accounts used with older app versions.
+- Improve diagnostics when device linking fails.
+
 ## v2026.10.6.1
 
 ### GitHub

@@ -32,16 +32,17 @@ pub(super) async fn run(
         &token,
         &tx,
     );
-    let success = tokio::select! {
+    let result = tokio::select! {
         _ = cancel => { client.shutdown().await; return; },
-        result = tokio::time::timeout(Duration::from_secs(180), work) => matches!(result, Ok(Ok(()))),
+        result = tokio::time::timeout(Duration::from_secs(180), work) => result,
     };
+    let success = matches!(result, Ok(Ok(())));
     progress(
         &tx,
-        if success {
-            "finished"
-        } else {
-            "failed_or_timed_out"
+        match result {
+            Ok(Ok(())) => "finished",
+            Ok(Err(_)) => "failed",
+            Err(_) => "timed_out",
         },
     );
     let _ = tx.send(CoreMsg::Internal(Box::new(
@@ -281,7 +282,10 @@ async fn prepare_owner_roster(
                 reply,
             },
         )))?;
-        receiver.await?.map_err(anyhow::Error::msg)
+        receiver.await?.map_err(|error| {
+            progress(tx, "device_list_repair_rejected");
+            anyhow::Error::msg(error)
+        })
     };
     prepare(heads.clone()).await?;
     let fresh = fetch_signer_roster_heads(owner, relays)

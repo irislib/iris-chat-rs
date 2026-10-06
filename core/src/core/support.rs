@@ -320,7 +320,22 @@ impl AppCore {
             detail: detail.into(),
         });
         while self.debug_log.len() > MAX_DEBUG_LOG_ENTRIES {
-            self.debug_log.pop_front();
+            // Receipt bursts must not erase the last approval attempt before a
+            // user can export it. Reserve room for its most recent 32 steps.
+            let approval_count = self
+                .debug_log
+                .iter()
+                .filter(|entry| entry.category.starts_with("device_link."))
+                .count();
+            let oldest = if approval_count <= 32 {
+                self.debug_log
+                    .iter()
+                    .position(|entry| !entry.category.starts_with("device_link."))
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            self.debug_log.remove(oldest);
         }
     }
 

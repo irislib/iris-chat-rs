@@ -42,7 +42,6 @@ impl AppCore {
             anyhow::ensure!(
                 head.pubkey == pending.owner
                     && is_app_keys_event(head)
-                    && !has_obsolete_private_labels(head)
                     && head.created_at == template.created_at
                     && head.content.is_empty()
                     && head.created_at.as_secs() <= now.saturating_add(300)
@@ -86,7 +85,7 @@ impl AppCore {
             pending.owner,
             Timestamp::from(created_at),
             template.kind,
-            template.tags.clone().to_vec(),
+            public_roster_tags(template),
             template.content.clone(),
         )
         .sign_with_keys(keys)?;
@@ -97,20 +96,28 @@ impl AppCore {
     }
 }
 
-fn has_obsolete_private_labels(event: &Event) -> bool {
-    private_device_labels::obsolete_private_app_keys_event(event)
-        || event.tags.iter().any(|tag| {
+fn public_roster_tags(event: &Event) -> Vec<nostr::Tag> {
+    // Old clients republished identical membership with changing encrypted labels.
+    // Ignore only that retired metadata when comparing signed authorization, and
+    // strip it from the replacement so repair never republishes private labels.
+    event
+        .tags
+        .iter()
+        .filter(|tag| {
             let values = tag.as_slice();
-            values.first().is_some_and(|name| name == "f")
+            !(values.first().is_some_and(|name| {
+                name == nostr_double_ratchet::APP_KEYS_ENCRYPTED_DEVICE_LABELS_FACT
+            }) || (values.first().is_some_and(|name| name == "f")
                 && values.get(1).is_some_and(|name| {
                     name == nostr_double_ratchet::APP_KEYS_ENCRYPTED_DEVICE_LABELS_FACT
-                })
+                })))
         })
+        .cloned()
+        .collect()
 }
 
 fn normalized_roster_subject(event: &Event) -> anyhow::Result<Vec<Vec<String>>> {
-    let mut tags = event
-        .tags
+    let mut tags = public_roster_tags(event)
         .iter()
         .map(|tag| tag.as_slice().to_vec())
         .collect::<Vec<_>>();

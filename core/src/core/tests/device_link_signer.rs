@@ -38,9 +38,14 @@ fn nostrconnect_device_link_preserves_private_history_choice_and_external_signer
         );
         publish_signer_test_event(&source, &relay, &old);
         if include_history {
-            let duplicate = AppKeys::from_event(&old).unwrap()
-                .get_event_at(owner.public_key(), old.created_at.as_secs())
-                .sign_with_keys(&owner).unwrap();
+            let mut legacy = AppKeys::from_event(&old).unwrap()
+                .get_event_at(owner.public_key(), old.created_at.as_secs());
+            legacy.tags.push(nostr::Tag::parse([
+                nostr_double_ratchet::APP_KEYS_ENCRYPTED_DEVICE_LABELS_FACT,
+                "retired-label-ciphertext",
+            ]).unwrap());
+            legacy.id = None;
+            let duplicate = legacy.sign_with_keys(&owner).unwrap();
             assert_ne!(duplicate.id, old.id);
             publish_signer_test_event(&source, &relay, &duplicate);
             assert_eq!(source.runtime.block_on(super::account_signer_relay::fetch_signer_roster_heads(
@@ -117,6 +122,7 @@ fn nostrconnect_device_link_preserves_private_history_choice_and_external_signer
             .unwrap();
         assert!(signed.content.is_empty());
         assert!(!serde_json::to_string(&signed).unwrap().contains("history"));
+        assert!(!serde_json::to_string(&signed).unwrap().contains("encrypted_device_labels"));
         source.apply_app_keys_event(&signed).unwrap();
         let outgoing = source.device_history_transfer(&device.to_hex()).unwrap();
         assert_eq!(outgoing.link_id, paired.link_id);
