@@ -211,9 +211,11 @@ impl TrafficHistory {
             .checked_duration_since(previous.observed_at)
             .and_then(|duration| u64::try_from(duration.as_millis()).ok())
             .filter(|elapsed| *elapsed > 0 && *elapsed <= i64::MAX as u64);
-        let mut interval = json!({"valid": false, "reason": "comparable",
-            "since_sample_id": previous.sample_id, "elapsed_ms": elapsed_ms,
-            "transport_deltas": null});
+        let interval = |reason: &str, deltas: Option<BTreeMap<&str, Counters>>| {
+            json!({"valid": deltas.is_some(), "reason": reason,
+                "since_sample_id": previous.sample_id, "elapsed_ms": elapsed_ms,
+                "transport_deltas": deltas})
+        };
         let reason = if generation != previous.generation {
             "endpoint_changed"
         } else if !current.keys().eq(previous.peers.keys()) {
@@ -223,28 +225,27 @@ impl TrafficHistory {
         } else {
             "comparable"
         };
-        interval["reason"] = reason.into();
         if reason != "comparable" {
-            return interval;
+            return interval(reason, None);
         }
         let mut deltas = BTreeMap::<&str, Counters>::new();
         for (key, counters) in current {
-            let delta = counters.subtract(previous.peers[key]);
+            let delta = previous
+                .peers
+                .get(key)
+                .and_then(|previous| counters.subtract(*previous));
             let total = deltas.entry(key.transport).or_default();
             let Some(delta) = delta.and_then(|delta| total.add(delta)) else {
-                interval["reason"] = "counter_reset".into();
-                return interval;
+                return interval("counter_reset", None);
             };
             *total = delta;
         }
-        interval["valid"] = true.into();
-        interval["transport_deltas"] = json!(deltas);
-        interval
+        interval("comparable", Some(deltas))
     }
 }
 
 async fn send_reply(
-    mut bundle: Value,
+    bundle: Value,
     reply: flume::Sender<String>,
     query: impl Future<Output = Result<Vec<ObservedPeer>, &'static str>>,
     history: Arc<Mutex<TrafficHistory>>,
@@ -268,9 +269,13 @@ async fn send_reply(
     })
     .await
     .unwrap_or_else(|_| unavailable("timeout"));
-    bundle["fips_transport"] = diagnostic;
+    let mut bundle = match bundle {
+        Value::Object(bundle) => bundle,
+        _ => serde_json::Map::new(),
+    };
+    bundle.insert("fips_transport".to_owned(), diagnostic);
     // The async task owns the sole sender, including timeout/error replies.
-    let _ = reply.send(bundle.to_string());
+    let _ = reply.send(Value::Object(bundle).to_string());
 }
 
 async fn query_endpoint(
