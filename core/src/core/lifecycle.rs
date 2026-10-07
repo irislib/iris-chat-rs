@@ -40,7 +40,14 @@ impl AppCore {
         data_dir: String,
         shared_state: Arc<RwLock<AppState>>,
     ) -> anyhow::Result<Self> {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
+        let mut runtime_builder = tokio::runtime::Builder::new_multi_thread();
+        // The default Android pool scales with CPU cores, adding scheduler
+        // overhead to small networking turns even while the app is idle.
+        // Two async workers keep independent I/O moving without that scheduler
+        // churn; blocking jobs and FIPS packet encryption use separate pools.
+        #[cfg(target_os = "android")]
+        runtime_builder.worker_threads(2);
+        let runtime = runtime_builder
             .enable_all()
             .max_blocking_threads(8)
             // FIPS control-plane turns contain several deliberately bounded
