@@ -261,6 +261,22 @@ def main():
         adb("shell", "dumpsys", "battery", "reset")
         idle_forced = False
 
+        # Simulate OS process reclamation, not a user force-stop (which should
+        # remain stopped). START_STICKY must restore receiving without opening UI.
+        close_activity()
+        previous_pid = adb("shell", "pidof", package).strip()
+        assert previous_pid.isdecimal()
+        adb("shell", "run-as", package, "kill", "-9", previous_pid)
+        wait_for("receiver process recreated", lambda: (new_pid := adb("shell", "pidof", package,
+                 check=False).strip()).isdecimal() and new_pid != previous_pid, timeout=90)
+        wait_for("restored background receiver", lambda: notification("background-receiving"))
+        restarted_message = f"restart-message-{time.time_ns()}"
+        command(f"message {owner} {restarted_message}")
+        event("message-sent")
+        wait_for("message after background process recreation",
+                 lambda: notification("iris_chat_message_alerts", restarted_message), timeout=90)
+        print("PASS receiver restores message delivery after process recreation", flush=True)
+
         adb("shell", "input", "keyevent", "WAKEUP")
         adb("shell", "cmd", "statusbar", "expand-notifications")
         (args.output / "notifications.png").write_bytes(subprocess.check_output(

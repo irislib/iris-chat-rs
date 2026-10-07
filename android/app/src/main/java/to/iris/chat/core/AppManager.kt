@@ -251,8 +251,8 @@ class AppManager(
     @Volatile private var googlePushAvailable: Boolean = true
 
     private var lastRevApplied: ULong = 0u
-    private var restoreCheckComplete = false
-    private var persistedRestoreInFlight = false
+    @Volatile private var restoreCheckComplete = false
+    @Volatile private var persistedRestoreInFlight = false
     private var cachedAccountBundle: StoredAccountBundle? = null
     private val secretPersistenceMutex = Mutex()
     private val backgroundSearch = BackgroundSearch(
@@ -1440,8 +1440,8 @@ class AppManager(
         IrisDebugLog.d(TAG, "restoreSessionFromSecureStore start")
         val pendingLink = loadPersistedPendingDeviceLink()
         if (pendingLink != null) {
-            restoreCheckComplete = true
             persistedRestoreInFlight = true
+            restoreCheckComplete = true
             val dispatched =
                 dispatchToRust(
                     AppAction.RestorePendingDeviceLink(
@@ -1473,9 +1473,9 @@ class AppManager(
             return
         }
 
-        restoreCheckComplete = true
         val bundle = StoredAccountBundle.fromJson(decrypted)
         persistedRestoreInFlight = true
+        restoreCheckComplete = true
         if (bundle != null) {
             cachedAccountBundle = bundle
             IrisDebugLog.d(TAG, "restoreSessionFromSecureStore dispatch bundle restore")
@@ -1920,7 +1920,11 @@ class AppManager(
         }
         val account = snapshot.account
         if (persistedRestoreInFlight) {
-            if (account == null && snapshot.busy.restoringSession) {
+            // Updates queued before the restore action are not a failed login.
+            // The FFI can coalesce away the busy=true snapshot, so completion
+            // must come from an account, a restored pairing, or a restore error.
+            val finishedWithoutAccount = snapshot.linkDevice != null || snapshot.toast != null
+            if (account == null && (snapshot.busy.restoringSession || !finishedWithoutAccount)) {
                 mutableBootstrapState.value = AccountBootstrapState.Loading
                 return
             }

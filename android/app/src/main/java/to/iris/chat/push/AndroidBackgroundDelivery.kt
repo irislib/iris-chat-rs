@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import to.iris.chat.IrisDebugLog
 import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.core.AppManager
 import to.iris.chat.rust.AppState
@@ -37,12 +38,16 @@ class AndroidBackgroundDelivery(
             }.collect { (state, bootstrap, foreground) ->
                 val old = previous
                 previous = state
-                if (bootstrap is AccountBootstrapState.Loading) return@collect
+                // These flows can arrive separately; never stop a sticky
+                // receiver while the account snapshot itself is still loading.
+                if (bootstrap is AccountBootstrapState.Loading || state.busy.restoringSession) return@collect
                 val wanted = !googlePushAvailable &&
                     state.account?.authorizationState == DeviceAuthorizationState.AUTHORIZED &&
                     (state.preferences.desktopNotificationsEnabled || state.preferences.voiceCallsEnabled ||
                         state.preferences.videoCallsEnabled)
                 if (lastWanted != wanted) {
+                    IrisDebugLog.d("IrisPush", "background receiving=$wanted foreground=$foreground " +
+                        "bootstrap=${bootstrap.javaClass.simpleName} authorization=${state.account?.authorizationState}")
                     lastWanted = wanted
                     context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit()
                         .putBoolean(ENABLED, wanted).apply()
@@ -78,6 +83,7 @@ class AndroidBackgroundDelivery(
     }
 
     fun serviceStarted() {
+        IrisDebugLog.d("IrisPush", "background service started wanted=$lastWanted")
         if (lastWanted == false) {
             context.stopService(Intent(context, BackgroundMessageService::class.java))
             return
@@ -87,6 +93,7 @@ class AndroidBackgroundDelivery(
     }
 
     fun serviceStopped() {
+        IrisDebugLog.d("IrisPush", "background service stopped")
         requested = false
         app.setBackgroundReceiving(false)
     }
