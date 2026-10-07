@@ -342,16 +342,16 @@ private extension FipsBle.HostBleEvent {
             return "scanning started"
         case .peerDiscovered:
             return "peer discovered"
-        case let .connected(_, _, _, sendSegmentMtu, receiveSegmentMtu):
-            return "connected send_mtu=\(sendSegmentMtu) receive_mtu=\(receiveSegmentMtu)"
-        case let .incomingConnection(_, _, sendSegmentMtu, receiveSegmentMtu):
-            return "incoming connected send_mtu=\(sendSegmentMtu) receive_mtu=\(receiveSegmentMtu)"
-        case let .bytesReceived(_, bytes):
-            return "received bytes=\(bytes.count)"
+        case let .connected(_, connectionId, _, sendSegmentMtu, receiveSegmentMtu):
+            return "connected connection=\(connectionId) send_mtu=\(sendSegmentMtu) receive_mtu=\(receiveSegmentMtu)"
+        case let .incomingConnection(connectionId, _, sendSegmentMtu, receiveSegmentMtu):
+            return "incoming connected connection=\(connectionId) send_mtu=\(sendSegmentMtu) receive_mtu=\(receiveSegmentMtu)"
+        case let .bytesReceived(connectionId, bytes):
+            return "received connection=\(connectionId) bytes=\(bytes.count)"
         case .writeCompleted:
             return "write completed"
-        case let .disconnected(_, reason):
-            return "disconnected reason=\(reason ?? "none")"
+        case let .disconnected(connectionId, reason):
+            return "disconnected connection=\(connectionId) reason=\(reason ?? "none")"
         case let .failed(_, message):
             return "failed message=\(message)"
         }

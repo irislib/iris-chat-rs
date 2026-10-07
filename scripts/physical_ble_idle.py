@@ -293,7 +293,9 @@ class Gate:
                                 "ipv4Routes": routes, "ipv6Routes": routes6}) + "\n")
         return ok
 
-    def configure(self, peer):
+    def configure(self, peer, device):
+        if not re.fullmatch(r"[a-f0-9]{64}", device) or device not in self.saved_account.before["devices"]:
+            raise ValueError("The Bluetooth target must be the saved account's current device")
         source = self.args.xctestrun.resolve()
         def rebase(value):
             if isinstance(value, str):
@@ -316,6 +318,7 @@ class Gate:
             target[key] = {k: v for k, v in target.get(key, {}).items()
                            if not k.startswith(("IRIS_UI_TEST_", "IRIS_FIPS_"))}
         environment = {"IRIS_FIPS_PHYSICAL_PEER_NPUB": peer,
+                       "IRIS_FIPS_PHYSICAL_PEER_DEVICE_HEX": device,
                        "IRIS_FIPS_PHYSICAL_RUN_ID": self.run_id,
                        "IRIS_FIPS_PHYSICAL_MESSAGE": self.probe,
                        "IRIS_FIPS_IDLE_METRICS": "1",
@@ -351,7 +354,7 @@ class Gate:
             raise ValueError("The isolated Android account did not report its identity")
         self.action("set_read_receipts_from_args", {"read_receipts_enabled": "true"}, ["-e", "enabled", "true"])
         self.action("disable_relays_and_report", {"relay_count": "0"})
-        configured = self.configure(peer)
+        configured = self.configure(peer, identity.get("device_public_key_hex", ""))
         self.adb("svc", "wifi", "disable")
         self.adb("svc", "data", "disable")
         self.adb("settings", "put", "global", "mobile_data", "0")

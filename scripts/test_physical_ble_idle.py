@@ -60,6 +60,32 @@ def save_capture(directory):
 
 
 class PhysicalIdleGateTests(unittest.TestCase):
+    def test_configure_requires_current_device_from_saved_roster(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source.xctestrun"
+            app = root / "TestApp.app"
+            bundle = root / "IrisChatUITests.xctest"
+            for path in (app, bundle):
+                path.mkdir()
+                (path / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "test", "CFBundleVersion": "1"}))
+                (path / "test").write_bytes(b"test product")
+            source.write_bytes(plistlib.dumps({"IrisChatUITests": {
+                "TestBundlePath": str(bundle), "UITargetAppPath": str(app),
+                "EnvironmentVariables": {"IRIS_UI_TEST_DATA_DIR": "/ordinary-data"},
+            }}))
+            gate = Gate(SimpleNamespace(artifact_dir=root / "run", xctestrun=source, sample_seconds=60))
+            device = "a" * 64
+            gate.saved_account.before = {"devices": [device]}
+            for invalid in ["", "b" * 64, device + "\n"]:
+                with self.assertRaises(ValueError):
+                    gate.configure("npub1fixture", invalid)
+            configured = plistlib.loads(gate.configure("npub1fixture", device).read_bytes())
+            environment = configured["IrisChatUITests"]["EnvironmentVariables"]
+            self.assertEqual(environment["IRIS_FIPS_PHYSICAL_PEER_DEVICE_HEX"], device)
+            self.assertEqual(environment["IRIS_FIPS_PHYSICAL_RUN_ID"], gate.run_id)
+            self.assertNotIn("IRIS_UI_TEST_DATA_DIR", environment)
+
     def test_quiet_app_passes_and_reports_each_minute(self):
         result = evaluate_metrics(fixture(), 60, 5, 5)
         self.assertTrue(result["ok"])

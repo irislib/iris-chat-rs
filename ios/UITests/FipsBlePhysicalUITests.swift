@@ -25,6 +25,11 @@ final class FipsBlePhysicalUITests: XCTestCase {
         app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = runID
         app.launchEnvironment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] = "1"
         app.launchEnvironment["IRIS_DISABLE_NOTIFICATIONS"] = "1"
+        app.launchEnvironment["IRIS_FIPS_PHYSICAL_PEER_DEVICE_HEX"] =
+            environment["IRIS_FIPS_PHYSICAL_PEER_DEVICE_HEX"]
+        if environment["IRIS_FIPS_IDLE_METRICS"] == "1" {
+            app.launchEnvironment["IRIS_FIPS_BLE_TRACE"] = "1"
+        }
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
         dismissBlockingSystemAlertIfPresent()
@@ -39,12 +44,12 @@ final class FipsBlePhysicalUITests: XCTestCase {
 
         print("IRIS_FIPS_READY_TO_SEND")
         Thread.sleep(forTimeInterval: preSendDelay)
-        sendAndWaitForReceipt(
+        guard sendAndWaitForReceipt(
             message,
             in: app,
             receiptTimeout: receiptTimeout,
             verifyTransportTrace: true
-        )
+        ) else { return }
         if environment["IRIS_FIPS_IDLE_METRICS"] == "1" {
             try measureIdleAfterBluetoothReceipt(app, environment: environment)
         }
@@ -66,7 +71,10 @@ final class FipsBlePhysicalUITests: XCTestCase {
             return
         }
         let close = element(app, "messageInfoCloseButton")
-        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        guard close.waitForExistence(timeout: 5) else {
+            XCTFail("could not close the verified BLE probe before idle measurement")
+            return
+        }
         close.tap()
         let options = XCTMeasureOptions()
         options.iterationCount = 2
@@ -115,12 +123,12 @@ final class FipsBlePhysicalUITests: XCTestCase {
         enableFipsBluetooth(in: app)
         openChat(with: peerNpub, in: app)
         guard waitForPeerProtocolReady(in: app) else { return }
-        sendAndWaitForReceipt(
+        guard sendAndWaitForReceipt(
             firstMessage,
             in: app,
             receiptTimeout: receiptTimeout,
             verifyTransportTrace: false
-        )
+        ) else { return }
 
         app.terminate()
         app.launchEnvironment["IRIS_UI_TEST_RESET"] = "0"
@@ -131,12 +139,12 @@ final class FipsBlePhysicalUITests: XCTestCase {
             "chat did not restore after relaunch"
         )
         print("IRIS_FIPS_RECONNECTED_READY_TO_SEND")
-        sendAndWaitForReceipt(
+        guard sendAndWaitForReceipt(
             secondMessage,
             in: app,
             receiptTimeout: receiptTimeout,
             verifyTransportTrace: true
-        )
+        ) else { return }
 #endif
     }
 
@@ -306,6 +314,22 @@ final class FipsBlePhysicalUITests: XCTestCase {
             return false
         }
 
+        if ProcessInfo.processInfo.environment["IRIS_FIPS_IDLE_METRICS"] == "1" {
+            let target = element(app, "physicalBluetoothTargetLink")
+            guard target.waitForExistence(timeout: 5) else {
+                XCTFail("exact Bluetooth target diagnostics are missing")
+                return false
+            }
+            let connected = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value == %@", "Connected"), object: target
+            )
+            guard XCTWaiter.wait(for: [connected], timeout: 60) == .completed else {
+                XCTFail("the saved Android device has no authenticated Bluetooth link")
+                return false
+            }
+            print("IRIS_FIPS_TARGET_BLE_CONNECTED")
+        }
+
         let back = element(app, "navigationBackButton")
         guard back.waitForExistence(timeout: 5) else {
             XCTFail("could not return to chat after readiness check")
@@ -320,23 +344,29 @@ final class FipsBlePhysicalUITests: XCTestCase {
         in app: XCUIApplication,
         receiptTimeout: TimeInterval,
         verifyTransportTrace: Bool
-    ) {
+    ) -> Bool {
         let composer = element(app, "chatMessageInput")
         composer.tap()
         composer.typeText(message)
         let send = element(app, "chatSendButton")
-        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        guard send.waitForExistence(timeout: 5) else {
+            XCTFail("BLE probe send button did not appear")
+            return false
+        }
         send.tap()
 
         let body = app.staticTexts[message]
-        XCTAssertTrue(body.waitForExistence(timeout: 15), "outgoing BLE probe did not appear")
+        guard body.waitForExistence(timeout: 15) else {
+            XCTFail("outgoing BLE probe did not appear")
+            return false
+        }
         let handedOff = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value IN %@", ["Sent", "Received", "Seen"]),
             object: body
         )
         guard XCTWaiter.wait(for: [handedOff], timeout: 60) == .completed else {
             XCTFail("message never left the protocol queue after peer bootstrap")
-            return
+            return false
         }
         let received = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value IN %@",
@@ -346,20 +376,27 @@ final class FipsBlePhysicalUITests: XCTestCase {
         )
         guard XCTWaiter.wait(for: [received], timeout: receiptTimeout) == .completed else {
             XCTFail("FIPS BLE receipt did not arrive")
-            return
+            return false
         }
-        guard verifyTransportTrace else { return }
+        guard verifyTransportTrace else { return true }
 
         body.press(forDuration: 0.6)
-        XCTAssertTrue(element(app, "messageActionsSheet").waitForExistence(timeout: 10))
+        guard element(app, "messageActionsSheet").waitForExistence(timeout: 10) else {
+            XCTFail("BLE probe actions did not appear")
+            return false
+        }
         let info = app.buttons["Info"]
-        XCTAssertTrue(info.waitForExistence(timeout: 5))
+        guard info.waitForExistence(timeout: 5) else {
+            XCTFail("BLE probe info action did not appear")
+            return false
+        }
         info.tap()
-        XCTAssertTrue(element(app, "messageInfoSheet").waitForExistence(timeout: 10))
-        XCTAssertTrue(
-            app.staticTexts["FIPS nearby"].waitForExistence(timeout: 10),
-            "receipt arrived without the FIPS nearby transport trace"
-        )
+        guard element(app, "messageInfoSheet").waitForExistence(timeout: 10),
+              app.staticTexts["FIPS nearby"].waitForExistence(timeout: 10) else {
+            XCTFail("receipt arrived without the FIPS nearby transport trace")
+            return false
+        }
+        return true
     }
 
     private func burstMessage(prefix: String, index: Int, size: Int) -> String {

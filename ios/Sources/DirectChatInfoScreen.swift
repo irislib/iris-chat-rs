@@ -191,6 +191,10 @@ struct DirectChatInfoScreen: View {
                         }
                     }
 
+                    if let target = FipsBlePhysicalTarget(environment: ProcessInfo.processInfo.environment) {
+                        FipsBlePhysicalProbeRow(service: manager.nearbyIris, target: target, ownerHex: chatId)
+                    }
+
                     DirectChatAdvancedCard(
                         debug: profileDebug,
                         isExpanded: $advancedExpanded

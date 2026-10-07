@@ -79,12 +79,13 @@ private fun HostBleEvent.debugSummary(): String =
         is HostBleEvent.AdvertisingStopped -> "advertising stopped"
         is HostBleEvent.ScanningStarted -> "scanning started"
         is HostBleEvent.PeerDiscovered -> "peer discovered"
-        is HostBleEvent.Connected -> "connected send_mtu=$sendSegmentMtu receive_mtu=$receiveSegmentMtu"
+        is HostBleEvent.Connected ->
+            "connected connection=$connectionId send_mtu=$sendSegmentMtu receive_mtu=$receiveSegmentMtu"
         is HostBleEvent.IncomingConnection ->
-            "incoming connected send_mtu=$sendSegmentMtu receive_mtu=$receiveSegmentMtu"
-        is HostBleEvent.BytesReceived -> "received bytes=${bytes.size}"
+            "incoming connected connection=$connectionId send_mtu=$sendSegmentMtu receive_mtu=$receiveSegmentMtu"
+        is HostBleEvent.BytesReceived -> "received connection=$connectionId bytes=${bytes.size}"
         is HostBleEvent.WriteCompleted -> "write completed"
-        is HostBleEvent.Disconnected -> "disconnected reason=${reason ?: "none"}"
+        is HostBleEvent.Disconnected -> "disconnected connection=$connectionId reason=${reason ?: "none"}"
         is HostBleEvent.Failed -> "failed message=$message"
     }
 
