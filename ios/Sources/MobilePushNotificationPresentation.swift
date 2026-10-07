@@ -1,31 +1,20 @@
 import UserNotifications
 
-/// Without Apple's filtering entitlement an empty alert restores the original
-/// server placeholder. Keep a truthful, quiet fallback until filtering is enabled.
+/// The extension is signed with Apple's notification-filtering entitlement.
+/// Suppression requires a fresh, empty content object, including no payload,
+/// badge, sound, or notification actions from the server placeholder.
 enum MobilePushNotificationPresentation {
-    // Enable only in builds signed with the notification-filtering entitlement.
-    static let filteringEnabled = false
-
-    static func prepareFallback(_ content: UNMutableNotificationContent, canFilter: Bool = filteringEnabled) {
-        content.title = canFilter ? "" : "Iris Chat"
+    static func content(
+        for resolution: MobilePushNotificationResolution,
+        original: UNNotificationContent
+    ) -> UNNotificationContent {
+        guard resolution.shouldShow else { return UNNotificationContent() }
+        let content = (original.mutableCopy() as? UNMutableNotificationContent)
+            ?? UNMutableNotificationContent()
+        content.title = resolution.title
         content.subtitle = ""
-        content.body = canFilter ? "" : "Chat updated"
-        content.sound = nil
-        content.badge = nil
-    }
-
-    static func apply(
-        _ resolution: MobilePushNotificationResolution,
-        to content: UNMutableNotificationContent,
-        canFilter: Bool = filteringEnabled
-    ) {
-        if !resolution.shouldShow && canFilter {
-            prepareFallback(content, canFilter: true)
-            return
-        }
-        if !resolution.title.isEmpty { content.title = resolution.title }
-        if !resolution.body.isEmpty { content.body = resolution.body }
-        content.sound = resolution.shouldShow ? .default : nil
-        if !resolution.shouldShow { content.badge = nil }
+        content.body = resolution.body
+        content.sound = .default
+        return content
     }
 }

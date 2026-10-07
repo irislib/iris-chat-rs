@@ -319,6 +319,8 @@ jobs:
           }
           verify_profile "$app_profile" "$IOS_BUNDLE_ID"
           verify_profile "$notification_profile" "$IOS_BUNDLE_ID.NotificationService"
+          python3 scripts/verify-ios-notification-filtering.py \
+            "$signing_dir/$(basename "$notification_profile").plist"
           verify_profile "$share_profile" "$IOS_BUNDLE_ID.ShareExtension"
 
           {
@@ -350,6 +352,10 @@ jobs:
           fi
           app="$(find "$archive/Products/Applications" -maxdepth 1 -type d -name '*.app' | head -n 1)"
           codesign --verify --deep --strict --verbose=2 "$app"
+          codesign --display --entitlements :- "$app/PlugIns/NotificationService.appex" \
+            > "$RUNNER_TEMP/iris-notification-entitlements.plist"
+          python3 scripts/verify-ios-notification-filtering.py \
+            "$RUNNER_TEMP/iris-notification-entitlements.plist"
           archive_zip="dist/ios/iris-chat-v${IRIS_APP_VERSION_NAME}-ios.xcarchive.zip"
           ditto -c -k --sequesterRsrc --keepParent "$archive" "$archive_zip"
       - name: Upload iOS build

@@ -30,6 +30,7 @@ schemes:
       config: Debug
       targets:
         - IrisChatTests
+        - NotificationServiceTests
         - IrisChatUITests
     archive:
       config: Release
@@ -130,6 +131,26 @@ targets:
         buildPhase: resources
     dependencies:
       - target: IrisChat
+
+  NotificationServiceTests:
+    type: bundle.unit-test
+    platform: iOS
+    settings:
+      base:
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        GENERATE_INFOPLIST_FILE: YES
+    sources:
+      - path: NotificationServiceTests
+      - path: NotificationService/NotificationService.swift
+      - path: Sources/MobilePushDeliveryProbe.swift
+      - path: Sources/MobilePushNotificationPresentation.swift
+      - path: Bindings
+        excludes:
+          - "*.h"
+          - "*.modulemap"
+    dependencies:
+      - framework: Frameworks/IrisChatCore.xcframework
+        embed: false
 
   IrisChatUITests:
     type: bundle.ui-testing

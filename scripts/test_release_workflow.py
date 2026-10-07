@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
+import plistlib
+import sys
+import tempfile
 import re
 import shutil
 import subprocess
@@ -12,6 +15,32 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_ios_filtering_requires_entitlement_in_profile_and_signed_extension(self) -> None:
+        verifier = ROOT / "scripts/verify-ios-notification-filtering.py"
+        key = "com.apple.developer.usernotifications.filtering"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "entitlements.plist"
+            for wrapped in (False, True):
+                for value in (None, False, "true", 1, True):
+                    with self.subTest(profile=wrapped, value=repr(value)):
+                        entitlements = {} if value is None else {key: value}
+                        document = {"Entitlements": entitlements} if wrapped else entitlements
+                        path.write_bytes(plistlib.dumps(document))
+                        result = subprocess.run(
+                            [sys.executable, str(verifier), str(path)], capture_output=True, text=True
+                        )
+                        self.assertEqual(result.returncode, 0 if value is True else 1)
+            path.write_bytes(b"not a plist")
+            result = subprocess.run([sys.executable, str(verifier), str(path)], capture_output=True)
+            self.assertEqual(result.returncode, 1)
+        workflow = (ROOT / ".github/workflows/build-artifacts.yml").read_text()
+        self.assertEqual(workflow.count("python3 scripts/verify-ios-notification-filtering.py"), 2)
+        self.assertIn('"$app/PlugIns/NotificationService.appex"', workflow)
+        source = plistlib.loads((ROOT / "ios/NotificationService/NotificationService.entitlements").read_bytes())
+        self.assertIs(source.get(key), True)
+        for gate in ("scripts/ios-build", ".github/workflows/ci.yml"):
+            self.assertIn("-only-testing:NotificationServiceTests", (ROOT / gate).read_text())
+
     def test_selected_ios_ui_tests_name_existing_classes_and_methods(self) -> None:
         tests = {}
         for path in (ROOT / "ios/UITests").glob("*.swift"):
