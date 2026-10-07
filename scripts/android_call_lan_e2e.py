@@ -19,6 +19,8 @@ import subprocess
 import threading
 import time
 
+from android_media_install import MediaInstall
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -60,12 +62,7 @@ def main():
     app_package = packages[0][0]
     user = adb("shell", "am", "get-current-user").strip()
     assert user.isdecimal()
-    background_components = ["to.iris.chat.push.BackgroundMessageService",
-                             "to.iris.chat.push.BackgroundMessageRestoreReceiver"]
-    package_dump = adb("shell", "dumpsys", "package", app_package)
-    for component in background_components:
-        assert not re.search(r"^\s+" + re.escape(component) + r"\s*$", package_dump, re.M), (
-            "Media harness requires default background component settings")
+    installation = MediaInstall(adb, backups, user, adb("shell", "dumpsys", "package", app_package))
 
     def port(kind=socket.SOCK_STREAM):
         with socket.socket(type=kind) as sock:
@@ -76,8 +73,6 @@ def main():
     relay_url = f"ws://{args.host}:{relay_port}"
     events = queue.Queue()
     processes = []
-    changed = []
-    disabled_components = []
     logs = []
     readers = []
 
@@ -111,11 +106,7 @@ def main():
         raise AssertionError("Local test listener did not start")
 
     try:
-        adb("shell", "am", "force-stop", app_package)
-        for component in background_components:
-            disabled_components.append(component)
-            adb("shell", "run-as", app_package, "pm", "disable", "--user", user,
-                app_package + "/" + component)
+        installation.begin()
         relay, _ = spawn_log("relay", [str(args.bin_dir / "local_nostr_relay"), f"{args.host}:{relay_port}"], stdout=subprocess.DEVNULL)
         listening(relay_port)
         environment = {**os.environ, "IRIS_DEMO_RELAYS": relay_url,
@@ -137,9 +128,7 @@ def main():
             except json.JSONDecodeError:
                 pass
         assert ready is not None, "Fixture did not create a test account"
-        for package, apk, backup in backups:
-            changed.append(backup)
-            adb("install", "-r", str(apk))
+        installation.install()
 
         def command(value):
             fixture.stdin.write(value + "\n")
@@ -199,7 +188,7 @@ def main():
             "message_server_stopped": server_stopped, "remote_hangup": ended, "benchmark": benchmark}, indent=2))
         print("PASS physical Wi-Fi call, native codecs, server stopped, mute/camera off, and remote hangup", flush=True)
     finally:
-        if changed:
+        if installation.changed:
             adb("pull", "/sdcard/Android/data/to.iris.chat.debug/files/call-tests/native-peer-log.json",
                 str(args.output / "native-peer-log.json"), check=False)
         for process in reversed(processes):
@@ -210,21 +199,11 @@ def main():
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)
-        # Stop only this dedicated test runner before restoring installed packages.
-        if changed:
-            adb("shell", "am", "force-stop", "to.iris.chat.debug", check=False)
         failures = []
-        for backup in changed:
-            try:
-                adb("install", "-r", str(backup))
-            except Exception as error:
-                failures.append(str(error))
-        for component in disabled_components:
-            try:
-                adb("shell", "run-as", app_package, "pm", "default-state", "--user", user,
-                    app_package + "/" + component)
-            except Exception as error:
-                failures.append(str(error))
+        try:
+            installation.restore()
+        except Exception as error:
+            failures.append(str(error))
         for reader in readers:
             reader.join(timeout=2)
         for log in logs:
