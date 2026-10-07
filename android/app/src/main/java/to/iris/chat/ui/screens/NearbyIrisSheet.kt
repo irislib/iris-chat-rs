@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -26,6 +27,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
@@ -219,15 +223,15 @@ private fun NearbyMasterRow(
 }
 
 @Composable
-internal fun rememberNearbySnapshotState(service: IrisNearbyService) = produceState(
-    initialValue = service.snapshot,
-    key1 = service,
-) {
-    while (true) {
-        delay(2_000L)
-        val next = service.snapshot
-        if (next != value) {
-            value = next
+internal fun rememberNearbySnapshotState(service: IrisNearbyService): androidx.compose.runtime.State<IrisNearbyService.Snapshot> {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val initial = remember(service) { service.snapshot }
+    return produceState(initialValue = initial, key1 = service, key2 = lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                value = service.snapshot
+                delay(2_000L)
+            }
         }
     }
 }
