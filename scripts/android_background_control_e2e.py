@@ -20,6 +20,7 @@ import time
 from android_background_delivery_e2e import wait_for, write_marker
 from android_background_health import CONTROL_PACKAGE, query_health
 from android_fips_health import comparable_fips_interval, filter_fips_health, require_single_static_udp_peer
+from android_background_control_resume import installed_artifact_hashes, paired_resume_settings
 from native_lab import acquire, release
 
 
@@ -66,16 +67,22 @@ def reject_unexpected_peers(health):
 
 
 def control_foreground_ready(adb):
-    focus = adb("shell", "dumpsys", "window", "windows")
-    if any("mCurrentFocus=" in line and "permissioncontroller" in line for line in focus.splitlines()):
-        adb("shell", "input", "keyevent", "BACK")  # Dismiss, never grant.
-        return False
     activities = adb("shell", "dumpsys", "activity", "activities")
-    ours = [block for block in re.split(r"\n\s*\* Hist", activities)
-            if f"packageName={CONTROL_PACKAGE} " in block]
-    visible = ("state=RESUMED", "mVisible=true", "mVisibleRequested=true", "mAppStopped=false")
+    blocks = re.split(r"\n\s*\* Hist", activities)
+    def resumed(block):
+        state = re.search(r"^\s*state=(\w+)", block, re.M)
+        return state is not None and state.group(1) == "RESUMED"
+    for block in blocks:
+        if ("packageName=com.android.permissioncontroller " in block and
+            "mActivityComponent=com.android.permissioncontroller/.permission.ui.GrantPermissionsActivity" in block and
+            f"launchedFromPackage={CONTROL_PACKAGE} " in block and resumed(block)):
+            adb("shell", "input", "keyevent", "BACK")  # Dismiss this app's prompt, never grant.
+            return False
+    ours = [block for block in blocks if f"packageName={CONTROL_PACKAGE} " in block]
+    # Android omits mAppStopped when false; the observed RESUMED state is explicit.
+    visible = ("mVisible=true", "mVisibleRequested=true")
     services = adb("shell", "dumpsys", "activity", "services", CONTROL_PACKAGE)
-    return any(all(field in block for field in visible) for block in ours) and (
+    return any(resumed(block) and all(field in block for field in visible) for block in ours) and (
         "BackgroundMessageService" in services and "isForeground=true" in services)
 
 
@@ -88,6 +95,7 @@ def main():
     parser.add_argument("--test-apk", required=True, type=Path)
     parser.add_argument("--aapt2", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--resume-from", type=Path, help="Continue exact paired control after a setup-only failure; never reinstall/reset")
     parser.add_argument("--external-idle-result", required=True, type=Path)
     args = parser.parse_args()
     package, test_package = CONTROL_PACKAGE, CONTROL_PACKAGE + ".test"
@@ -100,6 +108,7 @@ def main():
     processes, logs = [], []
     installed = False
     reverse_port = None
+    reverse_added = False
     original_whitelist = False
     whitelist_changed = False
     initial_awake = False
@@ -131,14 +140,24 @@ def main():
         return bool(ours) and all("state=STOPPED" in block for block in ours)
 
     try:
-        for name in (package, test_package):
-            assert not adb("shell", "pm", "path", name, check=False).strip(), "Control requires a fresh separate package; no reset allowed"
-        assert not adb("shell", "pm", "path", "com.google.android.gms", check=False).strip()
         initial_awake = "mWakefulness=Awake" in adb("shell", "dumpsys", "power")
+        resume = None
+        if args.resume_from is not None:
+            assert args.resume_from.resolve() != args.output.resolve()
+            hashes = installed_artifact_hashes(adb, args.app_apk, args.test_apk)
+            resume = paired_resume_settings(adb, args.resume_from, args.host)
+            write_marker(args.output / "resume-verification.json", {
+                "source_attempt": str(resume["source"]), "installed_artifacts": hashes,
+                "config_unchanged": True, "host_restore_requires_paired_device": True})
+            installed = True  # Cleanup manages this verified existing control; no installation occurs.
+        else:
+            for name in (package, test_package):
+                assert not adb("shell", "pm", "path", name, check=False).strip(), "Control requires a fresh separate package; no reset allowed"
+        assert not adb("shell", "pm", "path", "com.google.android.gms", check=False).strip()
         assert "UPDATES STOPPED" not in adb("shell", "dumpsys", "battery")
         addresses = adb("shell", "ip", "-o", "-4", "addr", "show", "wlan0")
         phone_ip = private_ipv4(re.search(r"inet ([0-9.]+)/", addresses).group(1))
-        reverse_port = free_port("127.0.0.1", socket.SOCK_STREAM)
+        reverse_port = resume["relay_port"] if resume else free_port("127.0.0.1", socket.SOCK_STREAM)
         relay_url = f"ws://127.0.0.1:{reverse_port}"
         relay_log = (args.output / "relay.log").open("w")
         logs.append(relay_log)
@@ -156,32 +175,41 @@ def main():
                 return False
 
         wait_for("control message server", relay_ready)
+        assert all(f"tcp:{reverse_port}" not in line.split()[1:2]
+                   for line in adb("reverse", "--list").splitlines()), "Message bridge already in use"
         adb("reverse", f"tcp:{reverse_port}", f"tcp:{reverse_port}")
-        adb("install", str(args.app_apk))
-        installed = True
-        adb("install", str(args.test_apk))
-        stage_control_config(adb, {"phase": "bootstrap", "relay_url": relay_url})
-        # Pure parser tests run before creating an account or opening an Activity.
-        classes = ",".join("to.iris.chat.push." + name for name in (
-            "BackgroundHealthSnapshotTest", "BackgroundFipsHealthSnapshotTest", "BackgroundControlStartupTest"))
-        instrument(classes, "parser-tests", tests=10)
-        adb("shell", "am", "force-stop", package)
-        adb("shell", "input", "keyevent", "WAKEUP")
-        prepared = instrument("to.iris.chat.push.BackgroundControlHarnessTest#bootstrap_fresh_identity",
-                              "bootstrap", background_control="1")
-        def field(name, pattern):
-            return re.search(r"INSTRUMENTATION_STATUS: " + name + "=(" + pattern + ")", prepared).group(1)
-        owner = field("owner", "[a-f0-9]{64}")
-        device_npub = field("device_npub", "npub1[a-z0-9]+")
-        udp_port = int(field("udp_port", "[0-9]+"))
-        assert "INSTRUMENTATION_STATUS: mesh_absent=true" in prepared
-        adb("shell", "am", "force-stop", package)
+        reverse_added = True
+        if resume:
+            owner, device_npub = resume["owner"], resume["device_npub"]
+            udp_port = resume["config"]["local_udp_port"]
+        else:
+            adb("install", str(args.app_apk))
+            installed = True
+            adb("install", str(args.test_apk))
+            stage_control_config(adb, {"phase": "bootstrap", "relay_url": relay_url})
+            classes = ",".join("to.iris.chat.push." + name for name in (
+                "BackgroundHealthSnapshotTest", "BackgroundFipsHealthSnapshotTest", "BackgroundControlStartupTest"))
+            instrument(classes, "parser-tests", tests=10)
+            adb("shell", "am", "force-stop", package)
+            adb("shell", "input", "keyevent", "WAKEUP")
+            prepared = instrument("to.iris.chat.push.BackgroundControlHarnessTest#bootstrap_fresh_identity",
+                                  "bootstrap", background_control="1")
+            def field(name, pattern):
+                return re.search(r"INSTRUMENTATION_STATUS: " + name + "=(" + pattern + ")", prepared).group(1)
+            owner = field("owner", "[a-f0-9]{64}")
+            device_npub = field("device_npub", "npub1[a-z0-9]+")
+            udp_port = int(field("udp_port", "[0-9]+"))
+            assert "INSTRUMENTATION_STATUS: mesh_absent=true" in prepared
+            adb("shell", "am", "force-stop", package)
 
-        host_port = free_port(args.host, socket.SOCK_DGRAM)
+        host_port = resume["host_port"] if resume else free_port(args.host, socket.SOCK_DGRAM)
         environment = isolated_host_environment(relay_url, f"{args.host}:{host_port}", device_npub, f"{phone_ip}:{udp_port}")
         fixture_log = (args.output / "fixture.log").open("w")
         logs.append(fixture_log)
-        fixture = subprocess.Popen([str(args.bin_dir / "iris-call-fixture"), str(args.output / "host-account")],
+        host_account = resume["host_account"] if resume else args.output / "host-account"
+        fixture_args = [str(args.bin_dir / "iris-call-fixture"), str(host_account)]
+        if resume: fixture_args += ["--resume-control", resume["config"]["peer_npub"]]
+        fixture = subprocess.Popen(fixture_args,
             env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=fixture_log, text=True, bufsize=1)
         processes.append(fixture)
         events = queue.Queue()
@@ -202,21 +230,26 @@ def main():
             fixture.stdin.write(value + "\n")
             fixture.stdin.flush()
         ready = event("ready")
-        receipt = args.output / "host-account" / "fixture-account-bundle.json"
+        receipt = host_account / "fixture-account-bundle.json"
         assert receipt.is_file() and receipt.stat().st_mode & 0o777 == 0o600, "Missing private host identity receipt"
         # The host exports its device npub directly; the owner key is not a FIPS peer identity.
         paired = {"phase": "paired", "relay_url": relay_url, "peer_npub": ready["device_npub"],
                   "peer_udp": f"{args.host}:{host_port}", "local_udp_port": udp_port}
-        stage_control_config(adb, paired)
-        command(f"accept {owner}")
-        event("accepted")
-        instrument("to.iris.chat.push.BackgroundControlHarnessTest#connect_control_peer", "pairing",
-            background_control="1", fixture_account_owner=owner, fixture_relay=relay_url,
-            fixture_owner=ready["owner"], fixture_invite=ready["invite"])
+        if resume:
+            assert ready["owner"] == resume["host_owner"] and paired == resume["config"], "Restored pair/config differs"
+            write_marker(args.output / "resumed-pair.json", {"exact_host_identity": True, "exact_static_config": True})
+        else:
+            stage_control_config(adb, paired)
+            command(f"accept {owner}")
+            event("accepted")
+            instrument("to.iris.chat.push.BackgroundControlHarnessTest#connect_control_peer", "pairing",
+                background_control="1", fixture_account_owner=owner, fixture_relay=relay_url,
+                fixture_owner=ready["owner"], fixture_invite=ready["invite"])
         whitelist = adb("shell", "dumpsys", "deviceidle", "whitelist")
         original_whitelist = any(package in line for line in whitelist.splitlines())
         adb("shell", "dumpsys", "deviceidle", "whitelist", f"+{package}")
         whitelist_changed = True
+        adb("shell", "input", "keyevent", "WAKEUP")
         launch = adb("shell", "am", "start", "-W", "-n", package + "/to.iris.chat.MainActivity")
         (args.output / "normal-launch.log").write_text(launch)
         assert "Status: ok" in launch, "Normal activity launch failed"
@@ -323,7 +356,7 @@ def main():
                         process.kill()
                         process.wait(timeout=10)
             clean("stop owned host process", stop_child)
-        if reverse_port is not None:
+        if reverse_added:
             clean("remove message server bridge", lambda: adb("reverse", "--remove", f"tcp:{reverse_port}"))
         if installed:
             clean("restore home", lambda: adb("shell", "input", "keyevent", "HOME"))

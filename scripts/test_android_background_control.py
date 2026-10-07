@@ -75,7 +75,7 @@ class BackgroundControlTest(unittest.TestCase):
                 reject_unexpected_peers({"fips_transport": {**base, field: value}})
 
     def test_cold_launch_must_be_visible_and_resumed_with_live_service_before_home(self):
-        visible = f"packageName={CONTROL_PACKAGE} state=RESUMED mVisible=true mVisibleRequested=true mAppStopped=false"
+        visible = f"packageName={CONTROL_PACKAGE} processName={CONTROL_PACKAGE}\n  state=RESUMED finishing=false\n  mVisible=true mVisibleRequested=true"
         service = "BackgroundMessageService isForeground=true"
         def check(activity, services):
             def adb(*args):
@@ -84,7 +84,7 @@ class BackgroundControlTest(unittest.TestCase):
                 return ""
             return control_foreground_ready(adb)
         self.assertTrue(check(visible, service))
-        for field in ("state=RESUMED", "mVisible=true", "mVisibleRequested=true", "mAppStopped=false"):
+        for field in ("state=RESUMED", "mVisible=true", "mVisibleRequested=true"):
             self.assertFalse(check(visible.replace(field, "pending"), service))
         self.assertFalse(check(visible, "BackgroundMessageService isForeground=false"))
         self.assertFalse(check(visible.replace(CONTROL_PACKAGE, "to.iris.chat"), service))
@@ -93,10 +93,25 @@ class BackgroundControlTest(unittest.TestCase):
         calls = []
         def adb(*args):
             calls.append(args)
-            return "mCurrentFocus=Window{com.android.permissioncontroller/.GrantPermissionsActivity}"
+            return f"""  * Hist #2: ActivityRecord{{permission}}
+      packageName=com.android.permissioncontroller processName=com.android.permissioncontroller
+      launchedFromUid=12345 launchedFromPackage={CONTROL_PACKAGE} launchedFromFeature=null userId=0
+      mActivityComponent=com.android.permissioncontroller/.permission.ui.GrantPermissionsActivity
+      state=RESUMED finishing=false
+      mVisibleRequested=true mVisible=true mClientVisible=true
+  * Hist #0: ActivityRecord{{app}}
+      packageName={CONTROL_PACKAGE} processName={CONTROL_PACKAGE}
+      state=PAUSED finishing=false
+      mVisibleRequested=true mVisible=true mClientVisible=true
+"""
         self.assertFalse(control_foreground_ready(adb))
-        self.assertEqual([("shell", "dumpsys", "window", "windows"),
+        self.assertEqual([("shell", "dumpsys", "activity", "activities"),
                           ("shell", "input", "keyevent", "BACK")], calls)
+        calls.clear()
+        def foreign_adb(*args):
+            return adb(*args).replace(f"launchedFromPackage={CONTROL_PACKAGE}", "launchedFromPackage=another.app")
+        self.assertFalse(control_foreground_ready(foreign_adb))
+        self.assertFalse(any("keyevent" in call for call in calls))
 
 
 if __name__ == "__main__":

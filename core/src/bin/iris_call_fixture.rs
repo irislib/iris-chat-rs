@@ -19,17 +19,31 @@ fn emit(value: serde_json::Value) -> Result<()> {
     io::stdout().flush().context("flush fixture output")
 }
 fn main() -> Result<()> {
-    let dir = std::env::args()
-        .nth(1)
+    let mut args = std::env::args().skip(1);
+    let dir = args
+        .next()
         .context("usage: iris-call-fixture <fresh-data-dir>")?;
-    if std::path::Path::new(&dir)
-        .read_dir()
-        .is_ok_and(|mut entries| entries.next().is_some())
+    let resume_peer = match (args.next(), args.next(), args.next()) {
+        (None, None, None) => None,
+        (Some(mode), Some(peer), None) if mode == "--resume-control" => Some(peer),
+        _ => bail!("Expected fresh data directory or explicit control resume with paired device"),
+    };
+    let isolated_control = std::env::var("IRIS_CALL_ISOLATED_CONTROL").as_deref() == Ok("1");
+    if resume_peer.is_some() && !isolated_control {
+        bail!("Resume is restricted to isolated control fixtures");
+    }
+    if resume_peer.is_none()
+        && std::path::Path::new(&dir)
+            .read_dir()
+            .is_ok_and(|mut entries| entries.next().is_some())
     {
         bail!("Call fixture requires a fresh data directory");
     }
-    let isolated_control = std::env::var("IRIS_CALL_ISOLATED_CONTROL").as_deref() == Ok("1");
     let receipt = std::path::Path::new(&dir).join("fixture-account-bundle.json");
+    let restore = resume_peer
+        .as_deref()
+        .map(|peer| iris_call_fixture_account::restore(&receipt, peer))
+        .transpose()?;
     let app = FfiApp::new(dir, String::new(), String::new());
     let (tx, updates) = flume::bounded(96);
     app.listen_for_updates(Box::new(Updates(tx)));
@@ -38,9 +52,15 @@ fn main() -> Result<()> {
         app.dispatch(AppAction::SetNearbyLanEnabled { enabled: false });
         app.dispatch(AppAction::SetNearbyBluetoothEnabled { enabled: false });
     }
-    app.dispatch(AppAction::CreateAccount {
+    app.dispatch(restore.unwrap_or_else(|| AppAction::CreateAccount {
         name: "Call test".into(),
-    });
+    }));
+    if isolated_control {
+        // Persisted settings are explicitly reconciled with this live fixture.
+        app.dispatch(AppAction::SetNostrRelays {
+            relay_urls: vec![std::env::var("IRIS_DEMO_RELAYS")?],
+        });
+    }
     if !isolated_control {
         app.dispatch(AppAction::SetNearbyLanEnabled { enabled: true });
     }
@@ -49,7 +69,7 @@ fn main() -> Result<()> {
     }
     app.dispatch(AppAction::CreatePublicInvite);
     let deadline = Instant::now() + Duration::from_secs(30);
-    let mut identity_saved = !isolated_control;
+    let mut identity_saved = !isolated_control || resume_peer.is_some();
     loop {
         if !identity_saved {
             for update in updates.try_iter() {
