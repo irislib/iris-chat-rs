@@ -1,6 +1,13 @@
 use super::*;
 
 impl AppCore {
+    pub(in crate::core) fn replace_device_sync_sender_for_test(
+        &mut self,
+        tcp: DeviceSyncTcpSender,
+    ) {
+        self.device_sync.as_mut().expect("device sync runtime").tcp = Some(tcp);
+    }
+
     pub(in crate::core) fn build_device_sync_packets_for_test(
         &self,
         roster_at: u64,

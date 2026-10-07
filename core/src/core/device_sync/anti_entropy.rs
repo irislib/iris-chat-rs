@@ -1,6 +1,28 @@
 use super::*;
 
 impl AppCore {
+    pub(in crate::core) fn refresh_device_sync_on_foreground(&mut self) {
+        let peers = self.device_sync.as_ref().map_or_else(Vec::new, |runtime| {
+            runtime
+                .siblings
+                .iter()
+                .map(|peer| peer.pubkey().to_string())
+                .collect()
+        });
+        if peers.is_empty() {
+            return;
+        }
+        self.push_debug_log("device_sync.foreground", format!("peers={}", peers.len()));
+        for peer in peers {
+            // A retained connection only requested an inventory when it opened.
+            // Resume from a fresh inventory: a broadcast or an in-flight response
+            // may have been missed while inactive. Close both halves of an old
+            // round so it cannot hold catch-up until the session's expiry.
+            self.clear_device_history(&peer);
+            self.request_device_sync_snapshot(&peer, None);
+        }
+    }
+
     pub(super) fn reply_device_sync_snapshot(
         &mut self,
         source_pubkey_hex: &str,

@@ -1,4 +1,121 @@
 #[test]
+fn foreground_repairs_missed_group_reactions_on_an_existing_device_connection() {
+    foreground_repairs_group_reactions(false);
+}
+
+#[test]
+fn foreground_restarts_interrupted_group_reaction_reconciliation_without_waiting_for_ttl() {
+    foreground_repairs_group_reactions(true);
+}
+
+fn foreground_repairs_group_reactions(interrupted: bool) {
+    let owner = Keys::generate();
+    let a = Keys::generate();
+    let b = Keys::generate();
+    let reactor = Keys::generate();
+    let owner_hex = owner.public_key().to_hex();
+    let reactor_hex = reactor.public_key().to_hex();
+    let chat = "group:foreground-reactions";
+    let (mut left, _, _left_dir) = logged_in_test_core_with_updates("foreground-left", &owner, &a);
+    let (mut right, _, _right_dir) =
+        logged_in_test_core_with_updates("foreground-right", &owner, &b);
+    configure_test_device_sync_profile(&mut left, &owner, &a, &b, None);
+    for known in left.app_keys.values_mut() {
+        known
+            .devices
+            .sort_by(|a, b| a.identity_pubkey_hex.cmp(&b.identity_pubkey_hex));
+    }
+    right.app_keys = left.app_keys.clone();
+    let group = serde_json::to_vec(&serde_json::json!({
+        "v":1,"type":"snapshot","rosterAt":100,"groups":[{
+            "id":"foreground-reactions","name":"Reactions","createdBy":owner_hex,
+            "members":[owner_hex,reactor_hex],"admins":[owner_hex],
+            "revision":1,"createdAt":100,"updatedAt":100,"accepted":true
+        }],"messages":[]
+    }))
+    .unwrap();
+    left.handle_device_sync_packet(&b.public_key().to_hex(), DEVICE_SYNC_PORT, &group);
+    right.handle_device_sync_packet(&a.public_key().to_hex(), DEVICE_SYNC_PORT, &group);
+    for core in [&mut left, &mut right] {
+        core.push_incoming_message_from(
+            chat,
+            Some("target".into()),
+            "A message with a missed reaction".into(),
+            200,
+            None,
+            None,
+            Some(owner_hex.clone()),
+            None,
+        );
+        core.persist_best_effort_inner();
+    }
+    // Retain a real runtime through AppForegrounded, but control delivery so
+    // neither relay replay nor a TCP reconnect can accidentally repair the gap.
+    let std::net::SocketAddr::V4(rendezvous) = reserve_tcp_addr() else {
+        unreachable!()
+    };
+    right.reconcile_device_sync_at_rendezvous_for_test(rendezvous);
+    let endpoint = right.device_sync_endpoint_for_test().unwrap_or_else(|| {
+        panic!("sync runtime did not start: {:?}", right.debug_log);
+    });
+    let (left_tx, left_rx) = DeviceSyncTcpSender::test_channel(256, 64 * 1024);
+    let (right_tx, right_rx) = DeviceSyncTcpSender::test_channel(256, 64 * 1024);
+    left.install_device_sync_sender_for_test(endpoint.clone(), left_tx, vec![test_fips_peer(&b)]);
+    right.replace_device_sync_sender_for_test(right_tx);
+    let request = serde_json::to_vec(&serde_json::json!({
+        "type":"request", "v":1, "rosterAt":100, "recordReconcile":1
+    }))
+    .unwrap();
+    left.handle_device_sync_packet(&b.public_key().to_hex(), DEVICE_SYNC_PORT, &request);
+    let mut trace = Vec::new();
+    for _ in 0..64 {
+        let x = drain_history_wire(&mut left, &a, &mut right, &b, &left_rx, &mut trace);
+        let y = drain_history_wire(&mut right, &b, &mut left, &a, &right_rx, &mut trace);
+        if !x && !y {
+            break;
+        }
+    }
+    assert_eq!(right.device_history_session_count_for_test(), 0);
+    assert_eq!(left.device_history_session_count_for_test(), 0);
+    assert!(left.capture_device_sync_control(
+        chat,
+        "missed-reaction",
+        &reactor_hex,
+        201,
+        REACTION_KIND,
+        "👍",
+        &[nostr::Tag::parse(["e", "target"]).unwrap()],
+    ));
+    if interrupted {
+        drain_history_wire(&mut left, &a, &mut right, &b, &left_rx, &mut trace);
+        drain_history_wire(&mut right, &b, &mut left, &a, &right_rx, &mut trace);
+        assert!(right.device_history_session_count_for_test() > 0);
+    }
+    // Lose the broadcast (or the in-flight inventory response) while inactive.
+    while left_rx.try_recv().is_ok() {}
+    assert!(right.threads[chat].messages[0].reactors.is_empty());
+    right.handle_action(AppAction::AppForegrounded);
+    assert!(
+        Arc::ptr_eq(&endpoint, &right.device_sync_endpoint_for_test().unwrap()),
+        "foreground catch-up must reuse the existing connection"
+    );
+    trace.clear();
+    for _ in 0..64 {
+        let x = drain_history_wire(&mut right, &b, &mut left, &a, &right_rx, &mut trace);
+        let y = drain_history_wire(&mut left, &a, &mut right, &b, &left_rx, &mut trace);
+        if !x && !y {
+            break;
+        }
+    }
+    assert!(right.threads[chat].messages[0].reactors.iter().any(|reaction|
+        reaction.author == reactor_hex && reaction.emoji == "👍"),
+        "foreground must request missing reactions without a reconnect or the 120-second session expiry");
+    assert_eq!(right.device_history_session_count_for_test(), 0);
+    assert_eq!(left.device_history_session_count_for_test(), 0);
+    right.stop_device_sync_now();
+}
+
+#[test]
 fn device_sync_metadata_refresh_restarts_an_inflight_record_request() {
     sync_metadata_refresh_during_records(true, false);
 }

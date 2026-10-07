@@ -68,6 +68,7 @@ impl AppCore {
         self.push_debug_log("app.foreground", "refresh relay session");
         self.start_private_contact_sync();
         self.reconcile_device_sync();
+        self.refresh_device_sync_on_foreground();
         self.schedule_session_connect();
         self.request_protocol_subscription_refresh_forced_reconnect_if_offline();
         let _fetching_recent_protocol_state = self.fetch_recent_protocol_state();
