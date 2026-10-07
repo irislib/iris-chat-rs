@@ -17,6 +17,7 @@ import threading
 import time
 
 from native_lab import acquire, release
+from android_background_health import query_health
 
 
 def wait_for(label, check, timeout=45):
@@ -29,6 +30,12 @@ def wait_for(label, check, timeout=45):
     raise AssertionError(f"Timed out: {label}")
 
 
+def write_marker(path, value):
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value))
+    temporary.replace(path)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", required=True)
@@ -36,9 +43,13 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--external-idle-result", type=Path,
                         help="Wait up to 10 minutes for a separate profiler's CPU percentages for this PID")
+    parser.add_argument("--receiver-health", action="store_true",
+                        help="Require one-shot debug receiver connection/outbox checks outside CPU windows")
     parser.add_argument("--offline-lan", action="store_true",
                         help="macOS: block public message/seed/STUN servers and stop the setup relay before sending over Wi-Fi")
     args = parser.parse_args()
+    if args.receiver_health and args.offline_lan:
+        parser.error("Receiver message-server health requires the online fixture mode")
     args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
     package = "to.iris.chat.backgroundtest"
     adb_base = ["adb", "-s", args.serial]
@@ -217,20 +228,49 @@ def main():
             assert wakefulness in ("Asleep", "Dozing"), "Idle sample requires the screen off"
             return state
 
+        health = {}
+
+        def receiver_health(phase):
+            # Host listener health alone is insufficient: query the same live app's transport too.
+            reachable = relay is not None and relay.poll() is None and relay_ready()
+            snapshot = query_health(adb, pid, f"ws://127.0.0.1:{port}", reachable)
+            idle_state()
+            health[phase] = snapshot
+            (args.output / f"health-{phase}.json").write_text(json.dumps(snapshot))
+            print(f"Receiver health {phase}: {snapshot['classification']}; "
+                  f"queued publications={snapshot['pending_relay_publish_count']}", flush=True)
+
         idle_state()
+        if args.receiver_health:
+            receiver_health("before")
         settle_seconds = 30  # Same settling period for internal and external profiling.
         time.sleep(settle_seconds)
         before_idle = idle_state()
         if args.external_idle_result:
             assert not args.external_idle_result.exists(), "Refusing a stale profiling result"
-            (args.output / "profile-ready.json").write_text(json.dumps({
-                "pid": int(pid), "package": package, "settle_seconds": settle_seconds}))
+            write_marker(args.output / "profile-ready.json", {
+                "pid": int(pid), "package": package, "settle_seconds": settle_seconds,
+                "receiver_health_handshake": args.receiver_health})
             print("Functional checks passed; quiet receiver ready for separate CPU profiling", flush=True)
+            if args.receiver_health:
+                # Observer pauses after the two CPU windows, before any optional profiler.
+                pair_path = args.output / "cpu-pair-complete.json"
+                wait_for("CPU pair before post-sample health query", pair_path.exists, timeout=600)
+                pair = json.loads(pair_path.read_text())
+                assert pair["pid"] == int(pid) and pair["elapsed_seconds"] >= 120
+                assert pair["background_verified"] is True
+                assert len(pair["cpu_percent_one_core"]) == 2
+                receiver_health("after")
+                assert health["after"]["elapsed_realtime_ms"] > health["before"]["elapsed_realtime_ms"]
+                write_marker(args.output / "health-after-ready.json", {
+                    "pid": int(pid), "classification": health["after"]["classification"]})
             wait_for("external idle profile", args.external_idle_result.exists, timeout=600)
             result = json.loads(args.external_idle_result.read_text())
             assert result["pid"] == int(pid) and result["elapsed_seconds"] >= 60
             percentages = result["cpu_percent_one_core"]
             assert isinstance(percentages, list) and percentages
+            if args.receiver_health:
+                assert percentages == pair["cpu_percent_one_core"], "CPU pair changed after health query"
         else:
             def ticks():
                 values = adb("shell", "run-as", package, "cat", f"/proc/{pid}/stat").rsplit(")", 1)[1].split()
@@ -240,9 +280,14 @@ def main():
             time.sleep(60)
             percentages = [(ticks() - before) / hz / (time.monotonic() - started) * 100]
             (args.output / "idle.json").write_text(json.dumps({"cpu_percent_one_core": percentages}))
+            if args.receiver_health:
+                receiver_health("after")
         (args.output / "idle-lifecycle.json").write_text(json.dumps({
-            "settle_seconds": settle_seconds, "before": before_idle, "after": idle_state()}))
-        idle_passed = all(0 <= value < 5 for value in percentages)
+            "settle_seconds": settle_seconds, "before": before_idle, "after": idle_state(),
+            "receiver_health": health}))
+        healthy_idle = not args.receiver_health or all(
+            snapshot["classification"] == "connected-idle" for snapshot in health.values())
+        idle_passed = healthy_idle and all(0 <= value < 5 for value in percentages)
         print(f"{'PASS' if idle_passed else 'FAIL'} settled background CPU budget", flush=True)
 
         assert "UPDATES STOPPED" not in adb("shell", "dumpsys", "battery"), "Battery is already simulated"
