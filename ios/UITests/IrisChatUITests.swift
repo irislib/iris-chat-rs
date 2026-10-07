@@ -981,7 +981,7 @@ final class IrisChatFlowUITests: IrisChatUITestCase {
         attachment.name = "device-link-in-progress"
         attachment.lifetime = .keepAlways
         add(attachment)
-        let failure = app.otherElements["settingsToastOverlay"].staticTexts["Could not link device. Try again."].firstMatch
+        let failure = app.otherElements["settingsToastOverlay"].staticTexts["Could not check message servers. Try again."].firstMatch
         XCTAssertTrue(failure.waitForExistence(timeout: 30), "link failure must be visible above the Settings sheet")
         XCTAssertTrue(failure.isHittable)
         let failed = XCTAttachment(screenshot: app.screenshot())
