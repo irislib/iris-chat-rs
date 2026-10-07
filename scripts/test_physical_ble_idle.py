@@ -54,7 +54,9 @@ def save_capture(directory):
     (directory / "result.json").write_text(json.dumps({"ok": False, "testRunId": "run",
         "error": "Old display-name parser rejected valid measurements",
         "restoration": {"wifi_on": True, "mobile_data": True,
-                        "bluetooth_unchanged": True, "ios_normal_launch": True}}))
+                        "bluetooth_unchanged": True, "ios_normal_launch": True,
+                        "android_preferences": True, "android_permissions": True, "android_account_stopped": True,
+                        "android_account_preserved": True}}))
 
 
 class PhysicalIdleGateTests(unittest.TestCase):
@@ -166,7 +168,7 @@ class PhysicalIdleGateTests(unittest.TestCase):
             self.assertEqual((directory / "result.json").read_bytes(), original)
 
     def test_incomplete_or_failed_hardware_evidence_cannot_pass(self):
-        for kind in ("skipped", "wrong_probe", "network_gap", "ip_route", "missing_restore", "failed_restore", "wrong_run"):
+        for kind in ("skipped", "wrong_probe", "network_gap", "ip_route", "missing_restore", "failed_restore", "wrong_run", "missing_account_restore"):
             with self.subTest(kind=kind), TemporaryDirectory() as temp:
                 directory = Path(temp)
                 save_capture(directory)
@@ -190,6 +192,7 @@ class PhysicalIdleGateTests(unittest.TestCase):
                     path = directory / "result.json"
                     data = json.loads(path.read_text())
                     if kind == "missing_restore": data["restoration"].pop("mobile_data")
+                    if kind == "missing_account_restore": data["restoration"].pop("android_account_preserved")
                     if kind == "failed_restore": data["restoration"]["mobile_data"] = False
                     if kind == "wrong_run": data["testRunId"] = "another-run"
                     path.write_text(json.dumps(data))

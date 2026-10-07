@@ -4,17 +4,12 @@ import android.database.sqlite.SQLiteDatabase
 import android.util.Base64
 import android.os.Bundle
 import android.os.SystemClock
-import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.rules.ActivityScenarioRule
-import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
-import org.junit.Rule
-import org.junit.Test
-import org.junit.runner.RunWith
 import to.iris.chat.core.AppManager
 import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.rust.AppAction
@@ -56,14 +51,19 @@ abstract class RealRelayHarnessBase {
     }
 
     protected fun ensureLoggedIn(createIfMissing: Boolean = false): to.iris.chat.rust.AccountSnapshot {
+        val savedIdentity = BleSavedIdentity(arguments, appPackageName(), createIfMissing)
         var createRequested = false
         return waitForState("logged in account", timeoutMs = 90_000) {
             val manager = appManager()
-            manager.state.value.account?.let { return@waitForState it }
+            manager.state.value.account?.let {
+                savedIdentity.checkAccount(it)
+                return@waitForState it
+            }
 
             when (manager.bootstrapState.value) {
                 AccountBootstrapState.Loading -> null
                 AccountBootstrapState.NeedsLogin -> {
+                    savedIdentity.checkNeedsLogin()
                     if (createIfMissing && !createRequested) {
                         createRequested = true
                         manager.createAccount()

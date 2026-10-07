@@ -46,24 +46,30 @@ def inspect_database(path, *, include_history=False, new_contact=None):
 
 
 def read_saved_state(adb, binary, *, include_history=False, new_contact=None):
-    assert not adb("shell", "pidof", PACKAGE, check=False).strip(), "Stop receiver before a consistent state read"
+    return read_stopped_test_state(adb, binary, PACKAGE, lambda path: inspect_database(
+        path, include_history=include_history, new_contact=new_contact))
+
+
+def read_stopped_test_state(adb, binary, package, inspect):
+    assert package in (PACKAGE, "to.iris.chat.blegate"), "Only preserved test accounts may be inspected"
+    assert not adb("shell", "pidof", package, check=False).strip(), "Stop receiver before a consistent state read"
     # A stopped process cannot write between these reads. Copy any retained WAL
     # alongside the DB so the private, read-only inspection sees committed data.
     with tempfile.TemporaryDirectory(prefix="iris-saved-state-") as directory:
         target = Path(directory) / "core.sqlite3"
         for suffix in ("", "-wal"):
             source = "files/core.sqlite3" + suffix
-            if suffix and not adb("shell", "run-as", PACKAGE, "ls", source, check=False).strip():
+            if suffix and not adb("shell", "run-as", package, "ls", source, check=False).strip():
                 continue
-            size = int(adb("shell", "run-as", PACKAGE, "stat", "-c", "%s", source))
+            size = int(adb("shell", "run-as", package, "stat", "-c", "%s", source))
             assert 0 <= size < 64 * 1024 * 1024, "Unexpected receiver database size"
-            payload = binary("exec-out", "run-as", PACKAGE, "cat", source)
+            payload = binary("exec-out", "run-as", package, "cat", source)
             assert len(payload) == size
             with os.fdopen(os.open(str(target) + suffix, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as file:
                 file.write(payload)
-        result = inspect_database(target, include_history=include_history, new_contact=new_contact)
-    result["account_store_sha256"] = adb("shell", "run-as", PACKAGE, "sha256sum", STORE).split()[0]
-    permissions = adb("shell", "dumpsys", "package", PACKAGE)
+        result = inspect(target)
+    result["account_store_sha256"] = adb("shell", "run-as", package, "sha256sum", STORE).split()[0]
+    permissions = adb("shell", "dumpsys", "package", package)
     result["permissions"] = dict(re.findall(r"(android\.permission\.[A-Z_]+): granted=(true|false)", permissions))
     return result
 

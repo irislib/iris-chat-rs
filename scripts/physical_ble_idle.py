@@ -22,6 +22,7 @@ import time
 import uuid
 
 from native_lab import acquire, release
+from android_ble_preservation import BlePreservation
 
 
 TEST = "FipsBlePhysicalUITests/testSendAndReceiveReceiptOverFipsBle"
@@ -157,7 +158,8 @@ def evaluate_capture(directory, probe, seconds, max_cpu, max_writes):
 def evaluate_saved_run(directory, max_cpu, max_writes):
     original = json.loads((directory / "result.json").read_text())
     restored = original.get("restoration", {})
-    required = ("wifi_on", "mobile_data", "bluetooth_unchanged", "ios_normal_launch")
+    required = ("wifi_on", "mobile_data", "bluetooth_unchanged", "ios_normal_launch",
+                "android_preferences", "android_permissions", "android_account_stopped", "android_account_preserved")
     if any(restored.get(k) is not True for k in required) or any(v is not True for v in restored.values()):
         raise ValueError("Saved run has missing or failed device restoration")
     data = plistlib.loads((directory / "physical-idle.xctestrun").read_bytes())
@@ -215,6 +217,7 @@ class Gate:
         self.result = {"ok": False}
         self.run_id = "ble-idle-" + uuid.uuid4().hex
         self.probe = "idle-probe-" + uuid.uuid4().hex
+        self.saved_account = BlePreservation(self)
 
     def command(self, argv, label, timeout=30):
         with (self.out / (label + ".log")).open("w") as log:
@@ -229,13 +232,14 @@ class Gate:
     def adb(self, *args):
         return self.command(["adb", "-s", self.args.android_serial, "shell", *args], "android-command").strip()
 
-    def action_command(self, action, extra=()):
+    def action_command(self, action, extra=(), test_class="RealRelayHarnessTest"):
         return ["adb", "-s", self.args.android_serial, "shell", "am", "instrument", "-w", "-r",
-                "-e", "class", "to.iris.chat.RealRelayHarnessTest#" + action, *extra,
+                "-e", "class", "to.iris.chat." + test_class + "#" + action,
+                *self.saved_account.arguments(), *extra,
                 PACKAGE + ".test/androidx.test.runner.AndroidJUnitRunner"]
 
-    def action(self, action, expected, extra=()):
-        output = self.command(self.action_command(action, extra), action, 180)
+    def action(self, action, expected, extra=(), test_class="RealRelayHarnessTest"):
+        output = self.command(self.action_command(action, extra, test_class), action, 180)
         return require_android_success(output, expected)
 
     def preflight(self):
@@ -272,6 +276,7 @@ class Gate:
             raise ValueError("Enable Bluetooth on the selected Android peer first")
         self.snapshot = snapshot
         write_json(self.out / "network-before.json", self.snapshot)
+        self.saved_account.capture()
 
     def offline(self):
         addresses = self.adb("ip", "-o", "addr", "show", "up")
@@ -338,7 +343,9 @@ class Gate:
 
     def execute(self):
         self.preflight()
-        identity = self.action("create_account_and_report_identity", {"app_package": PACKAGE})
+        self.saved_account.started = True
+        identity = self.action("report_logged_in_identity", {"app_package": PACKAGE,
+            "public_key_hex": self.saved_account.before["owner"]})
         peer = identity.get("npub", "")
         if not peer.startswith("npub1"):
             raise ValueError("The isolated Android account did not report its identity")
@@ -401,6 +408,7 @@ class Gate:
                 stop(child)
             except Exception:
                 self.restored[label] = False
+        self.saved_account.restore()
         if self.snapshot:
             for key, service in (("wifi_on", "wifi"), ("mobile_data", "data")):
                 try:
