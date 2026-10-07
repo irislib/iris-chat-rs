@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from android_background_control_e2e import (
     CONTROL_PACKAGE, isolated_host_environment, private_ipv4, reject_unexpected_peers,
-    require_control_artifacts, stage_control_config,
+    require_control_artifacts, stage_control_config, control_foreground_ready,
 )
 from android_background_health import query_health
 
@@ -73,6 +73,30 @@ class BackgroundControlTest(unittest.TestCase):
                              ("connected_peer_count", 2), ("transports", {"udp": {}, "websocket": {}})]:
             with self.subTest(field=field), self.assertRaises(AssertionError):
                 reject_unexpected_peers({"fips_transport": {**base, field: value}})
+
+    def test_cold_launch_must_be_visible_and_resumed_with_live_service_before_home(self):
+        visible = f"packageName={CONTROL_PACKAGE} state=RESUMED mVisible=true mVisibleRequested=true mAppStopped=false"
+        service = "BackgroundMessageService isForeground=true"
+        def check(activity, services):
+            def adb(*args):
+                if args[-1] == "activities": return activity
+                if "services" in args: return services
+                return ""
+            return control_foreground_ready(adb)
+        self.assertTrue(check(visible, service))
+        for field in ("state=RESUMED", "mVisible=true", "mVisibleRequested=true", "mAppStopped=false"):
+            self.assertFalse(check(visible.replace(field, "pending"), service))
+        self.assertFalse(check(visible, "BackgroundMessageService isForeground=false"))
+        self.assertFalse(check(visible.replace(CONTROL_PACKAGE, "to.iris.chat"), service))
+
+    def test_permission_dialog_is_dismissed_without_grant_or_backgrounding(self):
+        calls = []
+        def adb(*args):
+            calls.append(args)
+            return "mCurrentFocus=Window{com.android.permissioncontroller/.GrantPermissionsActivity}"
+        self.assertFalse(control_foreground_ready(adb))
+        self.assertEqual([("shell", "dumpsys", "window", "windows"),
+                          ("shell", "input", "keyevent", "BACK")], calls)
 
 
 if __name__ == "__main__":

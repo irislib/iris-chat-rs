@@ -65,6 +65,20 @@ def reject_unexpected_peers(health):
         assert set(fips["transports"]) <= {"udp"}, "Unexpected transport observed"
 
 
+def control_foreground_ready(adb):
+    focus = adb("shell", "dumpsys", "window", "windows")
+    if any("mCurrentFocus=" in line and "permissioncontroller" in line for line in focus.splitlines()):
+        adb("shell", "input", "keyevent", "BACK")  # Dismiss, never grant.
+        return False
+    activities = adb("shell", "dumpsys", "activity", "activities")
+    ours = [block for block in re.split(r"\n\s*\* Hist", activities)
+            if f"packageName={CONTROL_PACKAGE} " in block]
+    visible = ("state=RESUMED", "mVisible=true", "mVisibleRequested=true", "mAppStopped=false")
+    services = adb("shell", "dumpsys", "activity", "services", CONTROL_PACKAGE)
+    return any(all(field in block for field in visible) for block in ours) and (
+        "BackgroundMessageService" in services and "isForeground=true" in services)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", required=True)
@@ -201,11 +215,12 @@ def main():
         original_whitelist = any(package in line for line in whitelist.splitlines())
         adb("shell", "dumpsys", "deviceidle", "whitelist", f"+{package}")
         whitelist_changed = True
-        adb("shell", "am", "start", "-n", package + "/to.iris.chat.MainActivity")
-        # MainActivity may ask for notification permission; dismiss, never grant it.
-        focus = adb("shell", "dumpsys", "window", "windows")
-        if any("mCurrentFocus=" in line and "permissioncontroller" in line for line in focus.splitlines()):
-            adb("shell", "input", "keyevent", "BACK")
+        launch = adb("shell", "am", "start", "-W", "-n", package + "/to.iris.chat.MainActivity")
+        (args.output / "normal-launch.log").write_text(launch)
+        assert "Status: ok" in launch, "Normal activity launch failed"
+        # Wait for the actual Activity and service. Sending Home while a cold
+        # launch is still pending can prevent onCreate/onStart entirely.
+        wait_for("normal foreground activity and service", lambda: control_foreground_ready(adb))
         adb("shell", "input", "keyevent", "HOME")
         adb("shell", "input", "keyevent", "SLEEP")
         wait_for("control Activity stopped", stopped)
@@ -284,6 +299,13 @@ def main():
                 action()
             except Exception as error:
                 cleanup_errors.append({"step": label, "error_type": type(error).__name__})
+        if installed and active_error:
+            for name, command_parts in [
+                ("activities", ("activity", "activities")), ("windows", ("window", "windows")),
+                ("power", ("power",)), ("services", ("activity", "services", package)),
+            ]:
+                clean("capture " + name, lambda: (args.output / ("failure-" + name + ".txt")).write_text(
+                    adb("shell", "dumpsys", *command_parts, check=False)))
         if installed:
             clean("stop control", lambda: adb("shell", "am", "force-stop", package))
         if whitelist_changed and not original_whitelist:
