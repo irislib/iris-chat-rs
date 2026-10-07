@@ -34,6 +34,7 @@ import to.iris.chat.ui.theme.IrisChatTheme
 
 class MainActivity : ComponentActivity() {
     private lateinit var container: AppContainer
+    private var returnAfterCallId: String? = null
     private var pendingPermissionRequest: RuntimePermissionRequest? = null
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
@@ -70,6 +71,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         IrisDebugLog.d(TAG, "onCreate")
         container = (application as IrisChatApp).container
+        returnAfterCallId = savedInstanceState?.getString("returnAfterCallId")
         lifecycleScope.launch {
             container.appManager.call.collect { call ->
                 setShowWhenLocked(call?.phase in listOf("incoming", "connected"))
@@ -87,6 +89,7 @@ class MainActivity : ComponentActivity() {
             IrisChatTheme(darkTheme = darkTheme) {
                 NdrApp(
                     container = container,
+                    onCallDismissed = ::callDismissed,
                     onNearbyVisibilityChange = ::setNearbyVisible,
                     onNearbyLanVisibilityChange = ::setNearbyLanVisible,
                 )
@@ -112,6 +115,18 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleLaunchIntent(intent)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("returnAfterCallId", returnAfterCallId)
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun callDismissed(callId: String) {
+        if (returnAfterCallId != callId) return
+        returnAfterCallId = null
+        val call = container.appManager.call.value
+        if (call?.callId == callId && call.phase == "ended") moveTaskToBack(true)
     }
 
     override fun onUserInteraction() {
@@ -146,6 +161,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleLaunchIntent(intent: Intent?) {
+        if (intent?.action in setOf("to.iris.chat.SHOW_CALL", "to.iris.chat.ANSWER_CALL")) {
+            if (!container.appManager.appForegrounded.value) {
+                returnAfterCallId = intent?.getStringExtra("callId")
+            }
+            if (intent?.action == "to.iris.chat.ANSWER_CALL") {
+                intent.getStringExtra("callId")?.let(container.callRuntime::requestAnswer)
+            }
+            intent?.action = null
+            return
+        }
+        // An ordinary app launch supersedes returning to the previous app after a call.
+        if (intent?.action != null) returnAfterCallId = null
         if (intent?.action == to.iris.chat.push.BackgroundMessageService.ACTION_ALLOW_BACKGROUND) {
             intent.action = null
             val power = getSystemService(android.os.PowerManager::class.java)
@@ -163,10 +190,6 @@ class MainActivity : ComponentActivity() {
             intent.removeExtra(to.iris.chat.push.MobilePushNotifier.OWNER_EXTRA)
             intent.action = null
             intent.data = null
-            return
-        }
-        if (intent?.action == "to.iris.chat.ANSWER_CALL") {
-            intent.getStringExtra("callId")?.let(container.callRuntime::requestAnswer)
             return
         }
         if (intent?.action == ACTION_OPEN_CHAT_LIST) {

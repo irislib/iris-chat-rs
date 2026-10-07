@@ -116,6 +116,7 @@ import to.iris.chat.ui.screens.rememberNhashImageData
 @Composable
 fun NdrApp(
     container: AppContainer,
+    onCallDismissed: (String) -> Unit = {},
     onNearbyVisibilityChange: (Boolean) -> Unit = { enabled ->
         container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(enabled))
     },
@@ -393,7 +394,7 @@ fun NdrApp(
                 }
             }
 
-            to.iris.chat.calls.CallOverlay(container)
+            to.iris.chat.calls.CallOverlay(container, onCallDismissed)
 
             if (showingNearbyIris) {
                 val appState by appManager.state.collectAsStateWithLifecycle()
