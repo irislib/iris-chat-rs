@@ -55,14 +55,12 @@ def main():
         adb("pull", paths[0][8:], str(backup))
         backups.append((package, apk, backup))
 
-    def port():
-        with socket.socket() as sock:
+    def port(kind=socket.SOCK_STREAM):
+        with socket.socket(type=kind) as sock:
             sock.bind((args.host, 0))
             return sock.getsockname()[1]
 
-    relay_port, fips_port = port(), port()
-    while fips_port == relay_port:
-        fips_port = port()
+    relay_port, fips_port = port(), port(socket.SOCK_DGRAM)
     relay_url = f"ws://{args.host}:{relay_port}"
     events = queue.Queue()
     processes = []
@@ -103,8 +101,8 @@ def main():
         relay, _ = spawn_log("relay", [str(args.bin_dir / "local_nostr_relay"), f"{args.host}:{relay_port}"], stdout=subprocess.DEVNULL)
         listening(relay_port)
         environment = {**os.environ, "IRIS_DEMO_RELAYS": relay_url,
-            "IRIS_FIPS_WEBSOCKET_SEED_URLS": "", "IRIS_CHAT_FIPS_WEBSOCKET_BIND_ADDR": f"{args.host}:{fips_port}",
-            "IRIS_CHAT_FIPS_UDP_BIND_ADDR": f"{args.host}:0", "IRIS_CHAT_SAME_HOST_HASHTREE": "0"}
+            "IRIS_FIPS_WEBSOCKET_SEED_URLS": "", "IRIS_CHAT_FIPS_WEBSOCKET_BIND_ADDR": "",
+            "IRIS_CHAT_FIPS_UDP_BIND_ADDR": f"{args.host}:{fips_port}", "IRIS_CHAT_SAME_HOST_HASHTREE": "0"}
         environment.pop("IRIS_CALL_DESKTOP_CODEC", None)  # Exact echo permits frame-integrity checks.
         fixture, fixture_log = spawn_log("fixture", [str(args.bin_dir / "iris-call-fixture"), str(args.output / "account")],
             env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
@@ -121,7 +119,6 @@ def main():
             except json.JSONDecodeError:
                 pass
         assert ready is not None, "Fixture did not create a test account"
-        listening(fips_port)
         for package, apk, backup in backups:
             changed.append(backup)
             adb("install", "-r", str(apk))
@@ -134,7 +131,7 @@ def main():
             command("answer voice")
         parts = ["am", "instrument", "-w", "-r", "-e", "class", "to.iris.chat.calls.NativeCallFipsE2eTest"]
         extras = {"call_lan": "1", "call_relay": relay_url,
-            "call_fips_seed": f"ws://{args.host}:{fips_port}/fips", "call_invite": ready["invite"],
+            "call_fips_udp": f"{args.host}:{fips_port}", "call_peer_device": ready["device"], "call_invite": ready["invite"],
             "call_peer_owner": ready["owner"], "call_answer_voice": "1" if args.voice_only else "0"}
         for key, value in extras.items():
             parts.extend(["-e", key, value])

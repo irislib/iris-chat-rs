@@ -180,6 +180,13 @@ before calling. Installed account data is preserved and temporary network rules
 are removed on exit. This exercises local FIPS transport, not a physical Wi-Fi or
 Bluetooth link. Results distinguish simulated capture from physical hardware.
 
+`scripts/android_call_lan_e2e.py` exercises physical Android microphone/camera
+capture and native playback/decoding over Wi-Fi. Its fresh account uses an
+authenticated UDP peer configured from the fixture identity and local address;
+public WebSocket seeds are disabled and the setup message server stops before
+calling. This verifies LAN media, independently of automatic peer discovery, and
+preserves FIPS's restriction of plaintext WebSocket seeds to loopback addresses.
+
 `scripts/android_background_delivery_e2e.py` uses a separate `backgroundtest`
 package on a Google-free physical Android device. It verifies message alerts,
 voice/video ringing and cancellation, ended-call dismissal, Doze delivery with
