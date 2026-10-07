@@ -73,6 +73,19 @@ class BackgroundDeliveryHarnessTest : RealRelayHarnessBase() {
         assertTrue(!receiverActive())
     }
 
+    @Test fun resume_saved_background_receiver() {
+        assumeTrue("Use the isolated background delivery harness", optionalArg("background_harness") == "1")
+        require(appPackageName() == "to.iris.chat.backgroundtest")
+        val account = ensureLoggedIn()
+        require(account.publicKeyHex == requiredArg("fixture_account_owner"))
+        val manager = appManager()
+        manager.dispatch(AppAction.SetDesktopNotificationsEnabled(true))
+        manager.dispatch(AppAction.SetVoiceCallsEnabled(true))
+        manager.dispatch(AppAction.SetVideoCallsEnabled(true))
+        waitForState("saved background receiver resumed") { true.takeIf { receiverActive() } }
+        reportStatus("resumed" to "true", "total_chats" to manager.state.value.chatList.size.toString())
+    }
+
     @Test fun prepare_offline_contacts() {
         val encoded = optionalArg("fixture_contacts_b64")
         assumeTrue("Use the isolated background delivery harness", encoded != null)
