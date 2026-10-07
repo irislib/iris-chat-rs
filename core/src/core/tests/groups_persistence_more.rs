@@ -294,6 +294,38 @@ fn prune_expired_messages_removes_loaded_messages_and_sqlite_rows() {
     );
 }
 
+#[test]
+fn suspend_acknowledges_only_after_batch_preferences_are_committed() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.send_read_receipts = false;
+    let mut observer = AppStore::new(core.shared_db());
+    let (suspend_tx, suspend_rx) = flume::bounded(1);
+    // Hold the worker inside the next message, before the outer batch exits.
+    // This makes the old acknowledgement-before-commit race deterministic.
+    let (next_tx, next_rx) = flume::bounded(0);
+    let worker = std::thread::spawn(move || {
+        core.handle_messages(vec![
+            CoreMsg::PrepareForSuspend(suspend_tx),
+            CoreMsg::CorePerfCounters(next_tx),
+        ]);
+    });
+    suspend_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let saved = observer.load_preferences_snapshot().unwrap();
+    // Always unblock/join the worker before asserting, including on failure.
+    next_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    worker.join().unwrap();
+    assert!(
+        saved.is_some_and(|preferences| !preferences.send_read_receipts),
+        "iOS must not release background time before the final SQLite commit"
+    );
+}
+
 /// Regression for iOS RUNNINGBOARD 0xdead10cc crashes: a relay event
 /// queued just before `PrepareForSuspend` (or one that races in from
 /// the FFI channel during the suspend window) used to keep running

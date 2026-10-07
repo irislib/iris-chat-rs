@@ -2059,7 +2059,27 @@ final class AppManager: ObservableObject {
         }
     }
 
-    func receiveBackgroundPush(userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
+    func receiveBackgroundPush(
+        userInfo: [AnyHashable: Any],
+        applicationState: UIApplication.State? = nil
+    ) async -> UIBackgroundFetchResult {
+        // A silent push can cold-launch without a scene/background transition.
+        // Record UIKit's state so the callback still drains and pauses the core.
+        if (applicationState ?? UIApplication.shared.applicationState) == .background {
+            appSceneIsActive = false
+            appIsBackgrounded = true
+        }
+        let result = await ingestBackgroundPush(userInfo: userInfo)
+        if appIsBackgrounded {
+            // Every push can queue new writes after an earlier suspension.
+            // Keep the system fetch allowance until this push's barrier returns.
+            backgroundSuspendPrepared = false
+            await prepareForBackground()?.value
+        }
+        return result
+    }
+
+    private func ingestBackgroundPush(userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
         guard let payload = serializedPushPayload(userInfo: userInfo) else { return .noData }
         let priorRevision = state.rev
         dispatchToRust(.ingestMobilePushPayload(payloadJson: payload), showsToastOnFailure: false)
@@ -2068,7 +2088,7 @@ final class AppManager: ObservableObject {
         for _ in 0..<100 {
             if state.rev > priorRevision && state.account != nil { break }
             try? await Task.sleep(nanoseconds: 200_000_000)
-            if Task.isCancelled { return .noData }
+            if Task.isCancelled { break }
         }
         if let bundle = storedAccountBundle ?? secretStore.load() {
             await readNotificationCleanup.dismissRead(dataDir: dataDir.path, bundle: bundle)
@@ -2430,12 +2450,17 @@ final class AppManager: ObservableObject {
         appSceneIsActive = false
         appIsBackgrounded = true
 #if os(iOS)
+        prepareForBackground()
+#endif
+    }
+
+#if os(iOS)
+    @discardableResult
+    private func prepareForBackground() -> Task<Void, Never>? {
         // CallKit + background audio keep the active local connection alive.
         // Suspending FIPS here would cut off a call when the phone locks.
-        if let call = calls.call ?? state.call, call.phase != "ended" { return }
-        guard !backgroundSuspendPrepared else {
-            return
-        }
+        if let call = calls.call ?? state.call, call.phase != "ended" { return nil }
+        guard !backgroundSuspendPrepared else { return nil }
         backgroundSuspendPrepared = true
         let backgroundTask = IrisSuspendBackgroundTask()
 
@@ -2445,20 +2470,22 @@ final class AppManager: ObservableObject {
         }
 
         let runner = SuspendPreparationRunner(rust: rust)
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            runner.prepareForSuspend()
-            DispatchQueue.main.async { [weak self] in
-                // Unlock can enqueue AppForegrounded before this background
-                // worker reaches Rust. Resume again after the late flush so
-                // its suspend gate cannot leave the visible app disconnected.
-                if let self, !self.appIsBackgrounded || (self.calls.call != nil && self.calls.call?.phase != "ended") {
-                    self.dispatchToRust(.appForegrounded)
+        return Task { [weak self] in
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .utility).async {
+                    runner.prepareForSuspend()
+                    continuation.resume()
                 }
-                backgroundTask.finish()
             }
+            // Unlock can enqueue AppForegrounded before this background worker
+            // reaches Rust. Resume again after the late flush when still visible.
+            if let self, !self.appIsBackgrounded || (self.calls.call != nil && self.calls.call?.phase != "ended") {
+                self.dispatchToRust(.appForegrounded)
+            }
+            backgroundTask.finish()
         }
-#endif
     }
+#endif
 
     func recordUserActivity() {
         let now = Date()

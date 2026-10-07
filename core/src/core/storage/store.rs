@@ -236,14 +236,14 @@ impl AppStore {
         // Saves already commit their transactions. Never run PRAGMA optimize
         // here: it can start ANALYZE writes just as iOS is about to suspend us.
         // iOS uses DELETE journaling and has no WAL to checkpoint.
+        // Direct FFI readers share this connection on iOS. Drain any reader
+        // already holding it even though there is no WAL checkpoint to run.
+        let _conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         #[cfg(not(target_os = "ios"))]
-        {
-            let conn = self
-                .conn
-                .lock()
-                .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
-            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
-        }
+        _conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
         Ok(())
     }
 

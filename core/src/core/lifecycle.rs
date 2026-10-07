@@ -396,7 +396,18 @@ impl AppCore {
         self.enter_batch();
         let mut keep_running = true;
         for msg in messages {
-            if !self.handle_message(msg) {
+            // Suspension is a storage barrier. Its acknowledgement lets iOS
+            // release background time, so neither earlier batched writes nor
+            // prepare_for_suspend's own persistence may wait for exit_batch.
+            let suspending = matches!(&msg, CoreMsg::PrepareForSuspend(_));
+            if suspending {
+                self.exit_batch();
+            }
+            let handled = self.handle_message(msg);
+            if suspending {
+                self.enter_batch();
+            }
+            if !handled {
                 keep_running = false;
                 break;
             }
