@@ -140,6 +140,7 @@ impl AppCore {
             relay_connected_count: 0,
             all_relays_offline_since_secs: None,
             device_sync: None,
+            fips_traffic_history: Default::default(),
             calls: calls::CallRuntime::default(),
             pending_host_ble: None,
             host_ble_ownership: None,
@@ -317,7 +318,7 @@ impl AppCore {
             ),
             CoreMsg::Internal(event) => self.handle_internal(*event),
             CoreMsg::ExportSupportBundle(reply_tx) => {
-                let _ = reply_tx.send(self.export_support_bundle_json());
+                self.export_support_bundle_with_traffic(reply_tx);
             }
             CoreMsg::PeerProfileDebug {
                 owner_input,

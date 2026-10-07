@@ -1,4 +1,6 @@
 use super::*;
+mod fips_traffic;
+pub(super) use fips_traffic::TrafficHistory;
 
 impl AppCore {
     pub(super) fn build_runtime_debug_snapshot(&self) -> RuntimeDebugSnapshot {
@@ -95,11 +97,6 @@ impl AppCore {
             toast: self.state.toast.clone(),
             current_chat_list,
         }
-    }
-
-    pub(super) fn export_support_bundle_json(&self) -> String {
-        serde_json::to_string_pretty(&self.build_support_bundle())
-            .unwrap_or_else(|_| "{}".to_string())
     }
 
     pub(super) fn build_peer_profile_debug_snapshot(

@@ -21,6 +21,7 @@ impl AppCore {
             key: "test".to_string(),
             peer_refresh_key: "test".to_string(),
             endpoint,
+            configured_direct_peers: Default::default(),
             tcp: Some(tcp),
             siblings,
             snapshot_pending: false,

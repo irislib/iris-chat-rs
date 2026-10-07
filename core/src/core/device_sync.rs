@@ -46,6 +46,7 @@ pub(super) struct DeviceSyncRuntime {
     key: String,
     peer_refresh_key: String,
     pub(super) endpoint: Arc<FipsEndpoint>,
+    pub(super) configured_direct_peers: std::collections::BTreeSet<String>,
     pub(super) direct_files: Option<super::direct_file_tcp::DirectFileSender>,
     pub(super) calls_tx: Option<Sender<super::calls::MediaSend>>,
     tcp: Option<DeviceSyncTcpSender>,

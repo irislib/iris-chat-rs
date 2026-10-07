@@ -29,6 +29,10 @@ struct SharedFipsOptions {
     udp_bind_addr: Option<String>,
 }
 
+fn configured_direct_peer_ids(peers: &[PeerConfig]) -> std::collections::BTreeSet<String> {
+    peers.iter().map(|peer| peer.npub.clone()).collect()
+}
+
 impl AppCore {
     pub(in crate::core) fn reconcile_device_sync(&mut self) {
         if self.apply_current_device_labels_to_local_app_keys(false) {
@@ -331,6 +335,8 @@ impl AppCore {
                     *payloads = refreshed_bootstrap.unwrap_or_default();
                 }
                 let endpoint = runtime.endpoint.clone();
+                runtime.configured_direct_peers =
+                    configured_direct_peer_ids(&options.additional_peers);
                 let mut peer_config = config
                     .peers
                     .iter()
@@ -372,6 +378,7 @@ impl AppCore {
                 ..PeerConfig::default()
             })
             .collect::<Vec<_>>();
+        let configured_direct_peers = configured_direct_peer_ids(&options.additional_peers);
         peer_config.extend(options.additional_peers);
         let recent_peers = match DeviceSyncRecentPeers::load(
             self.data_dir.join(RECENT_PEERS_FILE_NAME),
@@ -688,6 +695,7 @@ impl AppCore {
             peer_refresh_key,
             endpoint,
             calls_tx,
+            configured_direct_peers,
             direct_files,
             tcp,
             siblings: config.siblings,

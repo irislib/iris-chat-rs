@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn support_bundle_replies_through_the_core_with_explicit_unavailable_traffic() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let app = new_ffi_app_inner(temp.path().to_string_lossy().to_string());
+    let bundle: serde_json::Value =
+        serde_json::from_str(&app.export_support_bundle_json()).unwrap();
+    assert_eq!(bundle["ffi_queue"]["core_support_bundle_timed_out"], false);
+    assert_eq!(bundle["fips_transport"]["valid"], false);
+    assert_eq!(bundle["fips_transport"]["status"], "unavailable");
+    assert!(bundle["fips_transport"]["connected_peer_count"].is_null());
+    assert!(bundle["relay_transport"].is_object());
+    app.shutdown_and_wait();
+}
+
+#[test]
 fn shutdown_drains_a_direct_search_waiting_for_the_database() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let app = new_ffi_app_inner(temp_dir.path().to_string_lossy().to_string());
