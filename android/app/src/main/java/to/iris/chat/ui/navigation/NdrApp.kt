@@ -121,13 +121,9 @@ fun NdrApp(
         container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(enabled))
     },
     onNearbyLanVisibilityChange: (Boolean) -> Unit = { visible ->
-        container.nearbyIrisService.setLocalNetworkVisible(visible)
         container.appManager.dispatch(AppAction.SetNearbyLanEnabled(visible))
     },
     onNearbyEnabledChange: (Boolean) -> Unit = { enabled ->
-        if (!enabled) {
-            container.nearbyIrisService.setLocalNetworkVisible(false)
-        }
         container.appManager.dispatch(AppAction.SetNearbyEnabled(enabled))
     },
 ) {
@@ -151,18 +147,6 @@ fun NdrApp(
     val openNearbyProfile = { ownerPubkeyHex: String ->
         showingNearbyIris = false
         appManager.pushScreen(Screen.DirectChatInfo(ownerPubkeyHex))
-    }
-
-    LaunchedEffect(preferences.nearbyEnabled, preferences.nearbyBluetoothEnabled) {
-        container.nearbyIrisService.setFipsBluetoothVisible(
-            preferences.nearbyEnabled && preferences.nearbyBluetoothEnabled,
-        )
-    }
-
-    LaunchedEffect(preferences.nearbyEnabled, preferences.nearbyLanEnabled) {
-        container.nearbyIrisService.setLocalNetworkVisible(
-            preferences.nearbyEnabled && preferences.nearbyLanEnabled,
-        )
     }
 
     LaunchedEffect(toast) {

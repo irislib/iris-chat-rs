@@ -81,7 +81,9 @@ transport available for new messages and calls after closing the app. Its quiet
 notification offers Android's background battery allowance, needed for prompt
 screen-off delivery. It uses the existing Nearby settings without adding a scan
 or polling loop, and stops when message, voice-call, and video-call alerts are all
-disabled or the account is removed. Phones with Google Play services continue to
+disabled or the account is removed. Saved Nearby settings also restore Android's
+multicast allowance without opening an activity; logout and device revocation
+release it. Phones with Google Play services continue to
 use Firebase for background wakeups. An offline incoming call still cannot wake
 an app whose process and network connection have been suspended, including iOS;
 both peers need a live local path, and Wi-Fi/Bluetooth discovery alone does not
@@ -183,7 +185,7 @@ package on a Google-free physical Android device. It verifies message alerts,
 voice/video ringing and cancellation, ended-call dismissal, Doze delivery with
 Android's background allowance, stopping when all alerts are disabled, and the
 idle CPU budget. `--offline-lan` also requires an authenticated Wi-Fi peer,
-disables public FIPS seeds, blocks public TCP and configured STUN ports on the
+disables the sender's public FIPS seeds, blocks public TCP and configured STUN ports on the
 macOS sender, and stops the setup message server before sending. UDP remains
 available for local discovery and data; this does not simulate disabled radios
 or impose an IP-wide Internet firewall. Device accounts in the production app

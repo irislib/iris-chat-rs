@@ -319,7 +319,6 @@ class MainActivity : ComponentActivity() {
 
     private fun setNearbyLanVisible(visible: Boolean) {
         if (!visible) {
-            container.nearbyIrisService.setLocalNetworkVisible(false)
             container.appManager.dispatch(AppAction.SetNearbyLanEnabled(false))
             return
         }
@@ -327,11 +326,9 @@ class MainActivity : ComponentActivity() {
             permissions = localNetworkPermissions().toList(),
             preferenceKeys = listOf(LOCAL_NETWORK_PERMISSION_KEY),
             onGranted = {
-                container.nearbyIrisService.setLocalNetworkVisible(true)
                 container.appManager.dispatch(AppAction.SetNearbyLanEnabled(true))
             },
             onDenied = {
-                container.nearbyIrisService.setLocalNetworkVisible(false)
                 container.appManager.dispatch(AppAction.SetNearbyLanEnabled(false))
             },
         )
@@ -408,7 +405,6 @@ class MainActivity : ComponentActivity() {
     private fun restoreNearbyVisibilityPreference() {
         val preferences = container.appManager.state.value.preferences
         if (!preferences.nearbyEnabled) {
-            container.nearbyIrisService.setLocalNetworkVisible(false)
             return
         }
         if (preferences.nearbyBluetoothEnabled) {
@@ -422,9 +418,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         if (preferences.nearbyLanEnabled) {
-            if (container.nearbyIrisService.hasLocalNetworkPermission()) {
-                container.nearbyIrisService.setLocalNetworkVisible(true)
-            } else {
+            if (!container.nearbyIrisService.hasLocalNetworkPermission()) {
                 container.appManager.dispatch(AppAction.SetNearbyLanEnabled(false))
             }
         }

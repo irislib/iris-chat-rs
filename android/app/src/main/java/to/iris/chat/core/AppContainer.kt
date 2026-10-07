@@ -27,6 +27,7 @@ class AppContainer(context: Context) {
                 secureSecretStore = secureSecretStore,
             )
         nearbyIrisService = IrisNearbyService(appContext)
+        nearbyIrisService.observeAppState(appManager.state, applicationScope)
         appManager.setFipsNearbyPeersPublisher(nearbyIrisService::applyFipsPeerSnapshot)
         callRuntime = IrisCallRuntime(appContext, appManager, applicationScope)
         backgroundDelivery = AndroidBackgroundDelivery(appContext, appManager, applicationScope)

@@ -6,6 +6,13 @@ import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import to.iris.chat.rust.AppState
+import to.iris.chat.rust.DeviceAuthorizationState
 import to.iris.chat.rust.DesktopNearbySnapshot
 
 /** UI and permission state for FIPS-owned Nearby transports. */
@@ -38,6 +45,7 @@ class IrisNearbyService(context: Context) {
     private val appContext = context.applicationContext
     @Volatile private var fipsBluetoothVisible = false
     @Volatile private var fipsLanVisible = false
+    private var requestedLanVisible = false
     @Volatile private var localNetworkPermissionGranted = readLocalNetworkPermission()
     @Volatile private var fipsPeers: List<Peer> = emptyList()
     @Volatile private var fipsBluetoothPeerIds: Set<String> = emptySet()
@@ -61,8 +69,23 @@ class IrisNearbyService(context: Context) {
                 mailbagSummary = null,
             )
 
+    @Synchronized
     fun refreshPermissionState() {
         localNetworkPermissionGranted = readLocalNetworkPermission()
+        setLocalNetworkVisible(requestedLanVisible)
+    }
+
+    /** Receiving may restore an account without ever creating an Activity. */
+    fun observeAppState(states: Flow<AppState>, scope: CoroutineScope) = scope.launch {
+        states.map { state ->
+            val enabled = state.account?.authorizationState == DeviceAuthorizationState.AUTHORIZED &&
+                state.preferences.nearbyEnabled
+            Pair(enabled && state.preferences.nearbyBluetoothEnabled,
+                enabled && state.preferences.nearbyLanEnabled)
+        }.distinctUntilChanged().collect { (bluetooth, lan) ->
+            setFipsBluetoothVisible(bluetooth)
+            setLocalNetworkVisible(lan)
+        }
     }
 
     fun hasBluetoothPermission(): Boolean =
@@ -76,9 +99,11 @@ class IrisNearbyService(context: Context) {
         fipsBluetoothVisible = visible
     }
 
+    @Synchronized
     fun setLocalNetworkVisible(visible: Boolean) {
-        fipsLanVisible = visible
-        if (visible) {
+        requestedLanVisible = visible
+        fipsLanVisible = visible && localNetworkPermissionGranted
+        if (fipsLanVisible) {
             acquireMulticastLock()
         } else {
             releaseMulticastLock()
