@@ -247,10 +247,11 @@ impl AppCore {
     }
 
     pub(super) fn is_chat_visible(&self, chat_id: &str) -> bool {
-        matches!(
-            self.screen_stack.last(),
-            Some(Screen::Chat { chat_id: current }) if current == chat_id
-        )
+        self.app_in_foreground
+            && matches!(
+                self.screen_stack.last(),
+                Some(Screen::Chat { chat_id: current }) if current == chat_id
+            )
     }
 
     pub(super) fn sync_active_chat_from_router(&mut self) {

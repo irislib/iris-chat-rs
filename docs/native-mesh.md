@@ -72,9 +72,17 @@ same call. macOS and browser alerts stop and dismiss when the call is answered,
 declined, canceled, or ends. Browser ringtones require an earlier interaction
 with the app, and call notifications require the browser’s notification permission.
 These local alerts do not require a separate push service. Active calls keep their
-network connection while the app is in the background. An offline incoming
-call cannot wake an app whose process or network connection has been suspended;
-keep the apps open to establish an offline call.
+network connection while the app is in the background. On Android without Google
+Play services, a foreground receiving service also keeps the existing encrypted
+transport available for new messages and calls after closing the app. Its quiet
+notification offers Android's background battery allowance, needed for prompt
+screen-off delivery. It uses the existing Nearby settings without adding a scan
+or polling loop, and stops when message, voice-call, and video-call alerts are all
+disabled or the account is removed. Phones with Google Play services continue to
+use Firebase for background wakeups. An offline incoming call still cannot wake
+an app whose process and network connection have been suspended, including iOS;
+both peers need a live local path, and Wi-Fi/Bluetooth discovery alone does not
+guarantee delivery during deep sleep.
 
 iOS uses the standard CallKit `voip` background mode and normal microphone,
 camera and local-network permissions. Raw multicast discovery on physical iOS

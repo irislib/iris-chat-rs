@@ -88,6 +88,7 @@ impl AppCore {
                 client_label,
             } => self.set_current_device_labels(&device_label, &client_label),
             AppAction::AppForegrounded => self.handle_app_foregrounded(),
+            AppAction::AppBackgrounded => self.app_in_foreground = false,
             AppAction::Logout => self.logout(),
             AppAction::CreateChat { peer_input } => self.create_chat(&peer_input),
             AppAction::CreateGroup {

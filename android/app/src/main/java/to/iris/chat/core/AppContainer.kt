@@ -7,6 +7,7 @@ import kotlinx.coroutines.SupervisorJob
 import to.iris.chat.account.AndroidKeystoreSecretStore
 import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.calls.IrisCallRuntime
+import to.iris.chat.push.AndroidBackgroundDelivery
 
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
@@ -16,6 +17,7 @@ class AppContainer(context: Context) {
     val appManager: AppManager
     val nearbyIrisService: IrisNearbyService
     val callRuntime: IrisCallRuntime
+    val backgroundDelivery: AndroidBackgroundDelivery
 
     init {
         appManager =
@@ -27,5 +29,6 @@ class AppContainer(context: Context) {
         nearbyIrisService = IrisNearbyService(appContext)
         appManager.setFipsNearbyPeersPublisher(nearbyIrisService::applyFipsPeerSnapshot)
         callRuntime = IrisCallRuntime(appContext, appManager, applicationScope)
+        backgroundDelivery = AndroidBackgroundDelivery(appContext, appManager, applicationScope)
     }
 }

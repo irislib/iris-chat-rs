@@ -121,6 +121,13 @@ fn main() -> Result<()> {
                         chat_id: (*owner).into(),
                         video: *kind == "video",
                     }),
+                    ["message", owner, words @ ..] if !words.is_empty() => {
+                        app.dispatch(AppAction::SendMessage {
+                            chat_id: (*owner).into(),
+                            text: words.join(" "),
+                        });
+                        emit(json!({"event":"message-sent"}))?;
+                    }
                     ["answer", kind] => {
                         auto_answer = true;
                         answer_voice = *kind == "voice";

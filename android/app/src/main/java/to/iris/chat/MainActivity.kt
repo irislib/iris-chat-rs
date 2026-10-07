@@ -146,6 +146,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleLaunchIntent(intent: Intent?) {
+        if (intent?.action == to.iris.chat.push.BackgroundMessageService.ACTION_ALLOW_BACKGROUND) {
+            intent.action = null
+            val power = getSystemService(android.os.PowerManager::class.java)
+            if (!power.isIgnoringBatteryOptimizations(packageName)) {
+                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName")))
+            }
+            return
+        }
         if (intent?.action == to.iris.chat.push.MobilePushNotifier.ACTION_OPEN_CHAT) {
             intent.getStringExtra(to.iris.chat.push.MobilePushNotifier.CHAT_ID_EXTRA)?.let { chatId ->
                 container.appManager.receiveNotificationChat(chatId, intent.getStringExtra(to.iris.chat.push.MobilePushNotifier.OWNER_EXTRA))

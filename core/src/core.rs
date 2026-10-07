@@ -757,6 +757,7 @@ pub struct AppCore {
     /// RUNNINGBOARD 0xdead10cc, and the FFI message queue can hold relay
     /// events that arrived just before the scene phase change.
     suspended: bool,
+    app_in_foreground: bool,
 }
 
 impl AppCore {

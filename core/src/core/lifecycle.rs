@@ -170,6 +170,7 @@ impl AppCore {
             // First rebuild populates the cache.
             mobile_push_dirty: true,
             suspended: false,
+            app_in_foreground: true,
         })
     }
 

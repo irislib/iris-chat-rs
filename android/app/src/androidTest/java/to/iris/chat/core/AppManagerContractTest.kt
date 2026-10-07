@@ -172,6 +172,41 @@ class AppManagerContractTest {
         appManager.appBackgrounded()
 
         assertEquals(1, rust.prepareForSuspendCount)
+        assertTrue(rust.dispatchedActions.contains(AppAction.AppBackgrounded))
+    }
+
+    @Test
+    fun background_receiver_keeps_transport_until_service_stops() {
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        appManager.appForegrounded()
+        appManager.setBackgroundReceiving(true)
+        appManager.appBackgrounded()
+        assertEquals(0, rust.prepareForSuspendCount)
+        assertTrue(rust.dispatchedActions.contains(AppAction.AppBackgrounded))
+        appManager.setBackgroundReceiving(false)
+        assertEquals(1, rust.prepareForSuspendCount)
+    }
+
+    @Test
+    fun service_restart_resumes_network_without_making_the_chat_visible() {
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        appManager.setBackgroundReceiving(true)
+        assertEquals(listOf(AppAction.AppForegrounded, AppAction.AppBackgrounded),
+            rust.dispatchedActions.filter { it == AppAction.AppForegrounded || it == AppAction.AppBackgrounded })
+        assertFalse(appManager.appForegrounded.value)
+    }
+
+    @Test
+    fun stale_composition_cannot_mark_background_messages_seen() {
+        val appManager = createManager()
+        appManager.appForegrounded()
+        assertTrue(appManager.canMarkActiveChatSeen())
+        val foregroundActivityTime = appManager.lastUserActivityAtSecs.value
+        appManager.setBackgroundReceiving(true)
+        appManager.appBackgrounded()
+        assertFalse(appManager.canMarkActiveChatSeen(true, foregroundActivityTime))
     }
 
     @Test

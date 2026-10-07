@@ -20,12 +20,16 @@ import androidx.core.content.ContextCompat
 import to.iris.chat.MainActivity
 import to.iris.chat.R
 import to.iris.chat.rust.MobilePushNotificationResolution
+import to.iris.chat.rust.NotificationCandidate
+import to.iris.chat.rust.ChatThreadSnapshot
 
 object MobilePushNotifier {
     fun show(
         context: Context,
         resolution: MobilePushNotificationResolution,
         owner: String?,
+        tag: String? = null,
+        id: Int = resolution.payloadJson.hashCode() and Int.MAX_VALUE,
     ) {
         if (!notificationsAllowed(context)) {
             PushNotificationProbe.recordNotificationBlocked(context, "permission_denied")
@@ -55,14 +59,31 @@ object MobilePushNotifier {
                 .setShowWhen(true)
                 .addExtras(Bundle().apply { putString(PAYLOAD_KEY, resolution.payloadJson) })
                 .build()
-        val notificationId = resolution.payloadJson.hashCode() and Int.MAX_VALUE
-        runCatching { manager.notify(notificationId, notification) }
-            .onSuccess { PushNotificationProbe.recordNotificationShown(context, notificationId) }
+        runCatching { manager.notify(tag, id, notification) }
+            .onSuccess { PushNotificationProbe.recordNotificationShown(context, id) }
             .onFailure { error ->
                 Log.w(TAG, "Failed to show push notification", error)
                 PushNotificationProbe.recordNotificationBlocked(context, error.javaClass.simpleName)
             }
     }
+
+    fun showLocal(context: Context, candidate: NotificationCandidate, owner: String) {
+        val payload = JSONObject().put("chat_id", candidate.chatId).toString()
+        show(context, MobilePushNotificationResolution(true, candidate.title, candidate.body, payload),
+            owner, localTag(owner, candidate.chatId), 0)
+    }
+
+    fun dismissLocalRead(context: Context, chats: List<ChatThreadSnapshot>, owner: String) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val unreadTags = chats.filter { it.unreadCount > 0uL }.map { localTag(owner, it.chatId) }.toSet()
+        manager.activeNotifications.filter {
+            it.id == 0 && it.tag?.startsWith("$LOCAL_TAG_PREFIX$owner:") == true && it.tag !in unreadTags
+        }
+            .forEach { manager.cancel(it.tag, it.id) }
+    }
+
+    private const val LOCAL_TAG_PREFIX = "local-message:"
+    private fun localTag(owner: String, chat: String) = "$LOCAL_TAG_PREFIX$owner:$chat"
 
     internal fun launchIntent(context: Context, payload: String, owner: String?): Intent {
         val chatId = runCatching { pushNotificationChatCandidates(JSONObject(payload)).firstOrNull() }.getOrNull()
@@ -94,6 +115,9 @@ object MobilePushNotifier {
     fun dismissRead(context: Context, dataDir: String, owner: String, device: String) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         val candidates = manager.activeNotifications.mapNotNull { notification ->
+            // Live notifications are cleared from the authoritative chat snapshot.
+            // They contain no encrypted push event and need no database/decrypt pass.
+            if (notification.tag?.startsWith(LOCAL_TAG_PREFIX) == true) return@mapNotNull null
             notification.notification.extras.getString(PAYLOAD_KEY)?.let { payload ->
                 notification to payload
             }

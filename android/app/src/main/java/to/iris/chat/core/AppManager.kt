@@ -247,6 +247,8 @@ class AppManager(
     private var rustGeneration: Long = 0
     @Volatile
     private var appInForeground: Boolean = false
+    private var backgroundReceiving: Boolean = false
+    @Volatile private var googlePushAvailable: Boolean = true
 
     private var lastRevApplied: ULong = 0u
     private var restoreCheckComplete = false
@@ -450,6 +452,28 @@ class AppManager(
         appInForeground = false
         mutableAppForegrounded.value = false
         selfUpdateManager.stopAutomaticChecks()
+        dispatchToRust(AppAction.AppBackgrounded, showsToastOnFailure = false)
+        suspendBackgroundNetworkIfIdle()
+    }
+
+    fun setGooglePushAvailable(available: Boolean) {
+        googlePushAvailable = available
+        if (available) refreshMobilePushSubscription()
+    }
+
+    fun setBackgroundReceiving(receiving: Boolean) {
+        if (backgroundReceiving == receiving) return
+        backgroundReceiving = receiving
+        if (receiving && !appInForeground) {
+            dispatchToRust(AppAction.AppForegrounded, showsToastOnFailure = false)
+            dispatchToRust(AppAction.AppBackgrounded, showsToastOnFailure = false)
+        } else if (!receiving) {
+            suspendBackgroundNetworkIfIdle()
+        }
+    }
+
+    private fun suspendBackgroundNetworkIfIdle() {
+        if (appInForeground || backgroundReceiving) return
         // A foreground call service keeps the encrypted transport alive during calls.
         if (mutableState.value.call?.phase in listOf("incoming", "outgoing", "ringing", "connected")) return
         runCatching {
@@ -506,7 +530,8 @@ class AppManager(
         appForegrounded: Boolean = this.appInForeground,
         lastUserActivityAtSecs: Long = this.mutableLastUserActivityAtSecs.value,
     ): Boolean =
-        appForegrounded &&
+        // A stopped lifecycle collector can retain its last foreground value.
+        appInForeground && appForegrounded &&
             currentTimeSeconds() - lastUserActivityAtSecs <= ACTIVE_CHAT_SEEN_IDLE_LIMIT_SECS
 
     fun updateGroupName(
@@ -1667,6 +1692,7 @@ class AppManager(
         state: AppState,
         ownerNsec: String?,
     ) {
+        if (!googlePushAvailable) return
         val input = mobilePushSyncInput(state, ownerNsec)
         if (input.ownerPubkeyHex == null) {
             lastMobilePushSyncInput = null
