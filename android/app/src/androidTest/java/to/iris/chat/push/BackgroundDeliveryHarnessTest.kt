@@ -86,6 +86,43 @@ class BackgroundDeliveryHarnessTest : RealRelayHarnessBase() {
         reportStatus("resumed" to "true", "total_chats" to manager.state.value.chatList.size.toString())
     }
 
+    @Test fun connect_saved_normal_fixture() {
+        assumeTrue("Use the guarded saved receiver harness", optionalArg("saved_functional_fixture") == "1")
+        require(appPackageName() == "to.iris.chat.backgroundtest")
+        val account = ensureLoggedIn(createIfMissing = false)
+        require(account.publicKeyHex == requiredArg("fixture_account_owner"))
+        require(account.devicePublicKeyHex == requiredArg("fixture_account_device"))
+        val manager = appManager()
+        val preferences = manager.state.value.preferences
+        require(preferences.nostrRelayUrls == listOf(requiredArg("fixture_relay")))
+        require(preferences.desktopNotificationsEnabled && preferences.voiceCallsEnabled && preferences.videoCallsEnabled)
+        for (permission in listOf(Manifest.permission.POST_NOTIFICATIONS, Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.CAMERA)) {
+            require(instrumentation.targetContext.checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+        }
+        val owner = requiredArg("fixture_owner")
+        val device = requiredArg("fixture_device")
+        require(owner.matches(Regex("[a-f0-9]{64}")) && device.matches(Regex("[a-f0-9]{64}")))
+        val existing = manager.state.value.chatList.any { it.chatId == owner }
+        require(existing == (requiredArg("fixture_contact_exists") == "1"))
+        if (!existing) {
+            val invite = String(Base64.decode(requiredArg("fixture_invite_b64"), Base64.URL_SAFE), Charsets.UTF_8)
+            manager.dispatch(AppAction.AcceptInvite(invite))
+            waitForState("saved normal fixture contact", timeoutMs = 60_000) {
+                manager.state.value.chatList.firstOrNull { it.chatId == owner }
+            }
+            manager.dispatch(AppAction.SetMessageRequestAccepted(owner))
+        }
+        // Also completes a previously interrupted pairing without adding another contact.
+        manager.sendText(owner, "Saved receiver fixture ready")
+        waitForState("verified normal fixture device", timeoutMs = 60_000) {
+            true.takeIf { device in manager.state.value.mobilePush.callAuthorPubkeys }
+        }
+        // Only the selected chat changes; no account creation, grants, or networking actions.
+        manager.dispatch(AppAction.UpdateScreenStack(listOf(Screen.Chat(owner))))
+        reportStatus("contact_added" to (!existing).toString(), "setup_message_sent" to "true")
+    }
+
     @Test fun prepare_offline_contacts() {
         val encoded = optionalArg("fixture_contacts_b64")
         assumeTrue("Use the isolated background delivery harness", encoded != null)

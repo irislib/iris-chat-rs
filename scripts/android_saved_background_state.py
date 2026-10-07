@@ -12,7 +12,7 @@ ALERTS = ("desktop_notifications_enabled", "voice_calls_enabled", "video_calls_e
 STORE = "files/datastore/iris_chat_secure_store.preferences_pb.preferences_pb"
 
 
-def inspect_database(path):
+def inspect_database(path, *, include_history=False):
     connection = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
     try:
         owner = connection.execute("SELECT value FROM app_meta WHERE key='account_owner_pubkey_hex'").fetchone()[0]
@@ -22,17 +22,21 @@ def inspect_database(path):
         cursor = connection.execute("SELECT * FROM preferences WHERE id=1")
         preferences = dict(zip((column[0] for column in cursor.description), cursor.fetchone()))
         policy = {key: value for key, value in preferences.items() if key not in ALERTS}
-        return {"owner": owner, "devices": devices,
+        result = {"owner": owner, "devices": devices,
                 "alerts": {key: preferences[key] for key in ALERTS},
                 "relays": json.loads(preferences["nostr_relay_urls_json"]),
                 "other_preferences_sha256": hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest(),
                 "history_counts": {table: connection.execute("SELECT count(*) FROM " + table).fetchone()[0]
                                    for table in ("threads", "messages", "groups")}}
+        if include_history:
+            from android_saved_history import history_snapshot
+            result["history"] = history_snapshot(connection)
+        return result
     finally:
         connection.close()
 
 
-def read_saved_state(adb, binary):
+def read_saved_state(adb, binary, *, include_history=False):
     assert not adb("shell", "pidof", PACKAGE, check=False).strip(), "Stop receiver before a consistent state read"
     # A stopped process cannot write between these reads. Copy any retained WAL
     # alongside the DB so the private, read-only inspection sees committed data.
@@ -48,7 +52,7 @@ def read_saved_state(adb, binary):
             assert len(payload) == size
             with os.fdopen(os.open(str(target) + suffix, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as file:
                 file.write(payload)
-        result = inspect_database(target)
+        result = inspect_database(target, include_history=include_history)
     result["account_store_sha256"] = adb("shell", "run-as", PACKAGE, "sha256sum", STORE).split()[0]
     permissions = adb("shell", "dumpsys", "package", PACKAGE)
     result["permissions"] = dict(re.findall(r"(android\.permission\.[A-Z_]+): granted=(true|false)", permissions))

@@ -5,10 +5,22 @@ import tempfile
 import unittest
 
 from android_saved_background_state import inspect_database, require_preserved_state
-from android_saved_background_diagnostics import signing_digests
+from android_saved_background_diagnostics import require_test_target, signing_digests
 
 
 class SavedReceiverStateTest(unittest.TestCase):
+    def test_test_apk_cannot_instrument_production_or_an_unexpected_runner(self):
+        manifest = '''E: manifest
+          E: instrumentation (line=9)
+            A: http://schemas.android.com/apk/res/android:name(0x01)="androidx.test.runner.AndroidJUnitRunner"
+            A: http://schemas.android.com/apk/res/android:targetPackage(0x02)="to.iris.chat.backgroundtest"
+          E: uses-permission (line=16)
+        '''
+        require_test_target(manifest)
+        for changed in ("", manifest.replace("to.iris.chat.backgroundtest", "to.iris.chat"),
+                        manifest.replace("AndroidJUnitRunner", "OtherRunner"), manifest + manifest):
+            with self.assertRaises(AssertionError): require_test_target(changed)
+
     def test_both_apksigner_formats_require_one_unambiguous_certificate(self):
         digest = "a" * 64
         for line in ("V2 Signer: certificate SHA-256 digest: ", "Signer #1 certificate SHA-256 digest: "):

@@ -10,6 +10,20 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 
+pub fn restore_exact(
+    path: &Path,
+    expected_owner: &str,
+    expected_device: &str,
+) -> Result<iris_chat_core::AppAction> {
+    let action = restore(path, expected_device)?;
+    anyhow::ensure!(
+        matches!(&action, iris_chat_core::AppAction::RestoreAccountBundle { owner_pubkey_hex, .. }
+        if owner_pubkey_hex == expected_owner),
+        "Fixture owner does not match the saved pairing"
+    );
+    Ok(action)
+}
+
 #[cfg(unix)]
 pub fn restore(path: &Path, expected_device: &str) -> Result<iris_chat_core::AppAction> {
     use nostr::{Keys, ToBech32};
@@ -147,6 +161,8 @@ mod tests {
             iris_chat_core::AppAction::RestoreAccountBundle { .. }
         ));
         assert!(restore(&path, &owner.public_key().to_bech32().unwrap()).is_err());
+        assert!(restore_exact(&path, &owner.public_key().to_hex(), &expected).is_ok());
+        assert!(restore_exact(&path, &device.public_key().to_hex(), &expected).is_err());
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(restore(&path, &expected).is_err());
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();

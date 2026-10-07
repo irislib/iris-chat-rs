@@ -1,5 +1,5 @@
 //! Opt-in interoperability driver using the same FFI actions and updates as
-//! native shells. Fresh test account only; echoes media after accepting a call.
+//! native shells. Explicit test identities only; echoes media after accepting a call.
 use anyhow::{bail, Context, Result};
 use iris_chat_core::{AppAction, AppReconciler, AppUpdate, CallAudioCodec, FfiApp};
 use serde_json::json;
@@ -7,6 +7,7 @@ use std::io::{self, BufRead, Write};
 use std::time::{Duration, Instant};
 
 mod iris_call_fixture_account;
+mod iris_call_fixture_mode;
 
 struct Updates(flume::Sender<AppUpdate>);
 impl AppReconciler for Updates {
@@ -23,26 +24,26 @@ fn main() -> Result<()> {
     let dir = args
         .next()
         .context("usage: iris-call-fixture <fresh-data-dir>")?;
-    let resume_peer = match (args.next(), args.next(), args.next()) {
-        (None, None, None) => None,
-        (Some(mode), Some(peer), None) if mode == "--resume-control" => Some(peer),
-        _ => bail!("Expected fresh data directory or explicit control resume with paired device"),
-    };
     let isolated_control = std::env::var("IRIS_CALL_ISOLATED_CONTROL").as_deref() == Ok("1");
-    if resume_peer.is_some() && !isolated_control {
-        bail!("Resume is restricted to isolated control fixtures");
-    }
-    if resume_peer.is_none()
+    let mode = iris_call_fixture_mode::Mode::parse(&args.collect::<Vec<_>>(), isolated_control)?;
+    if mode.resume_device.is_none()
         && std::path::Path::new(&dir)
             .read_dir()
             .is_ok_and(|mut entries| entries.next().is_some())
     {
         bail!("Call fixture requires a fresh data directory");
     }
+    if mode.normal_persistent {
+        iris_call_fixture_mode::private_directory(std::path::Path::new(&dir))?;
+    }
     let receipt = std::path::Path::new(&dir).join("fixture-account-bundle.json");
-    let restore = resume_peer
+    let restore = mode
+        .resume_device
         .as_deref()
-        .map(|peer| iris_call_fixture_account::restore(&receipt, peer))
+        .map(|peer| match mode.resume_owner.as_deref() {
+            Some(owner) => iris_call_fixture_account::restore_exact(&receipt, owner, peer),
+            None => iris_call_fixture_account::restore(&receipt, peer),
+        })
         .transpose()?;
     let app = FfiApp::new(dir, String::new(), String::new());
     let (tx, updates) = flume::bounded(96);
@@ -52,8 +53,15 @@ fn main() -> Result<()> {
         app.dispatch(AppAction::SetNearbyLanEnabled { enabled: false });
         app.dispatch(AppAction::SetNearbyBluetoothEnabled { enabled: false });
     }
-    app.dispatch(restore.unwrap_or_else(|| AppAction::CreateAccount {
-        name: "Call test".into(),
+    app.dispatch(restore.unwrap_or_else(|| {
+        AppAction::CreateAccount {
+            name: if mode.normal_persistent {
+                "Saved receiver test"
+            } else {
+                "Call test"
+            }
+            .into(),
+        }
     }));
     if isolated_control {
         // Persisted settings are explicitly reconciled with this live fixture.
@@ -61,7 +69,7 @@ fn main() -> Result<()> {
             relay_urls: vec![std::env::var("IRIS_DEMO_RELAYS")?],
         });
     }
-    if !isolated_control {
+    if !isolated_control && !mode.normal_persistent {
         app.dispatch(AppAction::SetNearbyLanEnabled { enabled: true });
     }
     if let Ok(url) = std::env::var("IRIS_CALL_PUSH_SERVER_URL") {
@@ -69,7 +77,7 @@ fn main() -> Result<()> {
     }
     app.dispatch(AppAction::CreatePublicInvite);
     let deadline = Instant::now() + Duration::from_secs(30);
-    let mut identity_saved = !isolated_control || resume_peer.is_some();
+    let mut identity_saved = !mode.persist_identity || mode.resume_device.is_some();
     loop {
         if !identity_saved {
             for update in updates.try_iter() {
@@ -95,6 +103,12 @@ fn main() -> Result<()> {
         if let (Some(account), Some(invite), true) =
             (state.account, state.public_invite, identity_saved)
         {
+            if mode.normal_persistent {
+                anyhow::ensure!(
+                    state.preferences.nostr_relay_urls == vec![std::env::var("IRIS_DEMO_RELAYS")?],
+                    "Saved fixture message server differs from the preserved setting"
+                );
+            }
             emit(
                 json!({"event":"ready","owner":account.public_key_hex,"device":account.device_public_key_hex,"device_npub":account.device_npub,"invite":invite.url}),
             )?;
