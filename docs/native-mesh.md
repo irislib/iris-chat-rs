@@ -65,16 +65,29 @@ capture or call controls. Phone integration uses iOS CallKit and Android
 self-managed Telecom with a foreground call service. Android uses a high-priority
 CallStyle notification with system ringtone and full-screen intent; presentation
 respects the phone’s notification permission, ringer, and system settings. Telecom
-owns audio focus for these calls. Apple audio restarts its existing voice-processing
+owns audio focus for these calls. Android dismisses the ended-call screen after
+one second; when an incoming call brought the app forward, it then returns to the
+previous app. A new call cancels the earlier call's dismissal timer.
+Apple audio restarts its existing voice-processing
 graph after hardware route changes and clears obsolete playback buffers; camera
 startup leaves the shared call audio session alone. CallKit and the in-app controls operate on the
 same call. macOS and browser alerts stop and dismiss when the call is answered,
 declined, canceled, or ends. Browser ringtones require an earlier interaction
 with the app, and call notifications require the browser’s notification permission.
 These local alerts do not require a separate push service. Active calls keep their
-network connection while the app is in the background. An offline incoming
-call cannot wake an app whose process or network connection has been suspended;
-keep the apps open to establish an offline call.
+network connection while the app is in the background. On Android without Google
+Play services, a foreground receiving service also keeps the existing encrypted
+transport available for new messages and calls after closing the app. Its quiet
+notification offers Android's background battery allowance, needed for prompt
+screen-off delivery. It uses the existing Nearby settings without adding a scan
+or polling loop, and stops when message, voice-call, and video-call alerts are all
+disabled or the account is removed. Saved Nearby settings also restore Android's
+multicast allowance without opening an activity; logout and device revocation
+release it. Phones with Google Play services continue to
+use Firebase for background wakeups. An offline incoming call still cannot wake
+an app whose process and network connection have been suspended, including iOS;
+both peers need a live local path, and Wi-Fi/Bluetooth discovery alone does not
+guarantee delivery during deep sleep.
 
 iOS uses the standard CallKit `voip` background mode and normal microphone,
 camera and local-network permissions. Raw multicast discovery on physical iOS
@@ -166,3 +179,24 @@ fixture, blocks non-loopback traffic and stops the local setup message server
 before calling. Installed account data is preserved and temporary network rules
 are removed on exit. This exercises local FIPS transport, not a physical Wi-Fi or
 Bluetooth link. Results distinguish simulated capture from physical hardware.
+
+`scripts/android_call_lan_e2e.py` exercises physical Android microphone/camera
+capture and native playback/decoding over Wi-Fi. Its fresh account uses an
+authenticated UDP peer configured from the fixture identity and local address;
+public WebSocket seeds are disabled and the setup message server stops before
+calling. This verifies LAN media, independently of automatic peer discovery, and
+preserves FIPS's restriction of plaintext WebSocket seeds to loopback addresses.
+
+`scripts/android_background_delivery_e2e.py` uses a separate `backgroundtest`
+package on a Google-free physical Android device. It verifies message alerts,
+voice/video ringing and cancellation, ended-call dismissal, Doze delivery with
+Android's background allowance, stopping when all alerts are disabled, and the
+idle CPU budget. `--offline-lan` also requires an authenticated Wi-Fi peer,
+disables the sender's public FIPS seeds, blocks public TCP and configured STUN ports on the
+macOS sender, and stops the setup message server before sending. UDP remains
+available for local discovery and data; this does not simulate disabled radios
+or impose an IP-wide Internet firewall. Device accounts in the production app
+are not changed, and temporary battery allowances are restored after the test.
+`scripts/android_background_contacts_fixture.py` can first add verified synthetic
+contacts and take them offline, so the same receiver test exercises offline-peer
+retry costs with an existing account. It only uses the `backgroundtest` package.

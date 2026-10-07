@@ -68,6 +68,7 @@ fn main() -> Result<()> {
     let mut last_key_request = (String::new(), 0u32);
     let mut audio = 0u64;
     let mut video = 0u64;
+    let mut lan_owners = Vec::<String>::new();
     let mut audio_nonzero = 0u64;
     let audio_codec = CallAudioCodec::new()?;
     let mut audio_playout_at = Instant::now();
@@ -121,6 +122,13 @@ fn main() -> Result<()> {
                         chat_id: (*owner).into(),
                         video: *kind == "video",
                     }),
+                    ["message", owner, words @ ..] if !words.is_empty() => {
+                        app.dispatch(AppAction::SendMessage {
+                            chat_id: (*owner).into(),
+                            text: words.join(" "),
+                        });
+                        emit(json!({"event":"message-sent"}))?;
+                    }
                     ["answer", kind] => {
                         auto_answer = true;
                         answer_voice = *kind == "voice";
@@ -131,7 +139,7 @@ fn main() -> Result<()> {
                         let call=state.call.map(|s|json!({"id":s.call_id,"phase":s.phase,"video":s.video_capable,"muted":s.remote_muted}));
                         emit(
                             json!({"event":"status","call":call,"audio_frames":audio,"video_frames":video,"nonzero_audio_frames":audio_nonzero,
-                                "call_authors":state.mobile_push.call_author_pubkeys}),
+                                "call_authors":state.mobile_push.call_author_pubkeys,"lan_owners":lan_owners}),
                         )?;
                     }
                     ["end"] => {
@@ -147,6 +155,19 @@ fn main() -> Result<()> {
             Err(flume::RecvTimeoutError::Timeout) => {}
         }
         for update in updates.try_iter().take(128) {
+            if let AppUpdate::NearbyPeersChanged {
+                snapshot,
+                lan_peer_ids,
+                ..
+            } = &update
+            {
+                lan_owners = snapshot
+                    .peers
+                    .iter()
+                    .filter(|peer| lan_peer_ids.contains(&peer.id))
+                    .filter_map(|peer| peer.owner_pubkey_hex.clone())
+                    .collect();
+            }
             if let AppUpdate::CallMedia {
                 call_id,
                 kind,

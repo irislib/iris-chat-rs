@@ -1,4 +1,25 @@
 #[test]
+fn background_receiver_keeps_open_chat_messages_unread_without_suspending() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("background-receiver-unread", &owner, &device);
+    let peer = Keys::generate().public_key().to_hex();
+    core.screen_stack = vec![Screen::Chat { chat_id: peer.clone() }];
+    assert!(core.is_chat_visible(&peer));
+
+    core.handle_action(AppAction::AppBackgrounded);
+    assert!(!core.suspended, "background receiving must retain network processing");
+    assert!(!core.is_chat_visible(&peer));
+    core.push_incoming_message_from(
+        &peer, Some("background-message".into()), "hello".into(), unix_now().get(),
+        None, None, Some(peer.clone()), None,
+    );
+    assert_eq!(core.threads[&peer].unread_count, 1);
+    core.handle_action(AppAction::AppForegrounded);
+    assert!(core.is_chat_visible(&peer));
+}
+
+#[test]
 fn pinning_chat_moves_it_above_newer_unpinned_chats_and_persists() {
     let owner = Keys::generate();
     let device = Keys::generate();

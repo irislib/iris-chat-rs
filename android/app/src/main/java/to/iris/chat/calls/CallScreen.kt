@@ -41,6 +41,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -98,7 +100,7 @@ fun ChatCallButtons(app: AppManager, chatId: String) {
 }
 
 @Composable
-fun CallOverlay(container: AppContainer) {
+fun CallOverlay(container: AppContainer, onDismissed: (String) -> Unit = {}) {
     val app = container.appManager
     val call by app.call.collectAsStateWithLifecycle()
     val preferences by app.preferences.collectAsStateWithLifecycle()
@@ -107,7 +109,7 @@ fun CallOverlay(container: AppContainer) {
     val error by container.callRuntime.error.collectAsStateWithLifecycle()
     val audioDevices by container.callRuntime.audioDevices.collectAsStateWithLifecycle()
     val answerRequest by container.callRuntime.answerRequest.collectAsStateWithLifecycle()
-    var dismissedId by remember { mutableStateOf<String?>(null) }
+    var dismissedId by rememberSaveable { mutableStateOf<String?>(null) }
     val active = call ?: return
     if (active.phase == "ended" && dismissedId == active.callId) return
     val permissions = rememberCallPermissionAction()
@@ -123,7 +125,7 @@ fun CallOverlay(container: AppContainer) {
     }
     CallSurface(active, preferences.voiceCallsEnabled, preferences.videoCallsEnabled, remote, local, error,
         audioDevices, now, permissions, app::dispatch, container.callRuntime::selectAudioDevice,
-        onDismiss = { dismissedId = active.callId }, quality = preferences.callQuality,
+        onDismiss = { dismissedId = active.callId; onDismissed(active.callId) }, quality = preferences.callQuality,
         customMaxBitrateBps = preferences.callMaxBitrateBps)
 }
 
@@ -144,6 +146,13 @@ internal fun CallSurface(
     quality: String = "auto",
     customMaxBitrateBps: UInt = 2_000_000u,
 ) {
+    val dismiss by rememberUpdatedState(onDismiss)
+    LaunchedEffect(active.callId, active.phase) {
+        if (active.phase == "ended") {
+            delay(1_000L)
+            dismiss()
+        }
+    }
     var qualityOpen by remember(active.callId) { mutableStateOf(false) }
     var audioOpen by remember(active.callId) { mutableStateOf(false) }
     Dialog(onDismissRequest = { if (active.phase == "ended") onDismiss() },

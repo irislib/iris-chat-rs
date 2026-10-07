@@ -303,12 +303,19 @@ async fn run(
     let mut connections = HashMap::<ConnectionId, Connection>::new();
     loop {
         let time = now(started);
+        // Socket input and commands wake this select immediately. With no
+        // application streams, only offer expiry and TCP handshake/close
+        // housekeeping need a timer; do not wake the runtime 100 times/second.
+        // Keep this within TCP's minimum retransmission interval, including
+        // half-open streams which have not reached accept() yet.
+        let poll_interval =
+            std::time::Duration::from_millis(if connections.is_empty() { 200 } else { 10 });
         tokio::select! {
             command = commands.recv_async() => match command {
                 Ok(command) => handle_command(command, local, &mut tcp, &mut offers, &mut connections, &events, &restrictions, time).await,
                 Err(_) => break,
             },
-            result = tokio::time::timeout(std::time::Duration::from_millis(10), tcp.receive(time)) => {
+            result = tokio::time::timeout(poll_interval, tcp.receive(time)) => {
                 if matches!(result, Ok(Err(fips_tcp_endpoint::AdapterError::Closed))) { break; }
             },
         }

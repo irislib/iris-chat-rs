@@ -172,6 +172,41 @@ class AppManagerContractTest {
         appManager.appBackgrounded()
 
         assertEquals(1, rust.prepareForSuspendCount)
+        assertTrue(rust.dispatchedActions.contains(AppAction.AppBackgrounded))
+    }
+
+    @Test
+    fun background_receiver_keeps_transport_until_service_stops() {
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        appManager.appForegrounded()
+        appManager.setBackgroundReceiving(true)
+        appManager.appBackgrounded()
+        assertEquals(0, rust.prepareForSuspendCount)
+        assertTrue(rust.dispatchedActions.contains(AppAction.AppBackgrounded))
+        appManager.setBackgroundReceiving(false)
+        assertEquals(1, rust.prepareForSuspendCount)
+    }
+
+    @Test
+    fun service_restart_resumes_network_without_making_the_chat_visible() {
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        appManager.setBackgroundReceiving(true)
+        assertEquals(listOf(AppAction.AppForegrounded, AppAction.AppBackgrounded),
+            rust.dispatchedActions.filter { it == AppAction.AppForegrounded || it == AppAction.AppBackgrounded })
+        assertFalse(appManager.appForegrounded.value)
+    }
+
+    @Test
+    fun stale_composition_cannot_mark_background_messages_seen() {
+        val appManager = createManager()
+        appManager.appForegrounded()
+        assertTrue(appManager.canMarkActiveChatSeen())
+        val foregroundActivityTime = appManager.lastUserActivityAtSecs.value
+        appManager.setBackgroundReceiving(true)
+        appManager.appBackgrounded()
+        assertFalse(appManager.canMarkActiveChatSeen(true, foregroundActivityTime))
     }
 
     @Test
@@ -284,6 +319,30 @@ class AppManagerContractTest {
     }
 
     @Test
+    fun queued_unrelated_state_does_not_finish_pending_account_restore() {
+        persistStoredSecret(StoredAccountBundle("nsec1owner", "owner-hex", "nsec1device").toJson())
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        waitFor("restore dispatched") { rust.dispatchedActions.any { it is AppAction.RestoreAccountBundle } }
+
+        rust.emit(AppUpdate.FullState(makeAppState(rev = 1u)))
+        assertTrue(appManager.bootstrapState.value is AccountBootstrapState.Loading)
+        rust.emit(AppUpdate.FullState(makeLoggedInState(rev = 2u)))
+        assertTrue(appManager.bootstrapState.value is AccountBootstrapState.LoggedIn)
+    }
+
+    @Test
+    fun failed_account_restore_finishes_loading_when_busy_state_was_coalesced() {
+        persistStoredSecret(StoredAccountBundle("nsec1owner", "owner-hex", "nsec1device").toJson())
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        waitFor("restore dispatched") { rust.dispatchedActions.any { it is AppAction.RestoreAccountBundle } }
+        assertTrue(appManager.bootstrapState.value is AccountBootstrapState.Loading)
+        rust.emit(AppUpdate.FullState(makeAppState(rev = 1u, toast = "Invalid key.")))
+        assertTrue(appManager.bootstrapState.value is AccountBootstrapState.NeedsLogin)
+    }
+
+    @Test
     fun restore_pending_device_link_takes_priority_over_stale_account_bundle() {
         persistStoredSecret(
             StoredAccountBundle("stale-owner", "stale-owner-hex", "stale-device").toJson(),
@@ -305,6 +364,10 @@ class AppManagerContractTest {
         assertEquals(pending.deviceNsec, action.deviceNsec)
         assertEquals(pending.approvalBootstrapJson, action.approvalBootstrapJson)
         assertTrue(appManager.bootstrapState.value is AccountBootstrapState.Loading)
+        rust.emit(AppUpdate.FullState(makeAppState(rev = 1u,
+            router = Router(Screen.Welcome, listOf(Screen.AddDevice))).copy(
+            linkDevice = to.iris.chat.rust.LinkDeviceSnapshot("device-link", ""))))
+        assertTrue(appManager.bootstrapState.value is AccountBootstrapState.NeedsLogin)
     }
 
     @Test

@@ -3,6 +3,7 @@ package to.iris.chat.calls
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.SystemClock
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -100,6 +101,37 @@ class CallMediaTest {
                 onAction = {}, onAudioDevice = {}, onDismiss = {})
         } }
         compose.onNodeWithContentDescription("Quality").assertDoesNotExist()
+    }
+
+    @Test fun endedCallClosesAfterOneSecond() {
+        compose.mainClock.autoAdvance = false
+        var dismissals = 0
+        compose.setContent { IrisChatTheme {
+            CallSurface(call("ended"), true, true, null, null, null, CallAudioDevices(), 0,
+                permissions = { _, next -> next() }, onAction = {}, onAudioDevice = {},
+                onDismiss = { dismissals++ })
+        } }
+        compose.mainClock.advanceTimeBy(500)
+        compose.onNodeWithText("Call ended").assertExists()
+        compose.runOnIdle { assertEquals(0, dismissals) }
+        compose.mainClock.advanceTimeBy(600)
+        compose.runOnIdle { assertEquals(1, dismissals) }
+    }
+
+    @Test fun endedCallTimerCannotDismissANewIncomingCall() {
+        compose.mainClock.autoAdvance = false
+        val current = mutableStateOf(call("ended"))
+        var dismissals = 0
+        compose.setContent { IrisChatTheme {
+            CallSurface(current.value, true, true, null, null, null, CallAudioDevices(), 0,
+                permissions = { _, next -> next() }, onAction = {}, onAudioDevice = {},
+                onDismiss = { dismissals++ })
+        } }
+        compose.mainClock.advanceTimeBy(500)
+        compose.runOnIdle { current.value = call("incoming").copy(callId = "next-call") }
+        compose.mainClock.advanceTimeBy(1_500)
+        compose.onNodeWithText("Incoming video call").assertExists()
+        compose.runOnIdle { assertEquals(0, dismissals) }
     }
 
     private fun call(phase: String) = CallSnapshot(callId = "test-call", chatId = "test-chat", peerName = "Alex", phase = phase,

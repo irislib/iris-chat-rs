@@ -43,17 +43,24 @@ class NativeCallFipsE2eTest {
         val args = InstrumentationRegistry.getArguments()
         val relay = args.getString("call_relay")
         val seed = args.getString("call_fips_seed")
+        val udpPeer = args.getString("call_fips_udp")
+        val peerDevice = args.getString("call_peer_device")
         val invite = args.getString("call_invite")
         val peer = args.getString("call_peer_owner")
         val voiceOnly = args.getString("call_answer_voice") == "1"
         val lan = args.getString("call_lan") == "1"
-        assumeTrue("Run with the local native call fixture", listOf(relay, seed, invite, peer).all { !it.isNullOrBlank() })
+        assumeTrue("Run with the local native call fixture", listOf(relay, invite, peer).all { !it.isNullOrBlank() } &&
+            if (lan) !udpPeer.isNullOrBlank() && !peerDevice.isNullOrBlank() else !seed.isNullOrBlank())
         check(instrumentation is NativeCallTestRunner)
-        listOf(relay!!, seed!!).forEach { check(URI(it).let { url ->
+        val setupUrls = if (lan) listOf(relay!!) else listOf(relay!!, seed!!)
+        setupUrls.forEach { check(URI(it).let { url ->
             url.scheme == "ws" && if (lan) InetAddress.getByName(url.host).isSiteLocalAddress else url.host == "127.0.0.1"
         }) }
+        if (lan) check(URI("udp://$udpPeer").let { url ->
+            url.port in 1..65535 && InetAddress.getByName(url.host).isSiteLocalAddress
+        })
         val context = instrumentation.targetContext
-        if (lan) listOf(relay, seed).forEach { endpoint ->
+        if (lan) setupUrls.forEach { endpoint ->
             val url = URI(endpoint)
             Socket().use { it.connect(InetSocketAddress(url.host, url.port), 2000) }
         }
@@ -69,7 +76,10 @@ class NativeCallFipsE2eTest {
         val directory = File(context.cacheDir, "native-call-e2e-${UUID.randomUUID()}").apply { mkdirs() }
         val remoteEnded = File(directory, "remote-ended")
         status("nativeCallControlPath", remoteEnded.absolutePath)
-        val environment = mapOf("IRIS_DEMO_RELAYS" to relay, "IRIS_FIPS_WEBSOCKET_SEED_URLS" to seed,
+        // LAN media uses authenticated UDP directly. Plain WebSocket seeds are
+        // deliberately restricted to loopback by the production FIPS library.
+        val environment = mapOf("IRIS_DEMO_RELAYS" to relay, "IRIS_FIPS_WEBSOCKET_SEED_URLS" to if (lan) "" else seed!!,
+            "IRIS_CHAT_FIPS_STATIC_PEERS" to if (lan) "${to.iris.chat.rust.peerInputToNpub(peerDevice!!)}=udp:$udpPeer" else "",
             "IRIS_CHAT_FIPS_WEBSOCKET_BIND_ADDR" to "", "IRIS_CHAT_FIPS_UDP_BIND_ADDR" to if (lan) "0.0.0.0:0" else "127.0.0.1:0")
         val previous = environment.mapValues { Os.getenv(it.key) }
         environment.forEach { (key, value) -> Os.setenv(key, value, true) }
@@ -109,7 +119,8 @@ class NativeCallFipsE2eTest {
             ffi.dispatch(AppAction.SetMessageRequestAccepted(peer!!))
             ffi.dispatch(AppAction.SendMessage(peer, "Call setup"))
             await("authenticated contact devices", 45_000) {
-                ffi.peerProfileDebug(peer)?.let { it.rosterDeviceCount > 0uL && it.activeSessionCount > 0uL } == true
+                ffi.peerProfileDebug(peer)?.let { it.rosterDeviceCount > 0uL && it.activeSessionCount > 0uL } == true &&
+                    (!lan || peerDevice in ffi.state().mobilePush.callAuthorPubkeys)
             }
             status("nativeCallPhase", "contact_ready")
             await("message server stopped", 15_000) {

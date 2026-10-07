@@ -100,6 +100,8 @@ pub enum AppAction {
         client_label: String,
     },
     AppForegrounded,
+    /// Hide the UI while an Android foreground service keeps receiving.
+    AppBackgrounded,
     Logout,
     CreateChat {
         peer_input: String,

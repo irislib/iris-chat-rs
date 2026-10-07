@@ -8,6 +8,63 @@ use std::{
 
 const TOKEN: &str = "0102030405060708010203040506070801020304050607080102030405060708";
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn idle_file_listener_sleeps_but_commands_wake_it_immediately() {
+    use std::future::{poll_fn, Future};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let mut config = fips_core::Config::new();
+    config.node.control.enabled = false;
+    config.node.discovery.local.enabled = false;
+    config.node.discovery.lan.enabled = false;
+    config.node.discovery.nostr.enabled = false;
+    let endpoint = Arc::new(
+        FipsEndpoint::builder()
+            .config(config)
+            .without_system_tun()
+            .bind()
+            .await
+            .unwrap(),
+    );
+    let tcp = FipsTcpEndpoint::bind(endpoint.clone(), PORT, Config::default(), 1)
+        .await
+        .unwrap();
+    let local = PeerIdentity::from_npub(endpoint.npub()).unwrap();
+    let (commands, rx) = flume::bounded(32);
+    let (tx, events) = flume::unbounded();
+    let polls = Arc::new(AtomicUsize::new(0));
+    let observed = polls.clone();
+    let task = tokio::spawn(async move {
+        let future = run(tcp, local, rx, tx, Arc::new(RwLock::new(HashMap::new())));
+        tokio::pin!(future);
+        poll_fn(|cx| {
+            observed.fetch_add(1, Ordering::Relaxed);
+            future.as_mut().poll(cx)
+        })
+        .await;
+    });
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    let idle_polls = polls.load(Ordering::Relaxed);
+    assert!(
+        idle_polls <= 8,
+        "idle file listener was polled {idle_polls} times"
+    );
+    commands
+        .send(Command::Cancel("wake-idle-listener".into()))
+        .unwrap();
+    let event = tokio::time::timeout(Duration::from_millis(100), events.recv_async())
+        .await
+        .expect("an idle listener must wake for commands")
+        .unwrap();
+    assert!(
+        matches!(event, DirectFileEvent::Cancelled { transfer_id, .. }
+        if transfer_id == "wake-idle-listener")
+    );
+    drop(commands);
+    task.await.unwrap();
+    endpoint.shutdown().await.unwrap();
+}
+
 struct Peer {
     endpoint: Arc<FipsEndpoint>,
     identity: PeerIdentity,

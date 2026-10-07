@@ -247,10 +247,12 @@ class AppManager(
     private var rustGeneration: Long = 0
     @Volatile
     private var appInForeground: Boolean = false
+    private var backgroundReceiving: Boolean = false
+    @Volatile private var googlePushAvailable: Boolean = true
 
     private var lastRevApplied: ULong = 0u
-    private var restoreCheckComplete = false
-    private var persistedRestoreInFlight = false
+    @Volatile private var restoreCheckComplete = false
+    @Volatile private var persistedRestoreInFlight = false
     private var cachedAccountBundle: StoredAccountBundle? = null
     private val secretPersistenceMutex = Mutex()
     private val backgroundSearch = BackgroundSearch(
@@ -450,6 +452,28 @@ class AppManager(
         appInForeground = false
         mutableAppForegrounded.value = false
         selfUpdateManager.stopAutomaticChecks()
+        dispatchToRust(AppAction.AppBackgrounded, showsToastOnFailure = false)
+        suspendBackgroundNetworkIfIdle()
+    }
+
+    fun setGooglePushAvailable(available: Boolean) {
+        googlePushAvailable = available
+        if (available) refreshMobilePushSubscription()
+    }
+
+    fun setBackgroundReceiving(receiving: Boolean) {
+        if (backgroundReceiving == receiving) return
+        backgroundReceiving = receiving
+        if (receiving && !appInForeground) {
+            dispatchToRust(AppAction.AppForegrounded, showsToastOnFailure = false)
+            dispatchToRust(AppAction.AppBackgrounded, showsToastOnFailure = false)
+        } else if (!receiving) {
+            suspendBackgroundNetworkIfIdle()
+        }
+    }
+
+    private fun suspendBackgroundNetworkIfIdle() {
+        if (appInForeground || backgroundReceiving) return
         // A foreground call service keeps the encrypted transport alive during calls.
         if (mutableState.value.call?.phase in listOf("incoming", "outgoing", "ringing", "connected")) return
         runCatching {
@@ -506,7 +530,8 @@ class AppManager(
         appForegrounded: Boolean = this.appInForeground,
         lastUserActivityAtSecs: Long = this.mutableLastUserActivityAtSecs.value,
     ): Boolean =
-        appForegrounded &&
+        // A stopped lifecycle collector can retain its last foreground value.
+        appInForeground && appForegrounded &&
             currentTimeSeconds() - lastUserActivityAtSecs <= ACTIVE_CHAT_SEEN_IDLE_LIMIT_SECS
 
     fun updateGroupName(
@@ -1415,8 +1440,8 @@ class AppManager(
         IrisDebugLog.d(TAG, "restoreSessionFromSecureStore start")
         val pendingLink = loadPersistedPendingDeviceLink()
         if (pendingLink != null) {
-            restoreCheckComplete = true
             persistedRestoreInFlight = true
+            restoreCheckComplete = true
             val dispatched =
                 dispatchToRust(
                     AppAction.RestorePendingDeviceLink(
@@ -1448,9 +1473,9 @@ class AppManager(
             return
         }
 
-        restoreCheckComplete = true
         val bundle = StoredAccountBundle.fromJson(decrypted)
         persistedRestoreInFlight = true
+        restoreCheckComplete = true
         if (bundle != null) {
             cachedAccountBundle = bundle
             IrisDebugLog.d(TAG, "restoreSessionFromSecureStore dispatch bundle restore")
@@ -1667,6 +1692,7 @@ class AppManager(
         state: AppState,
         ownerNsec: String?,
     ) {
+        if (!googlePushAvailable) return
         val input = mobilePushSyncInput(state, ownerNsec)
         if (input.ownerPubkeyHex == null) {
             lastMobilePushSyncInput = null
@@ -1894,7 +1920,11 @@ class AppManager(
         }
         val account = snapshot.account
         if (persistedRestoreInFlight) {
-            if (account == null && snapshot.busy.restoringSession) {
+            // Updates queued before the restore action are not a failed login.
+            // The FFI can coalesce away the busy=true snapshot, so completion
+            // must come from an account, a restored pairing, or a restore error.
+            val finishedWithoutAccount = snapshot.linkDevice != null || snapshot.toast != null
+            if (account == null && (snapshot.busy.restoringSession || !finishedWithoutAccount)) {
                 mutableBootstrapState.value = AccountBootstrapState.Loading
                 return
             }
