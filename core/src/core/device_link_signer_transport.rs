@@ -54,7 +54,11 @@ pub(super) async fn run(
         progress(&tx, &format!("failed: {reason}"));
     }
     let _ = tx.send(CoreMsg::Internal(Box::new(
-        InternalEvent::DeviceLinkSignerFinished { token, success, error },
+        InternalEvent::DeviceLinkSignerFinished {
+            token,
+            success,
+            error,
+        },
     )));
     client.shutdown().await;
 }

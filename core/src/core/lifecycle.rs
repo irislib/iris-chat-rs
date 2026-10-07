@@ -522,7 +522,10 @@ impl AppCore {
                     .prepare_device_link_roster_repair(&token, &heads)
                     .map_err(|error| {
                         let reason = super::device_link_signer::safe_error(&error);
-                        self.push_debug_log("device_link.approval", format!("repair_failed: {reason}"));
+                        self.push_debug_log(
+                            "device_link.approval",
+                            format!("repair_failed: {reason}"),
+                        );
                         reason.to_string()
                     });
                 let _ = reply.send(result);
@@ -537,14 +540,19 @@ impl AppCore {
                     .sign_device_link_request(&token, &unsigned_event_json, previous.as_ref())
                     .map_err(|error| {
                         let reason = super::device_link_signer::safe_error(&error);
-                        self.push_debug_log("device_link.approval", format!("sign_request_failed: {reason}"));
+                        self.push_debug_log(
+                            "device_link.approval",
+                            format!("sign_request_failed: {reason}"),
+                        );
                         reason.to_string()
                     });
                 let _ = reply.send(result);
             }
-            InternalEvent::DeviceLinkSignerFinished { token, success, error } => {
-                self.finish_device_link_signer(&token, success, error)
-            }
+            InternalEvent::DeviceLinkSignerFinished {
+                token,
+                success,
+                error,
+            } => self.finish_device_link_signer(&token, success, error),
             InternalEvent::PrivateContactSyncTick { generation } => {
                 self.private_contact_sync_tick(generation);
             }

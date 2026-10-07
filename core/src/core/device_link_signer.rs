@@ -3,8 +3,8 @@ use nostr::EventId;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
-mod repair;
 mod errors;
+mod repair;
 pub(super) use errors::safe_error;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -92,7 +92,12 @@ impl AppCore {
         }
     }
 
-    pub(super) fn finish_device_link_signer(&mut self, token: &str, success: bool, error: Option<String>) {
+    pub(super) fn finish_device_link_signer(
+        &mut self,
+        token: &str,
+        success: bool,
+        error: Option<String>,
+    ) {
         if self
             .pending_device_link_signer
             .as_ref()
@@ -117,7 +122,9 @@ impl AppCore {
             if success {
                 "Device added"
             } else {
-                error.as_deref().unwrap_or("Could not link device. Try again.")
+                error
+                    .as_deref()
+                    .unwrap_or("Could not link device. Try again.")
             }
             .into(),
         );
