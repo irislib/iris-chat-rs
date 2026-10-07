@@ -137,7 +137,8 @@ def main():
     def stopped():
         blocks = re.split(r"\n\s*\* Hist", adb("shell", "dumpsys", "activity", "activities"))
         ours = [block for block in blocks if f"packageName={package} " in block]
-        return bool(ours) and all("state=STOPPED" in block for block in ours)
+        hidden = ("state=STOPPED", "mAppStopped=true", "mVisible=false", "mVisibleRequested=false")
+        return bool(ours) and all(all(field in block for field in hidden) for block in ours)
 
     try:
         initial_awake = "mWakefulness=Awake" in adb("shell", "dumpsys", "power")
