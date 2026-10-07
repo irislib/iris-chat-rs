@@ -17,7 +17,7 @@ const SCOPE: &str = "connected_authenticated_peers";
 static NEXT_SAMPLE: AtomicU64 = AtomicU64::new(1);
 static PROCESS_NONCE: OnceLock<u128> = OnceLock::new();
 
-fn sample_id() -> Option<String> {
+pub(super) fn sample_id() -> Option<String> {
     let mut current = NEXT_SAMPLE.load(Ordering::Relaxed);
     loop {
         let next = current.checked_add(1)?;
@@ -133,6 +133,22 @@ struct Baseline {
 #[derive(Default)]
 pub(in crate::core) struct TrafficHistory {
     baseline: Option<Baseline>,
+    services: Option<super::fips_services::History>,
+}
+
+struct Observation {
+    peers: Vec<ObservedPeer>,
+    services: Result<super::fips_services::Observation, &'static str>,
+}
+
+#[cfg(test)]
+impl From<Vec<ObservedPeer>> for Observation {
+    fn from(peers: Vec<ObservedPeer>) -> Self {
+        Self {
+            peers,
+            services: Err("unavailable"),
+        }
+    }
 }
 
 fn unavailable(status: &'static str) -> Value {
@@ -247,7 +263,7 @@ impl TrafficHistory {
 async fn send_reply(
     bundle: Value,
     reply: flume::Sender<String>,
-    query: impl Future<Output = Result<Vec<ObservedPeer>, &'static str>>,
+    query: impl Future<Output = Result<Observation, &'static str>>,
     history: Arc<Mutex<TrafficHistory>>,
     configured: BTreeSet<String>,
     generation: u64,
@@ -255,39 +271,63 @@ async fn send_reply(
 ) {
     // Serialize explicit queries so out-of-order completion cannot roll the
     // baseline back. Waiting for another query shares the same total budget.
-    let diagnostic = tokio::time::timeout(timeout, async {
+    let (diagnostic, services) = tokio::time::timeout(timeout, async {
         let mut history = history.lock().await;
         // Cancellation or query failure discards the baseline automatically.
         let previous = history.baseline.take();
+        let previous_services = history.services.take();
         match query.await {
-            Ok(peers) => {
+            Ok(observation) => {
                 history.baseline = previous;
-                history.record(peers, &configured, generation, Instant::now())
+                let now = Instant::now();
+                let services = match observation.services {
+                    Ok(services) => {
+                        history.services = previous_services;
+                        services.record(&mut history.services, generation, now)
+                    }
+                    Err(status) => super::fips_services::unavailable(status),
+                };
+                (
+                    history.record(observation.peers, &configured, generation, now),
+                    services,
+                )
             }
-            Err(status) => unavailable(status),
+            Err(status) => (
+                unavailable(status),
+                super::fips_services::unavailable(status),
+            ),
         }
     })
     .await
-    .unwrap_or_else(|_| unavailable("timeout"));
+    .unwrap_or_else(|_| {
+        (
+            unavailable("timeout"),
+            super::fips_services::unavailable("timeout"),
+        )
+    });
     let mut bundle = match bundle {
         Value::Object(bundle) => bundle,
         _ => serde_json::Map::new(),
     };
     bundle.insert("fips_transport".to_owned(), diagnostic);
+    bundle.insert("fips_services".to_owned(), services);
     // The async task owns the sole sender, including timeout/error replies.
     let _ = reply.send(Value::Object(bundle).to_string());
 }
 
 async fn query_endpoint(
     endpoint: Option<Arc<FipsEndpoint>>,
-) -> Result<Vec<ObservedPeer>, &'static str> {
+    pubsub: Option<Arc<nostr_pubsub_fips::FipsPubsubClient>>,
+) -> Result<Observation, &'static str> {
     let endpoint = endpoint.ok_or("unavailable")?;
     let peers = endpoint.peers().await.map_err(|_| "query_error")?;
-    Ok(peers
+    let services = super::fips_services::Observation::capture(endpoint, pubsub);
+    let peers = peers
         .into_iter()
         .filter(|peer| peer.connected)
         .map(ObservedPeer::from)
-        .collect())
+        .collect();
+    Ok(Observation { peers, services })
 }
 
 impl AppCore {
@@ -303,10 +343,14 @@ impl AppCore {
             .as_ref()
             .map(|runtime| runtime.configured_direct_peers.clone())
             .unwrap_or_default();
+        let pubsub = self
+            .device_sync
+            .as_ref()
+            .and_then(|runtime| runtime.pubsub.clone());
         self.runtime.spawn(send_reply(
             bundle,
             reply,
-            query_endpoint(endpoint),
+            query_endpoint(endpoint, pubsub),
             self.fips_traffic_history.clone(),
             configured,
             self.fips_connection_generation,

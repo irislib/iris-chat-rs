@@ -90,7 +90,7 @@ async fn reply_is_once_on_success_error_unavailable_and_timeout() {
                 std::future::pending::<()>().await;
             }
             if status == "available" {
-                Ok(vec![peer("private-peer", 9, "udp", 1)])
+                Ok(vec![peer("private-peer", 9, "udp", 1)].into())
             } else {
                 Err(status)
             }
@@ -111,6 +111,9 @@ async fn reply_is_once_on_success_error_unavailable_and_timeout() {
         assert_eq!(json["fips_transport"]["valid"], status == "available");
         if status != "available" {
             assert!(json["fips_transport"]["connected_peer_count"].is_null());
+            assert_eq!(json["fips_services"]["valid"], false);
+            assert_eq!(json["fips_services"]["status"], status);
+            assert!(json["fips_services"].get("services").is_none());
         }
         assert_eq!(rx.try_recv(), Err(flume::TryRecvError::Disconnected));
     }
@@ -186,7 +189,7 @@ async fn concurrent_queries_share_the_timeout_budget_and_cannot_overtake() {
         async move {
             started_tx.send(()).unwrap();
             release_rx.recv_async().await.unwrap();
-            Ok(vec![peer("first", 1, "udp", 10)])
+            Ok(vec![peer("first", 1, "udp", 10)].into())
         },
         history.clone(),
         BTreeSet::new(),
@@ -202,7 +205,7 @@ async fn concurrent_queries_share_the_timeout_budget_and_cannot_overtake() {
         second_tx,
         async move {
             observed.store(true, Ordering::Relaxed);
-            Ok(vec![peer("first", 1, "udp", 20)])
+            Ok(vec![peer("first", 1, "udp", 20)].into())
         },
         history.clone(),
         BTreeSet::new(),
@@ -254,8 +257,12 @@ async fn live_authenticated_endpoint_produces_private_aggregate_reply() {
     let remote = endpoint(rendezvous).await;
     let peers = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let peers = query_endpoint(Some(local.clone())).await.unwrap();
-            if peers.iter().any(|peer| peer.key.identity == remote.npub()) {
+            let peers = query_endpoint(Some(local.clone()), None).await.unwrap();
+            if peers
+                .peers
+                .iter()
+                .any(|peer| peer.key.identity == remote.npub())
+            {
                 break peers;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -263,12 +270,13 @@ async fn live_authenticated_endpoint_produces_private_aggregate_reply() {
     })
     .await
     .unwrap();
+    let history = Arc::default();
     let (tx, rx) = flume::bounded(1);
     send_reply(
         json!({"existing": 1}),
         tx,
         std::future::ready(Ok(peers)),
-        Arc::default(),
+        Arc::clone(&history),
         BTreeSet::from([remote.npub().to_owned()]),
         1,
         QUERY_TIMEOUT,
@@ -287,6 +295,54 @@ async fn live_authenticated_endpoint_produces_private_aggregate_reply() {
     );
     assert!(!result.to_string().contains(remote.npub()));
     assert_eq!(rx.try_recv(), Err(flume::TryRecvError::Disconnected));
+    // Attribute a real authenticated service submission without leaking identities.
+    let port = hashtree_fips_transport::TCP_BLOB_SERVICE_PORT;
+    remote.register_service(port).await.unwrap();
+    local
+        .send_datagram(
+            fips_core::PeerIdentity::from_npub(remote.npub()).unwrap(),
+            port,
+            port,
+            vec![1, 2, 3],
+        )
+        .await
+        .unwrap();
+    let mut received = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        remote.recv_service_datagram_batch_into(&mut received, 1),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(received[0].data.as_slice(), &[1, 2, 3]);
+    let (tx, rx) = flume::bounded(1);
+    send_reply(
+        json!({}),
+        tx,
+        query_endpoint(Some(local.clone()), None),
+        history,
+        BTreeSet::new(),
+        1,
+        QUERY_TIMEOUT,
+    )
+    .await;
+    let after: Value = serde_json::from_str(&rx.recv().unwrap()).unwrap();
+    let services = &after["fips_services"];
+    assert_eq!(services["valid"], true);
+    assert_eq!(services["epoch_id"], result["fips_services"]["epoch_id"]);
+    let packets = |name: &str| {
+        services["services"][name]["transports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["submitted_packets"].as_u64().unwrap())
+            .sum::<u64>()
+    };
+    assert!(packets("hashtree") > 0);
+    assert_eq!(packets("pubsub"), 0);
+    assert!(services["pubsub_delivery"].is_null());
+    assert!(!after.to_string().contains(remote.npub()));
     local.shutdown().await.unwrap();
     remote.shutdown().await.unwrap();
 }

@@ -1,4 +1,5 @@
 use super::*;
+mod fips_services;
 mod fips_traffic;
 pub(super) use fips_traffic::TrafficHistory;
 
