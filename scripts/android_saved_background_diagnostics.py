@@ -278,11 +278,13 @@ def main():
             clean("restore existing test APK", restore_test)
         if app_touched:
             def verify_restored():
-                state = read_saved_state(adb, binary, include_history=functional); write_marker(args.output / "state-after-cleanup.json", state)
-                require_preserved_state(before, state, before["alerts"])
+                peer = fixture.ready["owner"] if fixture and fixture.ready else None
+                new_contact = peer if functional and peer and fingerprint(peer) not in before["history"]["threads"] else None
+                state = read_saved_state(adb, binary, include_history=functional, new_contact=new_contact)
+                write_marker(args.output / "state-after-cleanup.json", state)
+                require_preserved_state(before, state, before["alerts"], new_contact=new_contact)
                 additions = None
                 if functional:
-                    peer = fixture.ready["owner"] if fixture and fixture.ready else None
                     additions = require_preserved_history(before["history"], state["history"], peer)
                 result_file = args.output / "result.json"
                 if result_file.exists():

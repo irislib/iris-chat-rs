@@ -56,4 +56,42 @@ class SavedReceiverStateTest(unittest.TestCase):
             c.close()
 
 
+    def test_only_exact_planned_contact_acceptance_is_allowed_during_cleanup(self):
+        original_contact, fixture, other = "c" * 64, "d" * 64, "e" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "core.sqlite3")
+            c = sqlite3.connect(path)
+            c.executescript("""
+                CREATE TABLE app_meta(key TEXT,value TEXT);
+                CREATE TABLE ndr_kv(owner_pubkey_hex TEXT,device_pubkey_hex TEXT);
+                CREATE TABLE preferences(id INTEGER,desktop_notifications_enabled INTEGER,voice_calls_enabled INTEGER,
+                  video_calls_enabled INTEGER,nostr_relay_urls_json TEXT,accepted_owner_pubkeys_json TEXT,private_proxy_key TEXT);
+                CREATE TABLE threads(id INTEGER); CREATE TABLE messages(id INTEGER); CREATE TABLE groups(id INTEGER);
+            """)
+            c.execute("INSERT INTO app_meta VALUES('account_owner_pubkey_hex',?)", ("a" * 64,))
+            c.execute("INSERT INTO ndr_kv VALUES(?,?)", ("a" * 64, "b" * 64))
+            contacts = lambda values: json.dumps(values, separators=(",", ":"))
+            c.execute("INSERT INTO preferences VALUES(1,0,0,0,?,?,?)",
+                      ('["ws://127.0.0.1:1234"]', contacts([original_contact]), "private-value"))
+            c.commit()
+            before = inspect_database(path); before["permissions"] = {}
+            for accepted, private, allowed in (([original_contact, fixture], "private-value", True),
+                    ([original_contact, fixture, other], "private-value", False),
+                    ([fixture], "private-value", False),
+                    ([original_contact, fixture], "changed-secret", False)):
+                c.execute("UPDATE preferences SET accepted_owner_pubkeys_json=?,private_proxy_key=?",
+                          (contacts(accepted), private)); c.commit()
+                after = inspect_database(path, new_contact=fixture); after["permissions"] = {}
+                self.assertNotIn(private, json.dumps(after))
+                with self.assertRaises(AssertionError): require_preserved_state(before, after, before["alerts"])
+                with self.assertRaises(AssertionError):
+                    require_preserved_state(before, after, before["alerts"], new_contact=other)
+                if allowed:
+                    require_preserved_state(before, after, before["alerts"], new_contact=fixture)
+                else:
+                    with self.assertRaises(AssertionError):
+                        require_preserved_state(before, after, before["alerts"], new_contact=fixture)
+            c.close()
+
+
 if __name__ == "__main__": unittest.main()

@@ -31,6 +31,8 @@ class SavedFunctionalControllerTest(unittest.TestCase):
             after["history"]["threads"][fingerprint("c"*64)] = "empty-draft"
             after["history"]["messages"]["setup-id"] = dict(chat=fingerprint("c"*64), content="setup")
             after["history_counts"].update(threads=2, messages=2)
+            after["other_preferences_sha256"] = "settings-with-test-contact"
+            after["test_contact_acceptance"] = dict(owner="c"*64, prior_preferences_sha256="settings")
             receipt = dict(package=driver.PACKAGE, owner=before["owner"], device=before["devices"][0],
                 preferences={**before["alerts"], "nostr_relay_urls_json": json.dumps(before["relays"])},
                 installed_artifacts=dict(installed), history_counts=before["history_counts"],
