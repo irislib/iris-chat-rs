@@ -217,10 +217,14 @@ def main():
             assert wakefulness in ("Asleep", "Dozing"), "Idle sample requires the screen off"
             return state
 
+        idle_state()
+        settle_seconds = 30  # Same settling period for internal and external profiling.
+        time.sleep(settle_seconds)
         before_idle = idle_state()
         if args.external_idle_result:
             assert not args.external_idle_result.exists(), "Refusing a stale profiling result"
-            (args.output / "profile-ready.json").write_text(json.dumps({"pid": int(pid), "package": package}))
+            (args.output / "profile-ready.json").write_text(json.dumps({
+                "pid": int(pid), "package": package, "settle_seconds": settle_seconds}))
             print("Functional checks passed; quiet receiver ready for separate CPU profiling", flush=True)
             wait_for("external idle profile", args.external_idle_result.exists, timeout=600)
             result = json.loads(args.external_idle_result.read_text())
@@ -232,12 +236,12 @@ def main():
                 values = adb("shell", "run-as", package, "cat", f"/proc/{pid}/stat").rsplit(")", 1)[1].split()
                 return int(values[11]) + int(values[12])
             hz = int(adb("shell", "getconf", "CLK_TCK").strip())
-            time.sleep(30)  # Same settling period as the native idle gate.
             before, started = ticks(), time.monotonic()
             time.sleep(60)
             percentages = [(ticks() - before) / hz / (time.monotonic() - started) * 100]
             (args.output / "idle.json").write_text(json.dumps({"cpu_percent_one_core": percentages}))
-        (args.output / "idle-lifecycle.json").write_text(json.dumps({"before": before_idle, "after": idle_state()}))
+        (args.output / "idle-lifecycle.json").write_text(json.dumps({
+            "settle_seconds": settle_seconds, "before": before_idle, "after": idle_state()}))
         idle_passed = all(0 <= value < 5 for value in percentages)
         print(f"{'PASS' if idle_passed else 'FAIL'} settled background CPU budget", flush=True)
 
