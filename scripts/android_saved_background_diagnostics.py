@@ -130,12 +130,11 @@ def main():
             return {"pid": int(pid), "stopped_hidden": True, "foreground_service": True, "screen": screen}
         def health():
             value = query_health(adb, pid, relay_url, relay_ready(), require_fips=True)
-            assert value["fips_transport"]["valid"] is True, "Authenticated transport aggregates unavailable"
             return value
         deadline = time.monotonic() + 90
         while True:
             pre = health(); write_marker(args.output / "health-before.json", pre)
-            if pre["classification"] == "connected-idle": break
+            if pre["classification"] == "connected-idle" and pre["fips_transport"]["valid"] is True: break
             assert time.monotonic() < deadline, "Saved receiver did not reach healthy idle"
             time.sleep(2)
         lifecycle(); time.sleep(30); initial = lifecycle()
@@ -147,6 +146,7 @@ def main():
         pair = json.loads(pair_path.read_text())
         assert pair["pid"] == int(pid) and pair["elapsed_seconds"] >= 120 and pair["background_verified"] is True
         post = health(); write_marker(args.output / "health-after.json", post)
+        assert post["fips_transport"]["valid"] is True, "Authenticated transport aggregates unavailable after sample"
         assert post["classification"] == "connected-idle"
         interval = post["fips_transport"]["interval"]
         if interval["valid"]: comparable_fips_interval(pre["fips_transport"], post["fips_transport"])
