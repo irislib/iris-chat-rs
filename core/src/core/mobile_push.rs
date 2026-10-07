@@ -339,7 +339,7 @@ fn decrypt_mobile_push_notification_inner(
     // When NDR decrypt fails (the foreground app already advanced
     // the ratchet past this event) recover the message or control preview
     // stored by the foreground runtime. A cache miss has unknown contents;
-    // iOS supplies a quiet fallback until notification filtering is approved.
+    // Both mobile platforms suppress that unresolved notification.
     let cached_fallback = || {
         if !wait_for_cache {
             return lookup_mobile_push_preview(&data_dir, &outer_event_id, &owner_pubkey_hex)
@@ -560,11 +560,8 @@ fn decrypted_mobile_push_resolution(
     }
 
     // Render kind-specific text for every kind we can decrypt, but
-    // flag non-message kinds as "should not show" so platforms with
-    // real suppression (Android FCM service) drop them. iOS NSE
-    // can't suppress without the filtering entitlement, so its
-    // Swift handler renders the body anyway when it's non-empty —
-    // a "Reacted 👍" notification beats a blank one.
+    // flag non-message kinds as "should not show" so Android FCM and
+    // the entitled iOS notification extension both suppress them.
     MobilePushNotificationResolution {
         should_show: should_show_mobile_push_kind(inner_kind),
         title,

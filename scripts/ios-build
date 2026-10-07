@@ -377,6 +377,7 @@ run_ios_test() {
     -destination "$source_destination" \
     -parallel-testing-enabled NO \
     -only-testing:IrisChatTests \
+    -only-testing:NotificationServiceTests \
     test-without-building
 
   create_ios_test_shards "$source_udid" "$parallel_workers"

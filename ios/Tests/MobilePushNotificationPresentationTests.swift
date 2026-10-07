@@ -5,38 +5,56 @@ import UserNotifications
 @testable import IrisChat
 
 final class MobilePushNotificationPresentationTests: XCTestCase {
-    func testFailedDecryptionNeverReturnsAnEmptyOrNewMessageAlert() {
-        let content = serverPlaceholder()
-        MobilePushNotificationPresentation.prepareFallback(content)
-        MobilePushNotificationPresentation.apply(resolution(body: ""), to: content)
-        XCTAssertEqual(content.title, "Iris Chat")
-        XCTAssertEqual(content.body, "Chat updated")
-        XCTAssertNil(content.sound)
-        XCTAssertNil(content.badge)
-    }
-
-    func testControlsKeepTheirAccurateLabelsWithoutSoundOrBadge() {
-        for body in ["Seen", "Delivered", "Typing…", "Stopped typing", "Typing update"] {
-            let content = serverPlaceholder()
-            MobilePushNotificationPresentation.prepareFallback(content)
-            MobilePushNotificationPresentation.apply(resolution(body: body), to: content)
-            XCTAssertEqual(content.title, "Alice")
-            XCTAssertEqual(content.body, body)
-            XCTAssertNil(content.sound)
-            XCTAssertNil(content.badge)
+    func testSuppressedResolutionsReturnCompletelyEmptyContent() {
+        // Controls may retain preview text in the shared core. shouldShow is
+        // authoritative even when that text is nonempty.
+        for body in ["", "Seen", "Delivered", "Reacted 👍", "Typing…", "Stopped typing", "Typing update"] {
+            let content = MobilePushNotificationPresentation.content(
+                for: resolution(body: body), original: serverPlaceholder()
+            )
+            assertEmpty(content)
         }
     }
 
-    func testEntitledBuildCanHideControlsButStillShowsChatMessages() {
-        let content = serverPlaceholder()
-        MobilePushNotificationPresentation.apply(resolution(body: "Seen"), to: content, canFilter: true)
-        XCTAssertEqual(content.title, "")
-        XCTAssertEqual(content.body, "")
-        XCTAssertNil(content.sound)
-        MobilePushNotificationPresentation.apply(resolution(body: "Hello", shouldShow: true), to: content, canFilter: true)
-        XCTAssertEqual(content.title, "Alice")
-        XCTAssertEqual(content.body, "Hello")
-        XCTAssertNotNil(content.sound)
+    func testMessagesKeepTheirPreviewAndRouting() {
+        for body in ["Hello", "Alice: Group message"] {
+            let original = serverPlaceholder()
+            let content = MobilePushNotificationPresentation.content(
+                for: resolution(body: body, shouldShow: true), original: original
+            )
+            XCTAssertEqual(content.title, "Alice")
+            XCTAssertEqual(content.subtitle, "")
+            XCTAssertEqual(content.body, body)
+            XCTAssertNotNil(content.sound)
+            XCTAssertEqual(content.userInfo["iris_account_id"] as? String, "account")
+            XCTAssertEqual(content.userInfo["event"] as? String, "encrypted event")
+            XCTAssertEqual(content.threadIdentifier, "chat")
+            XCTAssertEqual(original.body, "New message")
+        }
+    }
+
+    func testSuppressingOnePushDoesNotAffectTheNextMessage() {
+        let original = serverPlaceholder()
+        assertEmpty(MobilePushNotificationPresentation.content(
+            for: resolution(body: "Seen"), original: original
+        ))
+        let message = MobilePushNotificationPresentation.content(
+            for: resolution(body: "Hello", shouldShow: true), original: original
+        )
+        XCTAssertEqual(message.body, "Hello")
+        XCTAssertNotNil(message.sound)
+    }
+
+    private func assertEmpty(_ content: UNNotificationContent, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(content.title, "", file: file, line: line)
+        XCTAssertEqual(content.subtitle, "", file: file, line: line)
+        XCTAssertEqual(content.body, "", file: file, line: line)
+        XCTAssertNil(content.sound, file: file, line: line)
+        XCTAssertNil(content.badge, file: file, line: line)
+        XCTAssertTrue(content.userInfo.isEmpty, file: file, line: line)
+        XCTAssertTrue(content.attachments.isEmpty, file: file, line: line)
+        XCTAssertEqual(content.categoryIdentifier, "", file: file, line: line)
+        XCTAssertEqual(content.threadIdentifier, "", file: file, line: line)
     }
 
     private func resolution(body: String, shouldShow: Bool = false) -> MobilePushNotificationResolution {
@@ -46,9 +64,13 @@ final class MobilePushNotificationPresentationTests: XCTestCase {
     private func serverPlaceholder() -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = "Iris Chat"
+        content.subtitle = "Server placeholder"
         content.body = "New message"
         content.sound = .default
         content.badge = 13
+        content.userInfo = ["iris_account_id": "account", "event": "encrypted event"]
+        content.categoryIdentifier = "message"
+        content.threadIdentifier = "chat"
         return content
     }
 }

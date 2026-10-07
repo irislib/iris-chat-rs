@@ -1,16 +1,9 @@
 import Foundation
 import UserNotifications
 
-/// iOS Notification Service Extension. Receives the encrypted Nostr
-/// event the notification server forwarded, decrypts it against the
-/// persisted double-ratchet state in the App Group container, and
-/// rewrites the visible notification with the chat name as the title
-/// and the plaintext message as the body. Group notifications use the
-/// group name as title and prefix the body with the sender name. If
-/// decryption fails for any reason — no logged-in
-/// account, missing storage, ratchet already advanced by the foreground
-/// app — we show a quiet "Chat updated" fallback. Decrypted controls use
-/// their real status until Apple's filtering entitlement lets us hide them.
+/// Decrypts message previews using the shared core's notification policy.
+/// Controls, muted/read/outgoing messages, and unresolved encrypted pushes
+/// return empty content under Apple's notification-filtering entitlement.
 final class NotificationService: UNNotificationServiceExtension {
     private static let appGroupIdentifier = "group.fi.siriusbusiness.irischat"
     private static let keychainService = "fi.siriusbusiness.irischat"
@@ -24,24 +17,22 @@ final class NotificationService: UNNotificationServiceExtension {
     ]
 
     private var contentHandler: ((UNNotificationContent) -> Void)?
-    private var bestAttempt: UNMutableNotificationContent?
+    private let completionLock = NSLock()
 
     override func didReceive(
         _ request: UNNotificationRequest,
         withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
     ) {
         MobilePushDeliveryProbe.recordIfArmed()
+        completionLock.lock()
         self.contentHandler = contentHandler
+        completionLock.unlock()
         let bestAttempt = (request.content.mutableCopy() as? UNMutableNotificationContent)
             ?? UNMutableNotificationContent()
-        self.bestAttempt = bestAttempt
         let shouldClearFallback = isLikelyEncryptedIrisPush(request.content)
-        if shouldClearFallback {
-            MobilePushNotificationPresentation.prepareFallback(bestAttempt)
-        }
 
         guard let payloadJson = serializedPayload(from: request.content) else {
-            contentHandler(bestAttempt)
+            finish(UNNotificationContent())
             return
         }
 
@@ -58,25 +49,25 @@ final class NotificationService: UNNotificationServiceExtension {
             resolution = resolveMobilePushNotificationPayload(rawPayloadJson: payloadJson)
         }
 
-        let hasPreview = !resolution.title.isEmpty || !resolution.body.isEmpty
-        if !resolution.shouldShow && !hasPreview {
-            contentHandler(bestAttempt)
-            return
-        }
         if shouldClearFallback && isGenericFallbackResolution(resolution) {
-            contentHandler(bestAttempt)
+            finish(UNNotificationContent())
             return
         }
-        MobilePushNotificationPresentation.apply(resolution, to: bestAttempt)
-        contentHandler(bestAttempt)
+        finish(MobilePushNotificationPresentation.content(for: resolution, original: bestAttempt))
     }
 
     override func serviceExtensionTimeWillExpire() {
-        // Apple gives the NSE ~30s. Hand off whatever we managed to
-        // mutate so the user at least gets the original notification.
-        if let contentHandler, let bestAttempt {
-            contentHandler(bestAttempt)
-        }
+        // Never restore the server placeholder if decryption runs out of time.
+        finish(UNNotificationContent())
+    }
+
+    private func finish(_ content: UNNotificationContent) {
+        completionLock.lock()
+        let handler = contentHandler
+        contentHandler = nil
+        completionLock.unlock()
+        // Expiration and decryption can race; deliver exactly once.
+        handler?(content)
     }
 
     private func serializedPayload(from content: UNNotificationContent) -> String? {
