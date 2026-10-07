@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import unittest
+import json
 
-from android_background_health import FLAGS, classify_health
+from android_background_health import FLAGS, classify_health, query_health
 
 
 class BackgroundHealthTest(unittest.TestCase):
@@ -49,6 +50,25 @@ class BackgroundHealthTest(unittest.TestCase):
                 snapshot[key] = value
                 with self.assertRaises(AssertionError):
                     classify_health(snapshot, 42, True)
+
+    def test_query_uses_explicit_user_and_preserves_pid(self):
+        calls = []
+
+        def adb(*args, **kwargs):
+            calls.append(args)
+            if "pidof" in args:
+                return "42"
+            if args[-1] == "get-current-user":
+                return "0"
+            if "cat" in args:
+                return json.dumps(self.healthy())
+            return ""
+
+        snapshot = query_health(adb, 42, "ws://127.0.0.1:1234", True)
+        broadcast = next(call for call in calls if "broadcast" in call)
+        self.assertEqual("0", broadcast[broadcast.index("--user") + 1])
+        self.assertIn("run-as", broadcast)
+        self.assertEqual("connected-idle", snapshot["classification"])
 
 
 if __name__ == "__main__":

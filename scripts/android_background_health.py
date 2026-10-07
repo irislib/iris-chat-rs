@@ -33,9 +33,12 @@ def classify_health(snapshot, pid, host_relay_reachable):
 
 def query_health(adb, pid, expected_relay, host_relay_reachable):
     assert adb("shell", "pidof", PACKAGE).strip() == str(pid), "Receiver process changed before query"
+    # Resolve this as shell: app UIDs cannot resolve the special USER_CURRENT (-2).
+    user = adb("shell", "am", "get-current-user").strip()
+    assert user.isdecimal(), "Missing explicit Android user"
     adb("shell", "run-as", PACKAGE, "rm", "-f", CACHE_FILE)
     # The receiver is not exported. Sending as its own UID retains that protection.
-    adb("shell", "run-as", PACKAGE, "am", "broadcast", "--user", "current",
+    adb("shell", "run-as", PACKAGE, "am", "broadcast", "--user", user,
         "-n", PACKAGE + "/to.iris.chat.debug.BackgroundHealthReceiver",
         "-a", "to.iris.chat.BACKGROUND_HEALTH", "--ei", "expected_pid", str(pid),
         "--es", "expected_relay", expected_relay)
