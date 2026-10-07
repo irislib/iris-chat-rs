@@ -1380,11 +1380,9 @@ impl AppCore {
             "relay.status",
             format!("url={normalized_relay_url} status={status}"),
         );
-        if status == RelayStatus::Connected {
-            self.recover_private_contact_history();
-        }
         match status {
             RelayStatus::Connected if !was_connected && is_connected => {
+                self.recover_private_contact_history();
                 self.request_user_discovery_refresh(false);
                 self.reconcile_protocol_subscriptions("relay_connected", false);
                 self.fetch_recent_protocol_state();

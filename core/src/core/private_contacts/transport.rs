@@ -48,8 +48,18 @@ impl AppCore {
         else {
             return;
         };
-        if let Ok(control) = build_private_contact_request_v2(&owner) {
-            self.send_private_contact_control(&control);
+        // Foregrounding and reconnecting several servers can arrive together.
+        // The protocol outbox already retries an accepted request; making new
+        // ones advances ratchets and asks siblings to replay every contact.
+        let recently_requested = self
+            .private_contacts
+            .last_recovery_request_at
+            .is_some_and(|last| last.elapsed() < Duration::from_secs(60));
+        if !recently_requested
+            && build_private_contact_request_v2(&owner)
+                .is_ok_and(|control| self.send_private_contact_control(&control))
+        {
+            self.private_contacts.last_recovery_request_at = Some(Instant::now());
         }
         self.broadcast_private_device_labels();
     }

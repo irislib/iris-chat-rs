@@ -13,6 +13,7 @@ pub(super) struct PrivateContactRuntime {
     pub(super) state: Option<PrivateContactSyncStateV2>,
     generation: u64,
     last_requests: BTreeMap<String, u64>,
+    pub(super) last_recovery_request_at: Option<Instant>,
     pub(super) sent_device_labels: Vec<super::private_device_labels::PrivateDeviceLabel>,
 }
 impl PrivateContactRuntime {
@@ -21,6 +22,7 @@ impl PrivateContactRuntime {
         self.generation = self.generation.wrapping_add(1);
         self.state = None;
         self.last_requests.clear();
+        self.last_recovery_request_at = None;
         self.sent_device_labels.clear();
     }
 

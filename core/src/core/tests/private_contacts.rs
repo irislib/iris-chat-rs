@@ -1,5 +1,87 @@
 use crate::private_contact_sync_v2::*;
 
+#[test]
+fn private_contact_recovery_ignores_secondary_relay_reconnects() {
+    let mut pair = chat_read_receipt_pair("private-recovery-secondary-relay");
+    let core = &mut pair.a;
+    core.preferences.nostr_relay_urls = vec![
+        "wss://stable.example".into(),
+        "wss://flapping.example".into(),
+    ];
+    core.relay_status_by_url
+        .insert("wss://stable.example".into(), RelayStatus::Connected);
+    core.refresh_relay_connection_status_from_cached_statuses();
+    let before = pending_publish_changes(core);
+    for _ in 0..12 {
+        for status in [RelayStatus::Connected, RelayStatus::Disconnected] {
+            core.enter_batch();
+            core.handle_relay_status_changed("wss://flapping.example".into(), status);
+            core.exit_batch();
+        }
+    }
+    assert_eq!(core.relay_connected_count, 1);
+    assert_eq!(
+        pending_publish_changes(core), before,
+        "a secondary relay reconnect must not mutate ratchets or write new recovery messages"
+    );
+    assert!(pending_events_with_kind(core, MESSAGE_EVENT_KIND).is_empty());
+}
+
+#[test]
+fn private_contact_recovery_coalesces_rapid_requests_and_still_converges() {
+    let mut pair = chat_read_receipt_pair("private-recovery-coalescing");
+    let contact = Keys::generate().public_key().to_hex();
+    pair.b.edit_private_contact_fields(
+        &contact,
+        private_contact_patch(serde_json::json!({"note":"recovered after outage"})),
+    );
+    pair.b.pending_relay_publishes.clear();
+    pair.a.recover_private_contact_history();
+    assert!(!pending_events_with_kind(&pair.a, MESSAGE_EVENT_KIND).is_empty());
+    let before = pending_publish_changes(&pair.a);
+    for _ in 0..12 {
+        pair.a.recover_private_contact_history();
+    }
+    assert_eq!(
+        pending_publish_changes(&pair.a), before,
+        "rapid foreground/reconnect recovery must reuse the durable request"
+    );
+    deliver_pending_relay_events_for_test(&pair.a, &mut pair.b);
+    deliver_pending_relay_events_for_test(&pair.b, &mut pair.a);
+    assert_eq!(
+        pair.a.owner_profiles[&contact].contact_note.as_deref(),
+        Some("recovered after outage")
+    );
+}
+
+#[test]
+fn private_contact_recovery_retries_failed_admission_and_later_outages() {
+    let mut pair = chat_read_receipt_pair("private-recovery-retry");
+    let core = &mut pair.a;
+    let engine = core.protocol_engine.take();
+    core.recover_private_contact_history();
+    assert!(core.private_contacts.last_recovery_request_at.is_none());
+    core.protocol_engine = engine;
+    core.preferences.nostr_relay_urls = vec!["wss://relay.example".into()];
+    core.handle_relay_status_changed("wss://relay.example".into(), RelayStatus::Connected);
+    assert_eq!(protocol_send_log_count(core, "private_contacts.self_sync_v2"), 1);
+    for _ in 0..3 {
+        core.handle_relay_status_changed("wss://relay.example".into(), RelayStatus::Disconnected);
+        core.handle_relay_status_changed("wss://relay.example".into(), RelayStatus::Connected);
+    }
+    assert_eq!(protocol_send_log_count(core, "private_contacts.self_sync_v2"), 1);
+
+    core.private_contacts.last_recovery_request_at =
+        Some(Instant::now() - Duration::from_secs(61));
+    core.handle_relay_status_changed("wss://relay.example".into(), RelayStatus::Disconnected);
+    core.handle_relay_status_changed("wss://relay.example".into(), RelayStatus::Connected);
+    assert_eq!(protocol_send_log_count(core, "private_contacts.self_sync_v2"), 2);
+
+    core.private_contacts.reset();
+    core.recover_private_contact_history();
+    assert_eq!(protocol_send_log_count(core, "private_contacts.self_sync_v2"), 3);
+}
+
 fn private_contact_patch(value: serde_json::Value) -> PrivateContactPatchV2 {
     serde_json::from_value(value).unwrap()
 }
