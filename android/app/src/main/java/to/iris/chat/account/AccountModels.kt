@@ -1,6 +1,7 @@
 package to.iris.chat.account
 
 import org.json.JSONObject
+import to.iris.chat.rust.AppState
 
 data class AccountState(
     val publicKeyHex: String,
@@ -68,4 +69,12 @@ sealed interface AccountBootstrapState {
     data object Loading : AccountBootstrapState
     data object NeedsLogin : AccountBootstrapState
     data class LoggedIn(val account: AccountState) : AccountBootstrapState
+}
+
+internal fun AppState.isAwaitingRestoreResult(): Boolean {
+    // Updates queued before the restore action are not a failed login.
+    // The FFI can coalesce away the busy=true snapshot, so completion
+    // must come from an account, a restored pairing, or a restore error.
+    val finishedWithoutAccount = linkDevice != null || toast != null
+    return account == null && (busy.restoringSession || !finishedWithoutAccount)
 }

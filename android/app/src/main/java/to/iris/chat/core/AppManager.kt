@@ -42,6 +42,7 @@ import to.iris.chat.account.EncryptedSecret
 import to.iris.chat.account.SecureSecretStore
 import to.iris.chat.account.StoredAccountBundle
 import to.iris.chat.account.StoredPendingDeviceLink
+import to.iris.chat.account.isAwaitingRestoreResult
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppReconciler
 import to.iris.chat.rust.AccountSnapshot
@@ -1920,11 +1921,7 @@ class AppManager(
         }
         val account = snapshot.account
         if (persistedRestoreInFlight) {
-            // Updates queued before the restore action are not a failed login.
-            // The FFI can coalesce away the busy=true snapshot, so completion
-            // must come from an account, a restored pairing, or a restore error.
-            val finishedWithoutAccount = snapshot.linkDevice != null || snapshot.toast != null
-            if (account == null && (snapshot.busy.restoringSession || !finishedWithoutAccount)) {
+            if (snapshot.isAwaitingRestoreResult()) {
                 mutableBootstrapState.value = AccountBootstrapState.Loading
                 return
             }
