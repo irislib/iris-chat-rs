@@ -17,6 +17,17 @@ struct SupportBundleShareItem: Identifiable {
     let url: URL
 }
 
+#if os(iOS)
+struct SupportBundleShareSheet: UIViewControllerRepresentable {
+    let item: SupportBundleShareItem
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [item.url], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+#else
 struct SupportBundleShareSheet: View {
     @Environment(\.dismiss) private var dismiss
     let item: SupportBundleShareItem
@@ -43,6 +54,7 @@ struct SupportBundleShareSheet: View {
         .presentationDetents([.medium])
     }
 }
+#endif
 
 enum ProfileQrTab: String, CaseIterable, Identifiable {
     case code
