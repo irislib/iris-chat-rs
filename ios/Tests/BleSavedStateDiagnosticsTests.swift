@@ -18,13 +18,14 @@ final class BleSavedStateDiagnosticsTests: XCTestCase {
         }
         let readerRun = try XCTUnwrap(AppPaths.testRunId(environment: env))
         try requireBleRun(sourceRun)
+        try requireBleReaderRun(readerRun)
         XCTAssertNotEqual(readerRun, sourceRun, "The test host must not reopen the account being inspected")
-        guard readerRun.hasPrefix("ble-diagnostic-reader-"), readerRun != sourceRun,
+        guard readerRun != sourceRun,
               env["IRIS_UI_TEST_RESET"] != "1", env["IRIS_UI_TEST_DATA_DIR"] == nil else {
             throw BleDiagnosticError.invalidInput
         }
         let probe = try XCTUnwrap(env["IRIS_BLE_DIAGNOSTIC_PROBE"])
-        guard probe.range(of: "^idle-probe-[a-f0-9]{32}$", options: .regularExpression) != nil else {
+        guard probe.range(of: "\\Aidle-probe-[a-f0-9]{32}\\z", options: .regularExpression) != nil else {
             throw BleDiagnosticError.invalidInput
         }
         // Resolve the app's supported storage container without invoking the
@@ -54,6 +55,11 @@ final class BleSavedStateDiagnosticsTests: XCTestCase {
             XCTAssertThrowsError(try requireBleRun(run))
         }
         XCTAssertNoThrow(try requireBleRun("ble-idle-" + String(repeating: "a", count: 32)))
+        for run in ["iris-chat", "ble-diagnostic-reader-../iris-chat", "ble-diagnostic-reader-",
+                    "ble-diagnostic-reader-" + String(repeating: "a", count: 32) + "\n"] {
+            XCTAssertThrowsError(try requireBleReaderRun(run))
+        }
+        XCTAssertNoThrow(try requireBleReaderRun("ble-diagnostic-reader-" + String(repeating: "a", count: 32)))
     }
 
     func testReaderPreservesDatabaseAndExcludesSecretsAndMessageContents() throws {
@@ -94,7 +100,13 @@ final class BleSavedStateDiagnosticsTests: XCTestCase {
 private enum BleDiagnosticError: Error { case invalidInput, missingDatabase, unreadableDatabase, queryFailed }
 
 private func requireBleRun(_ run: String) throws {
-    guard run.range(of: "^ble-idle-[a-f0-9]{32}$", options: .regularExpression) != nil else {
+    guard run.range(of: "\\Able-idle-[a-f0-9]{32}\\z", options: .regularExpression) != nil else {
+        throw BleDiagnosticError.invalidInput
+    }
+}
+
+private func requireBleReaderRun(_ run: String) throws {
+    guard run.range(of: "\\Able-diagnostic-reader-[a-f0-9]{32}\\z", options: .regularExpression) != nil else {
         throw BleDiagnosticError.invalidInput
     }
 }
@@ -132,7 +144,7 @@ private func bleStoredDiagnostics(database: URL, probe: String) throws -> [Strin
     }
     let identity = try rows("SELECT value AS owner FROM app_meta WHERE key='account_owner_pubkey_hex'")
     guard identity.count == 1, let owner = identity.first?["owner"],
-          owner.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { throw BleDiagnosticError.invalidInput }
+          owner.range(of: "\\A[a-f0-9]{64}\\z", options: .regularExpression) != nil else { throw BleDiagnosticError.invalidInput }
     let messages = try rows("SELECT id,chat_id,delivery,source_event_id,length(outgoing_event_json) AS encrypted_event_bytes,delivery_trace_json FROM messages WHERE body=? AND is_outgoing=1", arguments: [probe])
     let peers = Set(messages.compactMap { $0["chat_id"] }).union([owner])
     var rosters = [[String: Any]]()
