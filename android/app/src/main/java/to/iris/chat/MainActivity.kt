@@ -35,6 +35,7 @@ import to.iris.chat.ui.theme.IrisChatTheme
 class MainActivity : ComponentActivity() {
     private lateinit var container: AppContainer
     private var returnAfterCallId: String? = null
+    private var returningFromBackground = true
     private var pendingPermissionRequest: RuntimePermissionRequest? = null
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
@@ -147,8 +148,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         IrisDebugLog.d(TAG, "onStop")
+        returningFromBackground = true
         container.appManager.appBackgrounded()
         super.onStop()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        returningFromBackground = false
     }
 
     private companion object {
@@ -162,7 +169,9 @@ class MainActivity : ComponentActivity() {
 
     private fun handleLaunchIntent(intent: Intent?) {
         if (intent?.action in setOf("to.iris.chat.SHOW_CALL", "to.iris.chat.ANSWER_CALL")) {
-            if (!container.appManager.appForegrounded.value) {
+            // A stopped activity can receive onNewIntent after onStart has
+            // already marked the app foregrounded, but always before onResume.
+            if (returningFromBackground) {
                 returnAfterCallId = intent?.getStringExtra("callId")
             }
             if (intent?.action == "to.iris.chat.ANSWER_CALL") {
