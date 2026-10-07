@@ -200,15 +200,24 @@ struct SecretKeyField: View {
 
 struct LoadingOverlay: View {
     @Environment(\.irisPalette) private var palette
+    @State private var showsLoading = false
 
     var body: some View {
         ZStack {
-            palette.background.opacity(0.4).ignoresSafeArea()
-            Image("IrisLogo")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 112, height: 112)
-                .accessibilityLabel("Iris")
+            Color.clear
+            if showsLoading {
+                Text("Loading…")
+                    .font(.system(.callout, design: .rounded))
+                    .foregroundStyle(palette.muted)
+            }
+        }
+        .task {
+            do {
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+            } catch {
+                return
+            }
+            showsLoading = true
         }
     }
 }

@@ -2,6 +2,7 @@ import XCTest
 #if os(macOS)
 import AppKit
 import SwiftUI
+import Vision
 @testable import IrisChatMac
 #else
 @testable import IrisChat
@@ -186,13 +187,94 @@ final class SessionBootstrapTests: XCTestCase {
     }
 
 #if os(macOS)
-    private func capture(_ manager: AppManager, name: String) throws {
+    func testSlowRestoreShowsLoadingOnlyAfterTwoSeconds() async throws {
+        let manager = makeManager(rust: MockRustApp())
+        let started = ContinuousClock.now
+        let (window, host) = makeWindow(manager)
+        defer { window.orderOut(nil) }
+        XCTAssertFalse(containsText("Loading…", in: host))
+        try capture(host, name: "session-initial-blank")
+
+        let appeared = await waitUntil(timeoutNanoseconds: 3_000_000_000) {
+            self.containsText("Loading…", in: host)
+        }
+        XCTAssertTrue(appeared)
+        XCTAssertGreaterThanOrEqual(started.duration(to: .now), .seconds(2))
+        try capture(host, name: "session-delayed-loading")
+    }
+
+    func testErrorAppearsDuringInitialBlankStartup() async throws {
+        let rust = MockRustApp()
+        let manager = makeManager(rust: rust)
+        let (window, host) = makeWindow(manager)
+        defer { window.orderOut(nil) }
+        var snapshot = rust.state()
+        snapshot.rev = 1
+        snapshot.busy.restoringSession = true
+        snapshot.toast = "Could not restore profile."
+        manager.apply(update: .fullState(snapshot), generation: 0)
+
+        XCTAssertEqual(manager.toasts.message, "Could not restore profile.")
+        XCTAssertTrue(manager.bootstrapInFlight)
+        await Task.yield()
+        XCTAssertFalse(containsText("Loading…", in: host))
+        try capture(host, name: "session-immediate-error")
+    }
+
+    func testCompletedRestoreDoesNotShowDelayedLoading() async throws {
+        let rust = MockRustApp()
+        let manager = makeManager(rust: rust)
+        let (window, host) = makeWindow(manager)
+        defer { window.orderOut(nil) }
+        await Task.yield()
+        var snapshot = rust.state()
+        snapshot.rev = 1
+        snapshot.account = makeAccount()
+        snapshot.router = Router(defaultScreen: .chatList, screenStack: [])
+        manager.apply(update: .fullState(snapshot), generation: 0)
+        XCTAssertFalse(manager.bootstrapInFlight)
+
+        // Give the removed loading view's task time to finish if it was not cancelled.
+        let appeared = await waitUntil(timeoutNanoseconds: 2_500_000_000) {
+            self.containsText("Loading…", in: host)
+        }
+        XCTAssertFalse(appeared)
+        XCTAssertEqual(manager.activeScreen, .chatList)
+    }
+
+    private func containsText(_ text: String, in host: NSView) -> Bool {
+        host.layoutSubtreeIfNeeded()
+        host.displayIfNeeded()
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return false }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        guard let image = bitmap.cgImage else { return false }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        try? VNImageRequestHandler(cgImage: image).perform([request])
+        let expected = text.trimmingCharacters(in: .punctuationCharacters)
+        return request.results?.contains {
+            $0.topCandidates(1).first?.string.contains(expected) == true
+        } == true
+    }
+
+    private func makeWindow(_ manager: AppManager) -> (NSWindow, NSHostingView<RootView>) {
         let host = NSHostingView(rootView: RootView(manager: manager))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 640),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         window.makeKeyAndOrderFront(nil)
+        host.layoutSubtreeIfNeeded()
+        host.displayIfNeeded()
+        return (window, host)
+    }
+
+    private func capture(_ manager: AppManager, name: String) throws {
+        let (window, host) = makeWindow(manager)
         defer { window.orderOut(nil) }
+        try capture(host, name: name)
+    }
+
+    private func capture(_ host: NSView, name: String) throws {
         host.layoutSubtreeIfNeeded()
         host.displayIfNeeded()
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
