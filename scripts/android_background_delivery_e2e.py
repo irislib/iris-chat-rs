@@ -12,6 +12,7 @@ import queue
 import re
 import socket
 import subprocess
+import sys
 import threading
 import time
 
@@ -35,6 +36,8 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--external-idle-result", type=Path,
                         help="Wait up to 10 minutes for a separate profiler's CPU percentages for this PID")
+    parser.add_argument("--offline-lan", action="store_true",
+                        help="macOS: block public message/seed/STUN servers and stop the setup relay before sending over Wi-Fi")
     args = parser.parse_args()
     args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
     package = "to.iris.chat.backgroundtest"
@@ -69,6 +72,17 @@ def main():
                     return True
         return False
 
+    def activity_stopped():
+        dump = adb("shell", "dumpsys", "activity", "activities")
+        activities = [block for block in re.split(r"\n\s*\* Hist", dump)
+                      if f"packageName={package} " in block]
+        return bool(activities) and all("state=STOPPED" in block for block in activities)
+
+    def close_activity():
+        adb("shell", "input", "keyevent", "HOME")
+        adb("shell", "input", "keyevent", "SLEEP")
+        wait_for("activity stopped after closing animation", activity_stopped)
+
     relay = fixture = None
     port = None
     original_whitelist = False
@@ -99,8 +113,35 @@ def main():
         wait_for("test message server", relay_ready)
         adb("reverse", f"tcp:{port}", f"tcp:{port}")
         fixture_log = (args.output / "fixture.log").open("w")
-        fixture = subprocess.Popen([str(args.bin_dir / "iris-call-fixture"), str(args.output / "sender")],
-            env={**os.environ, "IRIS_DEMO_RELAYS": f"ws://127.0.0.1:{port}"},
+        fixture_command = [str(args.bin_dir / "iris-call-fixture"), str(args.output / "sender")]
+        fixture_environment = {**os.environ, "IRIS_DEMO_RELAYS": f"ws://127.0.0.1:{port}"}
+        if args.offline_lan:
+            addresses = adb("shell", "ip", "-o", "-4", "addr", "show", "wlan0")
+            match = re.search(r"inet ([0-9.]+)/", addresses)
+            assert match, "Offline Wi-Fi check needs the Pixel connected to Wi-Fi"
+            # Seatbelt supports only localhost or wildcard hosts. Deny public
+            # TCP (message/WebSocket servers) and every configured STUN port,
+            # while permitting UDP for actual LAN discovery/data. Public FIPS
+            # seeds are also disabled below; require an authenticated LAN peer.
+            # This is not an IP-wide Internet firewall or an offline-radio test.
+            policy = ('(version 1)(allow default)(deny network-outbound)'
+                      f'(allow network-outbound (remote ip "localhost:{port}")(remote udp "*:*"))'
+                      '(deny network-outbound (remote udp "*:3478")(remote udp "*:19302")'
+                      '(remote udp "*:5349")(remote udp "*:443"))')
+            (args.output / "sender-network.sb").write_text(policy)
+            probe = ('import socket\n'
+                     'for kind,port in [(socket.SOCK_STREAM,443),(socket.SOCK_DGRAM,3478),'
+                     '(socket.SOCK_DGRAM,19302)]:\n'
+                     ' s=socket.socket(socket.AF_INET,kind); s.settimeout(1)\n'
+                     ' try: s.connect(("192.0.2.1",port))\n'
+                     ' except PermissionError: pass\n'
+                     ' else: raise SystemExit("Public-server isolation failed")\n'
+                     ' finally: s.close()\n')
+            subprocess.run(["sandbox-exec", "-p", policy, sys.executable, "-c", probe], check=True)
+            fixture_command = ["sandbox-exec", "-p", policy] + fixture_command
+            fixture_environment["IRIS_FIPS_WEBSOCKET_SEED_URLS"] = ""
+        fixture = subprocess.Popen(fixture_command,
+            env=fixture_environment,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=fixture_log, text=True, bufsize=1)
         events = queue.Queue()
 
@@ -128,7 +169,7 @@ def main():
         ready = event("ready")
         prepared = instrument("prepare_background_receiver", fixture_invite=ready["invite"],
             fixture_owner=ready["owner"], fixture_device=ready["device"],
-            fixture_relay=f"ws://127.0.0.1:{port}")
+            fixture_relay=f"ws://127.0.0.1:{port}", offline_lan="1" if args.offline_lan else "0")
         owner = re.search(r"INSTRUMENTATION_STATUS: owner=([a-f0-9]{64})", prepared).group(1)
         device = re.search(r"INSTRUMENTATION_STATUS: device=([a-f0-9]{64})", prepared).group(1)
         # Android finishes instrumentation by killing its target process. Launch
@@ -139,13 +180,13 @@ def main():
         command(f"accept {owner}")
         event("accepted")
         wait_for("verified receiving device", lambda: device in status()["call_authors"])
-        adb("shell", "input", "keyevent", "HOME")
-        adb("shell", "input", "keyevent", "SLEEP")
-        def activity_stopped():
-            dump = adb("shell", "dumpsys", "activity", "activities")
-            return any(f"packageName={package} " in block and "state=STOPPED" in block
-                       for block in re.split(r"\n\s*\* Hist", dump))
-        wait_for("activity stopped after closing animation", activity_stopped)
+        if args.offline_lan:
+            wait_for("authenticated local Wi-Fi peer", lambda: owner in status()["lan_owners"], timeout=90)
+            relay.terminate()
+            relay.wait(timeout=10)
+            relay = None
+            print("Setup relay stopped; public server paths blocked and authenticated Pixel Wi-Fi peer ready", flush=True)
+        close_activity()
         wait_for("background service", lambda: notification("background-receiving"))
         # Screen off, with the most recent chat still selected in the router.
         message = f"screen-off-message-{time.time_ns()}"
@@ -158,32 +199,25 @@ def main():
             wait_for(f"screen-off {kind} ringing", lambda: notification("incoming-calls"))
             command("end")
             wait_for("caller cancellation dismisses ringing", lambda: not notification("incoming-calls"))
+            wait_for("call-ended screen returns to background", activity_stopped, timeout=10)
             print(f"PASS screen-off {kind} ringing and cancellation", flush=True)
-
-        assert "UPDATES STOPPED" not in adb("shell", "dumpsys", "battery"), "Battery is already simulated"
-        idle_forced = True
-        adb("shell", "dumpsys", "battery", "unplug")
-        adb("shell", "dumpsys", "deviceidle", "force-idle")
-        assert adb("shell", "dumpsys", "deviceidle", "get", "deep").strip() == "IDLE"
-        command(f"call {owner} video")
-        wait_for("video ringing in Doze", lambda: notification("incoming-calls"))
-        command("end")
-        wait_for("Doze call cancellation", lambda: not notification("incoming-calls"))
-        print("PASS video ringing in Doze with background allowance", flush=True)
-        adb("shell", "dumpsys", "deviceidle", "unforce")
-        adb("shell", "dumpsys", "battery", "reset")
-        idle_forced = False
-
-        adb("shell", "input", "keyevent", "WAKEUP")
-        adb("shell", "cmd", "statusbar", "expand-notifications")
-        (args.output / "notifications.png").write_bytes(subprocess.check_output(
-            adb_base + ["exec-out", "screencap", "-p"], timeout=15))
-        adb("shell", "cmd", "statusbar", "collapse")
-        adb("shell", "input", "keyevent", "SLEEP")
+            # The call's full-screen intent can open the activity and wake the
+            # display. Close it again before the next screen-off/idle assertion.
+            close_activity()
 
         # Observe the real app process; do not reset device-wide battery history.
         pid = adb("shell", "pidof", package).strip()
         assert pid.isdecimal()
+
+        def idle_state():
+            wakefulness = re.search(r"mWakefulness=(\w+)", adb("shell", "dumpsys", "power")).group(1)
+            state = {"pid": adb("shell", "pidof", package).strip(), "activity_stopped": activity_stopped(),
+                     "wakefulness": wakefulness, "receiving": notification("background-receiving")}
+            assert state["pid"] == pid and state["activity_stopped"] and state["receiving"]
+            assert wakefulness in ("Asleep", "Dozing"), "Idle sample requires the screen off"
+            return state
+
+        before_idle = idle_state()
         if args.external_idle_result:
             assert not args.external_idle_result.exists(), "Refusing a stale profiling result"
             (args.output / "profile-ready.json").write_text(json.dumps({"pid": int(pid), "package": package}))
@@ -203,11 +237,51 @@ def main():
             time.sleep(60)
             percentages = [(ticks() - before) / hz / (time.monotonic() - started) * 100]
             (args.output / "idle.json").write_text(json.dumps({"cpu_percent_one_core": percentages}))
-        assert all(0 <= value < 5 for value in percentages), "Background receiver exceeded the native idle CPU gate"
-        print("PASS settled background CPU budget", flush=True)
+        (args.output / "idle-lifecycle.json").write_text(json.dumps({"before": before_idle, "after": idle_state()}))
+        idle_passed = all(0 <= value < 5 for value in percentages)
+        print(f"{'PASS' if idle_passed else 'FAIL'} settled background CPU budget", flush=True)
+
+        assert "UPDATES STOPPED" not in adb("shell", "dumpsys", "battery"), "Battery is already simulated"
+        idle_forced = True
+        adb("shell", "dumpsys", "battery", "unplug")
+        adb("shell", "dumpsys", "deviceidle", "force-idle")
+        assert adb("shell", "dumpsys", "deviceidle", "get", "deep").strip() == "IDLE"
+        doze_message = f"doze-message-{time.time_ns()}"
+        command(f"message {owner} {doze_message}")
+        event("message-sent")
+        wait_for("message alert in Doze", lambda: notification("iris_chat_message_alerts", doze_message))
+        print("PASS message alert in Doze with background allowance", flush=True)
+        command(f"call {owner} video")
+        wait_for("video ringing in Doze", lambda: notification("incoming-calls"))
+        command("end")
+        wait_for("Doze call cancellation", lambda: not notification("incoming-calls"))
+        wait_for("Doze call-ended screen returns to background", activity_stopped, timeout=10)
+        print("PASS video ringing in Doze with background allowance", flush=True)
+        adb("shell", "dumpsys", "deviceidle", "unforce")
+        adb("shell", "dumpsys", "battery", "reset")
+        idle_forced = False
+
+        adb("shell", "input", "keyevent", "WAKEUP")
+        adb("shell", "cmd", "statusbar", "expand-notifications")
+        (args.output / "notifications.png").write_bytes(subprocess.check_output(
+            adb_base + ["exec-out", "screencap", "-p"], timeout=15))
+        adb("shell", "cmd", "statusbar", "collapse")
+        adb("shell", "input", "keyevent", "SLEEP")
+
         adb("shell", "input", "keyevent", "WAKEUP")
         instrument("stop_when_alerts_disabled", background_harness="1")
         print("PASS receiver stops when message and call alerts are disabled", flush=True)
+        assert idle_passed, "Background receiver exceeded the native idle CPU gate"
+    except Exception:
+        for name, parts in {
+            "notifications": ("shell", "dumpsys", "notification", "--noredact"),
+            "idle": ("shell", "dumpsys", "deviceidle"),
+            "activities": ("shell", "dumpsys", "activity", "activities"),
+            "services": ("shell", "dumpsys", "activity", "services", package),
+            "logcat": ("logcat", "-d", "-v", "threadtime"),
+        }.items():
+            (args.output / f"failure-{name}.log").write_text(adb(*parts, check=False))
+        raise
     finally:
         if idle_forced:
             adb("shell", "dumpsys", "deviceidle", "unforce", check=False)

@@ -2,6 +2,7 @@ package to.iris.chat.push
 
 import android.Manifest
 import android.app.NotificationManager
+import android.os.Build
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertTrue
@@ -32,7 +33,13 @@ class BackgroundDeliveryHarnessTest : RealRelayHarnessBase() {
         val owner = requiredArg("fixture_owner")
         val device = requiredArg("fixture_device")
         manager.dispatch(AppAction.SetNostrRelays(listOf(requiredArg("fixture_relay"))))
-        manager.dispatch(AppAction.SetNearbyEnabled(false))
+        val offlineLan = optionalArg("offline_lan") == "1"
+        if (offlineLan && Build.VERSION.SDK_INT >= 33) {
+            instrumentation.uiAutomation.grantRuntimePermission(appPackageName(), Manifest.permission.NEARBY_WIFI_DEVICES)
+        }
+        manager.dispatch(AppAction.SetNearbyEnabled(offlineLan))
+        manager.dispatch(AppAction.SetNearbyLanEnabled(offlineLan))
+        manager.dispatch(AppAction.SetNearbyBluetoothEnabled(false))
         manager.dispatch(AppAction.SetDesktopNotificationsEnabled(true))
         manager.dispatch(AppAction.SetVoiceCallsEnabled(true))
         manager.dispatch(AppAction.SetVideoCallsEnabled(true))

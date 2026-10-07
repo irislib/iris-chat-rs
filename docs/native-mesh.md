@@ -65,7 +65,10 @@ capture or call controls. Phone integration uses iOS CallKit and Android
 self-managed Telecom with a foreground call service. Android uses a high-priority
 CallStyle notification with system ringtone and full-screen intent; presentation
 respects the phone’s notification permission, ringer, and system settings. Telecom
-owns audio focus for these calls. Apple audio restarts its existing voice-processing
+owns audio focus for these calls. Android dismisses the ended-call screen after
+one second; when an incoming call brought the app forward, it then returns to the
+previous app. A new call cancels the earlier call's dismissal timer.
+Apple audio restarts its existing voice-processing
 graph after hardware route changes and clears obsolete playback buffers; camera
 startup leaves the shared call audio session alone. CallKit and the in-app controls operate on the
 same call. macOS and browser alerts stop and dismiss when the call is answered,
@@ -174,3 +177,14 @@ fixture, blocks non-loopback traffic and stops the local setup message server
 before calling. Installed account data is preserved and temporary network rules
 are removed on exit. This exercises local FIPS transport, not a physical Wi-Fi or
 Bluetooth link. Results distinguish simulated capture from physical hardware.
+
+`scripts/android_background_delivery_e2e.py` uses a separate `backgroundtest`
+package on a Google-free physical Android device. It verifies message alerts,
+voice/video ringing and cancellation, ended-call dismissal, Doze delivery with
+Android's background allowance, stopping when all alerts are disabled, and the
+idle CPU budget. `--offline-lan` also requires an authenticated Wi-Fi peer,
+disables public FIPS seeds, blocks public TCP and configured STUN ports on the
+macOS sender, and stops the setup message server before sending. UDP remains
+available for local discovery and data; this does not simulate disabled radios
+or impose an IP-wide Internet firewall. Device accounts in the production app
+are not changed, and temporary battery allowances are restored after the test.
