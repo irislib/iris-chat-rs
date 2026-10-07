@@ -202,6 +202,8 @@ def main():
             fixture.stdin.write(value + "\n")
             fixture.stdin.flush()
         ready = event("ready")
+        receipt = args.output / "host-account" / "fixture-account-bundle.json"
+        assert receipt.is_file() and receipt.stat().st_mode & 0o777 == 0o600, "Missing private host identity receipt"
         # The host exports its device npub directly; the owner key is not a FIPS peer identity.
         paired = {"phase": "paired", "relay_url": relay_url, "peer_npub": ready["device_npub"],
                   "peer_udp": f"{args.host}:{host_port}", "local_udp_port": udp_port}
@@ -284,6 +286,7 @@ def main():
         final = json.loads(args.external_idle_result.read_text())
         assert final["pid"] == int(pid) and final["cpu_percent_one_core"] == measured["cpu_percent_one_core"]
         write_marker(args.output / "result.json", {"diagnostic_only": True, "saved_account_gate_replaced": False,
+            "host_identity_receipt_saved": True,
             "cpu_percent_one_core": final["cpu_percent_one_core"], "before": initial, "after": lifecycle(),
             "features": {"messages": True, "voice_calls": True, "video_calls": True,
                          "nearby_discovery": False, "runtime_permissions_granted_by_harness": False},

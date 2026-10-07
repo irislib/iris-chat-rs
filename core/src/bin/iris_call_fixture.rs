@@ -6,6 +6,8 @@ use serde_json::json;
 use std::io::{self, BufRead, Write};
 use std::time::{Duration, Instant};
 
+mod iris_call_fixture_account;
+
 struct Updates(flume::Sender<AppUpdate>);
 impl AppReconciler for Updates {
     fn reconcile(&self, update: AppUpdate) {
@@ -27,6 +29,7 @@ fn main() -> Result<()> {
         bail!("Call fixture requires a fresh data directory");
     }
     let isolated_control = std::env::var("IRIS_CALL_ISOLATED_CONTROL").as_deref() == Ok("1");
+    let receipt = std::path::Path::new(&dir).join("fixture-account-bundle.json");
     let app = FfiApp::new(dir, String::new(), String::new());
     let (tx, updates) = flume::bounded(96);
     app.listen_for_updates(Box::new(Updates(tx)));
@@ -46,9 +49,32 @@ fn main() -> Result<()> {
     }
     app.dispatch(AppAction::CreatePublicInvite);
     let deadline = Instant::now() + Duration::from_secs(30);
+    let mut identity_saved = !isolated_control;
     loop {
+        if !identity_saved {
+            for update in updates.try_iter() {
+                if let AppUpdate::PersistAccountBundle {
+                    owner_nsec,
+                    owner_pubkey_hex,
+                    device_nsec,
+                    ..
+                } = update
+                {
+                    iris_call_fixture_account::save(
+                        &receipt,
+                        owner_nsec.as_deref(),
+                        &owner_pubkey_hex,
+                        &device_nsec,
+                    )?;
+                    identity_saved = true;
+                    break;
+                }
+            }
+        }
         let state = app.state();
-        if let (Some(account), Some(invite)) = (state.account, state.public_invite) {
+        if let (Some(account), Some(invite), true) =
+            (state.account, state.public_invite, identity_saved)
+        {
             emit(
                 json!({"event":"ready","owner":account.public_key_hex,"device":account.device_public_key_hex,"device_npub":account.device_npub,"invite":invite.url}),
             )?;
