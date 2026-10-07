@@ -70,6 +70,31 @@ class BackgroundHealthTest(unittest.TestCase):
         self.assertIn("run-as", broadcast)
         self.assertEqual("connected-idle", snapshot["classification"])
 
+    def test_required_fips_cannot_silently_fall_back_to_legacy_health(self):
+        payload = self.healthy()
+        calls = []
+
+        def adb(*args, **kwargs):
+            calls.append(args)
+            if "pidof" in args:
+                return "42"
+            if args[-1] == "get-current-user":
+                return "0"
+            if "cat" in args:
+                return json.dumps(payload)
+            return ""
+
+        with self.assertRaises(AssertionError):
+            query_health(adb, 42, "ws://127.0.0.1:1234", True, require_fips=True)
+        broadcast = next(call for call in calls if "broadcast" in call)
+        self.assertEqual("true", broadcast[broadcast.index("require_fips") + 1])
+        payload["fips_transport"] = dict(valid=False, status="timeout", scope="connected_authenticated_peers",
+                                         private_peer="must-not-persist")
+        result = query_health(adb, 42, "ws://127.0.0.1:1234", True, require_fips=True)
+        self.assertEqual("connected-idle", result["classification"])
+        self.assertEqual(dict(valid=False, status="timeout", scope="connected_authenticated_peers"),
+                         result["fips_transport"])
+
 
 if __name__ == "__main__":
     unittest.main()

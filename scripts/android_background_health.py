@@ -1,6 +1,7 @@
 """One-shot aggregate health checks for the isolated background receiver harness."""
 import json
 import time
+from android_fips_health import filter_fips_health
 
 PACKAGE = "to.iris.chat.backgroundtest"
 CACHE_FILE = "cache/background-health.json"
@@ -31,7 +32,7 @@ def classify_health(snapshot, pid, host_relay_reachable):
     return "connected-idle"
 
 
-def query_health(adb, pid, expected_relay, host_relay_reachable):
+def query_health(adb, pid, expected_relay, host_relay_reachable, *, require_fips=False):
     assert adb("shell", "pidof", PACKAGE).strip() == str(pid), "Receiver process changed before query"
     # Resolve this as shell: app UIDs cannot resolve the special USER_CURRENT (-2).
     user = adb("shell", "am", "get-current-user").strip()
@@ -41,7 +42,7 @@ def query_health(adb, pid, expected_relay, host_relay_reachable):
     adb("shell", "run-as", PACKAGE, "am", "broadcast", "--user", user,
         "-n", PACKAGE + "/to.iris.chat.debug.BackgroundHealthReceiver",
         "-a", "to.iris.chat.BACKGROUND_HEALTH", "--ei", "expected_pid", str(pid),
-        "--es", "expected_relay", expected_relay)
+        "--es", "expected_relay", expected_relay, "--ez", "require_fips", str(require_fips).lower())
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         raw = adb("shell", "run-as", PACKAGE, "cat", CACHE_FILE, check=False)
@@ -53,5 +54,9 @@ def query_health(adb, pid, expected_relay, host_relay_reachable):
         assert adb("shell", "pidof", PACKAGE).strip() == str(pid), "Receiver process changed during query"
         snapshot["host_relay_reachable"] = bool(host_relay_reachable)
         snapshot["classification"] = classify_health(snapshot, pid, host_relay_reachable)
+        if "fips_transport" in snapshot:
+            snapshot["fips_transport"] = filter_fips_health(snapshot["fips_transport"])
+        else:
+            assert not require_fips, "Required FIPS diagnostics missing"
         return snapshot
     raise AssertionError("One-shot receiver health query did not return")

@@ -25,7 +25,8 @@ class BackgroundHealthReceiver : BroadcastReceiver() {
                 val result = try {
                     // The raw bundle never leaves memory. Exporting does not foreground the app.
                     val bundle = runBlocking { app.container.appManager.exportSupportBundleJson() }
-                    filterBackgroundHealth(JSONObject(bundle), expectedRelay)
+                    filterBackgroundHealth(JSONObject(bundle), expectedRelay,
+                        requireFips = intent.getBooleanExtra("require_fips", false))
                 } catch (_: Exception) {
                     JSONObject().put("valid", false).put("error", "invalid_health_snapshot")
                 }
@@ -56,7 +57,7 @@ class BackgroundHealthReceiver : BroadcastReceiver() {
 }
 
 /** Allowlist aggregates; missing, coerced, or timed-out data must never look healthy. */
-internal fun filterBackgroundHealth(bundle: JSONObject, expectedRelay: String): JSONObject {
+internal fun filterBackgroundHealth(bundle: JSONObject, expectedRelay: String, requireFips: Boolean = false): JSONObject {
     fun JSONObject.boolean(key: String): Boolean = get(key) as? Boolean ?: error("Invalid boolean")
     fun JSONObject.count(key: String): Long {
         val value = get(key)
@@ -79,5 +80,10 @@ internal fun filterBackgroundHealth(bundle: JSONObject, expectedRelay: String): 
     require(transport.has("next_retry_due_in_ms"))
     result.put("retry_scheduled", !transport.isNull("next_retry_due_in_ms"))
     if (!transport.isNull("next_retry_due_in_ms")) transport.count("next_retry_due_in_ms")
+    if (bundle.has("fips_transport")) {
+        result.put("fips_transport", filterBackgroundFipsHealth(bundle.getJSONObject("fips_transport")))
+    } else {
+        require(!requireFips)
+    }
     return result
 }

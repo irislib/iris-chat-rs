@@ -40,4 +40,16 @@ class BackgroundHealthSnapshotTest {
             assertTrue(runCatching { filterBackgroundHealth(invalid, "ws://127.0.0.1:1234") }.isFailure)
         }
     }
+
+    @Test fun fipsDiagnosticsAreOptionalOnlyForLegacyQueries() {
+        val input = bundle()
+        assertFalse(filterBackgroundHealth(input, "ws://127.0.0.1:1234").has("fips_transport"))
+        assertTrue(runCatching { filterBackgroundHealth(input, "ws://127.0.0.1:1234", requireFips = true) }.isFailure)
+        input.put("fips_transport", JSONObject().put("valid", false).put("status", "timeout")
+            .put("scope", "connected_authenticated_peers").put("private_peer", "secret"))
+        val result = filterBackgroundHealth(input, "ws://127.0.0.1:1234", requireFips = true)
+        assertTrue(result.getBoolean("valid")) // Relay health and FIPS query validity are distinct.
+        assertFalse(result.getJSONObject("fips_transport").getBoolean("valid"))
+        assertFalse(result.toString().contains("secret"))
+    }
 }
