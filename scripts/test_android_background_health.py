@@ -95,6 +95,34 @@ class BackgroundHealthTest(unittest.TestCase):
         self.assertEqual(dict(valid=False, status="timeout", scope="connected_authenticated_peers"),
                          result["fips_transport"])
 
+    def test_required_service_diagnostics_must_exist_but_errors_are_retained(self):
+        from test_android_fips_services import sample
+        payload = self.healthy()
+        calls = []
+
+        def adb(*args, **kwargs):
+            calls.append(args)
+            if "pidof" in args: return "42"
+            if args[-1] == "get-current-user": return "0"
+            if "cat" in args: return json.dumps(payload)
+            return ""
+
+        with self.assertRaises(AssertionError):
+            query_health(adb, 42, "ws://127.0.0.1:1234", True, require_fips_services=True)
+        broadcast = next(call for call in calls if "broadcast" in call)
+        self.assertEqual("true", broadcast[broadcast.index("require_fips_services") + 1])
+        payload["fips_services"] = sample()
+        value = query_health(adb, 42, "ws://127.0.0.1:1234", True, require_fips_services=True)
+        self.assertEqual(sample(), value["fips_services"])
+        payload["fips_services"] = dict(valid=False, status="timeout",
+            scope="locally_originated_service_carrier_submissions", private_peer="secret")
+        value = query_health(adb, 42, "ws://127.0.0.1:1234", True, require_fips_services=True)
+        self.assertFalse(value["fips_services"]["valid"])
+        self.assertNotIn("private_peer", value["fips_services"])
+        payload["fips_services"]["services"] = {}
+        with self.assertRaises(AssertionError):
+            query_health(adb, 42, "ws://127.0.0.1:1234", True, require_fips_services=True)
+
 
 if __name__ == "__main__":
     unittest.main()

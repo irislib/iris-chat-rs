@@ -2,6 +2,7 @@
 import json
 import time
 from android_fips_health import filter_fips_health
+from android_fips_services import filter_fips_services
 
 PACKAGE = "to.iris.chat.backgroundtest"
 CONTROL_PACKAGE = "to.iris.chat.backgroundcontrol2"
@@ -33,7 +34,8 @@ def classify_health(snapshot, pid, host_relay_reachable):
     return "connected-idle"
 
 
-def query_health(adb, pid, expected_relay, host_relay_reachable, *, require_fips=False, package=PACKAGE):
+def query_health(adb, pid, expected_relay, host_relay_reachable, *, require_fips=False,
+                 require_fips_services=False, package=PACKAGE):
     assert package in (PACKAGE, CONTROL_PACKAGE), "Health query requires an exact isolated test package"
     assert adb("shell", "pidof", package).strip() == str(pid), "Receiver process changed before query"
     # Resolve this as shell: app UIDs cannot resolve the special USER_CURRENT (-2).
@@ -44,7 +46,8 @@ def query_health(adb, pid, expected_relay, host_relay_reachable, *, require_fips
     adb("shell", "run-as", package, "am", "broadcast", "--user", user,
         "-n", package + "/to.iris.chat.debug.BackgroundHealthReceiver",
         "-a", "to.iris.chat.BACKGROUND_HEALTH", "--ei", "expected_pid", str(pid),
-        "--es", "expected_relay", expected_relay, "--ez", "require_fips", str(require_fips).lower())
+        "--es", "expected_relay", expected_relay, "--ez", "require_fips", str(require_fips).lower(),
+        "--ez", "require_fips_services", str(require_fips_services).lower())
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         raw = adb("shell", "run-as", package, "cat", CACHE_FILE, check=False)
@@ -60,5 +63,9 @@ def query_health(adb, pid, expected_relay, host_relay_reachable, *, require_fips
             snapshot["fips_transport"] = filter_fips_health(snapshot["fips_transport"])
         else:
             assert not require_fips, "Required FIPS diagnostics missing"
+        if "fips_services" in snapshot:
+            snapshot["fips_services"] = filter_fips_services(snapshot["fips_services"])
+        else:
+            assert not require_fips_services, "Required FIPS service diagnostics missing"
         return snapshot
     raise AssertionError("One-shot receiver health query did not return")

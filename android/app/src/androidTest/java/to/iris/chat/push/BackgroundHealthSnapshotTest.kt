@@ -51,5 +51,13 @@ class BackgroundHealthSnapshotTest {
         assertTrue(result.getBoolean("valid")) // Relay health and FIPS query validity are distinct.
         assertFalse(result.getJSONObject("fips_transport").getBoolean("valid"))
         assertFalse(result.toString().contains("secret"))
+        assertTrue(runCatching {
+            filterBackgroundHealth(input, "ws://127.0.0.1:1234", requireFipsServices = true)
+        }.isFailure)
+        input.put("fips_services", JSONObject().put("valid", false).put("status", "timeout")
+            .put("scope", "locally_originated_service_carrier_submissions").put("private_peer", "secret"))
+        val services = filterBackgroundHealth(input, "ws://127.0.0.1:1234", requireFipsServices = true)
+        assertFalse(services.getJSONObject("fips_services").getBoolean("valid"))
+        assertFalse(services.toString().contains("secret"))
     }
 }

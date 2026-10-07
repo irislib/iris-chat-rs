@@ -13,6 +13,7 @@ import time
 from android_background_delivery_e2e import wait_for, write_marker
 from android_background_health import query_health
 from android_fips_health import comparable_fips_interval
+from android_fips_services import fips_service_interval
 from android_saved_background_state import ALERTS, PACKAGE, installed_hash, read_saved_state, require_preserved_state
 from native_lab import acquire, release
 
@@ -27,6 +28,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("serial", "app-apk", "previous-apk", "test-apk", "aapt2", "relay-bin", "account-receipt", "output"):
         parser.add_argument("--" + name, required=True, type=str if name == "serial" else Path)
+    parser.add_argument("--require-fips-services", action="store_true")
     args = parser.parse_args()
     for artifact, package in ((args.app_apk, PACKAGE), (args.previous_apk, PACKAGE), (args.test_apk, PACKAGE + ".test")):
         badging = subprocess.check_output([str(args.aapt2), "dump", "badging", str(artifact)], text=True)
@@ -129,17 +131,24 @@ def main():
             assert screen in ("Asleep", "Dozing")
             return {"pid": int(pid), "stopped_hidden": True, "foreground_service": True, "screen": screen}
         def health():
-            value = query_health(adb, pid, relay_url, relay_ready(), require_fips=True)
+            value = query_health(adb, pid, relay_url, relay_ready(), require_fips=True,
+                                 require_fips_services=args.require_fips_services)
             return value
         deadline = time.monotonic() + 90
         while True:
             pre = health(); write_marker(args.output / "health-before.json", pre)
-            if pre["classification"] == "connected-idle" and pre["fips_transport"]["valid"] is True: break
+            # Retain explicit startup errors rather than overwriting their only evidence.
+            with (args.output / "startup-health.jsonl").open("a") as snapshots:
+                snapshots.write(json.dumps(pre) + "\n")
+            if (pre["classification"] == "connected-idle" and pre["fips_transport"]["valid"] is True
+                    and (not args.require_fips_services or (pre["fips_services"]["valid"] is True
+                         and pre["fips_services"]["pubsub_delivery"] is not None))): break
             assert time.monotonic() < deadline, "Saved receiver did not reach healthy idle"
             time.sleep(2)
         lifecycle(); time.sleep(30); initial = lifecycle()
         write_marker(args.output / "profile-ready.json", {"pid": int(pid), "package": PACKAGE,
-            "settle_seconds": 30, "receiver_health_handshake": True, "diagnostic_only": True})
+            "settle_seconds": 30, "receiver_health_handshake": True, "diagnostic_only": True,
+            "fips_services_required": args.require_fips_services})
         print("Saved receiver ready: same account, live expected server, empty queue, normal background service", flush=True)
         pair_path = args.output / "cpu-pair-complete.json"
         wait_for("saved CPU pair", pair_path.exists, timeout=600)
@@ -150,6 +159,11 @@ def main():
         assert post["classification"] == "connected-idle"
         interval = post["fips_transport"]["interval"]
         if interval["valid"]: comparable_fips_interval(pre["fips_transport"], post["fips_transport"])
+        service_interval = None
+        if args.require_fips_services:
+            service_interval = fips_service_interval(pre["fips_services"], post["fips_services"])
+            write_marker(args.output / "service-interval.json", service_interval)
+            assert service_interval["valid"], "Service traffic interval unavailable or inconsistent; evidence retained"
         lifecycle(); write_marker(args.output / "health-after-ready.json", {"pid": int(pid), "classification": post["classification"]})
         external = args.output / "external-idle.json"
         wait_for("saved external result", external.exists, timeout=600)
@@ -158,6 +172,7 @@ def main():
         write_marker(args.output / "result.json", {"diagnostic_only": True, "release_gate_replaced": False,
             "cpu_percent_one_core": result["cpu_percent_one_core"], "before": initial, "after": lifecycle(),
             "native_interval_valid": interval["valid"], "native_interval_reason": interval["reason"],
+            "fips_service_interval": service_interval,
             "workload_differences": ["Original live counterpart absent", "Idle-only resume without preceding call sequence"],
             "alert_preferences_during_sample": {key: 1 for key in ALERTS},
             "fips_interval_scope": "Health snapshots include settling; UID and CPU spans are separately labelled"})
