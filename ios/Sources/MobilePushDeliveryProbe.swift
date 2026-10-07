@@ -13,13 +13,17 @@ enum MobilePushDeliveryProbe {
         return id
     }
 
-    static func recordIfArmed(fileManager: FileManager = .default) {
+    static func recordIfArmed(payloadID: String? = nil, fileManager: FileManager = .default) {
         guard let urls = try? probeURLs(fileManager: fileManager),
               let id = try? Data(contentsOf: urls.armed),
               !id.isEmpty else {
             return
         }
-        try? id.write(to: urls.receipt, options: .atomic)
+        // Physical APNs tests may restrict a probe to one explicit payload.
+        // Unrelated pushes and the foreground app cannot satisfy that probe.
+        let parts = String(decoding: id, as: UTF8.self).split(separator: "|", maxSplits: 1)
+        guard parts.count == 1 || (parts.count == 2 && String(parts[1]) == payloadID) else { return }
+        try? Data(parts[0].utf8).write(to: urls.receipt, options: .atomic)
         try? fileManager.removeItem(at: urls.armed)
     }
 
@@ -47,9 +51,13 @@ enum MobilePushDeliveryProbe {
         ) else {
             throw CocoaError(.fileNoSuchFile)
         }
+        // Library is accessible to physical-device development tools as well
+        // as both app processes. The app-group root is not remotely readable.
+        let directory = root.appendingPathComponent("Library", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         return (
-            root.appendingPathComponent(armedFilename),
-            root.appendingPathComponent(receiptFilename)
+            directory.appendingPathComponent(armedFilename),
+            directory.appendingPathComponent(receiptFilename)
         )
     }
 }

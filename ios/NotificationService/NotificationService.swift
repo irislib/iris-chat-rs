@@ -23,7 +23,7 @@ final class NotificationService: UNNotificationServiceExtension {
         _ request: UNNotificationRequest,
         withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
     ) {
-        MobilePushDeliveryProbe.recordIfArmed()
+        MobilePushDeliveryProbe.recordIfArmed(payloadID: request.content.userInfo["iris_push_e2e_id"] as? String)
         completionLock.lock()
         self.contentHandler = contentHandler
         completionLock.unlock()
