@@ -221,16 +221,13 @@ verify_hashtree_publication() {
 publish_hashtree() {
   local assets=()
   local name stage_dir add_output cid cli_target
+  require_command haps
   require_hashtree_identity
   while IFS= read -r name; do
     assets+=("$name")
     download_asset "$name"
   done < <(all_asset_names)
   verify_downloads "${assets[@]}"
-  if [[ "$CHECK_ONLY" -eq 1 ]]; then
-    echo "Hashtree preflight passed for $TAG ($IRIS_HASHTREE_PUBLISHER_NPUB)."
-    return
-  fi
   require_command curl
   require_command tar
   case "$(uname -s)-$(uname -m)" in
@@ -256,6 +253,12 @@ publish_hashtree() {
     --out-dir "$stage_dir" \
     --published-at "$PUBLISHED_AT"
   write_cli_installer "$stage_dir/install.sh" "$(hashtree_gateway_base_url "$TAG")" "$TAG"
+  local haps_args=(import-release "$stage_dir" --config "$ROOT/haps-release.json" --tag "$TAG" --key-file "$IRIS_HASHTREE_NSEC_PATH")
+  HAPS_HOME="$IRIS_HASHTREE_DATA_DIR/haps" haps "${haps_args[@]}" --check
+  if [[ "$CHECK_ONLY" -eq 1 ]]; then
+    echo "Hashtree and Haps preflight passed for $TAG ($IRIS_HASHTREE_PUBLISHER_NPUB)."
+    return
+  fi
 
   add_output="$(
     HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
@@ -270,6 +273,9 @@ publish_hashtree() {
   HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" \
     htree release publish "$IRIS_HASHTREE_RELEASE_TREE" "$TAG" "$cid"
   verify_hashtree_publication
+  HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
+  HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" \
+  HAPS_HOME="$IRIS_HASHTREE_DATA_DIR/haps" haps "${haps_args[@]}" --publish
   echo "Published $TAG to Hashtree: $(hashtree_gateway_base_url "$TAG")"
 }
 

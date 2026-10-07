@@ -9,7 +9,7 @@ exact, attested files from an immutable GitHub Release.
 | Channel | Content | How it is published |
 |---|---|---|
 | GitHub Release | Android, iOS, macOS, Windows, Linux, and CLI | Push a stable release tag |
-| Hashtree | The complete GitHub Release asset set and update metadata | `./scripts/distribute hashtree --tag <tag>` |
+| Hashtree + Haps | The complete GitHub Release asset set, update metadata, and signed desktop/CLI packages | `./scripts/distribute hashtree --tag <tag>` |
 | Zapstore | The exact GitHub Android APK | `./scripts/distribute zapstore --tag <tag>` |
 | Homebrew | The exact GitHub CLI archives through immutable Hashtree URLs | `./scripts/distribute homebrew --tag <tag>` |
 | TestFlight | The exact GitHub IPA | Run **iOS Distribution** with `testflight` (internal) or `testflight-public` (public beta) |
@@ -47,7 +47,7 @@ Optional path overrides are `IRIS_HASHTREE_NSEC_PATH`,
 Local distribution requires an authenticated GitHub CLI with `release verify`
 support, plus `jq`, `python3`, and the channel tools:
 
-- Hashtree: `htree`, `nak`, and `curl`
+- Hashtree: `htree`, `nak`, `curl`, and Haps with the `import-release` subcommand
 - Homebrew: `htree`, `nak`, `curl`, and `git`
 - Zapstore: `zsp`, `nak`, `base64`, and `sed`
 
@@ -176,6 +176,14 @@ manifest, attestations, and signer without publishing:
 ./scripts/distribute zapstore --tag v2026.7.28 --check
 ./scripts/distribute zapstore --tag v2026.7.28
 ```
+
+Hashtree distribution also publishes the same desktop/CLI bytes through Haps,
+using `haps-release.json` and the existing dedicated Hashtree signing identity.
+The Haps checksum/layout/signer check runs before publication, including with
+`--check`; Nostr publication runs only after the canonical Hashtree updater
+readback succeeds. Any Haps failure fails distribution. No separate build,
+catalog maintenance, or mobile installer execution is involved. The local
+publisher needs Haps with `import-release` support and Python 3.9 or newer.
 
 Use this order: Hashtree, Homebrew, Zapstore. Homebrew refuses to publish
 until the exact Hashtree tag exists. Commands are safe to retry with the same

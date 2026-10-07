@@ -1,0 +1,71 @@
+{
+  "catalog": "iris-chat-rs",
+  "publisher": "npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap",
+  "source": "htree://npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/iris-chat-rs",
+  "packages": [
+    {
+      "name": "iris-chat",
+      "target": "aarch64-apple-darwin",
+      "asset": "iris-chat-{tag}-macos-arm64.app.tar.gz",
+      "description": "Private messaging without a phone number.",
+      "commands": {
+        "iris-chat": "Iris Chat.app/Contents/MacOS/Iris Chat"
+      },
+      "app": "Iris Chat.app"
+    },
+    {
+      "name": "iris-chat",
+      "target": "x86_64-unknown-linux-gnu",
+      "asset": "iris-chat-{tag}-linux-x64.deb",
+      "description": "Private messaging without a phone number.",
+      "commands": {
+        "iris-chat": "usr/bin/iris-chat"
+      },
+      "desktop": {
+        "name": "Iris Chat",
+        "command": "iris-chat",
+        "icon": "usr/share/icons/hicolor/256x256/apps/iris-chat.png"
+      }
+    },
+    {
+      "name": "iris-chat",
+      "target": "x86_64-pc-windows-msvc",
+      "asset": "iris-chat-{tag}-windows-x64.zip",
+      "description": "Private messaging without a phone number.",
+      "commands": {
+        "iris-chat": "IrisChat.exe"
+      }
+    },
+    {
+      "name": "iris",
+      "target": "aarch64-apple-darwin",
+      "asset": "iris-{tag}-aarch64-apple-darwin.tar.gz",
+      "description": "Iris Chat command-line client",
+      "commands": {
+        "iris": "iris"
+      },
+      "root": "iris"
+    },
+    {
+      "name": "iris",
+      "target": "x86_64-apple-darwin",
+      "asset": "iris-{tag}-x86_64-apple-darwin.tar.gz",
+      "description": "Iris Chat command-line client",
+      "commands": {
+        "iris": "iris"
+      },
+      "root": "iris"
+    },
+    {
+      "name": "iris",
+      "target": "x86_64-unknown-linux-gnu",
+      "asset": "iris-{tag}-x86_64-unknown-linux-gnu.tar.gz",
+      "description": "Iris Chat command-line client",
+      "commands": {
+        "iris": "iris"
+      },
+      "root": "iris"
+    }
+  ],
+  "version_scheme": "date-revision"
+}
