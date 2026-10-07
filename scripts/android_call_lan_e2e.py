@@ -55,6 +55,18 @@ def main():
         adb("pull", paths[0][8:], str(backup))
         backups.append((package, apk, backup))
 
+    # This runner substitutes a plain Application and must not restore the
+    # stored account through a package-replaced broadcast or sticky service.
+    app_package = packages[0][0]
+    user = adb("shell", "am", "get-current-user").strip()
+    assert user.isdecimal()
+    background_components = ["to.iris.chat.push.BackgroundMessageService",
+                             "to.iris.chat.push.BackgroundMessageRestoreReceiver"]
+    package_dump = adb("shell", "dumpsys", "package", app_package)
+    for component in background_components:
+        assert not re.search(r"^\s+" + re.escape(component) + r"\s*$", package_dump, re.M), (
+            "Media harness requires default background component settings")
+
     def port(kind=socket.SOCK_STREAM):
         with socket.socket(type=kind) as sock:
             sock.bind((args.host, 0))
@@ -65,6 +77,7 @@ def main():
     events = queue.Queue()
     processes = []
     changed = []
+    disabled_components = []
     logs = []
     readers = []
 
@@ -98,6 +111,11 @@ def main():
         raise AssertionError("Local test listener did not start")
 
     try:
+        adb("shell", "am", "force-stop", app_package)
+        for component in background_components:
+            disabled_components.append(component)
+            adb("shell", "run-as", app_package, "pm", "disable", "--user", user,
+                app_package + "/" + component)
         relay, _ = spawn_log("relay", [str(args.bin_dir / "local_nostr_relay"), f"{args.host}:{relay_port}"], stdout=subprocess.DEVNULL)
         listening(relay_port)
         environment = {**os.environ, "IRIS_DEMO_RELAYS": relay_url,
@@ -201,12 +219,18 @@ def main():
                 adb("install", "-r", str(backup))
             except Exception as error:
                 failures.append(str(error))
+        for component in disabled_components:
+            try:
+                adb("shell", "run-as", app_package, "pm", "default-state", "--user", user,
+                    app_package + "/" + component)
+            except Exception as error:
+                failures.append(str(error))
         for reader in readers:
             reader.join(timeout=2)
         for log in logs:
             log.close()
         if failures:
-            raise RuntimeError("Could not restore all original test APKs; backups preserved in output")
+            raise RuntimeError("Could not restore original test APKs or component settings; inspect private evidence")
 
 
 if __name__ == "__main__":
