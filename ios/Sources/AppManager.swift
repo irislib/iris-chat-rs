@@ -1088,7 +1088,8 @@ final class AppManager: ObservableObject {
     private var pendingNavigationOverride: PendingNavigationOverride?
     private var backgroundSuspendPrepared = false
     private var storedAccountBundle: StoredAccountBundle?
-    private var persistedRestoreInFlight = false
+    // Startup updates can arrive before the credential lookup task runs.
+    private var persistedRestoreInFlight = true
     private var automaticRevocationLogoutInFlight = false
     private var localResetInFlight = false
     private var pendingChatLinkAction: AppAction?
@@ -1251,24 +1252,16 @@ final class AppManager: ObservableObject {
             }
         }
         Task {
-            // Safety net for true fresh launches. Persisted restores can take
-            // longer while Rust replays local state; never show Welcome while
-            // stored credentials are still being restored.
+            // A stalled restore must not keep sign-in hidden indefinitely.
             try? await Task.sleep(nanoseconds: 8_000_000_000)
             guard bootstrapInFlight, !localResetInFlight else {
-                return
-            }
-            guard !persistedRestoreInFlight else {
-                appendClientDebugLog(
-                    category: "bootstrap.timeout.restore_pending",
-                    detail: "keeping_loading_overlay=true"
-                )
                 return
             }
             appendClientDebugLog(
                 category: "bootstrap.timeout",
                 detail: "persistedRestoreInFlight=\(persistedRestoreInFlight)"
             )
+            persistedRestoreInFlight = false
             bootstrapInFlight = false
         }
 
@@ -3292,6 +3285,7 @@ final class AppManager: ObservableObject {
         }
         guard let bundle = secretStore.load() else {
             storedAccountBundle = nil
+            persistedRestoreInFlight = false
             bootstrapInFlight = false
             appendClientDebugLog(category: "session.restore", detail: "stored_bundle_loaded=false")
             return
@@ -3325,12 +3319,14 @@ final class AppManager: ObservableObject {
             bootstrapInFlight = false
             return
         }
-        guard nextState.account == nil && nextState.busy.restoringSession else {
-            persistedRestoreInFlight = false
-            bootstrapInFlight = false
-            return
-        }
-        bootstrapInFlight = true
+        // An idle, logged-out snapshot may predate the queued restore. Wait for
+        // a result, not just busy=false: the bridge can coalesce the busy state.
+        let restoredAccount = nextState.account != nil
+        let finishedWithoutAccount = !nextState.busy.restoringSession
+            && (nextState.linkDevice != nil || nextState.toast?.isEmpty == false)
+        guard restoredAccount || finishedWithoutAccount else { return }
+        persistedRestoreInFlight = false
+        bootstrapInFlight = false
     }
 
     private func stateByReconcilingPendingNavigation(_ nextState: AppState) -> AppState {
