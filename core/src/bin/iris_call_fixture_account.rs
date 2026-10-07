@@ -1,21 +1,21 @@
 //! Private, opt-in synthetic identity receipt for an isolated control fixture.
-use anyhow::{Context, Result};
+#[cfg(unix)]
+use anyhow::Context;
+use anyhow::Result;
+#[cfg(unix)]
 use serde_json::json;
+#[cfg(unix)]
 use std::fs::OpenOptions;
+#[cfg(unix)]
 use std::io::Write;
 use std::path::Path;
 
+#[cfg(unix)]
 pub fn save(path: &Path, owner_nsec: Option<&str>, owner: &str, device_nsec: &str) -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
     let owner_nsec = owner_nsec.context("Control fixture requires its fresh owner identity")?;
     let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    #[cfg(not(unix))]
-    anyhow::bail!("Private control identity receipts require a Unix host");
+    options.write(true).create_new(true).mode(0o600);
     let mut file = options
         .open(path)
         .context("Create private control identity receipt")?;
@@ -27,6 +27,16 @@ pub fn save(path: &Path, owner_nsec: Option<&str>, owner: &str, device_nsec: &st
     file.sync_all()
         .context("Sync private control identity receipt")?;
     Ok(())
+}
+
+#[cfg(not(unix))]
+pub fn save(
+    _path: &Path,
+    _owner_nsec: Option<&str>,
+    _owner: &str,
+    _device_nsec: &str,
+) -> Result<()> {
+    anyhow::bail!("Private control identity receipts require a Unix host")
 }
 
 #[cfg(all(test, unix))]
