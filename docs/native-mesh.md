@@ -191,7 +191,24 @@ preserves FIPS's restriction of plaintext WebSocket seeds to loopback addresses.
 package on a Google-free physical Android device. It verifies message alerts,
 voice/video ringing and cancellation, ended-call dismissal, Doze delivery with
 Android's background allowance, stopping when all alerts are disabled, and the
-idle CPU budget. `--offline-lan` also requires an authenticated Wi-Fi peer,
+idle CPU budget. For connected-idle qualification, use `--receiver-health` with
+the live online fixture. The host listener alone is not sufficient: the receiver
+must confirm the expected connection, zero queued publications, and no pending
+connection or publish-drain work before and after sampling. The debug-only,
+non-exported hook records aggregate health before the common 30-second settling
+period and after the CPU windows; it does not save the raw support bundle or
+query health during measurement. Preserve draining, reconnecting, and
+unavailable-server results under those classifications. Resuming a saved account
+after its fixture server has stopped does not establish healthy connected idle.
+Every qualified CPU window must remain below 5% of one core; do not round or
+average a failed window into a pass.
+
+With `--external-idle-result --receiver-health`, the observer writes
+`cpu-pair-complete.json` after its two windows, then waits for
+`health-after-ready.json` before optional profiling and its final result.
+The driver verifies that the process and recorded CPU values remain unchanged.
+
+`--offline-lan` also requires an authenticated Wi-Fi peer,
 disables the sender's public FIPS seeds, blocks public TCP and configured STUN ports on the
 macOS sender, and stops the setup message server before sending. UDP remains
 available for local discovery and data; this does not simulate disabled radios
