@@ -3,8 +3,9 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from android_media_install import MediaInstall
+from android_media_install import MediaInstall, debug_downgrade_packages
 
 
 class MediaInstallTest(unittest.TestCase):
@@ -26,7 +27,25 @@ class MediaInstallTest(unittest.TestCase):
     def test_fixture_start_failure_never_changes_original_apks(self):
         self.exercise(no_install=True)
 
-    def exercise(self, fail_test=False, fail_component=False, fail_restore=False, initial_enabled=0, no_install=False):
+    def test_downgrade_requires_exact_debuggable_packages_and_tracks_each_direction(self):
+        rows = [("to.iris.chat.debug", Path("new-app"), Path("old-app")),
+                ("to.iris.chat.test", Path("new-test"), Path("old-test"))]
+        def metadata(command, **kwargs):
+            name = command[-1]
+            package = "to.iris.chat.test" if "test" in name else "to.iris.chat.debug"
+            version = {"new-app": 1, "old-app": 2026072301, "new-test": 2, "old-test": 1}[name]
+            return f"package: name='{package}' versionCode='{version}'\napplication-debuggable\n"
+        with patch("android_media_install.subprocess.check_output", side_effect=metadata):
+            self.assertEqual(({rows[0][0]}, {rows[1][0]}), debug_downgrade_packages("aapt2", rows))
+        for change in (lambda text: text.replace("application-debuggable", "application-release"),
+                       lambda text: text.replace("to.iris.chat.debug", "to.iris.chat")):
+            with patch("android_media_install.subprocess.check_output", side_effect=lambda *a, **k: change(metadata(*a, **k))):
+                with self.assertRaises(AssertionError): debug_downgrade_packages("aapt2", rows)
+
+    def test_explicit_downgrade_flag_only_applies_to_the_selected_forward_install(self):
+        self.exercise(downgrade=True)
+
+    def exercise(self, fail_test=False, fail_component=False, fail_restore=False, initial_enabled=0, no_install=False, downgrade=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); app = "to.iris.chat.debug"; test = "to.iris.chat.test"
             files = {}
@@ -47,6 +66,7 @@ class MediaInstallTest(unittest.TestCase):
                     return hashlib.sha256(installed[package].read_bytes()).hexdigest() + " file\n"
                 if parts[:2] == ("install", "-r"):
                     path = Path(parts[-1]); package = test if "test" in path.name else app
+                    self.assertEqual(downgrade and path == files["new-app"], "-d" in parts)
                     if fail_test and path == files["new-test"]: raise RuntimeError("install failure")
                     if fail_restore and path == files["old-app"]: raise RuntimeError("restore failure")
                     if package == app and enabled != 3: unsafe_starts.append("package replaced")
@@ -65,7 +85,8 @@ class MediaInstallTest(unittest.TestCase):
                 else: raise AssertionError(parts)
                 return ""
             backups = [(app, files["new-app"], files["old-app"]), (test, files["new-test"], files["old-test"])]
-            guard = MediaInstall(adb, backups, "0", adb("shell", "dumpsys", "package", app))
+            guard = MediaInstall(adb, backups, "0", adb("shell", "dumpsys", "package", app),
+                                 downgrade_install={app} if downgrade else ())
             try:
                 guard.begin()
                 if fail_test or fail_component:

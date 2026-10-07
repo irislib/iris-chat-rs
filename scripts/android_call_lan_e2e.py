@@ -19,7 +19,7 @@ import subprocess
 import threading
 import time
 
-from android_media_install import MediaInstall
+from android_media_install import MediaInstall, debug_downgrade_packages
 
 
 def main():
@@ -32,6 +32,8 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--voice-only", action="store_true")
     parser.add_argument("--adb", default="adb")
+    parser.add_argument("--allow-debug-downgrade", action="store_true")
+    parser.add_argument("--aapt2", type=Path, help="Required to verify APKs before an explicitly allowed debug downgrade")
     args = parser.parse_args()
     address = ipaddress.IPv4Address(args.host)
     assert address.is_private and not address.is_loopback and not address.is_unspecified
@@ -62,7 +64,12 @@ def main():
     app_package = packages[0][0]
     user = adb("shell", "am", "get-current-user").strip()
     assert user.isdecimal()
-    installation = MediaInstall(adb, backups, user, adb("shell", "dumpsys", "package", app_package))
+    downgrades = (set(), set())
+    if args.allow_debug_downgrade:
+        assert args.aapt2 is not None, "Debug downgrade requires APK inspection"
+        downgrades = debug_downgrade_packages(args.aapt2, backups)
+    installation = MediaInstall(adb, backups, user, adb("shell", "dumpsys", "package", app_package),
+                                downgrade_install=downgrades[0], downgrade_restore=downgrades[1])
 
     def port(kind=socket.SOCK_STREAM):
         with socket.socket(type=kind) as sock:

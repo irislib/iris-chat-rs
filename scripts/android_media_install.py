@@ -1,13 +1,34 @@
 """Keep the saved Application stopped across temporary media-test APK updates."""
 import hashlib
 import re
+import subprocess
+
+
+def debug_downgrade_packages(aapt2, backups):
+    """Explicit opt-in is limited to the paired, debuggable media test apps."""
+    installing, restoring = set(), set()
+    assert [row[0] for row in backups] == ["to.iris.chat.debug", "to.iris.chat.test"]
+    for package, apk, backup in backups:
+        versions = []
+        for path in (apk, backup):
+            output = subprocess.check_output([str(aapt2), "dump", "badging", str(path)], text=True)
+            match = re.search(r"^package: name='([^']+)'([^\n]*)", output, re.M)
+            assert match and match[1] == package, "Unexpected media APK package"
+            assert re.search(r"^application-debuggable(?:\s|$)", output, re.M), "Downgrade requires debuggable APKs"
+            version = re.search(r"versionCode='([0-9]+)'", match[2])
+            versions.append(int(version[1]) if version else 0)
+        if versions[0] < versions[1]: installing.add(package)
+        if versions[1] < versions[0]: restoring.add(package)
+    return installing, restoring
 
 
 class MediaInstall:
-    def __init__(self, adb, backups, user, package_dump):
+    def __init__(self, adb, backups, user, package_dump, *, downgrade_install=(), downgrade_restore=()):
         self.adb, self.backups, self.user = adb, backups, user
         self.package = "to.iris.chat.debug"
         assert [row[0] for row in backups] == [self.package, "to.iris.chat.test"]
+        self.downgrade_install, self.downgrade_restore = set(downgrade_install), set(downgrade_restore)
+        assert self.downgrade_install | self.downgrade_restore <= {self.package, "to.iris.chat.test"}
         assert user.isdecimal()
         self.original_enabled = self.enabled_state(package_dump)
         assert self.original_enabled in (0, 1), "Media test app must be enabled before testing"
@@ -50,7 +71,7 @@ class MediaInstall:
         assert self.touched and self.enabled_state() == 3
         for package, apk, backup in self.backups:
             self.changed.append((package, backup))  # Roll back even an uncertain install outcome.
-            self.adb("install", "-r", str(apk))
+            self.adb("install", "-r", *(["-d"] if package in self.downgrade_install else []), str(apk))
             assert self.enabled_state() == 3, "APK update enabled the saved Application"
             assert self.installed_digest(package) == hashlib.sha256(apk.read_bytes()).hexdigest()
         for component in self.components:
@@ -69,7 +90,7 @@ class MediaInstall:
             self.adb("shell", "run-as", self.package, "pm", "default-state", "--user", self.user,
                      self.package + "/" + component)
         for package, backup in self.changed:
-            self.adb("install", "-r", str(backup))
+            self.adb("install", "-r", *(["-d"] if package in self.downgrade_restore else []), str(backup))
             assert self.enabled_state() == 3
         for package, _, backup in self.backups:
             assert self.installed_digest(package) == hashlib.sha256(backup.read_bytes()).hexdigest(), "Original APK was not restored"
