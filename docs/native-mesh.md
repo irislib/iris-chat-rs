@@ -197,7 +197,10 @@ must confirm the expected connection, zero queued publications, and no pending
 connection or publish-drain work before and after sampling. The debug-only,
 non-exported hook records aggregate health before the common 30-second settling
 period and after the CPU windows; it does not save the raw support bundle or
-query health during measurement. Preserve draining, reconnecting, and
+query health during measurement. These checks classify message-server state;
+they do not establish an isolated mesh workload or attribute its traffic.
+Keep isolated-peer diagnostic controls separate from the receiver workload
+being qualified. Preserve draining, reconnecting, and
 unavailable-server results under those classifications. Resuming a saved account
 after its fixture server has stopped does not establish healthy connected idle.
 Every qualified CPU window must remain below 5% of one core; do not round or
