@@ -5,9 +5,18 @@ import tempfile
 import unittest
 
 from android_saved_background_state import inspect_database, require_preserved_state
+from android_saved_background_diagnostics import signing_digests
 
 
 class SavedReceiverStateTest(unittest.TestCase):
+    def test_both_apksigner_formats_require_one_unambiguous_certificate(self):
+        digest = "a" * 64
+        for line in ("V2 Signer: certificate SHA-256 digest: ", "Signer #1 certificate SHA-256 digest: "):
+            self.assertEqual(digest, signing_digests(line + digest + "\n"))
+        for value in ("", "certificate SHA-256 digest: " + digest,
+                      "V2 Signer: certificate SHA-256 digest: " + digest + "\nV3 Signer: certificate SHA-256 digest: " + "b" * 64):
+            with self.assertRaises(AssertionError): signing_digests(value)
+
     def test_snapshot_preserves_identity_counts_and_detects_other_preference_changes_without_exporting_secrets(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "core.sqlite3")

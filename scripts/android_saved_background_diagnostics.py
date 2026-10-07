@@ -17,6 +17,12 @@ from android_saved_background_state import ALERTS, PACKAGE, installed_hash, read
 from native_lab import acquire, release
 
 
+def signing_digests(output):
+    values = set(re.findall(r"^(?:V[0-9]+ )?Signer[^\n]*certificate SHA-256 digest: ([a-fA-F0-9]{64})$", output, re.M))
+    assert len(values) == 1, "Expected one verified APK signing identity"
+    return next(iter(values)).lower()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("serial", "app-apk", "previous-apk", "test-apk", "aapt2", "relay-bin", "account-receipt", "output"):
@@ -27,7 +33,7 @@ def main():
         assert re.search(r"^package: name='([^']+)'", badging, re.M)[1] == package
     def signer(artifact):
         value = subprocess.check_output([str(args.aapt2.parent / "apksigner"), "verify", "--print-certs", str(artifact)], text=True)
-        return re.search(r"Signer #1 certificate SHA-256 digest: ([a-f0-9]+)", value)[1]
+        return signing_digests(value)
     assert signer(args.app_apk) == signer(args.previous_apk), "Preserving account data requires the same signing identity"
     receipt = json.loads(args.account_receipt.read_text())
     assert receipt["package"] == PACKAGE
@@ -92,7 +98,8 @@ def main():
         wait_for("preserved local message server", relay_ready)
         assert all(f"tcp:{port}" not in line.split()[1:2] for line in adb("reverse", "--list").splitlines())
         adb("reverse", f"tcp:{port}", f"tcp:{port}"); bridge = True
-        initial_exempt = any(PACKAGE in line for line in adb("shell", "dumpsys", "deviceidle", "whitelist").splitlines())
+        initial_exempt = any(line.split(",")[1:2] == [PACKAGE]
+                             for line in adb("shell", "dumpsys", "deviceidle", "whitelist").splitlines())
         adb("shell", "dumpsys", "deviceidle", "whitelist", "+" + PACKAGE); exemption = True
         app_touched = True
         (args.output / "update.log").write_text(adb("install", "-r", str(args.app_apk)))
@@ -101,6 +108,7 @@ def main():
         after_update = read_saved_state(adb, binary)
         write_marker(args.output / "state-after-update.json", after_update)
         require_preserved_state(before, after_update, before["alerts"])
+        assert after_update["account_store_sha256"] == before["account_store_sha256"], "App update changed encrypted account storage"
         assert after_update["history_counts"] == before["history_counts"], "App update changed saved history counts"
         adb("shell", "input", "keyevent", "WAKEUP")
         features_touched = True
@@ -171,6 +179,13 @@ def main():
             def verify_restored():
                 state = read_saved_state(adb, binary); write_marker(args.output / "state-after-cleanup.json", state)
                 require_preserved_state(before, state, before["alerts"])
+                result_file = args.output / "result.json"
+                if result_file.exists():
+                    final = json.loads(result_file.read_text())
+                    final.update(history_counts_before=before["history_counts"], history_counts_after=state["history_counts"],
+                                 history_counts_unchanged=before["history_counts"] == state["history_counts"],
+                                 initial_alert_preferences_restored=True)
+                    write_marker(result_file, final)
             clean("verify account settings and permissions restored", verify_restored)
         if exemption and not initial_exempt:
             clean("restore battery exemption", lambda: adb("shell", "dumpsys", "deviceidle", "whitelist", "-" + PACKAGE))
