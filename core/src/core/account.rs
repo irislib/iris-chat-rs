@@ -50,6 +50,7 @@ impl AppCore {
             return;
         }
         if self.logged_in.is_none() {
+            self.emit_state();
             return;
         }
 

@@ -201,9 +201,10 @@ impl AppCore {
     }
 }
 
-/// Compare two `AppState` snapshots ignoring `rev`. Returns true if the UI
-/// would render identically.
-fn state_content_eq(a: &AppState, b: &AppState) -> bool {
+mod network_state;
+
+/// Compare visible state, keeping diagnostic-only churn local while hidden.
+fn state_content_eq(a: &AppState, b: &AppState, include_diagnostics: bool) -> bool {
     a.call == b.call
         && a.router == b.router
         && a.account == b.account
@@ -215,7 +216,11 @@ fn state_content_eq(a: &AppState, b: &AppState) -> bool {
         && a.group_details == b.group_details
         && a.public_invite == b.public_invite
         && a.link_device == b.link_device
-        && a.network_status == b.network_status
+        && network_state::content_eq(
+            a.network_status.as_ref(),
+            b.network_status.as_ref(),
+            include_diagnostics,
+        )
         && a.mobile_push == b.mobile_push
         && a.preferences == b.preferences
         && a.user_discovery_revision == b.user_discovery_revision
@@ -913,7 +918,7 @@ impl AppCore {
         // FetchCatchUpEvents → ...) was producing 3-4 redundant pushes
         // and >1 s of Skipped frames each time.
         if let Some(last) = self.last_emitted_state.as_ref() {
-            if state_content_eq(last, &self.state) {
+            if state_content_eq(last, &self.state, self.app_in_foreground) {
                 return;
             }
         }
