@@ -15,7 +15,8 @@ import to.iris.chat.IrisChatApp
 /** One-shot, app-UID-only harness query. No timer or continuous debug snapshots. */
 class BackgroundHealthReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (!BuildConfig.DEBUG || context.packageName != PACKAGE || intent.action != ACTION) return
+        if (!BuildConfig.DEBUG || context.packageName !in setOf(PACKAGE, BackgroundControlProvider.PACKAGE) ||
+            intent.action != ACTION) return
         if (intent.getIntExtra("expected_pid", -1) != Process.myPid()) return
         val expectedRelay = intent.getStringExtra("expected_relay") ?: return
         val app = context.applicationContext as? IrisChatApp ?: return

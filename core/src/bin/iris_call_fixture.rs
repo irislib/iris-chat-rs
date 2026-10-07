@@ -26,13 +26,21 @@ fn main() -> Result<()> {
     {
         bail!("Call fixture requires a fresh data directory");
     }
+    let isolated_control = std::env::var("IRIS_CALL_ISOLATED_CONTROL").as_deref() == Ok("1");
     let app = FfiApp::new(dir, String::new(), String::new());
     let (tx, updates) = flume::bounded(96);
     app.listen_for_updates(Box::new(Updates(tx)));
+    if isolated_control {
+        app.dispatch(AppAction::SetNearbyEnabled { enabled: false });
+        app.dispatch(AppAction::SetNearbyLanEnabled { enabled: false });
+        app.dispatch(AppAction::SetNearbyBluetoothEnabled { enabled: false });
+    }
     app.dispatch(AppAction::CreateAccount {
         name: "Call test".into(),
     });
-    app.dispatch(AppAction::SetNearbyLanEnabled { enabled: true });
+    if !isolated_control {
+        app.dispatch(AppAction::SetNearbyLanEnabled { enabled: true });
+    }
     if let Ok(url) = std::env::var("IRIS_CALL_PUSH_SERVER_URL") {
         app.dispatch(AppAction::SetMobilePushServerUrl { url });
     }
@@ -42,7 +50,7 @@ fn main() -> Result<()> {
         let state = app.state();
         if let (Some(account), Some(invite)) = (state.account, state.public_invite) {
             emit(
-                json!({"event":"ready","owner":account.public_key_hex,"device":account.device_public_key_hex,"invite":invite.url}),
+                json!({"event":"ready","owner":account.public_key_hex,"device":account.device_public_key_hex,"device_npub":account.device_npub,"invite":invite.url}),
             )?;
             break;
         }
@@ -141,6 +149,23 @@ fn main() -> Result<()> {
                             json!({"event":"status","call":call,"audio_frames":audio,"video_frames":video,"nonzero_audio_frames":audio_nonzero,
                                 "call_authors":state.mobile_push.call_author_pubkeys,"lan_owners":lan_owners}),
                         )?;
+                    }
+                    ["health"] if isolated_control => {
+                        let raw: serde_json::Value =
+                            serde_json::from_str(&app.export_support_bundle_json())?;
+                        if raw["ffi_queue"]["core_support_bundle_timed_out"].as_bool()
+                            != Some(false)
+                        {
+                            bail!("Control support query unavailable");
+                        }
+                        let expected = std::env::var("IRIS_DEMO_RELAYS")?;
+                        let transport = &raw["relay_transport"];
+                        emit(json!({"event":"health",
+                            "expected_relay_matches":raw["relay_urls"] == json!([expected]),
+                            "connected_relay_count":transport["connected_relay_count"].as_u64().context("Missing relay count")?,
+                            "pending_relay_publish_count":transport["pending_relay_publish_count"].as_u64().context("Missing outbox count")?,
+                            "fips_transport":raw.get("fips_transport").context("Missing FIPS diagnostics")?,
+                        }))?;
                     }
                     ["end"] => {
                         if let Some(c) = app.state().call {
