@@ -38,9 +38,8 @@ pub(super) async fn run(
             .iter()
             .filter(|peer| peer.connected)
             .filter_map(|peer| {
-                let identity = FipsPeerIdentity::from_npub(&peer.npub).ok()?;
                 Some(FipsNearbyLinkSnapshot {
-                    device_pubkey_hex: identity.pubkey().to_string(),
+                    device_pubkey_hex: peer_key_hex(&peer.npub)?,
                     transport_type: peer.transport_type.clone().unwrap_or_default(),
                     transport_addr: peer.transport_addr.clone(),
                 })
@@ -122,6 +121,11 @@ pub(super) async fn run(
     }
 }
 
+fn peer_key_hex(npub: &str) -> Option<String> {
+    // Reporting needs only the validated public key, not routing or ECDH state.
+    Some(fips_core::decode_npub(npub).ok()?.to_string())
+}
+
 fn report_links(
     core_sender: &Sender<CoreMsg>,
     generation: u64,
@@ -141,6 +145,27 @@ fn report_links(
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
+
+    #[test]
+    fn displayed_peer_keys_preserve_identity_validation() {
+        let keys = Keys::generate();
+        let npub = keys.public_key().to_bech32().unwrap();
+        let expected = FipsPeerIdentity::from_npub(&npub)
+            .unwrap()
+            .pubkey()
+            .to_string();
+        assert_eq!(peer_key_hex(&npub), Some(expected.clone()));
+        assert_eq!(peer_key_hex(&npub.to_uppercase()), Some(expected));
+        let invalid_curve_key = PublicKey::from_byte_array([0xff; 32]).to_bech32().unwrap();
+        for invalid in [
+            "",
+            "npub1invalid",
+            "nsec1invalid",
+            invalid_curve_key.as_str(),
+        ] {
+            assert!(peer_key_hex(invalid).is_none(), "invalid peer key accepted");
+        }
+    }
 
     async fn local_endpoint(rendezvous: SocketAddrV4) -> Arc<FipsEndpoint> {
         let mut config = Config::new();
