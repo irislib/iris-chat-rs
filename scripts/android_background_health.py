@@ -4,7 +4,7 @@ import time
 from android_fips_health import filter_fips_health
 
 PACKAGE = "to.iris.chat.backgroundtest"
-CONTROL_PACKAGE = "to.iris.chat.backgroundcontrol"
+CONTROL_PACKAGE = "to.iris.chat.backgroundcontrol2"
 CACHE_FILE = "cache/background-health.json"
 FLAGS = ("connect_in_flight", "connect_dirty", "force_reconnect_dirty",
          "publish_drain_in_flight", "publish_drain_dirty", "retry_scheduled")

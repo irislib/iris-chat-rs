@@ -8,6 +8,7 @@ import org.junit.Rule
 import org.junit.Test
 import to.iris.chat.MainActivity
 import to.iris.chat.RealRelayHarnessBase
+import to.iris.chat.debug.BackgroundControlProvider
 import to.iris.chat.rust.AppAction
 
 /** Fresh control app only. No permission grants and no access to other app accounts. */
@@ -15,7 +16,7 @@ class BackgroundControlHarnessTest : RealRelayHarnessBase() {
     @get:Rule override val activityRule = ActivityScenarioRule(MainActivity::class.java)
 
     private fun requireControl() {
-        require(appPackageName() == "to.iris.chat.backgroundcontrol")
+        require(appPackageName() == BackgroundControlProvider.PACKAGE)
         require(optionalArg("background_control") == "1")
     }
 

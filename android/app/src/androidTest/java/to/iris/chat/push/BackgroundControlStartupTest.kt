@@ -6,6 +6,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import to.iris.chat.debug.backgroundControlEnvironment
+import to.iris.chat.debug.BackgroundControlProvider
 
 class BackgroundControlStartupTest {
     private fun bootstrap() = JSONObject().put("phase", "bootstrap").put("relay_url", "ws://127.0.0.1:1234")
@@ -13,6 +14,7 @@ class BackgroundControlStartupTest {
         .put("peer_npub", "npub1" + "q".repeat(58)).put("peer_udp", "192.168.1.2:1234").put("local_udp_port", 45678)
 
     @Test fun bootstrapCannotEnableAnEndpointOrAlternateDiscovery() {
+        assertEquals("to.iris.chat.backgroundcontrol2", BackgroundControlProvider.PACKAGE)
         val env = backgroundControlEnvironment(bootstrap())
         for (key in listOf("IRIS_FIPS_WEBSOCKET_SEED_URLS", "IRIS_CHAT_FIPS_WEBSOCKET_BIND_ADDR",
             "IRIS_CHAT_FIPS_ROUTED_PEERS", "IRIS_CHAT_FIPS_STATIC_PEERS", "IRIS_CHAT_FIPS_UDP_BIND_ADDR")) {

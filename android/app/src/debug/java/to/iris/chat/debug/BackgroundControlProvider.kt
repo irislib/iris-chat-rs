@@ -33,7 +33,7 @@ class BackgroundControlProvider : ContentProvider() {
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0
 
     companion object {
-        const val PACKAGE = "to.iris.chat.backgroundcontrol"
+        const val PACKAGE = "to.iris.chat.backgroundcontrol2"
         const val CONFIG_FILE = "background-control.json"
     }
 }

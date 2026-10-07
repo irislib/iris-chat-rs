@@ -16,7 +16,7 @@ from android_background_health import query_health
 
 class BackgroundControlTest(unittest.TestCase):
     def test_artifacts_cannot_target_saved_or_production_accounts(self):
-        for wrong in ("to.iris.chat", "to.iris.chat.backgroundtest", CONTROL_PACKAGE + ".test"):
+        for wrong in ("to.iris.chat", "to.iris.chat.backgroundtest", "to.iris.chat.backgroundcontrol", CONTROL_PACKAGE + ".test"):
             with self.subTest(wrong=wrong), patch("subprocess.check_output", return_value=f"package: name='{wrong}'"):
                 with self.assertRaises(AssertionError):
                     require_control_artifacts("aapt2", "app.apk", "test.apk")
