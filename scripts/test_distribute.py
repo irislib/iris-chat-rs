@@ -131,6 +131,23 @@ class DistributeTests(unittest.TestCase):
             """,
         )
         self.write_stub(
+            "haps",
+            r"""
+            #!/usr/bin/env python3
+            import json, os, pathlib, sys
+            args = sys.argv[1:]
+            assert args[0] == 'import-release'
+            assert pathlib.Path(args[1], 'release.json').is_file()
+            assert args[args.index('--tag') + 1] == os.environ['FAKE_TAG']
+            assert args[args.index('--key-file') + 1] == os.environ['IRIS_HASHTREE_NSEC_PATH']
+            assert os.environ['HAPS_HOME'] == os.environ['IRIS_HASHTREE_DATA_DIR'] + '/haps'
+            with open(os.environ['FAKE_COMMAND_LOG'], 'a') as log:
+                log.write('haps ' + ' '.join(args) + '\n')
+            if os.environ.get('FAKE_HAPS_FAIL') == args[-1]:
+                sys.exit('Haps publication failed')
+            """,
+        )
+        self.write_stub(
             "nak",
             r"""
             #!/usr/bin/env bash
@@ -313,9 +330,28 @@ class DistributeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         log = self.log.read_text()
         self.assertIn(f"iris-{TAG}-x86_64-unknown-linux-gnu.tar.gz", log)
+        self.assertIn('haps import-release', log)
+        self.assertNotIn('--publish', log)
         self.assertNotIn("htree add", log)
         self.assertNotIn("htree release publish", log)
         self.assertNotIn("curl", log)
+
+    def test_haps_failure_blocks_or_fails_final_publication(self) -> None:
+        for phase in ['--check', '--publish']:
+            with self.subTest(phase=phase):
+                if self.log.exists():
+                    self.log.unlink()
+                env = self.environment()
+                env['FAKE_HAPS_FAIL'] = phase
+                result = self.run_distribution('hashtree', env=env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Haps publication failed', result.stderr)
+                log = self.log.read_text()
+                if phase == '--check':
+                    self.assertNotIn('htree add', log)
+                else:
+                    self.assertIn('htree release publish', log)
+                    self.assertLess(log.index('signed-updater'), log.rindex('haps import-release'))
 
     def test_homebrew_check_downloads_only_cli_archives(self) -> None:
         result = self.run_distribution("homebrew", "--check")
