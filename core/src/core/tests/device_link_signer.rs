@@ -137,6 +137,68 @@ fn nostrconnect_device_link_preserves_private_history_choice_and_external_signer
 }
 
 #[test]
+fn nostrconnect_rejected_approval_stops_the_phone_without_waiting_for_expiry() {
+    let relay = crate::local_relay::TestRelay::start();
+    let owner = Keys::generate();
+    let approver = Keys::generate();
+    let (mut source, _, _source_dir) =
+        logged_in_test_core_with_updates("nip46-rejection", &owner, &approver);
+    let (source_tx, source_messages) = flume::unbounded();
+    source.core_sender = source_tx;
+    let relays = vec![relay.url().to_string()];
+    source.preferences.nostr_relay_urls = relays.clone();
+    source.logged_in.as_mut().unwrap().relay_urls =
+        vec![RelayUrl::parse(relay.url()).unwrap()];
+    let now = unix_now().get();
+    let old = AppKeys::new(vec![DeviceEntry::new(approver.public_key(), now - 20)])
+        .get_event_at(owner.public_key(), now - 1)
+        .sign_with_keys(&owner).unwrap();
+    source.app_keys.insert(owner.public_key().to_hex(), known_app_keys_from_ndr(
+        owner.public_key(), &AppKeys::from_event(&old).unwrap(), old.created_at.as_secs(),
+    ));
+    publish_signer_test_event(&source, &relay, &old);
+    let target_dir = tempfile::TempDir::new().unwrap();
+    let (mut target, target_messages, _) = signer_test_core(target_dir.path(), relays);
+    target.handle_action(AppAction::StartRemoteSignerLogin);
+    pump_signer_core_until(&mut target, &target_messages, |core| {
+        core.state.remote_signer_login.as_ref()
+            .is_some_and(|state| state.phase == crate::RemoteSignerPhase::WaitingForSigner)
+    });
+    let uri = target.state.remote_signer_login.as_ref().unwrap()
+        .connection_uri.clone().unwrap();
+    source.handle_action(AppAction::AddAuthorizedDeviceWithHistory {
+        device_input: uri,
+        include_message_history: true,
+    });
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while source.state.busy.updating_roster || target.state.busy.restoring_session {
+        for message in source_messages.try_iter() {
+            if matches!(&message, CoreMsg::Internal(event)
+                if matches!(event.as_ref(), InternalEvent::DeviceLinkSignerRequest { .. })) {
+                // A local membership revision wins over an older server response.
+                source.app_keys.get_mut(&owner.public_key().to_hex()).unwrap()
+                    .created_at_secs = now + 1;
+            }
+            source.handle_message(message);
+        }
+        if let Ok(message) = target_messages.recv_timeout(Duration::from_millis(10)) {
+            target.handle_message(message);
+        }
+        assert!(Instant::now() < deadline, "approval failure must finish promptly on both devices");
+    }
+    assert!(target.logged_in.is_none());
+    assert_eq!(source.state.toast.as_deref(), Some("Device list changed. Try again."));
+    assert!(source.debug_log.iter().any(|entry|
+        entry.category == "device_link.approval" &&
+        entry.detail == "sign_request_failed: Device list changed. Try again."
+    ));
+    assert!(relay.events().iter().all(|event|
+        serde_json::from_value::<Event>(event.clone()).unwrap().kind.as_u16() != APP_KEYS_EVENT_KIND as u16 ||
+        event["id"] == old.id.to_hex()
+    ));
+}
+
+#[test]
 fn nostrconnect_device_approval_is_one_addition_with_immutable_devices_and_bounded_uri() {
     use super::device_link_signer::validate_device_link_draft;
     use super::remote_signer_uri::parse_device_link_connection;
@@ -293,7 +355,7 @@ fn nostrconnect_approval_replay_is_idempotent_and_cancellation_revokes_signing()
             .is_none(),
         "unsigned/unpublished target cannot receive history"
     );
-    source.finish_device_link_signer(&token, true);
+    source.finish_device_link_signer(&token, true, None);
     assert!(
         source.state.busy.updating_roster,
         "a returned signature is not a completed link"

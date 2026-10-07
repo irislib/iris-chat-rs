@@ -128,6 +128,7 @@ pub(crate) enum InternalEvent {
     DeviceLinkSignerFinished {
         token: String,
         success: bool,
+        error: Option<String>,
     },
     PrivateContactSyncTick {
         generation: u64,

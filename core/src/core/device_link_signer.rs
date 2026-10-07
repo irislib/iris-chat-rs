@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
 mod repair;
+mod errors;
+pub(super) use errors::safe_error;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -90,7 +92,7 @@ impl AppCore {
         }
     }
 
-    pub(super) fn finish_device_link_signer(&mut self, token: &str, success: bool) {
+    pub(super) fn finish_device_link_signer(&mut self, token: &str, success: bool, error: Option<String>) {
         if self
             .pending_device_link_signer
             .as_ref()
@@ -115,7 +117,7 @@ impl AppCore {
             if success {
                 "Device added"
             } else {
-                "Could not link device. Try again."
+                error.as_deref().unwrap_or("Could not link device. Try again.")
             }
             .into(),
         );
@@ -148,7 +150,7 @@ impl AppCore {
                 .filter(|p| !p.completed)
             {
                 let token = pending.token.clone();
-                self.finish_device_link_signer(&token, true);
+                self.finish_device_link_signer(&token, true, None);
             }
         }
     }
@@ -260,7 +262,7 @@ impl AppCore {
         } else {
             self.app_keys.remove(&owner_hex);
         }
-        stored?;
+        stored.map_err(|_| anyhow::anyhow!("Could not save device link."))?;
         if let Some(pending) = self.pending_device_link_signer.as_mut() {
             pending.signed = Some((signed.clone(), info.clone(), previous.map(|event| event.id)));
         }

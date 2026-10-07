@@ -5,7 +5,7 @@ use nostr::nips::nip44;
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
-fn progress(tx: &Sender<CoreMsg>, phase: &'static str) {
+fn progress(tx: &Sender<CoreMsg>, phase: &str) {
     // Diagnostics must never contain the code, account keys, or encrypted messages.
     let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
         category: "device_link.approval".into(),
@@ -37,6 +37,11 @@ pub(super) async fn run(
         result = tokio::time::timeout(Duration::from_secs(180), work) => result,
     };
     let success = matches!(result, Ok(Ok(())));
+    let error = match &result {
+        Ok(Err(error)) => Some(super::device_link_signer::safe_error(error).to_string()),
+        Err(_) => Some("Device approval timed out. Try again.".to_string()),
+        _ => None,
+    };
     progress(
         &tx,
         match result {
@@ -45,8 +50,11 @@ pub(super) async fn run(
             Err(_) => "timed_out",
         },
     );
+    if let Some(reason) = &error {
+        progress(&tx, &format!("failed: {reason}"));
+    }
     let _ = tx.send(CoreMsg::Internal(Box::new(
-        InternalEvent::DeviceLinkSignerFinished { token, success },
+        InternalEvent::DeviceLinkSignerFinished { token, success, error },
     )));
     client.shutdown().await;
 }
@@ -198,10 +206,12 @@ async fn serve(
                         return Ok(json!(serde_json::to_string(signed)?));
                     }
                     anyhow::ensure!(draft.len() <= 32 * 1024, "Invalid device authorization.");
+                    progress(tx, "checking_sign_request_device_list");
                     let previous =
                         super::account_signer_relay::fetch_signer_roster(owner, roster_relays)
                             .await
                             .map_err(anyhow::Error::msg)?;
+                    progress(tx, "validating_sign_request");
                     let (reply, receiver) = oneshot::channel();
                     tx.send(CoreMsg::Internal(Box::new(
                         InternalEvent::DeviceLinkSignerRequest {
@@ -212,6 +222,7 @@ async fn serve(
                         },
                     )))?;
                     let (signed, info) = receiver.await?.map_err(anyhow::Error::msg)?;
+                    progress(tx, "rechecking_signed_device_list");
                     let fresh =
                         super::account_signer_relay::fetch_signer_roster(owner, roster_relays)
                             .await
@@ -237,12 +248,20 @@ async fn serve(
         .await;
         let reply = match result {
             Ok(result) => json!({"id":id,"result":result}),
-            Err(_) => {
-                progress(tx, "request_rejected");
-                json!({"id":id,"error":"Request not authorized or unsupported."})
+            Err(error) => {
+                let reason = super::device_link_signer::safe_error(&error);
+                progress(tx, &format!("request_rejected: {reason}"));
+                json!({"id":id,"error":reason})
             }
         };
         response(client, keys, connection.signer, &reply).await?;
+        if method == "sign_event" {
+            if let Some(error) = reply.get("error").and_then(Value::as_str) {
+                // The joining device has already received a terminal failure.
+                // Stop the phone's spinner too, instead of waiting for expiry.
+                anyhow::bail!(error.to_string());
+            }
+        }
         replies.insert(id.to_string(), (fingerprint, reply.clone()));
         if method == "sign_event" && reply.get("error").is_none() && !success_announced {
             success_announced = true;
@@ -250,6 +269,7 @@ async fn serve(
                 InternalEvent::DeviceLinkSignerFinished {
                     token: token.to_string(),
                     success: true,
+                    error: None,
                 },
             )));
         }
