@@ -323,7 +323,8 @@ jobs:
                   groups: groups,
                   distribute_external: public_testflight,
                   submit_beta_review: public_testflight,
-                  notify_external_testers: false,
+                  # Apple holds approved builds until testers are notified.
+                  notify_external_testers: public_testflight,
                   skip_waiting_for_build_processing: false,
                   uses_non_exempt_encryption: false
                 }
@@ -333,6 +334,41 @@ jobs:
                   testflight_options[:ipa] = ENV.fetch("IPA_PATH")
                 end
                 upload_to_testflight(**testflight_options)
+                if public_testflight
+                  build = Spaceship::ConnectAPI::Build.all(
+                    client: client, app_id: app.id, version: app_version,
+                    build_number: build_number, platform: Spaceship::ConnectAPI::Platform::IOS
+                  ).first
+                  UI.user_error!("Public TestFlight build not found after distribution") unless build
+                  detail = build.build_beta_detail
+                  unless detail&.auto_notify_enabled == true
+                    UI.user_error!("Public TestFlight automatic distribution is not enabled")
+                  end
+                  # A reused build may already have been approved with automatic
+                  # distribution disabled. Explicitly release that exact build.
+                  if ["BETA_APPROVED", "READY_FOR_BETA_TESTING"].include?(detail.external_build_state)
+                    client.test_flight_request_client.post("v1/buildBetaNotifications", {
+                      data: {
+                        type: "buildBetaNotifications",
+                        relationships: { build: { data: { type: "builds", id: build.id } } }
+                      }
+                    })
+                    6.times do
+                      build = Spaceship::ConnectAPI::Build.get(client: client, build_id: build.id)
+                      detail = build.build_beta_detail
+                      break if detail&.external_build_state == "IN_BETA_TESTING"
+                      sleep(10)
+                    end
+                  end
+                  case detail&.external_build_state
+                  when "IN_BETA_TESTING"
+                    UI.success("Public TestFlight #{app_version} (#{build_number}) is available to testers")
+                  when "WAITING_FOR_BETA_REVIEW", "IN_BETA_REVIEW"
+                    UI.important("Public TestFlight #{app_version} (#{build_number}) is awaiting Apple review; automatic distribution is enabled")
+                  else
+                    UI.user_error!("Public TestFlight is not available: #{detail&.external_build_state.inspect}")
+                  end
+                end
                 next
               end
 

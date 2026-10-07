@@ -281,8 +281,16 @@ class ReleaseWorkflowTests(unittest.TestCase):
             def self.user_error!(message)
               raise UserError, message
             end
+            def self.success(message)
+              $messages << message
+            end
+            def self.important(message)
+              $messages << message
+            end
           end
           Group = Struct.new(:name, :is_internal_group, :public_link_enabled)
+          BetaDetail = Struct.new(:auto_notify_enabled, :external_build_state)
+          FakeBuild = Struct.new(:id, :build_beta_detail)
           class FakeApp
             def id
               "test-app"
@@ -306,6 +314,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
               class Client
                 def initialize(token:)
                 end
+                def test_flight_request_client
+                  self
+                end
+                def post(path, body)
+                  raise "Wrong notification endpoint" unless path == "v1/buildBetaNotifications"
+                  expected = {data: {type: "buildBetaNotifications", relationships: {build: {data: {type: "builds", id: "exact-build"}}}}}
+                  raise "Notifying wrong build" unless body == expected
+                  $events << :activate_public_build
+                end
               end
               module App
                 def self.find(*, **)
@@ -315,7 +332,17 @@ class ReleaseWorkflowTests(unittest.TestCase):
               module Build
                 def self.all(**options)
                   raise "Wrong exact version" unless options[:version] == "2026.10.100" && options[:build_number] == "1"
+                  if $uploaded_options
+                    $events << :read_public_status
+                    return [] if $missing_build
+                    return [FakeBuild.new("exact-build", $missing_detail ? nil : BetaDetail.new($auto_notify, $external_state))]
+                  end
                   $existing_build ? [Object.new] : []
+                end
+                def self.get(client:, build_id:)
+                  raise "Wrong build verification" unless build_id == "exact-build"
+                  $events << :verify_activation
+                  FakeBuild.new(build_id, BetaDetail.new(true, $activated_state))
                 end
               end
               module Platform
@@ -350,6 +377,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
           def upload_to_app_store(**)
             $events << :app_store
             raise "TestFlight called upload_to_app_store"
+          end
+          def sleep(*)
           end
           eval(STDIN.read, TOPLEVEL_BINDING, "Fastfile")
           ENV.update(
@@ -398,6 +427,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
                   $groups = available
                   $existing_build = existing
                   $events = []
+                  $messages = []
+                  $auto_notify = true
+                  $external_state = "IN_BETA_TESTING"
                   $uploaded_options = nil
                   error = nil
                   begin
@@ -412,12 +444,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
                     raise error if error
                     expected_events = [:read_groups, :testflight]
                     expected_events += [:beta_review, :external_distribution_or_notification] if public_target
+                    expected_events << :read_public_status if public_target
                     raise "Unexpected actions: #{$events}" unless $events == expected_events
                     options = $uploaded_options
                     wanted_groups = public_target ? ["Public", "Preview"] : ["Team", "QA"]
                     raise "Wrong groups" unless options[:groups] == wanted_groups
                     raise "Wrong release notes" unless options[:changelog] == "Tagged release notes"
-                    raise "Unexpected notification" unless options[:notify_external_testers] == false
+                    raise "Public release must enable automatic distribution after approval" unless options[:notify_external_testers] == public_target
                     raise "Expired or rejected another build" if options[:expire_previous_builds] || options[:reject_build_waiting_for_review]
                     if existing
                       raise "Existing build was re-uploaded" unless options[:distribute_only] == true && !options.key?(:ipa)
@@ -429,6 +462,46 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 end
               end
             end
+            ENV["DISTRIBUTION_TARGET"] = "testflight-public"
+            ENV["IRIS_TESTFLIGHT_PUBLIC_GROUPS"] = "Public"
+            $groups = public_groups
+            [false, true].each do |existing|
+              [
+                ["IN_BETA_TESTING", true, "IN_BETA_TESTING", "available to testers", false],
+                ["WAITING_FOR_BETA_REVIEW", true, nil, "awaiting Apple review", false],
+                ["IN_BETA_REVIEW", true, nil, "awaiting Apple review", false],
+                ["BETA_APPROVED", true, "IN_BETA_TESTING", "available to testers", false],
+                ["READY_FOR_BETA_TESTING", true, "IN_BETA_TESTING", "available to testers", false],
+                ["BETA_APPROVED", true, "BETA_APPROVED", "not available", true],
+                ["BETA_REJECTED", true, nil, "not available", true],
+                ["EXPIRED", true, nil, "not available", true],
+                ["IN_BETA_TESTING", false, nil, "not enabled", true],
+                ["missing-build", true, nil, "not found", true],
+                ["missing-detail", true, nil, "not enabled", true]
+              ].each do |state, auto_notify, activated, message, fails|
+                $existing_build = existing
+                $external_state = state
+                $auto_notify = auto_notify
+                $activated_state = activated
+                $missing_build = state == "missing-build"
+                $missing_detail = state == "missing-detail"
+                $uploaded_options = nil
+                $events = []
+                $messages = []
+                error = nil
+                begin
+                  $distribution_lane.call
+                rescue UserError => failure
+                  error = failure.message
+                end
+                raise "Wrong public result for #{state}: #{error || $messages}" unless fails ? error&.include?(message) : error.nil? && $messages.any? { |m| m.include?(message) }
+                should_activate = ["BETA_APPROVED", "READY_FOR_BETA_TESTING"].include?(state)
+                raise "Wrong activation count" unless $events.count(:activate_public_build) == (should_activate ? 1 : 0)
+                raise "Repeated notification while waiting" if $events.count(:activate_public_build) > 1
+                raise "Entered App Store" if $events.include?(:app_store)
+              end
+            end
+            $uploaded_options = nil
             ENV["DISTRIBUTION_TARGET"] = "typo"
             $events = []
             begin

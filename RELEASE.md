@@ -203,7 +203,12 @@ In GitHub, open **Actions → iOS Distribution → Run workflow**.
   Review when required, and attach it to the existing public external groups
   named by `public_groups` (default `Public`). Their public links must already
   be enabled. This does not submit an App Store release or expire older builds.
-  Public availability depends on Apple's Beta App Review approval.
+  Automatic distribution after Beta App Review approval is enabled. An already
+  approved build is activated for testing, including when retrying distribution.
+  The workflow reports whether the build is available or still awaiting review.
+  Before calling the public release complete, verify the exact build is in the
+  public group with external status `IN_BETA_TESTING`; approval alone is not
+  availability. Confirm it is offered through the group's public TestFlight link.
 - Choose `app-store` to upload or reuse that build, apply the Apple notes, and
   submit it for review.
 - For App Store, choose automatic, manual, or phased release after approval.
