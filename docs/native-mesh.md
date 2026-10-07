@@ -190,3 +190,6 @@ macOS sender, and stops the setup message server before sending. UDP remains
 available for local discovery and data; this does not simulate disabled radios
 or impose an IP-wide Internet firewall. Device accounts in the production app
 are not changed, and temporary battery allowances are restored after the test.
+`scripts/android_background_contacts_fixture.py` can first add verified synthetic
+contacts and take them offline, so the same receiver test exercises offline-peer
+retry costs with an existing account. It only uses the `backgroundtest` package.
