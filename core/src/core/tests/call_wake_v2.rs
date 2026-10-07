@@ -189,8 +189,10 @@ fn call_wake_v2_cold_preview_preserves_ratchet_and_foreground_enforces_contact_p
         .unwrap();
     b.receive_call_push(&forged);
     assert!(b.calls.active.is_none());
+    b.handle_action(AppAction::AppBackgrounded);
     b.receive_call_push(&event);
     assert_eq!(b.state.call.as_ref().unwrap().call_id, id);
+    assert!(!b.app_in_foreground, "a call push resumes receiving without making the hidden UI visible");
     b.handle_action(AppAction::EndCall { call_id: id.into() });
     b.receive_call_push(&event);
     assert!(b.calls.active.is_none());

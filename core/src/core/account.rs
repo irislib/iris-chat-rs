@@ -36,7 +36,8 @@ impl AppCore {
     }
 
     pub(super) fn handle_app_foregrounded(&mut self) {
-        self.app_in_foreground = true;
+        // Authenticated call pushes also resume through here. Only the explicit
+        // UI action changes visibility; a background wake keeps the UI hidden.
         // Lift the suspend gate even when not logged in so a re-foregrounded
         // unauthenticated app can process events again.
         self.suspended = false;
