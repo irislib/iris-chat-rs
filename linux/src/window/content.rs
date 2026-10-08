@@ -278,7 +278,9 @@ impl Content {
         self.navigating.set(true);
         if state.account.is_some() {
             self.ensure_sidebar(manager);
-            self.split.set_sidebar(Some(&self.sidebar_page));
+            if self.split.sidebar().as_ref() != Some(&self.sidebar_page) {
+                self.split.set_sidebar(Some(&self.sidebar_page));
+            }
             let avatar_key = state
                 .account
                 .clone()
@@ -296,7 +298,9 @@ impl Content {
                 .unwrap()
                 .update(state, manager);
         } else {
-            self.split.set_sidebar(None::<&adw::NavigationPage>);
+            if self.split.sidebar().is_some() {
+                self.split.set_sidebar(None::<&adw::NavigationPage>);
+            }
             if let Some(list) = self.list.borrow_mut().as_mut() {
                 list.update(state, manager);
             }

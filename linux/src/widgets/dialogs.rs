@@ -82,7 +82,34 @@ fn dismiss_at(window: &gtk::Window, x: f64, y: f64) -> bool {
     {
         return false;
     }
-    dialog.close()
+    if content.is_mapped() {
+        return dialog.close();
+    }
+
+    // libadwaita 1.5 maps the dialog before opening its sheet on a later frame.
+    // Closing in that gap is undone by the pending open. Retain the click and
+    // close once the content is mapped, without dismissing a newer top dialog.
+    let window = window.downgrade();
+    dialog.add_tick_callback(move |dialog, _| {
+        let Some(window) = window.upgrade() else {
+            return gtk::glib::ControlFlow::Break;
+        };
+        if visible_dialog(&window).as_ref() != Some(dialog)
+            || !dialog.has_css_class(DISMISSIBLE)
+            || !dialog.can_close()
+        {
+            return gtk::glib::ControlFlow::Break;
+        }
+        let Some(content) = dialog.child() else {
+            return gtk::glib::ControlFlow::Break;
+        };
+        if !content.is_mapped() {
+            return gtk::glib::ControlFlow::Continue;
+        }
+        dialog.close();
+        gtk::glib::ControlFlow::Break
+    });
+    true
 }
 
 fn has_open_popover(widget: &gtk::Widget) -> bool {

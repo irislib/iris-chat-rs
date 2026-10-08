@@ -1,7 +1,8 @@
 use super::*;
 use std::time::{Duration, Instant};
 
-fn pump_until(mut ready: impl FnMut() -> bool) {
+#[track_caller]
+fn pump_until(stage: &str, mut ready: impl FnMut() -> bool) {
     let context = gtk::glib::MainContext::default();
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -11,7 +12,7 @@ fn pump_until(mut ready: impl FnMut() -> bool) {
         if ready() {
             return;
         }
-        assert!(Instant::now() < deadline, "dialog UI timed out");
+        assert!(Instant::now() < deadline, "dialog UI timed out: {stage}");
         std::thread::sleep(Duration::from_millis(2));
     }
 }
@@ -41,7 +42,9 @@ pub fn verify_ui() {
     window.present();
     let (profile, content) = dialog();
     present(&profile, Some(window.upcast_ref()));
-    pump_until(|| content.width() > 0 && profile.is_mapped());
+    pump_until("profile presentation", || {
+        content.width() > 0 && profile.is_mapped()
+    });
     let click = window
         .observe_controllers()
         .iter::<gtk::glib::Object>()
@@ -78,18 +81,26 @@ pub fn verify_ui() {
     popover.set_child(Some(&gtk::Button::with_label("Menu choice")));
     menu.set_popover(Some(&popover));
     content.append(&menu);
-    pump_until(|| menu.is_mapped() && menu.width() > 0);
+    pump_until("menu button layout", || {
+        menu.is_mapped() && menu.width() > 0
+    });
     menu.popup();
-    pump_until(|| popover.is_mapped());
+    pump_until("menu popup", || popover.is_mapped());
     assert!(!dismiss_at(window.upcast_ref(), 4.0, 4.0));
     popover.popdown();
-    pump_until(|| !popover.is_mapped());
+    pump_until("menu popdown", || !popover.is_mapped());
 
     let (nested, nested_content) = dialog();
     present(&nested, Some(window.upcast_ref()));
-    pump_until(|| nested_content.width() > 0 && nested.is_mapped());
+    pump_until("nested dialog presentation", || {
+        nested_content.width() > 0 && nested.is_mapped()
+    });
+    // Keep this early click: on libadwaita 1.5 the dialog can be allocated
+    // before its content maps, and the dismissal must survive its pending open.
     click.emit_by_name::<()>("pressed", &[&1i32, &4.0f64, &4.0f64]);
-    pump_until(|| window.visible_dialog() == Some(profile.clone()) && !nested.is_mapped());
+    pump_until("nested dialog outside-click dismissal", || {
+        window.visible_dialog() == Some(profile.clone()) && !nested.is_mapped()
+    });
     assert!(
         profile.is_mapped(),
         "outside click must only close the top dialog"
@@ -97,10 +108,19 @@ pub fn verify_ui() {
 
     let (confirmation, confirmation_content) = dialog();
     confirmation.present(Some(&window));
-    pump_until(|| confirmation_content.width() > 0 && confirmation.is_mapped());
+    pump_until("confirmation presentation", || {
+        confirmation_content.width() > 0 && confirmation.is_mapped()
+    });
     assert!(!dismiss_at(window.upcast_ref(), 4.0, 4.0));
+    // This protected dialog uses the native close API, not click-away. Wait
+    // until its content is presented before simulating its own close control.
+    pump_until("confirmation content presentation", || {
+        confirmation_content.is_mapped()
+    });
     confirmation.close();
-    pump_until(|| window.visible_dialog() == Some(profile.clone()) && !confirmation.is_mapped());
+    pump_until("confirmation dismissal", || {
+        window.visible_dialog() == Some(profile.clone()) && !confirmation.is_mapped()
+    });
 
     assert_eq!(
         window
@@ -114,6 +134,8 @@ pub fn verify_ui() {
         "reopening dialogs must reuse one backdrop handler"
     );
     click.emit_by_name::<()>("pressed", &[&1i32, &4.0f64, &4.0f64]);
-    pump_until(|| window.visible_dialog().is_none());
+    pump_until("profile outside-click dismissal", || {
+        window.visible_dialog().is_none()
+    });
     window.close();
 }

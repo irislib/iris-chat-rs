@@ -56,9 +56,13 @@ fn apply(manager: &AppManager, state: &AppState) {
 
 fn dialog(window: &adw::Window, title: &str) -> adw::Dialog {
     pump_until(|| {
-        window
-            .visible_dialog()
-            .is_some_and(|dialog| dialog.title() == title && dialog.is_mapped())
+        window.visible_dialog().is_some_and(|dialog| {
+            // Controls become usable after the sheet opens, which follows
+            // the dialog's own map on libadwaita 1.5.
+            dialog.title() == title
+                && dialog.is_mapped()
+                && dialog.child().is_some_and(|content| content.is_mapped())
+        })
     });
     window.visible_dialog().unwrap()
 }
@@ -343,6 +347,48 @@ pub fn verify_edit_history_ui(manager: Rc<AppManager>) {
             );
         }
         close(&window);
+    }
+
+    // An invalidation can precede the sheet's first frame on a slow machine.
+    // Start the production watcher before presentation to hold that gap open,
+    // then prove its close is retained even if the account/message reappears.
+    for change in ["deleted", "account"] {
+        apply(&manager, &state);
+        let early = adw::Dialog::builder().title("Early history").build();
+        early.set_child(Some(&gtk::Label::new(Some("Message history"))));
+        watch_message(&early, &message, &manager, |message| {
+            !message.deleted_for_everyone
+        });
+        let mut changed = state.clone();
+        if change == "deleted" {
+            changed.current_chat.as_mut().unwrap().messages[0].deleted_for_everyone = true;
+        } else {
+            changed.account.as_mut().unwrap().public_key_hex = "different-account".into();
+        }
+        apply(&manager, &changed);
+        glib::MainContext::default().block_on(glib::timeout_future(Duration::from_millis(250)));
+        assert!(!early.child().unwrap().is_mapped());
+        apply(&manager, &state);
+        crate::widgets::dialogs::present(&early, Some(window.upcast_ref()));
+        // The dialog leaves the model before its closing animation unmaps it.
+        pump_until(|| window.dialogs().n_items() == 0 && !early.is_mapped());
+        // Advance beyond the two-frame pending open in libadwaita 1.5 so an
+        // early close followed by a reopen cannot satisfy the regression.
+        let frames = Rc::new(std::cell::Cell::new(0));
+        let tick_frames = frames.clone();
+        window.add_tick_callback(move |_, _| {
+            tick_frames.set(tick_frames.get() + 1);
+            if tick_frames.get() >= 3 {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
+        pump_until(|| frames.get() >= 3);
+        assert!(
+            window.dialogs().n_items() == 0 && !early.is_mapped(),
+            "early {change} must remain dismissed"
+        );
     }
 
     // The local clock expires history without a new core snapshot.

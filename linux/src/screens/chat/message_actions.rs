@@ -258,17 +258,23 @@ pub(super) fn watch_message(
     let manager = manager.clone();
     let target = target.clone();
     let account = account_identity(&manager.current_state());
+    let mut invalidated = false;
     let source = glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
         let Some(dialog) = weak.upgrade() else {
             return glib::ControlFlow::Break;
         };
-        let state = manager.current_state();
-        let same_account = account.is_some() && account_identity(&state) == account;
-        let message = same_account
-            .then(|| live_message(&state, &target))
-            .flatten()
-            .map(|(_, message)| message);
-        if message.is_none_or(|message| !update(message)) {
+        if !invalidated {
+            let state = manager.current_state();
+            let same_account = account.is_some() && account_identity(&state) == account;
+            let message = same_account
+                .then(|| live_message(&state, &target))
+                .flatten()
+                .map(|(_, message)| message);
+            invalidated = message.is_none_or(|message| !update(message));
+        }
+        // libadwaita 1.5 can reopen a sheet closed before its content maps.
+        // Keep the invalidation and watcher until the pending open finishes.
+        if invalidated && dialog.child().is_some_and(|content| content.is_mapped()) {
             dialog.close();
         }
         glib::ControlFlow::Continue
