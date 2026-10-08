@@ -2,6 +2,45 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.8
+
+### GitHub
+
+- Suppress non-message iOS pushes using Apple-approved notification filtering, including decryption failures and extension timeouts. Verify the entitlement in signed release binaries.
+- Keep iOS background handling alive until notification processing and persistence finish, and coalesce private-contact recovery after message-server reconnects.
+- Receive Android messages and calls without Google push through the existing encrypted connections. Preserve saved accounts and nearby discovery when Android restarts the receiver.
+- Dismiss ended incoming-call screens and return background receivers to the background. Pause hidden Nearby polling, reduce idle direct-file listener wakeups, and avoid full chat snapshots for hidden network diagnostics.
+- Keep Apple startup loading visible until saved-session restoration settles. Present iPhone debug exports directly in the system share sheet.
+- Refresh linked-device history when foregrounding, including interrupted reconciliation, so missed reactions catch up promptly.
+- Keep queued nearby messages available for their intended recipient when another peer acknowledges them. Suppress retries only to the acknowledging peer while preserving queue limits.
+- Stop rejected device approvals promptly and preserve safe, specific failure reasons across the phone and browser.
+- Update FIPS core to 0.4.95, TCP to 0.2.5, TCP endpoint to 0.2.30, pubsub FIPS to 0.5.22, and Hashtree FIPS transport to 0.4.28. Bound idle control work and failed-service retries, retain authenticated peer identities, and correct TCP acknowledgment recovery and retry limits.
+- Stop redundant ICE checks for candidate pairs that have already connected, while preserving consent checks and new connection validation.
+- Keep new direct connections visible while their setup is starting so an early status check does not discard them. Cancel closed attempts during setup so they cannot recreate background connections.
+- Batch queued Android UDP packets without copying payloads or delaying sends, and keep packet accounting correct when a send fails.
+- Reuse network output buffers during empty completion turns.
+- Activate public TestFlight builds after approval and verify external testing status. Publish signed desktop and command-line packages through Haps using the same attested release binaries.
+
+### Apple
+
+- Filter unnecessary notifications on iPhone.
+- Improve background message handling and recovery after connection interruptions.
+- Keep startup smooth while restoring your account.
+- Improve device linking and message-history transfer, including accounts used with older app versions.
+- Keep sign-in codes available and show clearer linking errors without waiting for a timeout.
+- Catch up on missed reactions sooner when reopening the app.
+- Fix missed messages when a nearby device connects later.
+- Share iPhone debug information directly through the system share sheet.
+
+### Zapstore
+
+- Receive messages and calls in the background on Android devices without Google Play services.
+- Keep nearby delivery working after Android restarts the app.
+- Return to the background when an incoming call ends.
+- Improve device linking and show clearer errors.
+- Catch up on missed reactions sooner when reopening the app.
+- Fix missed messages when a nearby device connects later.
+
 ## v2026.10.7
 
 ### GitHub
