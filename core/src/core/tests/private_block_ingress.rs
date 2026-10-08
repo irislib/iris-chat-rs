@@ -152,19 +152,8 @@ fn private_block_mobile_push_decryption_and_cache_suppress_blocked_period() {
         let before = resolve();
         assert!(before.should_show, "positive decrypt control: {before:?}");
         assert_eq!(before.body, "blocked notification body");
-        core.set_user_blocked(&peer.public_key().to_hex(), true);
-        let blocked = resolve();
-        assert!(!blocked.should_show);
-        assert!(blocked.body.is_empty());
-        core.set_user_blocked(&peer.public_key().to_hex(), false);
-        let unblocked = resolve();
-        assert!(
-            !unblocked.should_show,
-            "same-second blocked period cannot appear after unblock"
-        );
-        assert!(unblocked.body.is_empty());
-        // A lagging sibling may have persisted this post before learning the block.
-        // Force the production SQLite preview fallback with the original outer ID.
+        // A lagging sibling can already have this post in its SQLite cache.
+        // Prove that cache is readable before introducing the block policy.
         let chat_id = if group {
             "group:shared".to_string()
         } else {
@@ -176,17 +165,58 @@ fn private_block_mobile_push_decryption_and_cache_suppress_blocked_period() {
             "blocked cached body".into(),
             now,
             None,
-            Some(event.id.to_hex()),
-            Some(peer.public_key().to_hex()),
             None,
+            Some(peer.public_key().to_hex()),
+            Some(event.id.to_hex()),
         );
         core.persist_best_effort_inner();
-        let cached = decrypt_mobile_push_notification(
-            dir.path().to_string_lossy().into_owned(),
-            owner.public_key().to_hex(),
-            Keys::generate().secret_key().to_secret_hex(),
-            payload,
+        let unavailable_device = Keys::generate();
+        let resolve_cache = || {
+            decrypt_mobile_push_notification(
+                dir.path().to_string_lossy().into_owned(),
+                owner.public_key().to_hex(),
+                unavailable_device.secret_key().to_secret_hex(),
+                payload.clone(),
+            )
+        };
+        let cached_before = resolve_cache();
+        assert!(
+            cached_before.should_show,
+            "positive SQLite fallback: {cached_before:?}"
         );
+        assert_eq!(cached_before.body, "blocked cached body");
+        // Fixed signed timestamps keep this boundary regression independent of
+        // whether the wall clock ticks during the cryptographic fixture setup.
+        assert!(core.apply_private_block_event(signed_block_transition(
+            &owner,
+            &owner,
+            &peer.public_key().to_hex(),
+            1,
+            now,
+            now,
+            true
+        )));
+        core.persist_best_effort_inner();
+        let blocked = resolve();
+        assert!(!blocked.should_show);
+        assert!(blocked.body.is_empty());
+        assert!(core.apply_private_block_event(signed_block_transition(
+            &owner,
+            &owner,
+            &peer.public_key().to_hex(),
+            2,
+            now,
+            now,
+            false
+        )));
+        core.persist_best_effort_inner();
+        let unblocked = resolve();
+        assert!(
+            !unblocked.should_show,
+            "same-second blocked period cannot appear after unblock"
+        );
+        assert!(unblocked.body.is_empty());
+        let cached = resolve_cache();
         assert!(!cached.should_show);
         assert!(cached.body.is_empty());
     }
