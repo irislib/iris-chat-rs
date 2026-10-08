@@ -14,11 +14,15 @@ namespace IrisChat.Chrome;
 public class MessageInfoWindow : Window
 {
     private readonly ChatMessageSnapshot _message;
+    private readonly AppManager _manager;
+    private readonly string? _accountAtOpen;
     private sealed record ParticipantInfo(string? OwnerPubkeyHex, string Name, string? PictureUrl, bool IsMe);
 
     public MessageInfoWindow(ChatMessageSnapshot message)
     {
         _message = message;
+        _manager = App.CurrentManager;
+        _accountAtOpen = _manager.Account?.publicKeyHex;
         Title = "Message Details";
         Width = 460;
         Height = 600;
@@ -32,13 +36,21 @@ public class MessageInfoWindow : Window
         Content = BuildContent();
         PropertyChangedEventHandler changed = (_, _) =>
         {
-            var chat = App.CurrentManager.CurrentChat;
-            var current = chat?.chatId == message.chatId ? chat.messages.FirstOrDefault(m => m.id == message.id) : null;
+            var current = CurrentMessage();
             if (current == null || current.deletedForEveryone != message.deletedForEveryone ||
                 current.body != message.body || !(current.editHistory ?? []).SequenceEqual(message.editHistory ?? [])) Close();
         };
-        Loaded += (_, _) => App.CurrentManager.PropertyChanged += changed;
-        Closed += (_, _) => App.CurrentManager.PropertyChanged -= changed;
+        Loaded += (_, _) => { _manager.PropertyChanged += changed; changed(this, new PropertyChangedEventArgs(null)); };
+        Closed += (_, _) => _manager.PropertyChanged -= changed;
+    }
+
+    private ChatMessageSnapshot? CurrentMessage()
+    {
+        if (_accountAtOpen == null || _manager.Account?.publicKeyHex != _accountAtOpen ||
+            _manager.ActiveScreen is not Screen.Chat { chatId: var activeChatId } || activeChatId != _message.chatId)
+            return null;
+        var chat = _manager.CurrentChat;
+        return chat?.chatId == _message.chatId ? chat.messages.FirstOrDefault(m => m.id == _message.id) : null;
     }
 
     private FrameworkElement BuildContent()
@@ -53,6 +65,26 @@ public class MessageInfoWindow : Window
         var stack = new StackPanel { Orientation = Orientation.Vertical };
 
         stack.Children.Add(BuildHeader());
+        if (MessageEditHistoryWindow.CanShow(_message))
+        {
+            var history = new Button
+            {
+                Content = "Edit history",
+                Name = "EditHistoryButton",
+                Padding = new Thickness(12, 6, 12, 6),
+                Margin = new Thickness(0, 0, 0, 12),
+                HorizontalAlignment = HorizontalAlignment.Left,
+            };
+            history.Click += (_, _) =>
+            {
+                var parent = Owner;
+                var current = CurrentMessage();
+                Close();
+                if (current != null && MessageEditHistoryWindow.CanShow(current))
+                    new MessageEditHistoryWindow(current) { Owner = parent }.ShowDialog();
+            };
+            stack.Children.Add(history);
+        }
         stack.Children.Add(BuildSection("Status", BuildStatusRows()));
         stack.Children.Add(BuildSection("People", BuildPeopleRows()));
         var transportRows = BuildTransportRows();

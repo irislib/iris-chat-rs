@@ -103,6 +103,7 @@ pub fn run_layout() {
         manager.current_state().current_chat.is_some()
     });
     crate::app_manager::verify_search_ui(manager.clone());
+    crate::screens::chat_list::verify_timestamps_ui(manager.clone());
     eprintln!("Checking responsive layout");
     layout_tests::run(manager.clone());
     eprintln!("Checking Settings and text size");
@@ -112,6 +113,8 @@ pub fn run_layout() {
     crate::screens::chat::verify_message_actions_ui(manager.clone());
     eprintln!("Checking outside-click dismissal");
     crate::widgets::dialogs::verify_ui();
+    eprintln!("Checking edit history");
+    crate::screens::chat::verify_edit_history_ui(manager.clone());
     println!(
         "PASS: responsive layout, stable inputs, sync status, hover actions and click-away dialogs"
     );

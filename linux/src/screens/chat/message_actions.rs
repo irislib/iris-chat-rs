@@ -4,6 +4,10 @@ mod hover;
 pub(super) use hover::install_hover_actions;
 #[cfg(feature = "ui-tests")]
 pub use hover::verify_ui;
+#[cfg(feature = "ui-tests")]
+mod history_tests;
+#[cfg(feature = "ui-tests")]
+pub use history_tests::verify_edit_history_ui;
 
 pub(super) fn can_delete_for_everyone(message: &ChatMessageSnapshot) -> bool {
     message.is_outgoing
@@ -43,11 +47,17 @@ pub(super) fn append_actions(
     }
     if !message.deleted_for_everyone && !message.edit_history.is_empty() {
         let history = gtk::Button::with_label("Edit history");
+        history.set_widget_name("messageEditHistoryMenu");
         history.add_css_class("flat");
         let target = message.clone();
         let manager = manager.clone();
+        let account = account_identity(&manager.current_state());
         let popover = popover.clone();
         history.connect_clicked(move |button| {
+            if account.is_none() || account_identity(&manager.current_state()) != account {
+                popover.popdown();
+                return;
+            }
             let parent = button
                 .root()
                 .and_then(|root| root.downcast::<gtk::Window>().ok());
@@ -136,7 +146,11 @@ pub(super) fn history_button(
     button.set_tooltip_text(Some("Edit history"));
     let target = message.clone();
     let manager = manager.clone();
+    let account = account_identity(&manager.current_state());
     button.connect_clicked(move |button| {
+        if account.is_none() || account_identity(&manager.current_state()) != account {
+            return;
+        }
         let parent = button
             .root()
             .and_then(|root| root.downcast::<gtk::Window>().ok());
@@ -145,11 +159,18 @@ pub(super) fn history_button(
     button
 }
 
-fn present_history(
+pub(super) fn present_history(
     parent: Option<&gtk::Window>,
     target: &ChatMessageSnapshot,
     manager: &Rc<AppManager>,
 ) {
+    let state = manager.current_state();
+    let Some((_, target)) = live_message(&state, target) else {
+        return;
+    };
+    if target.deleted_for_everyone || target.edit_history.is_empty() {
+        return;
+    }
     let dialog = adw::Dialog::builder()
         .title("Edit history")
         .content_width(440)
@@ -158,6 +179,7 @@ fn present_history(
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&adw::HeaderBar::new());
     let versions = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    versions.set_widget_name("editHistoryVersions");
     versions.set_margin_top(16);
     versions.set_margin_bottom(20);
     versions.set_margin_start(20);
@@ -170,17 +192,58 @@ fn present_history(
     populate_history(&versions, target);
     crate::widgets::dialogs::present(&dialog, parent);
 
-    let mut rendered = target.edit_history.clone();
+    let mut rendered = (target.body.clone(), target.edit_history.clone());
     watch_message(&dialog, target, manager, move |message| {
         if message.deleted_for_everyone || message.edit_history.is_empty() {
             return false;
         }
-        if rendered != message.edit_history {
+        if rendered.0 != message.body || rendered.1 != message.edit_history {
             populate_history(&versions, message);
-            rendered = message.edit_history.clone();
+            rendered = (message.body.clone(), message.edit_history.clone());
         }
         true
     });
+}
+
+pub(super) fn account_identity(state: &AppState) -> Option<(String, String)> {
+    state.account.as_ref().map(|account| {
+        (
+            account.public_key_hex.clone(),
+            account.device_public_key_hex.clone(),
+        )
+    })
+}
+
+pub(super) fn live_message<'a>(
+    state: &'a AppState,
+    target: &ChatMessageSnapshot,
+) -> Option<(&'a CurrentChatSnapshot, &'a ChatMessageSnapshot)> {
+    state.account.as_ref()?;
+    let screen = state
+        .router
+        .screen_stack
+        .last()
+        .unwrap_or(&state.router.default_screen);
+    if !matches!(
+        screen,
+        iris_chat_core::Screen::Chat { chat_id }
+            | iris_chat_core::Screen::DirectChatInfo { chat_id }
+            if chat_id == &target.chat_id
+    ) {
+        return None;
+    }
+    let chat = state
+        .current_chat
+        .as_ref()
+        .filter(|chat| chat.chat_id == target.chat_id)?;
+    let message = chat.messages.iter().find(|message| {
+        message.id == target.id
+            && message.chat_id == target.chat_id
+            && message
+                .expires_at_secs
+                .is_none_or(|expires| expires > unix_now())
+    })?;
+    Some((chat, message))
 }
 
 // History and details must stop exposing old content after deletion,
@@ -193,22 +256,18 @@ pub(super) fn watch_message(
 ) {
     let weak = dialog.downgrade();
     let manager = manager.clone();
-    let chat_id = target.chat_id.clone();
-    let message_id = target.id.clone();
+    let target = target.clone();
+    let account = account_identity(&manager.current_state());
     let source = glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
         let Some(dialog) = weak.upgrade() else {
             return glib::ControlFlow::Break;
         };
         let state = manager.current_state();
-        let message = state
-            .current_chat
-            .as_ref()
-            .filter(|chat| chat.chat_id == chat_id)
-            .and_then(|chat| {
-                chat.messages
-                    .iter()
-                    .find(|message| message.id == message_id)
-            });
+        let same_account = account.is_some() && account_identity(&state) == account;
+        let message = same_account
+            .then(|| live_message(&state, &target))
+            .flatten()
+            .map(|(_, message)| message);
         if message.is_none_or(|message| !update(message)) {
             dialog.close();
         }
@@ -223,39 +282,81 @@ pub(super) fn watch_message(
 }
 
 fn populate_history(container: &gtk::Box, message: &ChatMessageSnapshot) {
-    while let Some(child) = container.first_child() {
-        container.remove(&child);
+    let mut existing = std::collections::HashMap::new();
+    let mut child = container.first_child();
+    while let Some(row) = child {
+        child = row.next_sibling();
+        existing.insert(row.widget_name().to_string(), row);
     }
-    for (index, version) in message.edit_history.iter().enumerate() {
-        let row = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        let title = if index == 0 {
-            "Original".to_owned()
-        } else if index + 1 == message.edit_history.len() {
+    let mut previous = None::<gtk::Widget>;
+    for (index, version) in message.edit_history.iter().enumerate().rev() {
+        let name = format!("editHistoryVersion-{}", version.id);
+        let row = existing.remove(&name).unwrap_or_else(|| {
+            let row = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            row.set_widget_name(&name);
+            let heading = gtk::Label::new(None);
+            heading.add_css_class("heading");
+            heading.set_xalign(0.0);
+            row.append(&heading);
+            let time = gtk::Label::new(None);
+            time.add_css_class("dim-label");
+            time.add_css_class("caption");
+            time.set_selectable(true);
+            time.set_xalign(0.0);
+            row.append(&time);
+            let body = gtk::Label::new(None);
+            body.set_wrap(true);
+            body.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+            body.set_selectable(true);
+            body.set_xalign(0.0);
+            row.append(&body);
+            container.append(&row);
+            row.upcast()
+        });
+        let title = if index + 1 == message.edit_history.len() {
             "Current".to_owned()
+        } else if index == 0 {
+            "Original".to_owned()
         } else {
             format!("Edit {index}")
         };
-        let heading = gtk::Label::new(Some(&title));
-        heading.add_css_class("heading");
-        heading.set_xalign(0.0);
-        row.append(&heading);
         let time =
             glib::DateTime::from_unix_local(version.created_at_secs.min(i64::MAX as u64) as i64)
                 .ok()
                 .and_then(|time| time.format("%x %X").ok())
                 .map(|text| text.to_string())
                 .unwrap_or_default();
-        let time = gtk::Label::new(Some(&time));
-        time.add_css_class("dim-label");
-        time.add_css_class("caption");
-        time.set_xalign(0.0);
-        row.append(&time);
-        let body = gtk::Label::new(Some(&version.body));
-        body.set_wrap(true);
-        body.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        body.set_selectable(true);
-        body.set_xalign(0.0);
-        row.append(&body);
-        container.append(&row);
+        let mut label = row.first_child();
+        for text in [
+            title.as_str(),
+            time.as_str(),
+            reply_stripped_body(&version.body),
+        ] {
+            let current = label.unwrap().downcast::<gtk::Label>().unwrap();
+            label = current.next_sibling();
+            // Version ids are stable. Leave unchanged labels and selection intact.
+            if current.text() != text {
+                current.set_text(text);
+            }
+        }
+        container.reorder_child_after(&row, previous.as_ref());
+        previous = Some(row);
+    }
+    for row in existing.into_values() {
+        if let Some(window) = container.root().and_downcast::<gtk::Window>() {
+            if gtk::prelude::GtkWindowExt::focus(&window)
+                .is_some_and(|focused| focused == row || focused.is_ancestor(&row))
+            {
+                // A removed revision cannot retain selection; focus the stable
+                // scrolling control before GTK releases the selectable label.
+                if container
+                    .ancestor(gtk::ScrolledWindow::static_type())
+                    .is_none_or(|scroll| !scroll.grab_focus())
+                {
+                    gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
+                }
+            }
+        }
+        container.remove(&row);
     }
 }

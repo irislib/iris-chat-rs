@@ -452,6 +452,7 @@ struct ChatMessageRow: View, Equatable {
             canReplyAndReact: canReplyAndReact,
             canCopyAndForward: !message.deletedForEveryone,
             onEdit: irisCanEditMessage(message) && canReplyAndReact ? onEdit : nil,
+            onEditHistory: irisCanViewMessageEditHistory(message) ? onEditHistory : nil,
             onDeleteForEveryone: message.isOutgoing && !message.deletedForEveryone && canReplyAndReact ? onDeleteForEveryone : nil,
             onShowReactionPicker: { showReactionPicker = true },
             onReply: onReply,
@@ -632,7 +633,7 @@ struct ChatMessageRow: View, Equatable {
                                 // alignment for incoming bubbles is
                                 // Signal-ish-but-leading on iOS.
                                 HStack(spacing: 6) {
-                                    if !message.editHistory.isEmpty && !message.deletedForEveryone {
+                                    if irisCanViewMessageEditHistory(message) {
                                         Button("Edited", action: onEditHistory)
                                             .buttonStyle(.plain)
                                             .irisHoverPointer()
@@ -696,6 +697,10 @@ struct ChatMessageRow: View, Equatable {
                                 canReplyAndReact: canReplyAndReact,
                                 onEdit: irisCanEditMessage(message) && canReplyAndReact ? {
                                     actionAfterDismiss = onEdit
+                                    showActionsSheet = false
+                                } : nil,
+                                onEditHistory: irisCanViewMessageEditHistory(message) ? {
+                                    actionAfterDismiss = onEditHistory
                                     showActionsSheet = false
                                 } : nil,
                                 onDeleteForEveryone: message.isOutgoing && !message.deletedForEveryone && canReplyAndReact ? {

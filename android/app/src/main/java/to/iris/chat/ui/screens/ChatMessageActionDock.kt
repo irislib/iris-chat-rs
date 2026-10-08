@@ -48,6 +48,7 @@ internal fun MessageActionDock(
     onDelete: () -> Unit,
     canCopyAndForward: Boolean = true,
     onEdit: (() -> Unit)? = null,
+    onEditHistory: (() -> Unit)? = null,
     onDeleteForEveryone: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -88,6 +89,9 @@ internal fun MessageActionDock(
                 ) {
                     onEdit?.let { action ->
                         DropdownMenuItem(text = { Text("Edit") }, onClick = { menuOpen = false; action() })
+                    }
+                    onEditHistory?.let { action ->
+                        DropdownMenuItem(text = { Text("Edit history") }, onClick = { menuOpen = false; action() })
                     }
                     if (canCopyAndForward) DropdownMenuItem(
                         text = { Text("Copy text") },
@@ -166,4 +170,3 @@ private fun ActionDockIconButton(
         )
     }
 }
-

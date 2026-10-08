@@ -653,6 +653,7 @@ struct ChatScreen: View {
                 .irisModalSurface()
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+                .irisDismissOnMacOutsideClick { editHistorySelection = nil }
         }
         .confirmationDialog("Delete for everyone?", isPresented: Binding(
             get: { deleteForEveryoneTarget != nil },

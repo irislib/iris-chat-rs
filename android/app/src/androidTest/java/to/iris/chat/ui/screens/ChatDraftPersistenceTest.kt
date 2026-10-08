@@ -79,6 +79,7 @@ class ChatDraftPersistenceTest {
     @Test fun editSaveAndCancelPreserveTheUnsentDraft() = withChat { fixture ->
         val input = compose.onNodeWithTag("chatMessageInput")
         compose.onNodeWithTag("chatMessage-edit-target").performTouchInput { longClick() }
+        compose.onNodeWithText("Edit history", useUnmergedTree = true).assertDoesNotExist()
         compose.onNodeWithText("Edit", useUnmergedTree = true).performClick()
         input.assertTextEquals("Original message")
         input.performTextReplacement("Corrected message")
@@ -120,15 +121,87 @@ class ChatDraftPersistenceTest {
         compose.onNodeWithTag("messageEditHistory").assertExists()
         compose.onNodeWithText("Original").assertExists()
         compose.onNodeWithText("Current").assertExists()
-        compose.onNodeWithText("Close").performClick()
         fixture.updateMessage { it.copy(body = "", editHistory = emptyList(), deletedForEveryone = true) }
+        compose.onNodeWithTag("messageEditHistory").assertDoesNotExist()
         compose.onNodeWithText("Message deleted").assertExists()
         compose.onNodeWithTag("chatMessageEdited-edit-target").assertDoesNotExist()
         compose.onNodeWithTag("chatMessage-edit-target").performTouchInput { longClick() }
         compose.onNodeWithText("Edit", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithText("Edit history", useUnmergedTree = true).assertDoesNotExist()
         compose.onNodeWithText("Forward", useUnmergedTree = true).assertDoesNotExist()
         compose.onNodeWithText("Delete for everyone", useUnmergedTree = true).assertDoesNotExist()
         compose.onNodeWithText("Delete for me", useUnmergedTree = true).assertExists()
+    }
+
+    @Test fun receivedMessageHistoryIsDiscoverableInMenuAndDetailsAndUpdatesLive() = withChat { fixture ->
+        fixture.updateMessage { message -> message.copy(isOutgoing = false, body = "Newest version", editHistory = listOf(
+            MessageEditSnapshot("original", "Original message", 1uL),
+            MessageEditSnapshot("middle", "Middle version", 2uL),
+            MessageEditSnapshot("newest", "Newest version", 3uL),
+        )) }
+        compose.onNodeWithTag("chatMessage-edit-target").performTouchInput { longClick() }
+        compose.onNodeWithText("Edit", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithText("Edit history", useUnmergedTree = true).performClick()
+        val newestTop = compose.onNodeWithTag("messageEditVersion-newest").fetchSemanticsNode().boundsInRoot.top
+        val middleTop = compose.onNodeWithTag("messageEditVersion-middle").fetchSemanticsNode().boundsInRoot.top
+        val originalTop = compose.onNodeWithTag("messageEditVersion-original").fetchSemanticsNode().boundsInRoot.top
+        assertTrue("History is newest first", newestTop < middleTop && middleTop < originalTop)
+        compose.onNodeWithText("Current").assertExists()
+        compose.onNodeWithText("Edit 1").assertExists()
+        compose.onNodeWithText("Original").assertExists()
+        fixture.updateMessage { message -> message.copy(body = "Latest live edit", editHistory = message.editHistory +
+            MessageEditSnapshot("live", "Latest live edit", 4uL)) }
+        compose.onNodeWithTag("messageEditVersion-live").assertExists()
+        compose.onNodeWithText("Edit 2").assertExists()
+        compose.onNodeWithText("Close").performClick()
+
+        compose.onNodeWithTag("chatMessage-edit-target").performTouchInput { longClick() }
+        compose.onNodeWithText("Info", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("messageInfoDialog").assertExists()
+        compose.onNodeWithText("Edit history", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("messageInfoDialog").assertDoesNotExist()
+        compose.onNodeWithTag("messageEditHistory").assertExists()
+        fixture.updateState { state -> state.copy(currentChat = state.currentChat!!.copy(messages = emptyList())) }
+        compose.onNodeWithTag("messageEditHistory").assertDoesNotExist()
+    }
+
+    @Test fun editHistoryClosesWhenMessageExpires() = withChat { fixture ->
+        fixture.openHistory()
+        fixture.updateMessage { it.copy(expiresAtSecs = 1uL) }
+        compose.onNodeWithTag("messageEditHistory").assertDoesNotExist()
+    }
+
+    @Test fun editHistoryClosesWhenTheAccountChanges() = withChat { fixture ->
+        fixture.openHistory()
+        fixture.updateState { state -> state.copy(account = state.account!!.copy(publicKeyHex = "another-account")) }
+        compose.onNodeWithTag("messageEditHistory").assertDoesNotExist()
+    }
+
+    @Test fun editHistoryClosesWhenTheChatChanges() = withChat { fixture ->
+        fixture.openHistory()
+        fixture.updateState { state -> state.copy(currentChat = state.currentChat!!.copy(chatId = "another-chat")) }
+        compose.onNodeWithTag("messageEditHistory").assertDoesNotExist()
+    }
+
+    @Test fun editHistoryClosesWhenLeavingTheChatRoute() = withChat { fixture ->
+        fixture.openHistory()
+        fixture.updateState { state -> state.copy(router = Router(Screen.ChatList, listOf(Screen.Settings))) }
+        compose.onNodeWithTag("messageEditHistory").assertDoesNotExist()
+    }
+
+    @Test fun desktopMoreMenuOffersEditHistory() {
+        var opened = false
+        compose.setContent { IrisChatTheme(darkTheme = false) {
+            MessageActionDock(
+                canReplyAndReact = false,
+                postReactionSuggestions = emptyList(),
+                onReact = {}, onReply = {}, onForward = {}, onCopy = {}, onInfo = {}, onDelete = {},
+                onEditHistory = { opened = true },
+            )
+        } }
+        compose.onNodeWithContentDescription("More").performClick()
+        compose.onNodeWithText("Edit history").performClick()
+        compose.runOnIdle { assertTrue(opened) }
     }
 
     private fun withChat(block: (Fixture) -> Unit) {
@@ -176,10 +249,22 @@ class ChatDraftPersistenceTest {
             .filter { it.chatId == chatId }.map { it.text }
 
         fun updateMessage(transform: (ChatMessageSnapshot) -> ChatMessageSnapshot) {
+            updateState { state -> state.copy(currentChat = state.currentChat!!.copy(messages = state.currentChat!!.messages.map(transform))) }
+        }
+
+        fun openHistory() {
+            updateMessage { message -> message.copy(body = "Corrected message", editHistory = listOf(
+                MessageEditSnapshot("original", "Original message", 1uL),
+                MessageEditSnapshot("edited", "Corrected message", 2uL),
+            )) }
+            compose.onNodeWithTag("chatMessageEdited-edit-target").performClick()
+            compose.onNodeWithTag("messageEditHistory").assertExists()
+        }
+
+        fun updateState(transform: (AppState) -> AppState) {
             compose.runOnIdle {
                 val state = rust.currentState
-                val updated = state.copy(rev = state.rev + 1uL,
-                    currentChat = state.currentChat!!.copy(messages = state.currentChat!!.messages.map(transform)))
+                val updated = transform(state).copy(rev = state.rev + 1uL)
                 rust.currentState = updated
                 rust.emit(AppUpdate.FullState(updated))
             }

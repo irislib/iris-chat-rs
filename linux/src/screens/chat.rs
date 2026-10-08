@@ -34,6 +34,8 @@ pub(super) use expiry::settings_row as disappearing_messages_row;
 mod grouping;
 mod message_actions;
 #[cfg(feature = "ui-tests")]
+pub use message_actions::verify_edit_history_ui;
+#[cfg(feature = "ui-tests")]
 pub use message_actions::verify_ui as verify_message_actions_ui;
 mod safety;
 mod timeline;
@@ -424,9 +426,13 @@ fn group_id_from_chat_id(chat_id: &str) -> Option<String> {
 fn present_message_info(
     parent: Option<&gtk::Window>,
     message: &ChatMessageSnapshot,
-    chat: &CurrentChatSnapshot,
+    _chat: &CurrentChatSnapshot,
     manager: &Rc<AppManager>,
 ) {
+    let state = manager.current_state();
+    let Some((chat, message)) = message_actions::live_message(&state, message) else {
+        return;
+    };
     let dialog = adw::Dialog::builder()
         .title("Message Details")
         .content_width(420)
@@ -464,6 +470,32 @@ fn present_message_info(
     });
     header_row.append(&copy_all);
     content.append(&header_row);
+    if !message.deleted_for_everyone && !message.edit_history.is_empty() {
+        let history = adw::ActionRow::builder()
+            .title("Edit history")
+            .activatable(true)
+            .build();
+        history.set_widget_name("messageInfoEditHistory");
+        history.add_prefix(&gtk::Image::from_icon_name("document-open-recent-symbolic"));
+        history.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+        let target = message.clone();
+        let manager = manager.clone();
+        let account = message_actions::account_identity(&state);
+        let details = dialog.downgrade();
+        history.connect_activated(move |row| {
+            if message_actions::account_identity(&manager.current_state()) != account {
+                return;
+            }
+            let parent = row.root().and_downcast::<gtk::Window>();
+            if let Some(details) = details.upgrade() {
+                details.close();
+            }
+            message_actions::present_history(parent.as_ref(), &target, &manager);
+        });
+        let group = adw::PreferencesGroup::new();
+        group.add(&history);
+        content.append(&group);
+    }
     content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 
     // Status section
@@ -478,8 +510,6 @@ fn present_message_info(
     }
     info_value_row(&status_section, "Type", message_info_kind(message));
     content.append(&status_section);
-
-    let state = manager.current_state();
 
     // People
     let people_section = info_section("People");
@@ -1249,7 +1279,14 @@ fn build_message_popover(
     let info_message = message.clone();
     let info_chat = chat.clone();
     let manager_for_info = manager.clone();
+    let info_account = message_actions::account_identity(&manager.current_state());
     info_btn.connect_clicked(move |btn| {
+        if info_account.is_none()
+            || message_actions::account_identity(&manager_for_info.current_state()) != info_account
+        {
+            popover_for_info.popdown();
+            return;
+        }
         let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
         present_message_info(
             parent.as_ref(),

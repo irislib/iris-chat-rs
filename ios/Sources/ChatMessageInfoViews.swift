@@ -13,12 +13,15 @@ struct MessageInfoSheet: View {
     let chat: CurrentChatSnapshot?
     @ObservedObject var manager: AppManager
     let onClose: () -> Void
+    private let historyTarget: MessageEditHistoryTarget
+    @State private var showingEditHistory = false
 
     init(message: ChatMessageSnapshot, chat: CurrentChatSnapshot?, manager: AppManager, onClose: @escaping () -> Void) {
         self.initialMessage = message
         self.chat = chat
         self.manager = manager
         self.onClose = onClose
+        self.historyTarget = MessageEditHistoryTarget(message: message, accountID: manager.state.account?.publicKeyHex)
     }
 
     private var message: ChatMessageSnapshot {
@@ -49,6 +52,24 @@ struct MessageInfoSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     header
+                    if historyTarget.resolve(in: manager.state) != nil {
+                        IrisSectionCard {
+                            Button { showingEditHistory = true } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "clock.arrow.circlepath")
+                                    Text("Edit history")
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .foregroundStyle(palette.muted)
+                                }
+                                .font(.body)
+                                .foregroundStyle(palette.textPrimary)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.irisPlain)
+                            .accessibilityIdentifier("messageInfoEditHistoryButton")
+                        }
+                    }
                     statusSection
                     peopleSection
                     transportSection
@@ -82,6 +103,13 @@ struct MessageInfoSheet: View {
         }
         .accessibilityIdentifier("messageInfoSheet")
         .irisModalSurface()
+        .sheet(isPresented: $showingEditHistory) {
+            MessageEditHistorySheet(target: historyTarget, manager: manager) { showingEditHistory = false }
+                .irisModalSurface()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .irisDismissOnMacOutsideClick { showingEditHistory = false }
+        }
     }
 
     private var header: some View {
@@ -694,6 +722,7 @@ struct ChatMessageActionDock: View {
     var canReplyAndReact = true
     var canCopyAndForward = true
     var onEdit: (() -> Void)? = nil
+    var onEditHistory: (() -> Void)? = nil
     var onDeleteForEveryone: (() -> Void)? = nil
     let onShowReactionPicker: () -> Void
     let onReply: () -> Void
@@ -736,6 +765,7 @@ struct ChatMessageActionDock: View {
                 ChatMessageOverflowActionsPopover(
                     canCopyAndForward: canCopyAndForward,
                     onEdit: onEdit,
+                    onEditHistory: onEditHistory,
                     onDeleteForEveryone: onDeleteForEveryone,
                     onForward: onForward,
                     onCopy: onCopy,
@@ -773,6 +803,7 @@ private struct ChatMessageOverflowActionsPopover: View {
     @Environment(\.irisPalette) private var palette
     let canCopyAndForward: Bool
     let onEdit: (() -> Void)?
+    let onEditHistory: (() -> Void)?
     let onDeleteForEveryone: (() -> Void)?
     let onForward: () -> Void
     let onCopy: () -> Void
@@ -783,6 +814,9 @@ private struct ChatMessageOverflowActionsPopover: View {
         VStack(alignment: .leading, spacing: 0) {
             if let onEdit {
                 actionButton("Edit", systemName: "pencil", identifier: "messageEditMenuItem", action: onEdit)
+            }
+            if let onEditHistory {
+                actionButton("Edit history", systemName: "clock.arrow.circlepath", identifier: "messageEditHistoryMenuItem", action: onEditHistory)
             }
             if canCopyAndForward {
                 actionButton(
@@ -850,19 +884,31 @@ let quickReactionEmojis: [String] = ["❤️", "👍", "😂", "😮", "😢", "
 
 struct MessageEditHistorySheet: View {
     @Environment(\.irisPalette) private var palette
-    let initialMessage: ChatMessageSnapshot
+    let target: MessageEditHistoryTarget
     @ObservedObject var manager: AppManager
     let onClose: () -> Void
 
-    private var message: ChatMessageSnapshot {
-        guard let current = manager.state.currentChat, current.chatId == initialMessage.chatId else { return initialMessage }
-        return current.messages.first { $0.id == initialMessage.id } ?? initialMessage
+    init(initialMessage: ChatMessageSnapshot, manager: AppManager, onClose: @escaping () -> Void) {
+        self.init(target: MessageEditHistoryTarget(message: initialMessage, accountID: manager.state.account?.publicKeyHex),
+                  manager: manager, onClose: onClose)
+    }
+
+    init(target: MessageEditHistoryTarget, manager: AppManager, onClose: @escaping () -> Void) {
+        self.target = target
+        self.manager = manager
+        self.onClose = onClose
+    }
+
+    private var message: ChatMessageSnapshot? {
+        target.resolve(in: manager.state)
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                MessageEditHistoryVersions(message: message)
+                if let message {
+                    MessageEditHistoryVersions(message: message)
+                }
             }
             .background(palette.background)
             .navigationTitle("Edit history")
@@ -874,6 +920,23 @@ struct MessageEditHistorySheet: View {
 #endif
         }
         .accessibilityIdentifier("messageEditHistory")
+        .onReceive(manager.$state) { state in
+            if target.resolve(in: state) == nil { onClose() }
+        }
+        .task(id: message?.expiresAtSecs) {
+            guard let expiresAtSecs = message?.expiresAtSecs else { return }
+            // Expiry must close the sheet even before the next core update.
+            while !Task.isCancelled {
+                let remaining = Double(expiresAtSecs) - Date().timeIntervalSince1970
+                if remaining <= 0 {
+                    onClose()
+                    return
+                }
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(min(remaining, 3_600) * 1_000_000_000))
+                } catch { return }
+            }
+        }
     }
 }
 
@@ -886,10 +949,10 @@ struct MessageEditHistoryVersions: View {
             if message.deletedForEveryone {
                 Text("Message deleted").italic()
             } else {
-                ForEach(Array(message.editHistory.enumerated()), id: \.element.id) { index, version in
+                ForEach(irisMessageEditHistoryRows(message)) { version in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Text(index == 0 ? "Original" : (index == message.editHistory.count - 1 ? "Current" : "Edit"))
+                            Text(version.label)
                                 .font(.headline)
                             Spacer()
                             Text(Date(timeIntervalSince1970: TimeInterval(version.createdAtSecs)), style: .date)

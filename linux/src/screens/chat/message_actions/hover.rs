@@ -71,7 +71,11 @@ pub fn install_hover_actions(
     let target = message.clone();
     let chat = chat.clone();
     let manager = manager.clone();
+    let account = account_identity(&manager.current_state());
     info.connect_clicked(move |button| {
+        if account.is_none() || account_identity(&manager.current_state()) != account {
+            return;
+        }
         let parent = button
             .root()
             .and_then(|root| root.downcast::<gtk::Window>().ok());

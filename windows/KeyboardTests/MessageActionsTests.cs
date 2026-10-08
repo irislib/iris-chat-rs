@@ -46,6 +46,9 @@ internal static class MessageActionsTests
         Check(((Button)bubble.FindName("EditedButton")).Visibility == Visibility.Visible,
             "Edited is visible even in a grouped message");
         Check(bubble.ContextMenu.Items.OfType<MenuItem>().Any(item => Equals(item.Header, "Edit message")), "Own text offers editing");
+        Check(bubble.ContextMenu.Items.OfType<MenuItem>().Any(item => Equals(item.Header, "Edit history")), "Edited text offers history in the menu");
+        bubble.Bind(message with { isOutgoing = false });
+        Check(bubble.ContextMenu.Items.OfType<MenuItem>().Any(item => Equals(item.Header, "Edit history")), "Received messages offer history too");
         bubble.Bind(message with { deletedForEveryone = true, body = "", editHistory = [] });
         Check(((TextBox)bubble.FindName("BodyText")).Text == "Message deleted", "Deleted content is a tombstone");
         Check(((Button)bubble.FindName("EditedButton")).Visibility == Visibility.Collapsed, "Deleted message has no history link");
@@ -53,6 +56,7 @@ internal static class MessageActionsTests
             Equals(item.Header, "Edit message") || Equals(item.Header, "React") || Equals(item.Header, "Edit history")),
             "Deleted messages cannot be edited, reacted to, or expose history");
         composer.Clear();
+        EditHistoryTests.Run(window, IrisChat.App.CurrentManager);
         Console.WriteLine("PASS: message edit Save/Cancel, draft and attachment preservation, history and deleted-message controls");
     }
 

@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.AddReaction
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -45,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +69,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlin.math.abs
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -150,9 +153,12 @@ internal fun MessageBubble(
     val canReplyAndReact = chat?.isRemovedFromGroup != true && !message.deletedForEveryone
     val editAction = onEdit?.takeIf { canReplyAndReact && canEditMessage(message) }
     val deleteForEveryoneAction = onDeleteForEveryone?.takeIf { canReplyAndReact && message.isOutgoing }
-    var isEditHistoryOpen by remember(message.id) { mutableStateOf(false) }
-    if (isEditHistoryOpen && !message.deletedForEveryone) {
-        MessageEditHistoryDialog(message) { isEditHistoryOpen = false }
+    var isEditHistoryOpen by remember(message.chatId, message.id) { mutableStateOf(false) }
+    val historyAction: (() -> Unit)? = if (!message.deletedForEveryone && message.editHistory.isNotEmpty()) {
+        { isEditHistoryOpen = true }
+    } else null
+    if (isEditHistoryOpen) {
+        MessageEditHistoryDialog(message, appManager) { isEditHistoryOpen = false }
     }
     val clipboard = rememberIrisClipboard()
     val context = LocalContext.current.applicationContext
@@ -188,6 +194,7 @@ internal fun MessageBubble(
             message = message,
             chat = chat,
             appManager = appManager,
+            onEditHistory = historyAction?.let { action -> { isInfoOpen = false; action() } },
             onDismiss = { isInfoOpen = false },
         )
     }
@@ -198,6 +205,7 @@ internal fun MessageBubble(
             parsedBody = if (message.deletedForEveryone) "Message deleted" else parsed.body,
             reactions = reactions,
             onEdit = editAction?.let { action -> { isActionsSheetOpen = false; action() } },
+            onEditHistory = historyAction?.let { action -> { isActionsSheetOpen = false; action() } },
             onDeleteForEveryone = deleteForEveryoneAction?.let { action -> { isActionsSheetOpen = false; action() } },
             onDismiss = { isActionsSheetOpen = false },
             onReact = { emoji ->
@@ -367,6 +375,7 @@ internal fun MessageBubble(
                         canReplyAndReact = canReplyAndReact,
                         canCopyAndForward = !message.deletedForEveryone,
                         onEdit = editAction,
+                        onEditHistory = historyAction,
                         onDeleteForEveryone = deleteForEveryoneAction,
                         postReactionSuggestions = postReactionSuggestions,
                         onReact = { emoji -> pickReaction(emoji) },
@@ -529,6 +538,7 @@ internal fun MessageBubble(
                         canReplyAndReact = canReplyAndReact,
                         canCopyAndForward = !message.deletedForEveryone,
                         onEdit = editAction,
+                        onEditHistory = historyAction,
                         onDeleteForEveryone = deleteForEveryoneAction,
                         postReactionSuggestions = postReactionSuggestions,
                         onReact = { emoji -> pickReaction(emoji) },
@@ -676,6 +686,7 @@ private fun MessageActionsSheet(
     onInfo: () -> Unit,
     onDelete: () -> Unit,
     onEdit: (() -> Unit)?,
+    onEditHistory: (() -> Unit)?,
     onDeleteForEveryone: (() -> Unit)?,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -705,6 +716,9 @@ private fun MessageActionsSheet(
                 )
                 onEdit?.let { action ->
                     MessageActionRow(icon = Icons.Rounded.Edit, label = "Edit", onClick = action)
+                }
+                onEditHistory?.let { action ->
+                    MessageActionRow(icon = Icons.Rounded.History, label = "Edit history", onClick = action)
                 }
                 if (!message.deletedForEveryone) {
                     MessageActionRow(
@@ -1345,6 +1359,7 @@ private fun MessageInfoDialog(
     message: ChatMessageSnapshot,
     chat: CurrentChatSnapshot?,
     appManager: AppManager?,
+    onEditHistory: (() -> Unit)?,
     onDismiss: () -> Unit,
 ) {
     val clipboard = rememberIrisClipboard()
@@ -1407,6 +1422,10 @@ private fun MessageInfoDialog(
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
+                }
+
+                onEditHistory?.let { action ->
+                    MessageActionRow(icon = Icons.Rounded.History, label = "Edit history", onClick = action)
                 }
 
                 MessageInfoSection(title = "Status") {
@@ -2014,7 +2033,38 @@ internal val ChatEmojiChoices =
 
 
 @Composable
-private fun MessageEditHistoryDialog(message: ChatMessageSnapshot, onDismiss: () -> Unit) {
+private fun MessageEditHistoryDialog(
+    message: ChatMessageSnapshot,
+    appManager: AppManager?,
+    onDismiss: () -> Unit,
+) {
+    val appState = appManager?.state?.collectAsStateWithLifecycle()
+    val accountAtOpen = remember(appManager, message.chatId, message.id) {
+        appState?.value?.account?.publicKeyHex
+    }
+    val candidate = if (appManager == null) message else {
+        appState?.value?.takeIf {
+            val active = it.router.screenStack.lastOrNull() ?: it.router.defaultScreen
+            it.account?.publicKeyHex == accountAtOpen && it.account != null &&
+                active is to.iris.chat.rust.Screen.Chat && active.chatId == message.chatId
+        }
+            ?.currentChat?.takeIf { it.chatId == message.chatId }
+            ?.messages?.find { it.id == message.id }
+    }
+    val current = candidate?.takeIf {
+        !it.deletedForEveryone && it.editHistory.isNotEmpty() &&
+            (it.expiresAtSecs?.let { expiry -> expiry > (System.currentTimeMillis() / 1000).toULong() } != false)
+    }
+    LaunchedEffect(current == null) {
+        if (current == null) onDismiss()
+    }
+    LaunchedEffect(current?.expiresAtSecs) {
+        current?.expiresAtSecs?.let { expiry ->
+            delay((expiry.toLong() * 1000 - System.currentTimeMillis()).coerceAtLeast(0))
+            onDismiss()
+        }
+    }
+    if (current == null) return
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit history") },
@@ -2025,10 +2075,17 @@ private fun MessageEditHistoryDialog(message: ChatMessageSnapshot, onDismiss: ()
                     modifier = Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()).testTag("messageEditHistory"),
                     verticalArrangement = Arrangement.spacedBy(18.dp),
                 ) {
-                    message.editHistory.forEachIndexed { index, version ->
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    current.editHistory.asReversed().forEachIndexed { index, version ->
+                        Column(
+                            modifier = Modifier.testTag("messageEditVersion-${version.id}"),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
                             Text(
-                                if (index == 0) "Original" else if (index == message.editHistory.lastIndex) "Current" else "Edit",
+                                when (index) {
+                                    0 -> "Current"
+                                    current.editHistory.lastIndex -> "Original"
+                                    else -> "Edit ${current.editHistory.lastIndex - index}"
+                                },
                                 style = MaterialTheme.typography.titleSmall,
                             )
                             Text(messageInfoDateTime(version.createdAtSecs.toLong()), style = MaterialTheme.typography.labelSmall)

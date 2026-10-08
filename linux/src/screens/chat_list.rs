@@ -14,6 +14,11 @@ use crate::screens::confirm_delete_chat;
 use crate::widgets::clickable::PointerCursorExt;
 use crate::widgets::image_cache;
 
+mod timestamps;
+#[cfg(feature = "ui-tests")]
+pub use timestamps::verify_ui as verify_timestamps_ui;
+use timestamps::Timestamps;
+
 #[derive(PartialEq)]
 struct ListKey {
     chats: Vec<ChatThreadSnapshot>,
@@ -31,6 +36,7 @@ pub(crate) struct ChatListView {
     scope: gtk::Box,
     scrolled: gtk::ScrolledWindow,
     sync: super::sync_status::SyncStatus,
+    timestamps: Timestamps,
     rendered: Option<ListKey>,
 }
 
@@ -38,6 +44,7 @@ impl ChatListView {
     pub fn new(manager: &Rc<AppManager>) -> Self {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.set_vexpand(true);
+        let timestamps = Timestamps::install(&root);
         let (search_box, entry, scope) = build_search_box(manager);
         root.append(&search_box);
         let sync = super::sync_status::SyncStatus::new();
@@ -52,6 +59,7 @@ impl ChatListView {
             scope,
             scrolled,
             sync,
+            timestamps,
             rendered: None,
         }
     }
@@ -99,7 +107,14 @@ impl ChatListView {
             let focus =
                 crate::widgets::keyboard_list::FocusBookmark::capture(self.scrolled.upcast_ref());
             let offset = self.scrolled.vadjustment().value();
-            let body = build_body(state, manager, &key.search, key.results.as_ref());
+            self.timestamps.clear();
+            let body = build_body(
+                state,
+                manager,
+                &key.search,
+                key.results.as_ref(),
+                &self.timestamps,
+            );
             if let Some(id) = key.selected.as_ref() {
                 mark_selected(body.upcast_ref(), &format!("iris-keyboard-chat-{id}"));
             }
@@ -110,6 +125,7 @@ impl ChatListView {
             }
             self.rendered = Some(key);
         }
+        self.timestamps.refresh(unix_now());
         if focus_requested {
             self.entry.grab_focus();
         }
@@ -138,12 +154,13 @@ fn build_body(
     manager: &Rc<AppManager>,
     ui_state: &SearchUiState,
     results: Option<&SearchResultSnapshot>,
+    timestamps: &Timestamps,
 ) -> gtk::Box {
     let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
     body.set_widget_name("iris-keyboard-chat-list");
     if ui_state.is_active() {
         if let Some(results) = results {
-            append_search_results(&body, state, manager, results);
+            append_search_results(&body, state, manager, results, timestamps);
         } else {
             let searching = gtk::Label::new(Some("Searching…"));
             searching.add_css_class("dim-label");
@@ -185,7 +202,9 @@ fn build_body(
                 (section_count > 1).then_some("Pinned"),
                 pinned
                     .into_iter()
-                    .map(|chat| row_for(chat, &state.preferences, now, manager).upcast())
+                    .map(|chat| {
+                        row_for(chat, &state.preferences, now, manager, timestamps).upcast()
+                    })
                     .collect(),
             );
         }
@@ -201,7 +220,9 @@ fn build_body(
                 (section_count > 1).then_some("Chats"),
                 unpinned
                     .into_iter()
-                    .map(|chat| row_for(chat, &state.preferences, now, manager).upcast())
+                    .map(|chat| {
+                        row_for(chat, &state.preferences, now, manager, timestamps).upcast()
+                    })
                     .collect(),
             );
         }
@@ -297,6 +318,7 @@ fn append_search_results(
     state: &AppState,
     manager: &Rc<AppManager>,
     results: &SearchResultSnapshot,
+    timestamps: &Timestamps,
 ) {
     container.set_margin_top(8);
     container.set_margin_bottom(12);
@@ -353,7 +375,7 @@ fn append_search_results(
         container.append(&section_label("Contacts"));
         let list = grouped_list();
         for chat in &results.contacts {
-            list.append(&row_for(chat, &state.preferences, now, manager));
+            list.append(&row_for(chat, &state.preferences, now, manager, timestamps));
         }
         container.append(&list);
         wrote_any = true;
@@ -363,7 +385,7 @@ fn append_search_results(
         container.append(&section_label("Groups"));
         let list = grouped_list();
         for chat in &results.groups {
-            list.append(&row_for(chat, &state.preferences, now, manager));
+            list.append(&row_for(chat, &state.preferences, now, manager, timestamps));
         }
         container.append(&list);
         wrote_any = true;
@@ -373,7 +395,13 @@ fn append_search_results(
         container.append(&section_label("Messages"));
         let list = grouped_list();
         for hit in &results.messages {
-            list.append(&message_hit_row(hit, &state.preferences, now, manager));
+            list.append(&message_hit_row(
+                hit,
+                &state.preferences,
+                now,
+                manager,
+                timestamps,
+            ));
         }
         container.append(&list);
         wrote_any = true;
@@ -476,6 +504,7 @@ fn message_hit_row(
     prefs: &PreferencesSnapshot,
     now: u64,
     manager: &Rc<AppManager>,
+    timestamps: &Timestamps,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(escape(&hit.chat_display_name))
@@ -508,7 +537,7 @@ fn message_hit_row(
     ));
 
     if hit.created_at_secs > 0 {
-        let label = gtk::Label::new(Some(&relative_time(hit.created_at_secs, now)));
+        let label = timestamps.label(hit.created_at_secs, now);
         label.add_css_class("caption");
         label.add_css_class("dim-label");
         label.set_valign(gtk::Align::Center);
@@ -823,6 +852,7 @@ fn row_for(
     prefs: &PreferencesSnapshot,
     now: u64,
     manager: &Rc<AppManager>,
+    timestamps: &Timestamps,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(crate::widgets::person_name::markup(
@@ -879,7 +909,7 @@ fn row_for(
     suffix.set_halign(gtk::Align::End);
 
     if let Some(secs) = chat.last_message_at_secs {
-        let label = gtk::Label::new(Some(&relative_time(secs, now)));
+        let label = timestamps.label(secs, now);
         label.add_css_class("caption");
         label.add_css_class("dim-label");
         label.set_halign(gtk::Align::End);

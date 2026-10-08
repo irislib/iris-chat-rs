@@ -88,6 +88,7 @@ struct ChatMessageActionsSheet: View {
     var explicitAuthorName: String? = nil
     var canReplyAndReact = true
     var onEdit: (() -> Void)? = nil
+    var onEditHistory: (() -> Void)? = nil
     var onDeleteForEveryone: (() -> Void)? = nil
     let onReact: (String) -> Void
     let onShowFullReactionPicker: () -> Void
@@ -107,6 +108,10 @@ struct ChatMessageActionsSheet: View {
                         actionRow(icon: "arrowshape.turn.up.left", label: "Reply", action: onReply)
                     }
                     if let onEdit { actionRow(icon: "pencil", label: "Edit", action: onEdit) }
+                    if let onEditHistory {
+                        actionRow(icon: "clock.arrow.circlepath", label: "Edit history", action: onEditHistory)
+                            .accessibilityIdentifier("messageEditHistoryMenuItem")
+                    }
                     if !message.deletedForEveryone {
                         actionRow(icon: "arrowshape.turn.up.right", label: "Forward", action: onForward)
                         actionRow(icon: "doc.on.doc", label: "Copy", action: onCopy)
