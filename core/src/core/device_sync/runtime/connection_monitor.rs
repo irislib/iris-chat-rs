@@ -274,7 +274,10 @@ mod tests {
             .unwrap()
             .link_id;
         assert_eq!(retry_link, first_link);
-        outbox.write().unwrap().forget(&event_id);
+        outbox
+            .write()
+            .unwrap()
+            .acknowledge(&sibling.npub(), &event_id);
         datagrams.clear();
         assert!(
             tokio::time::timeout(

@@ -30,7 +30,10 @@ fn relay_publish_burst_does_not_replay_acknowledged_nearby_backlog() {
         .unwrap();
     assert!(core.publish_runtime_event(event.clone(), APPCORE_PROTOCOL_LABEL, None));
     let outbox = core.device_sync.as_ref().unwrap().nearby_outbox.clone();
-    outbox.write().unwrap().forget(&event.id.to_hex());
+    outbox
+        .write()
+        .unwrap()
+        .acknowledge("test-peer", &event.id.to_hex());
     for index in 0..20 {
         let next = EventBuilder::new(Kind::Custom(1060), format!("new control {index}"))
             .sign_with_keys(&device)
@@ -61,8 +64,17 @@ fn relay_publish_burst_does_not_replay_acknowledged_nearby_backlog() {
             .unwrap()
             .pending_for_link("test-peer", 1)
             .len(),
+        20,
+        "server persistence retries must not resend to a peer that acknowledged the event"
+    );
+    assert_eq!(
+        outbox
+            .read()
+            .unwrap()
+            .pending_for_link("later-peer", 1)
+            .len(),
         21,
-        "the retry interval must still recover older undelivered packets"
+        "server persistence retries must retain events for later peers"
     );
     core.runtime.block_on(endpoint.shutdown()).unwrap();
 }

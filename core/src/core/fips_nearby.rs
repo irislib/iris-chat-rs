@@ -146,13 +146,21 @@ struct FipsNearbyOutboxEntry {
     event_id: String,
     payload: Vec<u8>,
     sent_links: VecDeque<FipsNearbyOutboxLink>,
+    acknowledged_peers: VecDeque<String>,
+}
+
+impl FipsNearbyOutboxEntry {
+    fn acknowledged_by(&self, peer_npub: &str) -> bool {
+        self.acknowledged_peers.iter().any(|peer| peer == peer_npub)
+    }
 }
 
 /// Bounded nearby-event queue shared with the FIPS link monitor.
 ///
 /// Transport acceptance is not a delivery acknowledgement. Retry unacknowledged
 /// events on the same link with exponential backoff (2 to 30 seconds), or
-/// immediately on a new link. FIPS-nearby receipts remove acknowledged events.
+/// immediately on a new link. A receipt stops retries to that peer only: another
+/// peer may still need the event when it connects. Retention remains bounded.
 #[derive(Default, Debug)]
 pub(super) struct FipsNearbyOutbox {
     entries: VecDeque<FipsNearbyOutboxEntry>,
@@ -160,12 +168,12 @@ pub(super) struct FipsNearbyOutbox {
 
 impl FipsNearbyOutbox {
     pub(super) fn insert(&mut self, event_id: String, payload: Vec<u8>) {
-        let sent_links = self
+        let (sent_links, acknowledged_peers) = self
             .entries
             .iter()
             .position(|entry| entry.event_id == event_id)
             .and_then(|index| self.entries.remove(index))
-            .map(|entry| entry.sent_links)
+            .map(|entry| (entry.sent_links, entry.acknowledged_peers))
             .unwrap_or_default();
         while self.entries.len() >= FIPS_NEARBY_OUTBOX_MAX_EVENTS {
             self.entries.pop_front();
@@ -174,6 +182,7 @@ impl FipsNearbyOutbox {
             event_id,
             payload,
             sent_links,
+            acknowledged_peers,
         });
     }
 
@@ -182,9 +191,12 @@ impl FipsNearbyOutbox {
         self.entries
             .iter()
             .filter(|entry| {
-                !entry.sent_links.iter().any(|link| {
-                    link.peer_npub == peer_npub && link.link_id == link_id && now < link.retry_at
-                })
+                !entry.acknowledged_by(peer_npub)
+                    && !entry.sent_links.iter().any(|link| {
+                        link.peer_npub == peer_npub
+                            && link.link_id == link_id
+                            && now < link.retry_at
+                    })
             })
             .map(|entry| (entry.event_id.clone(), entry.payload.clone()))
             .collect()
@@ -224,6 +236,30 @@ impl FipsNearbyOutbox {
         }
     }
 
+    pub(super) fn acknowledge(&mut self, peer_npub: &str, event_id: &str) {
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.event_id == event_id)
+        else {
+            return;
+        };
+        if entry.acknowledged_by(peer_npub) {
+            return;
+        }
+        while entry.acknowledged_peers.len() >= FIPS_NEARBY_OUTBOX_MAX_LINKS_PER_EVENT {
+            entry.acknowledged_peers.pop_front();
+        }
+        entry.acknowledged_peers.push_back(peer_npub.to_owned());
+    }
+
+    fn acknowledged_by(&self, peer_npub: &str, event_id: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.event_id == event_id && entry.acknowledged_by(peer_npub))
+    }
+
+    // Explicit cancellation (for example group removal) still discards all copies.
     pub(super) fn forget(&mut self, event_id: &str) {
         self.entries.retain(|entry| entry.event_id != event_id);
     }
@@ -291,6 +327,8 @@ impl AppCore {
         if let Ok(mut outbox) = runtime.nearby_outbox.write() {
             outbox.insert(event.id.to_string(), payload.clone());
         }
+        let outbox = runtime.nearby_outbox.clone();
+        let event_id = event.id.to_string();
         let local_hex = self
             .logged_in
             .as_ref()
@@ -315,7 +353,14 @@ impl AppCore {
                     }
                 }
             }
-            for target in targets.into_values() {
+            for (npub, target) in targets {
+                if outbox
+                    .read()
+                    .map(|queue| queue.acknowledged_by(&npub, &event_id))
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
                 let _ = endpoint
                     .send_datagram(target, FIPS_NEARBY_PORT, FIPS_NEARBY_PORT, payload.clone())
                     .await;
@@ -466,9 +511,12 @@ impl AppCore {
                 });
             }
             FipsNearbyPacket::Receipt { event_id, .. } => {
+                let Some(source) = fips_peer_from_hex(source_pubkey_hex) else {
+                    return;
+                };
                 if let Some(runtime) = self.device_sync.as_ref() {
                     if let Ok(mut outbox) = runtime.nearby_outbox.write() {
-                        outbox.forget(&event_id);
+                        outbox.acknowledge(&source.npub(), &event_id);
                     }
                 }
                 let changed = self.add_transport_channel_for_event_id(&event_id, "FIPS nearby");

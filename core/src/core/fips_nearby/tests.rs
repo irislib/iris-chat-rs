@@ -2,6 +2,8 @@ use super::*;
 
 #[path = "ingestion_tests.rs"]
 mod ingestion;
+#[path = "receipt_tests.rs"]
+mod receipts;
 #[path = "snapshot_tests.rs"]
 mod snapshots;
 
@@ -41,7 +43,7 @@ fn event_and_receipt_round_trip() {
 }
 
 #[test]
-fn nearby_outbox_replays_on_a_new_link_and_forgets_receipted_events() {
+fn nearby_outbox_replays_unacknowledged_links_and_scopes_receipts() {
     let mut outbox = FipsNearbyOutbox::default();
     let event_id = event_id();
     let payload = b"queued nearby event".to_vec();
@@ -56,11 +58,22 @@ fn nearby_outbox_replays_on_a_new_link_and_forgets_receipted_events() {
     assert!(outbox.pending_for_link("peer", 7).is_empty());
     assert_eq!(
         outbox.pending_for_link("peer", 8),
-        vec![(event_id.clone(), payload)]
+        vec![(event_id.clone(), payload.clone())]
     );
 
-    outbox.forget(&event_id);
+    outbox.acknowledge("peer", &event_id);
     assert!(outbox.pending_for_link("peer", 8).is_empty());
+    assert_eq!(
+        outbox.pending_for_link("later-peer", 9),
+        vec![(event_id.clone(), payload.clone())]
+    );
+    // A duplicate publication must not restart retries to an acknowledged peer.
+    outbox.insert(event_id.clone(), payload.clone());
+    assert!(outbox.pending_for_link("peer", 10).is_empty());
+    assert_eq!(
+        outbox.pending_for_link("later-peer", 9),
+        vec![(event_id, payload)]
+    );
 }
 
 #[test]
