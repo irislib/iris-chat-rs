@@ -265,7 +265,13 @@ impl AppCore {
             .collect::<Vec<_>>();
         mesh.protocol_subscriptions.outbox_cursor = batch.last().map(|(id, _)| id.clone());
         for (_, pending) in batch {
-            if pending.chat_id.as_deref().is_some_and(|chat| self.blocked_direct_publication(chat)) { continue; }
+            if pending
+                .chat_id
+                .as_deref()
+                .is_some_and(|chat| self.blocked_direct_publication(chat))
+            {
+                continue;
+            }
             // Existing authenticated receipts stop mesh retries; relay persistence is separate.
             if self.mesh_message_retry_needed(&pending) != Some(false) {
                 if let Ok(event) = serde_json::from_str::<Event>(&pending.event_json) {

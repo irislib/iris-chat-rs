@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 42;
+const SCHEMA_VERSION: u32 = 43;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS direct_file_transfers (

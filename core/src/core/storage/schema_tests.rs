@@ -504,6 +504,9 @@ fn migrates_v41_blocked_history_visibility_without_changing_existing_preferences
     let mut conn = Connection::open_in_memory().unwrap();
     ensure_schema(&mut conn).unwrap();
     conn.execute_batch("ALTER TABLE preferences DROP COLUMN hide_blocked_group_messages;
+         ALTER TABLE pending_relay_publishes DROP COLUMN authored_at_secs;
+         INSERT INTO pending_relay_publishes (event_id, owner_pubkey_hex, label, event_json, chat_id, created_at_secs)
+         VALUES ('queued-control', 'owner', 'appcore.protocol', '{}', 'peer', 100);
          INSERT INTO preferences (
             id, send_typing_indicators, send_read_receipts, desktop_notifications_enabled,
             startup_at_login_enabled, nostr_relay_urls_json, image_proxy_enabled,
@@ -517,6 +520,14 @@ fn migrates_v41_blocked_history_visibility_without_changing_existing_preferences
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).unwrap();
     assert_eq!(saved, (0, "[\"blocked-person\"]".into(), 1, 0));
     assert_eq!(user_version(&conn), SCHEMA_VERSION);
+    let legacy_authored: Option<i64> = conn
+        .query_row(
+            "SELECT authored_at_secs FROM pending_relay_publishes WHERE event_id = 'queued-control'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(legacy_authored, None);
     conn.execute(
         "UPDATE preferences SET hide_blocked_group_messages = 1 WHERE id = 1",
         [],
@@ -534,4 +545,23 @@ fn migrates_v41_blocked_history_visibility_without_changing_existing_preferences
         retained, 1,
         "reopening must preserve the opted-in preference"
     );
+    // A database from the earlier visibility schema must also receive the
+    // authored timestamp migration without resetting its preference or queue.
+    conn.execute_batch(
+        "ALTER TABLE pending_relay_publishes DROP COLUMN authored_at_secs;
+         PRAGMA user_version = 42;",
+    )
+    .unwrap();
+    ensure_schema(&mut conn).unwrap();
+    let retained: (i64, Option<i64>, i64) = conn
+        .query_row(
+            "SELECT preferences.hide_blocked_group_messages, pending.authored_at_secs, pending.created_at_secs
+             FROM preferences JOIN pending_relay_publishes pending ON pending.event_id = 'queued-control'
+             WHERE preferences.id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(retained, (1, None, 100));
+    assert_eq!(user_version(&conn), SCHEMA_VERSION);
 }
