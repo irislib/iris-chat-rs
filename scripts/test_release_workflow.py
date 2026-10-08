@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
+import os
 import plistlib
 import sys
 import tempfile
@@ -15,6 +16,42 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_tagged_platform_policy_skips_only_ios_build_and_rejects_apple_distribution(self) -> None:
+        builds = (ROOT / ".github/workflows/build-artifacts.yml").read_text()
+        metadata = builds.split("\n  metadata:\n", 1)[1].split("\n  android:\n", 1)[0]
+        self.assertIn('build_ios=true', metadata)
+        self.assertIn('[[ -f release-platforms.json', metadata)
+        self.assertIn('platform-enabled --tag "$requested_tag" --platform ios', metadata)
+        self.assertIn('echo "build_ios=$build_ios"', metadata)
+        ios = builds.split("\n  ios:\n", 1)[1].split("\n  macos:\n", 1)[0]
+        self.assertIn("if: needs.metadata.outputs.build_ios == 'true'", ios)
+        for platform in ("android", "macos", "windows", "linux", "cli"):
+            job = re.split(r"\n  (?=\S)", builds.split(f"\n  {platform}:\n", 1)[1], maxsplit=1)[0]
+            self.assertNotIn("build_ios", job)
+        release = (ROOT / ".github/workflows/release.yml").read_text()
+        self.assertIn('scripts/release-manifest.py list-assets --tag "$RELEASE_TAG"', release)
+        apple = (ROOT / ".github/workflows/ios-distribution.yml").read_text()
+        check = apple.index("- name: Check iOS release policy")
+        self.assertLess(check, apple.index("- name: Download and verify exact release IPA"))
+        self.assertLess(check, apple.index("- name: Configure App Store Connect authentication"))
+        self.assertIn('source/scripts/release-manifest.py require-platform', apple)
+        self.assertIn('--tag "$RELEASE_TAG" --platform ios', apple)
+        self.assertEqual((ROOT / ".github/workflows/release-contract.yml").read_text().count(
+            '      - "release-platforms.json"'), 2)
+        script = textwrap.dedent(metadata.split("        run: |\n", 1)[1])
+        with tempfile.TemporaryDirectory() as directory:
+            for index, (ref, expected) in enumerate([
+                ("v2026.10.8.2", "false"), ("refs/tags/v2026.10.8.2", "false"),
+                ("v2026.10.8.3", "true"), ("main", "true"),
+            ]):
+                with self.subTest(ref=ref):
+                    output = Path(directory) / str(index)
+                    env = dict(os.environ, REQUESTED_REF=ref, GITHUB_OUTPUT=str(output))
+                    result = subprocess.run(["bash", "-c", script], cwd=ROOT, env=env,
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(f"build_ios={expected}\n", output.read_text())
+
     def test_ios_filtering_requires_entitlement_in_profile_and_signed_extension(self) -> None:
         verifier = ROOT / "scripts/verify-ios-notification-filtering.py"
         key = "com.apple.developer.usernotifications.filtering"

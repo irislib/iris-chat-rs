@@ -172,26 +172,7 @@ verify_downloads() {
 }
 
 all_asset_names() {
-  python3 - "$TAG" <<'PY'
-import sys
-tag = sys.argv[1]
-names = [
-    f"iris-chat-{tag}-android-arm64.apk",
-    f"iris-chat-{tag}-android-arm64.aab",
-    f"iris-chat-{tag}-ios.ipa",
-    f"iris-chat-{tag}-ios.xcarchive.zip",
-    f"iris-chat-{tag}-macos-arm64.dmg",
-    f"iris-chat-{tag}-macos-arm64.app.tar.gz",
-    f"iris-chat-{tag}-windows-x64-setup.exe",
-    f"iris-chat-{tag}-windows-x64.zip",
-    f"iris-chat-{tag}-linux-x64.deb",
-    f"iris-chat-{tag}-linux-x64.tar.gz",
-    f"iris-{tag}-aarch64-apple-darwin.tar.gz",
-    f"iris-{tag}-x86_64-apple-darwin.tar.gz",
-    f"iris-{tag}-x86_64-unknown-linux-gnu.tar.gz",
-]
-print(*names, sep="\n")
-PY
+  "$ROOT/scripts/release-manifest.py" list-assets --tag "$TAG"
 }
 
 write_cli_installer() {

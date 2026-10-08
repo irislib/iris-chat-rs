@@ -18,10 +18,29 @@ TAG_RE = re.compile(
     r"^v(?P<year>\d{4})\.(?P<month>[1-9]\d?)\.(?P<day>[1-9]\d?)"
     r"(?:\.(?P<corrective>[1-9]\d?))?$"
 )
+PLATFORM_POLICY = Path(__file__).resolve().parents[1] / "release-platforms.json"
+
+
+def excluded_platforms(tag: str) -> list[str]:
+    """Only explicit, committed per-tag iOS omissions may alter the inventory."""
+    require_tag(tag)
+    policy = json.loads(PLATFORM_POLICY.read_text(encoding="utf-8"))
+    if not isinstance(policy, dict) or set(policy) != {
+        "schema_version", "excluded_platforms_by_tag"
+    } or policy.get("schema_version") != 1:
+        raise ValueError("unsupported release platform policy")
+    overrides = policy["excluded_platforms_by_tag"]
+    if not isinstance(overrides, dict):
+        raise ValueError("invalid release platform overrides")
+    for release_tag, exclusions in overrides.items():
+        require_tag(release_tag)
+        if exclusions not in ([], ["ios"]):
+            raise ValueError(f"only ios may be excluded from a release: {release_tag}")
+    return overrides.get(tag, [])
 
 
 def asset_specs(tag: str) -> dict[str, tuple[str, str, str]]:
-    return {
+    specs = {
         f"iris-chat-{tag}-android-arm64.apk": ("android", "arm64", "apk"),
         f"iris-chat-{tag}-android-arm64.aab": ("android", "arm64", "aab"),
         f"iris-chat-{tag}-ios.ipa": ("ios", "universal", "ipa"),
@@ -40,6 +59,8 @@ def asset_specs(tag: str) -> dict[str, tuple[str, str, str]]:
             "archive",
         ),
     }
+    excluded = excluded_platforms(tag)
+    return {name: spec for name, spec in specs.items() if spec[0] not in excluded}
 
 
 def sha256(path: Path) -> str:
@@ -101,6 +122,7 @@ def create_manifest(tag: str, commit: str, asset_dir: Path, output: Path) -> Non
         "tag": tag,
         "version": tag.removeprefix("v"),
         "commit": commit,
+        "excluded_platforms": excluded_platforms(tag),
         "assets": assets,
     }
     output.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -121,7 +143,10 @@ def verify_manifest(
         raise ValueError("release manifest tag/version mismatch")
     if expected_commit is not None and manifest.get("commit") != expected_commit:
         raise ValueError("release manifest commit mismatch")
+    if manifest.get("excluded_platforms", []) != excluded_platforms(tag):
+        raise ValueError("release manifest platform policy mismatch")
 
+    specs = asset_specs(tag)
     entries = manifest.get("assets")
     if not isinstance(entries, list):
         raise ValueError("release manifest has no asset list")
@@ -132,13 +157,13 @@ def verify_manifest(
         name = str(entry["name"])
         if name in by_name:
             raise ValueError(f"duplicate release manifest asset: {name}")
-        if name not in asset_specs(tag):
+        if name not in specs:
             raise ValueError(f"unexpected release manifest asset: {name}")
         if entry.get("path") != f"assets/{name}":
             raise ValueError(f"unsafe release manifest path: {name}")
         by_name[name] = entry
 
-    expected_manifest_names = set(asset_specs(tag))
+    expected_manifest_names = set(specs)
     if set(by_name) != expected_manifest_names:
         raise ValueError("release manifest does not contain the canonical asset set")
 
@@ -238,6 +263,14 @@ def parse_args() -> argparse.Namespace:
     validate_tag = subparsers.add_parser("validate-tag")
     validate_tag.add_argument("--tag", required=True)
 
+    inventory = subparsers.add_parser("list-assets")
+    inventory.add_argument("--tag", required=True)
+    for command in ("platform-enabled", "require-platform"):
+        platform = subparsers.add_parser(command)
+        platform.add_argument("--tag", required=True)
+        platform.add_argument("--platform", required=True,
+                              choices=["android", "ios", "macos", "windows", "linux", "cli"])
+
     verify = subparsers.add_parser("verify")
     verify.add_argument("--tag", required=True)
     verify.add_argument("--manifest", required=True, type=Path)
@@ -261,6 +294,14 @@ def main() -> int:
         create_manifest(args.tag, args.commit, args.asset_dir, args.out)
     elif args.command == "validate-tag":
         require_tag(args.tag)
+    elif args.command == "list-assets":
+        print(*sorted(asset_specs(args.tag)), sep="\n")
+    elif args.command in ("platform-enabled", "require-platform"):
+        enabled = args.platform not in excluded_platforms(args.tag)
+        if args.command == "require-platform" and not enabled:
+            raise ValueError(f"{args.platform} artifacts are excluded from {args.tag}; distribution is unavailable")
+        if args.command == "platform-enabled":
+            print("true" if enabled else "false")
     elif args.command == "verify":
         verify_manifest(
             args.tag,

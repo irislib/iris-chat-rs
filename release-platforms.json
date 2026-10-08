@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "excluded_platforms_by_tag": {
+    "v2026.10.8.2": ["ios"]
+  }
+}

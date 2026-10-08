@@ -20,6 +20,23 @@ exact, attested files from an immutable GitHub Release.
 The release builds Android arm64, iOS, macOS arm64, Windows x64, Linux x64,
 and CLI archives for macOS arm64/x64 and Linux x64.
 
+An explicitly authorized iOS omission is recorded for its exact tag in
+`release-platforms.json` before tagging. All other tags still require the full
+asset set. The policy permits only iOS exclusions: `v2026.10.8.2` omits the IPA
+and Xcode archive from both GitHub and Hashtree. The tagged build workflow reads
+that committed policy, so pushing the tag and manually retrying it have the same
+scope. There is no mutable workflow flag or missing-file inference.
+
+The attested manifest records the exclusion, and every distributor verifies it
+against the tag policy while still requiring every remaining artifact. Keep
+published policy entries unchanged so historical inventories stay verifiable.
+Older full manifests without an exclusion field remain valid. iOS Distribution
+rejects excluded tags before downloading an IPA or contacting Apple. This does
+not skip any CI platform checks or the tagged core and mesh gates. iOS uses Apple
+updates, while Hashtree desktop/CLI discovery retains every matching artifact;
+publishing still preserves earlier version directories through the required
+verified release-tree root.
+
 The Linux CLI is built in Debian 12 so it does not inherit the hosted runner's
 newer glibc requirement. Before uploading it, the build workflow installs the
 exact archive in a fresh Debian 12 container as root and as a regular user,
@@ -154,9 +171,9 @@ git push github v2026.7.28
 ```
 
 Stop if the tree is not clean or the two commit IDs differ. Pushing the tag
-starts the **Release** workflow. It validates the notes and tag, builds all
-platforms, gives every binary one versioned filename, creates a digest
-manifest, attests every file, and publishes the GitHub Release.
+starts the **Release** workflow. It validates the notes and tag, builds the
+platforms required by the tag policy, gives every binary one versioned filename,
+creates a digest manifest, attests every file, and publishes the GitHub Release.
 
 Wait until that workflow succeeds before distributing anywhere else. A
 successful GitHub Release means the binaries exist; it does not mean the store

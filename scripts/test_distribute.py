@@ -10,7 +10,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from test_release_manifest import TAG, names
+from test_release_manifest import IOS_EXCLUDED_TAG, TAG, names
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -298,16 +298,67 @@ class DistributeTests(unittest.TestCase):
         return env
 
     def run_distribution(
-        self, channel: str, *extra: str, env=None
+        self, channel: str, *extra: str, env=None, tag=TAG
     ) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
-            [str(DISTRIBUTE), channel, "--tag", TAG, *extra],
+            [str(DISTRIBUTE), channel, "--tag", tag, *extra],
             env=env or self.environment(),
             capture_output=True,
             text=True,
         )
         self.assertEqual((self.global_config / "keys").read_text(), "unrelated identity\n")
         return result
+
+    def prepare_ios_excluded_release(self) -> dict[str, str]:
+        self.manifest.unlink()
+        for path in self.release.iterdir():
+            if "-ios." in path.name:
+                path.unlink()
+            else:
+                path.rename(path.with_name(path.name.replace(TAG, IOS_EXCLUDED_TAG)))
+        self.manifest = self.release / f"iris-chat-{IOS_EXCLUDED_TAG}-manifest.json"
+        subprocess.run(
+            [str(ROOT / "scripts/release-manifest.py"), "create", "--tag", IOS_EXCLUDED_TAG,
+             "--commit", "abc123", "--asset-dir", str(self.release), "--out", str(self.manifest)],
+            check=True,
+        )
+        self.notes = self.notes.replace(TAG, IOS_EXCLUDED_TAG)
+        env = self.environment()
+        metadata = json.loads(env["FAKE_RELEASE_VIEW_JSON"])
+        metadata["tagName"] = IOS_EXCLUDED_TAG
+        metadata["assets"] = [{"name": path.name} for path in self.release.iterdir()]
+        env["FAKE_RELEASE_VIEW_JSON"] = json.dumps(metadata)
+        env["FAKE_TAG"] = IOS_EXCLUDED_TAG
+        return env
+
+    def test_ios_excluded_release_promotes_every_remaining_channel(self) -> None:
+        env = self.prepare_ios_excluded_release()
+        for channel in ("hashtree", "homebrew", "zapstore"):
+            with self.subTest(channel=channel):
+                result = self.run_distribution(channel, "--check", env=env, tag=IOS_EXCLUDED_TAG)
+                self.assertEqual(result.returncode, 0, result.stderr)
+        log = self.log.read_text()
+        self.assertNotIn("-ios.ipa", log)
+        self.assertNotIn("-ios.xcarchive.zip", log)
+        self.assertNotIn("--publish", log)
+        self.assertIn("haps import-release", log)
+
+    def test_ios_excluded_inventory_still_rejects_other_missing_or_added_assets(self) -> None:
+        original = self.prepare_ios_excluded_release()
+        for missing in ("android-arm64.apk", "linux-x64.deb", "macos-arm64.dmg"):
+            env = dict(original)
+            metadata = json.loads(env["FAKE_RELEASE_VIEW_JSON"])
+            metadata["assets"] = [entry for entry in metadata["assets"] if not entry["name"].endswith(missing)]
+            env["FAKE_RELEASE_VIEW_JSON"] = json.dumps(metadata)
+            result = self.run_distribution("zapstore", "--check", env=env, tag=IOS_EXCLUDED_TAG)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("exact canonical", result.stderr)
+        metadata = json.loads(original["FAKE_RELEASE_VIEW_JSON"])
+        metadata["assets"].append({"name": f"iris-chat-{IOS_EXCLUDED_TAG}-ios.ipa"})
+        original["FAKE_RELEASE_VIEW_JSON"] = json.dumps(metadata)
+        result = self.run_distribution("zapstore", "--check", env=original, tag=IOS_EXCLUDED_TAG)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exact canonical", result.stderr)
 
     def test_default_hashtree_profile_ignores_inherited_global_config(self) -> None:
         env = self.environment()

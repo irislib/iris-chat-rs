@@ -5,6 +5,7 @@ on:
     paths:
       - "RELEASE_NOTES.md"
       - "RELEASE.md"
+      - "release-platforms.json"
       - "zapstore.yaml"
       - "packaging/homebrew/**"
       - "scripts/distribute"
@@ -23,6 +24,7 @@ on:
     paths:
       - "RELEASE_NOTES.md"
       - "RELEASE.md"
+      - "release-platforms.json"
       - "zapstore.yaml"
       - "packaging/homebrew/**"
       - "scripts/distribute"

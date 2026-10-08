@@ -69,6 +69,7 @@ jobs:
       version_name: ${{ steps.metadata.outputs.version_name }}
       version_code: ${{ steps.metadata.outputs.version_code }}
       build_timestamp_utc: ${{ steps.metadata.outputs.build_timestamp_utc }}
+      build_ios: ${{ steps.metadata.outputs.build_ios }}
     defaults:
       run:
         working-directory: ${{ env.APP_DIR }}
@@ -96,12 +97,18 @@ jobs:
           fi
           version_code="$(semantic_version_code "$version_name")"
           build_timestamp_utc="$(TZ=UTC git log -1 --format=%cd --date=format:'%Y-%m-%dT%H:%M:%SZ' HEAD)"
+          build_ios=true
+          # Older tags predate the policy and always include every platform.
+          if [[ -f release-platforms.json && "$requested_tag" =~ ^v[0-9]{4}\.[1-9][0-9]?\.[1-9][0-9]?(\.[1-9][0-9]?)?$ ]]; then
+            build_ios="$(scripts/release-manifest.py platform-enabled --tag "$requested_tag" --platform ios)"
+          fi
           {
             echo "commit=$commit"
             echo "short_sha=${commit:0:12}"
             echo "version_name=$version_name"
             echo "version_code=$version_code"
             echo "build_timestamp_utc=$build_timestamp_utc"
+            echo "build_ios=$build_ios"
           } >> "$GITHUB_OUTPUT"
 
   android:
@@ -202,6 +209,7 @@ jobs:
   ios:
     name: iOS archive and IPA
     needs: metadata
+    if: needs.metadata.outputs.build_ios == 'true'
     runs-on: macos-26
     timeout-minutes: 120
     environment: ios-build

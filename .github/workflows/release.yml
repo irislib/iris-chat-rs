@@ -73,6 +73,10 @@ jobs:
             --tag "$RELEASE_TAG" \
             --notes RELEASE_NOTES.md
 
+          if [[ -f release-platforms.json ]]; then
+            scripts/release-manifest.py list-assets --tag "$RELEASE_TAG" >/dev/null
+          fi
+
           source scripts/build_common.sh
           semantic_version_code "${RELEASE_TAG#v}" >/dev/null || {
             echo "::error::The tag cannot be converted to a shared app version code"

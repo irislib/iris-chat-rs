@@ -93,6 +93,17 @@ jobs:
           path: source
           fetch-depth: 1
 
+      - name: Check iOS release policy
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          # Tags from before platform exclusions retain their full inventory.
+          if [[ -f source/release-platforms.json ]]; then
+            source/scripts/release-manifest.py require-platform \
+              --tag "$RELEASE_TAG" --platform ios
+          fi
+
       - name: Download and verify exact release IPA
         id: ipa
         env:
